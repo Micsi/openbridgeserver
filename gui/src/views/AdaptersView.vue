@@ -35,7 +35,7 @@
             <textarea
               v-model="configDrafts[a.adapter_type]"
               class="input font-mono text-xs resize-none h-40"
-              :placeholder="'{\n  \"host\": \"192.168.1.1\",\n  \"port\": 3671\n}'"
+              placeholder='{"host": "192.168.1.1", "port": 3671}'
             />
           </div>
 
