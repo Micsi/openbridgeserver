@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------------------
 # OpenTWS — Multi-Stage Dockerfile (3 stages)
-# Stage 1 (node-builder):   npm ci + vite build → gui_dist/
+# Stage 1 (node-builder):   npm install + vite build → gui_dist/
 # Stage 2 (py-builder):     pip install Python deps
 # Stage 3 (runtime):        python:3.11-slim, copies both artefacts
 #
@@ -11,8 +11,8 @@
 FROM node:20-slim AS node-builder
 
 WORKDIR /gui-src
-COPY gui/package.json gui/package-lock.json* ./
-RUN npm ci --prefer-offline
+COPY gui/package.json ./
+RUN npm install --prefer-offline
 
 COPY gui/ ./
 RUN npm run build
