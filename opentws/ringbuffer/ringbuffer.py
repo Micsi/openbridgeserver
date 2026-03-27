@@ -226,6 +226,7 @@ class RingBuffer:
         adapter: str = "",
         from_ts: str = "",
         limit: int = 100,
+        dp_ids: list[str] | None = None,
     ) -> list[RingBufferEntry]:
         if not self._conn:
             return []
@@ -233,9 +234,16 @@ class RingBuffer:
         sql = "SELECT * FROM ringbuffer WHERE 1=1"
         params: list[Any] = []
 
-        if q:
-            sql += " AND (datapoint_id LIKE ? OR source_adapter LIKE ?)"
-            params += [f"%{q}%", f"%{q}%"]
+        if q or dp_ids:
+            parts: list[str] = []
+            if q:
+                parts += ["datapoint_id LIKE ?", "source_adapter LIKE ?"]
+                params += [f"%{q}%", f"%{q}%"]
+            if dp_ids:
+                placeholders = ",".join("?" * len(dp_ids))
+                parts.append(f"datapoint_id IN ({placeholders})")
+                params += dp_ids
+            sql += f" AND ({' OR '.join(parts)})"
         if adapter:
             sql += " AND source_adapter=?"
             params.append(adapter)

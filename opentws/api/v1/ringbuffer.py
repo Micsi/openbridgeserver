@@ -26,6 +26,7 @@ class RingBufferEntryOut(BaseModel):
     id: int
     ts: str
     datapoint_id: str
+    name: str | None
     topic: str
     old_value: Any
     new_value: Any
@@ -52,17 +53,35 @@ class RingBufferConfig(BaseModel):
 
 @router.get("/", response_model=list[RingBufferEntryOut])
 async def query_ringbuffer(
-    q: str = Query("", description="Substring in datapoint_id or source_adapter"),
+    q: str = Query("", description="Substring in datapoint name, id or source_adapter"),
     adapter: str = Query("", description="Exact source_adapter match"),
     from_ts: str = Query("", alias="from", description="ISO-8601 timestamp (exclusive lower bound)"),
     limit: int = Query(100, ge=1, le=10000),
     _user: str = Depends(get_current_user),
 ) -> list[RingBufferEntryOut]:
+    from opentws.core.registry import get_registry
+    registry = get_registry()
+
+    # Build name→id lookup and find dp_ids matching q by name
+    name_map: dict[str, str] = {str(dp.id): dp.name for dp in registry.all()}
+    dp_ids_by_name: list[str] = []
+    if q:
+        q_lower = q.lower()
+        dp_ids_by_name = [
+            str(dp.id) for dp in registry.all()
+            if q_lower in dp.name.lower()
+        ]
+
     rb = get_ringbuffer()
-    entries = await rb.query(q=q, adapter=adapter, from_ts=from_ts, limit=limit)
+    entries = await rb.query(
+        q=q, adapter=adapter, from_ts=from_ts, limit=limit,
+        dp_ids=dp_ids_by_name or None,
+    )
     return [
         RingBufferEntryOut(
-            id=e.id, ts=e.ts, datapoint_id=e.datapoint_id, topic=e.topic,
+            id=e.id, ts=e.ts, datapoint_id=e.datapoint_id,
+            name=name_map.get(e.datapoint_id),
+            topic=e.topic,
             old_value=e.old_value, new_value=e.new_value,
             source_adapter=e.source_adapter, quality=e.quality,
         )
