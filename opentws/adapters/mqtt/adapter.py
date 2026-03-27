@@ -149,6 +149,10 @@ class MqttAdapter(AdapterBase):
         cfg = self._cfg
         while True:
             try:
+                logger.info(
+                    "MQTT adapter subscriber connecting → %s:%d user=%s",
+                    cfg.host, cfg.port, cfg.username,
+                )
                 async with aiomqtt.Client(
                     hostname=cfg.host,
                     port=cfg.port,
@@ -196,6 +200,10 @@ class MqttAdapter(AdapterBase):
         cfg = self._cfg
         while True:
             try:
+                logger.info(
+                    "MQTT adapter publisher connecting → %s:%d user=%s",
+                    cfg.host, cfg.port, cfg.username,
+                )
                 async with aiomqtt.Client(
                     hostname=cfg.host,
                     port=cfg.port,
