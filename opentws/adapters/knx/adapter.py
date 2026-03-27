@@ -18,7 +18,6 @@ Adapter-Konfiguration (adapter_configs.config in DB):
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -29,7 +28,7 @@ from opentws.adapters.registry import register
 from opentws.adapters.knx.dpt_registry import DPTRegistry
 from opentws.core.event_bus import DataValueEvent
 
-# Import at module level so missing classes fail loudly at startup, not silently at runtime
+# Import at module level so missing classes fail loudly at startup
 try:
     from xknx.telegram.apci import GroupValueWrite, GroupValueResponse
     _APCI_IMPORTED = True
@@ -72,6 +71,7 @@ class KnxAdapter(AdapterBase):
     def __init__(self, event_bus: Any, config: dict | None = None) -> None:
         super().__init__(event_bus, config)
         self._xknx: Any = None
+        self._sniffer: Any = None
         # GA → list of (binding, dpt_def) — for inbound telegram routing
         self._ga_source_map: dict[str, list[tuple[Any, Any]]] = {}
 
@@ -83,6 +83,7 @@ class KnxAdapter(AdapterBase):
         try:
             from xknx import XKNX
             from xknx.io import ConnectionConfig, ConnectionType
+            from xknx.devices import Device as XknxDevice
         except ImportError:
             logger.error("xknx not installed — KNX adapter disabled. Run: pip install xknx")
             await self._publish_status(False, "xknx not installed")
@@ -103,6 +104,32 @@ class KnxAdapter(AdapterBase):
 
         self._xknx = XKNX(connection_config=conn_cfg)
 
+        # Build a Device subclass that forwards all incoming telegrams to us.
+        # xknx calls has_group_address() per telegram, then process() if True.
+        # We do this BEFORE start() so the device is registered when the
+        # connection comes up.
+        adapter_ref = self
+
+        class _TelegramSniffer(XknxDevice):
+            """Minimal xknx Device that receives all registered GAs."""
+
+            def has_group_address(self, group_address: Any) -> bool:
+                return str(group_address) in adapter_ref._ga_source_map
+
+            async def process(self, telegram: Any) -> bool:
+                await adapter_ref._on_telegram(telegram)
+                return True
+
+        # Device.__init__ signature: (xknx, name, device_updated_cb=None)
+        # In some xknx versions __init__ auto-registers; in others we must
+        # add explicitly. We do both safely.
+        self._sniffer = _TelegramSniffer(self._xknx, "opentws_sniffer")
+        try:
+            self._xknx.devices += self._sniffer
+            logger.debug("KNX: sniffer device added to xknx.devices via +=")
+        except Exception as exc:
+            logger.debug("KNX: xknx.devices += sniffer failed (%s), device may already be registered", exc)
+
         try:
             await self._xknx.start()
             await self._publish_status(True, f"Connected to {cfg.host}:{cfg.port}")
@@ -110,30 +137,22 @@ class KnxAdapter(AdapterBase):
         except Exception as exc:
             await self._publish_status(False, str(exc))
             logger.exception("KNX connect failed")
-            return
-
-        # Register callback AFTER start() so the background task is already running.
-        self._xknx.telegram_queue.register_telegram_received_cb(self._on_telegram)
-        n = len(self._xknx.telegram_queue.telegram_received_cbs)
-        logger.error("KNX: callback registered, total cbs: %d", n)
-
-        # Patch process_telegram_incoming to verify xknx routes incoming telegrams through it.
-        _original_pti = self._xknx.telegram_queue.process_telegram_incoming
-
-        async def _patched_pti(telegram: Any) -> None:
-            logger.error("KNX process_telegram_incoming CALLED: %s", telegram)
-            await _original_pti(telegram)
-
-        self._xknx.telegram_queue.process_telegram_incoming = _patched_pti
 
     async def disconnect(self) -> None:
         if self._xknx:
+            # Remove sniffer from devices before stopping
+            if self._sniffer is not None:
+                try:
+                    self._xknx.devices -= self._sniffer
+                except Exception:
+                    pass
             try:
                 await self._xknx.stop()
             except Exception:
                 logger.exception("KNX disconnect error")
         await self._publish_status(False, "Disconnected")
         self._xknx = None
+        self._sniffer = None
 
     # ------------------------------------------------------------------
     # Bindings
@@ -159,34 +178,27 @@ class KnxAdapter(AdapterBase):
             if bc.state_group_address:
                 self._ga_source_map.setdefault(bc.state_group_address, []).append(entry)
 
-        logger.debug(
-            "KNX: %d source GAs registered from %d bindings",
-            len(self._ga_source_map), len(self._bindings),
+        logger.info(
+            "KNX: %d source GAs registered from %d bindings: %s",
+            len(self._ga_source_map), len(self._bindings), list(self._ga_source_map.keys()),
         )
 
     # ------------------------------------------------------------------
-    # Inbound telegram handler
+    # Inbound telegram handler (called by _TelegramSniffer.process)
     # ------------------------------------------------------------------
 
     async def _on_telegram(self, telegram: Any) -> None:
-        # ERROR level so this is visible even without -debug filtering
-        logger.error("KNX _on_telegram CALLED: %s", telegram)
         try:
             if not _APCI_IMPORTED:
                 logger.error("KNX: xknx.telegram.apci not importable — cannot process telegrams")
                 return
 
-            # Only process write and response telegrams
             if not isinstance(telegram.payload, (GroupValueWrite, GroupValueResponse)):
-                logger.debug("KNX: skipping telegram type %s", type(telegram.payload).__name__)
                 return
 
             ga = str(telegram.destination_address)
-            logger.error("KNX telegram received: GA=%s payload=%s", ga, telegram.payload)
-
             entries = self._ga_source_map.get(ga)
             if not entries:
-                logger.warning("KNX: GA %s not in source map (registered: %s)", ga, list(self._ga_source_map.keys()))
                 return
 
             raw = _telegram_to_bytes(telegram)
@@ -201,6 +213,7 @@ class KnxAdapter(AdapterBase):
                     value = raw
                     quality = "uncertain"
 
+                logger.info("KNX value: GA=%s → datapoint=%s value=%s", ga, binding.datapoint_id, value)
                 await self._bus.publish(DataValueEvent(
                     datapoint_id=binding.datapoint_id,
                     value=value,
@@ -220,7 +233,7 @@ class KnxAdapter(AdapterBase):
         if not self._xknx:
             return None
         try:
-            from xknx.telegram import Telegram, TelegramDirection
+            from xknx.telegram import Telegram
             from xknx.telegram.address import GroupAddress
             from xknx.telegram.apci import GroupValueRead
 
@@ -243,7 +256,7 @@ class KnxAdapter(AdapterBase):
         try:
             from xknx.telegram import Telegram
             from xknx.telegram.address import GroupAddress
-            from xknx.telegram.apci import GroupValueWrite
+            from xknx.telegram.apci import GroupValueWrite as _GVW
             from xknx.core.value_reader import DPTBinary, DPTArray
 
             bc = KnxBindingConfig(**binding.config)
@@ -257,7 +270,7 @@ class KnxAdapter(AdapterBase):
 
             telegram = Telegram(
                 destination_address=GroupAddress(bc.group_address),
-                payload=GroupValueWrite(payload_value),
+                payload=_GVW(payload_value),
             )
             await self._xknx.telegrams.put(telegram)
         except Exception:
