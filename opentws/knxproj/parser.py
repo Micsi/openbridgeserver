@@ -64,7 +64,7 @@ async def parse_knxproj(file_bytes: bytes, password: str | None = None) -> list[
         ValueError: wenn die Datei nicht geparst werden kann
     """
     try:
-        from xknxproject import XKNXProject
+        from xknxproject import XKNXProj
     except ImportError as e:
         raise ValueError(
             "xknxproject nicht installiert. Bitte 'pip install xknxproject' ausführen."
