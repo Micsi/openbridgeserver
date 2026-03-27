@@ -89,15 +89,40 @@ def parse_knxproj(file_bytes: bytes, password: str | None = None) -> list[GroupA
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
-    group_addresses = getattr(project, "group_addresses", {}) or {}
+    # KNXProject ist ein TypedDict → dict-Zugriff, nicht Attribut-Zugriff
+    logger.info("parse() Typ: %s, Keys: %s", type(project).__name__,
+                list(project.keys()) if isinstance(project, dict) else dir(project))
+
+    if isinstance(project, dict):
+        group_addresses = project.get("group_addresses", {}) or {}
+    else:
+        group_addresses = getattr(project, "group_addresses", {}) or {}
+
+    logger.info("group_addresses Typ: %s, Anzahl: %d",
+                type(group_addresses).__name__, len(group_addresses))
+
+    # Ersten Eintrag zur Diagnose loggen
+    if group_addresses:
+        first_key = next(iter(group_addresses))
+        first_val = group_addresses[first_key]
+        logger.info("Beispiel GA: key=%r val_type=%s val=%r", first_key, type(first_val).__name__, first_val)
 
     records: list[GroupAddressRecord] = []
     for addr_str, ga in group_addresses.items():
+        # ga kann dict (TypedDict) oder Objekt sein
+        if isinstance(ga, dict):
+            name        = ga.get("name", "") or ""
+            description = ga.get("comment", "") or ga.get("description", "") or ""
+            dpt_raw     = ga.get("dpt")
+        else:
+            name        = getattr(ga, "name", "") or ""
+            description = getattr(ga, "comment", "") or getattr(ga, "description", "") or ""
+            dpt_raw     = getattr(ga, "dpt", None)
         records.append(GroupAddressRecord(
             address=     addr_str,
-            name=        getattr(ga, "name", "") or "",
-            description= getattr(ga, "comment", "") or getattr(ga, "description", "") or "",
-            dpt=         _dpt_from_xknxproject(getattr(ga, "dpt", None)),
+            name=        name,
+            description= description,
+            dpt=         _dpt_from_xknxproject(dpt_raw),
         ))
 
     logger.info("xknxproject: %d Gruppenadressen gelesen", len(records))
