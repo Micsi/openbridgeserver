@@ -259,6 +259,9 @@ def _row_to_binding(row: Any) -> Any:
     from opentws.models.binding import AdapterBinding
     from datetime import datetime
     instance_id_str = row["adapter_instance_id"] if row["adapter_instance_id"] else None
+    throttle    = row["send_throttle_ms"]
+    min_delta   = row["send_min_delta"]
+    min_delta_p = row["send_min_delta_pct"]
     return AdapterBinding(
         id=uuid.UUID(row["id"]),
         datapoint_id=uuid.UUID(row["datapoint_id"]),
@@ -267,6 +270,10 @@ def _row_to_binding(row: Any) -> Any:
         direction=row["direction"],
         config=json.loads(row["config"]),
         enabled=bool(row["enabled"]),
+        send_throttle_ms=int(throttle) if throttle is not None else None,
+        send_on_change=bool(row["send_on_change"]),
+        send_min_delta=float(min_delta) if min_delta is not None else None,
+        send_min_delta_pct=float(min_delta_p) if min_delta_p is not None else None,
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )

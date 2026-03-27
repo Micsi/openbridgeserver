@@ -40,6 +40,10 @@ class BindingOut(BaseModel):
     direction: str
     config: dict
     enabled: bool
+    send_throttle_ms: int | None = None
+    send_on_change: bool = False
+    send_min_delta: float | None = None
+    send_min_delta_pct: float | None = None
     created_at: str
     updated_at: str
 
@@ -79,6 +83,9 @@ async def _reload_adapter_instance(instance_id: str, db: Database) -> None:
 
 def _row_out(row: Any, name_map: dict[str, str] | None = None) -> BindingOut:
     instance_id = row["adapter_instance_id"]
+    throttle    = row["send_throttle_ms"]
+    min_delta   = row["send_min_delta"]
+    min_delta_p = row["send_min_delta_pct"]
     return BindingOut(
         id=uuid.UUID(row["id"]),
         datapoint_id=uuid.UUID(row["datapoint_id"]),
@@ -88,6 +95,10 @@ def _row_out(row: Any, name_map: dict[str, str] | None = None) -> BindingOut:
         direction=row["direction"],
         config=json.loads(row["config"]),
         enabled=bool(row["enabled"]),
+        send_throttle_ms=int(throttle) if throttle is not None else None,
+        send_on_change=bool(row["send_on_change"]),
+        send_min_delta=float(min_delta) if min_delta is not None else None,
+        send_min_delta_pct=float(min_delta_p) if min_delta_p is not None else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -150,12 +161,17 @@ async def create_binding(
 
     await db.execute_and_commit(
         """INSERT INTO adapter_bindings
-           (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+           (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled,
+            send_throttle_ms, send_on_change, send_min_delta, send_min_delta_pct,
+            created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             binding_id, str(dp_id), adapter_type,
             str(body.adapter_instance_id), body.direction,
-            json.dumps(body.config), int(body.enabled), now, now,
+            json.dumps(body.config), int(body.enabled),
+            body.send_throttle_ms, int(body.send_on_change),
+            body.send_min_delta, body.send_min_delta_pct,
+            now, now,
         ),
     )
     await _reload_adapter_instance(str(body.adapter_instance_id), db)
@@ -183,15 +199,23 @@ async def update_binding(
     updates = body.model_dump(exclude_none=True)
     now = datetime.now(timezone.utc).isoformat()
 
-    direction  = updates.get("direction", row["direction"])
-    config_val = json.dumps(updates.get("config", json.loads(row["config"])))
-    enabled    = int(updates.get("enabled", bool(row["enabled"])))
+    direction       = updates.get("direction", row["direction"])
+    config_val      = json.dumps(updates.get("config", json.loads(row["config"])))
+    enabled         = int(updates.get("enabled", bool(row["enabled"])))
+    throttle_ms     = updates.get("send_throttle_ms", row["send_throttle_ms"])
+    on_change       = int(updates.get("send_on_change", bool(row["send_on_change"])))
+    min_delta       = updates.get("send_min_delta", row["send_min_delta"])
+    min_delta_pct   = updates.get("send_min_delta_pct", row["send_min_delta_pct"])
 
     await db.execute_and_commit(
         """UPDATE adapter_bindings
-           SET direction=?, config=?, enabled=?, updated_at=?
+           SET direction=?, config=?, enabled=?,
+               send_throttle_ms=?, send_on_change=?, send_min_delta=?, send_min_delta_pct=?,
+               updated_at=?
            WHERE id=?""",
-        (direction, config_val, enabled, now, str(binding_id)),
+        (direction, config_val, enabled,
+         throttle_ms, on_change, min_delta, min_delta_pct,
+         now, str(binding_id)),
     )
 
     instance_id = row["adapter_instance_id"]

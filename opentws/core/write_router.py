@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -31,6 +32,10 @@ class WriteRouter:
         from opentws.core.registry import DataPointRegistry
         self._db: Database = db
         self._registry: DataPointRegistry = registry
+        # binding_id → timestamp of last successful send (monotonic seconds)
+        self._last_sent: dict[uuid.UUID, float] = {}
+        # binding_id → last successfully sent value (for on-change / delta checks)
+        self._last_value: dict[uuid.UUID, Any] = {}
 
     # ------------------------------------------------------------------
     # Path 1 — inbound MQTT dp/{uuid}/set
@@ -120,8 +125,62 @@ class WriteRouter:
                     binding.id, binding.adapter_type, binding.adapter_instance_id,
                 )
                 continue
+            # --- Filter 1: Send-Throttle ---
+            if binding.send_throttle_ms:
+                min_interval = binding.send_throttle_ms / 1000.0
+                last_ts = self._last_sent.get(binding.id)
+                if last_ts is not None and (time.monotonic() - last_ts) < min_interval:
+                    logger.debug(
+                        "WriteRouter: throttle — skipping binding %s "
+                        "(min=%.3fs elapsed=%.3fs)",
+                        binding.id, min_interval, time.monotonic() - last_ts,
+                    )
+                    continue
+
+            # --- Filter 2 & 3: Wert-basierte Filter (nur wenn Vorgänger bekannt) ---
+            last_val = self._last_value.get(binding.id)
+            if last_val is not None:
+
+                # Filter 2: Nur bei Änderung
+                if binding.send_on_change and value == last_val:
+                    logger.debug(
+                        "WriteRouter: on-change — skipping binding %s (value unchanged: %r)",
+                        binding.id, value,
+                    )
+                    continue
+
+                # Filter 3: Mindest-Abweichung (abs./rel.) — nur für numerische Werte
+                if binding.send_min_delta is not None or binding.send_min_delta_pct is not None:
+                    try:
+                        v_new  = float(value)
+                        v_last = float(last_val)
+                        diff   = abs(v_new - v_last)
+
+                        if binding.send_min_delta is not None and diff < binding.send_min_delta:
+                            logger.debug(
+                                "WriteRouter: min_delta — skipping binding %s "
+                                "(diff=%.4f < min=%.4f)",
+                                binding.id, diff, binding.send_min_delta,
+                            )
+                            continue
+
+                        if binding.send_min_delta_pct is not None:
+                            base = abs(v_last) if v_last != 0 else abs(v_new)
+                            pct  = (diff / base * 100) if base != 0 else 0.0
+                            if pct < binding.send_min_delta_pct:
+                                logger.debug(
+                                    "WriteRouter: min_delta_pct — skipping binding %s "
+                                    "(%.2f%% < %.2f%%)",
+                                    binding.id, pct, binding.send_min_delta_pct,
+                                )
+                                continue
+                    except (TypeError, ValueError):
+                        pass  # Nicht-numerische Werte: Delta-Filter ignorieren
+
             try:
                 await instance.write(binding, value)
+                self._last_sent[binding.id]  = time.monotonic()
+                self._last_value[binding.id] = value
                 logger.info(
                     "WriteRouter: wrote to adapter=%s instance=%s binding=%s value=%r",
                     binding.adapter_type, binding.adapter_instance_id, binding.id, value,

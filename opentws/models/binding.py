@@ -16,6 +16,10 @@ class AdapterBinding(BaseModel):
     direction: Literal["SOURCE", "DEST", "BOTH"]
     config: dict[str, Any] = Field(default_factory=dict)  # Validated by Adapter schema
     enabled: bool = True
+    send_throttle_ms: Optional[int] = None                # Min. Abstand zwischen zwei Sends (ms)
+    send_on_change: bool = False                          # Nur senden wenn Wert geändert hat
+    send_min_delta: Optional[float] = None                # Nur senden bei abs. Abweichung >= X
+    send_min_delta_pct: Optional[float] = None            # Nur senden bei rel. Abweichung >= X %
     created_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
@@ -30,9 +34,17 @@ class AdapterBindingCreate(BaseModel):
     direction: Literal["SOURCE", "DEST", "BOTH"]
     config: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
+    send_throttle_ms: Optional[int] = None
+    send_on_change: bool = False
+    send_min_delta: Optional[float] = None
+    send_min_delta_pct: Optional[float] = None
 
 
 class AdapterBindingUpdate(BaseModel):
     direction: Optional[Literal["SOURCE", "DEST", "BOTH"]] = None
     config: Optional[dict[str, Any]] = None
     enabled: Optional[bool] = None
+    send_throttle_ms: Optional[int] = None
+    send_on_change: Optional[bool] = None
+    send_min_delta: Optional[float] = None
+    send_min_delta_pct: Optional[float] = None

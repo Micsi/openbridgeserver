@@ -183,6 +183,16 @@ CREATE TABLE IF NOT EXISTS knx_group_addresses (
 CREATE INDEX IF NOT EXISTS idx_ga_name ON knx_group_addresses(name);
 """
 
+_MIGRATION_V7 = """
+ALTER TABLE adapter_bindings ADD COLUMN send_throttle_ms INTEGER;
+"""
+
+_MIGRATION_V8 = """
+ALTER TABLE adapter_bindings ADD COLUMN send_on_change      INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE adapter_bindings ADD COLUMN send_min_delta      REAL;
+ALTER TABLE adapter_bindings ADD COLUMN send_min_delta_pct  REAL;
+"""
+
 # List of (version, sql_or_callable) tuples — append new migrations here
 MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
@@ -191,6 +201,8 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (4, _MIGRATION_V4),
     (5, _migration_v5),
     (6, _MIGRATION_V6),
+    (7, _MIGRATION_V7),
+    (8, _MIGRATION_V8),
 ]
 
 

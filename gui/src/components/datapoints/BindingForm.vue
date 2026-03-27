@@ -184,6 +184,68 @@
       Bitte zuerst eine Adapter-Instanz wählen
     </div>
 
+    <!-- Send-Filter (nur bei DEST / BOTH) -->
+    <template v-if="form.direction === 'DEST' || form.direction === 'BOTH'">
+      <div class="section-header">Send-Filter</div>
+
+      <!-- Throttle -->
+      <div class="form-group">
+        <label class="label">Min. Zeitabstand zwischen zwei Sends</label>
+        <div class="flex gap-2">
+          <input
+            v-model.number="form.throttle_value"
+            type="number" min="0" step="1"
+            placeholder="0 = kein Filter"
+            class="input flex-1"
+          />
+          <select v-model="form.throttle_unit" class="input w-24">
+            <option value="ms">ms</option>
+            <option value="s">s</option>
+            <option value="min">min</option>
+            <option value="h">h</option>
+          </select>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">Sends innerhalb des Intervalls werden verworfen.</p>
+      </div>
+
+      <!-- Nur bei Änderung -->
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="send_on_change" v-model="form.send_on_change" class="w-4 h-4 rounded" />
+        <label for="send_on_change" class="text-sm text-slate-300">
+          Nur senden wenn Wert sich geändert hat (kein Duplikat)
+        </label>
+      </div>
+
+      <!-- Mindest-Abweichung -->
+      <div class="form-group">
+        <label class="label">Nur senden bei Mindest-Abweichung</label>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-slate-400 mb-1 block">Absolut</label>
+            <input
+              v-model.number="form.send_min_delta"
+              type="number" min="0" step="any"
+              placeholder="z.B. 0.5"
+              class="input"
+            />
+          </div>
+          <div>
+            <label class="text-xs text-slate-400 mb-1 block">Relativ (%)</label>
+            <input
+              v-model.number="form.send_min_delta_pct"
+              type="number" min="0" step="any"
+              placeholder="z.B. 2"
+              class="input"
+            />
+          </div>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">
+          Leer lassen = inaktiv. Beide aktiv = beide müssen erfüllt sein.
+          Nur für numerische Werte.
+        </p>
+      </div>
+    </template>
+
     <!-- Aktiviert -->
     <div class="flex items-center gap-2">
       <input type="checkbox" id="enabled" v-model="form.enabled" class="w-4 h-4 rounded" />
@@ -251,10 +313,17 @@ const groupedDpts = computed(() => {
   }))
 })
 
+const THROTTLE_FACTORS = { ms: 1, s: 1000, min: 60_000, h: 3_600_000 }
+
 const form = reactive({
   adapter_instance_id: '',
   direction:           'SOURCE',
   enabled:             true,
+  throttle_value:      0,
+  throttle_unit:       's',
+  send_on_change:      false,
+  send_min_delta:      null,
+  send_min_delta_pct:  null,
 })
 
 // Flaches Config-Objekt mit allen möglichen Feldern (Defaults)
@@ -317,6 +386,27 @@ watch(() => props.initial, val => {
   // Leere Strings für optionale Felder sicherstellen
   if (cfg.state_group_address == null) cfg.state_group_address = ''
   if (cfg.publish_topic       == null) cfg.publish_topic = ''
+  // Throttle: ms-Wert in sinnvolle Einheit zerlegen
+  const ms = val.send_throttle_ms ?? 0
+  if (ms === 0) {
+    form.throttle_value = 0
+    form.throttle_unit  = 's'
+  } else if (ms % 3_600_000 === 0) {
+    form.throttle_value = ms / 3_600_000
+    form.throttle_unit  = 'h'
+  } else if (ms % 60_000 === 0) {
+    form.throttle_value = ms / 60_000
+    form.throttle_unit  = 'min'
+  } else if (ms % 1000 === 0) {
+    form.throttle_value = ms / 1000
+    form.throttle_unit  = 's'
+  } else {
+    form.throttle_value = ms
+    form.throttle_unit  = 'ms'
+  }
+  form.send_on_change     = val.send_on_change     ?? false
+  form.send_min_delta     = val.send_min_delta     ?? null
+  form.send_min_delta_pct = val.send_min_delta_pct ?? null
 }, { immediate: true })
 
 onMounted(async () => {
@@ -374,9 +464,19 @@ async function submit() {
   saving.value = true
   try {
     const config = buildConfig()
+    const throttleMs = (form.throttle_value > 0)
+      ? Math.round(form.throttle_value * THROTTLE_FACTORS[form.throttle_unit])
+      : null
+    const filterPayload = {
+      send_throttle_ms:    throttleMs,
+      send_on_change:      form.send_on_change,
+      send_min_delta:      form.send_min_delta     > 0 ? form.send_min_delta     : null,
+      send_min_delta_pct:  form.send_min_delta_pct > 0 ? form.send_min_delta_pct : null,
+    }
     if (props.initial) {
       await dpApi.updateBinding(props.dpId, props.initial.id, {
         direction: form.direction, config, enabled: form.enabled,
+        ...filterPayload,
       })
     } else {
       if (!form.adapter_instance_id) {
@@ -385,6 +485,7 @@ async function submit() {
       await dpApi.createBinding(props.dpId, {
         adapter_instance_id: form.adapter_instance_id,
         direction: form.direction, config, enabled: form.enabled,
+        ...filterPayload,
       })
     }
     emit('save')
