@@ -81,12 +81,22 @@ export const searchApi = {
 
 // ── Adapters ──────────────────────────────────────────────────────────────
 export const adapterApi = {
-  list:         ()                         => api.get('/adapters'),
-  schema:       (type)                     => api.get(`/adapters/${type}/schema`),
-  bindingSchema:(type)                     => api.get(`/adapters/${type}/binding-schema`),
-  test:         (type, config)             => api.post(`/adapters/${type}/test`, { config }),
-  getConfig:    (type)                     => api.get(`/adapters/${type}/config`),
+  // Typ-Routen (Schema-Abfragen)
+  list:         ()                           => api.get('/adapters'),
+  schema:       (type)                       => api.get(`/adapters/${type}/schema`),
+  bindingSchema:(type)                       => api.get(`/adapters/${type}/binding-schema`),
+  test:         (type, config)               => api.post(`/adapters/${type}/test`, { config }),
+  getConfig:    (type)                       => api.get(`/adapters/${type}/config`),
   updateConfig: (type, config, enabled=true) => api.patch(`/adapters/${type}/config`, { config, enabled }),
+
+  // Instanz-Routen (Multi-Instance, Phase 5)
+  listInstances:   ()           => api.get('/adapters/instances'),
+  createInstance:  (data)       => api.post('/adapters/instances', data),
+  getInstance:     (id)         => api.get(`/adapters/instances/${id}`),
+  updateInstance:  (id, data)   => api.patch(`/adapters/instances/${id}`, data),
+  deleteInstance:  (id)         => api.delete(`/adapters/instances/${id}`),
+  testInstance:    (id, config) => api.post(`/adapters/instances/${id}/test`, { config }),
+  restartInstance: (id)         => api.post(`/adapters/instances/${id}/restart`),
 }
 
 // ── System ────────────────────────────────────────────────────────────────

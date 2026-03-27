@@ -1,5 +1,5 @@
 """
-Write Router — Phase 4
+Write Router — Phase 4 / Phase 5 (Multi-Instance)
 
 Two write paths:
 
@@ -11,6 +11,9 @@ Two write paths:
    DEST/BOTH bindings of the same DataPoint (excluding the originating binding to
    prevent loopback). This implements cross-protocol bridging, e.g.:
      KNX GA 27/6/6 (SOURCE) → DataPoint → KNX GA 6/7/15 (DEST)
+
+Phase 5: Adapter-Lookup erfolgt per adapter_instance_id (UUID), nicht mehr per Typ-String.
+Fallback auf Typ-String für Bindings ohne instance_id (Rückwärtskompatibilität).
 """
 from __future__ import annotations
 
@@ -36,8 +39,6 @@ class WriteRouter:
     async def handle(self, dp_id: uuid.UUID, raw_payload: str) -> None:
         """Deserialize payload and write to all DEST/BOTH bindings."""
         from opentws.models.types import DataTypeRegistry
-        from opentws.adapters import registry as adapter_registry
-        from opentws.adapters.registry import _row_to_binding
 
         logger.info("WriteRouter.handle: dp_id=%s payload=%r", dp_id, raw_payload)
         dp = self._registry.get(dp_id)
@@ -104,18 +105,26 @@ class WriteRouter:
             if skip_binding_id and binding.id == skip_binding_id:
                 logger.debug("WriteRouter: skipping originating binding %s", binding.id)
                 continue
-            instance = adapter_registry.get_instance(binding.adapter_type)
+
+            # Phase 5: Lookup per Instance-ID (bevorzugt), Fallback auf Typ
+            instance = None
+            if binding.adapter_instance_id:
+                instance = adapter_registry.get_instance_by_id(binding.adapter_instance_id)
+            if instance is None:
+                instance = adapter_registry.get_instance(binding.adapter_type)
+
             if instance is None:
                 logger.warning(
-                    "Adapter %s not running — write for binding %s skipped",
-                    binding.adapter_type, binding.id,
+                    "Adapter-Instanz nicht gefunden — write für binding %s übersprungen "
+                    "(type=%s, instance_id=%s)",
+                    binding.id, binding.adapter_type, binding.adapter_instance_id,
                 )
                 continue
             try:
                 await instance.write(binding, value)
                 logger.info(
-                    "WriteRouter: wrote to adapter=%s binding=%s value=%r",
-                    binding.adapter_type, binding.id, value,
+                    "WriteRouter: wrote to adapter=%s instance=%s binding=%s value=%r",
+                    binding.adapter_type, binding.adapter_instance_id, binding.id, value,
                 )
             except Exception:
                 logger.exception(

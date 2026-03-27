@@ -1,11 +1,13 @@
 """
-System API — Phase 4
+System API — Phase 4 / Phase 5 (Multi-Instance)
 
 GET /api/v1/system/health      liveness check (no auth required)
-GET /api/v1/system/adapters    detailed adapter + binding stats
+GET /api/v1/system/adapters    detailed adapter instances + binding stats
 GET /api/v1/system/datatypes   all registered DataTypes
 """
 from __future__ import annotations
+
+import uuid
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -29,7 +31,9 @@ class HealthOut(BaseModel):
 
 
 class AdapterDetailOut(BaseModel):
+    id: uuid.UUID | None
     adapter_type: str
+    name: str
     registered: bool
     running: bool
     connected: bool
@@ -55,8 +59,8 @@ async def health() -> HealthOut:
     except RuntimeError:
         dp_count = 0
 
-    status_map = adapter_registry.get_status()
-    running = sum(1 for v in status_map.values() if v["running"])
+    all_instances = adapter_registry.get_all_instances()
+    running = sum(1 for inst in all_instances.values() if inst.connected)
 
     return HealthOut(
         status="ok",
@@ -70,18 +74,18 @@ async def health() -> HealthOut:
 async def adapters_detail(
     _user: str = Depends(get_current_user),
 ) -> list[AdapterDetailOut]:
-    from opentws.adapters.registry import get_instance, all_types
-
+    """Alle laufenden Adapter-Instanzen mit Status."""
+    all_instances = adapter_registry.get_all_instances()
     result = []
-    for adapter_type in all_types():
-        instance = get_instance(adapter_type)
-        binding_count = len(instance.get_bindings()) if instance else 0
+    for instance_id, instance in all_instances.items():
         result.append(AdapterDetailOut(
-            adapter_type=adapter_type,
+            id=instance._instance_id,
+            adapter_type=instance.adapter_type,
+            name=instance._instance_name,
             registered=True,
-            running=instance is not None,
-            connected=instance.connected if instance else False,
-            bindings=binding_count,
+            running=True,
+            connected=instance.connected,
+            bindings=len(instance.get_bindings()),
         ))
     return result
 

@@ -1,33 +1,48 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { adapterApi, systemApi } from '@/api/client'
+import { adapterApi } from '@/api/client'
 
 export const useAdapterStore = defineStore('adapters', () => {
-  const adapters = ref([])   // AdapterDetailOut[]
-  const loading  = ref(false)
+  const instances = ref([])   // AdapterInstanceOut[]
+  const loading   = ref(false)
 
   async function fetchAdapters() {
     loading.value = true
     try {
-      const { data } = await systemApi.adapters()
-      adapters.value = data
+      const { data } = await adapterApi.listInstances()
+      instances.value = data
     } finally {
       loading.value = false
     }
   }
 
-  async function testAdapter(type, config) {
-    const { data } = await adapterApi.test(type, config)
-    return data   // { success, detail }
-  }
-
-  async function saveConfig(type, config, enabled = true) {
-    const { data } = await adapterApi.updateConfig(type, config, enabled)
+  async function createInstance(adapter_type, name, config, enabled = true) {
+    const { data } = await adapterApi.createInstance({ adapter_type, name, config, enabled })
+    instances.value.push(data)
     return data
   }
 
-  async function getConfig(type) {
-    const { data } = await adapterApi.getConfig(type)
+  async function updateInstance(id, payload) {
+    const { data } = await adapterApi.updateInstance(id, payload)
+    const idx = instances.value.findIndex(a => a.id === id)
+    if (idx !== -1) instances.value[idx] = data
+    return data
+  }
+
+  async function deleteInstance(id) {
+    await adapterApi.deleteInstance(id)
+    instances.value = instances.value.filter(a => a.id !== id)
+  }
+
+  async function testInstance(id, config) {
+    const { data } = await adapterApi.testInstance(id, config)
+    return data   // { success, detail }
+  }
+
+  async function restartInstance(id) {
+    const { data } = await adapterApi.restartInstance(id)
+    const idx = instances.value.findIndex(a => a.id === id)
+    if (idx !== -1) instances.value[idx] = data
     return data
   }
 
@@ -36,5 +51,18 @@ export const useAdapterStore = defineStore('adapters', () => {
     return data
   }
 
-  return { adapters, loading, fetchAdapters, testAdapter, saveConfig, getConfig, getSchema }
+  // Alle registrierten Adapter-Typen (für "Neue Instanz" Dropdown)
+  async function fetchTypes() {
+    const { data } = await adapterApi.list()
+    return data.map(a => a.adapter_type)
+  }
+
+  // Legacy-Kompatibilität
+  const adapters = instances
+
+  return {
+    adapters, instances, loading,
+    fetchAdapters, createInstance, updateInstance, deleteInstance,
+    testInstance, restartInstance, getSchema, fetchTypes,
+  }
 })

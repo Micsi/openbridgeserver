@@ -2,10 +2,19 @@
   <form @submit.prevent="submit" class="flex flex-col gap-4">
     <div class="grid grid-cols-2 gap-4">
       <div class="form-group">
-        <label class="label">Adapter *</label>
-        <select v-model="form.adapter_type" class="input" required>
-          <option value="">Adapter wählen …</option>
-          <option v-for="a in adapterTypes" :key="a" :value="a">{{ a }}</option>
+        <label class="label">Adapter-Instanz *</label>
+        <!-- Bearbeiten: Instanz-Name read-only anzeigen -->
+        <div v-if="props.initial" class="input bg-slate-800/50 text-slate-400 cursor-not-allowed">
+          {{ currentInstanceName }}
+        </div>
+        <!-- Neu: Instanz aus Liste wählen -->
+        <select v-else v-model="form.adapter_instance_id" class="input" required>
+          <option value="">Instanz wählen …</option>
+          <optgroup v-for="group in groupedInstances" :key="group.type" :label="group.type">
+            <option v-for="inst in group.items" :key="inst.id" :value="inst.id">
+              {{ inst.name }}
+            </option>
+          </optgroup>
         </select>
       </div>
       <div class="form-group">
@@ -50,7 +59,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch, onMounted } from 'vue'
+import { ref, reactive, watch, computed, onMounted } from 'vue'
 import { dpApi, adapterApi } from '@/api/client'
 import Spinner from '@/components/ui/Spinner.vue'
 
@@ -60,38 +69,62 @@ const props = defineProps({
 })
 const emit = defineEmits(['save', 'cancel'])
 
-const saving      = ref(false)
-const error       = ref(null)
-const showSchema  = ref(false)
-const schema      = ref(null)
-const adapterTypes = ref([])
-const configJson  = ref('{}')
+const saving     = ref(false)
+const error      = ref(null)
+const showSchema = ref(false)
+const schema     = ref(null)
+const allInstances = ref([])   // [{ id, adapter_type, name }]
+const configJson = ref('{}')
 
 const form = reactive({
-  adapter_type: '',
-  direction:    'SOURCE',
-  config:       {},
-  enabled:      true,
+  adapter_instance_id: '',
+  direction:           'SOURCE',
+  config:              {},
+  enabled:             true,
 })
 
+// Instanzen nach Typ gruppiert (für Optgroup)
+const groupedInstances = computed(() => {
+  const groups = {}
+  for (const inst of allInstances.value) {
+    if (!groups[inst.adapter_type]) groups[inst.adapter_type] = []
+    groups[inst.adapter_type].push(inst)
+  }
+  return Object.entries(groups).map(([type, items]) => ({ type, items }))
+})
+
+// Name der aktuellen Instanz (beim Bearbeiten)
+const currentInstanceName = computed(() => {
+  if (!props.initial) return ''
+  if (props.initial.instance_name) return `${props.initial.instance_name} (${props.initial.adapter_type})`
+  return props.initial.adapter_type
+})
+
+// Init beim Bearbeiten
 watch(() => props.initial, val => {
   if (val) {
-    form.adapter_type = val.adapter_type
-    form.direction    = val.direction
-    form.enabled      = val.enabled
-    configJson.value  = JSON.stringify(val.config, null, 2)
+    form.adapter_instance_id = val.adapter_instance_id ?? ''
+    form.direction           = val.direction
+    form.enabled             = val.enabled
+    configJson.value         = JSON.stringify(val.config, null, 2)
   }
 }, { immediate: true })
 
-watch(() => form.adapter_type, async (type) => {
-  if (!type) return
-  try { const { data } = await adapterApi.bindingSchema(type); schema.value = data } catch {}
+// Schema laden wenn Instanz gewählt
+watch(() => form.adapter_instance_id, async (instanceId) => {
+  if (!instanceId) { schema.value = null; return }
+  const inst = allInstances.value.find(i => i.id === instanceId)
+  if (!inst) return
+  try {
+    const { data } = await adapterApi.bindingSchema(inst.adapter_type)
+    schema.value = data
+  } catch { schema.value = null }
 })
 
 onMounted(async () => {
   try {
-    const { data } = await adapterApi.list()
-    adapterTypes.value = data.map(a => a.adapter_type)
+    const { data } = await adapterApi.listInstances()
+    allInstances.value = data
   } catch {}
 })
 
@@ -108,8 +141,12 @@ async function submit() {
         direction: form.direction, config: cfg, enabled: form.enabled,
       })
     } else {
+      if (!form.adapter_instance_id) {
+        error.value = 'Bitte eine Adapter-Instanz wählen'; saving.value = false; return
+      }
       await dpApi.createBinding(props.dpId, {
-        adapter_type: form.adapter_type, direction: form.direction, config: cfg, enabled: form.enabled,
+        adapter_instance_id: form.adapter_instance_id,
+        direction: form.direction, config: cfg, enabled: form.enabled,
       })
     }
     emit('save')

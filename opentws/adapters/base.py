@@ -1,14 +1,14 @@
 """
-AdapterBase ABC — Phase 2 / erweitert Phase 3
+AdapterBase ABC — Phase 2 / erweitert Phase 3 / Phase 5 (Multi-Instance)
 
 Alle Protokoll-Adapter erben von dieser Klasse.
-Phase-3-Erweiterungen:
-  - config: dict   – aus DB geladen (Verbindungsparameter)
-  - binding_config_schema – Pydantic-Schema für Binding-Konfiguration
-  - reload_bindings() – wird vom Registry aufgerufen nach connect()
+Phase-5-Erweiterungen:
+  - instance_id: uuid.UUID  – eindeutige Instanz-ID (aus DB)
+  - name: str               – benutzerfreundlicher Name (z.B. "KNX EG")
 """
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -31,12 +31,20 @@ class AdapterBase(ABC):
     config_schema: type[BaseModel]                 # API: /adapters/{type}/schema
     binding_config_schema: type[BaseModel]         # API: /adapters/{type}/binding-schema
 
-    def __init__(self, event_bus: Any, config: dict | None = None) -> None:
+    def __init__(
+        self,
+        event_bus: Any,
+        config: dict | None = None,
+        instance_id: uuid.UUID | None = None,
+        name: str | None = None,
+    ) -> None:
         from opentws.core.event_bus import EventBus
         self._bus: EventBus = event_bus
         self._config: dict = config or {}
         self._connected: bool = False
-        self._bindings: list[Any] = []  # list[AdapterBinding]
+        self._bindings: list[Any] = []                  # list[AdapterBinding]
+        self._instance_id: uuid.UUID = instance_id or uuid.uuid4()
+        self._instance_name: str = name or getattr(self, "adapter_type", "unknown")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -95,6 +103,8 @@ class AdapterBase(ABC):
         self._connected = connected
         await self._bus.publish(AdapterStatusEvent(
             adapter_type=self.adapter_type,
+            instance_id=self._instance_id,
+            instance_name=self._instance_name,
             connected=connected,
             detail=detail,
         ))

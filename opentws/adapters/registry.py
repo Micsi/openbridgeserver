@@ -1,19 +1,22 @@
 """
-Adapter Registry — Phase 2/3
+Adapter Registry — Phase 5 (Multi-Instance)
 
-Self-registering pattern: adapters decorate their class with @register.
-start_all() lädt Adapter-Konfigurationen und Bindings aus der DB.
+Jeder Adapter-Typ (KNX, MQTT, MODBUS_TCP …) kann mehrfach instanziert werden.
+Instanzen werden durch eine UUID identifiziert (adapter_instances Tabelle in DB).
+
+Rückwärtskompatibel: get_instance(adapter_type) liefert die erste laufende Instanz.
 """
 from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_adapters: dict[str, type] = {}   # adapter_type → AdapterBase subclass
-_instances: dict[str, Any] = {}   # adapter_type → live instance
+_adapters: dict[str, type] = {}    # adapter_type → AdapterBase Klasse
+_instances: dict[str, Any] = {}    # instance_id (str) → laufende Instanz
 
 
 # ---------------------------------------------------------------------------
@@ -51,67 +54,99 @@ def all_classes() -> dict[str, type]:
 
 async def start_all(event_bus: Any, db: Any) -> None:
     """
-    Instantiate, connect, and load bindings for all registered adapters.
-
-    For each registered adapter:
-      1. Load config dict from adapter_configs table (or empty dict)
-      2. Instantiate with (event_bus=bus, config=config_dict)
-      3. Connect
-      4. Load enabled bindings from DB and call reload_bindings()
+    Alle aktivierten Adapter-Instanzen aus adapter_instances laden,
+    verbinden und Bindings laden.
     """
-    from opentws.models.binding import AdapterBinding
+    rows = await db.fetchall(
+        "SELECT * FROM adapter_instances WHERE enabled=1"
+    )
+    if not rows:
+        logger.info("Keine Adapter-Instanzen in DB gefunden")
+        return
 
-    for adapter_type, cls in _adapters.items():
-        try:
-            # 1. Config
-            row = await db.fetchone(
-                "SELECT config FROM adapter_configs WHERE adapter_type=? AND enabled=1",
-                (adapter_type,),
+    for row in rows:
+        instance_id = row["id"]
+        adapter_type = row["adapter_type"]
+        cls = _adapters.get(adapter_type)
+        if cls is None:
+            logger.warning(
+                "Adapter-Klasse '%s' nicht registriert — Instanz %s übersprungen",
+                adapter_type, instance_id,
             )
-            config_dict: dict = json.loads(row["config"]) if row else {}
+            continue
 
-            # 2. Instantiate
-            instance = cls(event_bus=event_bus, config=config_dict)
-
-            # 3. Connect
+        try:
+            config_dict: dict = json.loads(row["config"]) if row["config"] else {}
+            instance = cls(
+                event_bus=event_bus,
+                config=config_dict,
+                instance_id=uuid.UUID(instance_id),
+                name=row["name"],
+            )
             await instance.connect()
-            _instances[adapter_type] = instance
+            _instances[instance_id] = instance
 
-            # 4. Bindings
             binding_rows = await db.fetchall(
-                "SELECT * FROM adapter_bindings WHERE adapter_type=? AND enabled=1",
-                (adapter_type,),
+                "SELECT * FROM adapter_bindings WHERE adapter_instance_id=? AND enabled=1",
+                (instance_id,),
             )
             bindings = [_row_to_binding(r) for r in binding_rows]
             await instance.reload_bindings(bindings)
 
             logger.info(
-                "Adapter started: %s (%d bindings)", adapter_type, len(bindings)
+                "Adapter gestartet: %s '%s' (%d Bindings)",
+                adapter_type, row["name"], len(bindings),
             )
         except Exception:
-            logger.exception("Failed to start adapter: %s", adapter_type)
+            logger.exception(
+                "Fehler beim Starten von Adapter %s '%s'", adapter_type, row["name"]
+            )
 
 
 async def stop_all() -> None:
-    """Disconnect all running adapter instances."""
-    for adapter_type, instance in list(_instances.items()):
+    """Alle laufenden Adapter-Instanzen trennen."""
+    for instance_id, instance in list(_instances.items()):
         try:
             await instance.disconnect()
-            logger.info("Adapter stopped: %s", adapter_type)
+            logger.info(
+                "Adapter gestoppt: %s '%s'",
+                instance.adapter_type, instance._instance_name,
+            )
         except Exception:
-            logger.exception("Error stopping adapter: %s", adapter_type)
+            logger.exception("Fehler beim Stoppen von Instanz %s", instance_id)
     _instances.clear()
 
 
+# ---------------------------------------------------------------------------
+# Lookup by ID / type
+# ---------------------------------------------------------------------------
+
+def get_instance_by_id(instance_id: str | uuid.UUID) -> Any | None:
+    """Instanz anhand der UUID zurückgeben."""
+    return _instances.get(str(instance_id))
+
+
 def get_instance(adapter_type: str) -> Any | None:
-    return _instances.get(adapter_type)
+    """
+    Rückwärtskompatibel: erste laufende Instanz des angegebenen Typs.
+    Für Multi-Instance: get_instance_by_id() verwenden.
+    """
+    for instance in _instances.values():
+        if instance.adapter_type == adapter_type:
+            return instance
+    return None
+
+
+def get_all_instances() -> dict[str, Any]:
+    """Alle laufenden Instanzen zurückgeben (instance_id → Instanz)."""
+    return dict(_instances)
 
 
 def get_status() -> dict[str, dict]:
-    """Return connection status for all registered adapters."""
+    """Status aller registrierten Adapter-Typen (für /system/adapters)."""
     result = {}
     for adapter_type in _adapters:
-        instance = _instances.get(adapter_type)
+        instance = get_instance(adapter_type)
         result[adapter_type] = {
             "registered": True,
             "running": instance is not None,
@@ -121,17 +156,114 @@ def get_status() -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------------------
+# Hot-Reload einer einzelnen Instanz (für API: PATCH /instances/{id})
+# ---------------------------------------------------------------------------
+
+async def restart_instance(instance_id: str, event_bus: Any, db: Any) -> Any | None:
+    """
+    Laufende Instanz stoppen, neu aus DB laden und starten.
+    Gibt die neue Instanz zurück, oder None bei Fehler.
+    """
+    # Alte Instanz stoppen
+    old = _instances.pop(instance_id, None)
+    if old:
+        try:
+            await old.disconnect()
+        except Exception:
+            logger.exception("Fehler beim Stoppen von Instanz %s", instance_id)
+
+    # Neu aus DB laden
+    row = await db.fetchone(
+        "SELECT * FROM adapter_instances WHERE id=? AND enabled=1", (instance_id,)
+    )
+    if row is None:
+        logger.warning("Instanz %s nicht in DB oder deaktiviert", instance_id)
+        return None
+
+    cls = _adapters.get(row["adapter_type"])
+    if cls is None:
+        logger.warning("Adapter-Klasse '%s' nicht registriert", row["adapter_type"])
+        return None
+
+    try:
+        config_dict = json.loads(row["config"]) if row["config"] else {}
+        instance = cls(
+            event_bus=event_bus,
+            config=config_dict,
+            instance_id=uuid.UUID(instance_id),
+            name=row["name"],
+        )
+        await instance.connect()
+        _instances[instance_id] = instance
+
+        binding_rows = await db.fetchall(
+            "SELECT * FROM adapter_bindings WHERE adapter_instance_id=? AND enabled=1",
+            (instance_id,),
+        )
+        bindings = [_row_to_binding(r) for r in binding_rows]
+        await instance.reload_bindings(bindings)
+
+        logger.info(
+            "Adapter neu gestartet: %s '%s' (%d Bindings)",
+            row["adapter_type"], row["name"], len(bindings),
+        )
+        return instance
+    except Exception:
+        logger.exception(
+            "Fehler beim Neustart von Adapter %s '%s'", row["adapter_type"], row["name"]
+        )
+        return None
+
+
+async def start_instance(instance_id: str, event_bus: Any, db: Any) -> Any | None:
+    """Neue Instanz aus DB laden und starten."""
+    return await restart_instance(instance_id, event_bus, db)
+
+
+async def stop_instance(instance_id: str) -> None:
+    """Einzelne Instanz stoppen und aus Registry entfernen."""
+    instance = _instances.pop(instance_id, None)
+    if instance:
+        try:
+            await instance.disconnect()
+            logger.info(
+                "Adapter gestoppt: %s '%s'",
+                instance.adapter_type, instance._instance_name,
+            )
+        except Exception:
+            logger.exception("Fehler beim Stoppen von Instanz %s", instance_id)
+
+
+# ---------------------------------------------------------------------------
+# Bindings neu laden für eine Instanz
+# ---------------------------------------------------------------------------
+
+async def reload_instance_bindings(instance_id: str, db: Any) -> None:
+    """Bindings einer laufenden Instanz aus DB neu laden."""
+    instance = _instances.get(instance_id)
+    if instance is None:
+        return
+    binding_rows = await db.fetchall(
+        "SELECT * FROM adapter_bindings WHERE adapter_instance_id=? AND enabled=1",
+        (instance_id,),
+    )
+    bindings = [_row_to_binding(r) for r in binding_rows]
+    await instance.reload_bindings(bindings)
+
+
+# ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 
 def _row_to_binding(row: Any) -> Any:
     from opentws.models.binding import AdapterBinding
-    import uuid
     from datetime import datetime
+    instance_id_str = row["adapter_instance_id"] if row["adapter_instance_id"] else None
     return AdapterBinding(
         id=uuid.UUID(row["id"]),
         datapoint_id=uuid.UUID(row["datapoint_id"]),
         adapter_type=row["adapter_type"],
+        adapter_instance_id=uuid.UUID(instance_id_str) if instance_id_str else None,
         direction=row["direction"],
         config=json.loads(row["config"]),
         enabled=bool(row["enabled"]),

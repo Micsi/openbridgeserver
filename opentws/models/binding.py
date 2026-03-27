@@ -1,4 +1,4 @@
-"""AdapterBinding Pydantic model — Phase 1."""
+"""AdapterBinding Pydantic model — Phase 1 / erweitert Phase 5 (Multi-Instance)."""
 from __future__ import annotations
 
 import datetime
@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 class AdapterBinding(BaseModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     datapoint_id: uuid.UUID
-    adapter_type: str                                    # "KNX" | "MODBUS_RTU" | ...
+    adapter_type: str                                     # "KNX" | "MODBUS_TCP" | ...
+    adapter_instance_id: uuid.UUID | None = None          # UUID der Adapter-Instanz
     direction: Literal["SOURCE", "DEST", "BOTH"]
     config: dict[str, Any] = Field(default_factory=dict)  # Validated by Adapter schema
     enabled: bool = True
@@ -24,7 +25,8 @@ class AdapterBinding(BaseModel):
 
 
 class AdapterBindingCreate(BaseModel):
-    adapter_type: str
+    adapter_instance_id: uuid.UUID                        # Pflicht: referenziert eine Instanz
+    adapter_type: str | None = None                       # Optional: wird aus Instanz abgeleitet
     direction: Literal["SOURCE", "DEST", "BOTH"]
     config: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True

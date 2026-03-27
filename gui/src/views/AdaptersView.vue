@@ -1,68 +1,151 @@
 <template>
   <div class="flex flex-col gap-5">
-    <div>
-      <h2 class="text-xl font-bold text-slate-100">Adapter</h2>
-      <p class="text-sm text-slate-500 mt-0.5">Konfiguration und Status aller Protokoll-Adapter</p>
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="text-xl font-bold text-slate-100">Adapter Instanzen</h2>
+        <p class="text-sm text-slate-500 mt-0.5">Protokoll-Adapter konfigurieren und verwalten</p>
+      </div>
+      <button @click="openCreate" class="btn-primary btn-sm">
+        + Neue Instanz
+      </button>
     </div>
 
     <div v-if="store.loading" class="flex justify-center py-20"><Spinner size="lg" /></div>
 
-    <div v-else class="grid md:grid-cols-2 xl:grid-cols-2 gap-4">
-      <div v-for="a in store.adapters" :key="a.adapter_type" class="card">
+    <div v-else class="flex flex-col gap-4">
+
+      <!-- Neue Instanz erstellen -->
+      <div v-if="creating" class="card border border-blue-500/40">
         <div class="card-header">
-          <div class="flex items-center gap-3">
+          <h3 class="font-semibold text-slate-100">Neue Instanz erstellen</h3>
+          <button @click="cancelCreate" class="btn-icon">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="p-5 flex flex-col gap-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div class="form-group">
+              <label class="label">Adapter-Typ *</label>
+              <select v-model="newForm.adapter_type" class="input" required>
+                <option value="">Typ wählen …</option>
+                <option v-for="t in availableTypes" :key="t" :value="t">{{ t }}</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="label">Name *</label>
+              <input v-model="newForm.name" type="text" class="input" placeholder="z.B. KNX Erdgeschoss" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="label">Konfiguration (JSON)</label>
+            <textarea v-model="newForm.configJson" class="input font-mono text-xs resize-none h-36"
+              placeholder='{"host": "192.168.1.1", "port": 3671}' />
+          </div>
+          <div v-if="createError" class="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+            {{ createError }}
+          </div>
+          <div class="flex gap-3">
+            <button @click="cancelCreate" class="btn-secondary btn-sm">Abbrechen</button>
+            <button @click="submitCreate" class="btn-primary btn-sm" :disabled="creating === 'saving'">
+              <Spinner v-if="creating === 'saving'" size="xs" color="white" />
+              Erstellen
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bestehende Instanzen -->
+      <div v-if="store.instances.length === 0 && !creating" class="card p-8 text-center text-slate-500">
+        Keine Adapter-Instanzen konfiguriert. Klicke auf „+ Neue Instanz" um zu beginnen.
+      </div>
+
+      <div v-for="a in store.instances" :key="a.id" class="card">
+        <!-- Card Header -->
+        <div class="card-header">
+          <div class="flex items-center gap-3 min-w-0">
             <span :class="['w-3 h-3 rounded-full shrink-0', a.connected ? 'bg-green-400' : a.running ? 'bg-amber-400 animate-pulse' : 'bg-slate-600']" />
-            <h3 class="font-semibold text-slate-100">{{ a.adapter_type }}</h3>
+            <h3 class="font-semibold text-slate-100 truncate">{{ a.name }}</h3>
+            <Badge variant="info" size="xs">{{ a.adapter_type }}</Badge>
             <Badge :variant="a.connected ? 'success' : a.running ? 'warning' : 'muted'" size="xs">
               {{ a.connected ? 'Verbunden' : a.running ? 'Läuft' : 'Inaktiv' }}
             </Badge>
           </div>
-          <button @click="toggleExpand(a.adapter_type)" class="btn-icon">
-            <svg class="w-4 h-4 transition-transform" :class="expanded[a.adapter_type] ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button @click="toggleExpand(a.id)" class="btn-icon">
+              <svg class="w-4 h-4 transition-transform" :class="expanded[a.id] ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div class="px-5 py-3 flex gap-4 text-sm">
-          <div class="text-slate-500">Bindings: <span class="text-slate-300 font-medium">{{ a.bindings }}</span></div>
+        <!-- Kurzinfo -->
+        <div class="px-5 py-2 flex gap-4 text-sm text-slate-500">
+          <span>Bindings: <span class="text-slate-300 font-medium">{{ a.bindings }}</span></span>
+          <span v-if="!a.registered" class="text-amber-400">⚠ Typ nicht registriert</span>
         </div>
 
-        <!-- Expanded config panel -->
-        <div v-if="expanded[a.adapter_type]" class="border-t border-slate-700/60 p-5 flex flex-col gap-4">
+        <!-- Expanded Config Panel -->
+        <div v-if="expanded[a.id]" class="border-t border-slate-700/60 p-5 flex flex-col gap-4">
+          <div class="form-group">
+            <label class="label">Name</label>
+            <input v-model="drafts[a.id].name" type="text" class="input" />
+          </div>
           <div class="form-group">
             <label class="label">Konfiguration (JSON)</label>
-            <textarea
-              v-model="configDrafts[a.adapter_type]"
-              class="input font-mono text-xs resize-none h-40"
-              placeholder='{"host": "192.168.1.1", "port": 3671}'
-            />
+            <textarea v-model="drafts[a.id].configJson" class="input font-mono text-xs resize-none h-40" />
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="checkbox" :id="'enabled-' + a.id" v-model="drafts[a.id].enabled" class="w-4 h-4 rounded" />
+            <label :for="'enabled-' + a.id" class="text-sm text-slate-300">Aktiviert</label>
           </div>
 
-          <div v-if="testResults[a.adapter_type]" :class="[
+          <!-- Feedback -->
+          <div v-if="feedback[a.id]" :class="[
             'flex items-center gap-2 p-3 rounded-lg text-sm',
-            testResults[a.adapter_type].success ? 'bg-green-500/10 border border-green-500/30 text-green-400' : 'bg-red-500/10 border border-red-500/30 text-red-400'
+            feedback[a.id].success ? 'bg-green-500/10 border border-green-500/30 text-green-400' : 'bg-red-500/10 border border-red-500/30 text-red-400'
           ]">
             <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path v-if="testResults[a.adapter_type].success" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+              <path v-if="feedback[a.id].success" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
             </svg>
-            {{ testResults[a.adapter_type].detail }}
+            {{ feedback[a.id].detail }}
           </div>
 
-          <div class="flex gap-3">
-            <button @click="testConnection(a.adapter_type)" class="btn-secondary btn-sm" :disabled="testing[a.adapter_type]">
-              <Spinner v-if="testing[a.adapter_type]" size="xs" color="slate" />
+          <div class="flex gap-3 flex-wrap">
+            <button @click="testConnection(a)" class="btn-secondary btn-sm" :disabled="busy[a.id] === 'test'">
+              <Spinner v-if="busy[a.id] === 'test'" size="xs" color="slate" />
               Verbindung testen
             </button>
-            <button @click="saveConfig(a.adapter_type)" class="btn-primary btn-sm" :disabled="saving[a.adapter_type]">
-              <Spinner v-if="saving[a.adapter_type]" size="xs" color="white" />
+            <button @click="saveInstance(a)" class="btn-primary btn-sm" :disabled="busy[a.id] === 'save'">
+              <Spinner v-if="busy[a.id] === 'save'" size="xs" color="white" />
               Speichern
+            </button>
+            <button @click="restartInstance(a)" class="btn-secondary btn-sm" :disabled="busy[a.id] === 'restart'">
+              <Spinner v-if="busy[a.id] === 'restart'" size="xs" color="slate" />
+              Neu verbinden
+            </button>
+            <button @click="confirmDelete(a)" class="ml-auto btn-danger btn-sm">
+              Löschen
             </button>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Löschen bestätigen -->
+    <ConfirmDialog
+      v-if="deleteTarget"
+      :title="`Instanz '${deleteTarget.name}' löschen?`"
+      message="Alle Bindings dieser Instanz werden ebenfalls gelöscht. Diese Aktion kann nicht rückgängig gemacht werden."
+      confirm-label="Löschen"
+      confirm-variant="danger"
+      @confirm="executeDelete"
+      @cancel="deleteTarget = null"
+    />
   </div>
 </template>
 
@@ -70,60 +153,161 @@
 import { ref, reactive, onMounted } from 'vue'
 import { adapterApi } from '@/api/client'
 import { useAdapterStore } from '@/stores/adapters'
-import Badge   from '@/components/ui/Badge.vue'
-import Spinner from '@/components/ui/Spinner.vue'
+import Badge         from '@/components/ui/Badge.vue'
+import Spinner       from '@/components/ui/Spinner.vue'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 
-const store       = useAdapterStore()
-const expanded    = reactive({})
-const configDrafts = reactive({})
-const testResults  = reactive({})
-const testing      = reactive({})
-const saving       = reactive({})
+const store          = useAdapterStore()
+const expanded       = reactive({})
+const drafts         = reactive({})   // id → { name, configJson, enabled }
+const feedback       = reactive({})   // id → { success, detail }
+const busy           = reactive({})   // id → 'test' | 'save' | 'restart' | null
+
+// Neue Instanz erstellen
+const creating       = ref(false)     // false | true | 'saving'
+const availableTypes = ref([])
+const newForm        = reactive({ adapter_type: '', name: '', configJson: '{}' })
+const createError    = ref(null)
+
+// Löschen
+const deleteTarget   = ref(null)
+
+// ------------------------------------------------------------------
 
 onMounted(async () => {
   await store.fetchAdapters()
-  // Load existing configs
-  for (const a of store.adapters) {
-    try {
-      const { data } = await adapterApi.getConfig(a.adapter_type)
-      configDrafts[a.adapter_type] = JSON.stringify(data.config, null, 2)
-    } catch {
-      configDrafts[a.adapter_type] = '{}'
-    }
-  }
+  initDrafts()
+  try {
+    availableTypes.value = await store.fetchTypes()
+  } catch {}
 })
 
-function toggleExpand(type) {
-  expanded[type] = !expanded[type]
-}
-
-async function testConnection(type) {
-  testing[type] = true
-  delete testResults[type]
-  try {
-    let cfg
-    try { cfg = JSON.parse(configDrafts[type] || '{}') } catch { cfg = {} }
-    const result = await store.testAdapter(type, cfg)
-    testResults[type] = result
-  } finally {
-    testing[type] = false
+function initDrafts() {
+  for (const a of store.instances) {
+    if (!drafts[a.id]) {
+      drafts[a.id] = {
+        name:       a.name,
+        configJson: JSON.stringify(a.config, null, 2),
+        enabled:    a.enabled,
+      }
+    }
   }
 }
 
-async function saveConfig(type) {
-  saving[type] = true
+function toggleExpand(id) {
+  expanded[id] = !expanded[id]
+}
+
+// ---------- Neu erstellen ----------
+
+async function openCreate() {
+  creating.value = true
+  newForm.adapter_type = ''
+  newForm.name = ''
+  newForm.configJson = '{}'
+  createError.value = null
+}
+
+function cancelCreate() {
+  creating.value = false
+}
+
+async function submitCreate() {
+  createError.value = null
+  if (!newForm.adapter_type || !newForm.name.trim()) {
+    createError.value = 'Bitte Typ und Name ausfüllen.'
+    return
+  }
+  let cfg
+  try { cfg = JSON.parse(newForm.configJson || '{}') } catch {
+    createError.value = 'Ungültiges JSON in Konfiguration.'
+    return
+  }
+  creating.value = 'saving'
+  try {
+    const inst = await store.createInstance(newForm.adapter_type, newForm.name.trim(), cfg)
+    drafts[inst.id] = { name: inst.name, configJson: JSON.stringify(inst.config, null, 2), enabled: inst.enabled }
+    creating.value = false
+  } catch (e) {
+    createError.value = e.response?.data?.detail ?? 'Fehler beim Erstellen'
+    creating.value = true
+  }
+}
+
+// ---------- Verbindung testen ----------
+
+async function testConnection(a) {
+  busy[a.id] = 'test'
+  delete feedback[a.id]
   try {
     let cfg
-    try { cfg = JSON.parse(configDrafts[type] || '{}') } catch {
-      testResults[type] = { success: false, detail: 'Ungültiges JSON' }
+    try { cfg = JSON.parse(drafts[a.id].configJson || '{}') } catch { cfg = {} }
+    const result = await store.testInstance(a.id, cfg)
+    feedback[a.id] = result
+  } catch (e) {
+    feedback[a.id] = { success: false, detail: e.response?.data?.detail ?? 'Fehler' }
+  } finally {
+    busy[a.id] = null
+  }
+}
+
+// ---------- Speichern ----------
+
+async function saveInstance(a) {
+  busy[a.id] = 'save'
+  delete feedback[a.id]
+  try {
+    let cfg
+    try { cfg = JSON.parse(drafts[a.id].configJson || '{}') } catch {
+      feedback[a.id] = { success: false, detail: 'Ungültiges JSON' }
       return
     }
-    await store.saveConfig(type, cfg)
-    testResults[type] = { success: true, detail: 'Konfiguration gespeichert' }
+    await store.updateInstance(a.id, {
+      name:    drafts[a.id].name,
+      config:  cfg,
+      enabled: drafts[a.id].enabled,
+    })
+    feedback[a.id] = { success: true, detail: 'Gespeichert und neu verbunden' }
   } catch (e) {
-    testResults[type] = { success: false, detail: e.response?.data?.detail ?? 'Fehler' }
+    feedback[a.id] = { success: false, detail: e.response?.data?.detail ?? 'Fehler' }
   } finally {
-    saving[type] = false
+    busy[a.id] = null
+  }
+}
+
+// ---------- Neu verbinden ----------
+
+async function restartInstance(a) {
+  busy[a.id] = 'restart'
+  delete feedback[a.id]
+  try {
+    await store.restartInstance(a.id)
+    feedback[a.id] = { success: true, detail: 'Verbindung neu aufgebaut' }
+  } catch (e) {
+    feedback[a.id] = { success: false, detail: e.response?.data?.detail ?? 'Fehler' }
+  } finally {
+    busy[a.id] = null
+  }
+}
+
+// ---------- Löschen ----------
+
+function confirmDelete(a) {
+  deleteTarget.value = a
+}
+
+async function executeDelete() {
+  const a = deleteTarget.value
+  deleteTarget.value = null
+  if (!a) return
+  try {
+    await store.deleteInstance(a.id)
+    delete expanded[a.id]
+    delete drafts[a.id]
+    delete feedback[a.id]
+  } catch (e) {
+    // Fehler still ignorieren — Instanz bleibt in Liste
+    console.error('Delete failed:', e)
   }
 }
 </script>

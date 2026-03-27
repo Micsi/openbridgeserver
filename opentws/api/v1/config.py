@@ -1,8 +1,10 @@
 """
-Config Export / Import — Phase 5
+Config Export / Import — Phase 5 (Multi-Instance)
 
-GET  /api/v1/config/export   → JSON dump aller DataPoints + Bindings + AdapterConfigs
+GET  /api/v1/config/export   → JSON dump aller DataPoints + Bindings + AdapterInstances
 POST /api/v1/config/import   ← JSON, upsert-Semantik (existierende IDs werden aktualisiert)
+
+Rückwärtskompatibel: Alter Export mit adapter_configs wird beim Import erkannt und migriert.
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from opentws.models.binding import AdapterBinding
 
 router = APIRouter(tags=["config"])
 
-_EXPORT_VERSION = "1"
+_EXPORT_VERSION = "2"
 
 
 # ---------------------------------------------------------------------------
@@ -42,11 +44,21 @@ class ExportedBinding(BaseModel):
     id: str
     datapoint_id: str
     adapter_type: str
+    adapter_instance_id: str | None = None
     direction: str
     config: dict
     enabled: bool
 
 
+class ExportedAdapterInstance(BaseModel):
+    id: str
+    adapter_type: str
+    name: str
+    config: dict
+    enabled: bool
+
+
+# Legacy (v1 export format)
 class ExportedAdapterConfig(BaseModel):
     adapter_type: str
     config: dict
@@ -58,7 +70,9 @@ class ConfigExport(BaseModel):
     exported_at: str
     datapoints: list[ExportedDataPoint]
     bindings: list[ExportedBinding]
-    adapter_configs: list[ExportedAdapterConfig]
+    adapter_instances: list[ExportedAdapterInstance] = []
+    # Legacy field (v1) — ignoriert beim Import wenn adapter_instances vorhanden
+    adapter_configs: list[ExportedAdapterConfig] = []
 
 
 class ImportResult(BaseModel):
@@ -66,7 +80,7 @@ class ImportResult(BaseModel):
     datapoints_updated: int
     bindings_created: int
     bindings_updated: int
-    adapter_configs_upserted: int
+    adapter_instances_upserted: int
     errors: list[str]
 
 
@@ -102,6 +116,7 @@ async def export_config(
             id=r["id"],
             datapoint_id=r["datapoint_id"],
             adapter_type=r["adapter_type"],
+            adapter_instance_id=r["adapter_instance_id"],
             direction=r["direction"],
             config=json.loads(r["config"]),
             enabled=bool(r["enabled"]),
@@ -109,14 +124,16 @@ async def export_config(
         for r in binding_rows
     ]
 
-    config_rows = await db.fetchall("SELECT * FROM adapter_configs")
-    adapter_configs = [
-        ExportedAdapterConfig(
+    instance_rows = await db.fetchall("SELECT * FROM adapter_instances ORDER BY adapter_type, name")
+    adapter_instances = [
+        ExportedAdapterInstance(
+            id=r["id"],
             adapter_type=r["adapter_type"],
-            config=json.loads(r["config"]),
+            name=r["name"],
+            config=json.loads(r["config"]) if r["config"] else {},
             enabled=bool(r["enabled"]),
         )
-        for r in config_rows
+        for r in instance_rows
     ]
 
     return ConfigExport(
@@ -124,7 +141,7 @@ async def export_config(
         exported_at=datetime.now(timezone.utc).isoformat(),
         datapoints=datapoints,
         bindings=bindings,
-        adapter_configs=adapter_configs,
+        adapter_instances=adapter_instances,
     )
 
 
@@ -139,7 +156,7 @@ async def import_config(
         datapoints_updated=0,
         bindings_created=0,
         bindings_updated=0,
-        adapter_configs_upserted=0,
+        adapter_instances_upserted=0,
         errors=[],
     )
     reg = get_registry()
@@ -161,7 +178,6 @@ async def import_config(
                 ))
                 result.datapoints_updated += 1
             else:
-                # Insert with explicit ID
                 dp = DataPoint(
                     id=dp_id,
                     name=dp_data.name,
@@ -184,6 +200,36 @@ async def import_config(
         except Exception as exc:
             result.errors.append(f"DataPoint {dp_data.id}: {exc}")
 
+    # --- Adapter Instances ---
+    # Quelle: adapter_instances (v2) oder adapter_configs (v1 legacy)
+    instances_to_upsert = body.adapter_instances
+    if not instances_to_upsert and body.adapter_configs:
+        # Legacy v1: adapter_configs → neue Instanzen mit neuer UUID
+        for ac in body.adapter_configs:
+            instances_to_upsert.append(ExportedAdapterInstance(
+                id=str(uuid.uuid4()),
+                adapter_type=ac.adapter_type,
+                name=ac.adapter_type,
+                config=ac.config,
+                enabled=ac.enabled,
+            ))
+
+    for ai in instances_to_upsert:
+        try:
+            await db.execute_and_commit(
+                """INSERT INTO adapter_instances
+                   (id, adapter_type, name, config, enabled, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(id) DO UPDATE
+                   SET name=excluded.name, config=excluded.config,
+                       enabled=excluded.enabled, updated_at=excluded.updated_at""",
+                (ai.id, ai.adapter_type, ai.name,
+                 json.dumps(ai.config), int(ai.enabled), now, now),
+            )
+            result.adapter_instances_upserted += 1
+        except Exception as exc:
+            result.errors.append(f"AdapterInstance {ai.id}: {exc}")
+
     # --- Bindings ---
     for b_data in body.bindings:
         try:
@@ -202,27 +248,15 @@ async def import_config(
             else:
                 await db.execute_and_commit(
                     """INSERT INTO adapter_bindings
-                       (id, datapoint_id, adapter_type, direction, config, enabled, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?)""",
-                    (b_id, b_data.datapoint_id, b_data.adapter_type, b_data.direction,
+                       (id, datapoint_id, adapter_type, adapter_instance_id,
+                        direction, config, enabled, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (b_id, b_data.datapoint_id, b_data.adapter_type,
+                     b_data.adapter_instance_id, b_data.direction,
                      json.dumps(b_data.config), int(b_data.enabled), now, now),
                 )
                 result.bindings_created += 1
         except Exception as exc:
             result.errors.append(f"Binding {b_data.id}: {exc}")
-
-    # --- Adapter Configs ---
-    for ac in body.adapter_configs:
-        try:
-            await db.execute_and_commit(
-                """INSERT INTO adapter_configs (adapter_type, config, enabled, updated_at)
-                   VALUES (?,?,?,?)
-                   ON CONFLICT(adapter_type) DO UPDATE
-                   SET config=excluded.config, enabled=excluded.enabled, updated_at=excluded.updated_at""",
-                (ac.adapter_type, json.dumps(ac.config), int(ac.enabled), now),
-            )
-            result.adapter_configs_upserted += 1
-        except Exception as exc:
-            result.errors.append(f"AdapterConfig {ac.adapter_type}: {exc}")
 
     return result

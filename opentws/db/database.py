@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiosqlite
 
@@ -96,12 +96,89 @@ ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0;
 UPDATE users SET is_admin=1 WHERE username='admin';
 """
 
-# List of (version, sql) tuples — append new migrations here
-MIGRATIONS: list[tuple[int, str]] = [
+
+async def _migration_v5(conn: aiosqlite.Connection) -> None:
+    """
+    Multi-Instance Support:
+    - Neue Tabelle adapter_instances (UUID PK, N Instanzen pro Typ)
+    - adapter_bindings bekommt adapter_instance_id Spalte
+    - Bestehende adapter_configs Daten werden migriert
+    - Bestehende Bindings erhalten die passende adapter_instance_id
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # 1. adapter_instances Tabelle erstellen
+    await conn.executescript("""
+        CREATE TABLE IF NOT EXISTS adapter_instances (
+            id           TEXT PRIMARY KEY,
+            adapter_type TEXT NOT NULL,
+            name         TEXT NOT NULL,
+            config       TEXT NOT NULL DEFAULT '{}',
+            enabled      INTEGER NOT NULL DEFAULT 1,
+            created_at   TEXT NOT NULL,
+            updated_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_type ON adapter_instances(adapter_type);
+    """)
+
+    # 2. adapter_instance_id Spalte zu adapter_bindings hinzufügen (ignoriere Fehler wenn schon vorhanden)
+    try:
+        await conn.execute(
+            "ALTER TABLE adapter_bindings ADD COLUMN adapter_instance_id TEXT"
+        )
+        await conn.commit()
+    except Exception:
+        pass  # Spalte existiert bereits
+
+    # 3. adapter_configs → adapter_instances migrieren
+    async with conn.execute("SELECT * FROM adapter_configs") as cur:
+        configs = await cur.fetchall()
+
+    type_to_instance_id: dict[str, str] = {}
+    for row in configs:
+        instance_id = str(uuid.uuid4())
+        type_to_instance_id[row["adapter_type"]] = instance_id
+        await conn.execute(
+            """INSERT OR IGNORE INTO adapter_instances
+               (id, adapter_type, name, config, enabled, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                instance_id,
+                row["adapter_type"],
+                row["adapter_type"],   # Name = Typ-String als Default
+                row["config"],
+                row["enabled"],
+                now,
+                now,
+            ),
+        )
+    await conn.commit()
+
+    # 4. Bestehende Bindings mit adapter_instance_id verknüpfen
+    for adapter_type, instance_id in type_to_instance_id.items():
+        await conn.execute(
+            """UPDATE adapter_bindings
+               SET adapter_instance_id=?
+               WHERE adapter_type=? AND adapter_instance_id IS NULL""",
+            (instance_id, adapter_type),
+        )
+    await conn.commit()
+    logger.info(
+        "Migration V5: %d adapter instance(s) created from adapter_configs",
+        len(type_to_instance_id),
+    )
+
+
+# List of (version, sql_or_callable) tuples — append new migrations here
+MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
     (2, _MIGRATION_V2),
     (3, _MIGRATION_V3),
     (4, _MIGRATION_V4),
+    (5, _migration_v5),
 ]
 
 
@@ -157,10 +234,13 @@ class Database:
 
     async def _run_migrations(self) -> None:
         current = await self._current_version()
-        for version, sql in MIGRATIONS:
+        for version, migration in MIGRATIONS:
             if version > current:
                 logger.info("Applying DB migration v%d …", version)
-                await self._conn.executescript(sql)
+                if callable(migration):
+                    await migration(self._conn)
+                else:
+                    await self._conn.executescript(migration)
                 await self._conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)", (version,)
                 )

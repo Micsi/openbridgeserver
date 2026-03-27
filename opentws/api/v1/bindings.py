@@ -1,12 +1,13 @@
 """
-Bindings API — Phase 4
+Bindings API — Phase 4 / Phase 5 (Multi-Instance)
 
 GET    /api/v1/datapoints/{id}/bindings
 POST   /api/v1/datapoints/{id}/bindings
 PATCH  /api/v1/datapoints/{id}/bindings/{binding_id}
 DELETE /api/v1/datapoints/{id}/bindings/{binding_id}
 
-On create/update/delete the relevant adapter is notified to reload bindings.
+Phase 5: Bindings referenzieren adapter_instance_id (UUID), nicht mehr adapter_type.
+adapter_type wird aus der Instanz abgeleitet und denormalisiert gespeichert.
 """
 from __future__ import annotations
 
@@ -34,6 +35,8 @@ class BindingOut(BaseModel):
     id: uuid.UUID
     datapoint_id: uuid.UUID
     adapter_type: str
+    adapter_instance_id: uuid.UUID | None
+    instance_name: str | None
     direction: str
     config: dict
     enabled: bool
@@ -45,33 +48,43 @@ class BindingOut(BaseModel):
 # DB helpers
 # ---------------------------------------------------------------------------
 
+async def _get_instance_name_map(db: Database) -> dict[str, str]:
+    """instance_id → name Mapping aus DB."""
+    rows = await db.fetchall("SELECT id, name FROM adapter_instances")
+    return {row["id"]: row["name"] for row in rows}
+
+
 async def _get_bindings_for_dp(db: Database, dp_id: uuid.UUID) -> list[BindingOut]:
     rows = await db.fetchall(
         "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
         (str(dp_id),),
     )
-    return [_row_out(r) for r in rows]
+    name_map = await _get_instance_name_map(db)
+    return [_row_out(r, name_map) for r in rows]
 
 
-async def _reload_adapter(adapter_type: str, db: Database) -> None:
-    """Tell a running adapter to reload its bindings from DB."""
-    from opentws.adapters.registry import get_instance, _row_to_binding
-    instance = get_instance(adapter_type)
+async def _reload_adapter_instance(instance_id: str, db: Database) -> None:
+    """Laufende Adapter-Instanz über ihre Bindings aus DB informieren."""
+    from opentws.adapters.registry import get_instance_by_id, _row_to_binding
+    instance = get_instance_by_id(instance_id)
     if instance is None:
         return
     rows = await db.fetchall(
-        "SELECT * FROM adapter_bindings WHERE adapter_type=? AND enabled=1",
-        (adapter_type,),
+        "SELECT * FROM adapter_bindings WHERE adapter_instance_id=? AND enabled=1",
+        (instance_id,),
     )
     bindings = [_row_to_binding(r) for r in rows]
     await instance.reload_bindings(bindings)
 
 
-def _row_out(row: Any) -> BindingOut:
+def _row_out(row: Any, name_map: dict[str, str] | None = None) -> BindingOut:
+    instance_id = row["adapter_instance_id"]
     return BindingOut(
         id=uuid.UUID(row["id"]),
         datapoint_id=uuid.UUID(row["datapoint_id"]),
         adapter_type=row["adapter_type"],
+        adapter_instance_id=uuid.UUID(instance_id) if instance_id else None,
+        instance_name=name_map.get(instance_id) if name_map and instance_id else None,
         direction=row["direction"],
         config=json.loads(row["config"]),
         enabled=bool(row["enabled"]),
@@ -91,7 +104,7 @@ async def list_bindings(
     db: Database = Depends(lambda: get_db()),
 ) -> list[BindingOut]:
     if get_registry().get(dp_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} nicht gefunden")
     return await _get_bindings_for_dp(db, dp_id)
 
 
@@ -107,41 +120,49 @@ async def create_binding(
     db: Database = Depends(lambda: get_db()),
 ) -> BindingOut:
     if get_registry().get(dp_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} nicht gefunden")
 
-    # Validate binding config against adapter's binding_config_schema
-    from opentws.adapters.registry import get_class
-    cls = get_class(body.adapter_type)
-    if cls is None:
+    # Instanz aus DB laden → adapter_type ableiten
+    instance_row = await db.fetchone(
+        "SELECT * FROM adapter_instances WHERE id=?", (str(body.adapter_instance_id),)
+    )
+    if instance_row is None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Unknown adapter_type '{body.adapter_type}'",
+            f"Adapter-Instanz '{body.adapter_instance_id}' nicht gefunden",
         )
-    if hasattr(cls, "binding_config_schema"):
+    adapter_type = instance_row["adapter_type"]
+
+    # Binding-Config gegen Schema validieren
+    from opentws.adapters.registry import get_class
+    cls = get_class(adapter_type)
+    if cls and hasattr(cls, "binding_config_schema"):
         try:
             cls.binding_config_schema(**body.config)
         except Exception as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"Invalid binding config: {exc}",
+                f"Ungültige Binding-Config: {exc}",
             ) from exc
 
-    binding = AdapterBinding(datapoint_id=dp_id, **body.model_dump())
+    binding_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
     await db.execute_and_commit(
         """INSERT INTO adapter_bindings
-           (id, datapoint_id, adapter_type, direction, config, enabled, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?)""",
+           (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
         (
-            str(binding.id), str(dp_id), binding.adapter_type, binding.direction,
-            json.dumps(binding.config), int(binding.enabled), now, now,
+            binding_id, str(dp_id), adapter_type,
+            str(body.adapter_instance_id), body.direction,
+            json.dumps(body.config), int(body.enabled), now, now,
         ),
     )
-    await _reload_adapter(binding.adapter_type, db)
+    await _reload_adapter_instance(str(body.adapter_instance_id), db)
 
-    row = await db.fetchone("SELECT * FROM adapter_bindings WHERE id=?", (str(binding.id),))
-    return _row_out(row)
+    row = await db.fetchone("SELECT * FROM adapter_bindings WHERE id=?", (binding_id,))
+    name_map = await _get_instance_name_map(db)
+    return _row_out(row, name_map)
 
 
 @router.patch("/{dp_id}/bindings/{binding_id}", response_model=BindingOut)
@@ -157,14 +178,14 @@ async def update_binding(
         (str(binding_id), str(dp_id)),
     )
     if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding nicht gefunden")
 
     updates = body.model_dump(exclude_none=True)
     now = datetime.now(timezone.utc).isoformat()
 
-    direction = updates.get("direction", row["direction"])
+    direction  = updates.get("direction", row["direction"])
     config_val = json.dumps(updates.get("config", json.loads(row["config"])))
-    enabled = int(updates.get("enabled", bool(row["enabled"])))
+    enabled    = int(updates.get("enabled", bool(row["enabled"])))
 
     await db.execute_and_commit(
         """UPDATE adapter_bindings
@@ -172,10 +193,14 @@ async def update_binding(
            WHERE id=?""",
         (direction, config_val, enabled, now, str(binding_id)),
     )
-    await _reload_adapter(row["adapter_type"], db)
+
+    instance_id = row["adapter_instance_id"]
+    if instance_id:
+        await _reload_adapter_instance(instance_id, db)
 
     updated = await db.fetchone("SELECT * FROM adapter_bindings WHERE id=?", (str(binding_id),))
-    return _row_out(updated)
+    name_map = await _get_instance_name_map(db)
+    return _row_out(updated, name_map)
 
 
 @router.delete("/{dp_id}/bindings/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -186,14 +211,15 @@ async def delete_binding(
     db: Database = Depends(lambda: get_db()),
 ) -> None:
     row = await db.fetchone(
-        "SELECT adapter_type FROM adapter_bindings WHERE id=? AND datapoint_id=?",
+        "SELECT adapter_instance_id FROM adapter_bindings WHERE id=? AND datapoint_id=?",
         (str(binding_id), str(dp_id)),
     )
     if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding nicht gefunden")
 
-    adapter_type = row["adapter_type"]
+    instance_id = row["adapter_instance_id"]
     await db.execute_and_commit(
         "DELETE FROM adapter_bindings WHERE id=?", (str(binding_id),)
     )
-    await _reload_adapter(adapter_type, db)
+    if instance_id:
+        await _reload_adapter_instance(instance_id, db)

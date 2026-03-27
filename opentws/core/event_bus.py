@@ -42,6 +42,8 @@ class AdapterStatusEvent:
     adapter_type: str
     connected: bool
     detail: str = ""
+    instance_id: uuid.UUID | None = None
+    instance_name: str = ""
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
