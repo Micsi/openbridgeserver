@@ -4,6 +4,10 @@ KNX Adapter — Phase 3
 Verbindet sich mit einem KNX/IP-Gateway (Tunneling oder Routing).
 Nutzt xknx für das Protokoll, eigenen DPTRegistry für Codierung.
 
+xknx ≥ 3.x: Device-dispatch läuft über _iter_remote_values() → GA-Map.
+has_group_address() wird in xknx 3.x nicht mehr für Dispatch verwendet.
+Der _TelegramSniffer wird deshalb NACH dem Laden der Bindings erstellt.
+
 Binding-Konfiguration (pro AdapterBinding.config):
   group_address:       str   — Gruppenadresse z.B. "1/2/3"
   dpt_id:              str   — z.B. "DPT9.001"
@@ -28,7 +32,7 @@ from opentws.adapters.registry import register
 from opentws.adapters.knx.dpt_registry import DPTRegistry
 from opentws.core.event_bus import DataValueEvent
 
-# Import at module level so missing classes fail loudly at startup
+# Import APCI classes at module level so missing symbols fail loudly at startup
 try:
     from xknx.telegram.apci import GroupValueWrite, GroupValueResponse
     _APCI_IMPORTED = True
@@ -72,7 +76,6 @@ class KnxAdapter(AdapterBase):
         super().__init__(event_bus, config)
         self._xknx: Any = None
         self._sniffer: Any = None
-        # GA → list of (binding, dpt_def) — for inbound telegram routing
         self._ga_source_map: dict[str, list[tuple[Any, Any]]] = {}
 
     # ------------------------------------------------------------------
@@ -83,9 +86,8 @@ class KnxAdapter(AdapterBase):
         try:
             from xknx import XKNX
             from xknx.io import ConnectionConfig, ConnectionType
-            from xknx.devices import Device as XknxDevice
         except ImportError:
-            logger.error("xknx not installed — KNX adapter disabled. Run: pip install xknx")
+            logger.error("xknx not installed — KNX adapter disabled")
             await self._publish_status(False, "xknx not installed")
             return
 
@@ -104,43 +106,6 @@ class KnxAdapter(AdapterBase):
 
         self._xknx = XKNX(connection_config=conn_cfg)
 
-        # Build a Device subclass that forwards all incoming telegrams to us.
-        # xknx calls has_group_address() per telegram, then process() if True.
-        # We do this BEFORE start() so the device is registered when the
-        # connection comes up.
-        adapter_ref = self
-
-        class _TelegramSniffer(XknxDevice):
-            """Minimal xknx Device that receives all incoming KNX telegrams."""
-
-            def has_group_address(self, group_address: Any) -> bool:
-                # Accept ALL group telegrams; _on_telegram filters by source map.
-                # Returning True only for registered GAs caused issues because
-                # xknx may represent the GA differently (GroupAddressType.FREE).
-                return True
-
-            async def process(self, telegram: Any) -> bool:
-                ga_str = str(telegram.destination_address)
-                if ga_str in adapter_ref._ga_source_map:
-                    logger.info("KNX sniffer.process: GA=%s (matched)", ga_str)
-                else:
-                    logger.debug("KNX sniffer.process: GA=%s (no binding)", ga_str)
-                await adapter_ref._on_telegram(telegram)
-                return True
-
-            def _iter_remote_values(self):  # type: ignore[override]
-                return iter([])
-
-        # Device.__init__ signature: (xknx, name, device_updated_cb=None)
-        # In some xknx versions __init__ auto-registers; in others we must
-        # add explicitly. We do both safely.
-        self._sniffer = _TelegramSniffer(self._xknx, "opentws_sniffer")
-        try:
-            self._xknx.devices += self._sniffer
-            logger.debug("KNX: sniffer device added to xknx.devices via +=")
-        except Exception as exc:
-            logger.debug("KNX: xknx.devices += sniffer failed (%s), device may already be registered", exc)
-
         try:
             await self._xknx.start()
             await self._publish_status(True, f"Connected to {cfg.host}:{cfg.port}")
@@ -150,27 +115,22 @@ class KnxAdapter(AdapterBase):
             logger.exception("KNX connect failed")
 
     async def disconnect(self) -> None:
+        self._sniffer = None
         if self._xknx:
-            # Remove sniffer from devices before stopping
-            if self._sniffer is not None:
-                try:
-                    self._xknx.devices -= self._sniffer
-                except Exception:
-                    pass
             try:
                 await self._xknx.stop()
             except Exception:
                 logger.exception("KNX disconnect error")
         await self._publish_status(False, "Disconnected")
         self._xknx = None
-        self._sniffer = None
 
     # ------------------------------------------------------------------
-    # Bindings
+    # Bindings — sniffer is created/recreated here so _iter_remote_values
+    # already knows the registered GAs at Device.__init__ time.
     # ------------------------------------------------------------------
 
     async def _on_bindings_reloaded(self) -> None:
-        """Build GA → binding lookup table."""
+        """Rebuild GA→binding map and re-register the sniffer Device."""
         self._ga_source_map.clear()
         for binding in self._bindings:
             if binding.direction not in ("SOURCE", "BOTH"):
@@ -184,24 +144,47 @@ class KnxAdapter(AdapterBase):
             dpt = DPTRegistry.get(bc.dpt_id)
             entry = (binding, dpt)
             self._ga_source_map.setdefault(bc.group_address, []).append(entry)
-
-            # Also register state_group_address as source if present
             if bc.state_group_address:
                 self._ga_source_map.setdefault(bc.state_group_address, []).append(entry)
 
         logger.info(
-            "KNX: %d source GAs registered from %d bindings: %s",
+            "KNX: %d source GAs from %d bindings: %s",
             len(self._ga_source_map), len(self._bindings), list(self._ga_source_map.keys()),
         )
 
+        if not self._xknx:
+            return
+
+        # Remove old sniffer so it's not in xknx.devices twice
+        if self._sniffer is not None:
+            try:
+                self._xknx.devices.async_remove(self._sniffer)
+                logger.debug("KNX: old sniffer removed")
+            except Exception as exc:
+                logger.debug("KNX: sniffer remove: %s", exc)
+            self._sniffer = None
+
+        if not self._ga_source_map:
+            return
+
+        # Create new sniffer with current GAs baked into _iter_remote_values().
+        # In xknx ≥ 3.x, Device.__init__ calls xknx.devices.async_add(self)
+        # which reads _iter_remote_values() to build the GA→device map.
+        # We must populate _remote_values BEFORE super().__init__().
+        try:
+            self._sniffer = _build_sniffer(self._xknx, self._ga_source_map, self)
+            logger.info("KNX: sniffer registered for GAs: %s", list(self._ga_source_map.keys()))
+        except Exception:
+            logger.exception("KNX: failed to create sniffer device")
+
     # ------------------------------------------------------------------
-    # Inbound telegram handler (called by _TelegramSniffer.process)
+    # Inbound telegram handler (called by sniffer.process)
     # ------------------------------------------------------------------
 
     async def _on_telegram(self, telegram: Any) -> None:
         try:
             if not _APCI_IMPORTED:
-                logger.error("KNX: xknx.telegram.apci not importable — cannot process telegrams")
+                logger.error("KNX: xknx.telegram.apci not importable")
                 return
 
             if not isinstance(telegram.payload, (GroupValueWrite, GroupValueResponse)):
@@ -213,8 +196,6 @@ class KnxAdapter(AdapterBase):
                 return
 
             raw = _telegram_to_bytes(telegram)
-            logger.debug("KNX: GA=%s raw=%s", ga, raw.hex())
-
             for binding, dpt in entries:
                 try:
                     value = dpt.decoder(raw)
@@ -224,7 +205,7 @@ class KnxAdapter(AdapterBase):
                     value = raw
                     quality = "uncertain"
 
-                logger.info("KNX value: GA=%s → datapoint=%s value=%s", ga, binding.datapoint_id, value)
+                logger.info("KNX value: GA=%s → dp=%s value=%s", ga, binding.datapoint_id, value)
                 await self._bus.publish(DataValueEvent(
                     datapoint_id=binding.datapoint_id,
                     value=value,
@@ -240,7 +221,6 @@ class KnxAdapter(AdapterBase):
     # ------------------------------------------------------------------
 
     async def read(self, binding: Any) -> Any:
-        """Send a GroupValueRead telegram and wait for the response."""
         if not self._xknx:
             return None
         try:
@@ -255,13 +235,11 @@ class KnxAdapter(AdapterBase):
                 payload=GroupValueRead(),
             )
             await self._xknx.telegrams.put(telegram)
-            # Response arrives via _on_telegram callback
         except Exception:
             logger.exception("KNX read failed for binding %s", binding.id)
         return None
 
     async def write(self, binding: Any, value: Any) -> None:
-        """Encode value and send a GroupValueWrite telegram."""
         if not self._xknx:
             return
         try:
@@ -274,11 +252,7 @@ class KnxAdapter(AdapterBase):
             dpt = DPTRegistry.get(bc.dpt_id)
             raw = dpt.encoder(value)
 
-            if len(raw) == 1 and raw[0] <= 0x3F:
-                payload_value = DPTBinary(raw[0])
-            else:
-                payload_value = DPTArray(list(raw))
-
+            payload_value = DPTBinary(raw[0]) if (len(raw) == 1 and raw[0] <= 0x3F) else DPTArray(list(raw))
             telegram = Telegram(
                 destination_address=GroupAddress(bc.group_address),
                 payload=_GVW(payload_value),
@@ -289,31 +263,87 @@ class KnxAdapter(AdapterBase):
 
 
 # ---------------------------------------------------------------------------
+# Sniffer Device factory — defined outside class to avoid closure issues
+# ---------------------------------------------------------------------------
+
+def _build_sniffer(xknx_instance: Any, ga_source_map: dict, adapter: KnxAdapter) -> Any:
+    """
+    Build and register a minimal xknx Device that receives all source GAs.
+
+    In xknx ≥ 3.x, Device.__init__ calls xknx.devices.async_add(self), which
+    reads _iter_remote_values() to build the internal GA→device dispatch map.
+    We must assign self._remote_values BEFORE super().__init__() is called.
+    """
+    from xknx.devices import Device as XknxDevice
+    from xknx.remote_value import RemoteValue
+    from xknx.telegram.address import GroupAddress
+
+    # Minimal RemoteValue subclass — just registers a GA, no DPT decoding
+    class _PassthroughRV(RemoteValue):  # type: ignore[type-arg]
+        def from_knx(self, raw_array: Any) -> bytes:
+            return bytes(raw_array) if raw_array else b""
+
+        def to_knx(self, value: Any) -> Any:
+            return []
+
+        @property
+        def unit_of_measurement(self) -> str | None:
+            return None
+
+        # xknx 3.x may require this; return empty list if not needed
+        @property
+        def passive_group_addresses(self) -> list:
+            return []
+
+    # One RemoteValue per source GA, using group_address_state (read-only sensor)
+    remote_values = [
+        _PassthroughRV(
+            xknx_instance,
+            group_address_state=GroupAddress(ga),
+            device_name="opentws_sniffer",
+            feature_name=ga,
+        )
+        for ga in ga_source_map
+    ]
+
+    class _TelegramSniffer(XknxDevice):
+        def __init__(self) -> None:
+            # Set _remote_values BEFORE super().__init__() so that
+            # _iter_remote_values() returns the correct GAs when
+            # Device.__init__ calls xknx.devices.async_add(self).
+            self._remote_values = remote_values
+            super().__init__(xknx_instance, "opentws_sniffer")
+
+        def _iter_remote_values(self):  # type: ignore[override]
+            return iter(self._remote_values)
+
+        async def process(self, telegram: Any) -> bool:
+            ga = str(telegram.destination_address)
+            logger.info("KNX sniffer.process: GA=%s", ga)
+            await adapter._on_telegram(telegram)
+            return True
+
+    return _TelegramSniffer()
+
+
+# ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 
 def _telegram_to_bytes(telegram: Any) -> bytes:
-    """Extract raw bytes from a KNX telegram payload.
-
-    xknx wraps the payload value in DPTBinary (1-bit, .value is int)
-    or DPTArray (multi-byte, .value is tuple[int, ...]).
-    Both have a .value attribute, so we must check the inner type.
-    """
+    """Extract raw payload bytes from a KNX telegram."""
     try:
         v = telegram.payload.value
         if hasattr(v, "value"):
             inner = v.value
-            # DPTArray: .value is a list/tuple of byte ints
             if isinstance(inner, (list, tuple)):
                 return bytes(inner)
-            # DPTBinary: .value is a single int (6 usable bits)
             return bytes([inner & 0x3F])
-        # xknx 2.x may return raw types directly
         if isinstance(v, (list, tuple)):
             return bytes(v)
         if isinstance(v, int):
             return bytes([v & 0x3F])
         return bytes(v) if v else b"\x00"
     except Exception:
-        logger.exception("KNX _telegram_to_bytes failed for %s", telegram)
+        logger.exception("KNX _telegram_to_bytes failed")
         return b"\x00"
