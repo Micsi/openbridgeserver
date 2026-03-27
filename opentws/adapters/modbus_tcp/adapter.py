@@ -182,31 +182,32 @@ class ModbusTcpAdapter(AdapterBase):
     # Low-level Modbus operations
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _slave_kwarg(unit_id: int) -> dict:
-        """Return the correct slave/unit keyword argument for the installed pymodbus version."""
-        try:
-            import pymodbus
-            major = int(pymodbus.__version__.split(".")[0])
-            return {"slave": unit_id} if major >= 3 else {"unit": unit_id}
-        except Exception:
-            return {"slave": unit_id}
+    async def _modbus_call(self, fn, *args, unit_id: int) -> Any:
+        """Call a pymodbus function with the correct slave/unit kwarg (version-safe).
+        Tries: slave= (3.x), unit= (2.x), positional (fallback).
+        """
+        for kwarg in ({"slave": unit_id}, {"unit": unit_id}):
+            try:
+                return await fn(*args, **kwarg)
+            except TypeError:
+                continue
+        # Last resort: pass unit_id as positional argument
+        return await fn(*args, unit_id)
 
     async def _read_register(self, bc: ModbusBindingConfig) -> Any:
         if not self._client or not self._client.connected:
             return None
 
         count = register_count(bc.data_format)
-        sk = self._slave_kwarg(bc.unit_id)
 
         if bc.register_type == "holding":
-            r = await self._client.read_holding_registers(bc.address, count, **sk)
+            r = await self._modbus_call(self._client.read_holding_registers, bc.address, count, unit_id=bc.unit_id)
         elif bc.register_type == "input":
-            r = await self._client.read_input_registers(bc.address, count, **sk)
+            r = await self._modbus_call(self._client.read_input_registers, bc.address, count, unit_id=bc.unit_id)
         elif bc.register_type == "coil":
-            r = await self._client.read_coils(bc.address, count, **sk)
+            r = await self._modbus_call(self._client.read_coils, bc.address, count, unit_id=bc.unit_id)
         elif bc.register_type == "discrete_input":
-            r = await self._client.read_discrete_inputs(bc.address, count, **sk)
+            r = await self._modbus_call(self._client.read_discrete_inputs, bc.address, count, unit_id=bc.unit_id)
         else:
             return None
 
@@ -221,12 +222,11 @@ class ModbusTcpAdapter(AdapterBase):
         )
 
     async def _write_register(self, bc: ModbusBindingConfig, value: Any) -> None:
-        sk = self._slave_kwarg(bc.unit_id)
         if bc.register_type == "coil":
-            await self._client.write_coil(bc.address, bool(value), **sk)
+            await self._modbus_call(self._client.write_coil, bc.address, bool(value), unit_id=bc.unit_id)
         elif bc.register_type == "holding":
             registers = encode_value(value, bc.data_format, bc.byte_order, bc.word_order, bc.scale_factor)
             if len(registers) == 1:
-                await self._client.write_register(bc.address, registers[0], **sk)
+                await self._modbus_call(self._client.write_register, bc.address, registers[0], unit_id=bc.unit_id)
             else:
-                await self._client.write_registers(bc.address, registers, **sk)
+                await self._modbus_call(self._client.write_registers, bc.address, registers, unit_id=bc.unit_id)
