@@ -22,12 +22,21 @@ import asyncio
 import logging
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from opentws.adapters.base import AdapterBase
 from opentws.adapters.registry import register
 from opentws.adapters.knx.dpt_registry import DPTRegistry
 from opentws.core.event_bus import DataValueEvent
+
+# Import at module level so missing classes fail loudly at startup, not silently at runtime
+try:
+    from xknx.telegram.apci import GroupValueWrite, GroupValueResponse
+    _APCI_IMPORTED = True
+except ImportError:
+    GroupValueWrite = None  # type: ignore[assignment,misc]
+    GroupValueResponse = None  # type: ignore[assignment,misc]
+    _APCI_IMPORTED = False
 
 logger = logging.getLogger(__name__)
 
@@ -146,39 +155,47 @@ class KnxAdapter(AdapterBase):
     # ------------------------------------------------------------------
 
     async def _on_telegram(self, telegram: Any) -> None:
-        from xknx.telegram.apci import GroupValueWrite, GroupValueResponse
+        # ERROR level so this is visible even without -debug filtering
+        logger.error("KNX _on_telegram CALLED: %s", telegram)
+        try:
+            if not _APCI_IMPORTED:
+                logger.error("KNX: xknx.telegram.apci not importable — cannot process telegrams")
+                return
 
-        # Only process write and response telegrams
-        if not isinstance(telegram.payload, (GroupValueWrite, GroupValueResponse)):
-            return
+            # Only process write and response telegrams
+            if not isinstance(telegram.payload, (GroupValueWrite, GroupValueResponse)):
+                logger.debug("KNX: skipping telegram type %s", type(telegram.payload).__name__)
+                return
 
-        ga = str(telegram.destination_address)
-        logger.debug("KNX telegram received: GA=%s payload=%s", ga, telegram.payload)
+            ga = str(telegram.destination_address)
+            logger.error("KNX telegram received: GA=%s payload=%s", ga, telegram.payload)
 
-        entries = self._ga_source_map.get(ga)
-        if not entries:
-            logger.debug("KNX: GA %s not in source map (registered: %s)", ga, list(self._ga_source_map.keys()))
-            return
+            entries = self._ga_source_map.get(ga)
+            if not entries:
+                logger.warning("KNX: GA %s not in source map (registered: %s)", ga, list(self._ga_source_map.keys()))
+                return
 
-        raw = _telegram_to_bytes(telegram)
-        logger.debug("KNX: GA=%s raw=%s", ga, raw.hex())
+            raw = _telegram_to_bytes(telegram)
+            logger.debug("KNX: GA=%s raw=%s", ga, raw.hex())
 
-        for binding, dpt in entries:
-            try:
-                value = dpt.decoder(raw)
-                quality = "good"
-            except Exception as exc:
-                logger.warning("KNX DPT decode error for %s (%s): %s", ga, dpt.dpt_id, exc)
-                value = raw
-                quality = "uncertain"
+            for binding, dpt in entries:
+                try:
+                    value = dpt.decoder(raw)
+                    quality = "good"
+                except Exception as exc:
+                    logger.warning("KNX DPT decode error for %s (%s): %s", ga, dpt.dpt_id, exc)
+                    value = raw
+                    quality = "uncertain"
 
-            await self._bus.publish(DataValueEvent(
-                datapoint_id=binding.datapoint_id,
-                value=value,
-                quality=quality,
-                source_adapter=self.adapter_type,
-                binding_id=binding.id,
-            ))
+                await self._bus.publish(DataValueEvent(
+                    datapoint_id=binding.datapoint_id,
+                    value=value,
+                    quality=quality,
+                    source_adapter=self.adapter_type,
+                    binding_id=binding.id,
+                ))
+        except Exception:
+            logger.exception("KNX _on_telegram unhandled exception")
 
     # ------------------------------------------------------------------
     # Read / Write
