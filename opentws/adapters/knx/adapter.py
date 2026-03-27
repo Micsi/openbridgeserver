@@ -120,6 +120,9 @@ class KnxAdapter(AdapterBase):
                 await adapter_ref._on_telegram(telegram)
                 return True
 
+            def _iter_remote_values(self):  # type: ignore[override]
+                return iter([])
+
         # Device.__init__ signature: (xknx, name, device_updated_cb=None)
         # In some xknx versions __init__ auto-registers; in others we must
         # add explicitly. We do both safely.
