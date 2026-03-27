@@ -228,14 +228,16 @@ const groupedDpts = computed(() => {
     DPT6:  'DPT 6.x — 8-Bit signed',
     DPT7:  'DPT 7.x — 16-Bit unsigned',
     DPT8:  'DPT 8.x — 16-Bit signed',
-    DPT9:  'DPT 9.x — 16-Bit Float (Temperatur, Feuchte …)',
+    DPT9:   'DPT 9.x — 16-Bit Float (Temperatur, Feuchte …)',
+    DPT10:  'DPT 10.x — Time of Day',
+    DPT11:  'DPT 11.x — Date',
     DPT12:  'DPT 12.x — 32-Bit unsigned',
     DPT13:  'DPT 13.x — 32-Bit signed',
     DPT14:  'DPT 14.x — 32-Bit IEEE Float (Leistung, Spannung …)',
     DPT16:  'DPT 16.x — 14-Byte String',
     DPT18:  'DPT 18.x — Scene Control',
     DPT19:  'DPT 19.x — Date and Time',
-    DPT219: 'DPT 219.x — Status with Mode',
+    DPT219: 'DPT 219.x — AlarmInfo',
   }
   for (const dpt of allDpts.value) {
     const family = dpt.dpt_id.replace(/\.\d+$/, '')   // "DPT9.001" → "DPT9"

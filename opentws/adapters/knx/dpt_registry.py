@@ -14,10 +14,15 @@ Implementierte DPTs:
   DPT7.x   — 16-Bit unsigned (INTEGER)
   DPT8.x   — 16-Bit signed (INTEGER)
   DPT9.x   — 16-Bit float EIS5 (FLOAT) ← Temperatur, Feuchte, etc.
+  DPT10.x  — Time of Day (STRING "HH:MM:SS")
+  DPT11.x  — Date (STRING "YYYY-MM-DD")
   DPT12.x  — 32-Bit unsigned (INTEGER)
   DPT13.x  — 32-Bit signed (INTEGER)
   DPT14.x  — 32-Bit IEEE float (FLOAT) ← Leistung, Spannung, etc.
   DPT16.x  — 14-Byte String (STRING)
+  DPT18.x  — Scene Control (INTEGER)
+  DPT19.x  — Date and Time (STRING ISO)
+  DPT219.x — AlarmInfo (INTEGER)
 """
 from __future__ import annotations
 
@@ -181,6 +186,65 @@ def _dpt16_encode(v: Any) -> bytes:
     return s.ljust(14, b"\x00")
 
 
+# --- DPT 10.x — Time of Day (3 bytes) ----------------------------------------
+# Byte0: DoW(7..5)|Hour(4..0)  Byte1: Minutes(5..0)  Byte2: Seconds(5..0)
+# DoW: 1=Mon…7=Sun, 0=any day
+# Rückgabe als "HH:MM:SS" String
+def _dpt10_decode(b: bytes) -> str:
+    import datetime
+    try:
+        hour   = b[0] & 0x1F
+        minute = b[1] & 0x3F
+        second = b[2] & 0x3F
+        return datetime.time(hour, minute, second).isoformat()
+    except Exception:
+        return ""
+
+def _dpt10_encode(v: Any) -> bytes:
+    import datetime
+    try:
+        if isinstance(v, str):
+            t = datetime.time.fromisoformat(v)
+        elif isinstance(v, (int, float)):
+            total = int(v)
+            t = datetime.time(total // 3600 % 24, total // 60 % 60, total % 60)
+        else:
+            t = datetime.datetime.now().time()
+        return bytes([t.hour & 0x1F, t.minute & 0x3F, t.second & 0x3F])
+    except Exception:
+        return bytes(3)
+
+
+# --- DPT 11.x — Date (3 bytes) -----------------------------------------------
+# Byte0: Day(4..0)  Byte1: Month(3..0)  Byte2: Year(6..0)
+# Jahr 0..89 → 2000+Y,  Jahr 90..99 → 1900+Y  (KNX-Spec)
+# Rückgabe als "YYYY-MM-DD" String
+def _dpt11_decode(b: bytes) -> str:
+    import datetime
+    try:
+        day   = b[0] & 0x1F
+        month = b[1] & 0x0F
+        yr    = b[2] & 0x7F
+        year  = 2000 + yr if yr < 90 else 1900 + yr
+        return datetime.date(year, month, day).isoformat()
+    except Exception:
+        return ""
+
+def _dpt11_encode(v: Any) -> bytes:
+    import datetime
+    try:
+        if isinstance(v, str):
+            d = datetime.date.fromisoformat(v)
+        elif isinstance(v, (int, float)):
+            d = datetime.date.fromtimestamp(float(v))
+        else:
+            d = datetime.date.today()
+        yr = d.year % 100          # 2025 → 25, 1990 → 90
+        return bytes([d.day & 0x1F, d.month & 0x0F, yr & 0x7F])
+    except Exception:
+        return bytes(3)
+
+
 # --- DPT 18.x — Scene Control (1 byte) ---------------------------------------
 # Bit 7: 0=Activate, 1=Learn  |  Bits 5..0: Scene number (0..63)
 # Wert = Szenennummer (0-63); negativ = Lern-Modus (z.B. -1 → Szene 0 lernen)
@@ -237,7 +301,7 @@ def _dpt19_encode(v: Any) -> bytes:
         return bytes(8)
 
 
-# --- DPT 219.x — Status with Mode (2 bytes) -----------------------------------
+# --- DPT 219.x — AlarmInfo (2 bytes) ------------------------------------------
 # Byte 0 (High): Mode-Bits  |  Byte 1 (Low): Status-Bits
 # Rohwert als Integer (0-65535); Interpretation abhängig vom Gerät
 def _dpt219_decode(b: bytes) -> int:
@@ -321,6 +385,12 @@ def _register_builtin_dpts() -> None:
         DPTDefinition("DPT14.057", "Reactive Power",      "FLOAT", "var",   4, _dpt14_encode, _dpt14_decode),
         DPTDefinition("DPT14.067", "Voltage",             "FLOAT", "V",     4, _dpt14_encode, _dpt14_decode),
 
+        # DPT 10 — Time of Day (3 bytes)
+        DPTDefinition("DPT10.001", "Time of Day",         "STRING", "",      3, _dpt10_encode, _dpt10_decode),
+
+        # DPT 11 — Date (3 bytes)
+        DPTDefinition("DPT11.001", "Date",                "STRING", "",      3, _dpt11_encode, _dpt11_decode),
+
         # DPT 16 — 14-byte string
         DPTDefinition("DPT16.000", "ASCII String",        "STRING", "",     14, _dpt16_encode, _dpt16_decode),
         DPTDefinition("DPT16.001", "ISO 8859-1 String",   "STRING", "",     14, _dpt16_encode, _dpt16_decode),
@@ -331,8 +401,8 @@ def _register_builtin_dpts() -> None:
         # DPT 19 — Date and Time (8 bytes)
         DPTDefinition("DPT19.001", "Date Time",           "STRING", "",      8, _dpt19_encode, _dpt19_decode),
 
-        # DPT 219 — Status with Mode (2 bytes)
-        DPTDefinition("DPT219.001", "Status with Mode",  "INTEGER", "",     2, _dpt219_encode, _dpt219_decode),
+        # DPT 219 — AlarmInfo (2 bytes)
+        DPTDefinition("DPT219.001", "AlarmInfo",          "INTEGER", "",     2, _dpt219_encode, _dpt219_decode),
     ]
     for d in defs:
         DPTRegistry.register(d)
