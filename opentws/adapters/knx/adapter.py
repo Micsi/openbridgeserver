@@ -102,7 +102,6 @@ class KnxAdapter(AdapterBase):
         )
 
         self._xknx = XKNX(connection_config=conn_cfg)
-        self._xknx.telegram_queue.register_telegram_received_cb(self._on_telegram)
 
         try:
             await self._xknx.start()
@@ -111,6 +110,24 @@ class KnxAdapter(AdapterBase):
         except Exception as exc:
             await self._publish_status(False, str(exc))
             logger.exception("KNX connect failed")
+            return
+
+        # Register callback AFTER start() to ensure the telegram processing
+        # background task is already running before we hook in.
+        self._xknx.telegram_queue.register_telegram_received_cb(self._on_telegram)
+        n = len(self._xknx.telegram_queue.telegram_received_cbs)
+        logger.error("KNX: callback registered after start(), total callbacks: %d", n)
+
+        # Belt-and-suspenders: also monkey-patch process_telegram_received so
+        # we can see if xknx calls it even when our registered cb is skipped.
+        _original_ptr = self._xknx.telegram_queue.process_telegram_received
+
+        async def _patched_ptr(telegram: Any) -> None:
+            logger.error("KNX process_telegram_received CALLED: %s", telegram)
+            await _original_ptr(telegram)
+
+        self._xknx.telegram_queue.process_telegram_received = _patched_ptr
+        logger.error("KNX: process_telegram_received monkey-patched")
 
     async def disconnect(self) -> None:
         if self._xknx:
