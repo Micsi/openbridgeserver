@@ -28,5 +28,6 @@ python-jose[cryptography]>=3.3.0
 pyyaml>=6.0.1
 python-multipart>=0.0.9
 
-# KNX Project File Import (AES-encrypted .knxproj support)
+# KNX Project File Import
 pyzipper>=0.3.6
+xknxproject>=3.4.0
