@@ -205,25 +205,23 @@ class GraphExecutor:
 
             case "datapoint_read":
                 # Value is injected via input_overrides from the manager.
-                # Apply optional value_formula transform before passing downstream.
+                # Apply optional value_formula transform (variable: x).
                 raw = inputs.get("value")
                 formula = (d.get("value_formula") or "").strip()
                 if formula and raw is not None:
                     try:
-                        raw = self._safe_eval(formula, {"value": self._to_num(raw), "v": self._to_num(raw)})
+                        raw = self._safe_eval(formula, {"x": self._to_num(raw)})
                     except Exception as exc:
                         logger.debug("datapoint_read formula error: %s", exc)
                 return {"value": raw, "changed": inputs.get("changed", False)}
 
             case "datapoint_write":
-                # Apply optional value_formula transform before the manager writes the value.
+                # Apply optional value_formula transform (variable: x) before manager writes.
                 write_val = inputs.get("value")
                 formula = (d.get("value_formula") or "").strip()
                 if formula and write_val is not None:
                     try:
-                        write_val = self._safe_eval(
-                            formula, {"value": self._to_num(write_val), "v": self._to_num(write_val)}
-                        )
+                        write_val = self._safe_eval(formula, {"x": self._to_num(write_val)})
                     except Exception as exc:
                         logger.debug("datapoint_write formula error: %s", exc)
                 return {"_write_value": write_val, "_triggered": inputs.get("trigger")}
@@ -243,8 +241,13 @@ class GraphExecutor:
 
     @staticmethod
     def _safe_eval(expr: str, ctx: dict[str, Any]) -> Any:
-        """Evaluate a math expression safely."""
+        """Evaluate a math expression safely.
+
+        Available: all math.* functions + abs, round, min, max + ctx variables.
+        """
         allowed = {k: v for k, v in math.__dict__.items() if not k.startswith("_")}
+        # Add Python builtins that are safe and useful in formulas
+        allowed.update({"abs": abs, "round": round, "min": min, "max": max})
         allowed.update(ctx)
         try:
             tree = ast.parse(expr, mode="eval")

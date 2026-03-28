@@ -18,6 +18,8 @@ from opentws.logic.models import FlowData
 
 logger = logging.getLogger(__name__)
 
+_THROTTLE_UNITS: dict[str, float] = {"ms": 1.0, "s": 1000.0, "min": 60_000.0, "h": 3_600_000.0}
+
 _manager: "LogicManager | None" = None
 
 
@@ -88,7 +90,8 @@ class LogicManager:
                 last_ts  = ns.get("last_ts")
 
                 # ── Filter: trigger_on_change ────────────────────────────
-                if d.get("trigger_on_change") == "true":
+                toc = d.get("trigger_on_change")
+                if toc is True or toc == "true":
                     if new_val == last_val:
                         continue
 
@@ -111,12 +114,14 @@ class LogicManager:
                     except (TypeError, ValueError):
                         pass
 
-                # ── Filter: throttle_ms ──────────────────────────────────
-                raw_throttle = d.get("throttle_ms")
-                if raw_throttle not in (None, "", 0) and last_ts is not None:
-                    elapsed_ms = (now - last_ts).total_seconds() * 1000
+                # ── Filter: throttle (value + unit) ──────────────────────
+                tv = d.get("throttle_value")
+                if tv not in (None, "", 0) and last_ts is not None:
                     try:
-                        if elapsed_ms < float(raw_throttle):
+                        unit_ms = _THROTTLE_UNITS.get(d.get("throttle_unit", "s"), 1000.0)
+                        throttle_ms = float(tv) * unit_ms
+                        elapsed_ms  = (now - last_ts).total_seconds() * 1000
+                        if elapsed_ms < throttle_ms:
                             continue
                     except (TypeError, ValueError):
                         pass
@@ -199,7 +204,8 @@ class LogicManager:
             last_ts = ns.get("last_write_ts")
 
             # ── Filter: only_on_change ───────────────────────────────────
-            if d.get("only_on_change") == "true":
+            ooc = d.get("only_on_change")
+            if ooc is True or ooc == "true":
                 if write_val == last_wr:
                     continue
 
@@ -212,12 +218,14 @@ class LogicManager:
                 except (TypeError, ValueError):
                     pass
 
-            # ── Filter: throttle_ms (write side) ─────────────────────────
-            raw_throttle = d.get("throttle_ms")
-            if raw_throttle not in (None, "", 0) and last_ts is not None:
-                elapsed_ms = (write_now - last_ts).total_seconds() * 1000
+            # ── Filter: throttle (value + unit, write side) ───────────────
+            tv = d.get("throttle_value")
+            if tv not in (None, "", 0) and last_ts is not None:
                 try:
-                    if elapsed_ms < float(raw_throttle):
+                    unit_ms    = _THROTTLE_UNITS.get(d.get("throttle_unit", "s"), 1000.0)
+                    throttle_ms = float(tv) * unit_ms
+                    elapsed_ms  = (write_now - last_ts).total_seconds() * 1000
+                    if elapsed_ms < throttle_ms:
                         continue
                 except (TypeError, ValueError):
                     pass
