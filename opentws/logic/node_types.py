@@ -167,6 +167,34 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#7c3aed",
     ),
+    NodeTypeDef(
+        type="clamp",
+        label="Begrenzer",
+        category="math",
+        description="Begrenzt den Eingangswert auf [Min, Max]. Werte außerhalb werden auf den Grenzwert gesetzt.",
+        inputs=[_port("value", "Wert")],
+        outputs=[_port("result", "Ergebnis")],
+        config_schema={
+            "min": {"type": "number", "default": 0,   "label": "Minimum"},
+            "max": {"type": "number", "default": 100, "label": "Maximum"},
+        },
+        color="#7c3aed",
+    ),
+    NodeTypeDef(
+        type="statistics",
+        label="Statistik",
+        category="math",
+        description="Berechnet Min/Max/Mittelwert laufend über alle empfangenen Werte. Reset-Eingang setzt zurück.",
+        inputs=[_port("value", "Wert"), _port("reset", "Reset", "trigger")],
+        outputs=[
+            _port("min",   "Min"),
+            _port("max",   "Max"),
+            _port("avg",   "Mittelwert"),
+            _port("count", "Anzahl"),
+        ],
+        config_schema={},
+        color="#7c3aed",
+    ),
 
     # ── Timer ─────────────────────────────────────────────────────────────
     NodeTypeDef(
@@ -199,6 +227,16 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         config_schema={"cron": {"type": "string", "default": "0 7 * * *"}},
         color="#b45309",
     ),
+    NodeTypeDef(
+        type="operating_hours",
+        label="Betriebsstunden",
+        category="timer",
+        description="Zählt Betriebsstunden solange 'Aktiv' wahr ist. Reset setzt den Zähler zurück.",
+        inputs=[_port("active", "Aktiv", "trigger"), _port("reset", "Reset", "trigger")],
+        outputs=[_port("hours", "Stunden")],
+        config_schema={},
+        color="#b45309",
+    ),
 
     # ── Script ────────────────────────────────────────────────────────────
     NodeTypeDef(
@@ -223,6 +261,87 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         config_schema={
             "server_url": {"type": "string", "default": ""},
             "tool_name":  {"type": "string", "default": ""},
+        },
+        color="#0e7490",
+    ),
+
+    # ── Astro ─────────────────────────────────────────────────────────────
+    NodeTypeDef(
+        type="astro_sun",
+        label="Astro Sonne",
+        category="astro",
+        description="Berechnet Sonnenauf- und -untergang basierend auf Breitengrad/Längengrad. Benötigt: pip install astral",
+        inputs=[],
+        outputs=[
+            _port("sunrise", "Aufgang"),
+            _port("sunset",  "Untergang"),
+            _port("is_day",  "Tagsüber", "trigger"),
+        ],
+        config_schema={
+            "latitude":  {"type": "number", "default": 47.37, "label": "Breitengrad"},
+            "longitude": {"type": "number", "default": 8.54,  "label": "Längengrad"},
+        },
+        color="#d97706",
+    ),
+
+    # ── Notification ──────────────────────────────────────────────────────
+    NodeTypeDef(
+        type="notify_pushover",
+        label="Pushover",
+        category="notification",
+        description="Sendet eine Push-Benachrichtigung via Pushover API (api.pushover.net).",
+        inputs=[_port("trigger", "Trigger", "trigger"), _port("message", "Nachricht")],
+        outputs=[_port("sent", "Gesendet", "trigger")],
+        config_schema={
+            "app_token": {"type": "string", "default": "", "label": "App-Token"},
+            "user_key":  {"type": "string", "default": "", "label": "User-Key"},
+            "title":     {"type": "string", "default": "openTWS", "label": "Titel"},
+            "message":   {"type": "string", "default": "", "label": "Nachricht (Fallback)"},
+            "priority":  {
+                "type": "string",
+                "enum": ["-1", "0", "1"],
+                "default": "0",
+                "label": "Priorität (-1=leise, 0=normal, 1=hoch)",
+            },
+        },
+        color="#e11d48",
+    ),
+    NodeTypeDef(
+        type="notify_sms",
+        label="SMS (seven.io)",
+        category="notification",
+        description="Sendet eine SMS via seven.io Gateway (gateway.seven.io).",
+        inputs=[_port("trigger", "Trigger", "trigger"), _port("message", "Nachricht")],
+        outputs=[_port("sent", "Gesendet", "trigger")],
+        config_schema={
+            "api_key": {"type": "string", "default": "", "label": "API-Key"},
+            "to":      {"type": "string", "default": "", "label": "Empfänger (+41…)"},
+            "sender":  {"type": "string", "default": "openTWS", "label": "Absender"},
+            "message": {"type": "string", "default": "", "label": "Nachricht (Fallback)"},
+        },
+        color="#e11d48",
+    ),
+
+    # ── Integration ───────────────────────────────────────────────────────
+    NodeTypeDef(
+        type="api_client",
+        label="API Client",
+        category="integration",
+        description="Sendet HTTP-Anfragen (GET/POST/PUT…) an externe APIs. Trigger-Eingang steuert die Ausführung.",
+        inputs=[_port("trigger", "Trigger", "trigger"), _port("body", "Body")],
+        outputs=[
+            _port("response", "Antwort"),
+            _port("status",   "Status"),
+            _port("success",  "Erfolg", "trigger"),
+        ],
+        config_schema={
+            "url":           {"type": "string", "default": "",    "label": "URL"},
+            "method":        {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "default": "GET", "label": "Methode"},
+            "content_type":  {"type": "string", "enum": ["application/json", "text/plain", "application/x-www-form-urlencoded"], "default": "application/json", "label": "Request Content-Type"},
+            "response_type": {"type": "string", "enum": ["json", "text"], "default": "json", "label": "Response-Typ"},
+            "verify_ssl":    {"type": "boolean", "default": True,  "label": "SSL-Zertifikat prüfen"},
+            "headers":       {"type": "string",  "default": "",    "label": "Header (JSON-Objekt, optional)"},
+            "timeout_s":     {"type": "number",  "default": 10,    "label": "Timeout (s)"},
         },
         color="#0e7490",
     ),

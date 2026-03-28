@@ -29,12 +29,15 @@ const props = defineProps({
 const emit = defineEmits(['drag-start'])
 
 const CATEGORY_ORDER = [
-  { id: 'logic',     label: 'Logik' },
-  { id: 'datapoint', label: 'DataPoints' },
-  { id: 'math',      label: 'Mathematik' },
-  { id: 'timer',     label: 'Timer' },
-  { id: 'script',    label: 'Skripte' },
-  { id: 'mcp',       label: 'MCP' },
+  { id: 'logic',        label: 'Logik'          },
+  { id: 'datapoint',    label: 'DataPoints'      },
+  { id: 'math',         label: 'Mathematik'      },
+  { id: 'timer',        label: 'Timer'           },
+  { id: 'astro',        label: 'Astronomie'      },
+  { id: 'notification', label: 'Benachrichtigung' },
+  { id: 'integration',  label: 'Integration'     },
+  { id: 'script',       label: 'Skripte'         },
+  { id: 'mcp',          label: 'MCP'             },
 ]
 
 const categories = computed(() =>

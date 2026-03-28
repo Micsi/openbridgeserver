@@ -153,6 +153,16 @@ const nodeTypeComponents = {
   timer_delay: _generic, timer_pulse: _generic, timer_cron: _generic,
   // MCP
   mcp_tool: _generic,
+  // Astro
+  astro_sun: _generic,
+  // Math extended
+  clamp: _generic, statistics: _generic,
+  // Timer extended
+  operating_hours: _generic,
+  // Notification
+  notify_pushover: _generic, notify_sms: _generic,
+  // Integration
+  api_client: _generic,
   // DataPoints & Script
   datapoint_read:  _datapoint,
   datapoint_write: _datapoint,

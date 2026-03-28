@@ -250,10 +250,23 @@ class LogicManager:
         flow: FlowData,
         overrides: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
+        execute_now = datetime.now(timezone.utc)
+        graph_state = self._node_state.setdefault(graph_id, {})
+
+        # ── Pre-compute operating_hours values to inject as overrides ─────
+        aug_overrides = dict(overrides)
+        for node in flow.nodes:
+            if node.type == "operating_hours":
+                ns  = graph_state.setdefault(node.id, {"accumulated_hours": 0.0, "last_start": None})
+                acc = ns["accumulated_hours"]
+                if ns.get("last_start"):
+                    acc += (execute_now - ns["last_start"]).total_seconds() / 3600
+                aug_overrides[node.id] = {**aug_overrides.get(node.id, {}), "_computed_hours": round(acc, 6)}
+
         hyst = self._hysteresis.setdefault(graph_id, {})
         executor = GraphExecutor(flow, hyst)
         try:
-            outputs = executor.execute(overrides)
+            outputs = executor.execute(aug_overrides)
         except Exception as exc:
             logger.error("Graph %s (%s) execution error: %s", graph_id, name, exc)
             return {}
@@ -280,11 +293,143 @@ class LogicManager:
         except Exception:
             pass  # WS not ready or no clients — non-critical
 
-        # Process datapoint_write outputs — apply trigger gating + write-side filters,
+        # ── Update operating_hours state ─────────────────────────────────
+        for node in flow.nodes:
+            if node.type != "operating_hours":
+                continue
+            out      = outputs.get(node.id, {})
+            ns       = graph_state.setdefault(node.id, {"accumulated_hours": 0.0, "last_start": None})
+            is_reset  = out.get("_reset", False)
+            is_active = out.get("_active", False)
+            if is_reset:
+                ns["accumulated_hours"] = 0.0
+                ns["last_start"] = execute_now if is_active else None
+            elif is_active:
+                if not ns.get("last_start"):
+                    ns["last_start"] = execute_now
+            else:
+                if ns.get("last_start"):
+                    ns["accumulated_hours"] += (execute_now - ns["last_start"]).total_seconds() / 3600
+                    ns["last_start"] = None
+
+        # ── Handle notify_pushover ────────────────────────────────────────
+        for node in flow.nodes:
+            if node.type != "notify_pushover":
+                continue
+            out = outputs.get(node.id, {})
+            if not GraphExecutor._to_bool(out.get("_trigger")):
+                continue
+            app_token = (node.data.get("app_token") or "").strip()
+            user_key  = (node.data.get("user_key")  or "").strip()
+            if not app_token or not user_key:
+                logger.warning("Pushover: app_token or user_key missing on node %s", node.id[:8])
+                continue
+            msg   = str(out.get("_message") or node.data.get("message") or "")
+            title = node.data.get("title", "openTWS")
+            prio  = int(node.data.get("priority", 0))
+            try:
+                import httpx  # noqa: PLC0415
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.post(
+                        "https://api.pushover.net/1/messages.json",
+                        data={"token": app_token, "user": user_key,
+                              "title": str(title), "message": msg, "priority": prio},
+                    )
+                    r.raise_for_status()
+                    outputs[node.id]["sent"] = True
+                    logger.info("Graph %s: Pushover sent", graph_id[:8])
+            except Exception as exc:
+                logger.warning("Graph %s: Pushover failed: %s", graph_id[:8], exc)
+
+        # ── Handle notify_sms ─────────────────────────────────────────────
+        for node in flow.nodes:
+            if node.type != "notify_sms":
+                continue
+            out = outputs.get(node.id, {})
+            if not GraphExecutor._to_bool(out.get("_trigger")):
+                continue
+            api_key = (node.data.get("api_key") or "").strip()
+            to      = (node.data.get("to")      or "").strip()
+            if not api_key or not to:
+                logger.warning("seven.io SMS: api_key or to missing on node %s", node.id[:8])
+                continue
+            msg    = str(out.get("_message") or node.data.get("message") or "")
+            sender = node.data.get("sender", "openTWS")
+            try:
+                import httpx  # noqa: PLC0415
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    r = await client.post(
+                        "https://gateway.seven.io/api/sms",
+                        headers={"X-Api-Key": api_key},
+                        data={"to": to, "from": str(sender), "text": msg},
+                    )
+                    r.raise_for_status()
+                    outputs[node.id]["sent"] = True
+                    logger.info("Graph %s: seven.io SMS sent to %s", graph_id[:8], to)
+            except Exception as exc:
+                logger.warning("Graph %s: seven.io SMS failed: %s", graph_id[:8], exc)
+
+        # ── Handle api_client ─────────────────────────────────────────────
+        for node in flow.nodes:
+            if node.type != "api_client":
+                continue
+            out = outputs.get(node.id, {})
+            if not GraphExecutor._to_bool(out.get("_trigger")):
+                continue
+            url = (node.data.get("url") or "").strip()
+            if not url:
+                continue
+            method       = (node.data.get("method", "GET") or "GET").upper()
+            content_type = node.data.get("content_type", "application/json")
+            resp_type    = node.data.get("response_type", "json")
+            verify_ssl   = node.data.get("verify_ssl", True)
+            if isinstance(verify_ssl, str):
+                verify_ssl = verify_ssl.lower() not in ("false", "0", "no")
+            timeout_s = float(node.data.get("timeout_s", 10) or 10)
+            import json as _json  # noqa: PLC0415
+            extra_headers: dict[str, str] = {}
+            hdr_str = (node.data.get("headers") or "").strip()
+            if hdr_str:
+                try:
+                    extra_headers = _json.loads(hdr_str)
+                except Exception:
+                    pass
+            body = out.get("_body")
+            try:
+                import httpx  # noqa: PLC0415
+                req_kwargs: dict[str, Any] = {"headers": extra_headers, "timeout": timeout_s}
+                if method in ("POST", "PUT", "PATCH"):
+                    if content_type == "application/json":
+                        req_kwargs["content"] = _json.dumps(body) if not isinstance(body, (str, bytes)) else body
+                        req_kwargs["headers"] = {**extra_headers, "Content-Type": "application/json"}
+                    elif content_type == "application/x-www-form-urlencoded":
+                        req_kwargs["data"] = body if isinstance(body, dict) else {"data": str(body)}
+                    else:
+                        req_kwargs["content"] = str(body or "")
+                        req_kwargs["headers"] = {**extra_headers, "Content-Type": "text/plain"}
+                async with httpx.AsyncClient(verify=verify_ssl) as client:
+                    resp = await client.request(method, url, **req_kwargs)
+                    if resp_type == "json":
+                        try:
+                            resp_data: Any = resp.json()
+                        except Exception:
+                            resp_data = resp.text
+                    else:
+                        resp_data = resp.text
+                    outputs[node.id].update({
+                        "response": resp_data,
+                        "status":   resp.status_code,
+                        "success":  200 <= resp.status_code < 300,
+                    })
+                    logger.info("Graph %s: API %s %s → %d", graph_id[:8], method, url, resp.status_code)
+            except Exception as exc:
+                logger.warning("Graph %s: api_client failed: %s", graph_id[:8], exc)
+                outputs[node.id].update({"response": str(exc), "status": None, "success": False})
+
+        # ── Process datapoint_write outputs — apply trigger gating + write-side filters,
         # then publish DataValueEvent so registry, ring-buffer, MQTT and WS all get notified.
         from opentws.core.event_bus import DataValueEvent
-        graph_state = self._node_state.setdefault(graph_id, {})
-        write_now   = datetime.now(timezone.utc)
+        write_now = execute_now
 
         # Build set of node+handle pairs that have an incoming edge (= are wired)
         wired_inputs: set[tuple[str, str]] = {

@@ -11,6 +11,7 @@ import logging
 import math
 import operator
 import re
+from datetime import date as _date
 from typing import Any
 
 from opentws.logic.models import FlowData, LogicNode
@@ -38,7 +39,7 @@ class GraphExecutor:
     Returns: {node_id: {handle_id: value}}
     """
 
-    def __init__(self, flow: FlowData, hysteresis_state: dict[str, bool] | None = None):
+    def __init__(self, flow: FlowData, hysteresis_state: dict[str, Any] | None = None):
         self.flow = flow
         self.hysteresis_state = hysteresis_state or {}
 
@@ -230,6 +231,86 @@ class GraphExecutor:
                 script = d.get("script", "result = 0")
                 result = self._run_script(script, inputs)
                 return {"result": result}
+
+            case "clamp":
+                lo  = float(d.get("min", 0))
+                hi  = float(d.get("max", 100))
+                val = self._to_num(inputs.get("value"))
+                return {"result": max(lo, min(hi, val))}
+
+            case "statistics":
+                # State stored in hysteresis_state keyed by node.id
+                state = self.hysteresis_state.setdefault(node.id, {
+                    "s_min": None, "s_max": None, "s_sum": 0.0, "s_count": 0
+                })
+                if self._to_bool(inputs.get("reset")):
+                    state.update({"s_min": None, "s_max": None, "s_sum": 0.0, "s_count": 0})
+                val = inputs.get("value")
+                if val is not None:
+                    fval = self._to_num(val)
+                    state["s_min"] = fval if state["s_min"] is None else min(state["s_min"], fval)
+                    state["s_max"] = fval if state["s_max"] is None else max(state["s_max"], fval)
+                    state["s_sum"] += fval
+                    state["s_count"] += 1
+                cnt = state["s_count"]
+                avg = (state["s_sum"] / cnt) if cnt > 0 else None
+                return {
+                    "min":   state["s_min"],
+                    "max":   state["s_max"],
+                    "avg":   round(avg, 6) if avg is not None else None,
+                    "count": cnt,
+                }
+
+            case "astro_sun":
+                try:
+                    from astral import LocationInfo          # noqa: PLC0415
+                    from astral.sun import sun as _astral_sun  # noqa: PLC0415
+                    import datetime as _dt                   # noqa: PLC0415
+                    lat = float(d.get("latitude",  47.37))
+                    lon = float(d.get("longitude",  8.54))
+                    loc = LocationInfo(latitude=lat, longitude=lon)
+                    s   = _astral_sun(loc.observer, date=_dt.date.today())
+                    tz  = s["sunrise"].tzinfo
+                    now_dt = _dt.datetime.now(tz)
+                    is_day = s["sunrise"] <= now_dt <= s["sunset"]
+                    return {
+                        "sunrise": s["sunrise"].strftime("%H:%M"),
+                        "sunset":  s["sunset"].strftime("%H:%M"),
+                        "is_day":  is_day,
+                    }
+                except ImportError:
+                    logger.warning("astral not installed — astro_sun needs: pip install astral")
+                    return {"sunrise": None, "sunset": None, "is_day": False}
+                except Exception as exc:
+                    logger.warning("astro_sun error: %s", exc)
+                    return {"sunrise": None, "sunset": None, "is_day": False}
+
+            case "operating_hours":
+                # _computed_hours is injected as override by LogicManager before execution
+                hours = self._to_num(inputs.get("_computed_hours", 0.0))
+                return {
+                    "hours":   round(hours, 4),
+                    "_active": self._to_bool(inputs.get("active")),
+                    "_reset":  self._to_bool(inputs.get("reset")),
+                }
+
+            case "notify_pushover" | "notify_sms":
+                # Async — fully handled by LogicManager after executor run
+                return {
+                    "_trigger": inputs.get("trigger"),
+                    "_message": inputs.get("message"),
+                    "sent":     False,
+                }
+
+            case "api_client":
+                # Async — fully handled by LogicManager after executor run
+                return {
+                    "_trigger": inputs.get("trigger"),
+                    "_body":    inputs.get("body"),
+                    "response": None,
+                    "status":   None,
+                    "success":  False,
+                }
 
             case "timer_delay" | "timer_pulse" | "timer_cron" | "mcp_tool":
                 # Async nodes — handled by manager, not executor

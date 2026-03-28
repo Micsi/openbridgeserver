@@ -73,6 +73,18 @@ const NODE_DEFS = {
   timer_pulse:  { label: 'Impuls',      color: '#b45309', inputs: [{id:'trigger',label:'Trigger'}],                  outputs: [{id:'out',   label:'Out'}]       },
   timer_cron:   { label: 'CronTrigger', color: '#b45309', inputs: [],                                                outputs: [{id:'trigger',label:'Trigger'}]  },
   mcp_tool:     { label: 'MCP Tool',    color: '#0e7490', inputs: [{id:'trigger',label:'Trigger'},{id:'input',label:'Input'}], outputs: [{id:'result',label:'Erg.'},{id:'done',label:'Fertig'}] },
+  // Astro
+  astro_sun:       { label: 'Astro Sonne',    color: '#d97706', inputs: [],                                                                    outputs: [{id:'sunrise',label:'Aufgang'},{id:'sunset',label:'Untergang'},{id:'is_day',label:'Tagsüber'}] },
+  // Math (extended)
+  clamp:           { label: 'Begrenzer',      color: '#7c3aed', inputs: [{id:'value',label:'Wert'}],                                           outputs: [{id:'result',label:'Erg.'}]      },
+  statistics:      { label: 'Statistik',      color: '#7c3aed', inputs: [{id:'value',label:'Wert'},{id:'reset',label:'Reset'}],                 outputs: [{id:'min',label:'Min'},{id:'max',label:'Max'},{id:'avg',label:'∅'},{id:'count',label:'N'}] },
+  // Timer (extended)
+  operating_hours: { label: 'Betriebsstd.',   color: '#b45309', inputs: [{id:'active',label:'Aktiv'},{id:'reset',label:'Reset'}],              outputs: [{id:'hours',label:'Std.'}]       },
+  // Notification
+  notify_pushover: { label: 'Pushover',       color: '#e11d48', inputs: [{id:'trigger',label:'Trigger'},{id:'message',label:'Nachricht'}],     outputs: [{id:'sent',label:'Gesendet'}]    },
+  notify_sms:      { label: 'SMS (seven.io)', color: '#e11d48', inputs: [{id:'trigger',label:'Trigger'},{id:'message',label:'Nachricht'}],     outputs: [{id:'sent',label:'Gesendet'}]    },
+  // Integration
+  api_client:      { label: 'API Client',     color: '#0e7490', inputs: [{id:'trigger',label:'Trigger'},{id:'body',label:'Body'}],             outputs: [{id:'response',label:'Antwort'},{id:'status',label:'Status'},{id:'success',label:'OK'}] },
 }
 
 const def = computed(() => NODE_DEFS[props.type] ?? { label: props.type, color: '#475569', inputs: [], outputs: [] })
@@ -89,6 +101,13 @@ const summary = computed(() => {
   if (props.type === 'timer_pulse')  return `${d.duration_s ?? 1} s`
   if (props.type === 'timer_cron')   return d.cron || '0 7 * * *'
   if (props.type === 'mcp_tool')     return d.tool_name || '—'
+  if (props.type === 'astro_sun')       return `${d.latitude ?? 47.37}° N  ${d.longitude ?? 8.54}° E`
+  if (props.type === 'clamp')           return `[${d.min ?? 0} … ${d.max ?? 100}]`
+  if (props.type === 'statistics')      return null
+  if (props.type === 'operating_hours') return null
+  if (props.type === 'notify_pushover') return d.title || 'openTWS'
+  if (props.type === 'notify_sms')      return d.to || '—'
+  if (props.type === 'api_client')      return `${d.method ?? 'GET'}  ${(d.url || '—').slice(0, 20)}`
   return null
 })
 
