@@ -44,6 +44,7 @@
           v-model:edges="edges"
           :node-types="nodeTypeComponents"
           :default-edge-options="{ type: 'smoothstep', animated: true, style: { stroke: '#475569', strokeWidth: 2 } }"
+          :delete-key-code="['Backspace', 'Delete']"
           fit-view-on-init
           class="logic-canvas"
           @node-click="onNodeClick"
@@ -98,7 +99,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, markRaw, shallowRef } from 'vue'
+import { ref, onMounted, markRaw } from 'vue'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background }           from '@vue-flow/background'
 import { Controls }             from '@vue-flow/controls'
@@ -116,9 +117,9 @@ import Modal               from '@/components/ui/Modal.vue'
 import ConfirmDialog       from '@/components/ui/ConfirmDialog.vue'
 import Spinner             from '@/components/ui/Spinner.vue'
 
-// Node components (lazy registered)
-import LogicGateNode   from '@/components/logic/nodes/LogicGateNode.vue'
-import DatapointNode   from '@/components/logic/nodes/DatapointNode.vue'
+// Node components
+import GenericNode      from '@/components/logic/nodes/GenericNode.vue'
+import DatapointNode    from '@/components/logic/nodes/DatapointNode.vue'
 import PythonScriptNode from '@/components/logic/nodes/PythonScriptNode.vue'
 
 // ── Store ──────────────────────────────────────────────────────────────────
@@ -128,21 +129,26 @@ const store = useLogicStore()
 const nodes = ref([])
 const edges = ref([])
 
-// ── Node type → component mapping ─────────────────────────────────────────
-const nodeTypeComponents = computed(() => {
-  const map = {}
-  // Logic gates
-  for (const t of ['and', 'or', 'not', 'xor', 'compare', 'hysteresis']) {
-    map[t] = markRaw({
-      ...LogicGateNode,
-      props: { ...LogicGateNode.props },
-    })
-  }
-  map['datapoint_read']  = markRaw(DatapointNode)
-  map['datapoint_write'] = markRaw(DatapointNode)
-  map['python_script']   = markRaw(PythonScriptNode)
-  return map
-})
+// ── Node type → component mapping (ALL 14 types registered) ───────────────
+const _generic      = markRaw(GenericNode)
+const _datapoint    = markRaw(DatapointNode)
+const _pythonScript = markRaw(PythonScriptNode)
+
+const nodeTypeComponents = {
+  // Logic
+  and: _generic, or: _generic, not: _generic, xor: _generic,
+  compare: _generic, hysteresis: _generic,
+  // Math
+  math_formula: _generic, math_map: _generic,
+  // Timer
+  timer_delay: _generic, timer_pulse: _generic, timer_cron: _generic,
+  // MCP
+  mcp_tool: _generic,
+  // DataPoints & Script
+  datapoint_read:  _datapoint,
+  datapoint_write: _datapoint,
+  python_script:   _pythonScript,
+}
 
 // ── Active graph ───────────────────────────────────────────────────────────
 const activeGraphId = ref('')
