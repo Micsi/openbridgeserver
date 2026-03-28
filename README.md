@@ -154,11 +154,11 @@ security:
 ┌──────────────────────────────────────────────────────────────────────┐
 │                          OpenTWS Process                             │
 │                                                                      │
-│  ┌────────────────────────┐  DataValueEvent   ┌──────────────────┐  │
+│  ┌────────────────────────┐  DataValueEvent    ┌──────────────────┐  │
 │  │   Adapter Instances    │ ────────────────▶ │    EventBus      │  │
-│  │                        │                   │ (fan-out)        │  │
-│  │  KNX "EG"              │ ◀── write() ───   │                  │  │
-│  │  KNX "OG"              │                   └───┬──────┬───────┘  │
+│  │                        │                    │ (fan-out)        │  │
+│  │  KNX "IP Router"       │ ◀── write() ───   │                  │  │
+│  │  KNX "IP Interface     │                   └───┬──────┬───────┘  │
 │  │  Modbus TCP "SPS"      │                       │      │          │
 │  │  MQTT "HomeAssistant"  │                 ┌─────▼──┐ ┌─▼───────┐ │
 │  │  …                     │                 │Registry│ │RingBuf  │ │
