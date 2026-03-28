@@ -68,7 +68,7 @@ const titles = {
   'RingBuffer':      'RingBuffer',
   'Settings':        'Einstellungen',
 }
-const pageTitle = computed(() => titles[route.name] ?? 'OpenTWS')
+const pageTitle = computed(() => titles[route.name] ?? 'openTWS')
 
 function logout() {
   ws.disconnect()

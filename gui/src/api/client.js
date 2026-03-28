@@ -1,5 +1,5 @@
 /**
- * OpenTWS API Client
+ * openTWS API Client
  * All calls go through /api/v1 — in dev proxied via Vite, in prod served by FastAPI.
  */
 import axios from 'axios'

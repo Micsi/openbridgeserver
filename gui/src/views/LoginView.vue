@@ -2,13 +2,7 @@
   <div class="w-full max-w-sm">
     <!-- Logo + heading -->
     <div class="text-center mb-8">
-      <div class="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl mb-4 shadow-lg shadow-blue-600/30">
-        <svg class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7"/>
-        </svg>
-      </div>
-      <h1 class="text-2xl font-bold text-slate-100">OpenTWS</h1>
-      <p class="text-sm text-slate-500 mt-1">Multiprotocol Server</p>
+      <img src="/opentws_logo.svg" class="w-48 h-48 mx-auto rounded-2xl" alt="openTWS" />
     </div>
 
     <!-- Card -->
@@ -38,7 +32,7 @@
       </div>
     </div>
 
-    <p class="text-center text-xs text-slate-600 mt-6">OpenTWS v0.1.0 · MIT License</p>
+    <p class="text-center text-xs text-slate-600 mt-6">openTWS v0.1.0 · MIT License</p>
   </div>
 </template>
 

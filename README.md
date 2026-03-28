@@ -1,4 +1,6 @@
-# OpenTWS
+# openTWS
+
+![openTWS Logo](logo/opentws_logo.svg)
 
 **Open-Source Multiprotocol Server for Building Automation**
 
@@ -19,7 +21,7 @@ It connects KNX, Modbus RTU/TCP, 1-Wire and external MQTT brokers through a unif
 | **History** | Plugin system — SQLite built-in, extensible (InfluxDB, TimescaleDB, …) |
 | **Debug** | RingBuffer: memory or disk (default: disk), searchable by name |
 | **Runtime config** | All changes apply immediately — no restart needed |
-| **Deployment** | Docker Compose (OpenTWS + Mosquitto) or bare-metal Python |
+| **Deployment** | Docker Compose (openTWS + Mosquitto) or bare-metal Python |
 | **License** | MIT |
 
 ---
@@ -79,7 +81,7 @@ curl http://localhost:8080/api/v1/system/health
 
 | Service | Port | Protocol |
 |---|---|---|
-| OpenTWS REST API + GUI | 8080 | HTTP |
+| openTWS REST API + GUI | 8080 | HTTP |
 | Mosquitto MQTT (internal) | 1883 | MQTT |
 | Mosquitto WebSocket | 9001 | MQTT over WS |
 
@@ -144,7 +146,7 @@ security:
   jwt_expire_minutes: 1440    # OPENTWS_SECURITY__JWT_EXPIRE_MINUTES
 ```
 
-> **Note:** The `mqtt` section configures the **internal** Mosquitto broker used for the OpenTWS topic bus. External MQTT brokers are configured as separate adapter instances (see [MQTT Adapter](#mqtt-adapter-external-broker)).
+> **Note:** The `mqtt` section configures the **internal** Mosquitto broker used for the openTWS topic bus. External MQTT brokers are configured as separate adapter instances (see [MQTT Adapter](#mqtt-adapter-external-broker)).
 
 ---
 
@@ -152,7 +154,7 @@ security:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                            OpenTWS Process                              │
+│                            openTWS Process                              │
 │                                                                         │
 │  ┌──────────────────────────┐  DataValueEvent  ┌────────────────────┐  │
 │  │    Adapter Instances     │ ───────────────▶ │     EventBus       │  │
@@ -205,7 +207,7 @@ All endpoints are under `/api/v1`. The interactive API documentation (Swagger UI
 
 ### Authentication
 
-OpenTWS supports two authentication methods that can be used interchangeably:
+openTWS supports two authentication methods that can be used interchangeably:
 
 | Method | Header | Use case |
 |---|---|---|
@@ -746,7 +748,7 @@ Use `POST /api/v1/adapters/instances/{id}/test` to trigger `scan_sensors()` and 
 
 ### MQTT Adapter (external broker)
 
-Connects to an **external** MQTT broker (distinct from the internal OpenTWS Mosquitto). Supports authentication and bidirectional bindings.
+Connects to an **external** MQTT broker (distinct from the internal openTWS Mosquitto). Supports authentication and bidirectional bindings.
 
 **Adapter config:**
 
@@ -812,7 +814,7 @@ When a value arrives on the MQTT topic, the WriteRouter automatically propagates
 
 ## MQTT Topics
 
-OpenTWS uses a **hybrid topic strategy** on the internal Mosquitto:
+openTWS uses a **hybrid topic strategy** on the internal Mosquitto:
 
 | Topic | Description |
 |---|---|

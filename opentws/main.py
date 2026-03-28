@@ -1,5 +1,5 @@
 """
-OpenTWS entry point — startup and graceful shutdown.
+openTWS entry point — startup and graceful shutdown.
 
 Startup-Sequenz:
   1. Database (SQLite + migrations)
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         level=getattr(logging, settings.server.log_level.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    logger.info("OpenTWS v0.1.0 starting …")
+    logger.info("openTWS v0.1.0 starting …")
 
     # 1. Database
     db = await init_db(settings.database.path)
@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await adapter_registry.start_all(bus, db)
 
     logger.info(
-        "OpenTWS ready — %d datapoints, %d adapters registered",
+        "openTWS ready — %d datapoints, %d adapters registered",
         registry.count(),
         len(adapter_registry.all_types()),
     )
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await mqtt.stop()
     await rb.stop()
     await get_db().disconnect()
-    logger.info("OpenTWS stopped.")
+    logger.info("openTWS stopped.")
 
 
 def create_app() -> FastAPI:
@@ -120,7 +120,7 @@ def create_app() -> FastAPI:
     from opentws.api.router import router
 
     app = FastAPI(
-        title="OpenTWS",
+        title="openTWS",
         description="Open-Source Multiprotocol Server for Building Automation",
         version="0.1.0",
         license_info={"name": "MIT"},

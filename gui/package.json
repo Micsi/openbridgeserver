@@ -1,7 +1,7 @@
 {
   "name": "opentws-gui",
   "version": "0.1.0",
-  "description": "OpenTWS Web GUI",
+  "description": "openTWS Web GUI",
   "type": "module",
   "scripts": {
     "dev": "vite",

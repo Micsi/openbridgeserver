@@ -7,12 +7,8 @@
   >
     <!-- Logo -->
     <div class="flex items-center gap-3 px-4 py-5 border-b border-slate-700/60">
-      <div class="shrink-0 w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-        <svg class="w-5 h-5 text-white" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M10 2L2 7l8 5 8-5-8-5zM2 13l8 5 8-5M2 10l8 5 8-5"/>
-        </svg>
-      </div>
-      <span v-if="!collapsed" class="font-bold text-slate-100 tracking-tight">OpenTWS</span>
+      <img src="/opentws_icon.svg" class="shrink-0 w-8 h-8 rounded-lg" alt="openTWS icon" />
+      <span v-if="!collapsed" class="font-bold text-slate-100 tracking-tight">openTWS</span>
     </div>
 
     <!-- Nav -->
