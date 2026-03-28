@@ -49,7 +49,7 @@
           v-model:nodes="nodes"
           v-model:edges="edges"
           :node-types="nodeTypeComponents"
-          :default-edge-options="{ type: 'smoothstep', animated: true, style: { stroke: '#475569', strokeWidth: 2 } }"
+          :default-edge-options="{ type: 'smoothstep', animated: true, interactionWidth: 20, style: { stroke: '#475569', strokeWidth: 2 } }"
           :delete-key-code="['Backspace', 'Delete']"
           fit-view-on-init
           class="logic-canvas"
@@ -396,4 +396,21 @@ onUnmounted(() => {
 .logic-canvas .vue-flow__handle { width: 10px; height: 10px; border-radius: 50%; }
 .logic-controls { bottom: 1rem; left: 1rem; }
 .logic-minimap { bottom: 1rem; right: 1rem; background: #1e293b; border: 1px solid #334155; border-radius: 6px; }
+
+/* Edge interaction — breite unsichtbare Klickfläche */
+.logic-canvas .vue-flow__edge .vue-flow__edge-interaction {
+  stroke-width: 20;
+  stroke: transparent;
+  cursor: pointer;
+}
+/* Hover */
+.logic-canvas .vue-flow__edge:hover .vue-flow__edge-path {
+  stroke: #94a3b8 !important;
+  stroke-width: 3 !important;
+}
+/* Selektiert → blau + dicker, dann Backspace/Delete drücken */
+.logic-canvas .vue-flow__edge.selected .vue-flow__edge-path {
+  stroke: #60a5fa !important;
+  stroke-width: 3 !important;
+}
 </style>
