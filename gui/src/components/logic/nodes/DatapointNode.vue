@@ -84,7 +84,7 @@ const hasFilter = computed(() => {
 }
 .gn-wrap :deep(.vue-flow__handle:hover) {
   background: #38bdf8;
-  transform: translate(-50%, -50%) scale(1.3);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.35);
 }
 
 .gn-card {
@@ -98,14 +98,14 @@ const hasFilter = computed(() => {
   z-index: 1;
 }
 .gn-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; gap: 4px;
   padding: 5px 10px;
   background: rgba(15,118,110,.18);
   border-radius: 5px 5px 0 0;
 }
 .gn-label        { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#f1f5f9; }
-.gn-filter-badge { font-size:9px; color:#fbbf24; margin-left:4px; opacity:.85; flex-shrink:0; }
-.gn-delete       { font-size:11px; color:#64748b; background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; margin-left:auto; }
+.gn-filter-badge { font-size:9px; color:#fbbf24; opacity:.85; flex-shrink:0; }
+.gn-delete       { font-size:11px; color:#64748b; background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; margin-left:auto; flex-shrink:0; }
 .gn-delete:hover { color:#f87171; }
 .gn-body   { padding: 6px 10px 2px; }
 .gn-sublabel { font-size:9px; color:#64748b; text-transform:uppercase; letter-spacing:.05em; margin-bottom:2px; }

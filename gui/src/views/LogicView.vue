@@ -210,15 +210,26 @@ const debugMode = ref(false)
 
 function fmtDebugVal(nodeOut) {
   if (!nodeOut || typeof nodeOut !== 'object') return null
+
+  function fv(v) {
+    if (v === null || v === undefined) return '—'
+    if (typeof v === 'boolean') return v ? '✓' : '✗'
+    if (typeof v === 'number') return String(parseFloat(v.toPrecision(5)))
+    return String(v).slice(0, 18)
+  }
+
+  // Public keys (no leading _)
   const pairs = Object.entries(nodeOut)
     .filter(([k]) => !k.startsWith('_'))
-    .map(([k, v]) => {
-      if (v === null || v === undefined) return `${k}=—`
-      if (typeof v === 'boolean') return `${k}=${v ? '✓' : '✗'}`
-      if (typeof v === 'number') return `${k}=${parseFloat(v.toPrecision(5))}`
-      return `${k}=${String(v).slice(0, 18)}`
-    })
-  return pairs.length ? pairs.join('   ') : null
+    .map(([k, v]) => `${k}=${fv(v)}`)
+  if (pairs.length) return pairs.join('   ')
+
+  // datapoint_write outputs are all _private — show write value with → prefix
+  if ('_write_value' in nodeOut) {
+    return `→ ${fv(nodeOut._write_value)}`
+  }
+
+  return null
 }
 
 function applyDebugValues(outputs) {

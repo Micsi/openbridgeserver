@@ -66,7 +66,7 @@ function remove() { removeNodes([props.id]) }
 }
 .gn-wrap :deep(.vue-flow__handle:hover) {
   background: #38bdf8;
-  transform: translate(-50%, -50%) scale(1.3);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.35);
 }
 
 .gn-card {

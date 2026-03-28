@@ -192,7 +192,7 @@ function remove() { removeNodes([props.id]) }
   background: #60a5fa !important;
 }
 .gn-root :deep(.vue-flow__handle:hover) {
-  transform: translate(-50%, -50%) scale(1.4) !important;
   background: #38bdf8 !important;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.35) !important;
 }
 </style>

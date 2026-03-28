@@ -47,3 +47,6 @@ coverage.xml
 
 # Docs build output
 docs/_build/
+
+# Not Public Data
+privatedata
