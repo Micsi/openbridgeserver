@@ -237,31 +237,14 @@ class LogicManager:
     async def execute_graph(self, graph_id: str) -> dict[str, Any]:
         """Manually trigger a graph (e.g. from API).
 
-        Reads current registry values for all datapoint_read nodes so that
-        a manual run shows real values — not None.
+        Registry seeding for all datapoint_read nodes is handled inside
+        _execute_graph, so no extra overrides are needed here.
         """
         entry = self._graphs.get(graph_id)
         if not entry:
             raise KeyError(f"Graph {graph_id} not in cache")
         name, enabled, flow = entry
-
-        # Seed overrides from current registry values
-        overrides: dict[str, dict[str, Any]] = {}
-        for node in flow.nodes:
-            if node.type != "datapoint_read":
-                continue
-            dp_id_str = node.data.get("datapoint_id")
-            if not dp_id_str:
-                continue
-            try:
-                dp_id = uuid.UUID(dp_id_str)
-                vs = self._registry.get_value(dp_id)
-                if vs is not None:
-                    overrides[node.id] = {"value": vs.value, "changed": False}
-            except Exception:
-                pass
-
-        return await self._execute_graph(graph_id, name, flow, overrides)
+        return await self._execute_graph(graph_id, name, flow, {})
 
     async def _execute_graph(
         self,
@@ -273,8 +256,30 @@ class LogicManager:
         execute_now = datetime.now(timezone.utc)
         graph_state = self._node_state.setdefault(graph_id, {})
 
+        # ── Seed all datapoint_read nodes from registry ───────────────────
+        # In event-driven execution only the triggered node(s) have overrides.
+        # All other DP-LESEN nodes would receive None, which propagates as 0.0
+        # through _to_num() in downstream blocks. Fix: pre-seed from registry so
+        # every DP-LESEN node has the latest known value. Caller overrides
+        # (event value + changed=True) are applied on top and take priority.
+        aug_overrides: dict[str, dict[str, Any]] = {}
+        for node in flow.nodes:
+            if node.type != "datapoint_read":
+                continue
+            dp_id_str = node.data.get("datapoint_id")
+            if not dp_id_str:
+                continue
+            try:
+                dp_id = uuid.UUID(dp_id_str)
+                vs = self._registry.get_value(dp_id)
+                if vs is not None:
+                    aug_overrides[node.id] = {"value": vs.value, "changed": False}
+            except Exception:
+                pass
+        # Event / manual overrides take priority over registry seed
+        aug_overrides.update(overrides)
+
         # ── Pre-compute operating_hours values to inject as overrides ─────
-        aug_overrides = dict(overrides)
         for node in flow.nodes:
             if node.type == "operating_hours":
                 ns  = graph_state.setdefault(node.id, {"accumulated_hours": 0.0, "last_start": None})
