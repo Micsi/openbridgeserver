@@ -529,13 +529,24 @@ class LogicManager:
             except Exception as exc:
                 logger.warning("Graph %s: failed to write dp %s: %s", graph_id, dp_id_str, exc)
 
+        # ── Persist node state (statistics / hysteresis) to DB ───────────
+        hyst = self._hysteresis.get(graph_id)
+        if hyst:
+            try:
+                await self._db.execute_and_commit(
+                    "UPDATE logic_graphs SET node_state = ? WHERE id = ?",
+                    (json.dumps(hyst), graph_id),
+                )
+            except Exception as exc:
+                logger.warning("Graph %s: failed to persist node_state: %s", graph_id[:8], exc)
+
         return outputs
 
     # ── Cache ─────────────────────────────────────────────────────────────
 
     async def _load_graphs(self) -> None:
         rows = await self._db.fetchall(
-            "SELECT id, name, enabled, flow_data FROM logic_graphs"
+            "SELECT id, name, enabled, flow_data, node_state FROM logic_graphs"
         )
         self._graphs = {}
         for row in rows:
@@ -543,12 +554,32 @@ class LogicManager:
                 raw = json.loads(row["flow_data"]) if row["flow_data"] else {}
                 flow = FlowData.model_validate(raw)
                 self._graphs[row["id"]] = (row["name"], bool(row["enabled"]), flow)
+
+                # Restore persisted node state (statistics, hysteresis, …) from DB,
+                # but only when there is no in-memory state already — so a reload()
+                # triggered by a graph save does NOT overwrite the live accumulators.
+                if row["id"] not in self._hysteresis:
+                    try:
+                        saved = json.loads(row["node_state"] or "{}")
+                        if isinstance(saved, dict) and saved:
+                            self._hysteresis[row["id"]] = saved
+                            logger.debug(
+                                "Graph %s: restored node_state (%d nodes)",
+                                row["id"][:8], len(saved),
+                            )
+                    except Exception:
+                        pass
             except Exception as exc:
                 logger.warning("Failed to parse graph %s: %s", row["id"], exc)
 
     def invalidate_cache(self, graph_id: str) -> None:
         self._graphs.pop(graph_id, None)
-        self._hysteresis.pop(graph_id, None)
+        # NOTE: _hysteresis is intentionally NOT cleared here.
+        # When a graph is saved (PUT/PATCH), invalidate_cache + reload() are called.
+        # Clearing _hysteresis would reset statistics accumulators on every save.
+        # The state is re-used by the next execution after reload.
+        # On DELETE the graph row is gone from DB so no persistence concerns remain;
+        # the in-memory entry is a no-op and will be GC'd naturally.
         self._node_state.pop(graph_id, None)
         # Cancel cron tasks for this specific graph
         to_remove = [k for k in self._cron_tasks if k[0] == graph_id]
