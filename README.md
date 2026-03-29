@@ -47,7 +47,8 @@ openTWS verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitlichen
 16. [MQTT-Topics](#mqtt-topics)
 17. [Datentypen](#datentypen)
 18. [Einstellungen](#einstellungen)
-19. [Entwicklung](#entwicklung)
+19. [Hilfsskripte](#hilfsskripte)
+20. [Entwicklung](#entwicklung)
 
 ---
 
@@ -873,6 +874,82 @@ Die Einstellungen sind über die Weboberfläche erreichbar (⚙ in der Seitenlei
 **API-Schlüssel:** Schlüssel für die Anbindung externer Systeme erstellen und widerrufen
 
 **Sicherung:** Vollständige Konfiguration herunterladen oder einspielen
+
+---
+
+## Hilfsskripte
+
+### Import-EtsGaCsv.ps1 — ETS-GA-Export importieren
+
+Das Skript `scripts/Import-EtsGaCsv.ps1` liest einen ETS-GA-CSV-Export und legt je Gruppenadresse
+automatisch einen DataPoint mit passendem Typ und Einheit an. Anschliessend wird eine
+Verknüpfung zur angegebenen KNX-Adapter-Instanz erstellt.
+
+**Voraussetzungen:** PowerShell 5.1 oder neuer, erreichbare openTWS-Instanz, gültiger API-Schlüssel.
+
+**Parameter:**
+
+| Parameter | Pflicht | Beschreibung |
+|---|---|---|
+| `-Url` | ja | Basis-URL der openTWS-Instanz, z.B. `http://localhost:8080` |
+| `-ApiKey` | ja | API-Schlüssel (`opentws_…`) |
+| `-File` | ja | Pfad zur ETS-GA-CSV-Datei |
+| `-Adapter` | ja | Name der KNX-Adapter-Instanz in openTWS |
+| `-LogFile` | nein | Pfad für Fehlerprotokoll; ohne Angabe werden Fehler auf der Konsole ausgegeben |
+| `-Direction` | nein | Verknüpfungsrichtung: `SOURCE` (Standard), `DEST` oder `BOTH` |
+| `-Encoding` | nein | Zeichenkodierung der CSV-Datei: `UTF8` (Standard) oder `Default` (ANSI/Windows-1252). ETS 5 exportiert i.d.R. ANSI, ETS 6 UTF-8. |
+
+**CSV-Format (ETS 5/6 GA-Export):**
+
+Der Export erfolgt in ETS über *Gruppenadressliste exportieren → CSV*. Das Skript erkennt Semikolon- und
+Komma-Trennzeichen sowie deutschsprachige und englischsprachige Spaltenköpfe automatisch.
+
+```
+"Group name";"Address";"Central";"Unfiltered";"Description";"Comment";"DatapointType";"Security"
+"Wohnzimmer Temperatur";"1/1/1";"";"";"";"";DPST-9-1;Auto
+"Wohnzimmer Helligkeit";"1/1/2";"";"";"";"";DPST-9-2;Auto
+"Rolllade EG Auf/Ab";"1/2/1";"";"";"";"";DPST-1-8;Auto
+```
+
+DPT-Angaben im Format `DPST-X-Y` (Haupt- und Subtyp) oder `DPT-X` (nur Haupttyp) werden
+automatisch in das openTWS-Format (`DPT9.001`) umgewandelt und der passende Datentyp (`FLOAT`,
+`INTEGER`, `BOOLEAN`, `STRING`) sowie die Einheit werden gesetzt. Fehlt der DPT, wird `FLOAT`
+ohne Einheit verwendet.
+
+**Beispiel:**
+
+```powershell
+.\scripts\Import-EtsGaCsv.ps1 `
+    -Url    http://localhost:8080 `
+    -ApiKey opentws_abc123 `
+    -File   C:\Projekte\GA_Export.csv `
+    -Adapter "KNX/IP"
+```
+
+ETS 5 (ANSI-Kodierung):
+
+```powershell
+.\scripts\Import-EtsGaCsv.ps1 `
+    -Url      http://localhost:8080 `
+    -ApiKey   opentws_abc123 `
+    -File     C:\Projekte\GA_Export.csv `
+    -Adapter  "KNX/IP" `
+    -Encoding Default
+```
+
+Mit Fehlerprotokoll:
+
+```powershell
+.\scripts\Import-EtsGaCsv.ps1 `
+    -Url     http://localhost:8080 `
+    -ApiKey  opentws_abc123 `
+    -File    C:\Projekte\GA_Export.csv `
+    -Adapter "KNX/IP" `
+    -LogFile C:\Projekte\import_errors.log
+```
+
+Das Skript läuft bei Einzelfehlern durch. Am Ende werden Anzahl der erfolgreich importierten,
+übersprungenen (Zeilen ohne Adresse) und fehlgeschlagenen GAs ausgegeben.
 
 ---
 
