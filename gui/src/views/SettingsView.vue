@@ -15,30 +15,85 @@
     </div>
 
     <!-- ── Allgemein ── -->
-    <div v-if="activeTab === 'general'" class="card max-w-md">
-      <div class="card-header"><h3 class="font-semibold text-sm text-slate-100">Allgemeine Einstellungen</h3></div>
-      <div class="card-body flex flex-col gap-4">
-        <div class="form-group">
-          <label class="label">Zeitzone</label>
-          <p class="text-xs text-slate-500 mb-2">Alle Zeitangaben im System werden in dieser Zeitzone dargestellt.</p>
-          <!-- Search input -->
-          <input
-            v-model="tzSearch"
-            type="text"
-            class="input text-sm mb-1"
-            placeholder="Zeitzone suchen … z.B. Zurich, Berlin, UTC"
-          />
-          <!-- Filtered dropdown -->
-          <select v-model="tzSelected" class="input text-sm" size="6" style="height:auto">
-            <option v-for="tz in filteredTimezones" :key="tz" :value="tz">{{ tz }}</option>
-          </select>
-          <p class="text-xs text-slate-500 mt-1">Gewählt: <span class="text-slate-200 font-mono">{{ tzSelected }}</span></p>
+    <div v-if="activeTab === 'general'" class="flex flex-col gap-4 max-w-md">
+
+      <!-- Zeitzone -->
+      <div class="card">
+        <div class="card-header"><h3 class="font-semibold text-sm text-slate-100">Allgemeine Einstellungen</h3></div>
+        <div class="card-body flex flex-col gap-4">
+          <div class="form-group">
+            <label class="label">Zeitzone</label>
+            <p class="text-xs text-slate-500 mb-2">Alle Zeitangaben im System werden in dieser Zeitzone dargestellt.</p>
+            <!-- Custom dropdown trigger -->
+            <div class="relative" ref="tzDropdownRef">
+              <button type="button" @click="tzDropdownOpen = !tzDropdownOpen"
+                class="input text-sm w-full text-left flex items-center justify-between gap-2">
+                <span class="font-mono text-slate-200 truncate">{{ tzSelected }}</span>
+                <svg class="w-4 h-4 text-slate-400 shrink-0 transition-transform" :class="tzDropdownOpen ? 'rotate-180' : ''"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </button>
+              <!-- Dropdown panel -->
+              <div v-if="tzDropdownOpen"
+                class="absolute z-50 left-0 right-0 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl overflow-hidden">
+                <div class="p-2 border-b border-slate-700">
+                  <input ref="tzSearchInputRef" v-model="tzSearch" type="text"
+                    class="input text-sm w-full"
+                    placeholder="Suchen … z.B. Zurich, Berlin, UTC"
+                    @keydown.escape="tzDropdownOpen = false"
+                    @keydown.enter.prevent="selectFirstTz" />
+                </div>
+                <div class="max-h-52 overflow-y-auto">
+                  <button v-for="tz in filteredTimezones" :key="tz" type="button"
+                    @click="selectTz(tz)"
+                    :class="['w-full text-left px-3 py-1.5 text-xs font-mono hover:bg-slate-700 transition-colors',
+                      tz === tzSelected ? 'text-teal-400 bg-slate-700/50' : 'text-slate-300']">
+                    {{ tz }}
+                  </button>
+                  <div v-if="!filteredTimezones.length" class="px-3 py-3 text-xs text-slate-500 text-center">Keine Treffer</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="tzMsg" :class="['p-3 rounded-lg text-sm', tzMsg.ok ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30']">{{ tzMsg.text }}</div>
+          <button @click="saveTz" class="btn-primary" :disabled="tzSaving">
+            <Spinner v-if="tzSaving" size="sm" color="white" />
+            Speichern
+          </button>
         </div>
-        <div v-if="tzMsg" :class="['p-3 rounded-lg text-sm', tzMsg.ok ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30']">{{ tzMsg.text }}</div>
-        <button @click="saveTz" class="btn-primary" :disabled="tzSaving">
-          <Spinner v-if="tzSaving" size="sm" color="white" />
-          Speichern
-        </button>
+      </div>
+
+      <!-- KNX Projekt Import -->
+      <div class="card p-5 flex flex-col gap-3">
+        <div class="flex items-center gap-2">
+          <h3 class="font-semibold text-sm text-slate-100">KNX Projekt importieren</h3>
+          <span class="text-xs text-slate-500 bg-slate-700/50 px-2 py-0.5 rounded">.knxproj</span>
+        </div>
+        <p class="text-sm text-slate-400">
+          ETS-Projektdatei importieren. Alle Gruppenadressen (GA, Name, DPT) werden gespeichert,
+          stehen im Binding-Formular als Suchvorschläge zur Verfügung und werden in der Sicherung mitgesichert.
+        </p>
+        <div class="flex flex-col gap-2">
+          <input type="file" accept=".knxproj" @change="onKnxprojFile"
+            class="text-sm text-slate-400 file:btn-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:text-xs file:border-0 file:cursor-pointer" />
+          <div class="form-group">
+            <label class="label">Projektpasswort <span class="text-slate-600 font-normal">(optional)</span></label>
+            <input v-model="knxPassword" type="password" class="input text-sm" placeholder="Nur bei passwortgeschützten Projekten" autocomplete="off" />
+          </div>
+          <div class="flex items-center gap-3">
+            <button @click="doKnxImport" class="btn-primary btn-sm" :disabled="!knxFile || knxImporting">
+              <Spinner v-if="knxImporting" size="sm" color="white" />
+              Importieren
+            </button>
+            <button v-if="knxGaCount > 0" @click="doClearKnxGA" class="btn-secondary btn-sm text-red-400 hover:text-red-300">
+              {{ knxGaCount }} GAs löschen
+            </button>
+          </div>
+        </div>
+        <div v-if="knxResult" :class="['p-3 rounded-lg text-sm', knxResult.ok ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30']">
+          {{ knxResult.text }}
+        </div>
       </div>
     </div>
 
@@ -144,38 +199,6 @@
         <input type="file" accept=".json" @change="onImportFile" class="text-sm text-slate-400 file:btn-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:text-xs file:border-0 file:cursor-pointer" />
         <div v-if="importResult" :class="['p-3 rounded-lg text-sm', importResult.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']">{{ importResult.text }}</div>
       </div>
-
-      <!-- KNX Projekt Import -->
-      <div class="card p-5 flex flex-col gap-3">
-        <div class="flex items-center gap-2">
-          <h3 class="font-semibold text-sm text-slate-100">KNX Projekt importieren</h3>
-          <span class="text-xs text-slate-500 bg-slate-700/50 px-2 py-0.5 rounded">.knxproj</span>
-        </div>
-        <p class="text-sm text-slate-400">
-          ETS-Projektdatei importieren. Alle Gruppenadressen (GA, Name, DPT) werden gespeichert,
-          stehen im Binding-Formular als Suchvorschläge zur Verfügung und werden in der Sicherung mitgesichert.
-        </p>
-        <div class="flex flex-col gap-2">
-          <input type="file" accept=".knxproj" @change="onKnxprojFile"
-            class="text-sm text-slate-400 file:btn-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:text-xs file:border-0 file:cursor-pointer" />
-          <div class="form-group">
-            <label class="label">Projektpasswort <span class="text-slate-600 font-normal">(optional)</span></label>
-            <input v-model="knxPassword" type="password" class="input text-sm" placeholder="Nur bei passwortgeschützten Projekten" autocomplete="off" />
-          </div>
-          <div class="flex items-center gap-3">
-            <button @click="doKnxImport" class="btn-primary btn-sm" :disabled="!knxFile || knxImporting">
-              <Spinner v-if="knxImporting" size="sm" color="white" />
-              Importieren
-            </button>
-            <button v-if="knxGaCount > 0" @click="doClearKnxGA" class="btn-secondary btn-sm text-red-400 hover:text-red-300">
-              {{ knxGaCount }} GAs löschen
-            </button>
-          </div>
-        </div>
-        <div v-if="knxResult" :class="['p-3 rounded-lg text-sm', knxResult.ok ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30']">
-          {{ knxResult.text }}
-        </div>
-      </div>
     </div>
 
     <!-- Modals -->
@@ -246,7 +269,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { authApi, configApi, knxprojApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
@@ -267,7 +290,6 @@ const ALL_TIMEZONES = (() => {
   try {
     return Intl.supportedValuesOf('timeZone')
   } catch {
-    // Fallback for older browsers
     return [
       'UTC', 'Europe/Zurich', 'Europe/Berlin', 'Europe/Vienna', 'Europe/London',
       'Europe/Paris', 'Europe/Rome', 'Europe/Amsterdam', 'Europe/Brussels',
@@ -285,10 +307,13 @@ const ALL_TIMEZONES = (() => {
   }
 })()
 
-const tzSearch   = ref('')
-const tzSelected = ref(settings.timezone)
-const tzSaving   = ref(false)
-const tzMsg      = ref(null)
+const tzSearch         = ref('')
+const tzSelected       = ref(settings.timezone)
+const tzSaving         = ref(false)
+const tzMsg            = ref(null)
+const tzDropdownOpen   = ref(false)
+const tzDropdownRef    = ref(null)
+const tzSearchInputRef = ref(null)
 
 const filteredTimezones = computed(() => {
   const q = tzSearch.value.toLowerCase()
@@ -296,9 +321,40 @@ const filteredTimezones = computed(() => {
   return ALL_TIMEZONES.filter(tz => tz.toLowerCase().includes(q))
 })
 
+function selectTz(tz) {
+  tzSelected.value   = tz
+  tzDropdownOpen.value = false
+  tzSearch.value     = ''
+}
+function selectFirstTz() {
+  if (filteredTimezones.value.length) selectTz(filteredTimezones.value[0])
+}
+
+// Auto-focus search input when dropdown opens
+watch(tzDropdownOpen, async (open) => {
+  if (open) {
+    await nextTick()
+    tzSearchInputRef.value?.focus()
+  } else {
+    tzSearch.value = ''
+  }
+})
+
+// Close dropdown on outside click
+function onOutsideClick(e) {
+  if (tzDropdownRef.value && !tzDropdownRef.value.contains(e.target)) {
+    tzDropdownOpen.value = false
+  }
+}
+
 onMounted(async () => {
   if (!settings.loaded) await settings.load()
   tzSelected.value = settings.timezone
+  document.addEventListener('mousedown', onOutsideClick)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onOutsideClick)
 })
 
 async function saveTz() {
@@ -495,4 +551,5 @@ onMounted(async () => {
   await loadKeys()
   await loadKnxGaCount()
 })
+// Note: timezone onMounted is defined above (merged there)
 </script>

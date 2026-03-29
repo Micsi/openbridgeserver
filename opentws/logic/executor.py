@@ -11,6 +11,7 @@ import logging
 import math
 import operator
 import re
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import date as _date
 from typing import Any
 
@@ -340,14 +341,33 @@ class GraphExecutor:
                 return {}
 
     @staticmethod
+    def _round_half_up(x: Any, ndigits: int = 0) -> Any:
+        """Round using ROUND_HALF_UP (mathematical rounding) via Decimal.
+
+        Python's built-in round() uses banker's rounding (round-half-to-even)
+        and is affected by float representation errors — e.g. round(21.16, 1)
+        returns 21.1 because 21.16 is stored as 21.159999... in IEEE 754.
+        This function converts via str(x) to avoid that issue.
+        """
+        try:
+            d = Decimal(str(x))
+            quant = Decimal(10) ** -ndigits
+            result = float(d.quantize(quant, rounding=ROUND_HALF_UP))
+            return int(result) if ndigits <= 0 else result
+        except Exception:
+            return round(x, ndigits)  # fallback
+
+    @staticmethod
     def _safe_eval(expr: str, ctx: dict[str, Any]) -> Any:
         """Evaluate a math expression safely.
 
         Available: all math.* functions + abs, round, min, max + ctx variables.
         """
         allowed = {k: v for k, v in math.__dict__.items() if not k.startswith("_")}
-        # Add Python builtins that are safe and useful in formulas
-        allowed.update({"abs": abs, "round": round, "min": min, "max": max})
+        # Add Python builtins that are safe and useful in formulas.
+        # Use _round_half_up instead of built-in round to get mathematical
+        # rounding (0.5 always rounds up) rather than banker's rounding.
+        allowed.update({"abs": abs, "round": GraphExecutor._round_half_up, "min": min, "max": max})
         allowed.update(ctx)
         try:
             tree = ast.parse(expr, mode="eval")
@@ -363,7 +383,7 @@ class GraphExecutor:
             exec(script, {"__builtins__": {"range": range, "len": len, "int": int,  # noqa: S102
                                            "float": float, "str": str, "bool": bool,
                                            "abs": abs, "min": min, "max": max,
-                                           "round": round, "math": math}}, local_ns)
+                                           "round": GraphExecutor._round_half_up, "math": math}}, local_ns)
             return local_ns.get("result")
         except Exception as exc:
             raise ExecutionError(f"Script error: {exc}") from exc

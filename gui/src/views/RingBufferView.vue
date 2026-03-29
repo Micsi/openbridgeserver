@@ -7,6 +7,11 @@
       </div>
       <button @click="showConfig = true" class="btn-secondary btn-sm">⚙ Konfigurieren</button>
       <button @click="load" class="btn-secondary btn-sm">↻ Aktualisieren</button>
+      <button @click="toggleAutoRefresh"
+        :class="['btn-sm', autoRefresh ? 'btn-primary' : 'btn-secondary']"
+        :title="autoRefresh ? 'Auto-Refresh aktiv (alle 30 s) — klicken zum Deaktivieren' : 'Auto-Refresh inaktiv — klicken zum Aktivieren'">
+        {{ autoRefresh ? '⏱ Auto' : '⏸ Manuell' }}
+      </button>
     </div>
 
     <!-- Stats bar -->
@@ -98,7 +103,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ringbufferApi } from '@/api/client'
 import { useTz } from '@/composables/useTz'
 import Badge   from '@/components/ui/Badge.vue'
@@ -113,14 +118,31 @@ const loading    = ref(false)
 const showConfig = ref(false)
 const configSaving = ref(false)
 const configMsg  = ref(null)
+const autoRefresh = ref(true)
 
 const filters = reactive({ q: '', adapter: '', limit: '500' })
 const configForm = reactive({ storage: 'memory', max_entries: 10000 })
 
 let debounceTimer = null
+let refreshTimer  = null
+
+const AUTO_REFRESH_MS = 30_000
+
 function debouncedLoad() {
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(load, 350)
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  refreshTimer = setInterval(load, AUTO_REFRESH_MS)
+}
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
+}
+function toggleAutoRefresh() {
+  autoRefresh.value = !autoRefresh.value
+  autoRefresh.value ? startAutoRefresh() : stopAutoRefresh()
 }
 
 onMounted(async () => {
@@ -129,6 +151,12 @@ onMounted(async () => {
     configForm.storage     = stats.value.storage
     configForm.max_entries = stats.value.max_entries
   }
+  startAutoRefresh()
+})
+
+onUnmounted(() => {
+  stopAutoRefresh()
+  clearTimeout(debounceTimer)
 })
 
 async function load() {
