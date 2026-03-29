@@ -74,7 +74,7 @@
           <thead><tr><th>Zeitstempel</th><th>Wert</th><th>Quality</th><th>Adapter</th></tr></thead>
           <tbody>
             <tr v-for="(p, i) in points" :key="i">
-              <td class="font-mono text-xs text-slate-400">{{ new Date(p.ts).toLocaleString('de-CH') }}</td>
+              <td class="font-mono text-xs text-slate-400">{{ fmtDateTime(p.ts) }}</td>
               <td class="font-mono text-blue-300">{{ p.value }}</td>
               <td><Badge :variant="p.quality === 'good' ? 'success' : 'warning'" size="xs">{{ p.quality }}</Badge></td>
               <td class="text-slate-500 text-xs">{{ p.adapter_type ?? '—' }}</td>
@@ -91,17 +91,20 @@ import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { historyApi } from '@/api/client'
 import { useDatapointStore } from '@/stores/datapoints'
+import { useTz } from '@/composables/useTz'
 import Badge   from '@/components/ui/Badge.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import { Chart, LineController, LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend } from 'chart.js'
 import 'chart.js/auto'
 
+const { fmtDateTime, fmtChartLabel, toDatetimeLocal, fromDatetimeLocal } = useTz()
+
 const route   = useRoute()
 const dpStore = useDatapointStore()
 
 const selectedDp  = ref(route.query.dp ?? '')
-const fromTs      = ref(defaultFrom())
-const toTs        = ref(new Date().toISOString().slice(0, 16))
+const fromTs      = ref(toDatetimeLocal(new Date(Date.now() - 24 * 3600 * 1000)))
+const toTs        = ref(toDatetimeLocal(new Date()))
 const mode        = ref('aggregate')
 const aggFn       = ref('avg')
 const aggInterval = ref('1h')
@@ -122,9 +125,7 @@ const chartTitle = computed(() => {
   return dp ? `${dp.name} ${mode.value === 'aggregate' ? `(${aggFn.value} / ${aggInterval.value})` : '(raw)'}` : 'Verlauf'
 })
 
-function defaultFrom() {
-  const d = new Date(); d.setHours(d.getHours() - 24); return d.toISOString().slice(0, 16)
-}
+// defaultFrom is no longer needed — fromTs is initialized via toDatetimeLocal()
 
 onMounted(async () => {
   if (!dpStore.items.length) await dpStore.fetchPage(0, 200)
@@ -136,8 +137,8 @@ async function load() {
   loading.value = true
   points.value  = []
   try {
-    const from = fromTs.value ? new Date(fromTs.value).toISOString() : undefined
-    const to   = toTs.value   ? new Date(toTs.value).toISOString()   : undefined
+    const from = fromDatetimeLocal(fromTs.value)
+    const to   = fromDatetimeLocal(toTs.value)
 
     if (mode.value === 'raw') {
       const { data } = await historyApi.query(selectedDp.value, { from, to, limit: 1000 })
@@ -157,7 +158,7 @@ function renderChart() {
   if (!chartCanvas.value || !points.value.length) return
   chartInstance?.destroy()
 
-  const labels = points.value.map(p => new Date(p.ts).toLocaleString('de-CH', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }))
+  const labels = points.value.map(p => fmtChartLabel(p.ts))
   const values = points.value.map(p => p.value)
 
   chartInstance = new Chart(chartCanvas.value, {

@@ -1,80 +1,141 @@
-# Changelog
+# Änderungsprotokoll
 
-All notable changes to OpenTWS are documented here.
-Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
+Alle wesentlichen Änderungen an openTWS werden hier festgehalten.
+
+---
+
+## [Unveröffentlicht — visu-Branch]
+
+### Neu
+
+**RingBuffer — Live-Aktualisierung über WebSocket**
+- Neue Einträge werden sofort an alle geöffneten Browser übertragen — kein manuelles Neuladen mehr nötig
+- Status-Badge „Live" / „Offline" zeigt den Verbindungszustand an
+- Eingehende Einträge werden auf der Clientseite gefiltert (aktive Filter werden berücksichtigt)
+- Das Änderungsprotokoll enthält weiterhin einen „↻ Aktualisieren"-Button für das vollständige Neuladen
+
+**Logik-Editor — Formeln und Rundung**
+- `round()` verwendet jetzt mathematisches Runden (0.5 → aufrunden) statt dem in der Programmierung üblichen „Bankers Rounding". `round(21.16, 1)` gibt jetzt korrekt `21.2` zurück.
+- Gilt für alle Formelfelder: DP Lesen, DP Schreiben, Formel-Block, Verknüpfungs-Transformation, Python-Skript
+
+**Logik-Editor — Formel-Block mit Ausgangs-Transformation**
+- Der **Formel**-Block hat ein zweites Formelfeld: „Ausgangs-Transformation"
+- Nach der Berechnung der Hauptformel (`a`, `b`) kann das Ergebnis mit einer weiteren Formel transformiert werden (Variable `x`)
+- Gleiche Benutzeroberfläche wie beim DP Schreiben: Vorlagen-Dropdown + freies Formelfeld
+
+**Logik-Editor — Trigger-Block repariert und umbenannt**
+- Fehler behoben: Der Trigger-Block löste angeschlossene Blöcke nicht aus, weil das interne Trigger-Signal nie weitergegeben wurde
+- Umbenannt: „CronTrigger" → **„Trigger"** (kürzer und verständlicher)
+
+**Einstellungen — Zeitzone**
+- Neue Zeitzone-Auswahl unter Einstellungen → Allgemein
+- Alle Zeitangaben in der Oberfläche werden in der gewählten Zeitzone dargestellt: Verlauf, Änderungsprotokoll, History-Suche, Astro-Block
+- Kompaktes Dropdown: Normalerweise nur die gewählte Zeitzone sichtbar — Klick öffnet die Auswahlliste mit Suchfeld
+- Suchfeld wird automatisch fokussiert, Eingabe von `Enter` wählt den ersten Treffer, `Escape` schliesst
+
+**Einstellungen — KNX-Projektdatei**
+- Der Bereich „KNX Projekt importieren" wurde vom Tab „Sicherung" in den Tab **Allgemein** verschoben
+
+**7 neue Blocktypen im Logik-Editor**
+
+| Block | Kategorie | Beschreibung |
+|---|---|---|
+| **Astro Sonne** | Astro | Berechnet Sonnenauf- und -untergang für den konfigurierten Standort. Ausgänge: Aufgangszeit, Untergangszeit, Tagsüber (Ein/Aus). Berücksichtigt die eingestellte Zeitzone. |
+| **Begrenzer** | Mathematik | Begrenzt den Eingangswert auf einen konfigurierbaren Bereich [Min, Max]. |
+| **Statistik** | Mathematik | Laufende Statistik über alle empfangenen Werte: Minimum, Maximum, Mittelwert, Anzahl. Reset-Eingang setzt zurück. |
+| **Betriebsstunden** | Timer | Zählt Betriebsstunden solange „Aktiv" wahr ist. |
+| **Pushover** | Benachrichtigung | Push-Benachrichtigung auf das Handy via Pushover-Dienst. |
+| **SMS (seven.io)** | Benachrichtigung | SMS-Versand via seven.io. |
+| **API-Abfrage** | Integration | HTTP-Anfragen an externe Adressen (GET/POST/PUT/PATCH/DELETE). |
+
+**Zeitplan-Editor (Trigger-Block)**
+- Vorlagen-Dropdown mit über 30 vordefinierten Zeitplänen
+- Visueller 5-Feld-Editor (Minute / Stunde / Tag / Monat / Wochentag)
+- Direkteingabe des Cron-Ausdrucks
+- Alle drei Eingabewege synchronisieren sich gegenseitig
+
+**WebSocket Live-Debug im Logik-Editor**
+- Debug-Wertebänder aktualisieren sich automatisch nach jeder Ausführung — ohne manuellen Klick
+- Ausführungen durch Wertänderungen, Zeitpläne und manuellen Start werden alle angezeigt
+
+---
+
+### Fehlerbehebungen
+
+**Statistik — Zustand ging bei jeder Ausführung verloren**
+- Ursache: Python-Fallstrick — ein leeres Wörterbuch `{}` gilt als „falsch". Der Ausdruck `zustand or {}` erstellte bei leerem Zustand immer ein neues, weggeworfenes Objekt statt das übergebene zu verwenden. Alle Änderungen gingen verloren.
+- Lösung: `zustand if zustand is not None else {}`
+- Betraf auch die Hysterese: Zustand ging zwischen Ausführungen verloren
+
+**Statistik — Zustand überlebt Neustart nicht**
+- Die Akkumulatoren (Minimum, Maximum, Summe, Anzahl) werden jetzt nach jeder Ausführung in der Datenbank gespeichert
+- Beim Serverstart wird der gespeicherte Zustand wiederhergestellt
+- Ein erneutes Speichern des Graphen überschreibt den laufenden Zustand nicht
+
+**DP Lesen — gelegentlich falsche Nullwerte**
+- Ursache: Bei ereignisgesteuerter Ausführung bekam nur der auslösende DP-Lesen-Block seinen Wert. Alle anderen DP-Lesen-Blöcke im selben Graphen erhielten „kein Wert", was zu 0.0 weiterverarbeitet wurde
+- Lösung: Vor jeder Ausführung werden alle DP-Lesen-Blöcke mit dem zuletzt bekannten Wert aus dem Werteabbild befüllt. Der auslösende Wert hat weiterhin Vorrang.
+
+**History — „Bis"-Feld berücksichtigte Zeitzone nicht**
+- Das Enddatum in der Verlaufsansicht wurde immer als Ortszeit des Browsers interpretiert, unabhängig von der eingestellten Zeitzone
+- Behoben: alle Datums-/Zeitfelder in der Verlaufsansicht verwenden jetzt die konfigurierte Zeitzone
+
+**Verschiedenes**
+- Löschen-Dialog bei Adaptern war unsichtbar (Anzeigefehler)
+- Handle-Punkte an Blöcken verschoben sich beim Darüberfahren seitwärts (Vue Flow CSS-Überschreibung)
+- DP Schreiben zeigte keinen Debug-Wert an
+- DP Schreiben schrieb immer, auch wenn der Trigger-Eingang nicht erfüllt war
 
 ---
 
 ## [0.1.0] — 2026-03-26
 
-### Added
+### Neu
 
-**Phase 1 — Foundation**
-- `config.py`: pydantic-settings v2 with YAML + environment variable loading
-  - Env prefix `OPENTWS_`, nested delimiter `__`
-  - Priority: env vars > config.yaml > built-in defaults
-- `db/database.py`: async SQLite wrapper (aiosqlite), WAL mode, FK constraints
-  - Version-based migration system (V1–V4)
-  - V1: `datapoints`, `adapter_bindings`, `api_keys`, `users` tables + indexes
-  - V2: `adapter_configs` table
-  - V3: `history_values` table
-  - V4: `is_admin` column on `users`
-- `models/types.py`: `DataTypeRegistry` with 8 built-in types: `UNKNOWN`, `BOOLEAN`, `INTEGER`, `FLOAT`, `STRING`, `DATE`, `TIME`, `DATETIME`
-- `models/datapoint.py`: `DataPoint` model with auto-generated `mqtt_topic = dp/{uuid}/value`
-- `models/binding.py`: `AdapterBinding` with `direction: SOURCE | DEST | BOTH`
-- `core/converter.py`: `ConversionResult(value, loss, loss_description)`, full conversion matrix
+**Grundgerüst (Phase 1)**
+- Konfiguration: YAML-Datei + Umgebungsvariablen, Einstellungen haben Priorität über Standardwerte
+- Datenbank: SQLite mit automatischer Aktualisierung bei neuen Versionen
+- Datenpunkt-Modell mit 8 eingebauten Datentypen
+- Verknüpfungs-Modell mit Richtung (Lesen / Schreiben / Beides)
 
-**Phase 2 — Core**
-- `core/event_bus.py`: async `EventBus` with `DataValueEvent` and `AdapterStatusEvent`
-- `core/mqtt_client.py`: aiomqtt wrapper, `{v, u, t, q}` payload, topic helpers
-- `core/registry.py`: `DataPointRegistry` with `ValueState`, in-memory + DB-backed
-- `adapters/base.py`: `AdapterBase` ABC with `reload_bindings()` hook
-- `adapters/registry.py`: `@register` decorator, `start_all()` / `stop_all()`
+**Kern (Phase 2)**
+- Ereignisbus: Wertänderungen und Adapterstatus werden an alle Abnehmer verteilt
+- MQTT-Anbindung an internen Mosquitto-Broker
+- Werteabbild: aktueller Stand aller Datenpunkte im Arbeitsspeicher
+- Schreibdienst: MQTT `dp/{uuid}/set` → Adapter-Schreibbefehl; Protokoll-Brücke (KNX ↔ Modbus ↔ MQTT)
 
-**Phase 3 — Adapters**
-- `adapters/knx/dpt_registry.py`: `DPTRegistry` with 37 DPTs
-  - DPT9 EIS5 2-byte float codec (`SEEEEMMM MMMMMMMM`)
-  - Unknown DPT → `UNKNOWN` (no crash)
-- `adapters/knx/adapter.py`: `KnxAdapter` — Tunneling + Routing, telegram callback
-- `adapters/modbus_base.py`: shared `ModbusBindingConfig`, `decode_registers()`, `encode_value()` for all 7 data formats
-- `adapters/modbus_tcp/adapter.py`: `ModbusTcpAdapter`, asyncio poll loop per SOURCE binding
-- `adapters/modbus_rtu/adapter.py`: `ModbusRtuAdapter`, serial line
-- `adapters/onewire/adapter.py`: Linux sysfs reader, graceful degradation on Windows
+**Adapter (Phase 3)**
+- KNX/IP: Tunneling und Routing, 22+ DPTs
+- Modbus TCP: alle 4 Registertypen, 7 Datenformate
+- Modbus RTU: Seriellverbindung
+- 1-Wire: Temperatursensoren über Linux-Systemordner
+- MQTT (externer Broker): bidirektionale Anbindung
 
-**Phase 4 — API**
-- `api/auth.py`: JWT HS256 (python-jose), PBKDF2-HMAC-SHA256 password hashing (stdlib), API Keys
-  - Default user `admin`/`admin` created on first startup with log warning
-  - Full user management: `GET/POST /auth/users`, `GET/PATCH/DELETE /auth/users/{username}`, `GET /auth/me`, `POST /auth/me/change-password`
-- `api/v1/datapoints.py`: full CRUD + pagination (`DataPointPage`)
-- `api/v1/bindings.py`: binding CRUD, validates config against adapter schema, live adapter reload
-- `api/v1/search.py`: server-side filtering by name, tag, type, adapter
-- `api/v1/adapters.py`: status, JSON schema, connection test, config CRUD
-- `api/v1/system.py`: `/health` (no auth), `/adapters`, `/datatypes`
-- `api/v1/websocket.py`: `WebSocketManager`, selective subscribe, 60 s keepalive
-- `core/write_router.py`: MQTT `dp/+/set` → `adapter.write()` via DB binding lookup
+**REST-API (Phase 4)**
+- Vollständige Datenverwaltung über API
+- Anmeldung mit Benutzername/Passwort (Token) oder API-Schlüssel
+- Benutzerverwaltung (Admin-Berechtigungen)
+- MQTT-Zugang pro Benutzer konfigurierbar
 
-**Phase 5 — Advanced Features**
-- `ringbuffer/ringbuffer.py`: SQLite circular buffer (`:memory:` or disk), runtime-switchable via `reconfigure()`
-- `history/sqlite_plugin.py`: `history_values` writer, raw query, SQL + Python aggregation (avg/min/max/last × 8 intervals)
-- `api/v1/ringbuffer.py`: query, stats, runtime config
-- `api/v1/history.py`: raw query + aggregate endpoint
-- `api/v1/config.py`: full JSON export + import with upsert semantics
+**Erweiterte Funktionen (Phase 5)**
+- Verlauf: Werteverlauf mit Rohabfrage und Zusammenfassung
+- Änderungsprotokoll (RingBuffer): letzten N Wertänderungen, Speicher oder Datei
+- Sicherung & Wiederherstellung: komplette Konfiguration als JSON-Datei
 
-**Phase 6 — Deployment**
-- `Dockerfile`: multi-stage build (builder + runtime), `python:3.11-slim`, non-root user `opentws`
-- `docker-compose.yml`: OpenTWS + Mosquitto, healthchecks, `OPENTWS_JWT_SECRET` env var
-- `mosquitto/mosquitto.conf`: plain MQTT (1883) + WebSocket (9001), persistence enabled
-- `.dockerignore`, `.gitignore`, `.env.example`
+**Bereitstellung (Phase 6)**
+- Docker: mehrstufige Erstellung, schlankes Image, kein Root-Benutzer
+- Docker Compose: openTWS + Mosquitto mit Statusprüfungen
+- Konfigurationsbeispiele für alle Einstiegspunkte
 
-### Fixed
+**Logik-Editor (Phase 7)**
+- Visuelle Arbeitsfläche mit Drag & Drop
+- 15 eingebaute Blocktypen in 6 Kategorien: Konstante, Logik, Datenpunkt, Mathematik, Timer, Skript
+- Automatische Ausführung bei Wertänderungen
+- Manuelle Ausführung über Schaltfläche oder API
+- Filter und Wert-Transformation für DP-Blöcke
+- KNX-Projektdatei-Import (`.knxproj`) für Gruppenadress-Suchvorschläge
 
-- pydantic-settings 2.13 renamed `secrets_settings` → `file_secret_settings` in `settings_customise_sources()`. Fixed by using `**kwargs` to absorb the renamed parameter.
-- passlib + bcrypt 5.0 incompatible on Python 3.14 (`__about__` removed, password length constraints changed). Replaced with stdlib `hashlib.pbkdf2_hmac` (PBKDF2-HMAC-SHA256, 260 000 iterations, `hmac.compare_digest`).
-- `aiosqlite.Connection` has no `execute_fetchone` method. Fixed by using `async with conn.execute() as cur: await cur.fetchone()`.
+### Bekannte Einschränkungen
 
-### Known Limitations
-
-- Web GUI not yet implemented (technology TBD: React / Vue / HTMX)
-- `tws2opentws.py` migration CLI deferred
-- Single-user role model (admin / non-admin); granular RBAC planned for a later phase
-- 1-Wire adapter requires Linux sysfs; Windows is development-only
+- 1-Wire-Adapter benötigt Linux; unter Windows wird er deaktiviert, startet aber ohne Fehler
+- Einfaches Rollenmodell: nur „Administrator" und „Benutzer"; feinere Rechteverwaltung geplant
