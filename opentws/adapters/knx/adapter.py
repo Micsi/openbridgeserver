@@ -218,7 +218,7 @@ class KnxAdapter(AdapterBase):
                     quality = "good"
                 except Exception as exc:
                     logger.warning("KNX DPT decode error for %s (%s): %s", ga, dpt.dpt_id, exc)
-                    value = raw
+                    value = raw.hex() if isinstance(raw, (bytes, bytearray)) else raw
                     quality = "uncertain"
 
                 logger.info("KNX value: GA=%s → dp=%s value=%s", ga, binding.datapoint_id, value)
