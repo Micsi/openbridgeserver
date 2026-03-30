@@ -94,7 +94,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useDatapointStore } from '@/stores/datapoints'
 import { useWebSocketStore } from '@/stores/websocket'
 import Badge          from '@/components/ui/Badge.vue'
@@ -117,10 +117,13 @@ let unsubWs = null
 onMounted(async () => {
   await store.loadDatatypes()
   await store.fetchPage(0)
-  ws.subscribe(store.items.map(d => d.id))
   unsubWs = ws.onValue((id, value, quality) => store.patchValue(id, value, quality))
 })
 onUnmounted(() => unsubWs?.())
+
+watch(() => store.items, (items) => {
+  ws.subscribe(items.map(d => d.id))
+}, { immediate: true })
 
 function onSearch() {
   clearTimeout(searchTimeout)
@@ -131,7 +134,11 @@ function onSearch() {
   }, 350)
 }
 
-function goPage(p) { store.fetchPage(p) }
+function goPage(p) {
+  const { q, tag, type } = filters.value
+  if (q || tag || type) store.search({ q, tag, type, page: p })
+  else store.fetchPage(p)
+}
 
 function openCreate() { editTarget.value = null; showForm.value = true }
 function openEdit(dp) { editTarget.value = dp;   showForm.value = true }
