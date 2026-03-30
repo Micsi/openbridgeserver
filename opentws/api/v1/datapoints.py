@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 
 from opentws.api.auth import get_current_user
 from opentws.core.registry import get_registry
@@ -42,6 +42,12 @@ class DataPointOut(BaseModel):
     quality: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("value")
+    def _serialize_value(self, v: Any) -> Any:
+        if isinstance(v, (bytes, bytearray)):
+            return v.hex()
+        return v
 
 
 class DataPointPage(BaseModel):

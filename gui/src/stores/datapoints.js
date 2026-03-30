@@ -26,19 +26,14 @@ export const useDatapointStore = defineStore('datapoints', () => {
   }
 
   async function search(params) {
-    const reqParams = { ...params, size: params.size ?? 50, page: params.page ?? 0 }
-    console.log('[store.search] request params:', JSON.stringify(reqParams))
     loading.value = true
     try {
-      const { data } = await searchApi.search(reqParams)
-      console.log('[store.search] response: page=', data.page, 'pages=', data.pages, 'total=', data.total, 'items=', data.items.length)
+      const { data } = await searchApi.search({ ...params, size: params.size ?? 50, page: params.page ?? 0 })
       items.value = data.items
       total.value = data.total
       page.value  = data.page
       size.value  = data.size
       pages.value = data.pages
-    } catch (err) {
-      console.error('[store.search] error:', err)
     } finally {
       loading.value = false
     }
