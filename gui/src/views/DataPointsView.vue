@@ -136,8 +136,7 @@ function onSearch() {
 
 function goPage(p) {
   const { q, tag, type } = filters.value
-  if (q || tag || type) store.search({ q, tag, type, page: p })
-  else store.fetchPage(p)
+  store.search({ q, tag, type, page: p })
 }
 
 function openCreate() { editTarget.value = null; showForm.value = true }
