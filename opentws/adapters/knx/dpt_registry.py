@@ -99,6 +99,14 @@ def _dpt5_decode_raw(b: bytes) -> int:
 def _dpt5_encode_raw(v: Any) -> bytes:
     return bytes([max(0, min(255, int(v)))])
 
+def _dpt5_decode_angle(b: bytes) -> float:
+    """DPT5.003: 0…255 → 0°…360°"""
+    return round(b[0] * 360.0 / 255.0, 1)
+
+def _dpt5_encode_angle(v: Any) -> bytes:
+    """DPT5.003: 0°…360° → 0…255"""
+    return bytes([max(0, min(255, round(float(v) * 255.0 / 360.0)))])
+
 
 # --- DPT 6.x — 8-bit signed --------------------------------------------------
 def _dpt6_decode(b: bytes) -> int:
@@ -407,7 +415,7 @@ def _register_builtin_dpts() -> None:
 
         # DPT 5 — 8-bit unsigned
         DPTDefinition("DPT5.001", "Scaling (0-100%)",     "FLOAT",   "%",   1, _dpt5_encode_percent, _dpt5_decode_percent),
-        DPTDefinition("DPT5.003", "Angle",                "INTEGER", "\u00b0", 1, _dpt5_encode_raw, _dpt5_decode_raw),
+        DPTDefinition("DPT5.003", "Angle",                "FLOAT",   "\u00b0", 1, _dpt5_encode_angle, _dpt5_decode_angle),
         DPTDefinition("DPT5.004", "Percent (0-255%)",     "INTEGER", "%",   1, _dpt5_encode_raw,     _dpt5_decode_raw),
         DPTDefinition("DPT5.005", "Decimal Factor",       "INTEGER", "",    1, _dpt5_encode_raw,     _dpt5_decode_raw),
         DPTDefinition("DPT5.006", "Tariff",               "INTEGER", "",    1, _dpt5_encode_raw,     _dpt5_decode_raw),

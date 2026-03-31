@@ -115,7 +115,7 @@ $DptMap = @{
     "DPT3.008"  = @{ data_type="INTEGER"; unit="" }  # Jalousie
     # DPT 5 — 8-Bit unsigned
     "DPT5.001"  = @{ data_type="FLOAT";   unit="%" }
-    "DPT5.003"  = @{ data_type="INTEGER"; unit=$deg }
+    "DPT5.003"  = @{ data_type="FLOAT";   unit=$deg }  # Angle 0-255 → 0°-360°
     "DPT5.004"  = @{ data_type="INTEGER"; unit="%" }
     "DPT5.005"  = @{ data_type="INTEGER"; unit="" }
     "DPT5.006"  = @{ data_type="INTEGER"; unit="" }
