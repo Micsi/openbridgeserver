@@ -67,38 +67,7 @@
         </div>
       </div>
 
-      <!-- KNX Projekt Import -->
-      <div class="card p-5 flex flex-col gap-3">
-        <div class="flex items-center gap-2">
-          <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">KNX Projekt importieren</h3>
-          <span class="text-xs text-slate-500 bg-slate-700/50 px-2 py-0.5 rounded">.knxproj</span>
-        </div>
-        <p class="text-sm text-slate-400">
-          ETS-Projektdatei importieren. Alle Gruppenadressen (GA, Name, DPT) werden gespeichert,
-          stehen im Binding-Formular als Suchvorschläge zur Verfügung und werden in der Sicherung mitgesichert.
-        </p>
-        <div class="flex flex-col gap-2">
-          <input type="file" accept=".knxproj" @change="onKnxprojFile"
-            class="text-sm text-slate-400 file:btn-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:text-xs file:border-0 file:cursor-pointer" />
-          <div class="form-group">
-            <label class="label">Projektpasswort <span class="text-slate-600 font-normal">(optional)</span></label>
-            <input v-model="knxPassword" type="password" class="input text-sm" placeholder="Nur bei passwortgeschützten Projekten" autocomplete="off" />
-          </div>
-          <div class="flex items-center gap-3">
-            <button @click="doKnxImport" class="btn-primary btn-sm" :disabled="!knxFile || knxImporting">
-              <Spinner v-if="knxImporting" size="sm" color="white" />
-              Importieren
-            </button>
-          </div>
-        </div>
-        <div v-if="knxResult" :class="['p-3 rounded-lg text-sm', knxResult.ok ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30']">
-          {{ knxResult.text }}
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Theme ── -->
-    <div v-if="activeTab === 'theme'" class="max-w-md">
+      <!-- Erscheinungsbild -->
       <div class="card">
         <div class="card-header">
           <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">Erscheinungsbild</h3>
@@ -213,7 +182,7 @@
       </div>
     </div>
 
-    <!-- ── Sicherung / Wiederherstellung ── -->
+    <!-- ── Datenmanagement ── -->
     <div v-if="activeTab === 'importexport'" class="flex flex-col gap-4 max-w-lg">
       <div class="card p-5 flex flex-col gap-3">
         <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">Sicherung erstellen</h3>
@@ -225,6 +194,64 @@
         <p class="text-sm text-slate-400">Sicherungsdatei einspielen. Bestehende Einträge werden aktualisiert, fehlende neu angelegt.</p>
         <input type="file" accept=".json" @change="onImportFile" class="text-sm text-slate-400 file:btn-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:text-xs file:border-0 file:cursor-pointer" />
         <div v-if="importResult" :class="['p-3 rounded-lg text-sm', importResult.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']">{{ importResult.text }}</div>
+      </div>
+
+      <!-- KNX Projekt Import -->
+      <div class="card p-5 flex flex-col gap-3">
+        <div class="flex items-center gap-2">
+          <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">KNX Projekt importieren</h3>
+          <span class="text-xs text-slate-500 bg-slate-700/50 px-2 py-0.5 rounded">.knxproj</span>
+        </div>
+        <p class="text-sm text-slate-400">
+          ETS-Projektdatei importieren. Alle Gruppenadressen (GA, Name, DPT) werden gespeichert,
+          stehen im Binding-Formular als Suchvorschläge zur Verfügung und werden in der Sicherung mitgesichert.
+        </p>
+        <div class="flex flex-col gap-2">
+          <input type="file" accept=".knxproj" @change="onKnxprojFile"
+            class="text-sm text-slate-400 file:btn-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:text-xs file:border-0 file:cursor-pointer" />
+          <div class="form-group">
+            <label class="label">Projektpasswort <span class="text-slate-600 font-normal">(optional)</span></label>
+            <input v-model="knxPassword" type="password" class="input text-sm" placeholder="Nur bei passwortgeschützten Projekten" autocomplete="off" />
+          </div>
+
+          <!-- DataPoints anlegen -->
+          <label class="flex items-center gap-2 cursor-pointer select-none mt-1">
+            <input type="checkbox" v-model="knxCreateDps" class="w-4 h-4 rounded accent-blue-500" />
+            <span class="text-sm text-slate-600 dark:text-slate-300">DataPoints anlegen / aktualisieren</span>
+          </label>
+
+          <div v-if="knxCreateDps" class="flex flex-col gap-2 pl-6 border-l-2 border-blue-500/30">
+            <div class="form-group">
+              <label class="label">KNX-Adapter Instanz</label>
+              <select v-model="knxAdapterName" class="input text-sm">
+                <option value="">— bitte wählen —</option>
+                <option v-for="inst in knxAdapterInstances" :key="inst.name" :value="inst.name">{{ inst.name }}</option>
+              </select>
+              <p v-if="knxAdapterInstances.length === 0" class="text-xs text-amber-400 mt-1">
+                Keine KNX-Adapter-Instanz gefunden. Bitte zuerst einen KNX-Adapter anlegen.
+              </p>
+            </div>
+            <div class="form-group">
+              <label class="label">Richtung</label>
+              <select v-model="knxDirection" class="input text-sm">
+                <option value="BOTH">BOTH — lesen &amp; schreiben</option>
+                <option value="SOURCE">SOURCE — nur lesen (KNX → DataPoint)</option>
+                <option value="DEST">DEST — nur schreiben (DataPoint → KNX)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button @click="doKnxImport" class="btn-primary btn-sm"
+              :disabled="!knxFile || knxImporting || (knxCreateDps && !knxAdapterName)">
+              <Spinner v-if="knxImporting" size="sm" color="white" />
+              Importieren
+            </button>
+          </div>
+        </div>
+        <div v-if="knxResult" :class="['p-3 rounded-lg text-sm', knxResult.ok ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/30']">
+          {{ knxResult.text }}
+        </div>
       </div>
     </div>
 
@@ -375,7 +402,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { authApi, configApi, knxprojApi } from '@/api/client'
+import { authApi, adapterApi, configApi, knxprojApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { useTz } from '@/composables/useTz'
@@ -476,11 +503,10 @@ async function saveTz() {
 
 const tabs = [
   { id: 'general',      label: 'Allgemein' },
-  { id: 'theme',        label: 'Theme' },
   { id: 'password',     label: 'Passwort' },
   ...(auth.isAdmin ? [{ id: 'users', label: 'Benutzer' }] : []),
   { id: 'apikeys',      label: 'API Keys' },
-  { id: 'importexport', label: 'Sicherung' },
+  { id: 'importexport', label: 'Datenmanagement' },
   ...(auth.isAdmin ? [{ id: 'dangerzone', label: 'Danger Zone' }] : []),
 ]
 
@@ -620,17 +646,31 @@ async function onImportFile(e) {
 }
 
 // ── KNX Projekt Import ──────────────────────────────────────────────────────
-const knxFile      = ref(null)
-const knxPassword  = ref('')
-const knxImporting = ref(false)
-const knxResult    = ref(null)
-const knxGaCount   = ref(0)
+const knxFile             = ref(null)
+const knxPassword         = ref('')
+const knxImporting        = ref(false)
+const knxResult           = ref(null)
+const knxGaCount          = ref(0)
+const knxCreateDps        = ref(false)
+const knxAdapterName      = ref('')
+const knxDirection        = ref('SOURCE')
+const knxAdapterInstances = ref([])
 
 async function loadKnxGaCount() {
   try {
     const { data } = await knxprojApi.listGA({ size: 1 })
     knxGaCount.value = data.total || 0
   } catch { knxGaCount.value = 0 }
+}
+
+async function loadKnxAdapterInstances() {
+  try {
+    const { data } = await adapterApi.listInstances()
+    knxAdapterInstances.value = (data || []).filter(i => i.adapter_type?.toUpperCase() === 'KNX')
+    if (knxAdapterInstances.value.length === 1) {
+      knxAdapterName.value = knxAdapterInstances.value[0].name
+    }
+  } catch { knxAdapterInstances.value = [] }
 }
 
 function onKnxprojFile(e) {
@@ -646,7 +686,12 @@ async function doKnxImport() {
     const fd = new FormData()
     fd.append('file', knxFile.value)
     if (knxPassword.value) fd.append('password', knxPassword.value)
-    const { data } = await knxprojApi.import(fd)
+    const params = {}
+    if (knxCreateDps.value && knxAdapterName.value) {
+      params.adapter_name = knxAdapterName.value
+      params.direction    = knxDirection.value
+    }
+    const { data } = await knxprojApi.import(fd, params)
     knxResult.value = { ok: true, text: data.message }
     await loadKnxGaCount()
   } catch (err) {
@@ -661,6 +706,7 @@ onMounted(async () => {
   if (auth.isAdmin) await loadUsers()
   await loadKeys()
   await loadKnxGaCount()
+  await loadKnxAdapterInstances()
 })
 // Note: timezone onMounted is defined above (merged there)
 
