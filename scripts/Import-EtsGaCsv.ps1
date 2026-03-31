@@ -368,108 +368,66 @@ function Get-ColValue {
 }
 
 # ---------------------------------------------------------------------------
-# Hauptlogik
+# Hauptlogik — Bulk-Upload (1 HTTP-Request statt N×2)
 # ---------------------------------------------------------------------------
 
 Write-Host "openTWS ETS-GA-Import gestartet" -ForegroundColor Cyan
-Write-Host "  Datei    : $File"
-Write-Host "  Kodierung: $Encoding (Auto = BOM-Erkennung: UTF8 oder Default/ANSI)"
-Write-Host "  Adapter  : $Adapter"
-Write-Host "  Richtung : $Direction"
+Write-Host "  Datei   : $File"
+Write-Host "  Adapter : $Adapter"
+Write-Host "  Richtung: $Direction"
 Write-Host ""
 
-# CSV einlesen
 if (-not (Test-Path $File)) { throw "Datei nicht gefunden: $File" }
-if ($Encoding -eq "Auto") {
-    $Encoding = Detect-Encoding -Path $File
-    Write-Host "  Kodierung: Auto $arr $Encoding erkannt" -ForegroundColor Gray
-}
-$delim   = Detect-Delimiter -Path $File -Enc $Encoding
-$rows    = Import-Csv -Path $File -Delimiter $delim -Encoding $Encoding
 
-# Adapter-ID ermitteln
-Write-Host "Suche Adapter-Instanz '$Adapter'..." -ForegroundColor Yellow
-$adapterId = Find-AdapterByName -Name $Adapter
-Write-Host "  $arr ID: $adapterId" -ForegroundColor Green
+# CSV als Rohdatei hochladen — Server erkennt Encoding (BOM/cp1252) selbst
+Add-Type -AssemblyName System.Net.Http
 
-# Statistik
-$ok      = 0
-$skipped = 0
-$failed  = [System.Collections.Generic.List[string]]::new()
+$fileName  = [System.IO.Path]::GetFileName($File)
+$adapterEnc = [Uri]::EscapeDataString($Adapter)
+$uri       = "$($Url.TrimEnd('/'))/api/v1/knxproj/import-csv?adapter_name=$adapterEnc&direction=$Direction"
 
-$total = @($rows).Count
-$i     = 0
+$httpClient    = [System.Net.Http.HttpClient]::new()
+$httpClient.DefaultRequestHeaders.Add("X-API-Key", $ApiKey)
 
-foreach ($row in $rows) {
-    $i++
-    $ga   = Get-ColValue $row $AddressCols
-    $name = Get-ColValue $row $NameCols
-    $dptRaw = Get-ColValue $row $DptCols
+$fileStream    = [System.IO.File]::OpenRead($File)
+$streamContent = [System.Net.Http.StreamContent]::new($fileStream)
+$streamContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new("text/csv")
 
-    # GA fehlt oder ist unvollständig (z.B. "2/7/-") → überspringen
-    if ([string]::IsNullOrWhiteSpace($ga)) { $skipped++; continue }
-    if ($ga -notmatch '^\d+/\d+/\d+$')    { $skipped++; continue }
-    if ([string]::IsNullOrWhiteSpace($name)) { $name = $ga }
+$form = [System.Net.Http.MultipartFormDataContent]::new()
+$form.Add($streamContent, "file", $fileName)
 
-    Write-Progress -Activity "Importiere GAs" -Status "$i/$total  $ga  $name" -PercentComplete ([int]($i * 100 / $total))
+Write-Host "Lade CSV hoch und importiere..." -ForegroundColor Yellow
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
 
-    try {
-        # DPT auflösen
-        $dptId    = Convert-EtsDpt -raw $dptRaw
-        $dataType = "FLOAT"
-        $unit     = ""
+try {
+    $response = $httpClient.PostAsync($uri, $form).GetAwaiter().GetResult()
+    $sw.Stop()
+    $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
 
-        if ($null -ne $dptId -and $DptMap.ContainsKey($dptId)) {
-            $dataType = $DptMap[$dptId].data_type
-            $unit     = $DptMap[$dptId].unit
-        }
-
-        # DataPoint anlegen
-        $dpBody = @{ name=$name; data_type=$dataType }
-        if (-not [string]::IsNullOrEmpty($unit)) { $dpBody["unit"] = $unit }
-
-        $dp = Invoke-Api -Method POST -Path "/datapoints" -Body $dpBody
-
-        # Binding anlegen
-        $bindConfig = @{ group_address=$ga }
-        if ($null -ne $dptId) { $bindConfig["dpt_id"] = $dptId }
-
-        $bindBody = @{
-            adapter_instance_id = $adapterId
-            direction           = $Direction
-            config              = $bindConfig
-        }
-        Invoke-Api -Method POST -Path "/datapoints/$($dp.id)/bindings" -Body $bindBody | Out-Null
-
-        $ok++
-        Write-Verbose "OK  $ga  →  DP $($dp.id)"
+    if (-not $response.IsSuccessStatusCode) {
+        throw "Server-Fehler $([int]$response.StatusCode): $body"
     }
-    catch {
-        $msg = "FEHLER  $ga  ($name): $_"
-        $failed.Add($msg)
-        Write-Warning $msg
-    }
+
+    $result = $body | ConvertFrom-Json
+
+    Write-Host ""
+    Write-Host "Import abgeschlossen" -ForegroundColor Cyan
+    Write-Host "  Neu erstellt : $($result.created)"
+    Write-Host "  Aktualisiert : $($result.updated)"
+    Write-Host "  Total        : $($result.imported)"
+    Write-Host "  Dauer        : $($sw.Elapsed.TotalSeconds.ToString('F1'))s"
+    Write-Host "  Meldung      : $($result.message)" -ForegroundColor Green
 }
-
-Write-Progress -Activity "Importiere GAs" -Completed
-
-# ---------------------------------------------------------------------------
-# Ergebnis
-# ---------------------------------------------------------------------------
-Write-Host ""
-Write-Host "Import abgeschlossen" -ForegroundColor Cyan
-Write-Host "  Erfolgreich : $ok"
-Write-Host "  Übersprungen: $skipped  (keine oder unvollständige Adresse)"
-Write-Host "  Fehler      : $($failed.Count)"
-
-if ($failed.Count -gt 0) {
+catch {
+    Write-Host ""
+    Write-Host "Import fehlgeschlagen: $_" -ForegroundColor Red
     if (-not [string]::IsNullOrWhiteSpace($LogFile)) {
-        $failed | Set-Content -Path $LogFile -Encoding UTF8
+        $_ | Out-File -FilePath $LogFile -Encoding UTF8
         Write-Host "  Fehlerprotokoll: $LogFile" -ForegroundColor Yellow
     }
-    else {
-        Write-Host ""
-        Write-Host "Fehlgeschlagene Gruppenadressen:" -ForegroundColor Yellow
-        $failed | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
-    }
+    exit 1
+}
+finally {
+    $fileStream.Dispose()
+    $httpClient.Dispose()
 }
