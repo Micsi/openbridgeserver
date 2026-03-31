@@ -476,12 +476,15 @@ async def clear_bindings(
     _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> ClearResult:
-    """Delete all Bindings. Admin only."""
+    """Delete all Bindings and reload running adapter instances. Admin only."""
     result = ClearResult(deleted=0)
     try:
         row = await db.fetchone("SELECT COUNT(*) as n FROM adapter_bindings")
         result.deleted = row["n"] if row else 0
         await db.execute_and_commit("DELETE FROM adapter_bindings")
+        from opentws.adapters import registry as adapter_registry
+        for instance_id in list(adapter_registry.get_all_instances().keys()):
+            await adapter_registry.reload_instance_bindings(instance_id, db)
     except Exception as exc:
         result.errors.append(f"Bindings clear failed: {exc}")
     return result
