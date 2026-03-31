@@ -43,10 +43,12 @@ def _dpt_from_csv(dpt_str: str | None) -> str | None:
     if m:
         main = int(m.group(1))
         defaults = {
-            1: "DPT1.001",  2: "DPT2.001",  5: "DPT5.001",
-            6: "DPT6.010",  7: "DPT7.001",  8: "DPT8.001",
-            9: "DPT9.001", 12: "DPT12.001", 13: "DPT13.001",
-            14: "DPT14.054", 16: "DPT16.000",
+            1: "DPT1.001",  2: "DPT2.001",  3: "DPT3.007",
+            5: "DPT5.001",  6: "DPT6.010",  7: "DPT7.001",
+            8: "DPT8.001",  9: "DPT9.001", 10: "DPT10.001",
+            11: "DPT11.001", 12: "DPT12.001", 13: "DPT13.001",
+            14: "DPT14.054", 16: "DPT16.000", 18: "DPT18.001",
+            19: "DPT19.001", 20: "DPT20.102",
         }
         return defaults.get(main, f"DPT{main}.001")
 
