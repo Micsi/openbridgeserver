@@ -285,6 +285,39 @@ def _dpt29_encode(v: Any) -> bytes:
     return struct.pack(">q", max(-9223372036854775808, min(9223372036854775807, int(v))))
 
 
+# --- DPT 2.x — 2-bit controlled value ----------------------------------------
+# Bit 1: Control (priority/override), Bit 0: Value
+# Returns integer 0-3; caller interprets control + value semantics
+def _dpt2_decode(b: bytes) -> int:
+    return b[0] & 0x03
+
+def _dpt2_encode(v: Any) -> bytes:
+    return bytes([max(0, min(3, int(v))) & 0x03])
+
+
+# --- DPT 4.x — 1-byte character -----------------------------------------------
+def _dpt4_001_decode(b: bytes) -> str:
+    return b[:1].decode("ascii", errors="replace")
+
+def _dpt4_001_encode(v: Any) -> bytes:
+    return str(v)[:1].encode("ascii", errors="replace").ljust(1, b"\x00")
+
+def _dpt4_002_decode(b: bytes) -> str:
+    return b[:1].decode("latin-1", errors="replace")
+
+def _dpt4_002_encode(v: Any) -> bytes:
+    return str(v)[:1].encode("latin-1", errors="replace").ljust(1, b"\x00")
+
+
+# --- DPT 17.x — Scene Number (1 byte) ----------------------------------------
+# Bits 5..0: Scene number 0-63 (= ETS scenes 1-64)
+def _dpt17_decode(b: bytes) -> int:
+    return b[0] & 0x3F
+
+def _dpt17_encode(v: Any) -> bytes:
+    return bytes([max(0, min(63, int(v))) & 0x3F])
+
+
 # --- DPT 18.x — Scene Control (1 byte) ---------------------------------------
 # Bit 7: 0=Activate, 1=Learn  |  Bits 5..0: Scene number (0..63)
 # Wert = Szenennummer (0-63); negativ = Lern-Modus (z.B. -1 → Szene 0 lernen)
@@ -351,6 +384,41 @@ def _dpt20_102_decode(b: bytes) -> int:
 def _dpt20_102_encode(v: Any) -> bytes:
     lo, hi = _DPT20_102_VALID_RANGE
     return bytes([max(lo, min(hi, int(v)))])
+
+
+# --- DPT 240.x — Combined Position (3 bytes) ----------------------------------
+# Byte 0 (MSB): HeightPosition U8  0-255 → 0-100 %  (~0.4 % resolution)
+# Byte 1:       SlatsPosition  U8  0-255 → 0-100 %
+# Byte 2 (LSB): Attributes     B8  Bit0=ValidHeightPos, Bit1=ValidSlatsPos
+def _dpt240_800_decode(b: bytes) -> dict:
+    height_raw = b[0]
+    slats_raw  = b[1]
+    attrs      = b[2]
+    valid_h    = bool(attrs & 0x01)
+    valid_s    = bool(attrs & 0x02)
+    return {
+        "height_pct": round(height_raw * 100.0 / 255.0, 1) if valid_h else None,
+        "slats_pct":  round(slats_raw  * 100.0 / 255.0, 1) if valid_s else None,
+        "valid_height": valid_h,
+        "valid_slats":  valid_s,
+    }
+
+def _dpt240_800_encode(v: Any) -> bytes:
+    import json as _json
+    if isinstance(v, str):
+        v = _json.loads(v)
+    if isinstance(v, dict):
+        h       = float(v.get("height_pct") or 0)
+        s       = float(v.get("slats_pct")  or 0)
+        valid_h = bool(v.get("valid_height", True))
+        valid_s = bool(v.get("valid_slats",  True))
+    else:
+        h = s = 0.0
+        valid_h = valid_s = False
+    height_raw = max(0, min(255, round(h * 255.0 / 100.0)))
+    slats_raw  = max(0, min(255, round(s * 255.0 / 100.0)))
+    attrs      = (0x01 if valid_h else 0x00) | (0x02 if valid_s else 0x00)
+    return bytes([height_raw, slats_raw, attrs])
 
 
 # --- DPT 219.x — AlarmInfo (2 bytes) ------------------------------------------
@@ -474,12 +542,21 @@ def _register_builtin_dpts() -> None:
         DPTDefinition("DPT9.029", "Absolute Humidity",    "FLOAT", "g/m\u00b3", 2, _dpt9_encode, _dpt9_decode),
         DPTDefinition("DPT9.030", "Concentration",        "FLOAT", "\u03bcg/m\u00b3", 2, _dpt9_encode, _dpt9_decode),
 
+        # DPT 2 — 2-bit controlled value
+        DPTDefinition("DPT2.001", "Switch Control",      "INTEGER", "",    1, _dpt2_encode, _dpt2_decode),
+        DPTDefinition("DPT2.002", "Bool Control",        "INTEGER", "",    1, _dpt2_encode, _dpt2_decode),
+
+        # DPT 4 — 1-byte character
+        DPTDefinition("DPT4.001", "Character (ASCII)",      "STRING", "",  1, _dpt4_001_encode, _dpt4_001_decode),
+        DPTDefinition("DPT4.002", "Character (ISO 8859-1)", "STRING", "",  1, _dpt4_002_encode, _dpt4_002_decode),
+
         # DPT 12 — 32-bit unsigned
         DPTDefinition("DPT12.001", "Counter (32-bit)",    "INTEGER", "",     4, _dpt12_encode, _dpt12_decode),
 
         # DPT 13 — 32-bit signed
         DPTDefinition("DPT13.001", "Counter (32-bit signed)", "INTEGER", "", 4, _dpt13_encode, _dpt13_decode),
-        DPTDefinition("DPT13.010", "Active Energy (Wh)", "INTEGER", "Wh",   4, _dpt13_encode, _dpt13_decode),
+        DPTDefinition("DPT13.010", "Active Energy (Wh)",  "INTEGER", "Wh",  4, _dpt13_encode, _dpt13_decode),
+        DPTDefinition("DPT13.013", "Active Energy (kWh)", "INTEGER", "kWh", 4, _dpt13_encode, _dpt13_decode),
 
         # DPT 14 — 32-bit IEEE float (vollständig nach KNX-Spec v02.02.01)
         DPTDefinition("DPT14.000", "Acceleration",              "FLOAT", "m/s\u00b2",   4, _dpt14_encode, _dpt14_decode),
@@ -590,8 +667,14 @@ def _register_builtin_dpts() -> None:
         DPTDefinition("DPT29.011", "Apparent Energy (VAh)","INTEGER", "VAh",  8, _dpt29_encode, _dpt29_decode),
         DPTDefinition("DPT29.012", "Reactive Energy (VARh)","INTEGER","VARh", 8, _dpt29_encode, _dpt29_decode),
 
+        # DPT 17 — Scene Number (1 byte, 0-63)
+        DPTDefinition("DPT17.001", "Scene Number",        "INTEGER", "",     1, _dpt17_encode, _dpt17_decode),
+
         # DPT 219 — AlarmInfo (2 bytes)
         DPTDefinition("DPT219.001", "AlarmInfo",          "INTEGER", "",     2, _dpt219_encode, _dpt219_decode),
+
+        # DPT 240 — Combined Position (3 bytes, Shutter & Blinds)
+        DPTDefinition("DPT240.800", "Combined Position",  "STRING",  "",     3, _dpt240_800_encode, _dpt240_800_decode),
     ]
     for d in defs:
         DPTRegistry.register(d)
