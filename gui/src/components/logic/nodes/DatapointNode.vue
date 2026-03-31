@@ -1,9 +1,9 @@
 <template>
-  <div class="gn-wrap" @mouseenter="hovered = true" @mouseleave="hovered = false">
+  <div class="gn-wrap" ref="wrapRef" @mouseenter="hovered = true" @mouseleave="hovered = false">
 
     <template v-if="isWrite">
-      <Handle type="target" id="value"   :position="Position.Left" :style="{ top: '45%' }" />
-      <Handle type="target" id="trigger" :position="Position.Left" :style="{ top: '68%' }" />
+      <Handle type="target" id="value"   :position="Position.Left" :style="{ top: port1Top }" />
+      <Handle type="target" id="trigger" :position="Position.Left" :style="{ top: port2Top }" />
     </template>
 
     <div class="gn-card">
@@ -20,27 +20,27 @@
       </div>
       <div class="gn-ports">
         <div v-if="isWrite" class="gn-port-col">
-          <span class="gn-port-label">Wert</span>
-          <span class="gn-port-label">Trigger</span>
+          <span ref="portRef1" class="gn-port-label">Wert</span>
+          <span ref="portRef2" class="gn-port-label">Trigger</span>
         </div>
         <div v-else class="gn-port-col" style="margin-left:auto;align-items:flex-end;">
-          <span class="gn-port-label">Wert</span>
-          <span class="gn-port-label">Geändert</span>
+          <span ref="portRef1" class="gn-port-label">Wert</span>
+          <span ref="portRef2" class="gn-port-label">Geändert</span>
         </div>
       </div>
       <div v-if="data._dbg" class="gn-debug">{{ data._dbg }}</div>
     </div>
 
     <template v-if="!isWrite">
-      <Handle type="source" id="value"   :position="Position.Right" class="gn-handle-out" :style="{ top: '45%' }" />
-      <Handle type="source" id="changed" :position="Position.Right" class="gn-handle-out" :style="{ top: '68%' }" />
+      <Handle type="source" id="value"   :position="Position.Right" class="gn-handle-out" :style="{ top: port1Top }" />
+      <Handle type="source" id="changed" :position="Position.Right" class="gn-handle-out" :style="{ top: port2Top }" />
     </template>
 
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 
 const props = defineProps({
@@ -53,6 +53,28 @@ const isWrite   = computed(() => props.type === 'datapoint_write')
 const hovered   = ref(false)
 const { removeNodes } = useVueFlow()
 function remove() { removeNodes([props.id]) }
+
+// ── Handle positioning: align with port labels ────────────────────────────
+const wrapRef  = ref(null)
+const portRef1 = ref(null)
+const portRef2 = ref(null)
+const port1Top = ref('50%')
+const port2Top = ref('75%')
+
+function updateHandlePositions() {
+  nextTick(() => {
+    if (!wrapRef.value || !portRef1.value || !portRef2.value) return
+    const wrapRect = wrapRef.value.getBoundingClientRect()
+    if (!wrapRect.height) return
+    const r1 = portRef1.value.getBoundingClientRect()
+    const r2 = portRef2.value.getBoundingClientRect()
+    port1Top.value = `${r1.top + r1.height / 2 - wrapRect.top}px`
+    port2Top.value = `${r2.top + r2.height / 2 - wrapRect.top}px`
+  })
+}
+
+onMounted(updateHandlePositions)
+watch(() => props.data._dbg, updateHandlePositions)
 
 const hasFilter = computed(() => {
   const d = props.data
