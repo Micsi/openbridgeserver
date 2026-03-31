@@ -8,12 +8,44 @@
   --surface-900: #f0f2f7;
   --surface-800: #ffffff;
   --surface-700: #f1f5f9;
+
+  /* Logic Engine */
+  --logic-canvas-bg:  #e2e8f0;
+  --logic-minimap-bg: #f8fafc;
+  --node-card-bg:     #ffffff;
+  --node-card-border: #cbd5e1;
+  --node-title-color: #0f172a;
+  --node-port-label:  #64748b;
+  --node-summary-color: #64748b;
+  --node-debug-bg:    rgba(16, 185, 129, 0.05);
+  --node-debug-color: #b45309;
+  --handle-in-bg:     #94a3b8;
+  --handle-out-bg:    #3b82f6;
+  --handle-border:    #e2e8f0;
+  --node-del-color:   #94a3b8;
+  --node-dp-active:   #0f766e;
 }
 .dark {
   --surface-950: #090b11;
   --surface-900: #0f1117;
   --surface-800: #161b27;
   --surface-700: #1e2435;
+
+  /* Logic Engine */
+  --logic-canvas-bg:  #0f172a;
+  --logic-minimap-bg: #1e293b;
+  --node-card-bg:     #1e293b;
+  --node-card-border: #334155;
+  --node-title-color: #f1f5f9;
+  --node-port-label:  #64748b;
+  --node-summary-color: #94a3b8;
+  --node-debug-bg:    rgba(16, 185, 129, 0.08);
+  --node-debug-color: #fbbf24;
+  --handle-in-bg:     #94a3b8;
+  --handle-out-bg:    #60a5fa;
+  --handle-border:    #0f172a;
+  --node-del-color:   #64748b;
+  --node-dp-active:   #5eead4;
 }
 
 @layer base {
