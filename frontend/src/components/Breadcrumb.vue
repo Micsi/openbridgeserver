@@ -55,7 +55,8 @@ function accessIcon(node: VisuNode): string {
   <nav v-if="breadcrumb.length > 0" class="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 flex-wrap">
     <!-- Haus-Icon -->
     <button
-      class="text-sm leading-none hover:text-gray-900 dark:hover:text-gray-200 transition-colors"
+      class="hover:text-gray-900 dark:hover:text-gray-200 transition-colors"
+      style="font-size: 0.85em; line-height: 1"
       title="Startseite"
       @click="router.push({ name: 'tree' })"
     >⌂</button>
