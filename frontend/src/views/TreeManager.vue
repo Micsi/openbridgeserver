@@ -311,7 +311,7 @@ onMounted(async () => {
     <div v-else class="flex-1 flex min-h-0">
 
       <!-- ── Baum (links) ──────────────────────────────────────────────────── -->
-      <div class="w-80 flex-shrink-0 flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 overflow-y-auto">
+      <div class="w-96 flex-shrink-0 flex flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 overflow-y-auto">
         <div class="flex items-center justify-between px-3 pt-3 pb-2">
           <span class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Struktur</span>
           <button
@@ -345,7 +345,7 @@ onMounted(async () => {
 
             <!-- Icon + Name -->
             <span class="flex-shrink-0 leading-none">{{ node.icon ?? (node.type === 'PAGE' ? '📄' : '📁') }}</span>
-            <span class="flex-1 truncate text-sm">{{ node.name }}</span>
+            <span class="flex-1 truncate text-sm" :title="node.name">{{ node.name }}</span>
 
             <!-- Type-Badge -->
             <span class="flex-shrink-0 text-xs px-1 rounded"
