@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { datapoints } from '@/api/client'
 import type { DataPointValue } from '@/types'
 
@@ -30,16 +30,38 @@ function toNumber(v: DataPointValue | null): number {
   return isNaN(parsed) ? min.value : parsed
 }
 
+// localValue: nur der Ziehlwert während der Nutzer dragged
 const localValue = ref(toNumber(displayValue.value))
-// true solange der Nutzer den Slider zieht → WS-Updates werden gepuffert
 const isDragging = ref(false)
 
-// Eingehende Werte synchronisieren, solange der Nutzer nicht zieht
+/**
+ * Anzeigewert:
+ * - Während des Ziehens: localValue (sofortige UI-Reaktion)
+ * - Sonst: immer aktueller Status-Datenpunkt-Wert (reaktiv!)
+ *
+ * Durch das Computed wird displayValue immer angezeigt wenn isDragging=false,
+ * auch wenn sich der Wert extern ändert (z.B. Schalter ausschalten).
+ */
+const shownValue = computed(() =>
+  isDragging.value ? localValue.value : toNumber(displayValue.value)
+)
+
+// localValue mit Status synchron halten, damit Drag vom richtigen Wert startet
 watch(displayValue, (v) => {
   if (!isDragging.value) {
     localValue.value = toNumber(v)
   }
 })
+
+// Sicherheits-Reset: falls pointerup ausserhalb des Elements endet,
+// isDragging trotzdem zurücksetzen
+function onWindowPointerUp() {
+  if (isDragging.value) {
+    isDragging.value = false
+  }
+}
+onMounted(() => window.addEventListener('pointerup', onWindowPointerUp))
+onUnmounted(() => window.removeEventListener('pointerup', onWindowPointerUp))
 
 /** @input → Live-Vorschau während des Ziehens (kein Senden) */
 function onInput(e: Event) {
@@ -68,7 +90,7 @@ async function sendValue() {
   <div class="flex flex-col justify-between h-full p-3 select-none">
     <span class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ label }}</span>
     <div class="flex items-baseline gap-1 my-1">
-      <span class="text-xl font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ localValue }}</span>
+      <span class="text-xl font-semibold tabular-nums text-gray-900 dark:text-gray-100">{{ shownValue }}</span>
       <span v-if="unit" class="text-sm text-gray-400 dark:text-gray-400">{{ unit }}</span>
     </div>
     <input
@@ -76,7 +98,7 @@ async function sendValue() {
       :min="min"
       :max="max"
       :step="step"
-      :value="localValue"
+      :value="shownValue"
       :disabled="editorMode"
       class="w-full accent-blue-500 cursor-pointer disabled:cursor-default disabled:opacity-50"
       @input="onInput"
