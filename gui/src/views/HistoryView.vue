@@ -77,9 +77,9 @@
           <tbody>
             <tr v-for="(p, i) in points" :key="i">
               <td class="font-mono text-xs text-slate-400">{{ fmtDateTime(p.ts) }}</td>
-              <td class="font-mono text-blue-500 dark:text-blue-300">{{ p.value }}</td>
-              <td><Badge :variant="p.quality === 'good' ? 'success' : 'warning'" size="xs">{{ p.quality }}</Badge></td>
-              <td class="text-slate-500 text-xs">{{ p.adapter_type ?? '—' }}</td>
+              <td class="font-mono text-blue-500 dark:text-blue-300">{{ p.v ?? '—' }}<span v-if="p.u" class="text-slate-500 ml-1 text-xs">{{ p.u }}</span></td>
+              <td><Badge :variant="p.q === 'good' ? 'success' : 'warning'" size="xs">{{ p.q }}</Badge></td>
+              <td class="text-slate-500 text-xs">—</td>
             </tr>
           </tbody>
         </table>
@@ -176,8 +176,8 @@ function renderChart() {
   if (!chartCanvas.value || !points.value.length) return
   chartInstance?.destroy()
 
-  const labels = points.value.map(p => fmtChartLabel(p.ts))
-  const values = points.value.map(p => p.value)
+  const labels = points.value.map(p => fmtChartLabel(p.ts ?? p.bucket))
+  const values = points.value.map(p => p.v)
 
   const dark = document.documentElement.classList.contains('dark')
   const tickColor   = dark ? '#64748b' : '#94a3b8'
