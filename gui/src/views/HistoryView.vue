@@ -8,12 +8,14 @@
     <!-- Controls -->
     <div class="card p-4">
       <div class="flex flex-wrap gap-3 items-end">
-        <div class="form-group min-w-52 flex-1">
+        <div class="form-group min-w-64 flex-1">
           <label class="label">DataPoint</label>
-          <select v-model="selectedDp" class="input">
-            <option value="">DataPoint wählen …</option>
-            <option v-for="dp in dpStore.items" :key="dp.id" :value="dp.id">{{ dp.name }}</option>
-          </select>
+          <DpCombobox
+            v-model="selectedDp"
+            :display-name="selectedDpName"
+            @select="onDpSelect"
+            placeholder="DataPoint suchen …"
+          />
         </div>
         <div class="form-group">
           <label class="label">Von</label>
@@ -89,20 +91,30 @@
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { historyApi } from '@/api/client'
-import { useDatapointStore } from '@/stores/datapoints'
+import { historyApi, dpApi } from '@/api/client'
 import { useTz } from '@/composables/useTz'
-import Badge   from '@/components/ui/Badge.vue'
-import Spinner from '@/components/ui/Spinner.vue'
+import Badge       from '@/components/ui/Badge.vue'
+import Spinner     from '@/components/ui/Spinner.vue'
+import DpCombobox  from '@/components/ui/DpCombobox.vue'
 import { Chart, LineController, LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend } from 'chart.js'
 import 'chart.js/auto'
 
 const { fmtDateTime, fmtChartLabel, toDatetimeLocal, fromDatetimeLocal } = useTz()
 
-const route   = useRoute()
-const dpStore = useDatapointStore()
+const route = useRoute()
 
-const selectedDp  = ref(route.query.dp ?? '')
+const selectedDp     = ref(route.query.dp ?? '')
+const selectedDpName = ref('')
+
+function onDpSelect(dp) {
+  if (dp) {
+    selectedDp.value     = dp.id
+    selectedDpName.value = dp.name
+  } else {
+    selectedDp.value     = ''
+    selectedDpName.value = ''
+  }
+}
 const fromTs      = ref(toDatetimeLocal(new Date(Date.now() - 24 * 3600 * 1000)))
 const toTs        = ref(toDatetimeLocal(new Date()))
 const mode        = ref('aggregate')
@@ -121,15 +133,21 @@ const intervals = [
 
 const chartTitle = computed(() => {
   if (!selectedDp.value) return 'Verlauf'
-  const dp = dpStore.items.find(d => d.id === selectedDp.value)
-  return dp ? `${dp.name} ${mode.value === 'aggregate' ? `(${aggFn.value} / ${aggInterval.value})` : '(raw)'}` : 'Verlauf'
+  const name = selectedDpName.value || selectedDp.value
+  return `${name} ${mode.value === 'aggregate' ? `(${aggFn.value} / ${aggInterval.value})` : '(raw)'}`
 })
 
 // defaultFrom is no longer needed — fromTs is initialized via toDatetimeLocal()
 
 onMounted(async () => {
-  if (!dpStore.items.length) await dpStore.fetchPage(0, 200)
-  if (selectedDp.value) await load()
+  // If opened with ?dp=<uuid>, resolve the name so the combobox shows it
+  if (selectedDp.value) {
+    try {
+      const { data } = await dpApi.get(selectedDp.value)
+      selectedDpName.value = data.name
+    } catch { /* ignore */ }
+    await load()
+  }
 })
 
 async function load() {
