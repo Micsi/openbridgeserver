@@ -12,41 +12,46 @@ const props = defineProps<{
 }>()
 
 const label = computed(() => (props.config.label as string | undefined) ?? '—')
-const min = computed(() => (props.config.min as number | undefined) ?? 0)
-const max = computed(() => (props.config.max as number | undefined) ?? 100)
-const step = computed(() => (props.config.step as number | undefined) ?? 1)
+const min   = computed(() => (props.config.min  as number | undefined) ?? 0)
+const max   = computed(() => (props.config.max  as number | undefined) ?? 100)
+const step  = computed(() => (props.config.step as number | undefined) ?? 1)
 
 // Status-Datenpunkt hat Vorrang für die Anzeige
 const displayValue = computed(() => props.statusValue ?? props.value)
 
 const unit = computed(() => (props.config.unit as string | undefined) ?? (displayValue.value?.u ?? ''))
 
-function resolveNumber(v: DataPointValue | null): number {
+/** Wandelt DataPointValue in eine Zahl um – akzeptiert number und string */
+function toNumber(v: DataPointValue | null): number {
   if (v === null) return min.value
   const raw = v.v
-  return typeof raw === 'number' ? raw : min.value
+  if (typeof raw === 'number') return raw
+  const parsed = parseFloat(String(raw))
+  return isNaN(parsed) ? min.value : parsed
 }
 
-const localValue = ref(resolveNumber(displayValue.value))
-let dragging = false
+const localValue = ref(toNumber(displayValue.value))
+// true solange der Nutzer den Slider zieht → WS-Updates werden gepuffert
+const isDragging = ref(false)
 
 // Eingehende Werte synchronisieren, solange der Nutzer nicht zieht
 watch(displayValue, (v) => {
-  if (!dragging) {
-    localValue.value = resolveNumber(v)
+  if (!isDragging.value) {
+    localValue.value = toNumber(v)
   }
 })
 
-let debounce: ReturnType<typeof setTimeout> | null = null
-
+/** @input → Live-Vorschau während des Ziehens (kein Senden) */
 function onInput(e: Event) {
-  dragging = true
+  isDragging.value = true
   localValue.value = Number((e.target as HTMLInputElement).value)
-  if (debounce) clearTimeout(debounce)
-  debounce = setTimeout(() => {
-    dragging = false
-    sendValue()
-  }, 300)
+}
+
+/** @change → feuert beim Loslassen (Maus, Touch, Tastatur) → Wert senden */
+function onChange(e: Event) {
+  localValue.value = Number((e.target as HTMLInputElement).value)
+  isDragging.value = false
+  sendValue()
 }
 
 async function sendValue() {
@@ -73,8 +78,9 @@ async function sendValue() {
       :step="step"
       :value="localValue"
       :disabled="editorMode"
-      class="w-full accent-blue-500 cursor-pointer"
+      class="w-full accent-blue-500 cursor-pointer disabled:cursor-default disabled:opacity-50"
       @input="onInput"
+      @change="onChange"
     />
     <div class="flex justify-between text-xs text-gray-400 dark:text-gray-500 mt-0.5">
       <span>{{ min }}</span>
