@@ -59,7 +59,7 @@ function accessBadge(node: VisuNode): { icon: string; label: string; cls: string
     <button
       v-for="child in children"
       :key="child.id"
-      class="relative flex flex-col items-center justify-center gap-3 p-6 rounded-xl bg-gray-800 border border-gray-700 hover:border-blue-500 hover:bg-gray-750 transition-all group"
+      class="relative flex flex-col items-center justify-center gap-3 p-6 rounded-xl bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-500 hover:bg-gray-200 dark:hover:bg-gray-750 transition-all group"
       @click="navigate(child)"
     >
       <!-- Access-Badge (oben rechts) -->
@@ -71,10 +71,10 @@ function accessBadge(node: VisuNode): { icon: string; label: string; cls: string
       >{{ accessBadge(child)!.icon }}</span>
 
       <span class="text-4xl">{{ child.icon ?? (child.type === 'PAGE' ? '📄' : '📁') }}</span>
-      <span class="text-sm font-medium text-gray-200 text-center leading-tight group-hover:text-white">
+      <span class="text-sm font-medium text-gray-700 dark:text-gray-200 text-center leading-tight group-hover:text-gray-900 dark:group-hover:text-white">
         {{ child.name }}
       </span>
-      <span class="text-xs text-gray-500">
+      <span class="text-xs text-gray-400 dark:text-gray-500">
         {{ child.type === 'PAGE' ? 'Seite' : 'Bereich' }}
       </span>
     </button>
