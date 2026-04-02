@@ -446,7 +446,7 @@ const showSettings = ref(false)
 
       <!-- ── Config-Panel (rechts) ───────────────────────────────────────── -->
       <aside class="w-72 flex-shrink-0 bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 overflow-y-auto flex flex-col">
-        <template v-if="selectedWidget && selectedDef">
+        <template v-if="selectedWidget && selectedDef" :key="selectedWidget.id">
           <!-- Header -->
           <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-100/50 dark:bg-gray-800/50">
             <div class="flex items-center gap-2">
