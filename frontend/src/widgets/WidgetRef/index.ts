@@ -3,14 +3,15 @@ import Widget from './Widget.vue'
 import Config from './Config.vue'
 
 WidgetRegistry.register({
-  type: 'Link',
-  label: 'Link',
+  type: 'WidgetRef',
+  label: 'Widget-Referenz',
   icon: '🔗',
   minW: 2, minH: 2,
-  defaultW: 2, defaultH: 2,
+  defaultW: 3, defaultH: 2,
   component: Widget,
   configComponent: Config,
-  defaultConfig: { label: '', icon: '🔗', target_node_id: '' },
+  defaultConfig: { source_page_id: null, source_widget_name: null },
   compatibleTypes: ['*'],
   noDatapoint: true,
+  supportsStatusDatapoint: false,
 })

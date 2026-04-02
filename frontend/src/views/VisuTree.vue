@@ -2,8 +2,10 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useVisuStore } from '@/stores/visu'
+import { useThemeStore } from '@/stores/theme'
 import type { VisuNode } from '@/types'
 import { storeToRefs } from 'pinia'
+import AuthButton from '@/components/AuthButton.vue'
 
 const store = useVisuStore()
 const { rootNodes, isLoggedIn } = storeToRefs(store)
@@ -27,40 +29,37 @@ function navigate(node: VisuNode) {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-950 text-gray-100">
+  <div class="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
     <!-- Header -->
-    <header class="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+    <header class="border-b border-gray-200 dark:border-gray-800 px-6 py-4 flex items-center justify-between bg-gray-50 dark:bg-gray-900">
       <div class="flex items-center gap-3">
-        <span class="text-xl font-bold text-blue-400">openTWS</span>
-        <span class="text-gray-600">|</span>
-        <span class="text-gray-300">Visualisierung</span>
+        <span class="text-xl font-bold text-blue-500 dark:text-blue-400">openTWS</span>
+        <span class="text-gray-300 dark:text-gray-600">|</span>
+        <span class="text-gray-600 dark:text-gray-300">Visualisierung</span>
       </div>
       <div class="flex items-center gap-3">
-        <a
-          v-if="isLoggedIn"
-          href="/api/v1/system/health"
-          class="text-xs text-gray-500 hover:text-gray-300"
-          target="_blank"
-        >Admin</a>
-        <span v-if="isLoggedIn" class="text-xs text-green-400 flex items-center gap-1">
-          <span class="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
-          Angemeldet
-        </span>
+        <!-- Hell/Dunkel-Umschalter -->
+        <button
+          class="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200 transition-colors px-2 py-1 rounded"
+          @click="useThemeStore().toggle()"
+          :title="useThemeStore().isDark ? 'Heller Modus' : 'Dunkler Modus'"
+        >{{ useThemeStore().isDark ? '☀️' : '🌙' }}</button>
+        <AuthButton />
       </div>
     </header>
 
     <!-- Content -->
     <main class="max-w-5xl mx-auto px-6 py-8">
-      <h2 class="text-xl font-semibold text-gray-100 mb-6">Übersicht</h2>
+      <h2 class="text-xl font-semibold mb-6">Übersicht</h2>
 
-      <div v-if="loading" class="text-center text-gray-500 py-16">Lade …</div>
+      <div v-if="loading" class="text-center text-gray-400 dark:text-gray-500 py-16">Lade …</div>
 
-      <div v-else-if="error" class="text-red-400 text-center py-16">{{ error }}</div>
+      <div v-else-if="error" class="text-red-500 dark:text-red-400 text-center py-16">{{ error }}</div>
 
-      <div v-else-if="rootNodes.length === 0" class="text-gray-500 text-center py-16">
+      <div v-else-if="rootNodes.length === 0" class="text-gray-400 dark:text-gray-500 text-center py-16">
         Noch keine Seiten vorhanden.<br />
         <span v-if="isLoggedIn" class="text-sm">
-          <router-link class="text-blue-400 hover:underline" to="/editor/new">
+          <router-link class="text-blue-500 dark:text-blue-400 hover:underline" to="/editor/new">
             Erste Seite erstellen
           </router-link>
         </span>
@@ -70,20 +69,24 @@ function navigate(node: VisuNode) {
         <button
           v-for="node in rootNodes"
           :key="node.id"
-          class="flex flex-col items-center justify-center gap-3 p-6 rounded-xl bg-gray-800 border border-gray-700 hover:border-blue-500 hover:bg-gray-750 transition-all group"
+          class="flex flex-col items-center justify-center gap-3 p-6 rounded-xl bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-500 transition-all group"
           @click="navigate(node)"
         >
           <span class="text-4xl">{{ node.icon ?? (node.type === 'PAGE' ? '📄' : '🏠') }}</span>
-          <span class="text-sm font-medium text-gray-200 text-center leading-tight group-hover:text-white">
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-200 text-center leading-tight group-hover:text-gray-900 dark:group-hover:text-white">
             {{ node.name }}
           </span>
           <span
-            v-if="node.access === 'protected'"
-            class="text-xs text-yellow-500 flex items-center gap-1"
-          >🔒 PIN</span>
+            v-if="node.access === 'readonly'"
+            class="text-xs text-blue-500 dark:text-blue-400 flex items-center gap-1"
+          >👁 Nur ansehen</span>
+          <span
+            v-else-if="node.access === 'protected'"
+            class="text-xs text-yellow-600 dark:text-yellow-500 flex items-center gap-1"
+          >🔐 PIN</span>
           <span
             v-else-if="node.access === 'private'"
-            class="text-xs text-red-400 flex items-center gap-1"
+            class="text-xs text-red-500 dark:text-red-400 flex items-center gap-1"
           >🔑 Login</span>
         </button>
       </div>

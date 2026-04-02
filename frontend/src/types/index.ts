@@ -1,7 +1,7 @@
 // ── VisuNode ──────────────────────────────────────────────────────────────────
 
 export type NodeType = 'LOCATION' | 'PAGE'
-export type AccessLevel = 'public' | 'protected' | 'private'
+export type AccessLevel = 'readonly' | 'public' | 'protected' | 'private'
 
 export interface VisuNode {
   id: string
@@ -11,6 +11,9 @@ export interface VisuNode {
   order: number
   icon: string | null
   access: AccessLevel | null   // null = von Elternknoten erben
+  /** Nur beim Schreiben (PATCH/POST): Klartext-PIN, wird backend-seitig gehasht.
+   *  Wird vom Backend niemals zurückgegeben. */
+  access_pin?: string | null
   page_config: PageConfig | null
   created_at: string
   updated_at: string
@@ -21,14 +24,19 @@ export interface VisuNode {
 export interface PageConfig {
   grid_cols: number
   grid_row_height: number
+  /** Feste Zellbreite in Pixeln — identisch in Editor und Viewer (WYSIWYG) */
+  grid_cell_width: number
   background: string | null
   widgets: WidgetInstance[]
 }
 
 export interface WidgetInstance {
   id: string
+  name: string
   type: string
   datapoint_id: string | null
+  /** Optionaler separater Status-Datenpunkt (für Widgets die schreiben und lesen) */
+  status_datapoint_id: string | null
   x: number
   y: number
   w: number
@@ -64,7 +72,9 @@ export interface WidgetProps {
   config: Record<string, unknown>
   datapointId: string | null
   value: DataPointValue | null
+  statusValue: DataPointValue | null
   editorMode: boolean
+  readonly?: boolean
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────

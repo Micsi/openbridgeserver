@@ -19,6 +19,11 @@ const router = createRouter({
       redirect: '/tree',
     },
     {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+    },
+    {
       path: '/tree',
       name: 'tree',
       component: () => import('@/views/VisuTree.vue'),
@@ -30,10 +35,10 @@ const router = createRouter({
       props: true,
     },
     {
-      path: '/:id',
-      name: 'viewer',
-      component: () => import('@/views/VisuViewer.vue'),
-      props: true,
+      path: '/manage',
+      name: 'manage',
+      component: () => import('@/views/TreeManager.vue'),
+      meta: { requiresAuth: true },
     },
     {
       path: '/editor/:id',
@@ -42,6 +47,13 @@ const router = createRouter({
       props: true,
       meta: { requiresAuth: true },
     },
+    // Viewer muss nach /editor/:id stehen (sonst matcht /:id zuerst)
+    {
+      path: '/:id',
+      name: 'viewer',
+      component: () => import('@/views/VisuViewer.vue'),
+      props: true,
+    },
   ],
 })
 
@@ -49,8 +61,8 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   if (to.meta.requiresAuth && !getJwt()) {
-    // Editor erfordert JWT — zurück zur Baumübersicht
-    return { name: 'tree' }
+    // Editor erfordert JWT → zur Login-Seite, danach zurück
+    return { name: 'login', query: { redirect: to.fullPath } }
   }
 })
 

@@ -9,6 +9,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { datapoints as datapointsApi } from '@/api/client'
 import type { DataPointValue } from '@/types'
 
 export const useDatapointsStore = defineStore('datapoints', () => {
@@ -61,5 +62,33 @@ export const useDatapointsStore = defineStore('datapoints', () => {
     return values.value[id] ?? null
   }
 
-  return { values, subscribed, subscribe, unsubscribe, getValue }
+  /**
+   * Aktuelle Werte via HTTP laden (Fallback wenn WebSocket noch nicht bereit
+   * oder für öffentliche Seiten ohne JWT).
+   * Nur IDs mit Qualität "good" werden gesetzt.
+   */
+  async function fetchInitialValues(ids: string[]): Promise<void> {
+    await Promise.allSettled(
+      ids.map(async (id) => {
+        try {
+          // Backend gibt { value, unit, quality, ts } zurück (nicht v/u/q/t)
+          const v = await datapointsApi.getValue(id, true)
+          const quality = (v.quality as DataPointValue['q']) ?? 'good'
+          if (quality === 'good' || quality === 'uncertain') {
+            values.value[id] = {
+              id,
+              v: v.value,
+              u: v.unit,
+              t: v.ts ?? new Date().toISOString(),
+              q: quality,
+            }
+          }
+        } catch {
+          // ignorieren — Wert bleibt leer
+        }
+      })
+    )
+  }
+
+  return { values, subscribed, subscribe, unsubscribe, getValue, fetchInitialValues }
 })
