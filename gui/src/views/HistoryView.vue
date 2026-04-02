@@ -105,14 +105,17 @@ const route = useRoute()
 
 const selectedDp     = ref(route.query.dp ?? '')
 const selectedDpName = ref('')
+const selectedDpUnit = ref('')
 
 function onDpSelect(dp) {
   if (dp) {
     selectedDp.value     = dp.id
     selectedDpName.value = dp.name
+    selectedDpUnit.value = dp.unit ?? ''
   } else {
     selectedDp.value     = ''
     selectedDpName.value = ''
+    selectedDpUnit.value = ''
   }
 }
 const fromTs      = ref(toDatetimeLocal(new Date(Date.now() - 24 * 3600 * 1000)))
@@ -145,6 +148,7 @@ onMounted(async () => {
     try {
       const { data } = await dpApi.get(selectedDp.value)
       selectedDpName.value = data.name
+      selectedDpUnit.value = data.unit ?? ''
     } catch { /* ignore */ }
     await load()
   }
@@ -208,7 +212,19 @@ function renderChart() {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
-        tooltip: { backgroundColor: tooltipBg, titleColor: tooltipTitle, bodyColor: tooltipBody, borderColor: tooltipBorder, borderWidth: 1 },
+        tooltip: {
+          backgroundColor: tooltipBg, titleColor: tooltipTitle,
+          bodyColor: tooltipBody, borderColor: tooltipBorder, borderWidth: 1,
+          callbacks: {
+            label: (ctx) => {
+              const v = ctx.parsed.y
+              const unit = mode.value === 'raw'
+                ? (points.value[ctx.dataIndex]?.u ?? selectedDpUnit.value)
+                : selectedDpUnit.value
+              return unit ? `${v} ${unit}` : String(v)
+            },
+          },
+        },
       },
       scales: {
         x: { ticks: { color: tickColor, maxTicksLimit: 10 }, grid: { color: gridColor } },

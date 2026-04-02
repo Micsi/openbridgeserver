@@ -3,17 +3,30 @@ import { useSettingsStore } from '@/stores/settings'
 export function useTz() {
   const settings = useSettingsStore()
 
+  // Strings without timezone offset (e.g. SQLite aggregate buckets "2024-01-01T14:00:00")
+  // are ambiguous — browsers may parse them as local time instead of UTC.
+  // Appending "Z" forces UTC interpretation.
+  function toUtcDate(iso) {
+    if (!iso) return null
+    const s = String(iso)
+    // Already has timezone info (Z, +HH:MM, -HH:MM)
+    if (/[Zz]$/.test(s) || /[+-]\d{2}:\d{2}$/.test(s)) return new Date(s)
+    return new Date(s + 'Z')
+  }
+
   function fmtDate(iso) {
-    if (!iso) return '—'
-    return new Date(iso).toLocaleDateString('de-CH', {
+    const d = toUtcDate(iso)
+    if (!d) return '—'
+    return d.toLocaleDateString('de-CH', {
       timeZone: settings.timezone,
       year: 'numeric', month: '2-digit', day: '2-digit',
     })
   }
 
   function fmtDateTime(iso) {
-    if (!iso) return '—'
-    return new Date(iso).toLocaleString('de-CH', {
+    const d = toUtcDate(iso)
+    if (!d) return '—'
+    return d.toLocaleString('de-CH', {
       timeZone: settings.timezone,
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -21,8 +34,9 @@ export function useTz() {
   }
 
   function fmtChartLabel(iso) {
-    if (!iso) return ''
-    return new Date(iso).toLocaleString('de-CH', {
+    const d = toUtcDate(iso)
+    if (!d) return ''
+    return d.toLocaleString('de-CH', {
       timeZone: settings.timezone,
       month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit',
