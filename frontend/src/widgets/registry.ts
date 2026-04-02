@@ -32,6 +32,8 @@ export interface WidgetDefinition {
   compatibleTypes: string[]
   /** Unterstützt separaten Status-Datenpunkt (z.B. Toggle, Slider) */
   supportsStatusDatapoint?: boolean
+  /** Kein eigener DataPoint nötig (z.B. Link, Widget-Referenz) */
+  noDatapoint?: boolean
 }
 
 class Registry {

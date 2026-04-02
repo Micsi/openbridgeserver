@@ -17,6 +17,7 @@ import '@/widgets/Toggle/index'
 import '@/widgets/Slider/index'
 import '@/widgets/Chart/index'
 import '@/widgets/Link/index'
+import '@/widgets/WidgetRef/index'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()

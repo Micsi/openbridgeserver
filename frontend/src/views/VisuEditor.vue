@@ -39,6 +39,7 @@ import '@/widgets/Toggle/index'
 import '@/widgets/Slider/index'
 import '@/widgets/Chart/index'
 import '@/widgets/Link/index'
+import '@/widgets/WidgetRef/index'
 
 // ── Props / Router / Store ────────────────────────────────────────────────────
 const props = defineProps<{ id: string }>()
@@ -502,7 +503,7 @@ const showSettings = ref(false)
             </div>
 
             <!-- DataPoint (Schreib-/Lese-DP) -->
-            <div v-if="selectedDef.compatibleTypes[0] !== '*' || selectedDef.type !== 'Link'">
+            <div v-if="!selectedDef.noDatapoint">
               <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
                 {{ selectedDef.supportsStatusDatapoint ? 'Schreib-Datenpunkt' : 'DataPoint' }}
               </p>
