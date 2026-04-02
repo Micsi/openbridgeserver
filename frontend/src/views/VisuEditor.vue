@@ -183,8 +183,8 @@ onMounted(async () => {
     // Rückwärtskompatibilität: fehlende Felder nachrüsten
     if (!config.value.grid_cell_width) config.value.grid_cell_width = 80
     for (const w of config.value.widgets) {
-      if (!('status_datapoint_id' in w)) w.status_datapoint_id = null
-      if (!('name' in w)) w.name = ''
+      w.status_datapoint_id ??= null
+      w.name ??= ''
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'Fehler beim Laden'
@@ -414,7 +414,7 @@ const showSettings = ref(false)
               :class="{ '!opacity-100': selectedId === w.id }"
             >
               <span class="text-xs text-gray-700 dark:text-gray-300 font-medium">
-                {{ w.name || WidgetRegistry.get(w.type)?.label ?? w.type }}
+                {{ w.name || (WidgetRegistry.get(w.type)?.label ?? w.type) }}
               </span>
               <button
                 class="text-xs text-gray-400 dark:text-gray-500 hover:text-red-500 dark:hover:text-red-400 transition-colors ml-2"
