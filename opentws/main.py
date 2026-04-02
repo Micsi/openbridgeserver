@@ -83,6 +83,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 6. History plugin
     await init_history_plugin(db)
+    from opentws.history.factory import handle_value_event as history_handler
+    bus.subscribe(DataValueEvent, history_handler)
 
     # 7. WebSocket Manager
     ws_manager = init_ws_manager()

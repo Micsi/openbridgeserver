@@ -43,6 +43,32 @@ def get_history_plugin() -> HistoryPlugin:
     return _plugin
 
 
+async def handle_value_event(event: Any) -> None:
+    """EventBus handler — called for every DataValueEvent; writes to the active plugin."""
+    if _plugin is None:
+        return
+    try:
+        # Resolve unit from the DataPoint registry (not carried on the event)
+        unit: str | None = None
+        try:
+            from opentws.core.registry import get_registry
+            dp = get_registry().get(event.datapoint_id)
+            if dp:
+                unit = dp.unit
+        except RuntimeError:
+            pass
+
+        await _plugin.write(
+            datapoint_id=event.datapoint_id,
+            value=event.value,
+            unit=unit,
+            quality=event.quality,
+            ts=event.ts,
+        )
+    except Exception as exc:
+        logger.error("History write failed for %s: %s", event.datapoint_id, exc)
+
+
 async def init_history_plugin(db: Any) -> HistoryPlugin:
     """
     Read settings from DB and initialize the appropriate HistoryPlugin.
