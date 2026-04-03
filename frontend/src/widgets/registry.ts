@@ -34,6 +34,8 @@ export interface WidgetDefinition {
   supportsStatusDatapoint?: boolean
   /** Kein eigener DataPoint nötig (z.B. Link, Widget-Referenz) */
   noDatapoint?: boolean
+  /** Optionale Funktion: gibt zusätzliche Datenpunkt-IDs aus der Config zurück (z.B. Info-Widget) */
+  getExtraDatapointIds?: (config: Record<string, unknown>) => string[]
 }
 
 class Registry {

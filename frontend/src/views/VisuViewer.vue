@@ -19,6 +19,7 @@ import '@/widgets/Slider/index'
 import '@/widgets/Chart/index'
 import '@/widgets/Link/index'
 import '@/widgets/WidgetRef/index'
+import '@/widgets/Info/index'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -57,9 +58,21 @@ const statusDpIds = computed(() =>
   widgets.value.map((w) => w.status_datapoint_id).filter((id): id is string => !!id)
 )
 
-// Alle zu abonnierenden IDs (Haupt + Status, dedupliziert)
+// Extra-Datenpunkt-IDs aus Widget-Configs (z.B. Info-Widget)
+const extraDpIds = computed(() => {
+  const ids: string[] = []
+  for (const w of widgets.value) {
+    const def = WidgetRegistry.get(w.type)
+    if (def?.getExtraDatapointIds) {
+      ids.push(...def.getExtraDatapointIds(w.config))
+    }
+  }
+  return ids
+})
+
+// Alle zu abonnierenden IDs (Haupt + Status + Extra, dedupliziert)
 const allDpIds = computed(() => {
-  const set = new Set([...datapointIds.value, ...statusDpIds.value])
+  const set = new Set([...datapointIds.value, ...statusDpIds.value, ...extraDpIds.value])
   return Array.from(set)
 })
 
