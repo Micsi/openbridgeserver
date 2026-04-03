@@ -166,11 +166,40 @@
       <!-- MQTT -->
       <template v-if="selectedAdapterType === 'MQTT'">
         <div class="section-header">MQTT Binding</div>
+
+        <!-- Topic with browser -->
         <div class="form-group">
           <label class="label">Topic *</label>
-          <input v-model="cfg.topic" class="input" placeholder="z.B. haus/wohnzimmer/temperatur" required />
+          <div class="flex gap-2">
+            <input v-model="cfg.topic" class="input flex-1" placeholder="z.B. haus/wohnzimmer/temperatur" required />
+            <button
+              type="button"
+              class="btn-secondary px-3 text-sm whitespace-nowrap"
+              :disabled="!form.adapter_instance_id || mqttBrowseLoading"
+              @click="mqttBrowse"
+            >
+              <span v-if="mqttBrowseLoading" class="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin mr-1"></span>
+              {{ mqttBrowseLoading ? 'Scannen …' : 'Browse' }}
+            </button>
+          </div>
           <p class="hint">SOURCE/BOTH: abonniertes Topic; DEST: Publish-Topic</p>
+
+          <!-- Browse results -->
+          <div
+            v-if="mqttBrowseTopics.length > 0"
+            class="mt-1 max-h-44 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-lg divide-y divide-slate-100 dark:divide-slate-700/50 bg-white dark:bg-slate-800"
+          >
+            <button
+              v-for="t in mqttBrowseTopics"
+              :key="t"
+              type="button"
+              class="w-full text-left px-3 py-1.5 text-sm font-mono hover:bg-slate-50 dark:hover:bg-slate-700/50 truncate"
+              @click="selectMqttTopic(t)"
+            >{{ t }}</button>
+          </div>
+          <p v-if="mqttBrowseError" class="text-xs text-red-400 mt-1">{{ mqttBrowseError }}</p>
         </div>
+
         <div class="optional-divider">Optionale Einstellungen</div>
         <div class="grid grid-cols-2 gap-4">
           <div class="form-group">
@@ -184,6 +213,33 @@
               <label for="mqtt_retain" class="text-sm text-slate-600 dark:text-slate-300">Retain</label>
             </div>
             <p class="hint">Broker speichert letzten Wert</p>
+          </div>
+        </div>
+
+        <!-- Payload Template — only for DEST / BOTH -->
+        <div v-if="form.direction === 'DEST' || form.direction === 'BOTH'" class="form-group">
+          <label class="label">Payload-Template <span class="optional">(optional)</span></label>
+          <input
+            v-model="cfg.payload_template"
+            class="input font-mono text-sm"
+            placeholder='z.B. {"value": "###DP###", "unit": "°C"}'
+          />
+          <p class="hint"><code class="text-blue-400">###DP###</code> wird durch den Datenpunktwert ersetzt. Leer = Wert direkt als Payload.</p>
+        </div>
+
+        <!-- Value Mapping -->
+        <div class="form-group">
+          <label class="label">Wertzuordnung <span class="optional">(optional)</span></label>
+          <select v-model="cfg.value_map_preset" class="input" @change="onValueMapPresetChange">
+            <option v-for="p in VALUE_MAP_PRESETS" :key="p.key" :value="p.key">{{ p.label }}</option>
+          </select>
+          <div v-if="cfg.value_map_preset === 'custom'" class="mt-2">
+            <textarea
+              v-model="cfg.value_map_custom"
+              class="input font-mono text-sm h-20 resize-y"
+              placeholder='{"0": "off", "1": "on"}'
+            />
+            <p class="hint">JSON-Objekt mit String-Schlüsseln und -Werten.</p>
           </div>
         </div>
       </template>
@@ -353,14 +409,30 @@ const form = reactive({
   send_min_delta_pct:  null,
 })
 
+const VALUE_MAP_PRESETS = [
+  { key: '',            label: '— keine Wertzuordnung —',            map: null },
+  { key: 'num_invert',  label: '0 ↔ 1 (numerisch invertieren)',       map: { '0': '1', '1': '0' } },
+  { key: 'bool_onoff',  label: 'true/false → on/off',                 map: { 'true': 'on', 'false': 'off' } },
+  { key: 'onoff_bool',  label: 'on/off → true/false',                 map: { 'on': 'true', 'off': 'false' } },
+  { key: 'num_onoff',   label: '0/1 → off/on',                        map: { '0': 'off', '1': 'on' } },
+  { key: 'onoff_num',   label: 'off/on → 0/1',                        map: { 'off': '0', 'on': '1' } },
+  { key: 'custom',      label: 'Benutzerdefiniert (JSON) …',           map: null },
+]
+
 const cfg = reactive({
   group_address: '', dpt_id: 'DPT9.001', state_group_address: '', respond_to_read: false,
   address: 0, register_type: 'holding', data_format: 'uint16',
   unit_id: 1, count: 1, scale_factor: 1.0, poll_interval: 1.0,
   byte_order: 'big', word_order: 'big',
-  topic: '', publish_topic: '', retain: false,
+  topic: '', publish_topic: '', retain: false, payload_template: '',
+  value_map: null, value_map_preset: '', value_map_custom: '',
   sensor_id: '', sensor_type: 'DS18B20',
 })
+
+// MQTT topic browser state
+const mqttBrowseTopics = ref([])
+const mqttBrowseLoading = ref(false)
+const mqttBrowseError  = ref(null)
 
 // ---------------------------------------------------------------------------
 // Computed
@@ -440,6 +512,17 @@ watch(() => props.initial, val => {
   if (cfg.state_group_address == null) cfg.state_group_address = ''
   if (cfg.publish_topic       == null) cfg.publish_topic = ''
   if (cfg.respond_to_read     == null) cfg.respond_to_read = false
+  if (cfg.payload_template    == null) cfg.payload_template = ''
+  // Restore value_map UI state from loaded config
+  if (cfg.value_map && typeof cfg.value_map === 'object') {
+    const mapStr = JSON.stringify(cfg.value_map)
+    const preset = VALUE_MAP_PRESETS.find(p => p.map && JSON.stringify(p.map) === mapStr)
+    cfg.value_map_preset = preset?.key ?? 'custom'
+    cfg.value_map_custom = preset ? '' : JSON.stringify(cfg.value_map, null, 2)
+  } else {
+    cfg.value_map_preset = ''
+    cfg.value_map_custom = ''
+  }
   const ms = val.send_throttle_ms ?? 0
   if      (ms === 0)               { form.throttle_value = 0;            form.throttle_unit = 's'   }
   else if (ms % 3_600_000 === 0)   { form.throttle_value = ms/3_600_000; form.throttle_unit = 'h'   }
@@ -465,6 +548,31 @@ onMounted(async () => {
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
+
+async function mqttBrowse() {
+  mqttBrowseLoading.value = true
+  mqttBrowseError.value   = null
+  mqttBrowseTopics.value  = []
+  try {
+    const res = await adapterApi.mqttBrowseTopics(form.adapter_instance_id)
+    mqttBrowseTopics.value = res.data
+    if (res.data.length === 0) mqttBrowseError.value = 'Keine Topics empfangen – Broker erreichbar?'
+  } catch (e) {
+    mqttBrowseError.value = e.response?.data?.detail ?? 'Fehler beim Abrufen der Topics'
+  } finally {
+    mqttBrowseLoading.value = false
+  }
+}
+
+function selectMqttTopic(topic) {
+  cfg.topic = topic
+  mqttBrowseTopics.value = []
+  mqttBrowseError.value  = null
+}
+
+function onValueMapPresetChange() {
+  if (cfg.value_map_preset !== 'custom') cfg.value_map_custom = ''
+}
 
 function onGaSelect(item) {
   if (item.dpt && item.dpt !== cfg.dpt_id) cfg.dpt_id = item.dpt
@@ -498,7 +606,16 @@ function buildConfig() {
   }
   if (type === 'MQTT') {
     const c = { topic: cfg.topic, retain: cfg.retain }
-    if (cfg.publish_topic?.trim()) c.publish_topic = cfg.publish_topic.trim()
+    if (cfg.publish_topic?.trim())    c.publish_topic    = cfg.publish_topic.trim()
+    if (cfg.payload_template?.trim()) c.payload_template = cfg.payload_template.trim()
+    // Resolve value_map from preset or custom JSON
+    let valueMap = null
+    if (cfg.value_map_preset === 'custom') {
+      try { valueMap = JSON.parse(cfg.value_map_custom) } catch { /* invalid JSON — ignore */ }
+    } else if (cfg.value_map_preset) {
+      valueMap = VALUE_MAP_PRESETS.find(p => p.key === cfg.value_map_preset)?.map ?? null
+    }
+    if (valueMap) c.value_map = valueMap
     return c
   }
   if (type === 'ONEWIRE') {

@@ -10,14 +10,25 @@ Adapter-Konfiguration (adapter_configs.config in DB):
   password: str?  — optional
 
 Binding-Konfiguration (pro AdapterBinding.config):
-  topic:         str   — Topic zum Subscriben (SOURCE/BOTH) bzw. Publishen (DEST/BOTH)
-  publish_topic: str?  — Für DEST/BOTH: separates Publish-Topic (falls abweichend von topic)
-  retain:        bool  — Retain-Flag beim Publishen (default: False)
+  topic:            str        — Topic zum Subscriben (SOURCE/BOTH) bzw. Publishen (DEST/BOTH)
+  publish_topic:    str?       — Für DEST/BOTH: separates Publish-Topic (falls abweichend von topic)
+  retain:           bool       — Retain-Flag beim Publishen (default: False)
+  payload_template: str?       — Für DEST/BOTH: Payload-Template mit ###DP### als Platzhalter
+  value_map:        dict[str,str]? — Wertzuordnung: z.B. {"0": "off", "1": "on"}
 
 Richtungs-Semantik:
   SOURCE  → Adapter subscribet auf topic, liefert Werte ins System
   DEST    → Adapter publisht auf publish_topic (oder topic) wenn write() aufgerufen wird
   BOTH    → Beides: subscriben auf topic, publishen auf publish_topic (oder topic)
+
+value_map:
+  Wird auf eingehende (SOURCE) und ausgehende (DEST) Werte angewendet.
+  Schlüssel und Werte sind Strings; der Istwert wird via str() konvertiert für den Lookup.
+
+payload_template:
+  Enthält den Platzhalter ###DP###, der durch den (ggf. per value_map transformierten) Wert
+  ersetzt wird. Nicht-String-Werte werden als JSON serialisiert (z.B. true statt True).
+  Leer = Wert wird direkt als Payload gesendet.
 """
 from __future__ import annotations
 
@@ -47,9 +58,11 @@ class MqttAdapterConfig(BaseModel):
 
 
 class MqttBindingConfig(BaseModel):
-    topic: str                        # subscribe (SOURCE/BOTH) or publish (DEST)
-    publish_topic: str | None = None  # DEST/BOTH: publish here if set, else use topic
-    retain: bool = False              # retain flag when publishing
+    topic: str                                  # subscribe (SOURCE/BOTH) or publish (DEST)
+    publish_topic: str | None = None            # DEST/BOTH: publish here if set, else use topic
+    retain: bool = False                        # retain flag when publishing
+    payload_template: str | None = None        # DEST/BOTH: template with ###DP### placeholder
+    value_map: dict[str, str] | None = None    # value substitution map (str keys + values)
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +196,12 @@ class MqttAdapter(AdapterBase):
 
         for binding in entries:
             pub_value = value
+            try:
+                bc = MqttBindingConfig(**binding.config)
+                if bc.value_map:
+                    pub_value = bc.value_map.get(str(pub_value), pub_value)
+            except Exception:
+                pass
             if binding.value_formula and pub_value is not None:
                 from opentws.core.formula import apply_formula
                 pub_value = apply_formula(binding.value_formula, pub_value)
@@ -237,8 +256,18 @@ class MqttAdapter(AdapterBase):
         try:
             bc = MqttBindingConfig(**binding.config)
             topic = bc.publish_topic or bc.topic
-            payload = json.dumps(value) if not isinstance(value, str) else value
+
+            # Apply value_map substitution
+            mapped = bc.value_map.get(str(value), value) if bc.value_map else value
+
+            # Build payload
+            if bc.payload_template:
+                val_str = mapped if isinstance(mapped, str) else json.dumps(mapped)
+                payload = bc.payload_template.replace("###DP###", val_str)
+            else:
+                payload = mapped if isinstance(mapped, str) else json.dumps(mapped)
+
             await self._publish_queue.put((topic, payload, bc.retain))
-            logger.info("MQTT adapter write queued: topic=%s value=%r retain=%s", topic, value, bc.retain)
+            logger.info("MQTT adapter write queued: topic=%s value=%r retain=%s", topic, mapped, bc.retain)
         except Exception:
             logger.exception("MQTT adapter write failed for binding %s", binding.id)
