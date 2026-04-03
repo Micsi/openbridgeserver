@@ -15,8 +15,9 @@ Binding-Konfiguration (pro AdapterBinding.config):
   retain:           bool       — Retain-Flag beim Publishen (default: False)
   payload_template: str?       — Für DEST/BOTH: Payload-Template mit ###DP### als Platzhalter
   value_map:        dict[str,str]? — Wertzuordnung: z.B. {"0": "off", "1": "on"}
-  source_data_type: str?       — SOURCE/BOTH: "string"|"int"|"float"|"bool"|"json"|None(=auto)
+  source_data_type: str?       — SOURCE/BOTH: "string"|"int"|"float"|"bool"|"json"|"xml"|None(=auto)
   json_key:         str?       — Schlüssel zum Extrahieren aus JSON-Payload (source_data_type=="json")
+  xml_path:         str?       — Element-Pfad (ET-XPath) zum Extrahieren aus XML-Payload (source_data_type=="xml")
 
 Richtungs-Semantik:
   SOURCE  → Adapter subscribet auf topic, liefert Werte ins System
@@ -35,6 +36,12 @@ source_data_type:
 json_key:
   Wenn source_data_type=="json": Schlüssel im geparsten JSON-Objekt, dessen Wert als
   DataPoint-Wert übernommen wird. Leer = gesamtes Objekt.
+
+xml_path:
+  Wenn source_data_type=="xml": ElementTree-kompatibler XPath-Ausdruck relativ zum
+  Root-Element (z.B. "temperature", "data/sensors/temperature").
+  Leer = text-Inhalt des Root-Elements.
+  Zahlenwerte werden automatisch nach int/float konvertiert, sonst String.
 
 value_map:
   Wird auf eingehende (SOURCE, nach source_data_type-Parsing) und ausgehende (DEST) Werte
@@ -78,8 +85,9 @@ class MqttBindingConfig(BaseModel):
     retain: bool = False                              # retain flag when publishing
     payload_template: str | None = None              # DEST/BOTH: template with ###DP### placeholder
     value_map: dict[str, str] | None = None          # value substitution map (str keys + values)
-    source_data_type: str | None = None              # SOURCE/BOTH: "string"|"int"|"float"|"bool"|"json"|None
+    source_data_type: str | None = None              # SOURCE/BOTH: "string"|"int"|"float"|"bool"|"json"|"xml"|None
     json_key: str | None = None                      # key to extract when source_data_type=="json"
+    xml_path: str | None = None                      # ET-XPath path when source_data_type=="xml"
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +233,30 @@ class MqttAdapter(AdapterBase):
                         pub_value = obj.get(bc.json_key, pub_value) if isinstance(obj, dict) else pub_value
                     else:
                         pub_value = obj
+                elif sdt == "xml":
+                    try:
+                        import xml.etree.ElementTree as ET
+                        root = ET.fromstring(raw)
+                        if bc.xml_path:
+                            el = root.find(bc.xml_path)
+                            if el is not None:
+                                text = (el.text or "").strip()
+                                try:
+                                    pub_value = int(text)
+                                except ValueError:
+                                    try:
+                                        pub_value = float(text)
+                                    except ValueError:
+                                        pub_value = text
+                            else:
+                                logger.warning(
+                                    "MQTT XML: path %r not found in payload for binding %s",
+                                    bc.xml_path, binding.id,
+                                )
+                        else:
+                            pub_value = (root.text or "").strip()
+                    except Exception as xml_exc:
+                        logger.warning("MQTT XML: parse error for binding %s: %s", binding.id, xml_exc)
                 elif sdt == "int":
                     try:
                         pub_value = int(float(pub_value)) if isinstance(pub_value, str) else int(pub_value)

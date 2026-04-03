@@ -279,6 +279,46 @@
               <p class="hint">Schlüssel im JSON-Objekt, dessen Wert übernommen wird.</p>
             </div>
           </div>
+
+          <!-- XML element-path extraction panel -->
+          <div v-if="cfg.source_data_type === 'xml'" class="mt-3 flex flex-col gap-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50">
+            <div class="form-group">
+              <label class="text-xs font-medium text-slate-500 mb-1 block">
+                Sample Payload <span class="font-normal text-slate-400">(optional — für Element-Vorschau)</span>
+              </label>
+              <textarea
+                v-model="mqttXmlSample"
+                class="input font-mono text-xs h-20 resize-y"
+                placeholder='<sensor><temperature>22.5</temperature><humidity>65</humidity></sensor>'
+                @input="onMqttXmlSampleInput"
+              />
+              <p v-if="mqttXmlParseError" class="text-xs text-red-400 mt-0.5">{{ mqttXmlParseError }}</p>
+            </div>
+            <div class="form-group">
+              <label class="text-xs font-medium text-slate-500 mb-1 block">Element-Pfad *</label>
+              <div class="flex gap-2">
+                <input
+                  v-model="cfg.xml_path"
+                  class="input flex-1 font-mono text-sm"
+                  placeholder="z.B. temperature oder data/sensors/temperature"
+                />
+                <select
+                  v-if="mqttXmlElements.length"
+                  v-model="cfg.xml_path"
+                  class="input w-52 shrink-0"
+                >
+                  <option value="">— aus Sample —</option>
+                  <option v-for="el in mqttXmlElements" :key="el.path" :value="el.path">
+                    {{ el.path }}<template v-if="el.text"> = {{ el.text }}</template>
+                  </option>
+                </select>
+              </div>
+              <p class="hint">
+                Pfad relativ zum Root-Element (ET-XPath, z.B. <code class="text-blue-400">data/temperature</code>).
+                Numerische Textwerte werden automatisch konvertiert.
+              </p>
+            </div>
+          </div>
         </div>
 
         <!-- Value Mapping -->
@@ -481,7 +521,7 @@ const cfg = reactive({
   byte_order: 'big', word_order: 'big',
   topic: '', publish_topic: '', retain: false, payload_template: '',
   value_map: null, value_map_preset: '', value_map_custom: '',
-  source_data_type: 'auto', json_key: '',
+  source_data_type: 'auto', json_key: '', xml_path: '',
   sensor_id: '', sensor_type: 'DS18B20',
 })
 
@@ -493,23 +533,29 @@ const MQTT_SOURCE_TYPES = [
   { value: 'float',  label: 'float' },
   { value: 'bool',   label: 'bool' },
   { value: 'json',   label: 'JSON — Schlüssel extrahieren' },
+  { value: 'xml',    label: 'XML — Element-Pfad extrahieren' },
 ]
 
 // DataPoint type → which MQTT source types are ok / warn / bad
 const MQTT_TYPE_COMPAT = {
-  BOOLEAN:  { ok: ['bool', 'auto'], warn: ['int', 'string'], bad: ['float', 'json'] },
-  INTEGER:  { ok: ['int', 'auto'],  warn: ['float'],          bad: ['bool', 'string', 'json'] },
-  FLOAT:    { ok: ['float', 'int', 'auto'], warn: [],          bad: ['bool', 'string', 'json'] },
-  STRING:   { ok: ['string', 'auto'], warn: ['int', 'float', 'bool'], bad: ['json'] },
-  DATE:     { ok: ['string', 'auto'], warn: [],  bad: ['int', 'float', 'bool', 'json'] },
-  TIME:     { ok: ['string', 'auto'], warn: [],  bad: ['int', 'float', 'bool', 'json'] },
-  DATETIME: { ok: ['string', 'auto'], warn: [],  bad: ['int', 'float', 'bool', 'json'] },
+  BOOLEAN:  { ok: ['bool', 'auto'], warn: ['int', 'string'], bad: ['float', 'json', 'xml'] },
+  INTEGER:  { ok: ['int', 'auto'],  warn: ['float'],          bad: ['bool', 'string', 'json', 'xml'] },
+  FLOAT:    { ok: ['float', 'int', 'auto'], warn: [],          bad: ['bool', 'string', 'json', 'xml'] },
+  STRING:   { ok: ['string', 'auto'], warn: ['int', 'float', 'bool'], bad: ['json', 'xml'] },
+  DATE:     { ok: ['string', 'auto'], warn: [],  bad: ['int', 'float', 'bool', 'json', 'xml'] },
+  TIME:     { ok: ['string', 'auto'], warn: [],  bad: ['int', 'float', 'bool', 'json', 'xml'] },
+  DATETIME: { ok: ['string', 'auto'], warn: [],  bad: ['int', 'float', 'bool', 'json', 'xml'] },
 }
 
 // JSON sample state (UI-only — not persisted)
-const mqttJsonSample    = ref('')
-const mqttJsonKeys      = ref([])   // [{ key: 'temperature', type: 'number' }, …]
+const mqttJsonSample     = ref('')
+const mqttJsonKeys       = ref([])   // [{ key: 'temperature', type: 'number' }, …]
 const mqttJsonParseError = ref(null)
+
+// XML sample state (UI-only — not persisted)
+const mqttXmlSample      = ref('')
+const mqttXmlElements    = ref([])   // [{ path: 'data/temperature', text: '22.5' }, …]
+const mqttXmlParseError  = ref(null)
 
 // MQTT topic browser state
 const mqttBrowseTopics = ref([])
@@ -584,7 +630,7 @@ const groupedInstances = computed(() => {
 // Compatibility badge for MQTT source_data_type vs DataPoint data_type
 const mqttTypeCompat = computed(() => {
   const sdt = cfg.source_data_type ?? 'auto'
-  if (sdt === 'auto' || sdt === 'json') return null   // no badge — dynamic
+  if (sdt === 'auto' || sdt === 'json' || sdt === 'xml') return null  // no badge — depends on extracted value
   const dpType = (props.dpDataType ?? 'UNKNOWN').toUpperCase()
   const compat = MQTT_TYPE_COMPAT[dpType]
   if (!compat) return null                             // UNKNOWN → no badge
@@ -611,6 +657,7 @@ watch(() => props.initial, val => {
   if (cfg.payload_template    == null) cfg.payload_template = ''
   if (cfg.source_data_type   == null) cfg.source_data_type = 'auto'
   if (cfg.json_key           == null) cfg.json_key = ''
+  if (cfg.xml_path           == null) cfg.xml_path = ''
   // Restore value_map UI state from loaded config
   if (cfg.value_map && typeof cfg.value_map === 'object') {
     const mapStr = JSON.stringify(cfg.value_map)
@@ -672,6 +719,36 @@ function onValueMapPresetChange() {
   if (cfg.value_map_preset !== 'custom') cfg.value_map_custom = ''
 }
 
+function collectXmlLeafPaths(el, prefix) {
+  const result = []
+  for (const child of el.children) {
+    const path = prefix ? `${prefix}/${child.tagName}` : child.tagName
+    if (child.children.length === 0) {
+      result.push({ path, text: child.textContent.trim() })
+    } else {
+      result.push(...collectXmlLeafPaths(child, path))
+    }
+  }
+  return result
+}
+
+function onMqttXmlSampleInput() {
+  mqttXmlParseError.value = null
+  mqttXmlElements.value = []
+  const s = mqttXmlSample.value.trim()
+  if (!s) return
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(s, 'application/xml')
+  const parseErr = doc.querySelector('parsererror')
+  if (parseErr) {
+    mqttXmlParseError.value = `Kein gültiges XML: ${parseErr.textContent.split('\n')[0].trim()}`
+    return
+  }
+  mqttXmlElements.value = collectXmlLeafPaths(doc.documentElement, '')
+  if (mqttXmlElements.value.length === 0)
+    mqttXmlParseError.value = 'Keine Kind-Elemente gefunden'
+}
+
 function onMqttJsonSampleInput() {
   mqttJsonParseError.value = null
   mqttJsonKeys.value = []
@@ -731,6 +808,8 @@ function buildConfig() {
       c.source_data_type = cfg.source_data_type
       if (cfg.source_data_type === 'json' && cfg.json_key?.trim())
         c.json_key = cfg.json_key.trim()
+      if (cfg.source_data_type === 'xml' && cfg.xml_path?.trim())
+        c.xml_path = cfg.xml_path.trim()
     }
     // Resolve value_map from preset or custom JSON
     let valueMap = null
