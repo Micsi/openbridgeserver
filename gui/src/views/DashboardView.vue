@@ -2,7 +2,7 @@
   <div class="flex flex-col gap-6">
     <!-- Header -->
     <div>
-      <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100">Dashboard</h2>
+      <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100">Übersicht</h2>
       <p class="text-sm text-slate-500 mt-0.5">Systemübersicht · Live-Status</p>
     </div>
 
