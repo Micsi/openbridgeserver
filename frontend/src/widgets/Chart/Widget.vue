@@ -74,7 +74,7 @@ onMounted(() => {
           mode: 'index',
           intersect: false,
           callbacks: {
-            title: (items) => fmtMs(items[0].parsed.x),
+            title: (items) => items[0]?.parsed.x != null ? fmtMs(items[0].parsed.x) : '',
           },
         },
       },
