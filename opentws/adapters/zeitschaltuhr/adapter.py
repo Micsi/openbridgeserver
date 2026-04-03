@@ -129,6 +129,10 @@ class ZeitschaltuhrConfig(BaseModel):
         "",
         description="Kanton/Bundesland (z.B. ZH, BY, OÖ) — leer = nur nationale Feiertage",
     )
+    holiday_language: str = Field(
+        "de",
+        description="Sprache der Feiertagsnamen (de, fr, it, en) — Standard: de",
+    )
     vacation_1_start: str = Field("", description="Ferienperiode 1 Beginn (JJJJ-MM-TT)")
     vacation_1_end: str = Field("", description="Ferienperiode 1 Ende (JJJJ-MM-TT)")
     vacation_2_start: str = Field("", description="Ferienperiode 2 Beginn (JJJJ-MM-TT)")
@@ -580,7 +584,18 @@ class ZeitschaltuhrAdapter(AdapterBase):
             kwargs: dict[str, Any] = {"years": [year, year + 1]}
             if self._cfg.holiday_subdivision:
                 kwargs["subdiv"] = self._cfg.holiday_subdivision
-            return hol_lib.country_holidays(self._cfg.holiday_country, **kwargs)
+            if self._cfg.holiday_language:
+                kwargs["language"] = self._cfg.holiday_language
+            try:
+                return hol_lib.country_holidays(self._cfg.holiday_country, **kwargs)
+            except Exception:
+                # Language not supported for this country — retry without language param
+                kwargs.pop("language", None)
+                logger.debug(
+                    "Sprache '%s' für Land '%s' nicht unterstützt — nutze Standardsprache",
+                    self._cfg.holiday_language, self._cfg.holiday_country,
+                )
+                return hol_lib.country_holidays(self._cfg.holiday_country, **kwargs)
         except ImportError:
             logger.info(
                 "holidays-Bibliothek nicht installiert — Feiertagserkennung deaktiviert "
