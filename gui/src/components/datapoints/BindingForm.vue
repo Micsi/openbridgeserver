@@ -721,12 +721,34 @@ function onValueMapPresetChange() {
 
 function collectXmlLeafPaths(el, prefix) {
   const result = []
+
+  // Group children by tag name so we can detect repeated elements
+  const byTag = {}
   for (const child of el.children) {
-    const path = prefix ? `${prefix}/${child.tagName}` : child.tagName
-    if (child.children.length === 0) {
-      result.push({ path, text: child.textContent.trim() })
-    } else {
-      result.push(...collectXmlLeafPaths(child, path))
+    ;(byTag[child.tagName] ??= []).push(child)
+  }
+
+  for (const [tag, siblings] of Object.entries(byTag)) {
+    for (let i = 0; i < siblings.length; i++) {
+      const child = siblings[i]
+
+      // Build path segment — include attribute predicate when helpful
+      let segment = tag
+      if (siblings.length > 1 || child.attributes.length > 0) {
+        // Prefer a named attribute (e.g. id) over positional index
+        const attr = child.attributes[0]
+        segment = attr
+          ? `${tag}[@${attr.name}='${attr.value}']`
+          : `${tag}[${i + 1}]`
+      }
+
+      const path = prefix ? `${prefix}/${segment}` : segment
+
+      if (child.children.length === 0) {
+        result.push({ path, text: child.textContent.trim() })
+      } else {
+        result.push(...collectXmlLeafPaths(child, path))
+      }
     }
   }
   return result
