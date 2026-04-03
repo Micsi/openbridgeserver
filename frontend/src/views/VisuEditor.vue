@@ -41,6 +41,7 @@ import '@/widgets/Slider/index'
 import '@/widgets/Chart/index'
 import '@/widgets/Link/index'
 import '@/widgets/WidgetRef/index'
+import '@/widgets/Info/index'
 
 // ── Props / Router / Store ────────────────────────────────────────────────────
 const props = defineProps<{ id: string }>()
@@ -504,10 +505,10 @@ const showSettings = ref(false)
               </div>
             </div>
 
-            <!-- DataPoint (Schreib-/Lese-DP) -->
+            <!-- Objekt (Schreib-/Lese-Objekt) -->
             <div v-if="!selectedDef.noDatapoint">
               <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
-                {{ selectedDef.supportsStatusDatapoint ? 'Schreib-Datenpunkt' : 'DataPoint' }}
+                {{ selectedDef.supportsStatusDatapoint ? 'Schreib-Objekt' : 'Objekt' }}
               </p>
               <DataPointPicker
                 :model-value="selectedWidget.datapoint_id"
@@ -519,13 +520,13 @@ const showSettings = ref(false)
               </p>
             </div>
 
-            <!-- Status-Datenpunkt (nur für schreibende Widgets) -->
+            <!-- Status-Objekt (nur für schreibende Widgets) -->
             <div v-if="selectedDef.supportsStatusDatapoint">
               <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">
-                Status-Datenpunkt
+                Status-Objekt
               </p>
               <p class="text-xs text-gray-400 dark:text-gray-600 mb-2">
-                Optional: separater Rückmelde-DP. Falls leer, wird der Schreib-DP für die Anzeige verwendet.
+                Optional: separates Rückmelde-Objekt. Falls leer, wird das Schreib-Objekt für die Anzeige verwendet.
               </p>
               <DataPointPicker
                 :model-value="selectedWidget.status_datapoint_id"
