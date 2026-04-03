@@ -250,6 +250,32 @@ export const datapoints = {
   },
 }
 
+// ── Adapters (Visu-seitig, nur Lesezugriff) ───────────────────────────────────
+
+export interface AdapterInstanceSummary {
+  id: string
+  adapter_type: string
+  name: string
+  running: boolean
+  connected: boolean
+}
+
+export interface InstanceBindingEntry {
+  binding_id: string
+  datapoint_id: string
+  datapoint_name: string
+  enabled: boolean
+  config: Record<string, unknown>
+}
+
+export const adapters = {
+  listInstances: () =>
+    request<AdapterInstanceSummary[]>('/adapters/instances'),
+
+  instanceBindings: (instanceId: string) =>
+    request<InstanceBindingEntry[]>(`/adapters/instances/${instanceId}/bindings`),
+}
+
 // ── History ───────────────────────────────────────────────────────────────────
 
 export const history = {
