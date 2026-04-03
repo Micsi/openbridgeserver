@@ -32,11 +32,11 @@
           </select>
         </div>
         <div class="form-group">
-          <label class="label">Direction *</label>
+          <label class="label">Richtung *</label>
           <select v-model="form.direction" class="input">
-            <option value="SOURCE">SOURCE — Adapter → System</option>
-            <option value="DEST">DEST — System → Adapter</option>
-            <option value="BOTH">BOTH — beidseitig</option>
+            <option value="SOURCE">Lesen (von Adapter)</option>
+            <option value="DEST">Schreiben (auf Adapter)</option>
+            <option value="BOTH">Lesen/Schreiben (von/auf Adapter)</option>
           </select>
         </div>
       </div>
@@ -58,11 +58,6 @@
               </option>
             </optgroup>
           </select>
-        </div>
-        <div class="form-group">
-          <label class="label">Status-Gruppenadresse <span class="optional">(optional)</span></label>
-          <GaCombobox v-model="cfg.state_group_address" placeholder="z.B. 1/2/4 oder Name suchen …" />
-          <p class="hint">Rückmelde-GA für den Ist-Wert (DEST / BOTH)</p>
         </div>
         <div v-if="form.direction === 'SOURCE' || form.direction === 'BOTH'" class="flex items-start gap-2">
           <input
@@ -182,7 +177,7 @@
               {{ mqttBrowseLoading ? 'Scannen …' : 'Browse' }}
             </button>
           </div>
-          <p class="hint">SOURCE/BOTH: abonniertes Topic; DEST: Publish-Topic</p>
+          <p class="hint">Lesen/Lesen+Schreiben: abonniertes Topic; Schreiben: Publish-Topic</p>
 
           <!-- Browse results -->
           <div
@@ -202,12 +197,14 @@
 
         <div class="optional-divider">Optionale Einstellungen</div>
         <div class="grid grid-cols-2 gap-4">
-          <div class="form-group">
+          <!-- Publish-Topic: nur bei Lesen/Schreiben (BOTH) sichtbar -->
+          <div v-if="form.direction === 'BOTH'" class="form-group">
             <label class="label">Publish-Topic <span class="optional">(optional)</span></label>
             <input v-model="cfg.publish_topic" class="input" placeholder="z.B. …/set" />
-            <p class="hint">Separates Topic für DEST/BOTH</p>
+            <p class="hint">Topic für Schreiben — leer = Topic wird verwendet</p>
           </div>
-          <div class="form-group flex flex-col justify-end">
+          <!-- Retain: nur bei Schreiben (DEST) oder Lesen/Schreiben (BOTH) -->
+          <div v-if="form.direction === 'DEST' || form.direction === 'BOTH'" class="form-group flex flex-col justify-end">
             <div class="flex items-center gap-2 mt-6">
               <input type="checkbox" id="mqtt_retain" v-model="cfg.retain" class="w-4 h-4 rounded" />
               <label for="mqtt_retain" class="text-sm text-slate-600 dark:text-slate-300">Retain</label>

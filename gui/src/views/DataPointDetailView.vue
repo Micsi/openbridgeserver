@@ -72,7 +72,9 @@
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ b.adapter_type }}</span>
-                <Badge :variant="b.direction === 'SOURCE' ? 'info' : b.direction === 'DEST' ? 'warning' : 'success'" size="xs">{{ b.direction }}</Badge>
+                <Badge :variant="b.direction === 'SOURCE' ? 'info' : b.direction === 'DEST' ? 'warning' : 'success'" size="xs">
+                  {{ b.direction === 'SOURCE' ? 'Lesen' : b.direction === 'DEST' ? 'Schreiben' : 'Lesen/Schreiben' }}
+                </Badge>
                 <Badge v-if="!b.enabled" variant="danger" size="xs">Deaktiviert</Badge>
               </div>
               <div class="text-xs text-slate-500 font-mono mt-1 truncate">{{ JSON.stringify(b.config) }}</div>
