@@ -76,7 +76,7 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
     <div class="flex items-center gap-2 pl-1">
       <input id="cfg-inv-up" v-model="cfg.invert_move_up" type="checkbox" class="rounded accent-blue-500" />
       <label for="cfg-inv-up" class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
-        Boolean invertieren (false = aktiv)
+        Invertieren — aktivieren wenn Langdruck in die falsche Richtung fährt
       </label>
     </div>
 
@@ -88,7 +88,7 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
     <div class="flex items-center gap-2 pl-1">
       <input id="cfg-inv-down" v-model="cfg.invert_move_down" type="checkbox" class="rounded accent-blue-500" />
       <label for="cfg-inv-down" class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
-        Boolean invertieren (false = aktiv)
+        Invertieren — aktivieren wenn Langdruck in die falsche Richtung fährt
       </label>
     </div>
 

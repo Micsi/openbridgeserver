@@ -92,6 +92,17 @@ async function write(id: string | null, value: unknown) {
   try { await datapoints.write(id, value) } catch { /* ignore */ }
 }
 
+// ── Stop senden ──────────────────────────────────────────────────────────────
+/**
+ * Sendet den Stop-Befehl (true, dann false nach kurzer Zeit).
+ * Wird nach Kurzklick UND über die Stop-Taste verwendet.
+ * Sendet nichts wenn kein dp_stop konfiguriert ist.
+ */
+async function sendStop() {
+  await write(dpStop.value, true)
+  if (dpStop.value) setTimeout(() => write(dpStop.value, false), 200)
+}
+
 // ── Hoch-Taste ──────────────────────────────────────────────────────────────
 /**
  * Kurzklick (< 0.5 s): Schritt hoch / Lamellen öffnen
@@ -120,11 +131,13 @@ async function onMoveUpEnd() {
   const wasShort = upState.value === 'pressing'   // Timer hat noch nicht ausgelöst
   if (upTimer) { clearTimeout(upTimer); upTimer = null }
   upState.value = 'idle'
-  // Nur bei Kurzklick: inaktiven Wert senden → Aktor erkennt kurzes Signal als Schritt
-  // Bei Langdruck:     nichts senden → Aktor fährt bis Endlage (Stop-Taste zum Abbruch)
   if (wasShort) {
-    await write(dpMoveUp.value, inactiveVal(invertUp.value))
+    // Kurzklick-Ende: Stop-DP senden statt inaktiven Richtungswert.
+    // Den inaktiven Wert (false) auf einem Richtungs-DP zu senden würde bei
+    // vielen Aktoren (DPT 1.008: 0=hoch, 1=runter) die Gegenrichtung auslösen.
+    await sendStop()
   }
+  // Langdruck: nichts senden → Aktor fährt selbständig bis Endlage
 }
 
 // ── Runter-Taste ─────────────────────────────────────────────────────────────
@@ -145,8 +158,9 @@ async function onMoveDownEnd() {
   if (downTimer) { clearTimeout(downTimer); downTimer = null }
   downState.value = 'idle'
   if (wasShort) {
-    await write(dpMoveDown.value, inactiveVal(invertDown.value))
+    await sendStop()
   }
+  // Langdruck: nichts senden → Aktor fährt selbständig bis Endlage
 }
 
 // ── Stop-Taste ───────────────────────────────────────────────────────────────
@@ -155,8 +169,7 @@ async function onStop() {
   if (downTimer) { clearTimeout(downTimer); downTimer = null }
   upState.value   = 'idle'
   downState.value = 'idle'
-  await write(dpStop.value, true)
-  setTimeout(() => write(dpStop.value, false), 200)
+  await sendStop()
 }
 
 // ── Positionsregler ──────────────────────────────────────────────────────────
