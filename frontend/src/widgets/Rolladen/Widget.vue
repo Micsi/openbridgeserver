@@ -215,26 +215,26 @@ async function slatStep(dir: 'open' | 'close') {
 
 // ── SVG Lamellenansicht – Queransicht (aus Führungsschiene) ──────────────────
 /**
- * Jede Lamelle wird als senkrechtes Rechteck gezeichnet (Blick von der Seite,
- * entlang der Lamellenachse). Die Breite wächst mit dem Neigungswinkel:
- *   0 % (waagerecht, offen)  → schmaler Strich (nur Kante sichtbar)
- *   100 % (senkrecht, zu)    → breites Rechteck (volle Fläche sichtbar)
+ * Blickrichtung: entlang der Rotationsachse (gestrichelte Mittellinie).
+ * Jede Lamelle erscheint als waagrechter Balken, der die Achse kreuzt.
+ * Die Breite ist fix; die Höhe wächst mit dem Neigungswinkel:
+ *   0 % (waagerecht, offen)  → dünner Strich (h ≈ 1.5)
+ *   100 % (senkrecht, zu)    → hoher Balken (füllt den Slot)
  */
-const SLAT_COUNT_V  = 4
-const SVG_VW        = 32
-const SVG_VH        = 80
-const SLAT_SPACING  = SVG_VW / SLAT_COUNT_V   // 8 px pro Slot
-const SLAT_MAX_W    = 7                         // Breite bei 90 ° (Slot = 8, 1 px Lücke)
+const SLAT_COUNT_V    = 5
+const SVG_VW          = 32
+const SVG_VH          = 80
+const SLAT_SPACING_V  = SVG_VH / (SLAT_COUNT_V + 1)   // ≈ 13.3 px
+const SLAT_FULL_W     = SVG_VW - 6                      // 26 px (3 px Rand je Seite)
+const SLAT_MAX_H      = SLAT_SPACING_V - 1              // ≈ 12.3 px (1 px Lücke)
 
 const slatRects = computed(() => {
   const angle = (shownSlat.value / 100) * 90
-  const w = Math.max(1.5, SLAT_MAX_W * Math.sin(angle * Math.PI / 180))
-  return Array.from({ length: SLAT_COUNT_V }, (_, i) => ({
-    x: i * SLAT_SPACING + (SLAT_SPACING - w) / 2,
-    y: 2,
-    w,
-    h: SVG_VH - 4,
-  }))
+  const h = Math.max(1.5, SLAT_MAX_H * Math.sin(angle * Math.PI / 180))
+  return Array.from({ length: SLAT_COUNT_V }, (_, i) => {
+    const cy = (i + 1) * SLAT_SPACING_V
+    return { x: 3, y: cy - h / 2, w: SLAT_FULL_W, h }
+  })
 })
 
 // ── Tooltip-Texte ────────────────────────────────────────────────────────────
@@ -402,18 +402,27 @@ onUnmounted(() => {
           @click="slatStep('open')"
         >☀</button>
 
-        <!-- SVG Queransicht: senkrechte Lamellen, Breite = Neigungswinkel -->
+        <!-- SVG Queransicht: waagrechte Lamellen kreuzen Rotationsachse -->
         <svg
           :viewBox="`0 0 ${SVG_VW} ${SVG_VH}`"
           class="w-full flex-1 min-h-0 rounded border border-gray-300 dark:border-gray-600 bg-sky-50 dark:bg-sky-950"
           xmlns="http://www.w3.org/2000/svg"
           preserveAspectRatio="xMidYMid meet"
         >
+          <!-- Rotationsachse (gestrichelte Mittellinie) -->
+          <line
+            :x1="SVG_VW / 2" y1="0"
+            :x2="SVG_VW / 2" :y2="SVG_VH"
+            stroke-width="1"
+            stroke-dasharray="3,2"
+            class="stroke-gray-400 dark:stroke-gray-500"
+          />
+          <!-- Lamellen (über der Achse gezeichnet) -->
           <rect
             v-for="(r, i) in slatRects"
             :key="i"
             :x="r.x" :y="r.y" :width="r.w" :height="r.h"
-            rx="0.5"
+            rx="1"
             class="fill-amber-400 dark:fill-amber-600 stroke-amber-600 dark:stroke-amber-400"
             stroke-width="0.5"
           />
