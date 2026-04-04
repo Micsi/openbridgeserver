@@ -39,6 +39,17 @@ const dpPositionStatus = computed(() => (props.config.dp_position_status  as str
 const dpSlat           = computed(() => (props.config.dp_slat             as string) || null)
 const dpSlatStatus     = computed(() => (props.config.dp_slat_status      as string) || null)
 
+// ── Sperr- / Status-Datenpunkte ──────────────────────────────────────────────
+const dpLock    = computed(() => (props.config.dp_lock    as string) || null)
+const dpStatus1 = computed(() => (props.config.dp_status_1 as string) || null)
+const dpStatus2 = computed(() => (props.config.dp_status_2 as string) || null)
+const dpStatus3 = computed(() => (props.config.dp_status_3 as string) || null)
+const dpStatus4 = computed(() => (props.config.dp_status_4 as string) || null)
+
+const labelStatus2 = computed(() => (props.config.label_status_2 as string) || 'Status 2')
+const labelStatus3 = computed(() => (props.config.label_status_3 as string) || 'Status 3')
+const labelStatus4 = computed(() => (props.config.label_status_4 as string) || 'Status 4')
+
 // ── Werte aus dem Store lesen ────────────────────────────────────────────────
 function toNumber(id: string | null): number | null {
   if (!id) return null
@@ -48,6 +59,28 @@ function toNumber(id: string | null): number | null {
   const p = parseFloat(String(v.v))
   return isNaN(p) ? null : p
 }
+
+function getBool(id: string | null): boolean | null {
+  if (!id) return null
+  const v = dpStore.getValue(id)
+  if (!v || v.v === null || v.v === undefined) return null
+  if (typeof v.v === 'boolean') return v.v
+  if (typeof v.v === 'number')  return v.v !== 0
+  const s = String(v.v).toLowerCase()
+  if (s === 'true'  || s === '1') return true
+  if (s === 'false' || s === '0') return false
+  return null
+}
+
+const lockValue    = computed(() => getBool(dpLock.value))
+const status1Value = computed(() => getBool(dpStatus1.value))
+const status2Value = computed(() => getBool(dpStatus2.value))
+const status3Value = computed(() => getBool(dpStatus3.value))
+const status4Value = computed(() => getBool(dpStatus4.value))
+
+const hasLockOrStatus = computed(() =>
+  !!(dpLock.value || dpStatus1.value || dpStatus2.value || dpStatus3.value || dpStatus4.value)
+)
 
 const rawPosition = computed(() => toNumber(dpPositionStatus.value ?? dpPosition.value))
 
@@ -213,6 +246,12 @@ async function slatStep(dir: 'open' | 'close') {
   await write(dpSlat.value, next)
 }
 
+// ── Sperre umschalten ────────────────────────────────────────────────────────
+async function toggleLock() {
+  if (props.editorMode || props.readonly) return
+  await write(dpLock.value, !(lockValue.value ?? false))
+}
+
 // ── SVG Lamellenansicht – Queransicht (entlang Rotationsachse) ───────────────
 /**
  * Blickrichtung: entlang der Rotationsachse (gestrichelte Mittellinie).
@@ -345,57 +384,140 @@ onUnmounted(() => {
 
       </div>
 
-      <!-- Mittlere Spalte: Schieberegler -->
-      <div class="flex flex-col flex-1 justify-center gap-3">
+      <!-- Mittlere Spalte: Schieberegler + Statuszeile -->
+      <div class="flex flex-col flex-1">
 
-        <!-- Positionsregler -->
-        <div>
-          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-0.5">
-            <span>Position</span>
-            <span class="tabular-nums font-medium text-gray-700 dark:text-gray-300">
-              {{ displayPosition !== null ? Math.round(shownPosition) + ' %' : '—' }}
-            </span>
+        <!-- Schieberegler (vertikal zentriert) -->
+        <div class="flex flex-col flex-1 justify-center gap-3">
+
+          <!-- Positionsregler -->
+          <div>
+            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-0.5">
+              <span>Position</span>
+              <span class="tabular-nums font-medium text-gray-700 dark:text-gray-300">
+                {{ displayPosition !== null ? Math.round(shownPosition) + ' %' : '—' }}
+              </span>
+            </div>
+            <input
+              type="range" min="0" max="100" step="1"
+              :value="shownPosition"
+              :disabled="editorMode || readonly"
+              class="w-full accent-blue-500 cursor-pointer disabled:cursor-default disabled:opacity-40"
+              @input="onPositionInput"
+              @change="onPositionChange"
+            />
+            <div class="flex justify-between text-xs text-gray-400 dark:text-gray-600 mt-0.5">
+              <span>auf</span><span>zu</span>
+            </div>
           </div>
-          <input
-            type="range" min="0" max="100" step="1"
-            :value="shownPosition"
-            :disabled="editorMode || readonly"
-            class="w-full accent-blue-500 cursor-pointer disabled:cursor-default disabled:opacity-40"
-            @input="onPositionInput"
-            @change="onPositionChange"
-          />
-          <div class="flex justify-between text-xs text-gray-400 dark:text-gray-600 mt-0.5">
-            <span>auf</span><span>zu</span>
+
+          <!-- Lamellenregler (nur Jalousie) -->
+          <div v-if="mode === 'jalousie'">
+            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-0.5">
+              <span>Lamellen</span>
+              <span class="tabular-nums font-medium text-gray-700 dark:text-gray-300">
+                {{ rawSlat !== null ? Math.round(shownSlat) + ' %' : '—' }}
+              </span>
+            </div>
+            <input
+              type="range" min="0" max="100" step="1"
+              :value="shownSlat"
+              :disabled="editorMode || readonly"
+              class="w-full accent-amber-500 cursor-pointer disabled:cursor-default disabled:opacity-40"
+              @input="onSlatInput"
+              @change="onSlatChange"
+            />
+            <div class="flex justify-between text-xs text-gray-400 dark:text-gray-600 mt-0.5">
+              <span>offen</span><span>zu</span>
+            </div>
           </div>
+
         </div>
 
-        <!-- Lamellenregler (nur Jalousie) -->
-        <div v-if="mode === 'jalousie'">
-          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-0.5">
-            <span>Lamellen</span>
-            <span class="tabular-nums font-medium text-gray-700 dark:text-gray-300">
-              {{ rawSlat !== null ? Math.round(shownSlat) + ' %' : '—' }}
-            </span>
-          </div>
-          <input
-            type="range" min="0" max="100" step="1"
-            :value="shownSlat"
-            :disabled="editorMode || readonly"
-            class="w-full accent-amber-500 cursor-pointer disabled:cursor-default disabled:opacity-40"
-            @input="onSlatInput"
-            @change="onSlatChange"
-          />
-          <div class="flex justify-between text-xs text-gray-400 dark:text-gray-600 mt-0.5">
-            <span>offen</span><span>zu</span>
-          </div>
-        </div>
+        <!-- Statuszeile: Sperre (Ausgang) + 4 read-only Indikatoren -->
+        <div v-if="hasLockOrStatus" class="flex gap-1 items-center shrink-0">
 
+          <!-- Sperre (schaltbarer Ausgang) -->
+          <button
+            v-if="dpLock"
+            class="relative w-7 h-7 rounded flex flex-col items-center justify-center gap-px transition-colors shrink-0
+                   bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300
+                   hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40"
+            :disabled="editorMode || readonly"
+            title="Sperre umschalten"
+            @click="toggleLock"
+          >
+            <span class="text-[9px] leading-none">🔒</span>
+            <span
+              class="w-2 h-2 rounded-full"
+              :class="lockValue === null ? 'bg-gray-400 dark:bg-gray-500'
+                                        : lockValue ? 'bg-red-500' : 'bg-green-500'"
+            />
+          </button>
+
+          <!-- Status 1: «Manuelle Sperre» (fester Name) -->
+          <div
+            v-if="dpStatus1"
+            class="w-7 h-7 rounded flex items-center justify-center shrink-0 cursor-default
+                   bg-gray-200 dark:bg-gray-700"
+            title="Manuelle Sperre"
+          >
+            <span
+              class="w-3 h-3 rounded-full"
+              :class="status1Value === null ? 'bg-gray-400 dark:bg-gray-500'
+                                           : status1Value ? 'bg-red-500' : 'bg-green-500'"
+            />
+          </div>
+
+          <!-- Status 2 -->
+          <div
+            v-if="dpStatus2"
+            class="w-7 h-7 rounded flex items-center justify-center shrink-0 cursor-default
+                   bg-gray-200 dark:bg-gray-700"
+            :title="labelStatus2"
+          >
+            <span
+              class="w-3 h-3 rounded-full"
+              :class="status2Value === null ? 'bg-gray-400 dark:bg-gray-500'
+                                           : status2Value ? 'bg-red-500' : 'bg-green-500'"
+            />
+          </div>
+
+          <!-- Status 3 -->
+          <div
+            v-if="dpStatus3"
+            class="w-7 h-7 rounded flex items-center justify-center shrink-0 cursor-default
+                   bg-gray-200 dark:bg-gray-700"
+            :title="labelStatus3"
+          >
+            <span
+              class="w-3 h-3 rounded-full"
+              :class="status3Value === null ? 'bg-gray-400 dark:bg-gray-500'
+                                           : status3Value ? 'bg-red-500' : 'bg-green-500'"
+            />
+          </div>
+
+          <!-- Status 4 -->
+          <div
+            v-if="dpStatus4"
+            class="w-7 h-7 rounded flex items-center justify-center shrink-0 cursor-default
+                   bg-gray-200 dark:bg-gray-700"
+            :title="labelStatus4"
+          >
+            <span
+              class="w-3 h-3 rounded-full"
+              :class="status4Value === null ? 'bg-gray-400 dark:bg-gray-500'
+                                           : status4Value ? 'bg-red-500' : 'bg-green-500'"
+            />
+          </div>
+
+        </div>
       </div>
 
       <!-- Rechte Spalte: Lamellenansicht Queransicht (nur Jalousie) -->
       <div
         v-if="mode === 'jalousie'"
-        class="flex flex-col items-center gap-1 w-10 shrink-0"
+        class="flex flex-col items-center gap-1 w-7 shrink-0"
       >
         <!-- Sonne = Lamellen öffnen (hell) -->
         <button

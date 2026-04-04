@@ -18,6 +18,15 @@ const cfg = reactive({
   dp_position_status:   (props.modelValue.dp_position_status   as string)  ?? '',
   dp_slat:              (props.modelValue.dp_slat              as string)  ?? '',
   dp_slat_status:       (props.modelValue.dp_slat_status       as string)  ?? '',
+  // Sperre & Statusindikatoren
+  dp_lock:              (props.modelValue.dp_lock              as string)  ?? '',
+  dp_status_1:          (props.modelValue.dp_status_1          as string)  ?? '',
+  dp_status_2:          (props.modelValue.dp_status_2          as string)  ?? '',
+  dp_status_3:          (props.modelValue.dp_status_3          as string)  ?? '',
+  dp_status_4:          (props.modelValue.dp_status_4          as string)  ?? '',
+  label_status_2:       (props.modelValue.label_status_2       as string)  ?? '',
+  label_status_3:       (props.modelValue.label_status_3       as string)  ?? '',
+  label_status_4:       (props.modelValue.label_status_4       as string)  ?? '',
 })
 
 const isJalousie = computed(() => cfg.mode === 'jalousie')
@@ -130,5 +139,72 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
         :compatible-types="['FLOAT', 'INTEGER']"
       />
     </template>
+
+    <hr class="border-gray-200 dark:border-gray-700" />
+
+    <!-- Sperre & Statusindikatoren -->
+    <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Sperre &amp; Statusindikatoren</p>
+
+    <!-- Sperre (Ausgang) -->
+    <DataPointPicker
+      v-model="cfg.dp_lock"
+      label="🔒 Sperre (Ausgang, schaltbar)"
+      :compatible-types="['BOOLEAN']"
+    />
+
+    <!-- Status 1: Manuelle Sperre (Name fix) -->
+    <DataPointPicker
+      v-model="cfg.dp_status_1"
+      label="Indikator 1 — «Manuelle Sperre» (Eingang, read-only)"
+      :compatible-types="['BOOLEAN']"
+    />
+
+    <!-- Status 2 -->
+    <div>
+      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">Indikator 2 — Bezeichnung</label>
+      <input
+        v-model="cfg.label_status_2"
+        type="text"
+        placeholder="z.B. Windalarm"
+        class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
+      />
+    </div>
+    <DataPointPicker
+      v-model="cfg.dp_status_2"
+      label="Indikator 2 (Eingang, read-only)"
+      :compatible-types="['BOOLEAN']"
+    />
+
+    <!-- Status 3 -->
+    <div>
+      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">Indikator 3 — Bezeichnung</label>
+      <input
+        v-model="cfg.label_status_3"
+        type="text"
+        placeholder="z.B. Regenalarm"
+        class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
+      />
+    </div>
+    <DataPointPicker
+      v-model="cfg.dp_status_3"
+      label="Indikator 3 (Eingang, read-only)"
+      :compatible-types="['BOOLEAN']"
+    />
+
+    <!-- Status 4 -->
+    <div>
+      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">Indikator 4 — Bezeichnung</label>
+      <input
+        v-model="cfg.label_status_4"
+        type="text"
+        placeholder="z.B. Automatik aktiv"
+        class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
+      />
+    </div>
+    <DataPointPicker
+      v-model="cfg.dp_status_4"
+      label="Indikator 4 (Eingang, read-only)"
+      :compatible-types="['BOOLEAN']"
+    />
   </div>
 </template>
