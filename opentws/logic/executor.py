@@ -227,6 +227,10 @@ class GraphExecutor:
                         raw = self._safe_eval(formula, {"x": self._to_num(raw)})
                     except Exception as exc:
                         logger.debug("datapoint_read formula error: %s", exc)
+                value_map = d.get("value_map")
+                if value_map and raw is not None:
+                    from opentws.core.transformation import apply_value_map
+                    raw = apply_value_map(raw, value_map)
                 return {"value": raw, "changed": inputs.get("changed", False)}
 
             case "datapoint_write":
@@ -238,6 +242,10 @@ class GraphExecutor:
                         write_val = self._safe_eval(formula, {"x": self._to_num(write_val)})
                     except Exception as exc:
                         logger.debug("datapoint_write formula error: %s", exc)
+                value_map = d.get("value_map")
+                if value_map and write_val is not None:
+                    from opentws.core.transformation import apply_value_map
+                    write_val = apply_value_map(write_val, value_map)
                 return {"_write_value": write_val, "_triggered": inputs.get("trigger")}
 
             case "python_script":
