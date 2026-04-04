@@ -5,7 +5,10 @@ import { useDatapointsStore } from '@/stores/datapoints'
 import type { DataPointValue } from '@/types'
 
 /** Schwellwert in ms: darunter = Kurzklick (Schritt/Stop), darüber = Langdruck (Fahren) */
-const LONG_PRESS_MS = 500
+const LONG_PRESS_MS = 300
+
+/** Schrittweite für Lamellen-Stufentasten in % */
+const SLAT_STEP = 10
 
 /** Tastenstatus für Richtungstasten */
 type PressState = 'idle' | 'pressing' | 'moving'
@@ -186,18 +189,39 @@ async function onPositionChange(e: Event) {
   await write(dpPosition.value, sendVal)
 }
 
-// ── Lamellenregler ───────────────────────────────────────────────────────────
-function onSlatInput(e: Event) {
-  localSlat.value = Number((e.target as HTMLInputElement).value)
-}
-
-async function onSlatChange(e: Event) {
-  const val = Number((e.target as HTMLInputElement).value)
-  localSlat.value = val
+// ── Lamellen-Schrittfunktionen ───────────────────────────────────────────────
+async function slatStep(dir: 'open' | 'close') {
+  if (props.editorMode || props.readonly) return
+  const current = localSlat.value ?? rawSlat.value ?? 0
+  const next = Math.max(0, Math.min(100, dir === 'open' ? current - SLAT_STEP : current + SLAT_STEP))
+  localSlat.value = next
   if (slatTimer) clearTimeout(slatTimer)
   slatTimer = setTimeout(() => { localSlat.value = null }, 5000)
-  await write(dpSlat.value, val)
+  await write(dpSlat.value, next)
 }
+
+// ── SVG Lamellenansicht (Queransicht) ─────────────────────────────────────────
+/**
+ * Berechnet die Höhe eines Lamellenquerschnitts in SVG-Einheiten.
+ * 0 % = waagerecht (nur Stärke sichtbar) → minHeight = 2
+ * 100 % = senkrecht (volle Breite) → maxHeight ≈ slatWidth (24)
+ */
+const SLAT_COUNT  = 5
+const SLAT_WIDTH  = 24   // SVG-Einheiten, Breite jeder Lamelle
+const SLAT_GAP    = 12   // Abstand Mitte-Mitte
+const SVG_W       = 32
+const SVG_H       = SLAT_COUNT * SLAT_GAP + 4
+
+const slatRects = computed(() => {
+  const angle = (shownSlat.value / 100) * 90          // 0–90 Grad
+  const h     = Math.max(2, SLAT_WIDTH * Math.sin(angle * Math.PI / 180))
+  return Array.from({ length: SLAT_COUNT }, (_, i) => ({
+    x:  (SVG_W - SLAT_WIDTH) / 2,
+    y:  i * SLAT_GAP + 2 - h / 2,
+    w:  SLAT_WIDTH,
+    h,
+  }))
+})
 
 // ── Tooltip-Texte ────────────────────────────────────────────────────────────
 const tooltipUp   = 'Kurz: Stopp\nLang: Auffahren bis Endlage'
@@ -326,23 +350,55 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- Lamellenregler (nur Jalousie) -->
-        <div v-if="mode === 'jalousie'">
-          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-0.5">
+        <!-- Lamellenansicht Queransicht (nur Jalousie) -->
+        <div v-if="mode === 'jalousie'" class="flex flex-col gap-1">
+          <!-- Label + Wert -->
+          <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400">
             <span>Lamellen</span>
             <span class="tabular-nums font-medium text-gray-700 dark:text-gray-300">
               {{ rawSlat !== null ? Math.round(shownSlat) + ' %' : '—' }}
             </span>
           </div>
-          <input
-            type="range" min="0" max="100" step="1"
-            :value="shownSlat"
-            :disabled="editorMode || readonly"
-            class="w-full accent-amber-500 cursor-pointer disabled:cursor-default disabled:opacity-40"
-            @input="onSlatInput"
-            @change="onSlatChange"
-          />
-          <div class="flex justify-between text-xs text-gray-400 dark:text-gray-600 mt-0.5">
+          <!-- SVG Queransicht + Stufentasten -->
+          <div class="flex items-center justify-between gap-1">
+            <!-- Lamellen öffnen (◁) -->
+            <button
+              class="w-6 h-6 rounded flex items-center justify-center text-xs font-bold transition-colors shrink-0
+                     bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300
+                     hover:bg-amber-100 dark:hover:bg-amber-900 disabled:opacity-40"
+              :disabled="editorMode || readonly"
+              title="Lamellen einen Schritt öffnen"
+              @click="slatStep('open')"
+            >◁</button>
+
+            <!-- SVG Seitenansicht -->
+            <svg
+              :viewBox="`0 0 ${SVG_W} ${SVG_H}`"
+              class="flex-1 h-16 rounded border border-gray-300 dark:border-gray-600 bg-sky-50 dark:bg-sky-950"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <rect
+                v-for="(r, i) in slatRects"
+                :key="i"
+                :x="r.x" :y="r.y" :width="r.w" :height="r.h"
+                rx="1"
+                class="fill-amber-400 dark:fill-amber-600 stroke-amber-600 dark:stroke-amber-400"
+                stroke-width="0.5"
+              />
+            </svg>
+
+            <!-- Lamellen schliessen (▷) -->
+            <button
+              class="w-6 h-6 rounded flex items-center justify-center text-xs font-bold transition-colors shrink-0
+                     bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300
+                     hover:bg-amber-100 dark:hover:bg-amber-900 disabled:opacity-40"
+              :disabled="editorMode || readonly"
+              title="Lamellen einen Schritt schliessen"
+              @click="slatStep('close')"
+            >▷</button>
+          </div>
+          <!-- Beschriftung -->
+          <div class="flex justify-between text-xs text-gray-400 dark:text-gray-600">
             <span>offen</span><span>zu</span>
           </div>
         </div>
@@ -355,10 +411,10 @@ onUnmounted(() => {
 <style scoped>
 /**
  * Fortschrittsbalken am unteren Rand der Richtungstaste.
- * Füllt sich in genau LONG_PRESS_MS (500 ms) → visuelles Feedback für Langdruck.
+ * Füllt sich in genau LONG_PRESS_MS (300 ms) → visuelles Feedback für Langdruck.
  */
 .long-press-bar {
-  animation: longPressProgress 500ms linear forwards;
+  animation: longPressProgress 300ms linear forwards;
 }
 
 @keyframes longPressProgress {
