@@ -92,7 +92,7 @@ const roofState = computed<WinState>(() => {
     if (pos >= 100) return 'open'
     return 'tilted' // partially open
   }
-  return deriveState(dpContact.value, dpTilt.value)
+  return deriveState(dpContact.value, invContact.value, dpTilt.value, invTilt.value)
 })
 
 function stateLabel(s: WinState): string {
