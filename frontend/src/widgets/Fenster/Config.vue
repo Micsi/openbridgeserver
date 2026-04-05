@@ -6,15 +6,21 @@ const props = defineProps<{ modelValue: Record<string, unknown> }>()
 const emit = defineEmits<{ (e: 'update:modelValue', val: Record<string, unknown>): void }>()
 
 const cfg = reactive({
-  label:           (props.modelValue.label           as string) ?? '',
-  mode:            (props.modelValue.mode            as string) ?? 'fenster',
-  dp_contact:      (props.modelValue.dp_contact      as string) ?? '',
-  dp_tilt:         (props.modelValue.dp_tilt         as string) ?? '',
-  dp_contact_left: (props.modelValue.dp_contact_left as string) ?? '',
-  dp_tilt_left:    (props.modelValue.dp_tilt_left    as string) ?? '',
-  dp_contact_right:(props.modelValue.dp_contact_right as string) ?? '',
-  dp_tilt_right:   (props.modelValue.dp_tilt_right   as string) ?? '',
-  dp_position:     (props.modelValue.dp_position     as string) ?? '',
+  label:                (props.modelValue.label                as string)  ?? '',
+  mode:                 (props.modelValue.mode                 as string)  ?? 'fenster',
+  dp_contact:           (props.modelValue.dp_contact           as string)  ?? '',
+  invert_contact:       (props.modelValue.invert_contact       as boolean) ?? false,
+  dp_tilt:              (props.modelValue.dp_tilt              as string)  ?? '',
+  invert_tilt:          (props.modelValue.invert_tilt          as boolean) ?? false,
+  dp_contact_left:      (props.modelValue.dp_contact_left      as string)  ?? '',
+  invert_contact_left:  (props.modelValue.invert_contact_left  as boolean) ?? false,
+  dp_tilt_left:         (props.modelValue.dp_tilt_left         as string)  ?? '',
+  invert_tilt_left:     (props.modelValue.invert_tilt_left     as boolean) ?? false,
+  dp_contact_right:     (props.modelValue.dp_contact_right     as string)  ?? '',
+  invert_contact_right: (props.modelValue.invert_contact_right as boolean) ?? false,
+  dp_tilt_right:        (props.modelValue.dp_tilt_right        as string)  ?? '',
+  invert_tilt_right:    (props.modelValue.invert_tilt_right    as boolean) ?? false,
+  dp_position:          (props.modelValue.dp_position          as string)  ?? '',
 })
 
 const isSingleWing  = computed(() => cfg.mode === 'fenster')
@@ -23,9 +29,9 @@ const isDoor        = computed(() => cfg.mode === 'tuere')
 const isSlidingDoor = computed(() => cfg.mode === 'schiebetuer')
 const isRoof        = computed(() => cfg.mode === 'dachfenster')
 
-const showContact = computed(() => isSingleWing.value || isDoor.value || isSlidingDoor.value || isRoof.value)
-const showTilt    = computed(() => isSingleWing.value || isRoof.value)
-const showWings   = computed(() => isDoubleWing.value)
+const showContact  = computed(() => isSingleWing.value || isDoor.value || isSlidingDoor.value || isRoof.value)
+const showTilt     = computed(() => isSingleWing.value || isRoof.value)
+const showWings    = computed(() => isDoubleWing.value)
 const showPosition = computed(() => isRoof.value)
 
 watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
@@ -61,50 +67,86 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
 
     <hr class="border-gray-200 dark:border-gray-700" />
 
-    <!-- Single/Door/Sliding/Roof: main contact -->
+    <!-- Single / Door / Sliding / Roof: main contact -->
     <template v-if="showContact">
-      <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Kontakt (BOOLEAN: true = offen)</p>
+      <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Kontakt</p>
       <DataPointPicker
         v-model="cfg.dp_contact"
-        label="Fensterkontakt / Türkontakt"
+        label="Fensterkontakt / Türkontakt (BOOLEAN)"
         :compatible-types="['BOOLEAN']"
       />
+      <div class="flex items-center gap-2 pl-1">
+        <input id="inv-contact" v-model="cfg.invert_contact" type="checkbox" class="rounded accent-blue-500" />
+        <label for="inv-contact" class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+          Invertieren — aktivieren wenn false = offen
+        </label>
+      </div>
     </template>
 
     <!-- Tilt contact (single-wing, roof) -->
     <template v-if="showTilt">
       <DataPointPicker
         v-model="cfg.dp_tilt"
-        label="Kippsensor (optional, BOOLEAN: true = gekippt)"
+        label="Kippsensor (optional, BOOLEAN)"
         :compatible-types="['BOOLEAN']"
       />
+      <div class="flex items-center gap-2 pl-1">
+        <input id="inv-tilt" v-model="cfg.invert_tilt" type="checkbox" class="rounded accent-blue-500" />
+        <label for="inv-tilt" class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+          Invertieren — aktivieren wenn false = gekippt
+        </label>
+      </div>
     </template>
 
     <!-- Double-wing contacts -->
     <template v-if="showWings">
-      <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Linker Flügel (BOOLEAN: true = offen)</p>
+      <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Linker Flügel</p>
       <DataPointPicker
         v-model="cfg.dp_contact_left"
-        label="Kontakt links"
+        label="Kontakt links (BOOLEAN)"
         :compatible-types="['BOOLEAN']"
       />
+      <div class="flex items-center gap-2 pl-1">
+        <input id="inv-contact-left" v-model="cfg.invert_contact_left" type="checkbox" class="rounded accent-blue-500" />
+        <label for="inv-contact-left" class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+          Invertieren — aktivieren wenn false = offen
+        </label>
+      </div>
       <DataPointPicker
         v-model="cfg.dp_tilt_left"
-        label="Kippsensor links (optional)"
+        label="Kippsensor links (optional, BOOLEAN)"
         :compatible-types="['BOOLEAN']"
       />
+      <div class="flex items-center gap-2 pl-1">
+        <input id="inv-tilt-left" v-model="cfg.invert_tilt_left" type="checkbox" class="rounded accent-blue-500" />
+        <label for="inv-tilt-left" class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+          Invertieren — aktivieren wenn false = gekippt
+        </label>
+      </div>
 
-      <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Rechter Flügel (BOOLEAN: true = offen)</p>
+      <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Rechter Flügel</p>
       <DataPointPicker
         v-model="cfg.dp_contact_right"
-        label="Kontakt rechts"
+        label="Kontakt rechts (BOOLEAN)"
         :compatible-types="['BOOLEAN']"
       />
+      <div class="flex items-center gap-2 pl-1">
+        <input id="inv-contact-right" v-model="cfg.invert_contact_right" type="checkbox" class="rounded accent-blue-500" />
+        <label for="inv-contact-right" class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+          Invertieren — aktivieren wenn false = offen
+        </label>
+      </div>
       <DataPointPicker
         v-model="cfg.dp_tilt_right"
-        label="Kippsensor rechts (optional)"
+        label="Kippsensor rechts (optional, BOOLEAN)"
         :compatible-types="['BOOLEAN']"
       />
+      <div class="flex items-center gap-2 pl-1">
+        <input id="inv-tilt-right" v-model="cfg.invert_tilt_right" type="checkbox" class="rounded accent-blue-500" />
+        <label for="inv-tilt-right" class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
+          Invertieren — aktivieren wenn false = gekippt
+        </label>
+      </div>
     </template>
 
     <!-- Roof window: position percentage -->

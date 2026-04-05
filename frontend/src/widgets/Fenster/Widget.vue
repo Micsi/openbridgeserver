@@ -26,16 +26,27 @@ const dpContactRight = computed(() => (props.config.dp_contact_right as string) 
 const dpTiltRight    = computed(() => (props.config.dp_tilt_right    as string) || null)
 const dpPosition     = computed(() => (props.config.dp_position      as string) || null)
 
-function getBool(id: string | null): boolean | null {
+// Invert flags
+const invContact      = computed(() => (props.config.invert_contact       as boolean) ?? false)
+const invTilt         = computed(() => (props.config.invert_tilt          as boolean) ?? false)
+const invContactLeft  = computed(() => (props.config.invert_contact_left  as boolean) ?? false)
+const invTiltLeft     = computed(() => (props.config.invert_tilt_left     as boolean) ?? false)
+const invContactRight = computed(() => (props.config.invert_contact_right as boolean) ?? false)
+const invTiltRight    = computed(() => (props.config.invert_tilt_right    as boolean) ?? false)
+
+function getBool(id: string | null, invert = false): boolean | null {
   if (!id) return null
   const v = dpStore.getValue(id)
   if (!v || v.v === null || v.v === undefined) return null
-  if (typeof v.v === 'boolean') return v.v
-  if (typeof v.v === 'number') return v.v !== 0
-  const s = String(v.v).toLowerCase()
-  if (s === 'true' || s === '1') return true
-  if (s === 'false' || s === '0') return false
-  return null
+  let result: boolean | null = null
+  if (typeof v.v === 'boolean') result = v.v
+  else if (typeof v.v === 'number') result = v.v !== 0
+  else {
+    const s = String(v.v).toLowerCase()
+    if (s === 'true'  || s === '1') result = true
+    else if (s === 'false' || s === '0') result = false
+  }
+  return result === null ? null : (invert ? !result : result)
 }
 
 function getNumber(id: string | null): number | null {
@@ -49,20 +60,23 @@ function getNumber(id: string | null): number | null {
 
 type WinState = 'closed' | 'tilted' | 'open' | 'unknown'
 
-function deriveState(contactId: string | null, tiltId: string | null): WinState {
+function deriveState(
+  contactId: string | null, invC: boolean,
+  tiltId:   string | null, invT: boolean,
+): WinState {
   if (props.editorMode) return 'closed'
-  const tilt    = getBool(tiltId)
-  const contact = getBool(contactId)
-  if (tilt === true)    return 'tilted'
-  if (contact === true) return 'open'
+  const tilt    = getBool(tiltId, invT)
+  const contact = getBool(contactId, invC)
+  if (tilt === true)     return 'tilted'
+  if (contact === true)  return 'open'
   if (contact === false) return 'closed'
   if (contactId === null && tiltId === null) return 'unknown'
   return 'unknown'
 }
 
-const stateMain  = computed(() => deriveState(dpContact.value, dpTilt.value))
-const stateLeft  = computed(() => deriveState(dpContactLeft.value, dpTiltLeft.value))
-const stateRight = computed(() => deriveState(dpContactRight.value, dpTiltRight.value))
+const stateMain  = computed(() => deriveState(dpContact.value, invContact.value, dpTilt.value, invTilt.value))
+const stateLeft  = computed(() => deriveState(dpContactLeft.value, invContactLeft.value, dpTiltLeft.value, invTiltLeft.value))
+const stateRight = computed(() => deriveState(dpContactRight.value, invContactRight.value, dpTiltRight.value, invTiltRight.value))
 
 const position = computed<number | null>(() => {
   if (props.editorMode) return null
