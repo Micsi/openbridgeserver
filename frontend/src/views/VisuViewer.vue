@@ -24,6 +24,7 @@ import '@/widgets/Text/index'
 import '@/widgets/Zeitschaltuhr/index'
 import '@/widgets/Rolladen/index'
 import '@/widgets/Licht/index'
+import '@/widgets/Fenster/index'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()

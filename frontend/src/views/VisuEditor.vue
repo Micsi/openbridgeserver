@@ -46,6 +46,7 @@ import '@/widgets/Text/index'
 import '@/widgets/Zeitschaltuhr/index'
 import '@/widgets/Rolladen/index'
 import '@/widgets/Licht/index'
+import '@/widgets/Fenster/index'
 
 // ── Props / Router / Store ────────────────────────────────────────────────────
 const props = defineProps<{ id: string }>()
