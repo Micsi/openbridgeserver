@@ -241,14 +241,6 @@ function drawWheel() {
   }
   ctx.putImageData(imageData, 0, 0)
 
-  // Dim overlay when off or at low brightness
-  if (!isOn.value && !props.editorMode) {
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'
-    ctx.beginPath()
-    ctx.arc(cx, cy, radius, 0, 2 * Math.PI)
-    ctx.fill()
-  }
-
   // Selector dot
   const rad  = (hue.value / 360) * 2 * Math.PI
   const dist = (sat.value / 100) * radius
@@ -271,7 +263,7 @@ function drawWheel() {
   ctx.fill()
 }
 
-watch([hue, sat, isOn], () => nextTick(drawWheel))
+watch([hue, sat], () => nextTick(drawWheel))
 
 // ── Wheel pointer interaction ─────────────────────────────────────────────────
 function eventToHueSat(e: PointerEvent): { h: number; s: number } | null {
