@@ -319,13 +319,6 @@ async function onWheelPointerUp(e: PointerEvent) {
   ])
 }
 
-// ── Lamp icon style ───────────────────────────────────────────────────────────
-const lampStyle = computed(() => {
-  if (!isOn.value) return {}
-  if (hasColor.value && currentColor.value) return { filter: `drop-shadow(0 0 4px ${currentColor.value})` }
-  return { filter: 'drop-shadow(0 0 4px #fbbf24)' }
-})
-
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 onMounted(() => {
   syncColorFromStore()
@@ -366,12 +359,19 @@ onUnmounted(() => {
       v-if="mode === 'on_off'"
       class="flex flex-col flex-1 items-center justify-center gap-2"
     >
-      <!-- Lamp icon -->
-      <span
-        class="text-3xl leading-none transition-all duration-300"
-        :class="isOn ? 'opacity-100' : 'opacity-30'"
-        :style="lampStyle"
-      >💡</span>
+      <!-- Lamp icon (Material Icons "lightbulb" filled, 24×24) -->
+      <svg
+        viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"
+        class="w-8 h-8 transition-all duration-300"
+        :class="isOn
+          ? (hasColor && currentColor ? '' : 'text-yellow-400')
+          : 'text-gray-300 dark:text-gray-600'"
+        :style="isOn && hasColor && currentColor
+          ? { color: currentColor, filter: `drop-shadow(0 0 5px ${currentColor})` }
+          : isOn ? { filter: 'drop-shadow(0 0 5px #fbbf24)' } : {}"
+      >
+        <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26C17.81 13.47 19 11.38 19 9c0-3.86-3.14-7-7-7z"/>
+      </svg>
       <!-- Toggle -->
       <button
         class="relative w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none"
@@ -394,11 +394,19 @@ onUnmounted(() => {
 
       <!-- Toggle row -->
       <div class="flex items-center gap-2 shrink-0">
-        <span
-          class="text-lg leading-none transition-all duration-300 shrink-0"
-          :class="isOn ? 'opacity-100' : 'opacity-30'"
-          :style="isOn ? lampStyle : {}"
-        >💡</span>
+        <!-- Lamp icon (Material Icons "lightbulb" filled, 24×24) -->
+        <svg
+          viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"
+          class="w-5 h-5 shrink-0 transition-all duration-300"
+          :class="isOn
+            ? (hasColor && currentColor ? '' : 'text-yellow-400')
+            : 'text-gray-300 dark:text-gray-600'"
+          :style="isOn && hasColor && currentColor
+            ? { color: currentColor, filter: `drop-shadow(0 0 4px ${currentColor})` }
+            : isOn ? { filter: 'drop-shadow(0 0 4px #fbbf24)' } : {}"
+        >
+          <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26C17.81 13.47 19 11.38 19 9c0-3.86-3.14-7-7-7z"/>
+        </svg>
         <button
           class="relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none shrink-0"
           :class="isOn ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'"
