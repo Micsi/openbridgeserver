@@ -78,6 +78,24 @@
               Leer = keine Transformation.
             </p>
           </div>
+
+          <div class="section-label mt-1">Wertzuordnung</div>
+          <div class="form-group">
+            <label class="label">Wertzuordnung <span class="text-slate-500 font-normal text-xs">(optional)</span></label>
+            <select v-model="valueMapPreset" @change="onValueMapPresetChange" class="input text-xs">
+              <option v-for="p in VALUE_MAP_PRESETS" :key="p.key" :value="p.key">{{ p.label }}</option>
+            </select>
+            <div v-if="valueMapPreset === 'custom'" class="mt-1">
+              <textarea
+                v-model="valueMapCustom"
+                @change="onValueMapCustomChange"
+                class="input text-xs font-mono h-16 resize-y"
+                placeholder='{"0": "off", "1": "on"}'
+              />
+              <p class="text-xs text-slate-500 mt-0.5">JSON-Objekt mit String-Schlüsseln und -Werten.</p>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Wird nach der Formel angewendet.</p>
+          </div>
         </div>
 
         <!-- Filter -->
@@ -313,10 +331,23 @@ const props = defineProps({
 const emit = defineEmits(['update', 'close'])
 
 // ── State ──────────────────────────────────────────────────────────────────
-const localData  = ref({})
-const dpSearch   = ref('')
-const dpResults  = ref([])
-const activeTab  = ref('connection')
+const localData      = ref({})
+const dpSearch       = ref('')
+const dpResults      = ref([])
+const activeTab      = ref('connection')
+const valueMapPreset = ref('')
+const valueMapCustom = ref('')
+
+// ── Value Map Presets ──────────────────────────────────────────────────────
+const VALUE_MAP_PRESETS = [
+  { key: '',            label: '— keine Wertzuordnung —',            map: null },
+  { key: 'num_invert',  label: '0 ↔ 1 (numerisch invertieren)',       map: { '0': '1', '1': '0' } },
+  { key: 'bool_onoff',  label: 'true/false → on/off',                 map: { 'true': 'on', 'false': 'off' } },
+  { key: 'onoff_bool',  label: 'on/off → true/false',                 map: { 'on': 'true', 'off': 'false' } },
+  { key: 'num_onoff',   label: '0/1 → off/on',                        map: { '0': 'off', '1': 'on' } },
+  { key: 'onoff_num',   label: 'off/on → 0/1',                        map: { 'off': '0', 'on': '1' } },
+  { key: 'custom',      label: 'Benutzerdefiniert (JSON) …',           map: null },
+]
 
 // ── Formula Presets ────────────────────────────────────────────────────────
 const MULTIPLY_PRESETS = [
@@ -473,7 +504,9 @@ const outputFormulaPreset = computed(() => {
   return ALL_PRESETS.find(p => p.f === f)?.f ?? '__custom__'
 })
 
-const hasTransform = computed(() => !!(localData.value.value_formula || '').trim())
+const hasTransform = computed(() =>
+  !!(localData.value.value_formula || '').trim() || !!valueMapPreset.value
+)
 const hasFilter    = computed(() => {
   const d = localData.value
   return boolVal('trigger_on_change') || boolVal('only_on_change') ||
@@ -507,6 +540,17 @@ watch(() => props.node, (n) => {
     }
     if (n.type === 'datapoint_read' || n.type === 'datapoint_write') {
       searchDps()
+      // Restore value_map UI state
+      const vm = n.data.value_map
+      if (vm && typeof vm === 'object') {
+        const mapStr = JSON.stringify(vm)
+        const preset = VALUE_MAP_PRESETS.find(p => p.map && JSON.stringify(p.map) === mapStr)
+        valueMapPreset.value = preset?.key ?? 'custom'
+        valueMapCustom.value = preset ? '' : JSON.stringify(vm, null, 2)
+      } else {
+        valueMapPreset.value = ''
+        valueMapCustom.value = ''
+      }
     }
   }
 }, { immediate: true })
@@ -527,6 +571,20 @@ function onOutputPresetChange(e) {
     localData.value.output_formula = val
     emitUpdate()
   }
+}
+
+function onValueMapPresetChange() {
+  if (valueMapPreset.value !== 'custom') valueMapCustom.value = ''
+  const preset = VALUE_MAP_PRESETS.find(p => p.key === valueMapPreset.value)
+  localData.value.value_map = preset?.map ?? null
+  emitUpdate()
+}
+
+function onValueMapCustomChange() {
+  try {
+    localData.value.value_map = JSON.parse(valueMapCustom.value)
+  } catch { localData.value.value_map = null }
+  emitUpdate()
 }
 
 // ── DataPoint picker ───────────────────────────────────────────────────────

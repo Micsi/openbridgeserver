@@ -337,21 +337,6 @@
           </div>
         </div>
 
-        <!-- Value Mapping -->
-        <div class="form-group">
-          <label class="label">Wertzuordnung <span class="optional">(optional)</span></label>
-          <select v-model="cfg.value_map_preset" class="input" @change="onValueMapPresetChange">
-            <option v-for="p in VALUE_MAP_PRESETS" :key="p.key" :value="p.key">{{ p.label }}</option>
-          </select>
-          <div v-if="cfg.value_map_preset === 'custom'" class="mt-2">
-            <textarea
-              v-model="cfg.value_map_custom"
-              class="input font-mono text-sm h-20 resize-y"
-              placeholder='{"0": "off", "1": "on"}'
-            />
-            <p class="hint">JSON-Objekt mit String-Schlüsseln und -Werten.</p>
-          </div>
-        </div>
       </template>
 
       <!-- 1-Wire -->
@@ -611,6 +596,23 @@
           und alle <code class="text-blue-400">math.*</code>-Funktionen. Leer = keine Transformation.
         </p>
       </div>
+
+      <div class="optional-divider">Wertzuordnung</div>
+      <div class="form-group">
+        <label class="label">Wertzuordnung <span class="optional">(optional)</span></label>
+        <select v-model="form.value_map_preset" class="input" @change="onValueMapPresetChange">
+          <option v-for="p in VALUE_MAP_PRESETS" :key="p.key" :value="p.key">{{ p.label }}</option>
+        </select>
+        <div v-if="form.value_map_preset === 'custom'" class="mt-2">
+          <textarea
+            v-model="form.value_map_custom"
+            class="input font-mono text-sm h-20 resize-y"
+            placeholder='{"0": "off", "1": "on"}'
+          />
+          <p class="hint">JSON-Objekt mit String-Schlüsseln und -Werten.</p>
+        </div>
+        <p class="hint mt-1">Wird nach der Formel angewendet. Schlüssel und Werte als Strings, z.B. <code class="text-blue-400">{"0": "off", "1": "on"}</code></p>
+      </div>
     </div><!-- /TAB Transformation -->
 
     <!-- ── TAB: Filter ── -->
@@ -702,6 +704,8 @@ const form = reactive({
   enabled:             true,
   value_formula:       '',
   formula_preset:      '',
+  value_map_preset:    '',
+  value_map_custom:    '',
   throttle_value:      0,
   throttle_unit:       's',
   send_on_change:      false,
@@ -725,7 +729,6 @@ const cfg = reactive({
   unit_id: 1, count: 1, scale_factor: 1.0, poll_interval: 1.0,
   byte_order: 'big', word_order: 'big',
   topic: '', publish_topic: '', retain: false, payload_template: '',
-  value_map: null, value_map_preset: '', value_map_custom: '',
   source_data_type: '', json_key: '', xml_path: '',
   sensor_id: '', sensor_type: 'DS18B20',
   // ZEITSCHALTUHR
@@ -797,7 +800,7 @@ const currentInstanceName = computed(() => {
 const visibleTabs = computed(() => {
   const tabs = [{ id: 'conn', label: 'Verbindung', badge: false }]
   if (selectedAdapterType.value && selectedAdapterType.value !== 'ZEITSCHALTUHR') {
-    const hasFormula = !!form.value_formula?.trim()
+    const hasFormula = !!form.value_formula?.trim() || !!form.value_map_preset
     tabs.push({ id: 'transform', label: 'Transformation', badge: hasFormula })
     if (form.direction === 'DEST' || form.direction === 'BOTH') {
       const hasFilter = form.throttle_value > 0 || form.send_on_change
@@ -891,15 +894,15 @@ watch(() => props.initial, val => {
   if (cfg.holiday_mode  == null) cfg.holiday_mode  = 'ignore'
   if (cfg.vacation_mode == null) cfg.vacation_mode = 'ignore'
   if (cfg.value         == null) cfg.value         = '1'
-  // Restore value_map UI state from loaded config
-  if (cfg.value_map && typeof cfg.value_map === 'object') {
-    const mapStr = JSON.stringify(cfg.value_map)
+  // Restore value_map UI state from top-level binding field
+  if (val.value_map && typeof val.value_map === 'object') {
+    const mapStr = JSON.stringify(val.value_map)
     const preset = VALUE_MAP_PRESETS.find(p => p.map && JSON.stringify(p.map) === mapStr)
-    cfg.value_map_preset = preset?.key ?? 'custom'
-    cfg.value_map_custom = preset ? '' : JSON.stringify(cfg.value_map, null, 2)
+    form.value_map_preset = preset?.key ?? 'custom'
+    form.value_map_custom = preset ? '' : JSON.stringify(val.value_map, null, 2)
   } else {
-    cfg.value_map_preset = ''
-    cfg.value_map_custom = ''
+    form.value_map_preset = ''
+    form.value_map_custom = ''
   }
   const ms = val.send_throttle_ms ?? 0
   if      (ms === 0)               { form.throttle_value = 0;            form.throttle_unit = 's'   }
@@ -949,7 +952,7 @@ function selectMqttTopic(topic) {
 }
 
 function onValueMapPresetChange() {
-  if (cfg.value_map_preset !== 'custom') cfg.value_map_custom = ''
+  if (form.value_map_preset !== 'custom') form.value_map_custom = ''
 }
 
 async function loadMqttSample() {
@@ -1116,14 +1119,6 @@ function buildConfig() {
       if (cfg.source_data_type === 'xml' && cfg.xml_path?.trim())
         c.xml_path = cfg.xml_path.trim()
     }
-    // Resolve value_map from preset or custom JSON
-    let valueMap = null
-    if (cfg.value_map_preset === 'custom') {
-      try { valueMap = JSON.parse(cfg.value_map_custom) } catch { /* invalid JSON — ignore */ }
-    } else if (cfg.value_map_preset) {
-      valueMap = VALUE_MAP_PRESETS.find(p => p.key === cfg.value_map_preset)?.map ?? null
-    }
-    if (valueMap) c.value_map = valueMap
     return c
   }
   if (type === 'ONEWIRE') {
@@ -1169,8 +1164,15 @@ async function submit() {
     const config     = buildConfig()
     const throttleMs = form.throttle_value > 0
       ? Math.round(form.throttle_value * THROTTLE_FACTORS[form.throttle_unit]) : null
+    let resolvedValueMap = null
+    if (form.value_map_preset === 'custom') {
+      try { resolvedValueMap = JSON.parse(form.value_map_custom) } catch { /* invalid JSON — ignore */ }
+    } else if (form.value_map_preset) {
+      resolvedValueMap = VALUE_MAP_PRESETS.find(p => p.key === form.value_map_preset)?.map ?? null
+    }
     const filterPayload = {
       value_formula:      form.value_formula?.trim() || null,
+      value_map:          resolvedValueMap,
       send_throttle_ms:   throttleMs,
       send_on_change:     form.send_on_change,
       send_min_delta:     (form.send_min_delta ?? 0) > 0     ? form.send_min_delta     : null,
