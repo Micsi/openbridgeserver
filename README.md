@@ -1,14 +1,14 @@
-# openTWS
+# open bridge multiprotocol ai server
 
 ![openTWS Logo](logo/opentws_logo.svg)
 
 **Offene Gebäudeautomations-Plattform — verbindet KNX, Modbus, MQTT und mehr**
 
-openTWS verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitlichen System. Alle Werte lassen sich über eine Weboberfläche überwachen, per Logik verknüpfen und über MQTT weitergeben — ohne proprietäre Konfigurationsdateien.
+open bridge verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitlichen System. Alle Werte lassen sich über eine Weboberfläche überwachen, per Logik verknüpfen und über MQTT weitergeben — ohne proprietäre Konfigurationsdateien.
 
 ---
 
-## Was kann openTWS?
+## Was kann open bridge?
 
 | Funktion | Beschreibung |
 |---|---|
