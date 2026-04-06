@@ -40,7 +40,7 @@ async function login() {
     <div class="w-80 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl p-8 shadow-2xl">
       <!-- Logo -->
       <div class="text-center mb-8">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 64" class="mx-auto rounded-lg mb-1" style="width:280px;height:auto;background:#111111">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 64" class="mx-auto rounded-lg mb-1" style="width:100%;height:auto;background:#111111">
           <!-- Hängebrücke Mark -->
           <rect x="0" y="38" width="62" height="3.5" rx="1.75" fill="#5DCAA5"/>
           <rect x="10" y="10" width="3.5" height="32" rx="1.75" fill="#5DCAA5"/>
