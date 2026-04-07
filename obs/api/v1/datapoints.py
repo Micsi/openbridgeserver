@@ -140,7 +140,7 @@ async def create_datapoint(
     from obs.models.types import DataTypeRegistry
     if not DataTypeRegistry.is_registered(body.data_type):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Unknown data_type '{body.data_type}'. "
             f"Available: {DataTypeRegistry.names()}",
         )
@@ -173,7 +173,7 @@ async def update_datapoint(
         from obs.models.types import DataTypeRegistry
         if not DataTypeRegistry.is_registered(body.data_type):
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 f"Unknown data_type '{body.data_type}'",
             )
     dp = await reg.update(dp_id, body)

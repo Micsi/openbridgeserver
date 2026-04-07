@@ -156,7 +156,7 @@ async def create_instance(
     cls = adapter_registry.get_class(body.adapter_type)
     if cls is None:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Adapter-Typ '{body.adapter_type}' nicht registriert",
         )
     # Config validieren
@@ -164,7 +164,7 @@ async def create_instance(
         cls.config_schema(**body.config)
     except Exception as exc:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Config-Validierungsfehler: {exc}",
         ) from exc
 
@@ -231,7 +231,7 @@ async def update_instance(
                 cls.config_schema(**body.config)
             except Exception as exc:
                 raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
                     f"Config-Validierungsfehler: {exc}",
                 ) from exc
         config_raw = json.dumps(body.config)
@@ -391,7 +391,7 @@ async def mqtt_browse_topics(
     try:
         cfg = MqttAdapterConfig(**config_dict)
     except Exception as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Config-Fehler: {exc}") from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Config-Fehler: {exc}") from exc
 
     try:
         import aiomqtt
@@ -447,7 +447,7 @@ async def mqtt_sample_payload(
     try:
         cfg = MqttAdapterConfig(**config_dict)
     except Exception as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Config-Fehler: {exc}") from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Config-Fehler: {exc}") from exc
 
     try:
         import aiomqtt
@@ -585,7 +585,7 @@ async def update_adapter_config(
         cls.config_schema(**body.config)
     except Exception as exc:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Config-Validierungsfehler: {exc}",
         ) from exc
 

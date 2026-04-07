@@ -50,7 +50,7 @@ def _parse_ts(s: str | None, default: datetime) -> datetime:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Invalid timestamp: {s!r}",
         )
 
@@ -129,7 +129,7 @@ async def aggregate_history(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
     if fn not in ("avg", "min", "max", "last"):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "fn must be one of: avg, min, max, last",
         )
 

@@ -243,7 +243,7 @@ async def import_knxproj_file(
 
     if not records:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Keine Gruppenadressen gefunden. "
             "Bitte prüfe ob du das richtige ETS-Projekt exportiert hast: "
             "In ETS unter 'Datei → Speichern unter' oder 'Projekt exportieren'. "
@@ -324,7 +324,7 @@ async def import_ga_csv_file(
 
     if not records:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Keine Gruppenadressen gefunden. "
             "Bitte prüfe ob du den ETS GA-Export als CSV verwendet hast.",
         )
