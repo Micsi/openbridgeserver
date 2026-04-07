@@ -456,6 +456,12 @@ def get_db() -> Database:
     return _db
 
 
+def reset_db() -> None:
+    """Reset the Database singleton. For testing only."""
+    global _db
+    _db = None
+
+
 async def init_db(path: str) -> Database:
     """Initialize and connect the singleton Database. Call once at startup."""
     global _db
