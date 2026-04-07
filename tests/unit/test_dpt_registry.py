@@ -356,7 +356,8 @@ class TestDPT14:
         roundtrip("DPT14.055", 3.5, abs_tol=1e-4)
 
     def test_voltage(self):
-        roundtrip("DPT14.024", 230.0, abs_tol=1e-3)
+        # DPT14.027 = Electric Potential (V) — DPT14.024 is not registered
+        roundtrip("DPT14.027", 230.0, abs_tol=1e-3)
 
     def test_negative_value(self):
         roundtrip("DPT14.019", -5.0, abs_tol=1e-4)   # current

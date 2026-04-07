@@ -24,7 +24,7 @@ def make_executor(nodes: list[dict], edges: list[dict] | None = None,
 
 def node(node_id: str, node_type: str, data: dict | None = None) -> dict:
     """Shorthand for building a node dict."""
-    return {"id": node_id, "type": node_type, "data": data or {}}
+    return {"id": node_id, "type": node_type, "position": {"x": 0, "y": 0}, "data": data or {}}
 
 
 def edge(source: str, target: str,
