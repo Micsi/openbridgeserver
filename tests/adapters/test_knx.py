@@ -134,7 +134,8 @@ class TestOnTelegram:
     async def test_unknown_ga_does_not_fire_event(self, mock_bus):
         adapter = self._make_adapter(mock_bus)
         # _ga_source_map is empty → GA unknown
-        telegram = self._make_telegram("9/9/9", b"\x00\x00")
+        # KNX middle group is 0-7, use valid address 2/7/255
+        telegram = self._make_telegram("2/7/255", b"\x00\x00")
 
         await adapter._on_telegram(telegram)
 
