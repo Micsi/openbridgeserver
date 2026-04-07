@@ -46,7 +46,7 @@ test('DataPoint löschen über ConfirmDialog', async ({ page }) => {
   // Create via API so we control the fixture
   const created = await apiPost('/api/v1/datapoints', {
     name,
-    data_type: 'BOOL',
+    data_type: 'BOOLEAN',
     tags: [],
   }) as { id: string }
   const dpId = created.id

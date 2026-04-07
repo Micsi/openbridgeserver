@@ -9,7 +9,7 @@ setup('authenticate as admin', async ({ page }) => {
   const pass = process.env.E2E_PASS ?? 'admin'
 
   // Navigate to root — Vue Router auth guard will redirect to /login
-  await page.goto('/gui/')
+  await page.goto('/gui/', { waitUntil: 'domcontentloaded' })
 
   // Wait for the login form (survives any client-side redirects)
   await page.waitForSelector('[data-testid="input-username"]', { timeout: 15_000 })

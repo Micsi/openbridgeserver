@@ -1,17 +1,20 @@
 /**
  * API helpers for E2E tests.
  *
- * Each function does a fresh login before the request using credentials from
- * E2E_USER / E2E_PASS env vars (default: admin / admin).
- * This is acceptable because tests run sequentially and there is no rate
- * limiting in the test environment.
+ * Credentials come from E2E_USER / E2E_PASS env vars (default: admin / admin).
+ * The token is cached per worker process so login is called at most once per
+ * worker, avoiding the server's login rate-limiter (HTTP 429).
  */
 
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
 const E2E_USER = process.env.E2E_USER ?? 'admin'
 const E2E_PASS = process.env.E2E_PASS ?? 'admin'
 
+// Module-level cache: one login per Playwright worker process.
+let _cachedToken: string | null = null
+
 async function getToken(): Promise<string> {
+  if (_cachedToken) return _cachedToken
   const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -19,7 +22,8 @@ async function getToken(): Promise<string> {
   })
   if (!res.ok) throw new Error(`Login failed: ${res.status}`)
   const data = await res.json()
-  return data.access_token as string
+  _cachedToken = data.access_token as string
+  return _cachedToken
 }
 
 export async function apiGet(path: string): Promise<unknown> {
