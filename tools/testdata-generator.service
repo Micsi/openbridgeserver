@@ -12,10 +12,10 @@ Group=obs
 # --- Anpassen: Installationspfad des Projekts ---
 WorkingDirectory=/opt/openbridgeserver
 
-# --- Anpassen: Pfad zum venv-Python und zur Konfigurationsdatei ---
-ExecStart=/opt/openbridgeserver/venv/bin/python \
+# --- Anpassen: Pfad zur Konfigurationsdatei ---
+ExecStart=/usr/bin/python3 \
     /opt/openbridgeserver/tools/testdata_generator.py \
-    /opt/openbridgeserver/tools/testdata_generator_example.yaml
+    /opt/openbridgeserver/tools/config.yaml
 
 # Sauber stoppen: SIGTERM → asyncio shutdown
 KillSignal=SIGTERM

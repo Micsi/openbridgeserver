@@ -283,7 +283,8 @@ Die folgenden drei Stellen in `testdata-generator.service` an die eigene Umgebun
 |-----------------------------------|-------------------------------------|----------------------------------|
 | `User` / `Group`                  | `obs`                               | Systembenutzer für den Prozess   |
 | `WorkingDirectory`                | `/opt/openbridgeserver`             | Installationspfad des Projekts   |
-| `ExecStart` (letztes Argument)    | `…testdata_generator_example.yaml` | Pfad zur Konfigurationsdatei     |
+| `ExecStart` (Python)              | `/usr/bin/python3`                  | Pfad zu Python (`which python3`) |
+| `ExecStart` (letztes Argument)    | `…tools/config.yaml`                | Pfad zur Konfigurationsdatei     |
 
 ### 2. Installieren
 
