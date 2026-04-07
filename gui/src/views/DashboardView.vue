@@ -45,7 +45,7 @@
         </div>
         <div class="card-body flex flex-col gap-0 -mx-5 -my-5 overflow-hidden rounded-b-xl">
           <div v-if="dpStore.loading" class="flex justify-center py-8"><Spinner /></div>
-          <div v-else-if="!dpStore.items.length" class="text-center text-slate-500 text-sm py-8">Keine DataPoints vorhanden</div>
+          <div v-else-if="!dpStore.items.length" class="text-center text-slate-500 text-sm py-8">Keine Objekte vorhanden</div>
           <template v-else>
             <div v-for="dp in dpStore.items.slice(0, 10)" :key="dp.id"
                  class="flex items-center gap-3 px-5 py-2.5 border-b border-slate-200/60 dark:border-slate-700/40 last:border-0 hover:bg-slate-100/80 dark:hover:bg-slate-800/40 transition-colors">

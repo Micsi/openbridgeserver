@@ -162,7 +162,11 @@
       "Bash(grep -E \"\\\\.\\(svg|png|jpg|jpeg|gif\\)$\")",
       "Bash(find C:/Users/DanielAbegglen/OneDrive/Hausbau/Elektro/KNX/openbridgeserver -type f \\\\\\(-name *.svg -o -name *.png -o -name *.jpg -o -name *.jpeg -o -name *.gif -o -name *.ico \\\\\\))",
       "Bash(find C:/Users/DanielAbegglen/OneDrive/Hausbau/Elektro/KNX/openbridgeserver -type f -name *.svg)",
-      "Bash(/dev/null -type f)"
+      "Bash(/dev/null -type f)",
+      "Bash(powershell -Command \"\\(Get-Content ''C:/Users/DanielAbegglen/OneDrive/Hausbau/Elektro/KNX/openbridgeserver/tools/ets6_group_addresses_demo.csv''\\).Count\")",
+      "Bash(powershell -Command \"Select-String -Path ''C:/Users/DanielAbegglen/OneDrive/Hausbau/Elektro/KNX/openbridgeserver/tools/ets6_group_addresses_demo.csv'' -Pattern ''^Demo'' | Select-Object -First 20 LineNumber,Line\")",
+      "Bash(grep -r \"import.*adapter\\\\|from.*adapters\\\\|register\" C:/Users/DanielAbegglen/OneDrive/Hausbau/Elektro/KNX/openbridgeserver/obs --include=*.py -l)",
+      "Bash(grep -rn \"from obs.adapters\\\\|import obs.adapters\\\\|adapters.__init__\\\\|from .adapters\" C:/Users/DanielAbegglen/OneDrive/Hausbau/Elektro/KNX/openbridgeserver/obs --include=*.py)"
     ]
   }
 }

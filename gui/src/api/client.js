@@ -64,9 +64,9 @@ export const authApi = {
 
 // ── DataPoints ────────────────────────────────────────────────────────────
 export const dpApi = {
-  list:          (page = 0, size = 50, sort = 'created_at', order = 'asc') => api.get('/datapoints', { params: { page, size, sort, order } }),
+  list:          (page = 0, size = 50, sort = 'created_at', order = 'asc') => api.get('/datapoints/', { params: { page, size, sort, order } }),
   get:           (id)                           => api.get(`/datapoints/${id}`),
-  create:        (data)                         => api.post('/datapoints', data),
+  create:        (data)                         => api.post('/datapoints/', data),
   update:        (id, data)                     => api.patch(`/datapoints/${id}`, data),
   delete:        (id)                           => api.delete(`/datapoints/${id}`),
   value:         (id)                           => api.get(`/datapoints/${id}/value`),
@@ -78,13 +78,13 @@ export const dpApi = {
 
 // ── Search ────────────────────────────────────────────────────────────────
 export const searchApi = {
-  search: (params) => api.get('/search', { params }),
+  search: (params) => api.get('/search/', { params }),
 }
 
 // ── Adapters ──────────────────────────────────────────────────────────────
 export const adapterApi = {
   // Typ-Routen (Schema-Abfragen)
-  list:         ()                           => api.get('/adapters'),
+  list:         ()                           => api.get('/adapters/'),
   schema:       (type)                       => api.get(`/adapters/${type}/schema`),
   bindingSchema:(type)                       => api.get(`/adapters/${type}/binding-schema`),
   knxDpts:      ()                           => api.get('/adapters/knx/dpts'),
@@ -139,7 +139,7 @@ export const historyApi = {
 
 // ── RingBuffer ────────────────────────────────────────────────────────────
 export const ringbufferApi = {
-  query:  (params)                  => api.get('/ringbuffer', { params }),
+  query:  (params)                  => api.get('/ringbuffer/', { params }),
   stats:  ()                        => api.get('/ringbuffer/stats'),
   config: (storage, max_entries)    => api.post('/ringbuffer/config', { storage, max_entries }),
 }

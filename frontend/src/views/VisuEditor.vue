@@ -55,6 +55,9 @@ const store = useVisuStore()
 const theme = useThemeStore()
 
 // ── State ─────────────────────────────────────────────────────────────────────
+const isNew   = computed(() => props.id === 'new')
+const newPageName = ref('Neue Seite')
+
 const loading = ref(true)
 const saving  = ref(false)
 const error   = ref('')
@@ -183,15 +186,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 // ── Laden ─────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   try {
-    if (!store.treeLoaded) await store.loadTree()
-    await store.loadBreadcrumb(props.id)
-    await store.loadPage(props.id)
-    if (store.pageConfig) config.value = JSON.parse(JSON.stringify(store.pageConfig))
-    // Rückwärtskompatibilität: fehlende Felder nachrüsten
-    if (!config.value.grid_cell_width) config.value.grid_cell_width = 80
-    for (const w of config.value.widgets) {
-      w.status_datapoint_id ??= null
-      w.name ??= ''
+    if (!isNew.value) {
+      if (!store.treeLoaded) await store.loadTree()
+      await store.loadBreadcrumb(props.id)
+      await store.loadPage(props.id)
+      if (store.pageConfig) config.value = JSON.parse(JSON.stringify(store.pageConfig))
+      // Rückwärtskompatibilität: fehlende Felder nachrüsten
+      if (!config.value.grid_cell_width) config.value.grid_cell_width = 80
+      for (const w of config.value.widgets) {
+        w.status_datapoint_id ??= null
+        w.name ??= ''
+      }
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'Fehler beim Laden'
@@ -267,8 +272,14 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    await store.savePage(props.id, config.value)
-    router.push({ name: 'viewer', params: { id: props.id } })
+    if (isNew.value) {
+      const node = await store.createNode({ name: newPageName.value.trim() || 'Neue Seite', type: 'PAGE', parent_id: null })
+      await store.savePage(node.id, config.value)
+      router.push({ name: 'viewer', params: { id: node.id } })
+    } else {
+      await store.savePage(props.id, config.value)
+      router.push({ name: 'viewer', params: { id: props.id } })
+    }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'Fehler beim Speichern'
   } finally {
@@ -291,6 +302,13 @@ const showSettings = ref(false)
     <header class="border-b border-gray-200 dark:border-gray-800 px-4 py-2 flex items-center gap-3 flex-shrink-0 bg-gray-50 dark:bg-gray-900">
       <Breadcrumb />
       <span class="text-xs font-medium text-blue-500 dark:text-blue-400 bg-blue-500/10 dark:bg-blue-400/10 px-2 py-0.5 rounded">Editor</span>
+      <input
+        v-if="isNew"
+        v-model="newPageName"
+        type="text"
+        placeholder="Seitenname …"
+        class="text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 w-48"
+      />
       <div class="flex-1" />
 
       <!-- Hell/Dunkel -->
@@ -310,7 +328,7 @@ const showSettings = ref(false)
 
       <button
         class="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700"
-        @click="router.push({ name: 'viewer', params: { id } })"
+        @click="router.push(isNew ? { name: 'tree' } : { name: 'viewer', params: { id } })"
       >Abbrechen</button>
 
       <button
