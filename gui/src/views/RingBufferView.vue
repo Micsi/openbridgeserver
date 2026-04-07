@@ -33,7 +33,7 @@
 
     <!-- Filters -->
     <div class="flex flex-wrap gap-3">
-      <input v-model="filters.q" type="text" class="input flex-1 min-w-40" placeholder="Suche nach Name/ID …" @input="debouncedLoad" />
+      <input v-model="filters.q" type="text" class="input flex-1 min-w-40" placeholder="Suche nach Name/ID …" @input="debouncedLoad" data-testid="input-filter" />
       <input v-model="filters.adapter" type="text" class="input w-36" placeholder="Adapter" @input="debouncedLoad" />
       <select v-model="filters.limit" class="input w-28" @change="load">
         <option value="100">100</option>
@@ -59,7 +59,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(e, i) in entries" :key="i" data-testid="ringbuffer-entry">
+            <tr v-for="(e, i) in entries" :key="i" data-testid="ringbuffer-entry" :data-dp="e.datapoint_id">
               <td class="font-mono text-xs text-slate-400 whitespace-nowrap">{{ fmtDateTime(e.ts) }}</td>
               <td class="text-sm">
                 <RouterLink :to="`/datapoints/${e.datapoint_id}`" class="text-blue-400 hover:underline font-mono text-xs">

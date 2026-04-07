@@ -17,17 +17,20 @@ test('RingBuffer Live-Eintrag ohne Reload', async ({ page }) => {
     // Status badge must say "Live"
     await expect(page.locator('[data-testid="status-badge"]')).toContainText('Live', { timeout: 8_000 })
 
-    // Count current entries
-    const before = await page.locator('[data-testid="ringbuffer-entry"]').count()
+    // Filter by our DataPoint ID so the view only shows entries for this DP.
+    // This avoids the 500-entry cap making before == after when the buffer is full.
+    await page.fill('[data-testid="input-filter"]', dpId)
+    await page.waitForTimeout(500) // debounce ~350 ms + server round-trip
 
-    // Push a value via API
+    // Before the push, no entries for this brand-new DP should exist
+    const before = await page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`).count()
+
+    // Push a value via API — server broadcasts ringbuffer_entry via WS
     await apiPost(`/api/v1/datapoints/${dpId}/value`, { value: 42.0, quality: 'good' })
 
-    // Within 6 s a new entry must appear (count goes up by at least 1)
-    await expect(async () => {
-      const after = await page.locator('[data-testid="ringbuffer-entry"]').count()
-      expect(after).toBeGreaterThan(before)
-    }).toPass({ timeout: 6_000 })
+    // The WS push must add the new row within 6 s
+    await expect(page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`))
+      .toHaveCount(before + 1, { timeout: 6_000 })
   } finally {
     await apiDelete(`/api/v1/datapoints/${dpId}`)
   }
