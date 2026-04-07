@@ -11,7 +11,7 @@
   "dependencies": {
     "vue": "^3.4.0",
     "vue-router": "^4.3.0",
-    "pinia": "^2.1.0",
+    "pinia": "^3.0.0",
     "axios": "^1.6.0",
     "chart.js": "^4.4.0",
     "@vue-flow/core": "^1.41.0",
