@@ -106,7 +106,7 @@ async def configure_ringbuffer(
     if body.storage not in ("memory", "disk"):
         from fastapi import HTTPException, status
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "storage must be 'memory' or 'disk'"
         )
     rb = get_ringbuffer()

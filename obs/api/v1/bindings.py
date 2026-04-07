@@ -143,7 +143,7 @@ async def create_binding(
     )
     if instance_row is None:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Adapter-Instanz '{body.adapter_instance_id}' nicht gefunden",
         )
     adapter_type = instance_row["adapter_type"]
@@ -156,7 +156,7 @@ async def create_binding(
             cls.binding_config_schema(**body.config)
         except Exception as exc:
             raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
                 f"Ungültige Binding-Config: {exc}",
             ) from exc
 
@@ -165,7 +165,7 @@ async def create_binding(
         from obs.core.formula import validate_formula
         err = validate_formula(body.value_formula)
         if err:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Ungültige Formel: {err}")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Ungültige Formel: {err}")
 
     binding_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -228,7 +228,7 @@ async def update_binding(
         from obs.core.formula import validate_formula
         err = validate_formula(formula)
         if err:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Ungültige Formel: {err}")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Ungültige Formel: {err}")
 
     await db.execute_and_commit(
         """UPDATE adapter_bindings

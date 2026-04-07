@@ -169,6 +169,12 @@ def get_ws_manager() -> WebSocketManager:
     return _manager
 
 
+def reset_ws_manager() -> None:
+    """Reset the WebSocketManager singleton. For testing only."""
+    global _manager
+    _manager = None
+
+
 def init_ws_manager() -> WebSocketManager:
     global _manager
     _manager = WebSocketManager()

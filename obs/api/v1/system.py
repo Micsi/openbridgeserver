@@ -173,7 +173,7 @@ async def update_app_settings(
         ZoneInfo(body.timezone)
     except Exception:
         from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                             detail=f"Unknown timezone: {body.timezone!r}")
 
     await db.execute_and_commit(
@@ -260,7 +260,7 @@ async def update_history_settings(
 
     if body.plugin not in ("sqlite", "influxdb", "timescaledb"):
         raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="plugin must be one of: sqlite, influxdb, timescaledb",
         )
 
