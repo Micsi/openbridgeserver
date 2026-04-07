@@ -241,7 +241,7 @@ export const datapoints = {
   search: (q: string, page = 0, size = 50, type = '') => {
     const params = new URLSearchParams({ q, page: String(page), size: String(size) })
     if (type) params.set('type', type)
-    return request<PaginatedResponse<DataPoint>>(`/search?${params}`)
+    return request<PaginatedResponse<DataPoint>>(`/search/?${params}`)
   },
 
   get: (id: string) => request<DataPoint>(`/datapoints/${id}`),
