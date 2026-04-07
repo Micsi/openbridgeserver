@@ -18,8 +18,10 @@ setup('authenticate as admin', async ({ page }) => {
   await page.fill('[data-testid="input-password"]', pass)
   await page.click('[data-testid="btn-login"]')
 
-  // Wait for redirect away from login
-  await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 10_000 })
+  // Wait for the sidebar nav to appear — it is only rendered after successful login.
+  // Using a DOM element avoids relying on waitForURL / "load" events, which do not
+  // fire for Vue Router's client-side (pushState) navigation.
+  await page.waitForSelector('[data-testid="nav-home"]', { timeout: 15_000 })
 
   // Persist storage state (localStorage with JWT token)
   fs.mkdirSync(path.dirname(authFile), { recursive: true })
