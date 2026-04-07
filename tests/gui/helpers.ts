@@ -14,8 +14,8 @@ const E2E_PASS = process.env.E2E_PASS ?? 'admin'
 async function getToken(): Promise<string> {
   const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ username: E2E_USER, password: E2E_PASS }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: E2E_USER, password: E2E_PASS }),
   })
   if (!res.ok) throw new Error(`Login failed: ${res.status}`)
   const data = await res.json()
