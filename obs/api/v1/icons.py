@@ -3,7 +3,7 @@ Icons Library API
 
 GET    /icons/            — list all installed SVG icons
 POST   /icons/import      — upload SVG file(s) or ZIP containing SVGs
-GET    /icons/export      — export selected or all icons as ZIP
+POST   /icons/export      — export selected or all icons as ZIP (JSON body, kein URL-Limit)
 GET    /icons/{name}      — get raw SVG content of a single icon
 DELETE /icons/            — delete one or multiple icons by name
 POST   /icons/fontawesome — import icons from FontAwesome
@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -282,19 +282,6 @@ async def export_icons_post(
         headers={"Content-Disposition": "attachment; filename=obs_icons.zip"},
     )
 
-
-@router.get("/export")
-async def export_icons(
-    names: list[str] = Query(default=[]),
-    _user: str = Depends(get_current_user),
-) -> StreamingResponse:
-    """Export Icons als ZIP (GET-Variante, nur für kleine Selektionen geeignet)."""
-    buf = _build_export_zip(_icons_dir(), names)
-    return StreamingResponse(
-        buf,
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=obs_icons.zip"},
-    )
 
 
 @router.delete("/", status_code=status.HTTP_200_OK)

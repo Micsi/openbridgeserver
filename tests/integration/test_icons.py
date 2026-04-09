@@ -223,7 +223,7 @@ async def test_delete_icons_not_found(client, auth_headers, icons_tmp):
 
 
 # ---------------------------------------------------------------------------
-# POST /icons/export — export ZIP (POST mit JSON-Body, kein URL-Limit)
+# POST /icons/export — export ZIP (JSON-Body, kein URL-Limit)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
