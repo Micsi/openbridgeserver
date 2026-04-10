@@ -578,6 +578,7 @@ async def import_fontawesome(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Keine Icons angegeben")
 
     icons_dir = _icons_dir()
+    icons_dir_resolved = icons_dir.resolve()
     imported: list[str] = []
     skipped = 0
     valid_styles = {"solid", "regular", "brands", "light", "thin", "duotone"}
@@ -632,7 +633,13 @@ async def import_fontawesome(
             if svg_bytes and _is_svg(svg_bytes):
                 # Dateiname enthält Style → kein gegenseitiges Überschreiben
                 filename = f"{safe}-{style}.svg"
-                (icons_dir / filename).write_bytes(svg_bytes)
+                target_path = (icons_dir / filename).resolve()
+                try:
+                    target_path.relative_to(icons_dir_resolved)
+                except ValueError:
+                    skipped += 1
+                    continue
+                target_path.write_bytes(svg_bytes)
                 imported.append(Path(filename).stem)  # z.B. "abacus-solid"
             else:
                 skipped += 1
