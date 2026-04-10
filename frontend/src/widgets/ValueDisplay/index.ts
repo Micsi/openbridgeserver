@@ -29,4 +29,8 @@ WidgetRegistry.register({
     ],
   },
   compatibleTypes: ['FLOAT', 'INTEGER', 'BOOLEAN', 'STRING'],
+  getExtraDatapointIds: (config) => {
+    const id = config.secondary_dp_id as string | undefined
+    return id ? [id] : []
+  },
 })
