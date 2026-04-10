@@ -31,9 +31,10 @@ const dpStore = useDatapointsStore()
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const widgetLabel  = computed(() => (props.config.label    as string | undefined) ?? '')
-const houseDpId    = computed(() => (props.config.house_dp as string | undefined) ?? '')
-const houseUnit    = computed(() => (props.config.house_unit as string | undefined) ?? 'W')
+const widgetLabel  = computed(() => (props.config.label      as string | undefined) ?? '')
+const houseIcon    = computed(() => (props.config.house_icon  as string | undefined) ?? '🏠')
+const houseDpId    = computed(() => (props.config.house_dp    as string | undefined) ?? '')
+const houseUnit    = computed(() => (props.config.house_unit  as string | undefined) ?? 'W')
 const houseDec     = computed(() => (props.config.house_decimals as number | undefined) ?? 1)
 
 const entities = computed<EntityConfig[]>(() => {
@@ -55,21 +56,23 @@ const entities = computed<EntityConfig[]>(() => {
 const { getSvg, isSvgIcon, svgIconName } = useIcons()
 const svgDataUrls = ref<Record<string, string>>({})
 
+async function loadSvgDataUrl(iconValue: string) {
+  if (!isSvgIcon(iconValue)) return
+  const name = svgIconName(iconValue)
+  if (svgDataUrls.value[name]) return
+  const svg = await getSvg(name)
+  if (svg) {
+    svgDataUrls.value[name] = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+  }
+}
+
 watch(
   entities,
-  async (ents) => {
-    for (const e of ents) {
-      if (!isSvgIcon(e.icon)) continue
-      const name = svgIconName(e.icon)
-      if (svgDataUrls.value[name]) continue
-      const svg = await getSvg(name)
-      if (svg) {
-        svgDataUrls.value[name] = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-      }
-    }
-  },
+  async (ents) => { for (const e of ents) await loadSvgDataUrl(e.icon) },
   { immediate: true },
 )
+
+watch(houseIcon, loadSvgDataUrl, { immediate: true })
 
 // ── Values ────────────────────────────────────────────────────────────────────
 
@@ -288,13 +291,23 @@ function animDur(power: number): string {
       />
       <!-- Icon: mittig wenn kein Hausverbrauch, sonst leicht nach oben -->
       <text
+        v-if="!isSvgIcon(houseIcon)"
         :x="CX"
         :y="houseDisplay ? CY - 5 : CY"
         text-anchor="middle"
         dominant-baseline="central"
         :font-size="houseDisplay ? 20 : 26"
         style="user-select: none;"
-      >🏠</text>
+      >{{ houseIcon }}</text>
+      <image
+        v-else-if="svgDataUrls[svgIconName(houseIcon)]"
+        :href="svgDataUrls[svgIconName(houseIcon)]"
+        :x="CX - (houseDisplay ? 10 : 13)"
+        :y="houseDisplay ? CY - 17 : CY - 13"
+        :width="houseDisplay ? 20 : 26"
+        :height="houseDisplay ? 20 : 26"
+        class="brightness-0 dark:invert"
+      />
       <!-- Hausverbrauch unter dem Icon -->
       <text
         v-if="houseDisplay"

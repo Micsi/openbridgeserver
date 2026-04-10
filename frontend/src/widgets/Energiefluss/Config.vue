@@ -49,6 +49,7 @@ const existingEntities = (props.modelValue.entities as EntityConfig[] | undefine
 
 const cfg = reactive({
   label:           (props.modelValue.label           as string) ?? '',
+  house_icon:      (props.modelValue.house_icon      as string) ?? '🏠',
   house_dp:        (props.modelValue.house_dp        as string) ?? '',
   house_unit:      (props.modelValue.house_unit      as string) ?? '',
   house_decimals:  (props.modelValue.house_decimals  as number) ?? 1,
@@ -60,6 +61,7 @@ watch(
   () => {
     emit('update:modelValue', {
       label:          cfg.label,
+      house_icon:     cfg.house_icon     || undefined,
       house_dp:       cfg.house_dp       || undefined,
       house_unit:     cfg.house_unit     || undefined,
       house_decimals: cfg.house_decimals,
@@ -93,8 +95,13 @@ watch(
     <!-- Hausverbrauch (Zentrum) -->
     <div class="border border-gray-700 rounded p-2 space-y-2">
       <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-        🏠 Hausverbrauch (Zentrum, optional)
+        Hausverbrauch (Zentrum, optional)
       </p>
+      <!-- Haus-Icon -->
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Icon</label>
+        <IconPicker v-model="cfg.house_icon" :dark="true" />
+      </div>
       <DataPointPicker
         :model-value="cfg.house_dp || null"
         :compatible-types="['FLOAT', 'INTEGER']"
