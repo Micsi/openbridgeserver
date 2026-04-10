@@ -519,6 +519,7 @@
           </div>
           <div v-if="faMsg" :class="['p-3 rounded-lg text-sm border', faMsg.ok ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30']">
             {{ faMsg.text }}
+            <pre v-if="faMsg.debug?.length" class="mt-2 text-xs opacity-80 whitespace-pre-wrap font-mono bg-black/20 rounded p-2 max-h-64 overflow-auto">{{ faMsg.debug.join('\n') }}</pre>
           </div>
           <button @click="doFaImport" class="btn-primary btn-sm w-fit" :disabled="faImporting || !faIconNames.trim()" data-testid="btn-fa-import">
             <Spinner v-if="faImporting" size="sm" color="white" />
@@ -1261,11 +1262,11 @@ async function doFaImport() {
     const payload = { icons: names, style: faStyle.value }
     if (faApiKey.value.trim()) payload.api_key = faApiKey.value.trim()
     const { data } = await iconsApi.importFa(payload)
-    faMsg.value = { ok: true, text: data.message }
-    faIconNames.value = ''
+    faMsg.value = { ok: data.imported > 0, text: data.message, debug: data.debug ?? [] }
+    if (data.imported > 0) faIconNames.value = ''
     await loadIcons()
   } catch (e) {
-    faMsg.value = { ok: false, text: e.response?.data?.detail ?? 'FontAwesome Import fehlgeschlagen' }
+    faMsg.value = { ok: false, text: e.response?.data?.detail ?? 'FontAwesome Import fehlgeschlagen', debug: [] }
   } finally {
     faImporting.value = false
   }

@@ -132,6 +132,7 @@ class ImportResult(BaseModel):
     skipped: int
     names: list[str]
     message: str
+    debug: list[str] = []   # temporäre Debug-Infos (Token-Exchange, GraphQL-Response)
 
 
 class DeleteRequest(BaseModel):
@@ -330,7 +331,11 @@ _FA_GRAPHQL_URL = "https://api.fontawesome.com"
 _FA_CDN = "https://unpkg.com/@fortawesome/fontawesome-free@7.2.0/svgs"
 
 
-async def _fa_exchange_token(http: httpx.AsyncClient, api_key: str) -> str | None:
+async def _fa_exchange_token(
+    http: httpx.AsyncClient,
+    api_key: str,
+    dbg: list[str],
+) -> str | None:
     """
     Tauscht einen FontAwesome API-Key gegen einen kurzlebigen Access-Token.
     POST https://api.fontawesome.com/token  (OAuth2 Bearer)
@@ -341,10 +346,13 @@ async def _fa_exchange_token(http: httpx.AsyncClient, api_key: str) -> str | Non
             f"{_FA_GRAPHQL_URL}/token",
             headers={"Authorization": f"Bearer {api_key}"},
         )
+        dbg.append(f"[token-exchange] HTTP {resp.status_code}: {resp.text[:500]}")
         if resp.status_code == 200:
-            return resp.json().get("access_token")
-    except Exception:
-        pass
+            token = resp.json().get("access_token")
+            dbg.append(f"[token-exchange] access_token erhalten: {'ja' if token else 'NEIN (Feld fehlt)'}")
+            return token
+    except Exception as exc:
+        dbg.append(f"[token-exchange] Exception: {exc}")
     return None
 
 
@@ -353,6 +361,7 @@ async def _fa_graphql_svg(
     access_token: str,
     icon_name: str,
     style: str,
+    dbg: list[str],
 ) -> bytes | None:
     """
     Ruft das fertige SVG-HTML eines Icons über die FontAwesome GraphQL API ab.
@@ -386,6 +395,7 @@ async def _fa_graphql_svg(
             },
             json={"query": query, "variables": {"id": icon_name}},
         )
+        dbg.append(f"[graphql:{icon_name}] HTTP {resp.status_code}: {resp.text[:800]}")
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -395,8 +405,10 @@ async def _fa_graphql_svg(
             .get("icon")
         )
         if not icon_data:
+            dbg.append(f"[graphql:{icon_name}] icon=null (kein Icon unter dieser ID)")
             return None
         svgs: list = icon_data.get("svgs") or []
+        dbg.append(f"[graphql:{icon_name}] {len(svgs)} SVG(s) gefunden: {[s.get('familyStyle') for s in svgs]}")
 
         # 1. Exakter Style-Match (case-insensitive)
         target = style.lower()
@@ -408,10 +420,11 @@ async def _fa_graphql_svg(
         # 2. Fallback: erstes verfügbares SVG des Icons
         for item in svgs:
             if item.get("html"):
+                dbg.append(f"[graphql:{icon_name}] kein '{style}' → Fallback auf {item.get('familyStyle')}")
                 return item["html"].encode()
 
-    except Exception:
-        pass
+    except Exception as exc:
+        dbg.append(f"[graphql:{icon_name}] Exception: {exc}")
     return None
 
 
@@ -464,30 +477,38 @@ async def import_fontawesome(
     valid_styles = {"solid", "regular", "brands", "light", "thin", "duotone"}
     style = body.style if body.style in valid_styles else "solid"
 
+    dbg: list[str] = []
+
     async with httpx.AsyncClient(timeout=15.0) as http:
         # PRO: einmalig Token tauschen (nicht pro Icon)
         access_token: str | None = None
         if body.api_key:
-            access_token = await _fa_exchange_token(http, body.api_key)
+            dbg.append(f"[config] api_key gesetzt (Länge {len(body.api_key)}), starte Token-Exchange …")
+            access_token = await _fa_exchange_token(http, body.api_key, dbg)
+        else:
+            dbg.append("[config] kein api_key → nur Free-CDN")
 
         for icon_name in body.icons:
             safe = _safe_name(icon_name)
             if not safe:
                 skipped += 1
+                dbg.append(f"[icon:{icon_name}] ungültiger Name → übersprungen")
                 continue
 
             svg_bytes: bytes | None = None
 
             # 1. Versuch: GraphQL (wenn Access-Token vorhanden)
             if access_token:
-                svg_bytes = await _fa_graphql_svg(http, access_token, icon_name, style)
+                svg_bytes = await _fa_graphql_svg(http, access_token, icon_name, style, dbg)
                 # FA5-Alias-Fallback für GraphQL
                 if svg_bytes is None and icon_name in _FA5_TO_FA6:
-                    svg_bytes = await _fa_graphql_svg(http, access_token, _FA5_TO_FA6[icon_name], style)
+                    svg_bytes = await _fa_graphql_svg(http, access_token, _FA5_TO_FA6[icon_name], style, dbg)
 
             # 2. Versuch: Free-CDN (immer, auch wenn api_key gesetzt aber GraphQL erfolglos)
             if svg_bytes is None:
-                svg_bytes = await _fa_cdn_svg(http, icon_name, style)
+                cdn_result = await _fa_cdn_svg(http, icon_name, style)
+                dbg.append(f"[cdn:{icon_name}] {'gefunden' if cdn_result else 'NICHT gefunden'}")
+                svg_bytes = cdn_result
 
             if svg_bytes and _is_svg(svg_bytes):
                 (icons_dir / f"{safe}.svg").write_bytes(svg_bytes)
@@ -499,6 +520,7 @@ async def import_fontawesome(
         imported=len(imported),
         skipped=skipped,
         names=imported,
+        debug=dbg,
         message=(
             f"{len(imported)} FontAwesome Icon(s) importiert"
             + (f", {skipped} nicht gefunden/übersprungen" if skipped else "")
