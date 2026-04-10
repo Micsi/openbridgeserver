@@ -359,24 +359,18 @@ async def _fa_graphql_svg(
     Gibt None zurück wenn das Icon nicht gefunden wurde oder der Scope fehlt.
 
     Die `html`-Field liefert ein komplettes <svg>…</svg>-Element.
-    Ohne ausreichende Scopes (svg_icons_free / svg_icons_pro) gibt FA null zurück.
+    Wir laden ALLE verfügbaren SVGs des Icons und filtern client-seitig nach Style —
+    das ist robuster als server-seitiger familyStyle-Filter mit Enum-Variablen.
     """
-    # familyStyle: z.B. {"family": "classic", "style": "solid"}
-    family_style_map = {
-        "solid":   {"family": "CLASSIC", "style": "SOLID"},
-        "regular": {"family": "CLASSIC", "style": "REGULAR"},
-        "brands":  {"family": "BRANDS",  "style": "BRANDS"},
-        "light":   {"family": "CLASSIC", "style": "LIGHT"},
-        "thin":    {"family": "CLASSIC", "style": "THIN"},
-        "duotone": {"family": "DUOTONE", "style": "SOLID"},
-    }
-    fs = family_style_map.get(style, {"family": "CLASSIC", "style": "SOLID"})
-
     query = """
-    query GetIcon($id: String!, $family: String!, $style: String!) {
+    query GetIcon($id: String!) {
       release {
         icon(id: $id) {
-          svgs(familyStyle: {family: $family, style: $style}) {
+          svgs {
+            familyStyle {
+              family
+              style
+            }
             html
           }
         }
@@ -390,19 +384,32 @@ async def _fa_graphql_svg(
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",
             },
-            json={"query": query, "variables": {"id": icon_name, **fs}},
+            json={"query": query, "variables": {"id": icon_name}},
         )
         if resp.status_code != 200:
             return None
         data = resp.json()
-        svgs = (
+        icon_data = (
             data.get("data", {})
             .get("release", {})
-            .get("icon", {})
-            .get("svgs", [])
+            .get("icon")
         )
-        if svgs and svgs[0].get("html"):
-            return svgs[0]["html"].encode()
+        if not icon_data:
+            return None
+        svgs: list = icon_data.get("svgs") or []
+
+        # 1. Exakter Style-Match (case-insensitive)
+        target = style.lower()
+        for item in svgs:
+            fs = item.get("familyStyle") or {}
+            if fs.get("style", "").lower() == target and item.get("html"):
+                return item["html"].encode()
+
+        # 2. Fallback: erstes verfügbares SVG des Icons
+        for item in svgs:
+            if item.get("html"):
+                return item["html"].encode()
+
     except Exception:
         pass
     return None
