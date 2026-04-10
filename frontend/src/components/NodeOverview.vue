@@ -59,7 +59,7 @@ function accessBadge(node: VisuNode): { icon: string; label: string; cls: string
     <button
       v-for="child in children"
       :key="child.id"
-      class="relative flex flex-col items-center justify-center gap-3 p-6 rounded-xl bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-500 hover:bg-gray-200 dark:hover:bg-gray-750 transition-all group"
+      class="relative flex flex-col items-center justify-center gap-3 p-6 rounded-xl bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-500 transition-all group"
       @click="navigate(child)"
     >
       <!-- Access-Badge (oben rechts) -->
