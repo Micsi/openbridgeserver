@@ -10,6 +10,23 @@ WidgetRegistry.register({
   defaultW: 3, defaultH: 2,
   component: Widget,
   configComponent: Config,
-  defaultConfig: { label: '', decimals: 1, value_formula: '', value_map: {} },
+  defaultConfig: {
+    label: '',
+    mode: 'value',
+    rules: [
+      {
+        fn: 'default',
+        threshold: '',
+        icon: '',
+        color: '#6b7280',
+        output_type: 'value',
+        calculation: '',
+        prefix: '',
+        text: '',
+        decimals: 1,
+        postfix: '',
+      },
+    ],
+  },
   compatibleTypes: ['FLOAT', 'INTEGER', 'BOOLEAN', 'STRING'],
 })
