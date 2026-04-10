@@ -298,6 +298,22 @@ export const adapters = {
     request<InstanceBindingEntry[]>(`/adapters/instances/${instanceId}/bindings`),
 }
 
+// ── Icons ─────────────────────────────────────────────────────────────────────
+
+export const icons = {
+  list: () => request<string[]>('/icons/'),
+
+  getSvg(name: string): Promise<string> {
+    const jwt = getJwt()
+    const headers: Record<string, string> = {}
+    if (jwt) headers['Authorization'] = `Bearer ${jwt}`
+    return fetch(`${BASE}/icons/${name}`, { headers }).then((r) => {
+      if (!r.ok) throw new Error(r.statusText)
+      return r.text()
+    })
+  },
+}
+
 // ── History ───────────────────────────────────────────────────────────────────
 
 export const history = {

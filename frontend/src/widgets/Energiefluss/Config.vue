@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, watch } from 'vue'
 import DataPointPicker from '@/components/DataPointPicker.vue'
+import IconPicker from '@/components/IconPicker.vue'
 
 type FlowDirection = 'to_house' | 'from_house' | 'bidirectional'
 
@@ -24,17 +25,6 @@ const emit = defineEmits<{
 }>()
 
 const MAX_ENTITIES = 8
-
-const ICON_PRESETS = [
-  { icon: '☀️', label: 'PV / Solar' },
-  { icon: '🏭', label: 'Verbrauch' },
-  { icon: '🔋', label: 'Batterie' },
-  { icon: '⚡', label: 'Netz' },
-  { icon: '🚗', label: 'Wallbox / E-Auto' },
-  { icon: '🌬️', label: 'Wind' },
-  { icon: '🔌', label: 'Steckdose' },
-  { icon: '💧', label: 'Wasser / Wärmepumpe' },
-]
 
 const DIRECTION_OPTIONS: { value: FlowDirection; label: string; title: string }[] = [
   { value: 'to_house',      label: '→ 🏠',  title: 'Nur vom Knoten zum Haus' },
@@ -198,27 +188,7 @@ watch(
           <!-- Icon-Auswahl -->
           <div>
             <label class="block text-xs text-gray-400 mb-1">Icon</label>
-            <div class="flex flex-wrap gap-1 mb-1">
-              <button
-                v-for="preset in ICON_PRESETS"
-                :key="preset.icon"
-                type="button"
-                :title="preset.label"
-                :class="[
-                  'px-1.5 py-0.5 rounded text-base leading-none border',
-                  entity.icon === preset.icon
-                    ? 'border-blue-500 bg-blue-500/20'
-                    : 'border-gray-700 hover:border-gray-500',
-                ]"
-                @click="entity.icon = preset.icon"
-              >{{ preset.icon }}</button>
-            </div>
-            <input
-              v-model="entity.icon"
-              type="text"
-              placeholder="Emoji (z.B. ☀️)"
-              class="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
-            />
+            <IconPicker v-model="entity.icon" :dark="true" />
           </div>
 
           <!-- Bezeichnung -->
