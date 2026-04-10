@@ -2,10 +2,14 @@
 import { computed } from 'vue'
 import { useDatapointsStore } from '@/stores/datapoints'
 
+type FlowDirection = 'to_house' | 'from_house' | 'bidirectional'
+
 interface EntityConfig {
   id: string
   label: string
   icon: string
+  color: string
+  direction: FlowDirection
   unit: string
   decimals: number
   invert: boolean
@@ -34,6 +38,8 @@ const entities = computed<EntityConfig[]>(() => {
     id: e.id!,
     label: e.label ?? '',
     icon: e.icon ?? '⚡',
+    color: e.color ?? '#60a5fa',
+    direction: e.direction ?? 'bidirectional',
     unit: e.unit ?? 'W',
     decimals: e.decimals ?? 1,
     invert: e.invert ?? false,
@@ -50,9 +56,18 @@ function formatPower(watts: number, unit: string, decimals: number): string {
   return watts.toFixed(decimals) + '\u202F' + u
 }
 
+/** isSource: true = Energie fliesst zum Haus (Punkt von Knoten → Mitte) */
+function resolveIsSource(power: number, direction: FlowDirection): boolean {
+  if (direction === 'to_house')   return true
+  if (direction === 'from_house') return false
+  // bidirectional: positiver Wert → Quelle (Richtung Haus)
+  return power >= 0
+}
+
 interface EntityDisplay {
   label: string
   icon: string
+  color: string
   power: number
   displayValue: string
   active: boolean
@@ -65,10 +80,11 @@ const displays = computed<EntityDisplay[]>(() =>
       return {
         label: e.label || e.id,
         icon: e.icon,
+        color: e.color,
         power: 0,
         displayValue: '—',
         active: false,
-        isSource: true,
+        isSource: resolveIsSource(0, e.direction),
       }
     }
     const dp = dpStore.getValue(e.id)
@@ -76,10 +92,11 @@ const displays = computed<EntityDisplay[]>(() =>
       return {
         label: e.label || e.id,
         icon: e.icon,
+        color: e.color,
         power: 0,
         displayValue: '…',
         active: false,
-        isSource: true,
+        isSource: resolveIsSource(0, e.direction),
       }
     }
     const raw = typeof dp.v === 'number' ? dp.v : parseFloat(String(dp.v))
@@ -88,10 +105,11 @@ const displays = computed<EntityDisplay[]>(() =>
     return {
       label: e.label || e.id,
       icon: e.icon,
+      color: e.color,
       power,
       displayValue: formatPower(power, unit, e.decimals),
       active: Math.abs(power) > 1,
-      isSource: power >= 0,
+      isSource: resolveIsSource(power, e.direction),
     }
   })
 )
@@ -105,7 +123,6 @@ const ENTITY_RADIUS = 88
 const ENTITY_R = 16
 
 function entityPos(i: number, total: number): Point {
-  // Start at top (−π/2), go clockwise
   const angle = (i / total) * 2 * Math.PI - Math.PI / 2
   return {
     x: CX + ENTITY_RADIUS * Math.cos(angle),
@@ -117,15 +134,12 @@ const positions = computed<Point[]>(() =>
   displays.value.map((_, i) => entityPos(i, displays.value.length))
 )
 
-// Determine which side to place the text relative to the entity
 type TextSide = 'above' | 'below' | 'left' | 'right'
 
 function textSide(pos: Point): TextSide {
   const dx = pos.x - CX
   const dy = pos.y - CY
-  if (Math.abs(dx) > Math.abs(dy)) {
-    return dx > 0 ? 'right' : 'left'
-  }
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left'
   return dy > 0 ? 'below' : 'above'
 }
 
@@ -143,59 +157,24 @@ function getTextLayout(pos: Point): TextLayout {
   const side = textSide(pos)
   switch (side) {
     case 'above':
-      return {
-        labelX: pos.x,
-        labelY: pos.y - ENTITY_R - TEXT_GAP - 9,
-        valueX: pos.x,
-        valueY: pos.y - ENTITY_R - TEXT_GAP,
-        anchor: 'middle',
-      }
+      return { labelX: pos.x, labelY: pos.y - ENTITY_R - TEXT_GAP - 9,
+               valueX: pos.x, valueY: pos.y - ENTITY_R - TEXT_GAP, anchor: 'middle' }
     case 'below':
-      return {
-        labelX: pos.x,
-        labelY: pos.y + ENTITY_R + TEXT_GAP + 1,
-        valueX: pos.x,
-        valueY: pos.y + ENTITY_R + TEXT_GAP + 10,
-        anchor: 'middle',
-      }
+      return { labelX: pos.x, labelY: pos.y + ENTITY_R + TEXT_GAP + 1,
+               valueX: pos.x, valueY: pos.y + ENTITY_R + TEXT_GAP + 10, anchor: 'middle' }
     case 'right':
-      return {
-        labelX: pos.x + ENTITY_R + TEXT_GAP,
-        labelY: pos.y - 4,
-        valueX: pos.x + ENTITY_R + TEXT_GAP,
-        valueY: pos.y + 6,
-        anchor: 'start',
-      }
+      return { labelX: pos.x + ENTITY_R + TEXT_GAP, labelY: pos.y - 4,
+               valueX: pos.x + ENTITY_R + TEXT_GAP, valueY: pos.y + 6, anchor: 'start' }
     case 'left':
-      return {
-        labelX: pos.x - ENTITY_R - TEXT_GAP,
-        labelY: pos.y - 4,
-        valueX: pos.x - ENTITY_R - TEXT_GAP,
-        valueY: pos.y + 6,
-        anchor: 'end',
-      }
+      return { labelX: pos.x - ENTITY_R - TEXT_GAP, labelY: pos.y - 4,
+               valueX: pos.x - ENTITY_R - TEXT_GAP, valueY: pos.y + 6, anchor: 'end' }
   }
 }
 
 // Animation speed: faster at higher power
 function animDur(power: number): string {
-  const absW = Math.abs(power)
-  const s = Math.max(0.6, Math.min(5, 4000 / Math.max(50, absW)))
+  const s = Math.max(0.6, Math.min(5, 4000 / Math.max(50, Math.abs(power))))
   return `${s.toFixed(2)}s`
-}
-
-function entityStroke(d: EntityDisplay): string {
-  if (!d.active) return '#4b5563'
-  return d.isSource ? '#22c55e' : '#f59e0b'
-}
-
-function flowColor(d: EntityDisplay): string {
-  return d.isSource ? '#22c55e' : '#f59e0b'
-}
-
-function valueColor(d: EntityDisplay): string {
-  if (!d.active) return '#6b7280'
-  return d.isSource ? '#22c55e' : '#f59e0b'
 }
 </script>
 
@@ -212,7 +191,7 @@ function valueColor(d: EntityDisplay): string {
       v-if="displays.length === 0"
       class="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500 text-xs text-center p-4"
     >
-      Keine Energiequellen konfiguriert.<br />Bitte Widget konfigurieren.
+      Keine Energieknoten konfiguriert.<br />Bitte Widget konfigurieren.
     </div>
 
     <svg
@@ -231,24 +210,24 @@ function valueColor(d: EntityDisplay): string {
         />
       </defs>
 
-      <!-- Connecting lines -->
+      <!-- Connecting lines (use node color) -->
       <line
         v-for="(pos, i) in positions"
         :key="`ef-line-${i}`"
         :x1="CX" :y1="CY"
         :x2="pos.x" :y2="pos.y"
         stroke-width="1.5"
-        :stroke="entityStroke(displays[i])"
-        :stroke-opacity="displays[i].active ? 0.5 : 0.25"
+        :stroke="displays[i].color"
+        :stroke-opacity="displays[i].active ? 0.55 : 0.2"
       />
 
-      <!-- Animated flow dots (isSource → entity to center, else center to entity) -->
+      <!-- Animated flow dots (node color, direction config-driven) -->
       <circle
         v-for="(d, i) in displays"
         v-show="d.active"
         :key="`ef-dot-${i}`"
         r="3.5"
-        :fill="flowColor(d)"
+        :fill="d.color"
       >
         <animateMotion
           :dur="animDur(d.power)"
@@ -279,15 +258,15 @@ function valueColor(d: EntityDisplay): string {
 
       <!-- Entity nodes -->
       <g v-for="(d, i) in displays" :key="`ef-entity-${i}`">
-        <!-- Entity circle -->
+        <!-- Entity circle (node color) -->
         <circle
           :cx="positions[i].x"
           :cy="positions[i].y"
           :r="ENTITY_R"
           fill="transparent"
           stroke-width="1.5"
-          :stroke="entityStroke(d)"
-          :stroke-opacity="d.active ? 0.8 : 0.4"
+          :stroke="d.color"
+          :stroke-opacity="d.active ? 0.85 : 0.35"
         />
         <!-- Entity icon -->
         <text
@@ -309,14 +288,14 @@ function valueColor(d: EntityDisplay): string {
           fill="#9ca3af"
         >{{ d.label }}</text>
 
-        <!-- Power value -->
+        <!-- Power value (node color when active) -->
         <text
           :x="getTextLayout(positions[i]).valueX"
           :y="getTextLayout(positions[i]).valueY"
           :text-anchor="getTextLayout(positions[i]).anchor"
           dominant-baseline="auto"
           font-size="8"
-          :fill="valueColor(d)"
+          :fill="d.active ? d.color : '#6b7280'"
         >{{ d.displayValue }}</text>
       </g>
     </svg>

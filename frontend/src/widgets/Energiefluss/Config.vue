@@ -2,10 +2,14 @@
 import { reactive, watch } from 'vue'
 import DataPointPicker from '@/components/DataPointPicker.vue'
 
+type FlowDirection = 'to_house' | 'from_house' | 'bidirectional'
+
 interface EntityConfig {
   id: string
   label: string
   icon: string
+  color: string
+  direction: FlowDirection
   unit: string
   decimals: number
   invert: boolean
@@ -32,11 +36,19 @@ const ICON_PRESETS = [
   { icon: '💧', label: 'Wasser / Wärmepumpe' },
 ]
 
+const DIRECTION_OPTIONS: { value: FlowDirection; label: string; title: string }[] = [
+  { value: 'to_house',      label: '→ 🏠',  title: 'Nur vom Knoten zum Haus' },
+  { value: 'bidirectional', label: '⇄',      title: 'Bidirektional (Vorzeichen entscheidet)' },
+  { value: 'from_house',    label: '🏠 →',  title: 'Nur vom Haus zum Knoten' },
+]
+
 function makeEntity(src?: Partial<EntityConfig>): EntityConfig {
   return {
     id: src?.id ?? '',
     label: src?.label ?? '',
     icon: src?.icon ?? '⚡',
+    color: src?.color ?? '#60a5fa',
+    direction: src?.direction ?? 'bidirectional',
     unit: src?.unit ?? '',
     decimals: src?.decimals ?? 1,
     invert: src?.invert ?? false,
@@ -75,27 +87,33 @@ watch(
       />
     </div>
 
-    <!-- Konvention -->
+    <!-- Hinweis -->
     <p class="text-xs text-gray-500 leading-relaxed">
-      <span class="text-green-400 font-medium">Grün ↗</span> = Energie fliesst
-      <span class="font-medium">zur Schaltzentrale</span> (positiver Wert).<br />
-      <span class="text-amber-400 font-medium">Orange ↙</span> = Energie fliesst
-      <span class="font-medium">von der Schaltzentrale weg</span> (negativer Wert).<br />
-      Mit «Vorzeichen umkehren» lässt sich die Richtungslogik pro Quelle invertieren.
+      Farbe und Flussrichtung werden pro Knoten konfiguriert.<br />
+      Bei «Bidirektional» bestimmt das Vorzeichen die Richtung (positiv → Haus, negativ → weg).
+      «Vorzeichen umkehren» dreht diese Logik um.
     </p>
 
-    <!-- Entity-Slots -->
+    <!-- Energieknoten -->
     <div class="pt-1">
       <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-        Energiequellen / -verbraucher (max. {{ MAX_ENTITIES }})
+        Energieknoten (max. {{ MAX_ENTITIES }})
       </p>
 
       <div
         v-for="(entity, i) in cfg.entities"
         :key="i"
         class="border border-gray-700 rounded p-2 space-y-2 mb-2"
+        :style="entity.id ? `border-color: ${entity.color}40` : ''"
       >
-        <p class="text-xs text-gray-500">Quelle / Verbraucher {{ i + 1 }}</p>
+        <!-- Header mit Farb-Swatch -->
+        <div class="flex items-center gap-2">
+          <span
+            class="w-2.5 h-2.5 rounded-full shrink-0"
+            :style="entity.id ? `background: ${entity.color}` : 'background: #4b5563'"
+          />
+          <p class="text-xs text-gray-500">Energieknoten {{ i + 1 }}</p>
+        </div>
 
         <DataPointPicker
           :model-value="entity.id || null"
@@ -104,6 +122,38 @@ watch(
         />
 
         <template v-if="entity.id">
+          <!-- Farbe -->
+          <div class="flex items-center gap-3">
+            <div>
+              <label class="block text-xs text-gray-400 mb-1">Farbe</label>
+              <input
+                v-model="entity.color"
+                type="color"
+                class="w-8 h-8 rounded cursor-pointer border border-gray-700 bg-transparent p-0.5"
+              />
+            </div>
+
+            <!-- Flussrichtung -->
+            <div class="flex-1">
+              <label class="block text-xs text-gray-400 mb-1">Flussrichtung</label>
+              <div class="flex gap-1">
+                <button
+                  v-for="opt in DIRECTION_OPTIONS"
+                  :key="opt.value"
+                  type="button"
+                  :title="opt.title"
+                  :class="[
+                    'flex-1 py-1 text-xs rounded border font-mono',
+                    entity.direction === opt.value
+                      ? 'border-blue-500 bg-blue-500/20 text-blue-300'
+                      : 'border-gray-700 text-gray-400 hover:border-gray-500',
+                  ]"
+                  @click="entity.direction = opt.value"
+                >{{ opt.label }}</button>
+              </div>
+            </div>
+          </div>
+
           <!-- Icon-Auswahl -->
           <div>
             <label class="block text-xs text-gray-400 mb-1">Icon</label>
