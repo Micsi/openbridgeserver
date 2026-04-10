@@ -279,30 +279,35 @@ const openPct = computed(() => {
         </template>
       </svg>
 
-      <!-- ── Sliding door (schiebetuer) ───────────────────────────── -->
+      <!-- ── Sliding door, fixed part LEFT (schiebetuer) ──────────── -->
       <svg
-        v-else-if="mode === 'schiebetuer'"
+        v-else-if="mode === 'schiebetuer' || mode === 'schiebetuer_r'"
         viewBox="0 0 72 64"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <!-- Outer frame (tracks) -->
+        <!-- Outer frame -->
         <line x1="2"  y1="4"  x2="2"  y2="60" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
         <line x1="70" y1="4"  x2="70" y2="60" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
         <line x1="2"  y1="4"  x2="70" y2="4"  stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
         <line x1="2"  y1="60" x2="70" y2="60" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
 
-        <!-- Closed: panel fills the opening -->
+        <!-- Closed: full panel (same for both variants) -->
         <template v-if="stateMain === 'closed'">
           <rect x="6" y="8" width="60" height="48" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/>
         </template>
 
-        <!-- Open: panel shifted to the left side -->
-        <template v-else-if="stateMain === 'open'">
-          <rect x="6" y="8" width="28" height="48" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.7"/>
-          <!-- Opening gap (dashed) -->
+        <!-- Open, fixer Teil LINKS: panel left, gap right -->
+        <template v-else-if="stateMain === 'open' && mode === 'schiebetuer'">
+          <rect x="6"  y="8" width="28" height="48" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.7"/>
           <rect x="38" y="8" width="28" height="48" stroke="currentColor" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.3"/>
+        </template>
+
+        <!-- Open, fixer Teil RECHTS: gap left, panel right -->
+        <template v-else-if="stateMain === 'open' && mode === 'schiebetuer_r'">
+          <rect x="6"  y="8" width="28" height="48" stroke="currentColor" stroke-width="1" stroke-dasharray="3,3" fill="none" opacity="0.3"/>
+          <rect x="38" y="8" width="28" height="48" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.7"/>
         </template>
 
         <!-- Unknown -->
