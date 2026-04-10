@@ -356,25 +356,57 @@ async def _fa_exchange_token(
     return None
 
 
+async def _fa_get_version(
+    http: httpx.AsyncClient,
+    access_token: str,
+    dbg: list[str],
+) -> str:
+    """
+    Ermittelt die aktuellste FontAwesome Release-Version über die GraphQL API.
+    Fallback: "7.2.0" (neueste bekannte Version).
+    """
+    query = "{ releases { version isLatest } }"
+    try:
+        resp = await http.post(
+            f"{_FA_GRAPHQL_URL}/graphql",
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            json={"query": query},
+        )
+        dbg.append(f"[version-discovery] HTTP {resp.status_code}: {resp.text[:400]}")
+        if resp.status_code == 200:
+            releases = resp.json().get("data", {}).get("releases") or []
+            # isLatest == True bevorzugen, sonst neueste
+            for r in releases:
+                if r.get("isLatest"):
+                    dbg.append(f"[version-discovery] isLatest → {r['version']}")
+                    return r["version"]
+            if releases:
+                v = releases[0]["version"]
+                dbg.append(f"[version-discovery] erstes Release → {v}")
+                return v
+    except Exception as exc:
+        dbg.append(f"[version-discovery] Exception: {exc}")
+    dbg.append("[version-discovery] Fallback → 7.2.0")
+    return "7.2.0"
+
+
 async def _fa_graphql_svg(
     http: httpx.AsyncClient,
     access_token: str,
     icon_name: str,
     style: str,
+    version: str,
     dbg: list[str],
 ) -> bytes | None:
     """
     Ruft das fertige SVG-HTML eines Icons über die FontAwesome GraphQL API ab.
-    Gibt None zurück wenn das Icon nicht gefunden wurde oder der Scope fehlt.
-
-    Die `html`-Field liefert ein komplettes <svg>…</svg>-Element.
-    Wir laden ALLE verfügbaren SVGs des Icons und filtern client-seitig nach Style —
-    das ist robuster als server-seitiger familyStyle-Filter mit Enum-Variablen.
+    Korrekte Signatur: release(version: $version) { icon(name: $name) { ... } }
+    Filtert client-seitig nach Style (robuster als server-seitiger Enum-Filter).
     """
     query = """
-    query GetIcon($id: String!) {
-      release {
-        icon(id: $id) {
+    query GetIcon($version: String!, $name: String!) {
+      release(version: $version) {
+        icon(name: $name) {
           svgs {
             familyStyle {
               family
@@ -393,7 +425,7 @@ async def _fa_graphql_svg(
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",
             },
-            json={"query": query, "variables": {"id": icon_name}},
+            json={"query": query, "variables": {"version": version, "name": icon_name}},
         )
         dbg.append(f"[graphql:{icon_name}] HTTP {resp.status_code}: {resp.text[:800]}")
         if resp.status_code != 200:
@@ -405,10 +437,10 @@ async def _fa_graphql_svg(
             .get("icon")
         )
         if not icon_data:
-            dbg.append(f"[graphql:{icon_name}] icon=null (kein Icon unter dieser ID)")
+            dbg.append(f"[graphql:{icon_name}] icon=null (kein Icon unter dieser ID/Version)")
             return None
         svgs: list = icon_data.get("svgs") or []
-        dbg.append(f"[graphql:{icon_name}] {len(svgs)} SVG(s) gefunden: {[s.get('familyStyle') for s in svgs]}")
+        dbg.append(f"[graphql:{icon_name}] {len(svgs)} SVG(s): {[s.get('familyStyle') for s in svgs]}")
 
         # 1. Exakter Style-Match (case-insensitive)
         target = style.lower()
@@ -482,9 +514,12 @@ async def import_fontawesome(
     async with httpx.AsyncClient(timeout=15.0) as http:
         # PRO: einmalig Token tauschen (nicht pro Icon)
         access_token: str | None = None
+        fa_version: str = "7.2.0"
         if body.api_key:
             dbg.append(f"[config] api_key gesetzt (Länge {len(body.api_key)}), starte Token-Exchange …")
             access_token = await _fa_exchange_token(http, body.api_key, dbg)
+            if access_token:
+                fa_version = await _fa_get_version(http, access_token, dbg)
         else:
             dbg.append("[config] kein api_key → nur Free-CDN")
 
@@ -499,10 +534,10 @@ async def import_fontawesome(
 
             # 1. Versuch: GraphQL (wenn Access-Token vorhanden)
             if access_token:
-                svg_bytes = await _fa_graphql_svg(http, access_token, icon_name, style, dbg)
+                svg_bytes = await _fa_graphql_svg(http, access_token, icon_name, style, fa_version, dbg)
                 # FA5-Alias-Fallback für GraphQL
                 if svg_bytes is None and icon_name in _FA5_TO_FA6:
-                    svg_bytes = await _fa_graphql_svg(http, access_token, _FA5_TO_FA6[icon_name], style, dbg)
+                    svg_bytes = await _fa_graphql_svg(http, access_token, _FA5_TO_FA6[icon_name], style, fa_version, dbg)
 
             # 2. Versuch: Free-CDN (immer, auch wenn api_key gesetzt aber GraphQL erfolglos)
             if svg_bytes is None:
