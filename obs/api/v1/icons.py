@@ -19,6 +19,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
+from werkzeug.utils import secure_filename
 
 from obs.api.auth import get_current_user
 from obs.config import get_settings
@@ -379,8 +380,15 @@ async def get_icon(
             "Ungültiger Icon-Name",
         )
 
+    safe_name = secure_filename(name)
+    if not safe_name or safe_name != name:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Ungültiger Icon-Name",
+        )
+
     icons_dir = _icons_dir().resolve()
-    svg_file = (icons_dir / f"{name}.svg").resolve()
+    svg_file = (icons_dir / f"{safe_name}.svg").resolve()
     try:
         svg_file.relative_to(icons_dir)
     except ValueError:
