@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import * as path from 'path'
-import { apiPost, apiDeleteWithBody } from '../helpers'
+import { getToken, apiDeleteWithBody } from '../helpers'
 
 // Minimal inline SVG als Buffer für Datei-Uploads
 const MINIMAL_SVG = Buffer.from(
@@ -14,11 +14,13 @@ async function gotoIconsTab(page: any) {
   await expect(page.locator('[data-testid="icons-tab"]')).toBeVisible({ timeout: 5_000 })
 }
 
-// Lädt ein SVG per API hoch (für Test-Setup)
+// Lädt ein SVG per API hoch (für Test-Setup).
+// Verwendet getToken() — liest das Token aus .auth/admin.json ohne Login-Request,
+// um den Rate-Limiter (5 Logins/min) nicht zu triggern.
 async function uploadIconViaApi(name: string): Promise<void> {
+  const token = await getToken()
   const fd = new FormData()
   fd.append('files', new Blob([MINIMAL_SVG], { type: 'image/svg+xml' }), `${name}.svg`)
-  const token = (await apiPost('/api/v1/auth/login', { username: 'admin', password: 'admin' }) as any).access_token
   await fetch(`${process.env.BASE_URL ?? 'http://localhost:8080'}/api/v1/icons/import`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },

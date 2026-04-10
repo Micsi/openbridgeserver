@@ -38,7 +38,7 @@ function _readTokenFromStorageState(): string | null {
   return null
 }
 
-async function getToken(): Promise<string> {
+export async function getToken(): Promise<string> {
   if (_cachedToken) return _cachedToken
   // Prefer the token saved by auth.setup.ts (no network call, no rate-limit risk)
   _cachedToken = _readTokenFromStorageState()
