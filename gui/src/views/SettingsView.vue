@@ -386,38 +386,40 @@
     </div>
 
     <!-- ── Icons Library ── -->
-    <div v-if="activeTab === 'icons' && !isDemo" class="flex flex-col gap-4">
+    <div v-if="activeTab === 'icons' && !isDemo" class="flex flex-col gap-4" data-testid="icons-tab">
 
       <!-- Toolbar -->
       <div class="flex flex-wrap items-center gap-3">
-        <span class="text-sm text-slate-400">{{ iconsFiltered.length }} Icon(s)</span>
+        <span class="text-sm text-slate-400" data-testid="icons-count">{{ iconsFiltered.length }} Icon(s)</span>
         <div class="flex-1" />
-        <button v-if="iconsSelected.size > 0" @click="doIconsExport" class="btn-secondary btn-sm">
+        <button v-if="iconsSelected.size > 0" @click="doIconsExport" class="btn-secondary btn-sm" data-testid="btn-icons-export">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
           {{ iconsSelected.size }} exportieren
         </button>
-        <button v-if="iconsSelected.size > 0" @click="doIconsDelete" class="btn-danger btn-sm">
+        <button v-if="iconsSelected.size > 0" @click="doIconsDelete" class="btn-danger btn-sm" data-testid="btn-icons-delete">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0a1 1 0 011-1h4a1 1 0 011 1m-7 0h8"/></svg>
           {{ iconsSelected.size }} löschen
         </button>
-        <button v-if="icons.length > 0" @click="iconsSelectAll" class="btn-secondary btn-sm">
+        <button v-if="icons.length > 0" @click="iconsSelectAll" class="btn-secondary btn-sm" data-testid="btn-icons-select-all">
           {{ iconsSelected.size === icons.length ? 'Alle abwählen' : 'Alle wählen' }}
         </button>
-        <input v-model="iconsSearch" type="text" class="input text-sm w-40" placeholder="Suchen…" />
+        <input v-model="iconsSearch" type="text" class="input text-sm w-40" placeholder="Suchen…" data-testid="input-icons-search" />
       </div>
 
       <!-- Feedback -->
-      <div v-if="iconsMsg" :class="['p-3 rounded-lg text-sm border', iconsMsg.ok ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30']">
+      <div v-if="iconsMsg" :class="['p-3 rounded-lg text-sm border', iconsMsg.ok ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30']"
+        data-testid="icons-msg">
         {{ iconsMsg.text }}
       </div>
 
       <!-- Icon Grid -->
       <div v-if="iconsLoading" class="flex justify-center py-10"><Spinner /></div>
-      <div v-else-if="icons.length === 0" class="text-center text-sm text-slate-500 py-10">
+      <div v-else-if="icons.length === 0" class="text-center text-sm text-slate-500 py-10" data-testid="icons-empty">
         Noch keine Icons installiert. Lade SVG-Dateien hoch, um zu beginnen.
       </div>
-      <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-3">
+      <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-3" data-testid="icons-grid">
         <label v-for="icon in iconsFiltered" :key="icon.name" :title="icon.name"
+          :data-testid="`icon-item-${icon.name}`"
           :class="['relative flex flex-col items-center gap-1.5 p-3 rounded-lg border cursor-pointer transition-colors select-none',
             iconsSelected.has(icon.name)
               ? 'border-blue-500 bg-blue-50 dark:bg-blue-500/10'
@@ -453,7 +455,8 @@
             @dragover.prevent="iconsDragOver = true"
             @dragleave.prevent="iconsDragOver = false"
             @drop.prevent="onIconsDrop"
-            @click="$refs.iconsFileInput.click()">
+            @click="$refs.iconsFileInput.click()"
+            data-testid="icons-dropzone">
             <div class="flex flex-col items-center gap-2 py-8 px-4 text-center pointer-events-none">
               <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
@@ -464,6 +467,7 @@
               </div>
             </div>
             <input ref="iconsFileInput" type="file" accept=".svg,.zip" multiple class="sr-only"
+              data-testid="input-icons-file"
               @change="onIconsFileSelect" />
           </div>
 
@@ -496,12 +500,12 @@
           <div class="form-group">
             <label class="label">Icon-Namen (kommagetrennt)</label>
             <input v-model="faIconNames" type="text" class="input text-sm font-mono"
-              placeholder="home, star, user, arrow-right" />
+              placeholder="home, star, user, arrow-right" data-testid="input-fa-names" />
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div class="form-group">
               <label class="label">Stil</label>
-              <select v-model="faStyle" class="input text-sm">
+              <select v-model="faStyle" class="input text-sm" data-testid="select-fa-style">
                 <option value="solid">Solid</option>
                 <option value="regular">Regular</option>
                 <option value="brands">Brands</option>
@@ -516,7 +520,7 @@
           <div v-if="faMsg" :class="['p-3 rounded-lg text-sm border', faMsg.ok ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30']">
             {{ faMsg.text }}
           </div>
-          <button @click="doFaImport" class="btn-primary btn-sm w-fit" :disabled="faImporting || !faIconNames.trim()">
+          <button @click="doFaImport" class="btn-primary btn-sm w-fit" :disabled="faImporting || !faIconNames.trim()" data-testid="btn-fa-import">
             <Spinner v-if="faImporting" size="sm" color="white" />
             Icons importieren
           </button>

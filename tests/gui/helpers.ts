@@ -112,3 +112,21 @@ export async function apiDelete(path: string): Promise<void> {
     throw new Error(`DELETE ${path} failed: ${res.status}`)
   }
 }
+
+export async function apiDeleteWithBody(path: string, body: unknown): Promise<unknown> {
+  const token = await getToken()
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text()
+    throw new Error(`DELETE ${path} failed: ${res.status} — ${text}`)
+  }
+  if (res.status === 204) return null
+  return res.json()
+}

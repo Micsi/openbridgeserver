@@ -185,7 +185,10 @@
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:unpkg.com)",
       "WebFetch(domain:app.unpkg.com)",
-      "WebFetch(domain:docs.fontawesome.com)"
+      "WebFetch(domain:docs.fontawesome.com)",
+      "Bash(Remove-Item -Recurse -Force 'C:\\\\Users\\\\DanielAbegglen\\\\OneDrive\\\\Hausbau\\\\Elektro\\\\KNX\\\\openbridgeserver\\\\gui\\\\tests' -ErrorAction SilentlyContinue)",
+      "Bash(Remove-Item -Force 'C:\\\\Users\\\\DanielAbegglen\\\\OneDrive\\\\Hausbau\\\\Elektro\\\\KNX\\\\openbridgeserver\\\\gui\\\\vitest.config.js' -ErrorAction SilentlyContinue)",
+      "Bash(Write-Host 'done')"
     ]
   }
 }
