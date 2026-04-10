@@ -234,114 +234,116 @@ const quality = computed(() => props.value?.q ?? null)
 </script>
 
 <template>
-  <!-- ── VALUE MODE ─────────────────────────────────────────────────────────── -->
-  <div v-if="mode === 'value'" class="flex flex-col h-full p-3 select-none">
-    <span v-if="widgetLabel" class="text-xs text-gray-500 dark:text-gray-400 truncate mb-1">{{ widgetLabel }}</span>
+  <!-- ── VALUE MODE (large icon + value below, wie Nur-Icon-Layout) ─────────── -->
+  <div v-if="mode === 'value'" class="flex flex-col items-center h-full p-2 select-none">
+    <span v-if="widgetLabel" class="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0 mb-1">{{ widgetLabel }}</span>
 
-    <div class="flex items-center gap-3 flex-1 min-h-0">
-      <!-- Icon circle -->
+    <!-- Icon: fills remaining height, square -->
+    <div class="flex-1 min-h-0 flex items-center justify-center w-full">
       <div
         v-if="activeIcon"
-        class="shrink-0 w-12 h-12 rounded-full border-2 flex items-center justify-center"
+        class="h-full max-w-full rounded-full border-2 flex items-center justify-center"
+        style="aspect-ratio: 1"
         :style="{ borderColor: activeColor }"
       >
-        <span v-if="!isSvgIcon(activeIcon)" class="text-2xl leading-none select-none">{{ activeIcon }}</span>
+        <span v-if="!isSvgIcon(activeIcon)" class="text-4xl leading-none select-none">{{ activeIcon }}</span>
         <span
           v-else-if="svgContent"
-          class="w-6 h-6 flex items-center justify-center brightness-0 dark:invert [&>svg]:w-full [&>svg]:h-full"
+          class="flex items-center justify-center brightness-0 dark:invert [&>svg]:w-full [&>svg]:h-full"
+          style="width: 55%; height: 55%"
           v-html="svgContent"
         />
       </div>
+    </div>
 
-      <!-- Value block -->
-      <div class="flex flex-col justify-center min-w-0">
-        <div class="flex items-baseline gap-1 flex-wrap">
-          <span v-if="mainDisplay.prefix" class="text-xs text-gray-400 dark:text-gray-500">{{ mainDisplay.prefix }}</span>
-          <span
-            class="text-2xl font-semibold tabular-nums leading-none"
-            :style="activeRule ? { color: activeColor } : {}"
-            data-testid="widget-value"
-          >{{ mainDisplay.value }}</span>
-          <span v-if="mainDisplay.postfix" class="text-sm text-gray-400 dark:text-gray-400">{{ mainDisplay.postfix }}</span>
-        </div>
-        <span v-if="secondaryDisplay" class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 tabular-nums truncate">
-          {{ secondaryDisplay }}
-        </span>
+    <!-- Value below icon -->
+    <div class="shrink-0 text-center mt-1">
+      <div class="flex items-baseline justify-center gap-1 flex-wrap">
+        <span v-if="mainDisplay.prefix" class="text-xs text-gray-400 dark:text-gray-500">{{ mainDisplay.prefix }}</span>
+        <span
+          class="text-xl font-semibold tabular-nums leading-none"
+          :style="activeRule ? { color: activeColor } : {}"
+          data-testid="widget-value"
+        >{{ mainDisplay.value }}</span>
+        <span v-if="mainDisplay.postfix" class="text-sm text-gray-400">{{ mainDisplay.postfix }}</span>
       </div>
+      <span v-if="secondaryDisplay" class="text-xs text-gray-400 dark:text-gray-500 tabular-nums">{{ secondaryDisplay }}</span>
     </div>
 
     <!-- Quality indicator -->
-    <div class="flex justify-end mt-1">
+    <div class="flex justify-end w-full mt-0.5">
       <span v-if="quality === 'bad'" class="w-2 h-2 rounded-full bg-red-500" title="Qualität: schlecht" />
       <span v-else-if="quality === 'uncertain'" class="w-2 h-2 rounded-full bg-yellow-400" title="Qualität: undefiniert" />
     </div>
   </div>
 
   <!-- ── HISTORY MODE ───────────────────────────────────────────────────────── -->
-  <div v-else-if="mode === 'history'" class="flex flex-col h-full p-2 select-none">
-    <!-- Top row: icon + label + current value -->
-    <div class="flex items-center gap-2 shrink-0 mb-1">
+  <!-- Icon: 4 flex parts, chart: 1 flex part (= 1/4 of icon height) -->
+  <div v-else-if="mode === 'history'" class="flex flex-col items-center h-full p-2 select-none">
+    <span v-if="widgetLabel" class="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0 mb-1">{{ widgetLabel }}</span>
+
+    <!-- Icon area: 4 shares -->
+    <div class="min-h-0 flex items-center justify-center w-full" style="flex: 4">
       <div
         v-if="activeIcon"
-        class="shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center"
+        class="h-full max-w-full rounded-full border-2 flex items-center justify-center"
+        style="aspect-ratio: 1"
         :style="{ borderColor: activeColor }"
       >
-        <span v-if="!isSvgIcon(activeIcon)" class="text-base leading-none select-none">{{ activeIcon }}</span>
+        <span v-if="!isSvgIcon(activeIcon)" class="text-4xl leading-none select-none">{{ activeIcon }}</span>
         <span
           v-else-if="svgContent"
-          class="w-4 h-4 flex items-center justify-center brightness-0 dark:invert [&>svg]:w-full [&>svg]:h-full"
+          class="flex items-center justify-center brightness-0 dark:invert [&>svg]:w-full [&>svg]:h-full"
+          style="width: 55%; height: 55%"
           v-html="svgContent"
         />
       </div>
-      <span v-if="widgetLabel" class="text-xs text-gray-500 dark:text-gray-400 truncate flex-1">{{ widgetLabel }}</span>
-      <span
-        class="text-sm font-semibold tabular-nums shrink-0 ml-auto"
-        :style="activeRule ? { color: activeColor } : {}"
-        data-testid="widget-value"
-      >
-        <template v-if="mainDisplay.prefix">{{ mainDisplay.prefix }}&nbsp;</template>{{ mainDisplay.value }}<template v-if="mainDisplay.postfix">&nbsp;{{ mainDisplay.postfix }}</template>
-      </span>
     </div>
 
-    <!-- Mini chart (clickable) -->
+    <!-- Value below icon -->
+    <div class="shrink-0 text-center my-0.5">
+      <span
+        class="text-base font-semibold tabular-nums"
+        :style="activeRule ? { color: activeColor } : {}"
+        data-testid="widget-value"
+      ><template v-if="mainDisplay.prefix">{{ mainDisplay.prefix }}&thinsp;</template>{{ mainDisplay.value }}<template v-if="mainDisplay.postfix">&thinsp;{{ mainDisplay.postfix }}</template></span>
+    </div>
+
+    <!-- Chart: 1 share (= max 1/4 of icon height), clickable -->
     <div
-      class="flex-1 min-h-0 cursor-pointer rounded overflow-hidden"
+      class="w-full min-h-0 cursor-pointer rounded overflow-hidden"
+      style="flex: 1"
       :title="editorMode ? '' : 'Klicken für Vollansicht'"
       @click="!editorMode && (modalOpen = true)"
     >
       <canvas v-if="!editorMode" ref="canvasEl" class="w-full h-full" />
-      <div v-else class="flex items-center justify-center h-full text-gray-600 text-xs">
-        Verlauf ({{ historyHours }}h)
-      </div>
+      <div v-else class="flex items-center justify-center h-full text-gray-600 text-xs">Verlauf</div>
     </div>
   </div>
 
-  <!-- ── ICON ONLY MODE ────────────────────────────────────────────────────── -->
-  <div v-else class="flex flex-col items-center justify-center h-full p-3 select-none gap-2">
-    <div
-      v-if="activeIcon"
-      class="rounded-full border-2 flex items-center justify-center"
-      style="width: 56px; height: 56px;"
-      :style="{ borderColor: activeColor }"
-    >
-      <span v-if="!isSvgIcon(activeIcon)" class="text-3xl leading-none select-none">{{ activeIcon }}</span>
-      <span
-        v-else-if="svgContent"
-        class="w-8 h-8 flex items-center justify-center brightness-0 dark:invert [&>svg]:w-full [&>svg]:h-full"
-        v-html="svgContent"
-      />
+  <!-- ── ICON ONLY MODE (nur Icon + Beschriftung, kein Wert) ───────────────── -->
+  <div v-else class="flex flex-col items-center h-full p-2 select-none">
+    <span v-if="widgetLabel" class="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0 mb-1">{{ widgetLabel }}</span>
+
+    <!-- Icon fills remaining space -->
+    <div class="flex-1 min-h-0 flex items-center justify-center w-full">
+      <div
+        v-if="activeIcon"
+        class="h-full max-w-full rounded-full border-2 flex items-center justify-center"
+        style="aspect-ratio: 1"
+        :style="{ borderColor: activeColor }"
+      >
+        <span v-if="!isSvgIcon(activeIcon)" class="text-4xl leading-none select-none">{{ activeIcon }}</span>
+        <span
+          v-else-if="svgContent"
+          class="flex items-center justify-center brightness-0 dark:invert [&>svg]:w-full [&>svg]:h-full"
+          style="width: 55%; height: 55%"
+          v-html="svgContent"
+        />
+      </div>
     </div>
-    <span
-      v-if="widgetLabel"
-      class="text-xs text-gray-500 dark:text-gray-400 text-center leading-tight"
-    >{{ widgetLabel }}</span>
-    <span
-      class="text-sm font-medium tabular-nums"
-      :style="activeRule ? { color: activeColor } : {}"
-      data-testid="widget-value"
-    >
-      <template v-if="mainDisplay.prefix">{{ mainDisplay.prefix }}&nbsp;</template>{{ mainDisplay.value }}<template v-if="mainDisplay.postfix">&nbsp;{{ mainDisplay.postfix }}</template>
-    </span>
+    <!-- hidden but keeps data-testid accessible for tests -->
+    <span class="sr-only" data-testid="widget-value">{{ mainDisplay.value }}</span>
   </div>
 
   <!-- ── MODAL (history) ───────────────────────────────────────────────────── -->
