@@ -192,7 +192,7 @@
     <div v-if="activeTab === 'importexport' && !isDemo" class="flex flex-col gap-4 max-w-lg">
       <div class="card p-5 flex flex-col gap-3">
         <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">Konfiguration sichern</h3>
-        <p class="text-sm text-slate-400">Alle Objekte, Verknüpfungen, Adapter-Instanzen, KNX-Gruppenadressen, Logikblätter, <strong class="text-slate-300">Icons</strong> und den <strong class="text-slate-300">FontAwesome API Key</strong> als JSON-Datei sichern.</p>
+        <p class="text-sm text-slate-400">Alle Objekte, Verknüpfungen, Adapter-Instanzen, KNX-Gruppenadressen, Logikblätter, Icons und den FontAwesome API Key als JSON-Datei sichern.</p>
         <button @click="doExport" class="btn-secondary">JSON herunterladen</button>
       </div>
       <div class="card p-5 flex flex-col gap-3">
