@@ -34,7 +34,7 @@
               :class="{ 'gn-port-negate--active': !!data[`negate_${def.inputs[r].id}`] }"
               :title="`${def.inputs[r].id} negieren`"
               @click.stop="toggleNegate(def.inputs[r].id)"
-            >{{ data[`negate_${def.inputs[r].id}`] ? '¬' : def.inputs[r].label }}</button>
+            >{{ data[`negate_${def.inputs[r].id}`] ? `¬${def.inputs[r].label}` : def.inputs[r].label }}</button>
             <span v-else class="gn-port-left">{{ def.inputs[r]?.label }}</span>
 
             <!-- Output label — clickable negation toggle for gate nodes (only on last row) -->
@@ -44,7 +44,7 @@
               :class="{ 'gn-port-negate--active': !!data.negate_out }"
               title="Ausgang negieren"
               @click.stop="toggleNegate('out')"
-            >{{ data.negate_out ? '¬Out' : def.outputs[r].label }}</button>
+            >{{ data.negate_out ? `¬${def.outputs[r].label}` : def.outputs[r].label }}</button>
             <span v-else class="gn-port-right">{{ def.outputs[r]?.label }}</span>
           </div>
         </div>
