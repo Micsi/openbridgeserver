@@ -437,16 +437,14 @@ const openPct = computed(() => {
         <template v-if="stateMain === 'closed'">
           <rect x="7" y="7" width="186" height="82" stroke-width="2"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- handle: schiebetuer closed → UP (right portion); schiebetuer_r closed → UP (left portion) -->
+          <!-- handle at left edge of movable (right) panel → UP; schiebetuer_r: right edge of movable (left) panel → UP -->
           <g v-if="mode === 'schiebetuer'" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="147" cy="48" r="2"/>
-            <line x1="147" y1="48" x2="147" y2="25" stroke-width="3" stroke-linecap="butt"/>
-            <line x1="141" y1="25" x2="153" y2="25" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="103" cy="48" r="2"/>
+            <line x1="103" y1="48" x2="103" y2="25" stroke-width="3" stroke-linecap="round"/>
           </g>
           <g v-else class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="54" cy="48" r="2"/>
-            <line x1="54" y1="48" x2="54" y2="25" stroke-width="3" stroke-linecap="butt"/>
-            <line x1="48" y1="25" x2="60" y2="25" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="97" cy="48" r="2"/>
+            <line x1="97" y1="48" x2="97" y2="25" stroke-width="3" stroke-linecap="round"/>
           </g>
         </template>
         <!-- Open, fixer Teil LINKS: panel slid left (solid), gap right (ghost) -->
@@ -455,11 +453,10 @@ const openPct = computed(() => {
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
           <rect x="100" y="7" width="93" height="82" stroke-width="1.5" stroke-dasharray="8,5"
                 class="fill-gray-200 dark:fill-gray-700 stroke-gray-300 dark:stroke-gray-600" opacity="0.5"/>
-          <!-- handle: open → DOWN on solid (left) panel -->
+          <!-- handle at right edge of movable panel → DOWN -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="54" cy="48" r="2"/>
-            <line x1="54" y1="48" x2="54" y2="71" stroke-width="3" stroke-linecap="butt"/>
-            <line x1="48" y1="71" x2="60" y2="71" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="97" cy="48" r="2"/>
+            <line x1="97" y1="48" x2="97" y2="71" stroke-width="3" stroke-linecap="round"/>
           </g>
         </template>
         <!-- Open, fixer Teil RECHTS: gap left (ghost), panel slid right (solid) -->
@@ -468,11 +465,10 @@ const openPct = computed(() => {
                 class="fill-gray-200 dark:fill-gray-700 stroke-gray-300 dark:stroke-gray-600" opacity="0.5"/>
           <rect x="100" y="7" width="93" height="82" stroke-width="2"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- handle: open → DOWN on solid (right) panel -->
+          <!-- handle at left edge of movable panel → DOWN -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="147" cy="48" r="2"/>
-            <line x1="147" y1="48" x2="147" y2="71" stroke-width="3" stroke-linecap="butt"/>
-            <line x1="141" y1="71" x2="153" y2="71" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="103" cy="48" r="2"/>
+            <line x1="103" y1="48" x2="103" y2="71" stroke-width="3" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else>
