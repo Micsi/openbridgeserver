@@ -235,6 +235,15 @@ const openPct = computed(() => {
       </svg>
 
       <!-- ── Double-wing window (fenster_2) ──────────────────────────── -->
+      <!--
+        viewBox 72×64  |  outer frame: x 2→70, y 2→62  |  center divider x=36
+        Left wing  inner pane: x 7→31 (w=24), y 7→57 (h=50)
+        Right wing inner pane: x 41→65 (w=24), y 7→57 (h=50)
+        Same proportions as single-wing:
+          kipp : 17% of 24 = ~4px left shift  |  open : 79% of 24 = 19px, falls 3px
+        Frame is split L/R so each half shows its wing's state color (matching single-wing principle).
+        Panes are fully gray (fill + stroke), identical to single-wing.
+      -->
       <svg
         v-else-if="mode === 'fenster_2'"
         viewBox="0 0 72 64"
@@ -242,52 +251,68 @@ const openPct = computed(() => {
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <!-- Outer frame -->
-        <rect x="2" y="2" width="68" height="60" rx="1" stroke-width="2.5" stroke="currentColor"/>
-        <!-- Center divider -->
-        <line x1="36" y1="2" x2="36" y2="62" stroke-width="2.5" stroke="currentColor"/>
-
-        <!-- Left wing: gray fill + per-wing state color as stroke (pane border = status indicator) -->
+        <!-- ① Left half-frame: state color of left wing -->
         <g :class="stateColorClass(stateLeft)">
-          <template v-if="stateLeft === 'closed'">
-            <rect x="7" y="7" width="24" height="50" stroke-width="1.5" stroke="currentColor"
-                  class="fill-gray-300 dark:fill-gray-600"/>
-          </template>
-          <template v-else-if="stateLeft === 'tilted'">
-            <!-- kipp: bottom fixed (7→31,y=57), top shifted left ~4px (17% of 24) -->
-            <polygon points="3,7 27,7 31,57 7,57" stroke-width="1.5" stroke="currentColor"
-                     class="fill-gray-300 dark:fill-gray-600"/>
-          </template>
-          <template v-else-if="stateLeft === 'open'">
-            <!-- open: hinge x=7, free side x=26 (79% of 24), falls +3px -->
-            <polygon points="7,7 26,10 26,60 7,57" stroke-width="1.5" stroke="currentColor" stroke-linejoin="round"
-                     class="fill-gray-300 dark:fill-gray-600"/>
-          </template>
-          <template v-else>
-            <text x="19" y="37" text-anchor="middle" dominant-baseline="middle" font-size="14" fill="currentColor" opacity="0.4">?</text>
-          </template>
+          <line x1="2"  y1="2"  x2="2"  y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="2"  y1="2"  x2="36" y2="2"  stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="2"  y1="62" x2="36" y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
         </g>
 
-        <!-- Right wing: same approach, mirrored -->
+        <!-- ② Right half-frame: state color of right wing -->
         <g :class="stateColorClass(stateRight)">
-          <template v-if="stateRight === 'closed'">
-            <rect x="41" y="7" width="24" height="50" stroke-width="1.5" stroke="currentColor"
-                  class="fill-gray-300 dark:fill-gray-600"/>
-          </template>
-          <template v-else-if="stateRight === 'tilted'">
-            <!-- kipp: bottom fixed (41→65,y=57), top shifted left ~4px -->
-            <polygon points="37,7 61,7 65,57 41,57" stroke-width="1.5" stroke="currentColor"
-                     class="fill-gray-300 dark:fill-gray-600"/>
-          </template>
-          <template v-else-if="stateRight === 'open'">
-            <!-- open: hinge x=65, free side x=46 (79% of 24 from right), falls +3px -->
-            <polygon points="65,7 46,10 46,60 65,57" stroke-width="1.5" stroke="currentColor" stroke-linejoin="round"
-                     class="fill-gray-300 dark:fill-gray-600"/>
-          </template>
-          <template v-else>
-            <text x="53" y="37" text-anchor="middle" dominant-baseline="middle" font-size="14" fill="currentColor" opacity="0.4">?</text>
-          </template>
+          <line x1="70" y1="2"  x2="70" y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="36" y1="2"  x2="70" y2="2"  stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="36" y1="62" x2="70" y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
         </g>
+
+        <!-- ③ Center divider: summaryState (worst-case of both wings) -->
+        <line x1="36" y1="2" x2="36" y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+
+        <!-- ④ Left wing pane — gray fill + gray stroke, drawn AFTER frame so it sits in front -->
+        <template v-if="stateLeft === 'closed'">
+          <rect x="7" y="7" width="24" height="50" stroke-width="1.5"
+                class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <circle cx="29" cy="32" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+        </template>
+        <template v-else-if="stateLeft === 'tilted'">
+          <!-- kipp: bottom (7→31,57) fixed, top shifted left 4px → (3→27,7) -->
+          <polygon points="3,7 27,7 31,57 7,57" stroke-width="1.5"
+                   class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <circle cx="28" cy="32" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+        </template>
+        <template v-else-if="stateLeft === 'open'">
+          <!-- open: hinge x=7, free x=26 (79% of 24), falls +3px; bottom-right at y=60 -->
+          <polygon points="7,7 26,10 26,60 7,57" stroke-width="1.5" stroke-linejoin="round"
+                   class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <circle cx="24" cy="35" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+        </template>
+        <template v-else>
+          <text x="19" y="37" text-anchor="middle" dominant-baseline="middle" font-size="14"
+                class="fill-gray-400 dark:fill-gray-500" opacity="0.6">?</text>
+        </template>
+
+        <!-- ⑤ Right wing pane — mirror of left wing -->
+        <template v-if="stateRight === 'closed'">
+          <rect x="41" y="7" width="24" height="50" stroke-width="1.5"
+                class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <circle cx="43" cy="32" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+        </template>
+        <template v-else-if="stateRight === 'tilted'">
+          <!-- kipp: bottom (41→65,57) fixed, top shifted left 4px → (37→61,7) -->
+          <polygon points="37,7 61,7 65,57 41,57" stroke-width="1.5"
+                   class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <circle cx="44" cy="32" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+        </template>
+        <template v-else-if="stateRight === 'open'">
+          <!-- open: hinge x=65, free x=46 (79% of 24 from right), falls +3px -->
+          <polygon points="65,7 46,10 46,60 65,57" stroke-width="1.5" stroke-linejoin="round"
+                   class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <circle cx="48" cy="35" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+        </template>
+        <template v-else>
+          <text x="53" y="37" text-anchor="middle" dominant-baseline="middle" font-size="14"
+                class="fill-gray-400 dark:fill-gray-500" opacity="0.6">?</text>
+        </template>
       </svg>
 
       <!-- ── Door LEFT-hinged (tuere) ──────────────────────────────────── -->
