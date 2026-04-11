@@ -65,7 +65,7 @@ test('Kamera: kein URL konfiguriert → Platzhalter "Keine URL konfiguriert"', a
 
   try {
     await page.goto(`/visu/${pageId}`)
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
 
     const widget = page.locator(`[data-widget-id="${widgetId}"]`)
     await expect(widget).toContainText('Keine URL konfiguriert')
@@ -91,9 +91,10 @@ test('Kamera: MJPEG-Modus → <img> mit direkter Kamera-URL als src', async ({ p
 
   try {
     await page.goto(`/visu/${pageId}`)
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
 
     const img = page.locator(`[data-widget-id="${widgetId}"] img`)
+    await expect(img).toBeAttached({ timeout: 10_000 })
     await expect(img).toHaveAttribute('src', camUrl)
     // Kein video-Element
     await expect(page.locator(`[data-widget-id="${widgetId}"] video`)).toHaveCount(0)
@@ -116,9 +117,10 @@ test('Kamera: HLS-Modus → <video> mit Kamera-URL als src', async ({ page }) =>
 
   try {
     await page.goto(`/visu/${pageId}`)
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
 
     const video = page.locator(`[data-widget-id="${widgetId}"] video`)
+    await expect(video).toBeAttached({ timeout: 10_000 })
     await expect(video).toHaveAttribute('src', camUrl)
     // Kein img-Element
     await expect(page.locator(`[data-widget-id="${widgetId}"] img`)).toHaveCount(0)
@@ -141,9 +143,10 @@ test('Kamera: Proxy-Modus → img src enthält /api/v1/camera/proxy und _token',
 
   try {
     await page.goto(`/visu/${pageId}`)
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
 
     const img = page.locator(`[data-widget-id="${widgetId}"] img`)
+    await expect(img).toBeAttached({ timeout: 10_000 })
     const src = await img.getAttribute('src')
 
     expect(src).toContain('/api/v1/camera/proxy')
@@ -174,7 +177,7 @@ test('Kamera: Fehler-Overlay und Reload-Button erscheinen bei nicht erreichbarem
 
   try {
     await page.goto(`/visu/${pageId}`)
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
 
     const widget = page.locator(`[data-widget-id="${widgetId}"]`)
 
@@ -206,7 +209,7 @@ test('Kamera: konfiguriertes Label wird in Kopfzeile angezeigt', async ({ page }
 
   try {
     await page.goto(`/visu/${pageId}`)
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
 
     const widget = page.locator(`[data-widget-id="${widgetId}"]`)
     await expect(widget).toContainText('Eingangskamera')
@@ -229,9 +232,10 @@ test('Kamera: Snapshot-Modus → img src enthält _t Cache-Buster', async ({ pag
 
   try {
     await page.goto(`/visu/${pageId}`)
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
 
     const img = page.locator(`[data-widget-id="${widgetId}"] img`)
+    await expect(img).toBeAttached({ timeout: 10_000 })
     const src = await img.getAttribute('src')
 
     expect(src).toContain('_t=')
