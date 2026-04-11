@@ -141,286 +141,249 @@ const openPct = computed(() => {
 
       <!-- ── Single-wing window LEFT-hinged (fenster) ──────────────────── -->
       <!--
-        viewBox 56×64  |  outer frame: rect(2,2,52,60)
-        inner pane area: x 7→49 (w=42), y 7→57 (h=50)
-        KNX reference analysis (361px viewBox):
-          kipp : bottom fixed (103→266), top shifted LEFT ~17% of width → top: 75→233
-          open : hinge left x≈101, free right x≈233 (79% of frame w),
-                 free side falls ~5px lower (perspective), bottom-right exits frame
+        Real: 60×60cm  →  viewBox 60×60  (1cm = 1unit)
+        Frame stroke 2.5 (4.2% of 60)  |  pane stroke 1.5  |  handle r=2
+        Pane area: x 5→55 (w=50), y 5→55 (h=50)
+        Kipp shift: 17% of 50 = 8.5 → top-left at x=-3 (clips at viewBox edge)
+        Open: 79% of 50 = 40px from hinge, perspective fall +6px on free side
       -->
       <svg
         v-if="mode === 'fenster'"
-        viewBox="0 0 56 64"
+        viewBox="0 0 60 60"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <!-- Outer frame -->
-        <rect x="2" y="2" width="52" height="60" rx="1" stroke-width="2.5" stroke="currentColor"/>
+        <rect x="1.5" y="1.5" width="57" height="57" rx="0.5" stroke-width="2.5" stroke="currentColor"/>
 
-        <!-- Closed: inner pane (gray wing, colored frame) + handle dot -->
         <template v-if="stateMain === 'closed'">
-          <rect x="7" y="7" width="42" height="50" stroke-width="1.5"
+          <rect x="5" y="5" width="50" height="50" stroke-width="1.5"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="47" cy="32" r="2"
-                  class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="53" cy="30" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
-
-        <!-- Tilted (Kipp): gray parallelogram — bottom fixed, top shifted left ~7px -->
         <template v-else-if="stateMain === 'tilted'">
-          <polygon points="0,7 42,7 49,57 7,57" stroke-width="1.5"
+          <!-- kipp: bottom (5→55,55) fixed, top shifted left 8.5px → (-3→47,5) -->
+          <polygon points="-3,5 47,5 55,55 5,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="44" cy="32" r="2"
-                  class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="51" cy="30" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
-
-        <!-- Open: gray perspective parallelogram as polygon (fills over frame edge) -->
         <template v-else-if="stateMain === 'open'">
-          <polygon points="7,7 40,12 40,62 7,57" stroke-width="1.5" stroke-linejoin="round"
+          <!-- open: hinge x=5, free x=45 (79% of 50), falls +6px; bottom-right y=61 clips -->
+          <polygon points="5,5 45,11 45,61 5,55" stroke-width="1.5" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="38" cy="37" r="2"
-                  class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="43" cy="36" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
-
-        <!-- Unknown -->
         <template v-else>
-          <text x="28" y="37" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
+          <text x="30" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 
       <!-- ── Single-wing window RIGHT-hinged (fenster_r) ──────────────── -->
-      <!--
-        Mirror of fenster: hinge right x=49, free side x=16 (49-33)
-        Kipp: same parallelogram (kipp is bottom-pivoted, direction-agnostic in KNX standard)
-        Open: perspective falls identically — free side 5px lower, free top (16,12), free bottom (16,62)
-      -->
+      <!-- Real: 60×60cm → viewBox 60×60. Mirror of fenster. -->
       <svg
         v-else-if="mode === 'fenster_r'"
-        viewBox="0 0 56 64"
+        viewBox="0 0 60 60"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <!-- Outer frame -->
-        <rect x="2" y="2" width="52" height="60" rx="1" stroke-width="2.5" stroke="currentColor"/>
+        <rect x="1.5" y="1.5" width="57" height="57" rx="0.5" stroke-width="2.5" stroke="currentColor"/>
 
-        <!-- Closed: inner pane (gray wing) + handle dot left-centre -->
         <template v-if="stateMain === 'closed'">
-          <rect x="7" y="7" width="42" height="50" stroke-width="1.5"
+          <rect x="5" y="5" width="50" height="50" stroke-width="1.5"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="9" cy="32" r="2"
-                  class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="7" cy="30" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
-
-        <!-- Tilted (Kipp): gray parallelogram -->
         <template v-else-if="stateMain === 'tilted'">
-          <polygon points="0,7 42,7 49,57 7,57" stroke-width="1.5"
+          <!-- same kipp polygon (bottom pivot, direction-agnostic) -->
+          <polygon points="-3,5 47,5 55,55 5,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="12" cy="32" r="2"
-                  class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="9" cy="30" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
-
-        <!-- Open: gray perspective parallelogram, hinge right x=49, free side x=16 -->
         <template v-else-if="stateMain === 'open'">
-          <polygon points="49,7 16,12 16,62 49,57" stroke-width="1.5" stroke-linejoin="round"
+          <!-- open: hinge x=55, free x=15 (55-40), falls +6px -->
+          <polygon points="55,5 15,11 15,61 55,55" stroke-width="1.5" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="18" cy="37" r="2"
-                  class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="17" cy="36" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
-
-        <!-- Unknown -->
         <template v-else>
-          <text x="28" y="37" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
+          <text x="30" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 
       <!-- ── Double-wing window (fenster_2) ──────────────────────────── -->
       <!--
-        viewBox 72×64  |  outer frame: x 2→70, y 2→62  |  center divider x=36
-        Left wing  inner pane: x 7→31 (w=24), y 7→57 (h=50)
-        Right wing inner pane: x 41→65 (w=24), y 7→57 (h=50)
-        Same proportions as single-wing:
-          kipp : 17% of 24 = ~4px left shift  |  open : 79% of 24 = 19px, falls 3px
-        Frame is split L/R so each half shows its wing's state color (matching single-wing principle).
-        Panes are fully gray (fill + stroke), identical to single-wing.
+        Real: 120×60cm  →  viewBox 120×60  (1cm = 1unit)
+        Each wing = 60×60cm = identical to single fenster (pane x=5→55 / x=65→115, w=50, h=50)
+        Frame split L/R per wing state. Center divider at x=60. Strokes same as fenster.
       -->
       <svg
         v-else-if="mode === 'fenster_2'"
-        viewBox="0 0 72 64"
+        viewBox="0 0 120 60"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <!-- ① Left half-frame: state color of left wing -->
+        <!-- Left half-frame (stateLeft color) -->
         <g :class="stateColorClass(stateLeft)">
-          <line x1="2"  y1="2"  x2="2"  y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-          <line x1="2"  y1="2"  x2="36" y2="2"  stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-          <line x1="2"  y1="62" x2="36" y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="1.5" y1="1.5" x2="1.5"  y2="58.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="1.5" y1="1.5" x2="60"   y2="1.5"  stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="1.5" y1="58.5" x2="60"  y2="58.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
         </g>
-
-        <!-- ② Right half-frame: state color of right wing -->
+        <!-- Right half-frame (stateRight color) -->
         <g :class="stateColorClass(stateRight)">
-          <line x1="70" y1="2"  x2="70" y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-          <line x1="36" y1="2"  x2="70" y2="2"  stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-          <line x1="36" y1="62" x2="70" y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="118.5" y1="1.5" x2="118.5" y2="58.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="60"    y1="1.5" x2="118.5" y2="1.5"  stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <line x1="60"    y1="58.5" x2="118.5" y2="58.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
         </g>
+        <!-- Center divider (summaryState) -->
+        <line x1="60" y1="1.5" x2="60" y2="58.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
 
-        <!-- ③ Center divider: summaryState (worst-case of both wings) -->
-        <line x1="36" y1="2" x2="36" y2="62" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-
-        <!-- ④ Left wing pane — gray fill + gray stroke, drawn AFTER frame so it sits in front -->
+        <!-- Left wing pane (identical coordinates to single fenster) -->
         <template v-if="stateLeft === 'closed'">
-          <rect x="7" y="7" width="24" height="50" stroke-width="1.5"
+          <rect x="5" y="5" width="50" height="50" stroke-width="1.5"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="29" cy="32" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="53" cy="30" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
         <template v-else-if="stateLeft === 'tilted'">
-          <!-- kipp: bottom (7→31,57) fixed, top shifted left 4px → (3→27,7) -->
-          <polygon points="3,7 27,7 31,57 7,57" stroke-width="1.5"
+          <polygon points="-3,5 47,5 55,55 5,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="28" cy="32" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="51" cy="30" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
         <template v-else-if="stateLeft === 'open'">
-          <!-- open: hinge x=7, free x=26 (79% of 24), falls +3px; bottom-right at y=60 -->
-          <polygon points="7,7 26,10 26,60 7,57" stroke-width="1.5" stroke-linejoin="round"
+          <polygon points="5,5 45,11 45,61 5,55" stroke-width="1.5" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="24" cy="35" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="43" cy="36" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
         <template v-else>
-          <text x="19" y="37" text-anchor="middle" dominant-baseline="middle" font-size="14"
-                class="fill-gray-400 dark:fill-gray-500" opacity="0.6">?</text>
+          <text x="30" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
         </template>
 
-        <!-- ⑤ Right wing pane — mirror of left wing -->
+        <!-- Right wing pane (offset +60, same shapes mirrored) -->
         <template v-if="stateRight === 'closed'">
-          <rect x="41" y="7" width="24" height="50" stroke-width="1.5"
+          <rect x="65" y="5" width="50" height="50" stroke-width="1.5"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="43" cy="32" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="67" cy="30" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
         <template v-else-if="stateRight === 'tilted'">
-          <!-- kipp: bottom (41→65,57) fixed, top shifted left 4px → (37→61,7) -->
-          <polygon points="37,7 61,7 65,57 41,57" stroke-width="1.5"
+          <!-- kipp: bottom (65→115,55) fixed, top shifted left 8.5px → (57→107,5) -->
+          <polygon points="57,5 107,5 115,55 65,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="44" cy="32" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="63" cy="30" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
         <template v-else-if="stateRight === 'open'">
-          <!-- open: hinge x=65, free x=46 (79% of 24 from right), falls +3px -->
-          <polygon points="65,7 46,10 46,60 65,57" stroke-width="1.5" stroke-linejoin="round"
+          <!-- open: hinge x=115, free x=75 (115-40), falls +6px -->
+          <polygon points="115,5 75,11 75,61 115,55" stroke-width="1.5" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <circle cx="48" cy="35" r="2" class="fill-gray-500 dark:fill-gray-400"/>
+          <circle cx="77" cy="36" r="2" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
         <template v-else>
-          <text x="53" y="37" text-anchor="middle" dominant-baseline="middle" font-size="14"
-                class="fill-gray-400 dark:fill-gray-500" opacity="0.6">?</text>
+          <text x="90" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 
       <!-- ── Door LEFT-hinged (tuere) ──────────────────────────────────── -->
+      <!--
+        Real: 90×200cm  →  viewBox 90×200  (1cm = 1unit)
+        Frame stroke 4 (4.4% of 90)  |  pane stroke 2  |  handle r=3
+        Pane: x=7, y=7, w=76, h=183 (to y=190)
+        Open: 79% of 76 = 60px, fall 9px. Free side bottom at y=199 (inside viewBox)
+      -->
       <svg
         v-else-if="mode === 'tuere'"
-        viewBox="0 0 56 72"
+        viewBox="0 0 90 200"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <!-- Door frame -->
-        <line x1="2"  y1="2"  x2="2"  y2="70" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <line x1="54" y1="2"  x2="54" y2="70" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <line x1="2"  y1="2"  x2="54" y2="2"  stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <!-- Floor line -->
-        <line x1="2"  y1="70" x2="54" y2="70" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
+        <line x1="2"  y1="2"   x2="2"  y2="194" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="88" y1="2"   x2="88" y2="194" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="2"  y1="2"   x2="88" y2="2"   stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="2"  y1="196" x2="88" y2="196" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
 
-        <!-- Closed: gray door panel -->
         <template v-if="stateMain === 'closed'">
-          <rect x="6" y="5" width="44" height="64" stroke-width="1.5"
+          <rect x="7" y="7" width="76" height="183" stroke-width="2"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
         </template>
-
-        <!-- Open: gray perspective parallelogram, hinge left x=6, free side x=28 -->
         <template v-else-if="stateMain === 'open'">
-          <polygon points="6,5 28,8 28,70 6,69" stroke-width="1.5" stroke-linejoin="round"
+          <!-- hinge x=7, free x=67 (7+60), fall +9; bottom-right y=199 -->
+          <polygon points="7,7 67,16 67,199 7,190" stroke-width="2" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <circle cx="65" cy="107" r="3" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
-
-        <!-- Unknown -->
         <template v-else>
-          <text x="28" y="40" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
+          <text x="45" y="100" text-anchor="middle" dominant-baseline="middle" font-size="28" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 
       <!-- ── Door RIGHT-hinged (tuere_r) ──────────────────────────────── -->
+      <!-- Real: 90×200cm → viewBox 90×200. Mirror of tuere. -->
       <svg
         v-else-if="mode === 'tuere_r'"
-        viewBox="0 0 56 72"
+        viewBox="0 0 90 200"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <!-- Door frame -->
-        <line x1="2"  y1="2"  x2="2"  y2="70" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <line x1="54" y1="2"  x2="54" y2="70" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <line x1="2"  y1="2"  x2="54" y2="2"  stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <!-- Floor line -->
-        <line x1="2"  y1="70" x2="54" y2="70" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
+        <line x1="2"  y1="2"   x2="2"  y2="194" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="88" y1="2"   x2="88" y2="194" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="2"  y1="2"   x2="88" y2="2"   stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="2"  y1="196" x2="88" y2="196" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
 
-        <!-- Closed: gray door panel -->
         <template v-if="stateMain === 'closed'">
-          <rect x="6" y="5" width="44" height="64" stroke-width="1.5"
+          <rect x="7" y="7" width="76" height="183" stroke-width="2"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
         </template>
-
-        <!-- Open: gray perspective parallelogram, hinge right x=50, free side x=28 -->
         <template v-else-if="stateMain === 'open'">
-          <polygon points="50,5 28,8 28,70 50,69" stroke-width="1.5" stroke-linejoin="round"
+          <!-- hinge x=83 (7+76), free x=23 (83-60), fall +9 -->
+          <polygon points="83,7 23,16 23,199 83,190" stroke-width="2" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <circle cx="25" cy="107" r="3" class="fill-gray-500 dark:fill-gray-400"/>
         </template>
-
-        <!-- Unknown -->
         <template v-else>
-          <text x="28" y="40" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
+          <text x="45" y="100" text-anchor="middle" dominant-baseline="middle" font-size="28" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 
-      <!-- ── Sliding door, fixed part LEFT (schiebetuer) ──────────────── -->
+      <!-- ── Sliding door (schiebetuer) ──────────────────────────────── -->
+      <!--
+        Real: 400×200cm  →  viewBox 200×100  (1cm = 0.5unit, same 2:1 ratio)
+        Frame stroke 4 (4% of 100)  |  panel stroke 2
+        Pane area: x=7, y=7, w=186, h=82 (to y=89). Center at x=100.
+        Each half: w=93. Ghost dasharray "8,5" (scaled for 200-unit viewBox).
+      -->
       <svg
         v-else-if="mode === 'schiebetuer' || mode === 'schiebetuer_r'"
-        viewBox="0 0 72 64"
+        viewBox="0 0 200 100"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <!-- Outer frame -->
-        <line x1="2"  y1="4"  x2="2"  y2="60" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <line x1="70" y1="4"  x2="70" y2="60" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-        <line x1="2"  y1="4"  x2="70" y2="4"  stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-        <!-- Floor line: same style as Türe (thin, semi-transparent) -->
-        <line x1="2"  y1="60" x2="70" y2="60" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
+        <line x1="2"   y1="2"  x2="2"   y2="94" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="198" y1="2"  x2="198" y2="94" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="2"   y1="2"  x2="198" y2="2"  stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <line x1="2"   y1="96" x2="198" y2="96" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
 
-        <!-- Closed: full gray panel -->
         <template v-if="stateMain === 'closed'">
-          <rect x="6" y="8" width="60" height="48" stroke-width="1.5"
+          <rect x="7" y="7" width="186" height="82" stroke-width="2"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
         </template>
-
-        <!-- Open, fixer Teil LINKS: moving panel (gray) slid left, ghost outline for gap -->
+        <!-- Open, fixer Teil LINKS: panel slid left (solid), gap right (ghost) -->
         <template v-else-if="stateMain === 'open' && mode === 'schiebetuer'">
-          <rect x="6"  y="8" width="28" height="48" stroke-width="1.5"
+          <rect x="7"   y="7" width="93" height="82" stroke-width="2"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <rect x="38" y="8" width="28" height="48" stroke-width="1" stroke-dasharray="3,3"
+          <rect x="100" y="7" width="93" height="82" stroke-width="1.5" stroke-dasharray="8,5"
                 class="fill-gray-200 dark:fill-gray-700 stroke-gray-300 dark:stroke-gray-600" opacity="0.5"/>
         </template>
-
-        <!-- Open, fixer Teil RECHTS: ghost on left, moving panel (gray) on right -->
+        <!-- Open, fixer Teil RECHTS: gap left (ghost), panel slid right (solid) -->
         <template v-else-if="stateMain === 'open' && mode === 'schiebetuer_r'">
-          <rect x="6"  y="8" width="28" height="48" stroke-width="1" stroke-dasharray="3,3"
+          <rect x="7"   y="7" width="93" height="82" stroke-width="1.5" stroke-dasharray="8,5"
                 class="fill-gray-200 dark:fill-gray-700 stroke-gray-300 dark:stroke-gray-600" opacity="0.5"/>
-          <rect x="38" y="8" width="28" height="48" stroke-width="1.5"
+          <rect x="100" y="7" width="93" height="82" stroke-width="2"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
         </template>
-
-        <!-- Unknown -->
         <template v-else>
-          <text x="36" y="37" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
+          <text x="100" y="50" text-anchor="middle" dominant-baseline="middle" font-size="30" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 
