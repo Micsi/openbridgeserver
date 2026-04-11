@@ -211,22 +211,24 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
     # ── Heating Circuit ───────────────────────────────────────────────────
     NodeTypeDef(
         type="heating_circuit",
-        label="Heizkreis (DIN)",
+        label="Sommer/Winter (DIN)",
         category="math",
         description=(
-            "Winter/Sommer-Umschaltung nach DIN. Berechnet Tagesmittel aus drei Messzeitpunkten "
-            "(7:00, 14:00, 22:00 Uhr): T_avg = (T1 + T2 + 2×T3) / 4. "
+            "Sommer/Winter-Umschaltung nach DIN. Eingang: Aussentemperatur. "
+            "Der Wert wird je nach Tageszeit automatisch T1 (≈07:00), T2 (≈14:00) oder T3 (≈22:00) zugeordnet. "
+            "Tagesmittel: T_avg = (T1 + T2 + 2×T3) / 4. "
             "Heizmodus aktiv wenn gleitendes Monatsmittel < Heizgrenze."
         ),
         inputs=[
-            _port("t1", "T1 (07:00)"),
-            _port("t2", "T2 (14:00)"),
-            _port("t3", "T3 (22:00)"),
+            _port("value", "Temp °C"),
         ],
         outputs=[
-            _port("heating_mode", "Heizmodus (0/1)"),
-            _port("daily_avg",    "Tagesmittel °C"),
-            _port("monthly_avg",  "Monatsmittel °C"),
+            _port("heating_mode", "Heizmodus"),
+            _port("daily_avg",    "Tagesmittel"),
+            _port("monthly_avg",  "Monatsmittel"),
+            _port("t1",           "T1 (debug)"),
+            _port("t2",           "T2 (debug)"),
+            _port("t3",           "T3 (debug)"),
         ],
         config_schema={
             "heating_limit": {"type": "number", "default": 15.0, "label": "Heizgrenze °C"},

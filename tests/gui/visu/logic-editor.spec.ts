@@ -137,21 +137,19 @@ test('AND-Gate mit negate_out zeigt false wenn beide Eingänge true', async ({ p
 // heating_circuit: node type exists in registry and graph runs without error
 // ---------------------------------------------------------------------------
 test('heating_circuit-Node läuft durch und gibt heating_mode aus', async ({ page }) => {
+  // New design: single 'value' input; slot assigned by time of day.
+  // We just verify the node executes and returns a valid heating_mode (0 or 1).
   const graph = await apiPost('/api/v1/logic/graphs', {
     name: `E2E-HC-${Date.now()}`,
     description: 'Playwright: heating_circuit',
     enabled: true,
     flow_data: {
       nodes: [
-        { id: 't1', type: 'const_value', position: { x: 0,   y: 0   }, data: { value: '5',  data_type: 'number' } },
-        { id: 't2', type: 'const_value', position: { x: 0,   y: 100 }, data: { value: '6',  data_type: 'number' } },
-        { id: 't3', type: 'const_value', position: { x: 0,   y: 200 }, data: { value: '4',  data_type: 'number' } },
-        { id: 'hc', type: 'heating_circuit', position: { x: 300, y: 100 }, data: { heating_limit: 15.0 } },
+        { id: 'cv', type: 'const_value', position: { x: 0,   y: 0 }, data: { value: '10', data_type: 'number' } },
+        { id: 'hc', type: 'heating_circuit', position: { x: 300, y: 0 }, data: { heating_limit: 15.0 } },
       ],
       edges: [
-        { id: 'e1', source: 't1', target: 'hc', sourceHandle: 'value', targetHandle: 't1' },
-        { id: 'e2', source: 't2', target: 'hc', sourceHandle: 'value', targetHandle: 't2' },
-        { id: 'e3', source: 't3', target: 'hc', sourceHandle: 'value', targetHandle: 't3' },
+        { id: 'e1', source: 'cv', target: 'hc', sourceHandle: 'value', targetHandle: 'value' },
       ],
     },
   }) as { id: string }
@@ -159,9 +157,12 @@ test('heating_circuit-Node läuft durch und gibt heating_mode aus', async ({ pag
   try {
     const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as { outputs: Record<string, Record<string, unknown>> }
     expect(result.outputs['hc']).toBeDefined()
-    // T_avg = (5+6+2*4)/4 = 4.75 < 15 → heating_mode = 1
-    expect(result.outputs['hc']['heating_mode']).toBe(1)
-    expect(typeof result.outputs['hc']['daily_avg']).toBe('number')
+    // heating_mode is 0 or 1 (slot-based; exact value depends on test run time)
+    expect([0, 1]).toContain(result.outputs['hc']['heating_mode'])
+    // debug outputs are present in the response
+    expect('t1' in result.outputs['hc']).toBe(true)
+    expect('t2' in result.outputs['hc']).toBe(true)
+    expect('t3' in result.outputs['hc']).toBe(true)
   } finally {
     await apiDelete(`/api/v1/logic/graphs/${graphId}`)
   }
@@ -266,7 +267,7 @@ test('Logic-Editor Palette zeigt neue Node-Typen an', async ({ page }) => {
 
   // Wait for the palette to populate from the API (node types are fetched async)
   // Each new node type must have a visible label entry in the palette
-  await expect(page.getByText('Heizkreis (DIN)', { exact: true })).toBeVisible({ timeout: 8_000 })
+  await expect(page.getByText('Sommer/Winter (DIN)', { exact: true })).toBeVisible({ timeout: 8_000 })
   await expect(page.getByText('Min/Max Tracker',  { exact: true })).toBeVisible({ timeout: 3_000 })
   await expect(page.getByText('Verbrauchszähler', { exact: true })).toBeVisible({ timeout: 3_000 })
 })

@@ -358,29 +358,57 @@ class GraphExecutor:
                 return {}
 
             case "heating_circuit":
-                # DIN-Norm Winter/Sommer-Umschaltung
-                # T_avg = (T1 + T2 + 2*T3) / 4  (T3 doppelt gewichtet: 22:00 Uhr)
+                # DIN-Norm Sommer/Winter-Umschaltung
+                # Eingang: Temperaturwert (wird je nach Tageszeit T1/T2/T3 zugeordnet)
+                # T1 ≈ 07:00, T2 ≈ 14:00, T3 ≈ 22:00 (doppelt gewichtet)
+                # T_avg = (T1 + T2 + 2×T3) / 4
+                import datetime as _dt
                 state = self.hysteresis_state.setdefault(node.id, {
+                    "t1": None, "t1_date": None,
+                    "t2": None, "t2_date": None,
+                    "t3": None, "t3_date": None,
                     "daily_temps": [], "daily_avg": None, "monthly_avg": None,
                 })
-                t1 = inputs.get("t1")
-                t2 = inputs.get("t2")
-                t3 = inputs.get("t3")
+                val = inputs.get("value")
                 heating_limit = float(d.get("heating_limit", 15.0))
-                if t1 is not None and t2 is not None and t3 is not None:
-                    daily_avg = (self._to_num(t1) + self._to_num(t2) + 2 * self._to_num(t3)) / 4
-                    state["daily_avg"] = daily_avg
-                    state["daily_temps"].append(daily_avg)
-                    # Keep at most 31 days for monthly average
-                    state["daily_temps"] = state["daily_temps"][-31:]
-                    state["monthly_avg"] = sum(state["daily_temps"]) / len(state["daily_temps"])
-                # Use monthly average when available, else daily average
+                if val is not None:
+                    fval = self._to_num(val)
+                    today = _dt.date.today().isoformat()
+                    # _slot allows unit tests to force a specific slot without mocking time
+                    slot = inputs.get("_slot")
+                    if slot is None:
+                        hour = _dt.datetime.now().hour
+                        if 5 <= hour <= 10:
+                            slot = "t1"
+                        elif 12 <= hour <= 16:
+                            slot = "t2"
+                        elif 20 <= hour <= 23:
+                            slot = "t3"
+                    if slot in ("t1", "t2", "t3"):
+                        state[slot] = fval
+                        state[f"{slot}_date"] = today
+                    # Compute daily avg once all three slots have today's date
+                    if (state["t1_date"] == today and state["t2_date"] == today
+                            and state["t3_date"] == today):
+                        daily_avg = (state["t1"] + state["t2"] + 2 * state["t3"]) / 4
+                        state["daily_avg"] = daily_avg
+                        state["daily_temps"].append(daily_avg)
+                        state["daily_temps"] = state["daily_temps"][-31:]
+                        state["monthly_avg"] = (
+                            sum(state["daily_temps"]) / len(state["daily_temps"])
+                        )
+                        # Reset slots for next day
+                        for k in ("t1", "t2", "t3", "t1_date", "t2_date", "t3_date"):
+                            state[k] = None
                 ref_temp = state["monthly_avg"] if state["monthly_avg"] is not None else state["daily_avg"]
                 heating_mode = (1 if ref_temp < heating_limit else 0) if ref_temp is not None else 0
                 return {
                     "heating_mode": heating_mode,
-                    "daily_avg": state["daily_avg"],
-                    "monthly_avg": state["monthly_avg"],
+                    "daily_avg":    state["daily_avg"],
+                    "monthly_avg":  state["monthly_avg"],
+                    "t1":           state["t1"],
+                    "t2":           state["t2"],
+                    "t3":           state["t3"],
                 }
 
             case "min_max_tracker":

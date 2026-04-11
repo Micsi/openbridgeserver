@@ -697,53 +697,81 @@ class TestEnhancedGateInputs:
 # ===========================================================================
 
 class TestHeatingCircuit:
-    def _run(self, t1, t2, t3, limit=15.0, state=None):
+    """Tests for the redesigned heating_circuit node.
+
+    New API: single 'value' input; time slot assigned via '_slot' override
+    (t1 / t2 / t3).  All three slots in the same date must be received
+    before a daily_avg is computed.
+    """
+
+    def _run_slot(self, slot, value, config=None, state=None):
+        """Feed a single temperature reading at the given time slot."""
         if state is None:
             state = {}
-        n1 = node("h", "heating_circuit", {"heating_limit": limit})
+        if config is None:
+            config = {"heating_limit": 15.0}
+        n1 = node("h", "heating_circuit", config)
         exc = make_executor([n1], hysteresis_state=state)
-        return exc.execute({"h": {"t1": t1, "t2": t2, "t3": t3}})["h"], state
+        return exc.execute({"h": {"value": value, "_slot": slot}})["h"], state
+
+    def _run_full_day(self, t1, t2, t3, config=None, state=None):
+        """Simulate a full day (all three slots) and return the final output."""
+        if state is None:
+            state = {}
+        if config is None:
+            config = {"heating_limit": 15.0}
+        n1 = node("h", "heating_circuit", config)
+        out = None
+        for slot, val in [("t1", t1), ("t2", t2), ("t3", t3)]:
+            exc = make_executor([n1], hysteresis_state=state)
+            out = exc.execute({"h": {"value": val, "_slot": slot}})["h"]
+        return out, state
 
     def test_din_formula_daily_avg(self):
         # T_avg = (10 + 12 + 2*8) / 4 = 38/4 = 9.5
-        out, _ = self._run(10, 12, 8)
+        out, _ = self._run_full_day(10, 12, 8)
         assert out["daily_avg"] == pytest.approx(9.5)
 
     def test_heating_mode_on_when_below_limit(self):
-        out, _ = self._run(5, 6, 4, limit=15.0)  # daily_avg = (5+6+2*4)/4 = 4.75 < 15
+        # daily_avg = (5+6+2*4)/4 = 4.75 < 15
+        out, _ = self._run_full_day(5, 6, 4, config={"heating_limit": 15.0})
         assert out["heating_mode"] == 1
 
     def test_heating_mode_off_when_above_limit(self):
-        out, _ = self._run(18, 22, 20, limit=15.0)  # daily_avg = (18+22+2*20)/4 = 20 > 15
+        # daily_avg = (18+22+2*20)/4 = 20.0 > 15
+        out, _ = self._run_full_day(18, 22, 20, config={"heating_limit": 15.0})
         assert out["heating_mode"] == 0
+
+    def test_debug_outputs_visible_before_day_complete(self):
+        """t1/t2/t3 debug ports reflect stored slot values."""
+        state = {}
+        out, _ = self._run_slot("t1", 10.0, state=state)
+        assert out["t1"] == pytest.approx(10.0)
+        assert out["t2"] is None
+        out2, _ = self._run_slot("t2", 14.0, state=state)
+        assert out2["t2"] == pytest.approx(14.0)
 
     def test_monthly_avg_after_multiple_days(self):
         state = {}
-        n1 = node("h", "heating_circuit", {"heating_limit": 15.0})
         # Day 1: T_avg = (4+6+2*2)/4 = 14/4 = 3.5
-        exc = make_executor([n1], hysteresis_state=state)
-        exc.execute({"h": {"t1": 4, "t2": 6, "t3": 2}})
+        self._run_full_day(4, 6, 2, state=state)
         # Day 2: T_avg = (8+10+2*6)/4 = 30/4 = 7.5
-        exc2 = make_executor([n1], hysteresis_state=state)
-        out = exc2.execute({"h": {"t1": 8, "t2": 10, "t3": 6}})["h"]
+        out, _ = self._run_full_day(8, 10, 6, state=state)
         # monthly_avg = (3.5 + 7.5) / 2 = 5.5
         assert out["monthly_avg"] == pytest.approx(5.5)
 
     def test_heating_mode_uses_monthly_avg(self):
         """When monthly_avg is available it determines heating_mode, not daily_avg."""
         state = {}
-        n1 = node("h", "heating_circuit", {"heating_limit": 15.0})
         # Build up a warm monthly average (>15°)
         for _ in range(3):
-            exc = make_executor([n1], hysteresis_state=state)
-            exc.execute({"h": {"t1": 20, "t2": 22, "t3": 20}})  # daily_avg = 20.5
+            self._run_full_day(20, 22, 20, state=state)  # daily_avg ≈ 20.5
         # Now send a cold day — daily_avg would be cold but monthly_avg is warm
-        exc = make_executor([n1], hysteresis_state=state)
-        out = exc.execute({"h": {"t1": 5, "t2": 6, "t3": 4}})["h"]
+        out, _ = self._run_full_day(5, 6, 4, state=state)
         # monthly_avg still > 15 → no heating
         assert out["heating_mode"] == 0
 
-    def test_no_inputs_returns_zero_heating_mode(self):
+    def test_no_input_returns_zero_heating_mode(self):
         state = {}
         n1 = node("h", "heating_circuit", {"heating_limit": 15.0})
         exc = make_executor([n1], hysteresis_state=state)
@@ -753,11 +781,9 @@ class TestHeatingCircuit:
 
     def test_monthly_buffer_capped_at_31_days(self):
         state = {}
-        n1 = node("h", "heating_circuit", {"heating_limit": 15.0})
         for _ in range(40):  # push 40 days
-            exc = make_executor([n1], hysteresis_state=state)
-            exc.execute({"h": {"t1": 10, "t2": 12, "t3": 8}})
-        assert len(state[n1["id"]]["daily_temps"]) <= 31
+            self._run_full_day(10, 12, 8, state=state)
+        assert len(state["h"]["daily_temps"]) <= 31
 
 
 # ===========================================================================
