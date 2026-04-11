@@ -312,18 +312,6 @@
               class="input text-sm" @change="emitUpdate" />
           </div>
 
-          <!-- Dynamic per-input negation for IN 3 … IN N (IN 1 / IN 2 are in static config_schema) -->
-          <template v-if="isGateNode && gateExtraInputCount > 0">
-            <div class="label mt-1 text-xs text-slate-400">Weitere Eingänge negieren</div>
-            <div v-for="i in gateExtraInputCount" :key="'negate-in' + (i + 2)"
-                 class="form-group flex items-center gap-2">
-              <input type="checkbox"
-                     :checked="!!localData[`negate_in${i + 2}`]"
-                     @change="e => { localData[`negate_in${i + 2}`] = e.target.checked; emitUpdate() }"
-              />
-              <label class="label mb-0">IN {{ i + 2 }} negieren</label>
-            </div>
-          </template>
         </template>
       </div>
     </template>
@@ -498,16 +486,6 @@ const isWrite          = computed(() => props.node?.type === 'datapoint_write')
 const isCronNode       = computed(() => props.node?.type === 'timer_cron')
 const isMathFormulaNode = computed(() => props.node?.type === 'math_formula')
 
-const isGateNode = computed(() =>
-  props.node?.type === 'and' || props.node?.type === 'or' || props.node?.type === 'xor'
-)
-
-// Number of extra dynamic inputs beyond "a" and "b" (i.e. in2, in3, …)
-const gateExtraInputCount = computed(() => {
-  if (!isGateNode.value) return 0
-  const count = Math.max(2, Math.min(30, Number(localData.value?.input_count) || 2))
-  return count - 2  // "a" and "b" are handled by static negate_a / negate_b fields
-})
 
 const configFields = computed(() => {
   const schema = nodeDef.value?.config_schema ?? {}
