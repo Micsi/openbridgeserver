@@ -149,42 +149,40 @@ const openPct = computed(() => {
       -->
       <svg
         v-if="mode === 'fenster'"
-        viewBox="0 0 60 60"
+        viewBox="0 0 120 60"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <rect x="1.5" y="1.5" width="57" height="57" rx="0.5" stroke-width="2.5" stroke="currentColor"/>
+        <!-- content centred: original 60×60 shifted +30 on x -->
+        <rect x="31.5" y="1.5" width="57" height="57" rx="0.5" stroke-width="2.5" stroke="currentColor"/>
 
         <template v-if="stateMain === 'closed'">
-          <rect x="5" y="5" width="50" height="50" stroke-width="1.5"
+          <rect x="35" y="5" width="50" height="50" stroke-width="1.5"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- handle pivot on free (right) edge — arm DOWN = closed (length 10) -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="53" cy="30" r="1.5"/>
-            <line x1="53" y1="30" x2="53" y2="40" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="83" cy="30" r="1.5"/>
+            <line x1="83" y1="30" x2="83" y2="40" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="stateMain === 'tilted'">
-          <polygon points="-3,5 47,5 55,55 5,55" stroke-width="1.5"
+          <polygon points="27,5 77,5 85,55 35,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- handle arm UP = kipp (length 10) -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="51" cy="30" r="1.5"/>
-            <line x1="51" y1="30" x2="51" y2="20" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="81" cy="30" r="1.5"/>
+            <line x1="81" y1="30" x2="81" y2="20" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="stateMain === 'open'">
-          <polygon points="5,5 45,11 45,61 5,55" stroke-width="1.5" stroke-linejoin="round"
+          <polygon points="35,5 75,11 75,61 35,55" stroke-width="1.5" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- handle arm LEFT toward hinge (Anschlag links) = open (length 10) -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="43" cy="36" r="1.5"/>
-            <line x1="43" y1="36" x2="33" y2="36" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="73" cy="36" r="1.5"/>
+            <line x1="73" y1="36" x2="63" y2="36" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else>
-          <text x="30" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
+          <text x="60" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 
@@ -192,42 +190,40 @@ const openPct = computed(() => {
       <!-- Real: 60×60cm → viewBox 60×60. Mirror of fenster. -->
       <svg
         v-else-if="mode === 'fenster_r'"
-        viewBox="0 0 60 60"
+        viewBox="0 0 120 60"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <rect x="1.5" y="1.5" width="57" height="57" rx="0.5" stroke-width="2.5" stroke="currentColor"/>
+        <!-- content centred: original 60×60 shifted +30 on x -->
+        <rect x="31.5" y="1.5" width="57" height="57" rx="0.5" stroke-width="2.5" stroke="currentColor"/>
 
         <template v-if="stateMain === 'closed'">
-          <rect x="5" y="5" width="50" height="50" stroke-width="1.5"
+          <rect x="35" y="5" width="50" height="50" stroke-width="1.5"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- handle pivot on free (left) edge — arm DOWN = closed (length 10) -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="7" cy="30" r="1.5"/>
-            <line x1="7" y1="30" x2="7" y2="40" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="37" cy="30" r="1.5"/>
+            <line x1="37" y1="30" x2="37" y2="40" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="stateMain === 'tilted'">
-          <polygon points="-3,5 47,5 55,55 5,55" stroke-width="1.5"
+          <polygon points="27,5 77,5 85,55 35,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- handle arm UP = kipp (length 10) -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="9" cy="30" r="1.5"/>
-            <line x1="9" y1="30" x2="9" y2="20" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="39" cy="30" r="1.5"/>
+            <line x1="39" y1="30" x2="39" y2="20" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="stateMain === 'open'">
-          <polygon points="55,5 15,11 15,61 55,55" stroke-width="1.5" stroke-linejoin="round"
+          <polygon points="85,5 45,11 45,61 85,55" stroke-width="1.5" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- handle arm RIGHT toward hinge (Anschlag rechts) = open (length 10) -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
-            <circle cx="17" cy="36" r="1.5"/>
-            <line x1="17" y1="36" x2="27" y2="36" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="47" cy="36" r="1.5"/>
+            <line x1="47" y1="36" x2="57" y2="36" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else>
-          <text x="30" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
+          <text x="60" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 
