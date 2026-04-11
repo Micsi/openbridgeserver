@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { randomUUID } from 'crypto'
-import { apiPost, apiPut, apiDelete } from '../helpers'
+import { apiPost, apiPut, apiDelete, getToken } from '../helpers'
 
 /**
  * E2E-Tests für das Kamera-Widget.
@@ -136,12 +136,19 @@ test('Kamera: Proxy-Modus → img src enthält /api/v1/camera/proxy und _token',
   const pageId   = visuNode.id
   const widgetId = randomUUID()
   const camUrl   = 'http://192.168.1.100/cam.mjpeg'
+  const token    = await getToken()
 
   await buildKameraPage(pageId, widgetId, {
     url: camUrl, streamType: 'mjpeg', authType: 'none', useProxy: true,
   })
 
   try {
+    // JWT vor dem Seitenload in localStorage setzen, damit der Widget-Renderer
+    // localStorage.getItem('visu_jwt') beim ersten Render bereits befüllt vorfindet.
+    await page.addInitScript((jwt) => {
+      window.localStorage.setItem('visu_jwt', jwt)
+    }, token)
+
     await page.goto(`/visu/${pageId}`)
     await page.waitForLoadState('domcontentloaded')
 
@@ -151,9 +158,7 @@ test('Kamera: Proxy-Modus → img src enthält /api/v1/camera/proxy und _token',
 
     expect(src).toContain('/api/v1/camera/proxy')
     expect(src).toContain('url=')
-    // _token muss gesetzt sein (JWT aus localStorage)
     expect(src).toMatch(/_token=\S+/)
-    // Die originale Kamera-URL muss encoded in der Proxy-URL stehen
     expect(src).toContain(encodeURIComponent(camUrl))
   } finally {
     await apiDelete(`/api/v1/visu/nodes/${pageId}`)
