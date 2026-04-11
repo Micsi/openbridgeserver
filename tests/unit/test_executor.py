@@ -766,10 +766,17 @@ class TestHeatingCircuit:
         assert out["heating_mode"] == 0
 
     def test_hysteresis_turns_off_above_temp_summer(self):
-        """Heating turns OFF once temp rises above temp_summer."""
+        """Heating turns OFF once monthly_avg rises above temp_summer.
+
+        After 1 cold day (avg≈4.75) we need ≥7 warm days (avg≈22.5) so that
+        the rolling monthly average exceeds temp_summer=20 °C.
+        """
         state = {}
-        self._run_full_day(5, 6, 4, state=state)   # → ON
-        out, _ = self._run_full_day(22, 24, 22, state=state)  # → OFF
+        self._run_full_day(5, 6, 4, state=state)      # cold day → ON
+        # 9 warm days: monthly_avg ≈ (4.75 + 9×22.5) / 10 = 206.75/10 = 20.675 > 20
+        for _ in range(9):
+            self._run_full_day(22, 24, 22, state=state)
+        out, _ = self._run_full_day(22, 24, 22, state=state)  # 10th warm → OFF
         assert out["heating_mode"] == 0
 
     def test_debug_outputs_visible_before_day_complete(self):

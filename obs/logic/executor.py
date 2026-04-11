@@ -429,24 +429,12 @@ class GraphExecutor:
                     "year_min": None, "year_max": None, "last_year": None,
                     "initialized": False,
                 })
-                # Apply seed values once (e.g. migrated from a predecessor system)
-                if not state["initialized"]:
-                    for key, cfg_key in [
-                        ("abs_min", "init_abs_min"), ("abs_max", "init_abs_max"),
-                        ("day_min", "init_day_min"), ("day_max", "init_day_max"),
-                        ("month_min", "init_month_min"), ("month_max", "init_month_max"),
-                        ("year_min", "init_year_min"), ("year_max", "init_year_max"),
-                    ]:
-                        v = d.get(cfg_key)
-                        if v not in (None, ""):
-                            state[key] = float(v)
-                    state["initialized"] = True
                 today = _date.today()
                 day_key   = today.isoformat()
                 week_key  = f"{today.isocalendar()[0]}-W{today.isocalendar()[1]:02d}"
                 month_key = f"{today.year}-{today.month:02d}"
                 year_key  = str(today.year)
-                # Period resets
+                # Period resets FIRST — so seeds applied afterwards survive the next call
                 if state["last_day"] != day_key:
                     state["day_min"] = state["day_max"] = None
                     state["last_day"] = day_key
@@ -459,6 +447,18 @@ class GraphExecutor:
                 if state["last_year"] != year_key:
                     state["year_min"] = state["year_max"] = None
                     state["last_year"] = year_key
+                # Apply seed values AFTER resets (once, e.g. migrated from predecessor system)
+                if not state["initialized"]:
+                    for key, cfg_key in [
+                        ("abs_min", "init_abs_min"), ("abs_max", "init_abs_max"),
+                        ("day_min", "init_day_min"), ("day_max", "init_day_max"),
+                        ("month_min", "init_month_min"), ("month_max", "init_month_max"),
+                        ("year_min", "init_year_min"), ("year_max", "init_year_max"),
+                    ]:
+                        v = d.get(cfg_key)
+                        if v not in (None, ""):
+                            state[key] = float(v)
+                    state["initialized"] = True
                 val = inputs.get("value")
                 if val is not None:
                     fval = self._to_num(val)
@@ -486,7 +486,29 @@ class GraphExecutor:
                     "yearly": 0.0,  "prev_yearly": 0.0,  "last_year": None,
                     "initialized": False,
                 })
-                # Apply seed values once (e.g. migrated from a predecessor system)
+                today = _date.today()
+                day_key   = today.isoformat()
+                week_key  = f"{today.isocalendar()[0]}-W{today.isocalendar()[1]:02d}"
+                month_key = f"{today.year}-{today.month:02d}"
+                year_key  = str(today.year)
+                # Period resets FIRST (save previous period total before clearing)
+                if state["last_day"] != day_key:
+                    state["prev_daily"] = state["daily"]
+                    state["daily"] = 0.0
+                    state["last_day"] = day_key
+                if state["last_week"] != week_key:
+                    state["prev_weekly"] = state["weekly"]
+                    state["weekly"] = 0.0
+                    state["last_week"] = week_key
+                if state["last_month"] != month_key:
+                    state["prev_monthly"] = state["monthly"]
+                    state["monthly"] = 0.0
+                    state["last_month"] = month_key
+                if state["last_year"] != year_key:
+                    state["prev_yearly"] = state["yearly"]
+                    state["yearly"] = 0.0
+                    state["last_year"] = year_key
+                # Apply seed values AFTER resets (once, e.g. migrated from predecessor system)
                 if not state["initialized"]:
                     v_meter = d.get("init_meter")
                     if v_meter not in (None, ""):
@@ -501,31 +523,9 @@ class GraphExecutor:
                         if v not in (None, ""):
                             state[key] = float(v)
                     state["initialized"] = True
-                today = _date.today()
-                day_key   = today.isoformat()
-                week_key  = f"{today.isocalendar()[0]}-W{today.isocalendar()[1]:02d}"
-                month_key = f"{today.year}-{today.month:02d}"
-                year_key  = str(today.year)
                 val = inputs.get("value")
                 if val is not None:
                     fval = self._to_num(val)
-                    # Period resets (save previous period total before clearing)
-                    if state["last_day"] != day_key:
-                        state["prev_daily"] = state["daily"]
-                        state["daily"] = 0.0
-                        state["last_day"] = day_key
-                    if state["last_week"] != week_key:
-                        state["prev_weekly"] = state["weekly"]
-                        state["weekly"] = 0.0
-                        state["last_week"] = week_key
-                    if state["last_month"] != month_key:
-                        state["prev_monthly"] = state["monthly"]
-                        state["monthly"] = 0.0
-                        state["last_month"] = month_key
-                    if state["last_year"] != year_key:
-                        state["prev_yearly"] = state["yearly"]
-                        state["yearly"] = 0.0
-                        state["last_year"] = year_key
                     # Add delta (counter increments only; ignores rollovers)
                     prev = state["last_value"]
                     if prev is not None and fval >= prev:
