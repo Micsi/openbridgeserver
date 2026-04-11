@@ -193,6 +193,7 @@ async def ensure_default_user(db: Database) -> None:
             "— Change the password immediately! POST /api/v1/auth/login"
         )
 
+
 # ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------

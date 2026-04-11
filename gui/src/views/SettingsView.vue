@@ -20,7 +20,7 @@
     <!-- Demo-Modus Banner -->
     <div v-if="isDemo && activeTab !== 'general'" class="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-600 dark:text-amber-400">
       <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M12 3a9 9 0 110 18A9 9 0 0112 3z"/></svg>
-      Demo-Modus — dieser Bereich ist schreibgeschützt.
+      Demo-Modus — dieser Bereich ist schreibgeschützt/gesperrt.
     </div>
 
     <!-- ── Allgemein ── -->
