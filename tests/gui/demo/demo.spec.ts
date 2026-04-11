@@ -13,7 +13,7 @@ import { test, expect } from '@playwright/test'
 test('Demo-User sieht Dashboard (Übersicht)', async ({ page }) => {
   await page.goto('/')
   await page.waitForLoadState('networkidle')
-  await expect(page.getByRole('heading', { name: 'Übersicht' })).toBeVisible({ timeout: 8_000 })
+  await expect(page.getByRole('heading', { name: 'Übersicht', level: 2 })).toBeVisible({ timeout: 8_000 })
 })
 
 test('Demo-User sieht Adapter-Ansicht mit Demo-Modus Banner', async ({ page }) => {
