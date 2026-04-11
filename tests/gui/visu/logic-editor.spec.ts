@@ -126,8 +126,8 @@ test('AND-Gate mit negate_out zeigt false wenn beide Eingänge true', async ({ p
   const graphId = graph.id
   try {
     // Run via API and check the result directly
-    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as Record<string, Record<string, unknown>>
-    expect(result['g']?.['out']).toBe(false)
+    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as { outputs: Record<string, Record<string, unknown>> }
+    expect(result.outputs['g']?.['out']).toBe(false)
   } finally {
     await apiDelete(`/api/v1/logic/graphs/${graphId}`)
   }
@@ -157,11 +157,11 @@ test('heating_circuit-Node läuft durch und gibt heating_mode aus', async ({ pag
   }) as { id: string }
   const graphId = graph.id
   try {
-    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as Record<string, Record<string, unknown>>
-    expect(result['hc']).toBeDefined()
+    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as { outputs: Record<string, Record<string, unknown>> }
+    expect(result.outputs['hc']).toBeDefined()
     // T_avg = (5+6+2*4)/4 = 4.75 < 15 → heating_mode = 1
-    expect(result['hc']['heating_mode']).toBe(1)
-    expect(typeof result['hc']['daily_avg']).toBe('number')
+    expect(result.outputs['hc']['heating_mode']).toBe(1)
+    expect(typeof result.outputs['hc']['daily_avg']).toBe('number')
   } finally {
     await apiDelete(`/api/v1/logic/graphs/${graphId}`)
   }
@@ -187,11 +187,11 @@ test('min_max_tracker-Node gibt min_abs und max_abs aus', async ({ page }) => {
   }) as { id: string }
   const graphId = graph.id
   try {
-    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as Record<string, Record<string, unknown>>
-    expect(result['mm']).toBeDefined()
-    expect(result['mm']['min_abs']).toBe(42)
-    expect(result['mm']['max_abs']).toBe(42)
-    expect(result['mm']['min_daily']).toBe(42)
+    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as { outputs: Record<string, Record<string, unknown>> }
+    expect(result.outputs['mm']).toBeDefined()
+    expect(result.outputs['mm']['min_abs']).toBe(42)
+    expect(result.outputs['mm']['max_abs']).toBe(42)
+    expect(result.outputs['mm']['min_daily']).toBe(42)
   } finally {
     await apiDelete(`/api/v1/logic/graphs/${graphId}`)
   }
@@ -218,8 +218,8 @@ test('consumption_counter-Node berechnet Verbrauch zwischen zwei Läufen', async
   const graphId = graph.id
   try {
     // First run: sets baseline, consumption = 0
-    const r1 = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as Record<string, Record<string, unknown>>
-    expect(r1['cc']['daily']).toBe(0)
+    const r1 = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as { outputs: Record<string, Record<string, unknown>> }
+    expect(r1.outputs['cc']['daily']).toBe(0)
 
     // Update const_value to 1050 and run again → delta = 50
     await apiPut(`/api/v1/logic/graphs/${graphId}`, {
@@ -236,8 +236,8 @@ test('consumption_counter-Node berechnet Verbrauch zwischen zwei Läufen', async
         ],
       },
     })
-    const r2 = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as Record<string, Record<string, unknown>>
-    expect(r2['cc']['daily']).toBe(50)
+    const r2 = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as { outputs: Record<string, Record<string, unknown>> }
+    expect(r2.outputs['cc']['daily']).toBe(50)
   } finally {
     await apiDelete(`/api/v1/logic/graphs/${graphId}`)
   }
@@ -264,20 +264,9 @@ test('Logic-Editor Palette zeigt neue Node-Typen an', async ({ page }) => {
   await page.goto('/logic')
   await page.waitForLoadState('networkidle')
 
-  // The node palette lists available types — check for the new categories/labels
-  // (uses data-testid or text content depending on the UI implementation)
-  const palette = page.locator('[data-testid="node-palette"], .node-palette, aside')
-  if (await palette.count() > 0) {
-    const paletteText = await palette.first().textContent()
-    expect(paletteText).toBeTruthy()
-    // At least one of the expected labels must appear in the palette
-    const hasNewNodes =
-      (paletteText?.includes('Heizkreis') ?? false) ||
-      (paletteText?.includes('Min/Max') ?? false) ||
-      (paletteText?.includes('Verbrauch') ?? false)
-    expect(hasNewNodes).toBe(true)
-  } else {
-    // Palette not yet implemented as a separate aside — skip gracefully
-    test.skip()
-  }
+  // Wait for the palette to populate from the API (node types are fetched async)
+  // Each new node type must have a visible label entry in the palette
+  await expect(page.getByText('Heizkreis (DIN)', { exact: true })).toBeVisible({ timeout: 8_000 })
+  await expect(page.getByText('Min/Max Tracker',  { exact: true })).toBeVisible({ timeout: 3_000 })
+  await expect(page.getByText('Verbrauchszähler', { exact: true })).toBeVisible({ timeout: 3_000 })
 })
