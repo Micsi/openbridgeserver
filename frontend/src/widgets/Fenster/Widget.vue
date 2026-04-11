@@ -106,7 +106,7 @@ function stateColorClass(s: WinState): string {
 }
 
 const summaryState = computed<WinState>(() => {
-  if (mode.value === 'fenster_2') {
+  if (mode.value === 'fenster_2' || mode.value === 'zweituerer') {
     if (stateLeft.value === 'open'   || stateRight.value === 'open')   return 'open'
     if (stateLeft.value === 'tilted' || stateRight.value === 'tilted') return 'tilted'
     if (stateLeft.value === 'closed' && stateRight.value === 'closed') return 'closed'
@@ -318,6 +318,81 @@ const openPct = computed(() => {
         </template>
         <template v-else>
           <text x="90" y="30" text-anchor="middle" dominant-baseline="middle" font-size="20" fill="currentColor" opacity="0.4">?</text>
+        </template>
+      </svg>
+
+      <!-- ── Double door (zweituerer) ──────────────────────────────────── -->
+      <!--
+        Real: 2×90×200cm  →  viewBox 180×200  (1cm = 1unit)
+        Left wing = tuere (L-hinged), right wing = tuere_r (R-hinged, offset +90)
+        Frame split L/R per wing state. Center divider at x=90. Strokes same as tuere.
+      -->
+      <svg
+        v-else-if="mode === 'zweituerer'"
+        viewBox="0 0 180 200"
+        class="w-full h-full max-h-full"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <!-- Left half-frame (stateLeft color) -->
+        <g :class="stateColorClass(stateLeft)">
+          <line x1="2"  y1="2"  x2="2"  y2="194" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+          <line x1="2"  y1="2"  x2="90" y2="2"   stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        </g>
+        <!-- Center divider (summaryState) -->
+        <line x1="90" y1="2" x2="90" y2="194" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        <!-- Right half-frame (stateRight color) -->
+        <g :class="stateColorClass(stateRight)">
+          <line x1="178" y1="2"   x2="178" y2="194" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+          <line x1="90"  y1="2"   x2="178" y2="2"   stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+        </g>
+        <!-- Floor line (thin, semi-transparent) -->
+        <line x1="2" y1="196" x2="178" y2="196" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.3"/>
+
+        <!-- Left wing pane (L-hinged, identical to tuere) -->
+        <template v-if="stateLeft === 'closed'">
+          <rect x="7" y="7" width="76" height="183" stroke-width="2"
+                class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <g v-if="showHandleLeft" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
+            <circle cx="81" cy="100" r="2"/>
+            <line x1="81" y1="100" x2="66" y2="100" stroke-width="3" stroke-linecap="butt"/>
+            <line x1="66" y1="96"  x2="66" y2="104" stroke-width="3" stroke-linecap="round"/>
+          </g>
+        </template>
+        <template v-else-if="stateLeft === 'open'">
+          <polygon points="7,7 67,16 67,199 7,190" stroke-width="2" stroke-linejoin="round"
+                   class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <g v-if="showHandleLeft" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
+            <circle cx="65" cy="107" r="2"/>
+            <line x1="65" y1="107" x2="50" y2="107" stroke-width="3" stroke-linecap="butt"/>
+            <line x1="50" y1="103" x2="50" y2="111" stroke-width="3" stroke-linecap="round"/>
+          </g>
+        </template>
+        <template v-else>
+          <text x="45" y="100" text-anchor="middle" dominant-baseline="middle" font-size="28" fill="currentColor" opacity="0.4">?</text>
+        </template>
+
+        <!-- Right wing pane (R-hinged, tuere_r offset +90) -->
+        <template v-if="stateRight === 'closed'">
+          <rect x="97" y="7" width="76" height="183" stroke-width="2"
+                class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <g v-if="showHandleRight" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
+            <circle cx="99"  cy="100" r="2"/>
+            <line x1="99"  y1="100" x2="114" y2="100" stroke-width="3" stroke-linecap="butt"/>
+            <line x1="114" y1="96"  x2="114" y2="104" stroke-width="3" stroke-linecap="round"/>
+          </g>
+        </template>
+        <template v-else-if="stateRight === 'open'">
+          <polygon points="173,7 113,16 113,199 173,190" stroke-width="2" stroke-linejoin="round"
+                   class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <g v-if="showHandleRight" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
+            <circle cx="115" cy="107" r="2"/>
+            <line x1="115" y1="107" x2="130" y2="107" stroke-width="3" stroke-linecap="butt"/>
+            <line x1="130" y1="103" x2="130" y2="111" stroke-width="3" stroke-linecap="round"/>
+          </g>
+        </template>
+        <template v-else>
+          <text x="135" y="100" text-anchor="middle" dominant-baseline="middle" font-size="28" fill="currentColor" opacity="0.4">?</text>
         </template>
       </svg>
 

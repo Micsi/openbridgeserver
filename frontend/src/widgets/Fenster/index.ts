@@ -12,7 +12,7 @@ WidgetRegistry.register({
   configComponent: Config,
   defaultConfig: {
     label: '',
-    mode: 'fenster',        // 'fenster' | 'fenster_2' | 'tuere' | 'schiebetuer' | 'dachfenster'
+    mode: 'fenster',        // 'fenster' | 'fenster_r' | 'fenster_2' | 'tuere' | 'tuere_r' | 'schiebetuer' | 'schiebetuer_r' | 'zweituerer' | 'dachfenster'
     dp_contact: '',
     invert_contact: false,
     dp_tilt: '',
