@@ -104,10 +104,14 @@ const NODE_DEFS = {
   // Timer (extended)
   operating_hours:    { label: 'Betriebsstd.',   color: '#b45309', inputs: [{id:'active',label:'Aktiv'},{id:'reset',label:'Reset'}],                   outputs: [{id:'hours',label:'Std.'}]       },
   // Notification
-  notify_pushover:    { label: 'Pushover',       color: '#e11d48', inputs: [{id:'trigger',label:'Trigger'},{id:'message',label:'Nachricht'}],          outputs: [{id:'sent',label:'Gesendet'}]    },
-  notify_sms:         { label: 'SMS (seven.io)', color: '#e11d48', inputs: [{id:'trigger',label:'Trigger'},{id:'message',label:'Nachricht'}],          outputs: [{id:'sent',label:'Gesendet'}]    },
+  notify_pushover:    { label: 'Pushover',       color: '#e11d48', inputs: [{id:'trigger',label:'Trigger'},{id:'message',label:'Nachricht'},{id:'url',label:'URL'},{id:'url_title',label:'URL-Titel'},{id:'image_url',label:'Bild-URL'}], outputs: [{id:'sent',label:'Gesendet'}] },
+  notify_sms:         { label: 'SMS (seven.io)', color: '#e11d48', inputs: [{id:'trigger',label:'Trigger'},{id:'message',label:'Nachricht'}],           outputs: [{id:'sent',label:'Gesendet'}]    },
+  // String
+  string_concat:      { label: 'String Verketten', color: '#0891b2', inputs: [{id:'in_1',label:'1'},{id:'in_2',label:'2'}], outputs: [{id:'result',label:'Ergebnis'}] },
   // Integration
   api_client:         { label: 'API Client',     color: '#0e7490', inputs: [{id:'trigger',label:'Trigger'},{id:'body',label:'Body'}],                  outputs: [{id:'response',label:'Antwort'},{id:'status',label:'Status'},{id:'success',label:'OK'}] },
+  json_extractor:     { label: 'JSON Extraktor', color: '#0369a1', inputs: [{id:'data',label:'Daten'}],                                                outputs: [{id:'value',label:'Wert'}] },
+  xml_extractor:      { label: 'XML Extraktor',  color: '#0369a1', inputs: [{id:'data',label:'Daten'}],                                                outputs: [{id:'value',label:'Wert'}] },
 }
 
 // ── Gate helpers ───────────────────────────────────────────────────────────
@@ -115,7 +119,7 @@ const isGateNode = computed(() =>
   props.type === 'and' || props.type === 'or' || props.type === 'xor'
 )
 
-// ── Computed def — expands gate inputs dynamically from data.input_count
+// ── Computed def — expands gate + string_concat inputs dynamically
 const def = computed(() => {
   const base = NODE_DEFS[props.type] ?? { label: props.type, color: '#475569', inputs: [], outputs: [] }
   if (isGateNode.value) {
@@ -125,6 +129,14 @@ const def = computed(() => {
       label: `IN ${i + 1}`,
     }))
     return { ...base, inputs, outputs: [{ id: 'out', label: 'Out' }] }
+  }
+  if (props.type === 'string_concat') {
+    const count = Math.max(2, Math.min(20, Number(props.data?.count) || 2))
+    const inputs = Array.from({ length: count }, (_, i) => ({
+      id:    `in_${i + 1}`,
+      label: String(i + 1),
+    }))
+    return { ...base, inputs, outputs: [{ id: 'result', label: 'Ergebnis' }] }
   }
   return base
 })
@@ -153,7 +165,14 @@ const summary = computed(() => {
   if (props.type === 'operating_hours') return null
   if (props.type === 'notify_pushover')     return d.title || 'open bridge server'
   if (props.type === 'notify_sms')          return d.to || '—'
+  if (props.type === 'string_concat') {
+    const count = Math.max(2, Math.min(20, Number(d.count) || 2))
+    const sep = d.separator != null && d.separator !== '' ? `"${String(d.separator).slice(0, 6)}"` : null
+    return sep ? `${count} Teile · ${sep}` : `${count} Teile`
+  }
   if (props.type === 'api_client')          return `${d.method ?? 'GET'}  ${(d.url || '—').slice(0, 20)}`
+  if (props.type === 'json_extractor')      return d.json_path || '—'
+  if (props.type === 'xml_extractor')       return d.xml_path  || '—'
   if (props.type === 'heating_circuit')     return `W≤${d.temp_winter ?? 15} °C  S≥${d.temp_summer ?? 20} °C`
   if (props.type === 'min_max_tracker')     return null
   if (props.type === 'consumption_counter') return null

@@ -32,6 +32,7 @@ const CATEGORY_ORDER = [
   { id: 'logic',        label: 'Logik'          },
   { id: 'datapoint',    label: 'Objekte'         },
   { id: 'math',         label: 'Mathematik'      },
+  { id: 'string',       label: 'Text'            },
   { id: 'timer',        label: 'Timer'           },
   { id: 'astro',        label: 'Astronomie'      },
   { id: 'notification', label: 'Benachrichtigung' },

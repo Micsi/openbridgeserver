@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { apiPost, apiPut, apiGet, apiDelete } from '../helpers'
+import { apiPost, apiPut, apiGet, apiDelete, getToken } from '../helpers'
 
 
 /**
@@ -270,4 +270,415 @@ test('Logic-Editor Palette zeigt neue Node-Typen an', async ({ page }) => {
   await expect(page.getByText('Sommer/Winter (DIN)', { exact: true })).toBeVisible({ timeout: 8_000 })
   await expect(page.getByText('Min/Max Tracker',  { exact: true })).toBeVisible({ timeout: 3_000 })
   await expect(page.getByText('Verbrauchszähler', { exact: true })).toBeVisible({ timeout: 3_000 })
+})
+
+// ---------------------------------------------------------------------------
+// api_client: node-type registry contains the node and its auth fields
+// ---------------------------------------------------------------------------
+test('api_client Node-Typ ist in der Registry und hat Auth-Felder im config_schema', async ({ page }) => {
+  const types = await apiGet('/api/v1/logic/node-types') as Array<{
+    type: string
+    config_schema: Record<string, { type: string; enum?: string[] }>
+  }>
+  const apiClient = types.find(t => t.type === 'api_client')
+  expect(apiClient).toBeDefined()
+
+  const schema = apiClient!.config_schema
+  // Base fields
+  expect(schema).toHaveProperty('url')
+  expect(schema).toHaveProperty('method')
+  // Auth fields
+  expect(schema).toHaveProperty('auth_type')
+  expect(schema.auth_type.enum).toEqual(expect.arrayContaining(['none', 'basic', 'digest', 'bearer']))
+  expect(schema).toHaveProperty('auth_username')
+  expect(schema).toHaveProperty('auth_password')
+  expect(schema).toHaveProperty('auth_token')
+})
+
+// ---------------------------------------------------------------------------
+// api_client: palette shows "API Client" label
+// ---------------------------------------------------------------------------
+test('Logic-Editor Palette zeigt API Client Node an', async ({ page }) => {
+  await page.goto('/logic')
+  await page.waitForLoadState('networkidle')
+  await expect(page.getByText('API Client', { exact: true })).toBeVisible({ timeout: 8_000 })
+})
+
+// ---------------------------------------------------------------------------
+// api_client: GET request to local server endpoint returns success=True
+// ---------------------------------------------------------------------------
+test('api_client GET-Request gegen eigenen Server liefert success=true', async ({ page }) => {
+  // Use the public health endpoint — no auth required, always returns 200
+  const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
+  const targetUrl = `${BASE_URL}/api/v1/system/health`
+
+  const graph = await apiPost('/api/v1/logic/graphs', {
+    name: `E2E-ApiClient-GET-${Date.now()}`,
+    description: 'Playwright: api_client GET 200',
+    enabled: true,
+    flow_data: {
+      nodes: [
+        {
+          id: 'trig',
+          type: 'const_value',
+          position: { x: 0, y: 0 },
+          data: { value: 'true', data_type: 'bool' },
+        },
+        {
+          id: 'ac',
+          type: 'api_client',
+          position: { x: 300, y: 0 },
+          data: {
+            url:           targetUrl,
+            method:        'GET',
+            response_type: 'json',
+            verify_ssl:    false,
+            auth_type:     'none',
+          },
+        },
+      ],
+      edges: [
+        { id: 'e1', source: 'trig', target: 'ac', sourceHandle: 'value', targetHandle: 'trigger' },
+      ],
+    },
+  }) as { id: string }
+  const graphId = graph.id
+
+  try {
+    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as {
+      outputs: Record<string, Record<string, unknown>>
+    }
+    expect(result.outputs['ac']).toBeDefined()
+    expect(result.outputs['ac']['success']).toBe(true)
+    expect(result.outputs['ac']['status']).toBe(200)
+    expect(result.outputs['ac']['response']).not.toBeNull()
+  } finally {
+    await apiDelete(`/api/v1/logic/graphs/${graphId}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// api_client: Bearer Auth adds Authorization header — tested via API result
+// ---------------------------------------------------------------------------
+test('api_client Bearer Auth sendet Authorization-Header', async ({ page }) => {
+  // Use the real JWT token so the auth-protected endpoint returns 200.
+  // This verifies the api_client node correctly forwards the Bearer header.
+  const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
+  const targetUrl = `${BASE_URL}/api/v1/logic/node-types`
+  const token = await getToken()
+
+  const graph = await apiPost('/api/v1/logic/graphs', {
+    name: `E2E-ApiClient-Bearer-${Date.now()}`,
+    description: 'Playwright: api_client Bearer auth',
+    enabled: true,
+    flow_data: {
+      nodes: [
+        {
+          id: 'trig',
+          type: 'const_value',
+          position: { x: 0, y: 0 },
+          data: { value: 'true', data_type: 'bool' },
+        },
+        {
+          id: 'ac',
+          type: 'api_client',
+          position: { x: 300, y: 0 },
+          data: {
+            url:        targetUrl,
+            method:     'GET',
+            auth_type:  'bearer',
+            auth_token: token,
+            verify_ssl: false,
+          },
+        },
+      ],
+      edges: [
+        { id: 'e1', source: 'trig', target: 'ac', sourceHandle: 'value', targetHandle: 'trigger' },
+      ],
+    },
+  }) as { id: string }
+  const graphId = graph.id
+
+  try {
+    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as {
+      outputs: Record<string, Record<string, unknown>>
+    }
+    // Node must have executed (not skipped) and returned a valid HTTP status
+    expect(result.outputs['ac']).toBeDefined()
+    expect(result.outputs['ac']['status']).toBe(200)
+    expect(result.outputs['ac']['success']).toBe(true)
+  } finally {
+    await apiDelete(`/api/v1/logic/graphs/${graphId}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// api_client: config panel in GUI shows auth fields based on auth_type
+// ---------------------------------------------------------------------------
+test('api_client Config-Panel zeigt Auth-Felder korrekt an', async ({ page }) => {
+  // Create a graph with an api_client node via API
+  const graph = await apiPost('/api/v1/logic/graphs', {
+    name: `E2E-ApiClient-Config-${Date.now()}`,
+    description: 'Playwright: api_client config panel auth',
+    enabled: true,
+    flow_data: {
+      nodes: [
+        {
+          id: 'ac',
+          type: 'api_client',
+          position: { x: 100, y: 100 },
+          data: {
+            url:       'http://example.com',
+            method:    'GET',
+            auth_type: 'none',
+          },
+        },
+      ],
+      edges: [],
+    },
+  }) as { id: string }
+  const graphId = graph.id
+
+  try {
+    await page.goto('/logic')
+    await page.waitForLoadState('networkidle')
+    await page.selectOption('[data-testid="select-graph"]', graphId)
+    await page.waitForTimeout(1_500)
+
+    // Click on the node to open the config panel
+    await page.locator('.vue-flow__node').first().click()
+    await page.waitForTimeout(500)
+
+    // Auth type selector must be visible
+    const authTypeSelect = page.locator('[data-testid="api-client-auth-type"]')
+    await expect(authTypeSelect).toBeVisible({ timeout: 5_000 })
+
+    // With auth_type=none: username/password fields must NOT be visible
+    await expect(page.locator('[data-testid="api-client-auth-basic"]')).not.toBeVisible()
+    await expect(page.locator('[data-testid="api-client-auth-bearer"]')).not.toBeVisible()
+
+    // Switch to basic auth → username field appears
+    await authTypeSelect.selectOption('basic')
+    await expect(page.locator('[data-testid="api-client-auth-basic"]')).toBeVisible({ timeout: 3_000 })
+    await expect(page.locator('[data-testid="api-client-auth-bearer"]')).not.toBeVisible()
+
+    // Switch to bearer → token field appears, username disappears
+    await authTypeSelect.selectOption('bearer')
+    await expect(page.locator('[data-testid="api-client-auth-bearer"]')).toBeVisible({ timeout: 3_000 })
+    await expect(page.locator('[data-testid="api-client-auth-basic"]')).not.toBeVisible()
+
+    // Switch back to none → all auth fields hidden
+    await authTypeSelect.selectOption('none')
+    await expect(page.locator('[data-testid="api-client-auth-basic"]')).not.toBeVisible()
+    await expect(page.locator('[data-testid="api-client-auth-bearer"]')).not.toBeVisible()
+  } finally {
+    await apiDelete(`/api/v1/logic/graphs/${graphId}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// api_client: downstream success trigger fires when HTTP call returns 200
+// ---------------------------------------------------------------------------
+test('api_client Erfolg-Ausgang löst nachgelagerten Node aus bei HTTP 200', async ({ page }) => {
+  // Graph: const_value(true) → api_client.trigger
+  //        api_client.success + const_value(true) → and_gate
+  // After the second-pass fix, and_gate.out must be true when HTTP returns 200.
+  // Use the public health endpoint — no auth required.
+  const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
+  const targetUrl = `${BASE_URL}/api/v1/system/health`
+
+  const graph = await apiPost('/api/v1/logic/graphs', {
+    name: `E2E-ApiClient-Downstream-${Date.now()}`,
+    description: 'Playwright: api_client downstream trigger',
+    enabled: true,
+    flow_data: {
+      nodes: [
+        { id: 'trig',  type: 'const_value', position: { x: 0,   y: 0   }, data: { value: 'true', data_type: 'bool' } },
+        { id: 'cv2',   type: 'const_value', position: { x: 0,   y: 100 }, data: { value: 'true', data_type: 'bool' } },
+        {
+          id: 'ac', type: 'api_client', position: { x: 300, y: 0 },
+          data: { url: targetUrl, method: 'GET', response_type: 'json', verify_ssl: false, auth_type: 'none' },
+        },
+        { id: 'gate',  type: 'and', position: { x: 600, y: 50  }, data: { input_count: 2 } },
+      ],
+      edges: [
+        { id: 'e1', source: 'trig', target: 'ac',   sourceHandle: 'value',   targetHandle: 'trigger' },
+        { id: 'e2', source: 'ac',   target: 'gate',  sourceHandle: 'success', targetHandle: 'in1' },
+        { id: 'e3', source: 'cv2',  target: 'gate',  sourceHandle: 'value',   targetHandle: 'in2' },
+      ],
+    },
+  }) as { id: string }
+  const graphId = graph.id
+
+  try {
+    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as {
+      outputs: Record<string, Record<string, unknown>>
+    }
+    // api_client must show success
+    expect(result.outputs['ac']['success']).toBe(true)
+    // AND gate must have received success=true from the second-pass re-execution
+    expect(result.outputs['gate']['out']).toBe(true)
+  } finally {
+    await apiDelete(`/api/v1/logic/graphs/${graphId}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// json_extractor: registry contains node type with correct schema
+// ---------------------------------------------------------------------------
+test('json_extractor ist in der Node-Type-Registry mit json_path-Schema', async ({ page }) => {
+  const types = await apiGet('/api/v1/logic/node-types') as Array<{
+    type: string
+    config_schema: Record<string, { type: string }>
+  }>
+  const jx = types.find(t => t.type === 'json_extractor')
+  expect(jx).toBeDefined()
+  expect(jx!.config_schema).toHaveProperty('json_path')
+})
+
+// ---------------------------------------------------------------------------
+// xml_extractor: registry contains node type with correct schema
+// ---------------------------------------------------------------------------
+test('xml_extractor ist in der Node-Type-Registry mit xml_path-Schema', async ({ page }) => {
+  const types = await apiGet('/api/v1/logic/node-types') as Array<{
+    type: string
+    config_schema: Record<string, { type: string }>
+  }>
+  const xx = types.find(t => t.type === 'xml_extractor')
+  expect(xx).toBeDefined()
+  expect(xx!.config_schema).toHaveProperty('xml_path')
+})
+
+// ---------------------------------------------------------------------------
+// json_extractor: runs via API and extracts correct value
+// ---------------------------------------------------------------------------
+test('json_extractor extrahiert Wert aus JSON-String', async ({ page }) => {
+  const payload = JSON.stringify({ sensor: { temperature: 21.5 } })
+
+  const graph = await apiPost('/api/v1/logic/graphs', {
+    name: `E2E-JSON-Extractor-${Date.now()}`,
+    description: 'Playwright: json_extractor',
+    enabled: true,
+    flow_data: {
+      nodes: [
+        {
+          id: 'cv',
+          type: 'const_value',
+          position: { x: 0, y: 0 },
+          data: { value: payload, data_type: 'string' },
+        },
+        {
+          id: 'jx',
+          type: 'json_extractor',
+          position: { x: 300, y: 0 },
+          data: { json_path: 'sensor.temperature' },
+        },
+      ],
+      edges: [
+        { id: 'e1', source: 'cv', target: 'jx', sourceHandle: 'value', targetHandle: 'data' },
+      ],
+    },
+  }) as { id: string }
+  const graphId = graph.id
+
+  try {
+    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as {
+      outputs: Record<string, Record<string, unknown>>
+    }
+    expect(result.outputs['jx']).toBeDefined()
+    expect(result.outputs['jx']['value']).toBe(21.5)
+    // _preview must contain the original payload
+    expect(result.outputs['jx']['_preview']).toContain('temperature')
+  } finally {
+    await apiDelete(`/api/v1/logic/graphs/${graphId}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// xml_extractor: runs via API and extracts correct value
+// ---------------------------------------------------------------------------
+test('xml_extractor extrahiert Wert aus XML-String', async ({ page }) => {
+  const xmlPayload = '<root><temperature>21.5</temperature></root>'
+
+  const graph = await apiPost('/api/v1/logic/graphs', {
+    name: `E2E-XML-Extractor-${Date.now()}`,
+    description: 'Playwright: xml_extractor',
+    enabled: true,
+    flow_data: {
+      nodes: [
+        {
+          id: 'cv',
+          type: 'const_value',
+          position: { x: 0, y: 0 },
+          data: { value: xmlPayload, data_type: 'string' },
+        },
+        {
+          id: 'xx',
+          type: 'xml_extractor',
+          position: { x: 300, y: 0 },
+          data: { xml_path: './/temperature' },
+        },
+      ],
+      edges: [
+        { id: 'e1', source: 'cv', target: 'xx', sourceHandle: 'value', targetHandle: 'data' },
+      ],
+    },
+  }) as { id: string }
+  const graphId = graph.id
+
+  try {
+    const result = await apiPost(`/api/v1/logic/graphs/${graphId}/run`, {}) as {
+      outputs: Record<string, Record<string, unknown>>
+    }
+    expect(result.outputs['xx']).toBeDefined()
+    expect(result.outputs['xx']['value']).toBe('21.5')
+    expect(result.outputs['xx']['_preview']).toContain('temperature')
+  } finally {
+    await apiDelete(`/api/v1/logic/graphs/${graphId}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// json_extractor: config panel shows preview area and path picker
+// ---------------------------------------------------------------------------
+test('json_extractor Config-Panel zeigt Preview-Bereich und Pfad-Eingabe', async ({ page }) => {
+  const graph = await apiPost('/api/v1/logic/graphs', {
+    name: `E2E-JSON-Config-${Date.now()}`,
+    description: 'Playwright: json_extractor config UI',
+    enabled: true,
+    flow_data: {
+      nodes: [
+        {
+          id: 'jx',
+          type: 'json_extractor',
+          position: { x: 100, y: 100 },
+          data: { json_path: 'temperature' },
+        },
+      ],
+      edges: [],
+    },
+  }) as { id: string }
+  const graphId = graph.id
+
+  try {
+    await page.goto('/logic')
+    await page.waitForLoadState('networkidle')
+    await page.selectOption('[data-testid="select-graph"]', graphId)
+    await page.waitForTimeout(1_500)
+
+    // Click on the node to open the config panel
+    await page.locator('.vue-flow__node').first().click()
+    await page.waitForTimeout(500)
+
+    // Preview textarea must be present
+    const preview = page.locator('[data-testid="extractor-preview"]')
+    await expect(preview).toBeVisible({ timeout: 5_000 })
+
+    // Path input must be present and contain the configured path
+    const pathInput = page.locator('[data-testid="extractor-path-input"]')
+    await expect(pathInput).toBeVisible({ timeout: 3_000 })
+    await expect(pathInput).toHaveValue('temperature')
+  } finally {
+    await apiDelete(`/api/v1/logic/graphs/${graphId}`)
+  }
 })

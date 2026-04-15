@@ -15,10 +15,25 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from obs.logic.executor import GraphExecutor
 from obs.logic.models import FlowData
 
 logger = logging.getLogger(__name__)
+
+
+def _msg_to_str(v: object) -> str:
+    """Convert any node output value to a message string.
+
+    Uses explicit None-check rather than truthiness so that falsy values
+    (0, False, 0.0, "") are preserved as their string representation instead
+    of being silently replaced by a fallback.
+    """
+    import json as _j  # noqa: PLC0415
+    if isinstance(v, (dict, list)):
+        return _j.dumps(v, ensure_ascii=False)
+    return str(v)
 
 _THROTTLE_UNITS: dict[str, float] = {"ms": 1.0, "s": 1000.0, "min": 60_000.0, "h": 3_600_000.0}
 
@@ -296,28 +311,6 @@ class LogicManager:
             logger.error("Graph %s (%s) execution error: %s", graph_id, name, exc)
             return {}
 
-        # Broadcast execution results to all WS clients (live debug mode)
-        try:
-            from obs.api.v1.websocket import get_ws_manager
-
-            def _safe(v: Any) -> Any:
-                if v is None or isinstance(v, (bool, int, float, str)):
-                    return v
-                return str(v)
-
-            safe_outputs = {
-                nid: {k: _safe(val) for k, val in node_out.items()}
-                for nid, node_out in outputs.items()
-                if isinstance(node_out, dict)
-            }
-            await get_ws_manager().broadcast({
-                "action":   "logic_run",
-                "graph_id": graph_id,
-                "outputs":  safe_outputs,
-            })
-        except Exception:
-            pass  # WS not ready or no clients — non-critical
-
         # ── Update operating_hours state ─────────────────────────────────
         for node in flow.nodes:
             if node.type != "operating_hours":
@@ -337,64 +330,11 @@ class LogicManager:
                     ns["accumulated_hours"] += (execute_now - ns["last_start"]).total_seconds() / 3600
                     ns["last_start"] = None
 
-        # ── Handle notify_pushover ────────────────────────────────────────
-        for node in flow.nodes:
-            if node.type != "notify_pushover":
-                continue
-            out = outputs.get(node.id, {})
-            if not GraphExecutor._to_bool(out.get("_trigger")):
-                continue
-            app_token = (node.data.get("app_token") or "").strip()
-            user_key  = (node.data.get("user_key")  or "").strip()
-            if not app_token or not user_key:
-                logger.warning("Pushover: app_token or user_key missing on node %s", node.id[:8])
-                continue
-            msg   = str(out.get("_message") or node.data.get("message") or "")
-            title = node.data.get("title", "open bridge server")
-            prio  = int(node.data.get("priority", 0))
-            try:
-                import httpx  # noqa: PLC0415
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    r = await client.post(
-                        "https://api.pushover.net/1/messages.json",
-                        data={"token": app_token, "user": user_key,
-                              "title": str(title), "message": msg, "priority": prio},
-                    )
-                    r.raise_for_status()
-                    outputs[node.id]["sent"] = True
-                    logger.info("Graph %s: Pushover sent", graph_id[:8])
-            except Exception as exc:
-                logger.warning("Graph %s: Pushover failed: %s", graph_id[:8], exc)
-
-        # ── Handle notify_sms ─────────────────────────────────────────────
-        for node in flow.nodes:
-            if node.type != "notify_sms":
-                continue
-            out = outputs.get(node.id, {})
-            if not GraphExecutor._to_bool(out.get("_trigger")):
-                continue
-            api_key = (node.data.get("api_key") or "").strip()
-            to      = (node.data.get("to")      or "").strip()
-            if not api_key or not to:
-                logger.warning("seven.io SMS: api_key or to missing on node %s", node.id[:8])
-                continue
-            msg    = str(out.get("_message") or node.data.get("message") or "")
-            sender = node.data.get("sender", "open bridge server")
-            try:
-                import httpx  # noqa: PLC0415
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    r = await client.post(
-                        "https://gateway.seven.io/api/sms",
-                        headers={"X-Api-Key": api_key},
-                        data={"to": to, "from": str(sender), "text": msg},
-                    )
-                    r.raise_for_status()
-                    outputs[node.id]["sent"] = True
-                    logger.info("Graph %s: seven.io SMS sent to %s", graph_id[:8], to)
-            except Exception as exc:
-                logger.warning("Graph %s: seven.io SMS failed: %s", graph_id[:8], exc)
-
         # ── Handle api_client ─────────────────────────────────────────────
+        # Track which api_client nodes completed an HTTP call so we can
+        # re-propagate their real outputs to downstream nodes afterwards.
+        triggered_api_clients: set[str] = set()
+        import json as _json  # noqa: PLC0415
         for node in flow.nodes:
             if node.type != "api_client":
                 continue
@@ -411,7 +351,6 @@ class LogicManager:
             if isinstance(verify_ssl, str):
                 verify_ssl = verify_ssl.lower() not in ("false", "0", "no")
             timeout_s = float(node.data.get("timeout_s", 10) or 10)
-            import json as _json  # noqa: PLC0415
             extra_headers: dict[str, str] = {}
             hdr_str = (node.data.get("headers") or "").strip()
             if hdr_str:
@@ -420,8 +359,20 @@ class LogicManager:
                 except Exception:
                     pass
             body = out.get("_body")
+            # ── Authentication ──────────────────────────────────────────
+            auth_type = (node.data.get("auth_type") or "none").lower()
+            auth: Any = None
+            if auth_type in ("basic", "digest"):
+                username = (node.data.get("auth_username") or "").strip()
+                password = (node.data.get("auth_password") or "").strip()
+                if username:
+                    auth = httpx.BasicAuth(username, password) if auth_type == "basic" \
+                        else httpx.DigestAuth(username, password)
+            elif auth_type == "bearer":
+                token = (node.data.get("auth_token") or "").strip()
+                if token:
+                    extra_headers = {**extra_headers, "Authorization": f"Bearer {token}"}
             try:
-                import httpx  # noqa: PLC0415
                 req_kwargs: dict[str, Any] = {"headers": extra_headers, "timeout": timeout_s}
                 if method in ("POST", "PUT", "PATCH"):
                     if content_type == "application/json":
@@ -432,7 +383,7 @@ class LogicManager:
                     else:
                         req_kwargs["content"] = str(body or "")
                         req_kwargs["headers"] = {**extra_headers, "Content-Type": "text/plain"}
-                async with httpx.AsyncClient(verify=verify_ssl) as client:
+                async with httpx.AsyncClient(auth=auth, verify=verify_ssl) as client:
                     resp = await client.request(method, url, **req_kwargs)
                     if resp_type == "json":
                         try:
@@ -447,9 +398,148 @@ class LogicManager:
                         "success":  200 <= resp.status_code < 300,
                     })
                     logger.info("Graph %s: API %s %s → %d", graph_id[:8], method, url, resp.status_code)
+                    triggered_api_clients.add(node.id)
             except Exception as exc:
                 logger.warning("Graph %s: api_client failed: %s", graph_id[:8], exc)
                 outputs[node.id].update({"response": str(exc), "status": None, "success": False})
+
+        # ── Re-propagate api_client outputs to downstream nodes ───────────
+        # The first executor pass computed downstream nodes with the placeholder
+        # success=False. Now that we have the real HTTP results, we re-run the
+        # executor for those downstream nodes using input overrides so their
+        # outputs (and downstream datapoint writes, etc.) reflect the real values.
+        if triggered_api_clients:
+            downstream_overrides: dict[str, dict[str, Any]] = {}
+            for e in flow.edges:
+                if e.source in triggered_api_clients:
+                    src_handle = e.sourceHandle or "out"
+                    tgt_handle = e.targetHandle or "in"
+                    downstream_overrides.setdefault(e.target, {})[tgt_handle] = (
+                        outputs[e.source].get(src_handle)
+                    )
+            if downstream_overrides:
+                second_executor = GraphExecutor(flow, hyst, self._app_config)
+                second_outputs  = second_executor.execute(downstream_overrides)
+                api_client_ids  = {n.id for n in flow.nodes if n.type == "api_client"}
+                for nid, vals in second_outputs.items():
+                    if nid not in api_client_ids:
+                        outputs[nid] = vals
+
+        # ── Handle notify_pushover ────────────────────────────────────────
+        # Runs AFTER api_client second-pass so that graphs with api_client →
+        # json_extractor → notify see the real HTTP response, not placeholders.
+        for node in flow.nodes:
+            if node.type != "notify_pushover":
+                continue
+            out = outputs.get(node.id, {})
+            if not GraphExecutor._to_bool(out.get("_trigger")):
+                continue
+            app_token = (node.data.get("app_token") or "").strip()
+            user_key  = (node.data.get("user_key")  or "").strip()
+            if not app_token or not user_key:
+                logger.warning("Pushover: app_token or user_key missing on node %s", node.id[:8])
+                continue
+            _raw_msg = out.get("_message")
+            msg       = _msg_to_str(_raw_msg) if _raw_msg is not None \
+                else str(node.data.get("message") or "")
+            title     = node.data.get("title", "open bridge server")
+            prio      = int(node.data.get("priority", 0))
+            # Input port value takes precedence over static config
+            _out_url   = out.get("_url")
+            _out_utit  = out.get("_url_title")
+            _out_img   = out.get("_image_url")
+            url       = (_msg_to_str(_out_url)  if _out_url  is not None else (node.data.get("url")       or "")).strip()
+            url_title = (_msg_to_str(_out_utit) if _out_utit is not None else (node.data.get("url_title") or "")).strip()
+            image_url = (_msg_to_str(_out_img)  if _out_img  is not None else (node.data.get("image_url") or "")).strip()
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    payload: dict[str, object] = {
+                        "token": app_token, "user": user_key,
+                        "title": str(title), "message": msg, "priority": prio,
+                    }
+                    if url:
+                        payload["url"] = url
+                    if url_title:
+                        payload["url_title"] = url_title
+
+                    if image_url:
+                        # Download image and attach as multipart
+                        img_r = await client.get(image_url, timeout=10.0)
+                        img_r.raise_for_status()
+                        content_type = img_r.headers.get("content-type", "image/jpeg")
+                        fname = image_url.split("?")[0].split("/")[-1] or "image.jpg"
+                        r = await client.post(
+                            "https://api.pushover.net/1/messages.json",
+                            data=payload,
+                            files={"attachment": (fname, img_r.content, content_type)},
+                        )
+                    else:
+                        r = await client.post(
+                            "https://api.pushover.net/1/messages.json",
+                            data=payload,
+                        )
+                    r.raise_for_status()
+                    outputs[node.id]["sent"] = True
+                    logger.info("Graph %s: Pushover sent (msg=%r)", graph_id[:8], msg[:40])
+            except Exception as exc:
+                logger.warning("Graph %s: Pushover failed (msg=%r): %s", graph_id[:8], msg[:40], exc)
+
+        # ── Handle notify_sms ─────────────────────────────────────────────
+        for node in flow.nodes:
+            if node.type != "notify_sms":
+                continue
+            out = outputs.get(node.id, {})
+            if not GraphExecutor._to_bool(out.get("_trigger")):
+                continue
+            api_key = (node.data.get("api_key") or "").strip()
+            to      = (node.data.get("to")      or "").strip()
+            if not api_key or not to:
+                logger.warning("seven.io SMS: api_key or to missing on node %s", node.id[:8])
+                continue
+            _raw_msg = out.get("_message")
+            msg    = _msg_to_str(_raw_msg) if _raw_msg is not None \
+                else str(node.data.get("message") or "")
+            sender = node.data.get("sender", "obs")
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    r = await client.post(
+                        "https://gateway.seven.io/api/sms",
+                        headers={"X-Api-Key": api_key},
+                        data={"to": to, "from": str(sender), "text": msg},
+                    )
+                    r.raise_for_status()
+                    # seven.io returns the number of sent messages as body (e.g. "1").
+                    # A value of "0" means failure (no credits, invalid number, etc.)
+                    # even though the HTTP status is 200.
+                    body = r.text.strip()
+                    logger.info("Graph %s: seven.io response status=%d body=%r", graph_id[:8], r.status_code, body[:80])
+                    # seven.io returns the number of sent messages on success (e.g. "1"),
+                    # or a numeric error code on failure. Known error codes:
+                    _SEVEN_ERRORS = {
+                        100: "Unbekannter Fehler / Empfänger nicht angegeben",
+                        200: "Absender nicht angegeben",
+                        201: "Absender zu lang (max 11 Zeichen)",
+                        300: "Nachricht nicht angegeben",
+                        301: "Nachricht zu lang",
+                        401: "API-Key ungültig oder nicht autorisiert",
+                        402: "Nicht genug Guthaben",
+                        403: "Absender nicht erlaubt",
+                        500: "Server-Fehler bei seven.io",
+                    }
+                    try:
+                        body_int = int(body)
+                        if body_int in _SEVEN_ERRORS:
+                            raise ValueError(f"seven.io Fehlercode {body_int}: {_SEVEN_ERRORS[body_int]}")
+                        if body_int <= 0:
+                            raise ValueError(f"seven.io: 0 Nachrichten gesendet (body={body!r})")
+                    except ValueError:
+                        raise  # re-raise error code or zero-count errors
+                    except TypeError:
+                        pass  # non-numeric body → assume success (future API changes)
+                    outputs[node.id]["sent"] = True
+                    logger.info("Graph %s: seven.io SMS sent to %s (msg=%r)", graph_id[:8], to, msg[:40])
+            except Exception as exc:
+                logger.warning("Graph %s: seven.io SMS failed (msg=%r): %s", graph_id[:8], msg[:40], exc)
 
         # ── Process datapoint_write outputs — apply trigger gating + write-side filters,
         # then publish DataValueEvent so registry, ring-buffer, MQTT and WS all get notified.
@@ -539,6 +629,31 @@ class LogicManager:
                 )
             except Exception as exc:
                 logger.warning("Graph %s: failed to persist node_state: %s", graph_id[:8], exc)
+
+        # ── Broadcast final execution results to all WS clients ──────────
+        # Broadcast happens here — after all async ops (api_client HTTP calls,
+        # second-pass re-execution, etc.) — so the debug view shows the real
+        # success/response values and not the executor's initial placeholders.
+        try:
+            from obs.api.v1.websocket import get_ws_manager
+
+            def _safe(v: Any) -> Any:
+                if v is None or isinstance(v, (bool, int, float, str)):
+                    return v
+                return str(v)
+
+            safe_outputs = {
+                nid: {k: _safe(val) for k, val in node_out.items()}
+                for nid, node_out in outputs.items()
+                if isinstance(node_out, dict)
+            }
+            await get_ws_manager().broadcast({
+                "action":   "logic_run",
+                "graph_id": graph_id,
+                "outputs":  safe_outputs,
+            })
+        except Exception:
+            pass  # WS not ready or no clients — non-critical
 
         return outputs
 
