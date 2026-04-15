@@ -429,14 +429,7 @@ class GraphExecutor:
                         if xml_path:
                             el = root.find(xml_path)
                             if el is not None:
-                                text = (el.text or "").strip()
-                                try:
-                                    value = int(text)
-                                except ValueError:
-                                    try:
-                                        value = float(text)
-                                    except ValueError:
-                                        value = text
+                                value = (el.text or "").strip()
                         # no path → value stays None; user must select one
                     except _ET.ParseError:
                         pass

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { apiPost, apiPut, apiGet, apiDelete } from '../helpers'
+import { apiPost, apiPut, apiGet, apiDelete, getToken } from '../helpers'
 
 
 /**
@@ -308,9 +308,9 @@ test('Logic-Editor Palette zeigt API Client Node an', async ({ page }) => {
 // api_client: GET request to local server endpoint returns success=True
 // ---------------------------------------------------------------------------
 test('api_client GET-Request gegen eigenen Server liefert success=true', async ({ page }) => {
-  // Use the server's own node-types endpoint — always available, always 200
+  // Use the public health endpoint — no auth required, always returns 200
   const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
-  const targetUrl = `${BASE_URL}/api/v1/logic/node-types`
+  const targetUrl = `${BASE_URL}/api/v1/system/health`
 
   const graph = await apiPost('/api/v1/logic/graphs', {
     name: `E2E-ApiClient-GET-${Date.now()}`,
@@ -361,11 +361,11 @@ test('api_client GET-Request gegen eigenen Server liefert success=true', async (
 // api_client: Bearer Auth adds Authorization header — tested via API result
 // ---------------------------------------------------------------------------
 test('api_client Bearer Auth sendet Authorization-Header', async ({ page }) => {
-  // The server's /api/v1/logic/node-types endpoint is public (no auth required),
-  // so a Bearer token will be sent but ignored — the request still returns 200.
-  // This test verifies the node executes successfully with bearer auth configured.
+  // Use the real JWT token so the auth-protected endpoint returns 200.
+  // This verifies the api_client node correctly forwards the Bearer header.
   const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
   const targetUrl = `${BASE_URL}/api/v1/logic/node-types`
+  const token = await getToken()
 
   const graph = await apiPost('/api/v1/logic/graphs', {
     name: `E2E-ApiClient-Bearer-${Date.now()}`,
@@ -387,7 +387,7 @@ test('api_client Bearer Auth sendet Authorization-Header', async ({ page }) => {
             url:        targetUrl,
             method:     'GET',
             auth_type:  'bearer',
-            auth_token: 'test-bearer-token',
+            auth_token: token,
             verify_ssl: false,
           },
         },
@@ -483,8 +483,9 @@ test('api_client Erfolg-Ausgang löst nachgelagerten Node aus bei HTTP 200', asy
   // Graph: const_value(true) → api_client.trigger
   //        api_client.success + const_value(true) → and_gate
   // After the second-pass fix, and_gate.out must be true when HTTP returns 200.
+  // Use the public health endpoint — no auth required.
   const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
-  const targetUrl = `${BASE_URL}/api/v1/logic/node-types`
+  const targetUrl = `${BASE_URL}/api/v1/system/health`
 
   const graph = await apiPost('/api/v1/logic/graphs', {
     name: `E2E-ApiClient-Downstream-${Date.now()}`,
