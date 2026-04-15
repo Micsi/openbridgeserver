@@ -20,6 +20,19 @@ from obs.logic.models import FlowData
 
 logger = logging.getLogger(__name__)
 
+
+def _msg_to_str(v: object) -> str:
+    """Convert any node output value to a message string.
+
+    Uses explicit None-check rather than truthiness so that falsy values
+    (0, False, 0.0, "") are preserved as their string representation instead
+    of being silently replaced by a fallback.
+    """
+    import json as _j  # noqa: PLC0415
+    if isinstance(v, (dict, list)):
+        return _j.dumps(v, ensure_ascii=False)
+    return str(v)
+
 _THROTTLE_UNITS: dict[str, float] = {"ms": 1.0, "s": 1000.0, "min": 60_000.0, "h": 3_600_000.0}
 
 _manager: "LogicManager | None" = None
@@ -327,7 +340,9 @@ class LogicManager:
             if not app_token or not user_key:
                 logger.warning("Pushover: app_token or user_key missing on node %s", node.id[:8])
                 continue
-            msg   = str(out.get("_message") or node.data.get("message") or "")
+            _raw_msg = out.get("_message")
+            msg = _msg_to_str(_raw_msg) if _raw_msg is not None \
+                else str(node.data.get("message") or "")
             title = node.data.get("title", "open bridge server")
             prio  = int(node.data.get("priority", 0))
             try:
@@ -340,9 +355,9 @@ class LogicManager:
                     )
                     r.raise_for_status()
                     outputs[node.id]["sent"] = True
-                    logger.info("Graph %s: Pushover sent", graph_id[:8])
+                    logger.info("Graph %s: Pushover sent (msg=%r)", graph_id[:8], msg[:40])
             except Exception as exc:
-                logger.warning("Graph %s: Pushover failed: %s", graph_id[:8], exc)
+                logger.warning("Graph %s: Pushover failed (msg=%r): %s", graph_id[:8], msg[:40], exc)
 
         # ── Handle notify_sms ─────────────────────────────────────────────
         for node in flow.nodes:
@@ -356,7 +371,9 @@ class LogicManager:
             if not api_key or not to:
                 logger.warning("seven.io SMS: api_key or to missing on node %s", node.id[:8])
                 continue
-            msg    = str(out.get("_message") or node.data.get("message") or "")
+            _raw_msg = out.get("_message")
+            msg    = _msg_to_str(_raw_msg) if _raw_msg is not None \
+                else str(node.data.get("message") or "")
             sender = node.data.get("sender", "open bridge server")
             try:
                 import httpx  # noqa: PLC0415
@@ -368,9 +385,9 @@ class LogicManager:
                     )
                     r.raise_for_status()
                     outputs[node.id]["sent"] = True
-                    logger.info("Graph %s: seven.io SMS sent to %s", graph_id[:8], to)
+                    logger.info("Graph %s: seven.io SMS sent to %s (msg=%r)", graph_id[:8], to, msg[:40])
             except Exception as exc:
-                logger.warning("Graph %s: seven.io SMS failed: %s", graph_id[:8], exc)
+                logger.warning("Graph %s: seven.io SMS failed (msg=%r): %s", graph_id[:8], msg[:40], exc)
 
         # ── Handle api_client ─────────────────────────────────────────────
         # Track which api_client nodes completed an HTTP call so we can
