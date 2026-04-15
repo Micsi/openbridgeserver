@@ -439,18 +439,41 @@ class LogicManager:
                 logger.warning("Pushover: app_token or user_key missing on node %s", node.id[:8])
                 continue
             _raw_msg = out.get("_message")
-            msg = _msg_to_str(_raw_msg) if _raw_msg is not None \
+            msg       = _msg_to_str(_raw_msg) if _raw_msg is not None \
                 else str(node.data.get("message") or "")
-            title = node.data.get("title", "open bridge server")
-            prio  = int(node.data.get("priority", 0))
+            title     = node.data.get("title", "open bridge server")
+            prio      = int(node.data.get("priority", 0))
+            url       = (node.data.get("url")       or "").strip()
+            url_title = (node.data.get("url_title") or "").strip()
+            image_url = (node.data.get("image_url") or "").strip()
             try:
                 import httpx  # noqa: PLC0415
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    r = await client.post(
-                        "https://api.pushover.net/1/messages.json",
-                        data={"token": app_token, "user": user_key,
-                              "title": str(title), "message": msg, "priority": prio},
-                    )
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    payload: dict[str, object] = {
+                        "token": app_token, "user": user_key,
+                        "title": str(title), "message": msg, "priority": prio,
+                    }
+                    if url:
+                        payload["url"] = url
+                    if url_title:
+                        payload["url_title"] = url_title
+
+                    if image_url:
+                        # Download image and attach as multipart
+                        img_r = await client.get(image_url, timeout=10.0)
+                        img_r.raise_for_status()
+                        content_type = img_r.headers.get("content-type", "image/jpeg")
+                        fname = image_url.split("?")[0].split("/")[-1] or "image.jpg"
+                        r = await client.post(
+                            "https://api.pushover.net/1/messages.json",
+                            data=payload,
+                            files={"attachment": (fname, img_r.content, content_type)},
+                        )
+                    else:
+                        r = await client.post(
+                            "https://api.pushover.net/1/messages.json",
+                            data=payload,
+                        )
                     r.raise_for_status()
                     outputs[node.id]["sent"] = True
                     logger.info("Graph %s: Pushover sent (msg=%r)", graph_id[:8], msg[:40])
