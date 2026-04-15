@@ -369,12 +369,16 @@ function onNodeClick({ node }) {
   selectedNode.value = { ...node }
 }
 
+let _autoSaveTimer = null
 function onNodeDataUpdate(newData) {
   if (!selectedNode.value) return
   nodes.value = nodes.value.map(n =>
     n.id === selectedNode.value.id ? { ...n, data: { ...n.data, ...newData } } : n
   )
   selectedNode.value = { ...selectedNode.value, data: { ...selectedNode.value.data, ...newData } }
+  // Auto-save after 500 ms idle
+  clearTimeout(_autoSaveTimer)
+  _autoSaveTimer = setTimeout(() => saveGraph(), 500)
 }
 
 // ── WebSocket — live debug updates ────────────────────────────────────────

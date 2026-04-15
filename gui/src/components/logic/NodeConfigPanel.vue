@@ -491,11 +491,6 @@
       </div>
     </template>
 
-    <!-- Footer -->
-    <div class="p-3 border-t border-slate-200 dark:border-slate-700/60">
-      <button @click="emitUpdate" class="btn-primary w-full btn-sm">Übernehmen</button>
-    </div>
-
   </div>
 </template>
 
