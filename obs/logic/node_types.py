@@ -421,7 +421,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         config_schema={
             "api_key": {"type": "string", "default": "", "label": "API-Key"},
             "to":      {"type": "string", "default": "", "label": "Empfänger (+41…)"},
-            "sender":  {"type": "string", "default": "open bridge server", "label": "Absender"},
+            "sender":  {"type": "string", "default": "obs", "label": "Absender (max 11 Zeichen)"},
             "message": {"type": "string", "default": "", "label": "Nachricht (Fallback)"},
         },
         color="#e11d48",

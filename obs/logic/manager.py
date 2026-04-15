@@ -472,7 +472,7 @@ class LogicManager:
             _raw_msg = out.get("_message")
             msg    = _msg_to_str(_raw_msg) if _raw_msg is not None \
                 else str(node.data.get("message") or "")
-            sender = node.data.get("sender", "open bridge server")
+            sender = node.data.get("sender", "obs")
             try:
                 import httpx  # noqa: PLC0415
                 async with httpx.AsyncClient(timeout=15.0) as client:
@@ -487,12 +487,29 @@ class LogicManager:
                     # even though the HTTP status is 200.
                     body = r.text.strip()
                     logger.info("Graph %s: seven.io response status=%d body=%r", graph_id[:8], r.status_code, body[:80])
+                    # seven.io returns the number of sent messages on success (e.g. "1"),
+                    # or a numeric error code on failure. Known error codes:
+                    _SEVEN_ERRORS = {
+                        100: "Unbekannter Fehler / Empfänger nicht angegeben",
+                        200: "Absender nicht angegeben",
+                        201: "Absender zu lang (max 11 Zeichen)",
+                        300: "Nachricht nicht angegeben",
+                        301: "Nachricht zu lang",
+                        401: "API-Key ungültig oder nicht autorisiert",
+                        402: "Nicht genug Guthaben",
+                        403: "Absender nicht erlaubt",
+                        500: "Server-Fehler bei seven.io",
+                    }
                     try:
-                        sent_count = int(body)
-                    except (ValueError, TypeError):
-                        sent_count = 1  # non-numeric body → assume sent (older API versions)
-                    if sent_count <= 0:
-                        raise ValueError(f"seven.io reported 0 messages sent (body={body!r})")
+                        body_int = int(body)
+                        if body_int in _SEVEN_ERRORS:
+                            raise ValueError(f"seven.io Fehlercode {body_int}: {_SEVEN_ERRORS[body_int]}")
+                        if body_int <= 0:
+                            raise ValueError(f"seven.io: 0 Nachrichten gesendet (body={body!r})")
+                    except ValueError:
+                        raise  # re-raise error code or zero-count errors
+                    except TypeError:
+                        pass  # non-numeric body → assume success (future API changes)
                     outputs[node.id]["sent"] = True
                     logger.info("Graph %s: seven.io SMS sent to %s (msg=%r)", graph_id[:8], to, msg[:40])
             except Exception as exc:
