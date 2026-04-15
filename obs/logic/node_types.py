@@ -429,6 +429,30 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
 
     # ── Integration ───────────────────────────────────────────────────────
     NodeTypeDef(
+        type="json_extractor",
+        label="JSON Extractor",
+        category="integration",
+        description="Parst einen JSON-String und extrahiert einen Wert anhand eines Schlüsselpfades (Punkt-Notation, z.B. sensors.temperature). Empfangene Daten werden im Konfigurations-Panel zur Pfad-Auswahl angezeigt.",
+        inputs=[_port("data", "Daten")],
+        outputs=[_port("value", "Wert")],
+        config_schema={
+            "json_path": {"type": "string", "default": "", "label": "Schlüsselpfad"},
+        },
+        color="#0369a1",
+    ),
+    NodeTypeDef(
+        type="xml_extractor",
+        label="XML Extractor",
+        category="integration",
+        description="Parst einen XML-String und extrahiert einen Wert anhand eines XPath-Ausdrucks (ElementTree-Syntax, z.B. ./sensor/temperature). Empfangene Daten werden im Konfigurations-Panel zur Pfad-Auswahl angezeigt.",
+        inputs=[_port("data", "Daten")],
+        outputs=[_port("value", "Wert")],
+        config_schema={
+            "xml_path": {"type": "string", "default": "", "label": "XPath-Ausdruck"},
+        },
+        color="#0369a1",
+    ),
+    NodeTypeDef(
         type="api_client",
         label="API Client",
         category="integration",

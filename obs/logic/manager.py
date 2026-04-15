@@ -382,21 +382,10 @@ class LogicManager:
             if node.type != "api_client":
                 continue
             out = outputs.get(node.id, {})
-            trigger_val = out.get("_trigger")
-            logger.debug(
-                "Graph %s: api_client node %s — _trigger=%r (raw executor output)",
-                graph_id[:8], node.id[:8], trigger_val,
-            )
-            if not GraphExecutor._to_bool(trigger_val):
-                logger.info(
-                    "Graph %s: api_client node %s — SKIPPED (trigger=%r). "
-                    "Connect a Trigger-Eingang oder stelle sicher, dass der vorgelagerte Node True liefert.",
-                    graph_id[:8], node.id[:8], trigger_val,
-                )
+            if not GraphExecutor._to_bool(out.get("_trigger")):
                 continue
             url = (node.data.get("url") or "").strip()
             if not url:
-                logger.warning("Graph %s: api_client node %s — SKIPPED (URL is empty)", graph_id[:8], node.id[:8])
                 continue
             method       = (node.data.get("method", "GET") or "GET").upper()
             content_type = node.data.get("content_type", "application/json")
@@ -411,7 +400,7 @@ class LogicManager:
                 try:
                     extra_headers = _json.loads(hdr_str)
                 except Exception:
-                    logger.warning("Graph %s: api_client node %s — headers JSON parse error: %r", graph_id[:8], node.id[:8], hdr_str)
+                    pass
             body = out.get("_body")
             # ── Authentication ──────────────────────────────────────────
             auth_type = (node.data.get("auth_type") or "none").lower()
@@ -426,10 +415,6 @@ class LogicManager:
                 token = (node.data.get("auth_token") or "").strip()
                 if token:
                     extra_headers = {**extra_headers, "Authorization": f"Bearer {token}"}
-            logger.debug(
-                "Graph %s: api_client node %s — %s %s auth=%s verify_ssl=%s timeout=%ss",
-                graph_id[:8], node.id[:8], method, url, auth_type, verify_ssl, timeout_s,
-            )
             try:
                 req_kwargs: dict[str, Any] = {"headers": extra_headers, "timeout": timeout_s}
                 if method in ("POST", "PUT", "PATCH"):
@@ -458,7 +443,7 @@ class LogicManager:
                     logger.info("Graph %s: API %s %s → %d", graph_id[:8], method, url, resp.status_code)
                     triggered_api_clients.add(node.id)
             except Exception as exc:
-                logger.warning("Graph %s: api_client node %s — FAILED: %s", graph_id[:8], node.id[:8], exc)
+                logger.warning("Graph %s: api_client failed: %s", graph_id[:8], exc)
                 outputs[node.id].update({"response": str(exc), "status": None, "success": False})
 
         # ── Re-propagate api_client outputs to downstream nodes ───────────

@@ -349,6 +349,72 @@ class GraphExecutor:
                     "success":  False,
                 }
 
+            case "json_extractor":
+                import json as _json_mod  # noqa: PLC0415
+                raw = inputs.get("data")
+                json_path = (d.get("json_path") or "").strip()
+
+                # Parse raw input to Python object
+                if isinstance(raw, str):
+                    try:
+                        data_obj: Any = _json_mod.loads(raw)
+                    except (ValueError, TypeError):
+                        data_obj = raw
+                elif raw is not None:
+                    data_obj = raw
+                else:
+                    data_obj = None
+
+                # Extract value at dotted path
+                value: Any = None
+                if data_obj is not None:
+                    if json_path:
+                        try:
+                            value = self._json_extract(data_obj, json_path)
+                        except (KeyError, IndexError, TypeError, ValueError):
+                            value = None
+                    else:
+                        value = data_obj
+
+                # _preview: compact JSON snapshot for config-panel path picker (max 20 KB)
+                try:
+                    preview = _json_mod.dumps(data_obj, default=str, ensure_ascii=False)
+                    if len(preview) > 20_000:
+                        preview = preview[:20_000] + "…"
+                except Exception:
+                    preview = str(data_obj) if data_obj is not None else None
+
+                return {"value": value, "_preview": preview}
+
+            case "xml_extractor":
+                import xml.etree.ElementTree as _ET  # noqa: PLC0415
+                raw_xml = inputs.get("data")
+                xml_path = (d.get("xml_path") or "").strip()
+
+                value = None
+                preview_str: str | None = None
+
+                if isinstance(raw_xml, str) and raw_xml.strip():
+                    preview_str = raw_xml[:20_000] if len(raw_xml) > 20_000 else raw_xml
+                    try:
+                        root = _ET.fromstring(raw_xml.strip())
+                        if xml_path:
+                            el = root.find(xml_path)
+                            if el is not None:
+                                text = (el.text or "").strip()
+                                try:
+                                    value = int(text)
+                                except ValueError:
+                                    try:
+                                        value = float(text)
+                                    except ValueError:
+                                        value = text
+                        # no path → value stays None; user must select one
+                    except _ET.ParseError:
+                        pass
+
+                return {"value": value, "_preview": preview_str}
+
             case "timer_cron":
                 # Fired by manager via input_overrides; pass trigger signal downstream
                 return {"trigger": inputs.get("trigger", False)}
@@ -549,6 +615,29 @@ class GraphExecutor:
             case _:
                 logger.debug("Unknown node type: %s", t)
                 return {}
+
+    @staticmethod
+    def _json_extract(obj: Any, path: str) -> Any:
+        """Extract a value from a nested dict/list using dotted-notation path.
+
+        Supports:
+          "key"           → obj["key"]
+          "parent.child"  → obj["parent"]["child"]
+          "items.0.name"  → obj["items"][0]["name"]
+          "a[0].b"        → obj["a"][0]["b"]  (bracket notation normalised)
+        """
+        # Normalise array brackets: "items[0]" → "items.0"
+        path = re.sub(r'\[(\d+)\]', r'.\1', path)
+        parts = [p for p in path.split('.') if p]
+        current = obj
+        for part in parts:
+            if isinstance(current, dict):
+                current = current[part]
+            elif isinstance(current, (list, tuple)):
+                current = current[int(part)]
+            else:
+                raise TypeError(f"Cannot traverse {type(current).__name__} with key '{part}'")
+        return current
 
     def _collect_gate_inputs(self, inputs: dict[str, Any], d: dict[str, Any]) -> list[bool]:
         """Collect all active gate inputs with per-input negation applied.
