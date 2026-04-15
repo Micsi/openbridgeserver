@@ -344,9 +344,21 @@ class GraphExecutor:
                     "_reset":  self._to_bool(inputs.get("reset")),
                 }
 
-            case "notify_pushover" | "notify_sms":
+            case "notify_pushover":
                 # Async — fully handled by LogicManager after executor run.
                 # Fires automatically when a message arrives (no separate trigger needed).
+                msg = inputs.get("message")
+                return {
+                    "_trigger":    msg is not None,
+                    "_message":    msg,
+                    "_url":        inputs.get("url"),
+                    "_url_title":  inputs.get("url_title"),
+                    "_image_url":  inputs.get("image_url"),
+                    "sent":        False,
+                }
+
+            case "notify_sms":
+                # Async — fully handled by LogicManager after executor run.
                 msg = inputs.get("message")
                 return {
                     "_trigger": msg is not None,

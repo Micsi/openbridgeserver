@@ -443,9 +443,13 @@ class LogicManager:
                 else str(node.data.get("message") or "")
             title     = node.data.get("title", "open bridge server")
             prio      = int(node.data.get("priority", 0))
-            url       = (node.data.get("url")       or "").strip()
-            url_title = (node.data.get("url_title") or "").strip()
-            image_url = (node.data.get("image_url") or "").strip()
+            # Input port value takes precedence over static config
+            _out_url   = out.get("_url")
+            _out_utit  = out.get("_url_title")
+            _out_img   = out.get("_image_url")
+            url       = (_msg_to_str(_out_url)  if _out_url  is not None else (node.data.get("url")       or "")).strip()
+            url_title = (_msg_to_str(_out_utit) if _out_utit is not None else (node.data.get("url_title") or "")).strip()
+            image_url = (_msg_to_str(_out_img)  if _out_img  is not None else (node.data.get("image_url") or "")).strip()
             try:
                 import httpx  # noqa: PLC0415
                 async with httpx.AsyncClient(timeout=15.0) as client:

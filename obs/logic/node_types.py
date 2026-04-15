@@ -410,7 +410,12 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         label="Pushover",
         category="notification",
         description="Sendet eine Push-Benachrichtigung via Pushover API (api.pushover.net). Wird automatisch ausgelöst wenn eine Nachricht am Eingang ankommt.",
-        inputs=[_port("message", "Nachricht")],
+        inputs=[
+            _port("message",   "Nachricht"),
+            _port("url",       "URL"),
+            _port("url_title", "URL-Titel"),
+            _port("image_url", "Bild-URL"),
+        ],
         outputs=[_port("sent", "Gesendet", "trigger")],
         config_schema={
             "app_token": {"type": "string", "default": "", "label": "App-Token"},
