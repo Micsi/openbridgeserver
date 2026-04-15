@@ -368,6 +368,56 @@
       </div>
     </template>
 
+    <!-- ── string_concat ────────────────────────────────────────────────── -->
+    <template v-else-if="isStringConcatNode">
+      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <p class="text-xs text-slate-500">{{ nodeDef?.description }}</p>
+
+        <!-- Count + Separator -->
+        <div class="flex gap-3">
+          <div class="form-group flex-1">
+            <label class="label">Anzahl Eingänge</label>
+            <input
+              type="number" min="2" max="20"
+              :value="concatCount"
+              @change="onConcatCountChange"
+              class="input text-sm"
+              data-testid="concat-count"
+            />
+          </div>
+          <div class="form-group flex-1">
+            <label class="label">Trennzeichen</label>
+            <input
+              v-model="localData.separator"
+              @change="emitUpdate"
+              class="input text-sm font-mono"
+              placeholder="leer = ohne"
+              data-testid="concat-separator"
+            />
+          </div>
+        </div>
+
+        <!-- Per-slot static text -->
+        <div class="section-label">Statischer Text pro Eingang</div>
+        <p class="text-xs text-slate-500 -mt-2">
+          Verbundene Eingänge überschreiben den statischen Text. Leere Felder ergeben einen leeren Teilstring.
+        </p>
+        <div class="flex flex-col gap-2">
+          <div v-for="i in concatSlots" :key="i" class="flex items-center gap-2">
+            <span class="text-xs text-slate-400 w-5 text-right shrink-0">{{ i }}</span>
+            <input
+              :value="localData[`text_${i}`] ?? ''"
+              @input="localData[`text_${i}`] = $event.target.value"
+              @change="emitUpdate"
+              class="input text-sm flex-1"
+              :placeholder="`Eingang ${i} …`"
+              :data-testid="`concat-text-${i}`"
+            />
+          </div>
+        </div>
+      </div>
+    </template>
+
     <!-- ── json_extractor / xml_extractor ───────────────────────────────── -->
     <template v-else-if="isExtractorNode">
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
@@ -615,6 +665,17 @@ const isApiClientNode  = computed(() => props.node?.type === 'api_client')
 const isExtractorNode  = computed(() =>
   props.node?.type === 'json_extractor' || props.node?.type === 'xml_extractor'
 )
+const isStringConcatNode = computed(() => props.node?.type === 'string_concat')
+
+// ── string_concat: dynamic slot count ─────────────────────────────────────
+const concatCount = computed(() => Math.max(2, Math.min(20, Number(localData.value.count) || 2)))
+const concatSlots = computed(() => Array.from({ length: concatCount.value }, (_, i) => i + 1))
+
+function onConcatCountChange(e) {
+  const v = Math.max(2, Math.min(20, parseInt(e.target.value) || 2))
+  localData.value.count = v
+  emitUpdate()
+}
 
 // ── Extractor: preview + path helpers ─────────────────────────────────────
 const extractorPreview = computed(() => {

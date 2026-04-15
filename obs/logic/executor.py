@@ -272,6 +272,19 @@ class GraphExecutor:
                 val = self._to_num(inputs.get("value"))
                 return {"result": max(lo, min(hi, val))}
 
+            case "string_concat":
+                count = max(2, min(20, int(d.get("count", 2))))
+                sep   = str(d.get("separator", ""))
+                parts: list[str] = []
+                for i in range(1, count + 1):
+                    val = inputs.get(f"in_{i}")
+                    if val is not None:
+                        parts.append(str(val))
+                    else:
+                        static = d.get(f"text_{i}")
+                        parts.append(str(static) if static is not None else "")
+                return {"result": sep.join(parts)}
+
             case "statistics":
                 # State stored in hysteresis_state keyed by node.id
                 state = self.hysteresis_state.setdefault(node.id, {

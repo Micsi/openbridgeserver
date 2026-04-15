@@ -168,6 +168,8 @@ const nodeTypeComponents = {
   heating_circuit: _generic, min_max_tracker: _generic, consumption_counter: _generic,
   // Timer extended
   operating_hours: _generic,
+  // String
+  string_concat: _generic,
   // Notification
   notify_pushover: _generic, notify_sms: _generic,
   // Integration
