@@ -117,7 +117,7 @@ class TestApiClientManagerHttp:
         manager._graphs[graph_id] = ("test", True, flow)
         manager._node_state[graph_id] = {}
         return asyncio.get_event_loop().run_until_complete(
-            manager._execute_graph(graph_id, "test", flow, overrides or {"ac": {"trigger": True}})
+            manager._execute_graph(graph_id, "test", flow, overrides if overrides is not None else {"ac": {"trigger": True}})
         )
 
     @patch("obs.logic.manager.httpx.AsyncClient")
