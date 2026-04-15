@@ -15,6 +15,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from obs.logic.executor import GraphExecutor
 from obs.logic.models import FlowData
 
@@ -333,7 +335,6 @@ class LogicManager:
         # re-propagate their real outputs to downstream nodes afterwards.
         triggered_api_clients: set[str] = set()
         import json as _json  # noqa: PLC0415
-        import httpx           # noqa: PLC0415
         for node in flow.nodes:
             if node.type != "api_client":
                 continue
@@ -451,7 +452,6 @@ class LogicManager:
             url_title = (_msg_to_str(_out_utit) if _out_utit is not None else (node.data.get("url_title") or "")).strip()
             image_url = (_msg_to_str(_out_img)  if _out_img  is not None else (node.data.get("image_url") or "")).strip()
             try:
-                import httpx  # noqa: PLC0415
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     payload: dict[str, object] = {
                         "token": app_token, "user": user_key,
@@ -501,7 +501,6 @@ class LogicManager:
                 else str(node.data.get("message") or "")
             sender = node.data.get("sender", "obs")
             try:
-                import httpx  # noqa: PLC0415
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     r = await client.post(
                         "https://gateway.seven.io/api/sms",

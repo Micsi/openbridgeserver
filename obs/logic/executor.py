@@ -402,7 +402,7 @@ class GraphExecutor:
                         except (KeyError, IndexError, TypeError, ValueError):
                             value = None
                     else:
-                        value = data_obj
+                        value = None  # No path configured — user must select one
 
                 # _preview: compact JSON snapshot for config-panel path picker (max 20 KB)
                 try:
