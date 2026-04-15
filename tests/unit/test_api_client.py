@@ -116,7 +116,7 @@ class TestApiClientManagerHttp:
         graph_id = "test-graph"
         manager._graphs[graph_id] = ("test", True, flow)
         manager._node_state[graph_id] = {}
-        return asyncio.get_event_loop().run_until_complete(
+        return asyncio.run(
             manager._execute_graph(graph_id, "test", flow, overrides if overrides is not None else {"ac": {"trigger": True}})
         )
 
@@ -244,7 +244,7 @@ class TestApiClientAuthentication:
 
         with patch("obs.logic.manager.httpx.AsyncClient", _FakeClient):
             with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-                outputs = asyncio.get_event_loop().run_until_complete(
+                outputs = asyncio.run(
                     manager._execute_graph(
                         graph_id, "test", flow, {"ac": {"trigger": True}}
                     )
@@ -308,7 +308,7 @@ class TestApiClientAuthentication:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
             )
 
@@ -342,7 +342,7 @@ class TestApiClientAuthentication:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
             )
 
@@ -364,7 +364,7 @@ class TestApiClientAuthentication:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
             )
 
@@ -415,7 +415,7 @@ class TestApiClientDownstreamPropagation:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = asyncio.get_event_loop().run_until_complete(
+            outputs = asyncio.run(
                 manager._execute_graph(graph_id, "t", flow, {})
             )
 
@@ -452,7 +452,7 @@ class TestApiClientDownstreamPropagation:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = asyncio.get_event_loop().run_until_complete(
+            outputs = asyncio.run(
                 manager._execute_graph(graph_id, "t", flow, {})
             )
 
@@ -487,7 +487,7 @@ class TestApiClientWsBroadcast:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", return_value=mock_ws_manager):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
             )
 
