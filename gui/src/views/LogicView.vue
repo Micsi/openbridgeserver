@@ -249,6 +249,15 @@ function fmtDebugVal(nodeOut) {
     return `→ ${fv(nodeOut._write_value)}`
   }
 
+  // notify nodes — show message content + sent status
+  if ('_message' in nodeOut) {
+    const msg  = nodeOut._message !== null && nodeOut._message !== undefined
+      ? `"${String(nodeOut._message).slice(0, 24)}"`
+      : '—'
+    const sent = 'sent' in nodeOut ? `  sent=${fv(nodeOut.sent)}` : ''
+    return msg + sent
+  }
+
   return null
 }
 
