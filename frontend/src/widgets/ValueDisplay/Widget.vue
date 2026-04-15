@@ -150,6 +150,7 @@ const mainDisplay = computed<DisplayParts>(() => {
   }
   let v: unknown = rawValue.value
   if (typeof v === 'number' && rule.calculation) v = applyCalc(v, rule.calculation)
+  if (typeof v === 'boolean') return { prefix: rule.prefix, value: v ? 'EIN' : 'AUS', postfix: rule.postfix }
   const formatted = typeof v === 'number' ? (v as number).toFixed(rule.decimals ?? 1) : String(v ?? '—')
   return { prefix: rule.prefix, value: formatted, postfix: rule.postfix || (props.value?.u ?? '') }
 })
@@ -270,8 +271,8 @@ const quality = computed(() => props.value?.q ?? null)
   <div v-if="mode === 'value'" class="flex flex-col items-center h-full p-2 select-none">
     <span v-if="widgetLabel" class="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0 mb-1">{{ widgetLabel }}</span>
 
-    <!-- Icon: fills remaining height, square, no circle -->
-    <div class="flex-1 min-h-0 flex items-center justify-center w-full" style="aspect-ratio: 1; max-width: 100%">
+    <!-- Icon: 3 flex shares, square, no circle -->
+    <div class="min-h-0 flex items-center justify-center w-full" style="flex: 3; aspect-ratio: 1; max-width: 100%">
       <span
         v-if="activeIcon && !isSvgIcon(activeIcon)"
         class="leading-none select-none h-full flex items-center"
@@ -287,12 +288,12 @@ const quality = computed(() => props.value?.q ?? null)
       />
     </div>
 
-    <!-- Value: fixed theme colors -->
-    <div class="shrink-0 text-center mt-1">
+    <!-- Value: 2 flex shares, larger and more prominent -->
+    <div class="min-h-0 flex flex-col items-center justify-center text-center mt-1" style="flex: 2">
       <div class="flex items-baseline justify-center gap-1 flex-wrap">
-        <span v-if="mainDisplay.prefix" class="text-xs text-gray-500 dark:text-gray-400">{{ mainDisplay.prefix }}</span>
-        <span class="text-xl font-semibold tabular-nums leading-none text-gray-900 dark:text-gray-100" data-testid="widget-value">{{ mainDisplay.value }}</span>
-        <span v-if="mainDisplay.postfix" class="text-sm text-gray-500 dark:text-gray-400">{{ mainDisplay.postfix }}</span>
+        <span v-if="mainDisplay.prefix" class="text-sm text-gray-500 dark:text-gray-400">{{ mainDisplay.prefix }}</span>
+        <span class="text-2xl font-semibold tabular-nums leading-none text-gray-900 dark:text-gray-100" data-testid="widget-value">{{ mainDisplay.value }}</span>
+        <span v-if="mainDisplay.postfix" class="text-base text-gray-500 dark:text-gray-400">{{ mainDisplay.postfix }}</span>
       </div>
       <span v-if="secondaryDisplay" class="text-xs text-gray-400 dark:text-gray-500 tabular-nums">{{ secondaryDisplay }}</span>
     </div>
