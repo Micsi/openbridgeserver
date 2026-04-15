@@ -133,7 +133,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onDocClick))
         ref="inputEl"
         v-model="query"
         type="text"
-        placeholder="Name, Tag oder Typ …"
+        placeholder="Name, UUID, Konfiguration …"
         class="w-full bg-transparent px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none"
         @keydown.escape="open = false"
       />
