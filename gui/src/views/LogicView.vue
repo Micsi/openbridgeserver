@@ -74,6 +74,7 @@
         v-if="selectedNode"
         :node="selectedNode"
         :node-types="store.nodeTypes"
+        :node-outputs="lastRunOutputs"
         @update="onNodeDataUpdate"
         @close="selectedNode = null"
       />
@@ -170,7 +171,7 @@ const nodeTypeComponents = {
   // Notification
   notify_pushover: _generic, notify_sms: _generic,
   // Integration
-  api_client: _generic,
+  api_client: _generic, json_extractor: _generic, xml_extractor: _generic,
   // DataPoints & Script
   datapoint_read:  _datapoint,
   datapoint_write: _datapoint,
@@ -251,7 +252,12 @@ function fmtDebugVal(nodeOut) {
   return null
 }
 
+// Last run outputs — always kept (not just in debug mode) so that
+// json_extractor / xml_extractor config panels can read _preview data.
+const lastRunOutputs = ref({})
+
 function applyDebugValues(outputs) {
+  lastRunOutputs.value = outputs
   nodes.value = nodes.value.map(n => ({
     ...n,
     data: { ...n.data, _dbg: fmtDebugVal(outputs[n.id]) ?? undefined }
@@ -277,6 +283,8 @@ async function runGraph() {
     const { data } = await logicApi.runGraph(activeGraphId.value)
     const evalCount = Object.keys(data.outputs || {}).length
     showStatus(true, `Graph ausgeführt — ${evalCount} Nodes evaluiert`)
+    // Always update lastRunOutputs (needed for extractor config panels)
+    lastRunOutputs.value = data.outputs || {}
     if (debugMode.value) applyDebugValues(data.outputs || {})
   } catch (err) {
     showStatus(false, err.response?.data?.detail ?? 'Fehler')
