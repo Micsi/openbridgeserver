@@ -60,7 +60,7 @@ import { searchApi } from '@/api/client'
 const props = defineProps({
   modelValue: { type: String, default: '' },   // selected DP id
   displayName: { type: String, default: '' },  // shown in the input when an item is selected
-  placeholder: { type: String, default: 'Objekt suchen …' },
+  placeholder: { type: String, default: 'Name, UUID, Konfiguration …' },
 })
 const emit = defineEmits(['update:modelValue', 'select'])
 
