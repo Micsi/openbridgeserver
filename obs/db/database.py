@@ -267,6 +267,10 @@ _MIGRATION_V20 = """
 ALTER TABLE adapter_bindings ADD COLUMN value_map TEXT;
 """
 
+_MIGRATION_V21 = """
+ALTER TABLE datapoints ADD COLUMN record_history INTEGER NOT NULL DEFAULT 1;
+"""
+
 _MIGRATION_V18 = """
 CREATE TABLE visu_nodes_new (
     id           TEXT PRIMARY KEY,
@@ -341,6 +345,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (18, _MIGRATION_V18),
     (19, _MIGRATION_V19),
     (20, _MIGRATION_V20),
+    (21, _MIGRATION_V21),
 ]
 
 

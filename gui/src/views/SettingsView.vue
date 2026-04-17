@@ -267,7 +267,7 @@
     </div>
 
     <!-- ── History Backend ── -->
-    <div v-if="activeTab === 'history' && !isDemo" class="flex flex-col gap-4 max-w-lg">
+    <div v-if="activeTab === 'history' && !isDemo" class="flex flex-col gap-4 max-w-2xl">
       <div class="card">
         <div class="card-header">
           <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">Historie DB</h3>
@@ -380,6 +380,74 @@
               <Spinner v-if="histSaving" size="sm" color="white" />
               Speichern &amp; aktivieren
             </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Objekt-Filter -->
+      <div class="card" data-testid="history-filter-card">
+        <div class="card-header">
+          <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">Objekt-Filter</h3>
+          <span class="text-xs text-slate-500">{{ histFilterExcludedCount }} von {{ histAllDps.length }} Objekt(e) ausgeschlossen</span>
+        </div>
+        <div class="card-body flex flex-col gap-3">
+          <p class="text-sm text-slate-500">
+            Objekte, für die die Historisierung deaktiviert ist, werden nicht in der Historie-DB gespeichert.
+            Typische Kandidaten: Zeit, Datum, Systemwerte ohne historische Relevanz.
+          </p>
+
+          <!-- Search -->
+          <input
+            v-model="histFilterSearch"
+            type="text"
+            class="input text-sm"
+            placeholder="Objekte suchen…"
+            data-testid="input-history-filter-search"
+          />
+
+          <!-- Loading -->
+          <div v-if="histFilterLoading" class="flex justify-center py-4" data-testid="history-filter-loading"><Spinner /></div>
+
+          <!-- Empty state -->
+          <div v-else-if="histFilteredDps.length === 0" class="text-sm text-slate-500 text-center py-4" data-testid="history-filter-empty">
+            Keine Objekte gefunden.
+          </div>
+
+          <!-- DataPoint list -->
+          <div v-else class="flex flex-col divide-y divide-slate-200 dark:divide-slate-700/60 max-h-96 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700/60" data-testid="history-filter-list">
+            <div
+              v-for="dp in histFilteredDps"
+              :key="dp.id"
+              class="flex items-center gap-3 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+              :data-testid="`history-filter-row-${dp.id}`"
+            >
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{{ dp.name }}</div>
+                <div class="text-xs text-slate-500 font-mono truncate">{{ dp.data_type }}{{ dp.unit ? ' · ' + dp.unit : '' }}</div>
+              </div>
+              <button
+                @click="toggleHistoryFilter(dp)"
+                :class="[
+                  'shrink-0 relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none',
+                  dp.record_history ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'
+                ]"
+                :title="dp.record_history ? 'Historisierung aktiv – klicken zum Deaktivieren' : 'Historisierung deaktiviert – klicken zum Aktivieren'"
+                :data-testid="`toggle-history-${dp.id}`"
+              >
+                <span
+                  :class="[
+                    'inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform',
+                    dp.record_history ? 'translate-x-4' : 'translate-x-0.5'
+                  ]"
+                />
+              </button>
+            </div>
+          </div>
+
+          <!-- Schnellauswahl -->
+          <div class="flex items-center gap-2 pt-1">
+            <button @click="histFilterSetAll(true)" class="btn-secondary btn-sm" data-testid="btn-history-filter-enable-all">Alle aktivieren</button>
+            <button @click="histFilterSetAll(false)" class="btn-secondary btn-sm" data-testid="btn-history-filter-disable-all">Alle deaktivieren</button>
           </div>
         </div>
       </div>
@@ -693,7 +761,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { authApi, adapterApi, configApi, knxprojApi, historySettingsApi, iconsApi } from '@/api/client'
+import { authApi, adapterApi, configApi, knxprojApi, historySettingsApi, iconsApi, dpApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { useTz } from '@/composables/useTz'
@@ -775,11 +843,17 @@ onMounted(async () => {
   if (!settings.loaded) await settings.load()
   tzSelected.value = settings.timezone
   document.addEventListener('mousedown', onOutsideClick)
-  if (auth.isAdmin) loadHistorySettings()
+  if (auth.isAdmin) {
+    loadHistorySettings()
+    loadHistoryFilterDps()
+  }
 })
 
 watch(activeTab, (tab) => {
-  if (tab === 'history' && auth.isAdmin) loadHistorySettings()
+  if (tab === 'history' && auth.isAdmin) {
+    loadHistorySettings()
+    loadHistoryFilterDps()
+  }
   if (tab === 'icons') { loadIcons(); loadFaSettings() }
 })
 
@@ -857,6 +931,56 @@ async function testHistoryConnection() {
   } finally {
     histTesting.value = false
   }
+}
+
+// ── History Objekt-Filter ──────────────────────────────────────────────────
+const histAllDps       = ref([])
+const histFilterSearch = ref('')
+const histFilterLoading = ref(false)
+
+const histFilteredDps = computed(() => {
+  const q = histFilterSearch.value.toLowerCase().trim()
+  const filtered = q
+    ? histAllDps.value.filter(dp =>
+        dp.name.toLowerCase().includes(q) ||
+        dp.id.toLowerCase().includes(q) ||
+        dp.data_type.toLowerCase().includes(q) ||
+        (dp.unit ?? '').toLowerCase().includes(q)
+      )
+    : histAllDps.value
+  // Ausgeschlossene Objekte (record_history=false) zuerst
+  return [...filtered].sort((a, b) => {
+    if (a.record_history === b.record_history) return 0
+    return a.record_history ? 1 : -1
+  })
+})
+
+const histFilterExcludedCount = computed(() =>
+  histAllDps.value.filter(dp => !dp.record_history).length
+)
+
+async function loadHistoryFilterDps() {
+  histFilterLoading.value = true
+  try {
+    const { data } = await dpApi.listAll()
+    histAllDps.value = data.items ?? []
+  } catch { /* non-critical */ }
+  finally { histFilterLoading.value = false }
+}
+
+async function toggleHistoryFilter(dp) {
+  const newVal = !dp.record_history
+  try {
+    await dpApi.update(dp.id, { record_history: newVal })
+    dp.record_history = newVal
+  } catch (e) {
+    console.error('Fehler beim Aktualisieren der Historisierung:', e)
+  }
+}
+
+async function histFilterSetAll(enable) {
+  const targets = histFilteredDps.value.filter(dp => dp.record_history !== enable)
+  await Promise.all(targets.map(dp => toggleHistoryFilter(dp)))
 }
 
 // ── Theme ──────────────────────────────────────────────────────────────────

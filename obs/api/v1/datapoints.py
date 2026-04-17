@@ -39,6 +39,7 @@ class DataPointOut(BaseModel):
     mqtt_topic: str
     mqtt_alias: str | None
     persist_value: bool
+    record_history: bool
     created_at: str
     updated_at: str
     # Runtime
@@ -91,6 +92,7 @@ def _enrich(dp: Any) -> DataPointOut:
         mqtt_topic=dp.mqtt_topic,
         mqtt_alias=dp.mqtt_alias,
         persist_value=dp.persist_value,
+        record_history=dp.record_history,
         created_at=dp.created_at.isoformat(),
         updated_at=dp.updated_at.isoformat(),
         value=state.value if state else None,

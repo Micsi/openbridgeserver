@@ -45,6 +45,10 @@
           <dd>
             <Badge :variant="dp.persist_value ? 'success' : 'muted'" size="xs">{{ dp.persist_value ? 'Ja' : 'Nein' }}</Badge>
           </dd>
+          <dt class="text-slate-500">Historisierung</dt>
+          <dd>
+            <Badge :variant="dp.record_history ? 'success' : 'muted'" size="xs" data-testid="badge-record-history">{{ dp.record_history ? 'Aktiv' : 'Deaktiviert' }}</Badge>
+          </dd>
           <dt class="text-slate-500">Erstellt</dt>   <dd class="text-slate-400 text-xs">{{ new Date(dp.created_at).toLocaleString('de-CH') }}</dd>
           <dt class="text-slate-500">Geändert</dt>   <dd class="text-slate-400 text-xs">{{ new Date(dp.updated_at).toLocaleString('de-CH') }}</dd>
         </dl>

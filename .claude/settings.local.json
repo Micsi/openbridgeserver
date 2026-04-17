@@ -206,7 +206,11 @@
       "Bash(python -c \"from obs.logic.node_types import get_all_node_types; types = get_all_node_types\\(\\); [print\\(t.type\\) for t in types if t.category == 'integration']\")",
       "Bash(ls -d */)",
       "Bash(git log:*)",
-      "Bash(npx vue-tsc:*)"
+      "Bash(npx vue-tsc:*)",
+      "Bash(cmd /c \"gh auth status\")",
+      "Bash(python -c \"from obs.models.datapoint import DataPoint, DataPointCreate, DataPointUpdate; dp = DataPoint\\(name='test'\\); print\\('record_history default:', dp.record_history\\); print\\('OK'\\)\")",
+      "Bash(python -c \"from obs.models.datapoint import DataPoint, DataPointCreate, DataPointUpdate; dp = DataPoint\\(name='test'\\); print\\('record_history default:', dp.record_history\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, 'C:/Users/DanielAbegglen/OneDrive/Hausbau/Elektro/KNX/openbridgeserver'\\); from obs.models.datapoint import DataPoint; dp = DataPoint\\(name='test'\\); print\\('record_history:', dp.record_history\\)\")"
     ]
   }
 }
