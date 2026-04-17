@@ -65,6 +65,7 @@ export const authApi = {
 // ── DataPoints ────────────────────────────────────────────────────────────
 export const dpApi = {
   list:          (page = 0, size = 50, sort = 'created_at', order = 'asc') => api.get('/datapoints/', { params: { page, size, sort, order } }),
+  listAll:       ()                             => api.get('/datapoints/', { params: { page: 0, size: 500, sort: 'name', order: 'asc' } }),
   get:           (id)                           => api.get(`/datapoints/${id}`),
   create:        (data)                         => api.post('/datapoints/', data),
   update:        (id, data)                     => api.patch(`/datapoints/${id}`, data),

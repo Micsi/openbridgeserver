@@ -17,6 +17,7 @@ class DataPoint(BaseModel):
     mqtt_topic: str = ""
     mqtt_alias: Optional[str] = None
     persist_value: bool = True
+    record_history: bool = True
     created_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
@@ -38,6 +39,7 @@ class DataPointCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
     mqtt_alias: Optional[str] = None
     persist_value: bool = True
+    record_history: bool = True
 
 
 class DataPointUpdate(BaseModel):
@@ -47,3 +49,4 @@ class DataPointUpdate(BaseModel):
     tags: Optional[list[str]] = None
     mqtt_alias: Optional[str] = None
     persist_value: Optional[bool] = None
+    record_history: Optional[bool] = None

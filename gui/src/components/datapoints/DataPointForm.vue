@@ -48,6 +48,11 @@
       <span class="text-sm text-slate-700 dark:text-slate-200">Letzten Wert speichern <span class="text-slate-500 font-normal">(nach Neustart sofort verfügbar)</span></span>
     </label>
 
+    <label class="flex items-center gap-2 cursor-pointer select-none" data-testid="label-record-history">
+      <input v-model="form.record_history" type="checkbox" class="w-4 h-4 rounded accent-blue-500" data-testid="checkbox-record-history" />
+      <span class="text-sm text-slate-700 dark:text-slate-200">Historisierung aktiv <span class="text-slate-500 font-normal">(Werte in der Historie-DB speichern)</span></span>
+    </label>
+
     <div v-if="error" class="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
       {{ error }}
     </div>
@@ -144,10 +149,11 @@ const effectiveUnit = computed(() => {
 })
 
 const form = reactive({
-  name:          '',
-  data_type:     'FLOAT',
-  mqtt_alias:    '',
-  persist_value: true,
+  name:           '',
+  data_type:      'FLOAT',
+  mqtt_alias:     '',
+  persist_value:  true,
+  record_history: true,
 })
 
 // Helper: initialise unit controls from a raw string
@@ -167,15 +173,16 @@ function applyUnit(raw) {
 
 watch(() => props.initial, (val) => {
   if (val) {
-    form.name          = val.name
-    form.data_type     = val.data_type
-    form.mqtt_alias    = val.mqtt_alias ?? ''
-    form.persist_value = val.persist_value ?? true
-    tagsInput.value    = val.tags?.join(', ') ?? ''
+    form.name           = val.name
+    form.data_type      = val.data_type
+    form.mqtt_alias     = val.mqtt_alias ?? ''
+    form.persist_value  = val.persist_value ?? true
+    form.record_history = val.record_history ?? true
+    tagsInput.value     = val.tags?.join(', ') ?? ''
     applyUnit(val.unit)
   } else {
     form.name = ''; form.data_type = 'FLOAT'; form.mqtt_alias = ''
-    form.persist_value = true
+    form.persist_value = true; form.record_history = true
     tagsInput.value = ''
     applyUnit('')
   }
@@ -187,12 +194,13 @@ async function submit() {
   try {
     const tags = tagsInput.value.split(',').map(t => t.trim()).filter(Boolean)
     await props.saveHandler({
-      name:          form.name,
-      data_type:     form.data_type,
-      unit:          effectiveUnit.value,
+      name:           form.name,
+      data_type:      form.data_type,
+      unit:           effectiveUnit.value,
       tags,
-      mqtt_alias:    form.mqtt_alias || null,
-      persist_value: form.persist_value,
+      mqtt_alias:     form.mqtt_alias || null,
+      persist_value:  form.persist_value,
+      record_history: form.record_history,
     })
   } catch (e) {
     error.value = e.response?.data?.detail ?? e.message ?? 'Fehler beim Speichern'

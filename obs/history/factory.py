@@ -54,12 +54,13 @@ async def handle_value_event(event: Any) -> None:
     if _plugin is None:
         return
     try:
-        # Resolve unit from the DataPoint registry (not carried on the event)
         unit: str | None = None
         try:
             from obs.core.registry import get_registry
             dp = get_registry().get(event.datapoint_id)
             if dp:
+                if not dp.record_history:
+                    return
                 unit = dp.unit
         except RuntimeError:
             pass
