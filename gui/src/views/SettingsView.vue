@@ -406,15 +406,15 @@
           />
 
           <!-- Loading -->
-          <div v-if="histFilterLoading" class="flex justify-center py-4"><Spinner /></div>
+          <div v-if="histFilterLoading" class="flex justify-center py-4" data-testid="history-filter-loading"><Spinner /></div>
 
           <!-- Empty state -->
-          <div v-else-if="histFilteredDps.length === 0" class="text-sm text-slate-500 text-center py-4">
+          <div v-else-if="histFilteredDps.length === 0" class="text-sm text-slate-500 text-center py-4" data-testid="history-filter-empty">
             Keine Objekte gefunden.
           </div>
 
           <!-- DataPoint list -->
-          <div v-else class="flex flex-col divide-y divide-slate-200 dark:divide-slate-700/60 max-h-96 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700/60">
+          <div v-else class="flex flex-col divide-y divide-slate-200 dark:divide-slate-700/60 max-h-96 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700/60" data-testid="history-filter-list">
             <div
               v-for="dp in histFilteredDps"
               :key="dp.id"

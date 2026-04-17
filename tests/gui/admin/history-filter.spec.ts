@@ -104,6 +104,19 @@ test('Historisierung per Bearbeiten-Dialog aktivieren/deaktivieren', async ({ pa
 })
 
 // ---------------------------------------------------------------------------
+// Helper: History-Tab öffnen und warten bis DataPoints geladen sind
+// ---------------------------------------------------------------------------
+
+async function openHistoryFilterTab(page: import('@playwright/test').Page) {
+  await page.goto('/settings')
+  await page.click('button:has-text("Historie DB")')
+  await expect(page.locator('[data-testid="history-filter-card"]')).toBeVisible({ timeout: 8_000 })
+  // Warten bis Lade-Spinner verschwunden und Liste sichtbar ist
+  await expect(page.locator('[data-testid="history-filter-loading"]')).not.toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('[data-testid="history-filter-list"]')).toBeVisible({ timeout: 5_000 })
+}
+
+// ---------------------------------------------------------------------------
 // Test 3: Objekt-Filter in den Einstellungen — Toggle-Schalter
 // ---------------------------------------------------------------------------
 
@@ -118,29 +131,24 @@ test('Objekt-Filter in Einstellungen — Toggle ändert Historisierung', async (
   const dpId = created.id
 
   try {
-    await page.goto('/settings')
-
-    // History-Tab öffnen
-    await page.click('button:has-text("Historie DB")')
-    await expect(page.locator('[data-testid="history-filter-card"]')).toBeVisible({ timeout: 5_000 })
+    await openHistoryFilterTab(page)
 
     // Objekt suchen
     await page.fill('[data-testid="input-history-filter-search"]', name)
-    await page.waitForTimeout(500)
 
     const toggle = page.locator(`[data-testid="toggle-history-${dpId}"]`)
-    await expect(toggle).toBeVisible({ timeout: 5_000 })
+    await expect(toggle).toBeVisible({ timeout: 8_000 })
 
     // Ausgangszustand: aktiv (grün)
     await expect(toggle).toHaveClass(/bg-green-500/)
 
     // Deaktivieren
     await toggle.click()
-    await expect(toggle).not.toHaveClass(/bg-green-500/, { timeout: 3_000 })
+    await expect(toggle).not.toHaveClass(/bg-green-500/, { timeout: 5_000 })
 
     // Wieder aktivieren
     await toggle.click()
-    await expect(toggle).toHaveClass(/bg-green-500/, { timeout: 3_000 })
+    await expect(toggle).toHaveClass(/bg-green-500/, { timeout: 5_000 })
   } finally {
     await apiDelete(`/api/v1/datapoints/${dpId}`)
   }
@@ -159,21 +167,17 @@ test('Objekt-Filter Suche filtert Objekte korrekt', async ({ page }) => {
   ])
 
   try {
-    await page.goto('/settings')
-    await page.click('button:has-text("Historie DB")')
-    await expect(page.locator('[data-testid="history-filter-card"]')).toBeVisible({ timeout: 5_000 })
+    await openHistoryFilterTab(page)
 
     // Suche nach nameA — nur A sichtbar
     await page.fill('[data-testid="input-history-filter-search"]', nameA)
-    await page.waitForTimeout(400)
-    await expect(page.locator(`[data-testid="toggle-history-${dpA.id}"]`)).toBeVisible({ timeout: 3_000 })
+    await expect(page.locator(`[data-testid="toggle-history-${dpA.id}"]`)).toBeVisible({ timeout: 8_000 })
     await expect(page.locator(`[data-testid="toggle-history-${dpB.id}"]`)).not.toBeVisible()
 
     // Suche leeren — beide sichtbar
     await page.fill('[data-testid="input-history-filter-search"]', '')
-    await page.waitForTimeout(400)
-    await expect(page.locator(`[data-testid="toggle-history-${dpA.id}"]`)).toBeVisible({ timeout: 3_000 })
-    await expect(page.locator(`[data-testid="toggle-history-${dpB.id}"]`)).toBeVisible({ timeout: 3_000 })
+    await expect(page.locator(`[data-testid="toggle-history-${dpA.id}"]`)).toBeVisible({ timeout: 5_000 })
+    await expect(page.locator(`[data-testid="toggle-history-${dpB.id}"]`)).toBeVisible({ timeout: 5_000 })
   } finally {
     await Promise.all([
       apiDelete(`/api/v1/datapoints/${dpA.id}`),
