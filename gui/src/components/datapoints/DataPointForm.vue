@@ -100,8 +100,12 @@ const UNIT_CATEGORIES = [
     units: ['m/s', 'km/h', 'm/s²'],
   },
   {
+    label: 'Winkel',
+    units: ['°'],
+  },
+  {
     label: 'Volumen & Durchfluss',
-    units: ['m³', 'l', 'dl', 'cl', 'm³/h', 'l/h', 'l/min'],
+    units: ['m³', 'l', 'dl', 'cl', 'm³/h', 'l/h', 'l/min', 'mm/h'],
   },
   {
     label: 'Länge & Fläche',
@@ -114,6 +118,10 @@ const UNIT_CATEGORIES = [
   {
     label: 'Zeit',
     units: ['ms', 's', 'min', 'h', 'd'],
+  },
+  {
+    label: 'Strahlung',
+    units: ['nSv/h', 'mSv/h'],
   },
   {
     label: 'Sonstiges',

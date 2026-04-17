@@ -276,3 +276,51 @@ test('Zurück-Navigation stellt Filter wieder her', async ({ page }) => {
     await apiDelete(`/api/v1/datapoints/${dpId}`)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Test 8: Neue Einheiten (°, mm/h, nSv/h, mSv/h) sind in der Auswahl
+// ---------------------------------------------------------------------------
+
+test('Neue Einheiten sind im Einheiten-Dropdown vorhanden', async ({ page }) => {
+  await page.goto('/gui/')
+  await page.click('[data-testid="nav-datapoints"]')
+  await expect(page).toHaveURL(/\/datapoints/)
+  await page.click('[data-testid="btn-new-datapoint"]')
+
+  const select = page.locator('[data-testid="select-unit"]')
+  await expect(select).toBeVisible({ timeout: 5_000 })
+
+  for (const unit of ['°', 'mm/h', 'nSv/h', 'mSv/h']) {
+    await expect(select.locator(`option[value="${unit}"]`)).toHaveCount(1, { timeout: 3_000 })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Test 9: DataPoint mit Einheit ° anlegen und in der Liste sehen
+// ---------------------------------------------------------------------------
+
+test('DataPoint mit Einheit ° anlegen', async ({ page }) => {
+  const name = `E2E-Winkel-${Date.now()}`
+
+  await page.goto('/gui/')
+  await page.click('[data-testid="nav-datapoints"]')
+  await expect(page).toHaveURL(/\/datapoints/)
+
+  await page.click('[data-testid="btn-new-datapoint"]')
+  await page.fill('[data-testid="input-name"]', name)
+  await page.selectOption('[data-testid="select-unit"]', '°')
+  await page.click('[data-testid="btn-save"]')
+
+  await expect(page.locator('[data-testid="datapoint-list"]')).toContainText(name, { timeout: 5_000 })
+
+  const rows = await page.locator('[data-testid^="dp-row-"]').all()
+  for (const row of rows) {
+    const text = await row.textContent()
+    if (text?.includes(name)) {
+      const testid = await row.getAttribute('data-testid') ?? ''
+      const id = testid.replace('dp-row-', '')
+      await apiDelete(`/api/v1/datapoints/${id}`)
+      break
+    }
+  }
+})
