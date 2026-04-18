@@ -486,8 +486,8 @@ async def modbus_generator(cfg: dict) -> None:
     ir_values: list[int] = [0] * _SIZE
 
     device = SimDevice(
-        unit_id=unit_id,
-        data=[
+        id=unit_id,
+        simdata=[
             SimData(address=0, values=co_values, datatype=DataType.BITS),
             SimData(address=0, values=di_values, datatype=DataType.BITS),
             SimData(address=0, values=hr_values, datatype=DataType.REGISTERS),
