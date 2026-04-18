@@ -152,9 +152,9 @@ test('NodeConfigPanel: Ungültiges JSON in Wertzuordnung zeigt Fehlermeldung', a
     const textarea = page.locator('[data-testid="value-map-custom"]')
     await expect(textarea).toBeVisible({ timeout: 5_000 })
 
-    // Replace with invalid JSON and trigger the change handler
+    // Replace with invalid JSON; press Tab to blur → fires native change event
     await textarea.fill('{not valid json')
-    await textarea.dispatchEvent('change')
+    await textarea.press('Tab')
     await page.waitForTimeout(300)
 
     // Error message must appear
