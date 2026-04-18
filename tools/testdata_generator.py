@@ -501,9 +501,12 @@ async def modbus_generator(cfg: dict) -> None:
     _devices = [_make_device(0)] if unit_id == 0 else [_make_device(0), _make_device(unit_id)]
 
     _FC = {"coil": 1, "discrete_input": 2, "holding": 3, "input": 4}
-    _BUFFERS = {1: co_values, 2: di_values, 3: hr_values, 4: ir_values}
 
     async def update_loop() -> None:
+        # Wait briefly so server.context (SimCore) is fully initialized
+        await asyncio.sleep(0.2)
+        ctx = server.context
+
         async def update_one(reg_cfg: dict) -> None:
             interval = float(reg_cfg.get("interval", 1.0))
             reg_type = reg_cfg.get("register_type", "holding")
@@ -512,19 +515,16 @@ async def modbus_generator(cfg: dict) -> None:
             scale_factor = float(reg_cfg.get("scale_factor", 1.0))
             gen = ValueGenerator(reg_cfg)
             fc = _FC.get(reg_type, 3)
-            buf = _BUFFERS[fc]
 
             while True:
                 value = gen.next()
                 try:
                     if reg_type in ("coil", "discrete_input"):
-                        buf[address] = int(bool(value))
+                        await ctx.async_setValues(unit_id, fc, address, [int(bool(value))])
                         logger.info("Modbus %-16s[%d] = %s", reg_type, address, bool(value))
                     else:
                         regs = encode_value(value, data_format, scale_factor=scale_factor)
-                        for i, v in enumerate(regs):
-                            if address + i < len(buf):
-                                buf[address + i] = v
+                        await ctx.async_setValues(unit_id, fc, address, regs)
                         logger.info("Modbus %-16s[%d] = %s  raw=%s", reg_type, address, value, regs)
                 except Exception:
                     logger.exception("Modbus update failed register=%d", address)
