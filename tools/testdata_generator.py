@@ -450,12 +450,8 @@ async def knx_generator(cfg: dict) -> None:
 
 async def modbus_generator(cfg: dict) -> None:
     try:
-        from pymodbus.server import StartAsyncTcpServer
-        from pymodbus.datastore import (
-            ModbusSequentialDataBlock,
-            ModbusDeviceContext,
-            ModbusServerContext,
-        )
+        from pymodbus.server import ModbusTcpServer
+        from pymodbus.simulator.simdata import DataType, SimData, SimDevice
     except ImportError:
         logger.error("pymodbus not installed — Modbus generator disabled")
         return
@@ -478,19 +474,28 @@ async def modbus_generator(cfg: dict) -> None:
         ) -> list[int]:
             return [int(float(value) / scale_factor) & 0xFFFF]
 
-    co = ModbusSequentialDataBlock(1, [0] * 1000)
-    di = ModbusSequentialDataBlock(1, [0] * 1000)
-    hr = ModbusSequentialDataBlock(1, [0] * 1000)
-    ir = ModbusSequentialDataBlock(1, [0] * 1000)
-
-    unit_id = int(cfg.get("unit_id", 1))
-    slave_ctx = ModbusDeviceContext(di=di, co=co, hr=hr, ir=ir)
-    server_ctx = ModbusServerContext(devices={unit_id: slave_ctx})
-
     host = cfg.get("host", "0.0.0.0")
     port = int(cfg.get("port", 502))
+    unit_id = int(cfg.get("unit_id", 1))
+
+    _SIZE = 1000
+    co_values: list[int] = [0] * _SIZE
+    di_values: list[int] = [0] * _SIZE
+    hr_values: list[int] = [0] * _SIZE
+    ir_values: list[int] = [0] * _SIZE
+
+    device = SimDevice(
+        unit_id=unit_id,
+        data=[
+            SimData(address=0, values=co_values, datatype=DataType.BITS),
+            SimData(address=0, values=di_values, datatype=DataType.BITS),
+            SimData(address=0, values=hr_values, datatype=DataType.REGISTERS),
+            SimData(address=0, values=ir_values, datatype=DataType.REGISTERS),
+        ],
+    )
 
     _FC = {"coil": 1, "discrete_input": 2, "holding": 3, "input": 4}
+    _BUFFERS = {1: co_values, 2: di_values, 3: hr_values, 4: ir_values}
 
     async def update_loop() -> None:
         async def update_one(reg_cfg: dict) -> None:
@@ -501,16 +506,19 @@ async def modbus_generator(cfg: dict) -> None:
             scale_factor = float(reg_cfg.get("scale_factor", 1.0))
             gen = ValueGenerator(reg_cfg)
             fc = _FC.get(reg_type, 3)
+            buf = _BUFFERS[fc]
 
             while True:
                 value = gen.next()
                 try:
                     if reg_type in ("coil", "discrete_input"):
-                        slave_ctx.setValues(fc, address, [int(bool(value))])
+                        buf[address] = int(bool(value))
                         logger.info("Modbus %-16s[%d] = %s", reg_type, address, bool(value))
                     else:
                         regs = encode_value(value, data_format, scale_factor=scale_factor)
-                        slave_ctx.setValues(fc, address, regs)
+                        for i, v in enumerate(regs):
+                            if address + i < len(buf):
+                                buf[address + i] = v
                         logger.info("Modbus %-16s[%d] = %s  raw=%s", reg_type, address, value, regs)
                 except Exception:
                     logger.exception("Modbus update failed register=%d", address)
@@ -529,10 +537,8 @@ async def modbus_generator(cfg: dict) -> None:
             raise
 
     logger.info("Modbus TCP server starting on %s:%d (unit_id=%d)", host, port, unit_id)
-    server_task = asyncio.create_task(
-        StartAsyncTcpServer(context=server_ctx, address=(host, port)),
-        name="modbus-server",
-    )
+    server = ModbusTcpServer(device, address=(host, port))
+    server_task = asyncio.create_task(server.serve_forever(), name="modbus-server")
     update_task = asyncio.create_task(update_loop(), name="modbus-updater")
 
     try:
