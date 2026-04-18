@@ -152,12 +152,11 @@ test('NodeConfigPanel: Ungültiges JSON in Wertzuordnung zeigt Fehlermeldung', a
     const textarea = page.locator('[data-testid="value-map-custom"]')
     await expect(textarea).toBeVisible({ timeout: 5_000 })
 
-    // Replace with invalid JSON; press Tab to blur → fires native change event
+    // Replace with invalid JSON — fill() fires the input event → live validation shows error
     await textarea.fill('{not valid json')
-    await textarea.press('Tab')
-    await page.waitForTimeout(300)
+    await page.waitForTimeout(200)
 
-    // Error message must appear
+    // Error message must appear (driven by @input handler, no Tab needed)
     await expect(page.getByText(/Ungültiges JSON/i)).toBeVisible({ timeout: 3_000 })
   } finally {
     await apiDelete(`/api/v1/logic/graphs/${graphId}`)

@@ -89,6 +89,7 @@
             <div v-if="valueMapPreset === 'custom'" class="mt-1">
               <textarea
                 v-model="valueMapCustom"
+                @input="onValueMapCustomInput"
                 @change="onValueMapCustomChange"
                 class="input text-xs font-mono h-24 resize-y"
                 placeholder='{"0": "Aus", "1": "Init", "2": "Aktiv", "3": "Fehler"}'
@@ -879,6 +880,17 @@ function onExtractorPathSelect(e) {
   const key = props.node.type === 'json_extractor' ? 'json_path' : 'xml_path'
   localData.value[key] = path
   emitUpdate()
+}
+
+function onValueMapCustomInput(e) {
+  const val = e.target.value.trim()
+  if (!val) { valueMapCustomError.value = ''; return }
+  try {
+    JSON.parse(val)
+    valueMapCustomError.value = ''
+  } catch (err) {
+    valueMapCustomError.value = `Ungültiges JSON: ${err.message}`
+  }
 }
 
 function onValueMapCustomChange() {
