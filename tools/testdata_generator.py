@@ -451,7 +451,8 @@ async def knx_generator(cfg: dict) -> None:
 async def modbus_generator(cfg: dict) -> None:
     try:
         from pymodbus.server import ModbusTcpServer
-        from pymodbus.simulator.simdata import DataType, SimData, SimDevice
+        from pymodbus.simulator.simdata import DataType, SimData
+        from pymodbus.simulator.simdevice import SimDevice
     except ImportError:
         logger.error("pymodbus not installed — Modbus generator disabled")
         return
