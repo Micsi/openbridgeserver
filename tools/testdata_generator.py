@@ -485,7 +485,7 @@ async def modbus_generator(cfg: dict) -> None:
 
     unit_id = int(cfg.get("unit_id", 1))
     slave_ctx = ModbusDeviceContext(di=di, co=co, hr=hr, ir=ir)
-    server_ctx = ModbusServerContext(slaves={unit_id: slave_ctx}, single=False)
+    server_ctx = ModbusServerContext(devices={unit_id: slave_ctx})
 
     host = cfg.get("host", "0.0.0.0")
     port = int(cfg.get("port", 502))
