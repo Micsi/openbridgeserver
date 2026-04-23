@@ -84,6 +84,7 @@ const NODE_DEFS = {
   or:           { label: 'OR',          color: '#1d4ed8', inputs: [{id:'in1',label:'IN 1'},{id:'in2',label:'IN 2'}], outputs: [{id:'out',   label:'Out'}]       },
   not:          { label: 'NOT',         color: '#1d4ed8', inputs: [{id:'in1',label:'IN 1'}],                         outputs: [{id:'out',   label:'Out'}]       },
   xor:          { label: 'XOR',         color: '#1d4ed8', inputs: [{id:'in1',label:'IN 1'},{id:'in2',label:'IN 2'}], outputs: [{id:'out',   label:'Out'}]       },
+  gate:         { label: 'TOR',         color: '#1d4ed8', inputs: [{id:'in',label:'Eingang'},{id:'enable',label:'Freigabe'}], outputs: [{id:'out', label:'Ausgang'}]  },
   compare:      { label: 'Vergleich',   color: '#1d4ed8', inputs: [{id:'in1',label:'IN 1'},{id:'in2',label:'IN 2'}], outputs: [{id:'out',   label:'Erg.'}]      },
   hysteresis:   { label: 'Hysterese',   color: '#1d4ed8', inputs: [{id:'value',label:'Wert'}],                       outputs: [{id:'out',   label:'Out'}]       },
   math_formula: { label: 'Formel',      color: '#7c3aed', inputs: [{id:'in1',label:'IN 1'},{id:'in2',label:'IN 2'}],  outputs: [{id:'result',label:'Erg.'}]      },
@@ -176,6 +177,10 @@ const summary = computed(() => {
   if (props.type === 'heating_circuit')     return `W≤${d.temp_winter ?? 15} °C  S≥${d.temp_summer ?? 20} °C`
   if (props.type === 'min_max_tracker')     return null
   if (props.type === 'consumption_counter') return null
+  if (props.type === 'gate') {
+    const behavior = d.closed_behavior === 'default_value' ? `→ ${d.default_value ?? 0}` : '→ halten'
+    return d.negate_enable ? `¬Freigabe  ${behavior}` : behavior
+  }
   if (props.type === 'and' || props.type === 'or' || props.type === 'xor') {
     const count = Math.max(2, Math.min(30, Number(props.data?.input_count) || 2))
     return count > 2 ? `${count} Eingänge` : null

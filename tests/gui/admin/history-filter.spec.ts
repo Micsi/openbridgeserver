@@ -206,11 +206,25 @@ test('Objekt-Filter zeigt alle Objekte — Zähler entspricht API-Gesamtzahl', a
   const expectedTotal = totalBefore + 3
 
   try {
+    // Brief pause so all 3 API writes are fully committed before page load
+    await page.waitForTimeout(500)
+
     await openHistoryFilterTab(page)
 
-    // Der Zähler "X von Y Objekt(e) ausgeschlossen" muss Y = expectedTotal zeigen
+    // Reload to guarantee a fresh fetch — the page might have loaded before the new DPs were indexed
+    await page.reload()
+    await page.click('button:has-text("Historie DB")')
+    await expect(page.locator('[data-testid="history-filter-card"]')).toBeVisible({ timeout: 8_000 })
+    await expect(page.locator('[data-testid="history-filter-loading"]')).not.toBeVisible({ timeout: 10_000 })
+
+    // Der Zähler muss Y >= expectedTotal zeigen — parallel laufende Tests können weitere DPs anlegen,
+    // daher ist nur eine Untergrenze korrekt (nicht exakter Vergleich).
     const counterText = page.locator('[data-testid="history-filter-card"] .card-header span')
-    await expect(counterText).toContainText(`von ${expectedTotal} Objekt`, { timeout: 8_000 })
+    await expect.poll(async () => {
+      const text = await counterText.textContent() ?? ''
+      const m = text.match(/von (\d+) Objekt/)
+      return m ? parseInt(m[1]) : 0
+    }, { timeout: 8_000 }).toBeGreaterThanOrEqual(expectedTotal)
 
     // Alle 3 neu erstellten Objekte müssen einzeln auffindbar sein
     for (const dp of created) {
