@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { apiPost, apiDelete } from '../helpers'
+import { apiGet, apiPost, apiDelete } from '../helpers'
 
 // ---------------------------------------------------------------------------
 // Helper: PATCH DataPoint via API
@@ -183,5 +183,41 @@ test('Objekt-Filter Suche filtert Objekte korrekt', async ({ page }) => {
       apiDelete(`/api/v1/datapoints/${dpA.id}`),
       apiDelete(`/api/v1/datapoints/${dpB.id}`),
     ])
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Test 5: Objekt-Filter — Zähler stimmt mit tatsächlicher Gesamtzahl überein
+// (Regression für Bug #212: nur 500 Objekte wurden angezeigt)
+// ---------------------------------------------------------------------------
+
+test('Objekt-Filter zeigt alle Objekte — Zähler entspricht API-Gesamtzahl', async ({ page }) => {
+  const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
+
+  // Gesamtzahl vor dem Test ermitteln
+  const before = await apiGet('/api/v1/datapoints/?page=0&size=1') as { total: number }
+  const totalBefore = before.total
+
+  // 3 neue Objekte anlegen, damit mindestens diese im Filter erscheinen müssen
+  const names = Array.from({ length: 3 }, (_, i) => `E2E-CountCheck-${Date.now()}-${i}`)
+  const created = await Promise.all(
+    names.map(name => apiPost('/api/v1/datapoints', { name, data_type: 'FLOAT', tags: [] }) as Promise<{ id: string }>)
+  )
+  const expectedTotal = totalBefore + 3
+
+  try {
+    await openHistoryFilterTab(page)
+
+    // Der Zähler "X von Y Objekt(e) ausgeschlossen" muss Y = expectedTotal zeigen
+    const counterText = page.locator('[data-testid="history-filter-card"] .card-header span')
+    await expect(counterText).toContainText(`von ${expectedTotal} Objekt`, { timeout: 8_000 })
+
+    // Alle 3 neu erstellten Objekte müssen einzeln auffindbar sein
+    for (const dp of created) {
+      await page.fill('[data-testid="input-history-filter-search"]', dp.id)
+      await expect(page.locator(`[data-testid="toggle-history-${dp.id}"]`)).toBeVisible({ timeout: 8_000 })
+    }
+  } finally {
+    await Promise.all(created.map(dp => apiDelete(`/api/v1/datapoints/${dp.id}`)))
   }
 })

@@ -65,7 +65,18 @@ export const authApi = {
 // ── DataPoints ────────────────────────────────────────────────────────────
 export const dpApi = {
   list:          (page = 0, size = 50, sort = 'created_at', order = 'asc') => api.get('/datapoints/', { params: { page, size, sort, order } }),
-  listAll:       ()                             => api.get('/datapoints/', { params: { page: 0, size: 500, sort: 'name', order: 'asc' } }),
+  listAll: async () => {
+    const size = 500
+    const first = await api.get('/datapoints/', { params: { page: 0, size, sort: 'name', order: 'asc' } })
+    const { items, pages } = first.data
+    if (pages <= 1) return { data: { items } }
+    const rest = await Promise.all(
+      Array.from({ length: pages - 1 }, (_, i) =>
+        api.get('/datapoints/', { params: { page: i + 1, size, sort: 'name', order: 'asc' } })
+      )
+    )
+    return { data: { items: [...items, ...rest.flatMap(r => r.data.items)] } }
+  },
   get:           (id)                           => api.get(`/datapoints/${id}`),
   create:        (data)                         => api.post('/datapoints/', data),
   update:        (id, data)                     => api.patch(`/datapoints/${id}`, data),
