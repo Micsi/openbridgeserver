@@ -115,7 +115,7 @@ _SORT_KEYS = {
 @router.get("/", response_model=DataPointPage)
 async def list_datapoints(
     page:  int = Query(0, ge=0),
-    size:  int = Query(50, ge=1, le=500),
+    size:  int = Query(50, ge=1, le=10000),
     sort:  str = Query("created_at", pattern="^(name|data_type|created_at|updated_at)$"),
     order: str = Query("asc",        pattern="^(asc|desc)$"),
     _user: str = Depends(get_current_user),
