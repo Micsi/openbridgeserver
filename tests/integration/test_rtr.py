@@ -40,7 +40,7 @@ async def _create_int_dp(client, auth_headers, name: str) -> str:
 async def _create_page(client, auth_headers) -> str:
     resp = await client.post(
         "/api/v1/visu/nodes",
-        json={"name": f"RTR-Test-{uuid.uuid4()}", "type": "PAGE", "order": 999, "access": "private"},
+        json={"name": f"RTR-Test-{uuid.uuid4()}", "type": "PAGE", "order": 999, "access": "protected"},
         headers=auth_headers,
     )
     assert resp.status_code == 201
