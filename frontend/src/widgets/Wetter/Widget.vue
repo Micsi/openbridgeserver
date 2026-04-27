@@ -226,14 +226,14 @@ const activeAlerts = computed(() => {
 
 <template>
   <div
-    class="h-full w-full flex flex-col overflow-hidden bg-gray-900 rounded text-white select-none"
+    class="h-full w-full flex flex-col overflow-hidden bg-white dark:bg-gray-900 rounded text-gray-900 dark:text-white select-none"
     data-testid="wetter-widget"
   >
 
     <!-- ── Editor-Platzhalter ───────────────────────────────────────────────── -->
     <div
       v-if="editorMode && !url"
-      class="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2"
+      class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 gap-2"
     >
       <span class="text-4xl">🌤️</span>
       <span class="text-xs">Wetter-API-URL konfigurieren</span>
@@ -242,17 +242,17 @@ const activeAlerts = computed(() => {
     <!-- ── Editor-Modus mit URL (kein Live-Fetch) ──────────────────────────── -->
     <div
       v-else-if="editorMode && url"
-      class="flex-1 flex flex-col items-center justify-center text-gray-500 gap-1"
+      class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 gap-1"
     >
       <span class="text-3xl">🌤️</span>
-      <span class="text-xs text-gray-400">{{ label || 'Wetter' }}</span>
-      <span class="text-xs text-gray-600">Vorschau im Live-Modus</span>
+      <span class="text-xs text-gray-500 dark:text-gray-400">{{ label || 'Wetter' }}</span>
+      <span class="text-xs text-gray-400 dark:text-gray-600">Vorschau im Live-Modus</span>
     </div>
 
     <!-- ── Kein URL im Live-Modus ───────────────────────────────────────────── -->
     <div
       v-else-if="!url"
-      class="flex-1 flex items-center justify-center text-gray-600 text-xs"
+      class="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-600 text-xs"
     >
       Keine API-URL konfiguriert
     </div>
@@ -260,7 +260,7 @@ const activeAlerts = computed(() => {
     <!-- ── Laden ────────────────────────────────────────────────────────────── -->
     <div
       v-else-if="loading && !weatherData"
-      class="flex-1 flex items-center justify-center text-gray-500 text-xs gap-2"
+      class="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500 text-xs gap-2"
     >
       <span class="animate-spin">⏳</span>
       <span>Wetterdaten werden geladen …</span>
@@ -272,9 +272,9 @@ const activeAlerts = computed(() => {
       class="flex-1 flex flex-col items-center justify-center gap-2 px-4"
     >
       <span class="text-2xl">⚠️</span>
-      <span class="text-xs text-red-400 text-center">{{ errorMsg }}</span>
+      <span class="text-xs text-red-600 dark:text-red-400 text-center">{{ errorMsg }}</span>
       <button
-        class="mt-1 px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-200 transition-colors"
+        class="mt-1 px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-xs text-gray-700 dark:text-gray-200 transition-colors"
         @click="fetchWeather"
       >
         Neu laden
@@ -287,13 +287,13 @@ const activeAlerts = computed(() => {
       <!-- Header: Ort + Aktualisierung -->
       <div class="flex items-center justify-between px-3 pt-2 pb-1 shrink-0">
         <span
-          class="text-sm font-semibold text-gray-100 truncate"
+          class="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate"
           data-testid="wetter-location"
         >
           {{ locationName }}
         </span>
         <button
-          class="text-gray-500 hover:text-gray-300 transition-colors text-xs ml-2 shrink-0"
+          class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors text-xs ml-2 shrink-0"
           title="Jetzt aktualisieren"
           @click="fetchWeather"
         >
@@ -310,14 +310,14 @@ const activeAlerts = computed(() => {
           <span class="text-3xl font-bold leading-none" data-testid="wetter-temp">
             {{ fmtTemp(weatherData.current.temp) }}
           </span>
-          <span class="text-xs text-gray-400 truncate capitalize mt-0.5">
+          <span class="text-xs text-gray-500 dark:text-gray-400 truncate capitalize mt-0.5">
             {{ weatherData.current.weather[0]?.description ?? '' }}
           </span>
         </div>
       </div>
 
       <!-- Detail-Zeile ─────────────────────────────────────────────────────────── -->
-      <div class="flex flex-wrap gap-x-3 gap-y-0.5 px-3 pb-1 text-xs text-gray-400 shrink-0">
+      <div class="flex flex-wrap gap-x-3 gap-y-0.5 px-3 pb-1 text-xs text-gray-500 dark:text-gray-400 shrink-0">
         <span v-if="showFeelsLike" data-testid="wetter-feels-like">
           🌡️ {{ fmtTemp(weatherData.current.feels_like) }}
         </span>
@@ -347,7 +347,7 @@ const activeAlerts = computed(() => {
       </div>
 
       <!-- Trennlinie -->
-      <div v-if="showForecast && forecastSlice.length" class="border-t border-gray-800 mx-3 my-1 shrink-0" />
+      <div v-if="showForecast && forecastSlice.length" class="border-t border-gray-200 dark:border-gray-800 mx-3 my-1 shrink-0" />
 
       <!-- Vorhersage ───────────────────────────────────────────────────────────── -->
       <div
@@ -361,13 +361,13 @@ const activeAlerts = computed(() => {
           class="flex flex-col items-center gap-0.5 min-w-[3rem] flex-1"
           data-testid="wetter-forecast-day"
         >
-          <span class="text-xs text-gray-500 capitalize">{{ fmtDay(day.dt) }}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500 capitalize">{{ fmtDay(day.dt) }}</span>
           <span class="text-xl leading-none">{{ weatherIcon(day.weather[0]?.icon ?? '') }}</span>
-          <span class="text-xs font-semibold text-gray-200">{{ fmtTemp(day.temp.max) }}</span>
-          <span class="text-xs text-gray-500">{{ fmtTemp(day.temp.min) }}</span>
+          <span class="text-xs font-semibold text-gray-700 dark:text-gray-200">{{ fmtTemp(day.temp.max) }}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">{{ fmtTemp(day.temp.min) }}</span>
           <span
             v-if="showForecastPrecipitation && day.pop > 0"
-            class="text-xs text-blue-400"
+            class="text-xs text-blue-600 dark:text-blue-400"
             :title="`Niederschlag: ${fmtPercent(day.pop)}`"
           >
             {{ fmtPercent(day.pop) }}
@@ -378,16 +378,16 @@ const activeAlerts = computed(() => {
       <!-- Warnungen ────────────────────────────────────────────────────────────── -->
       <div
         v-if="activeAlerts.length"
-        class="mx-2 mb-2 rounded bg-orange-900/60 border border-orange-700 px-2 py-1.5 shrink-0"
+        class="mx-2 mb-2 rounded bg-orange-50 border border-orange-300 dark:bg-orange-900/60 dark:border-orange-700 px-2 py-1.5 shrink-0"
         data-testid="wetter-alerts"
       >
         <div
           v-for="alert in activeAlerts"
           :key="alert.event + alert.start"
-          class="text-xs text-orange-200"
+          class="text-xs text-orange-800 dark:text-orange-200"
         >
           ⚠️ {{ alert.event }}
-          <span v-if="alert.sender_name" class="text-orange-400 ml-1">({{ alert.sender_name }})</span>
+          <span v-if="alert.sender_name" class="text-orange-600 dark:text-orange-400 ml-1">({{ alert.sender_name }})</span>
         </div>
       </div>
 
