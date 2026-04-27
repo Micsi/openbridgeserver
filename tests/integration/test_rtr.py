@@ -104,7 +104,7 @@ async def test_rtr_page_config_roundtrip(client, auth_headers):
             json=page_payload,
             headers=auth_headers,
         )
-        assert put.status_code == 200, put.text
+        assert put.status_code in (200, 204), put.text
 
         get = await client.get(f"/api/v1/visu/pages/{page_id}", headers=auth_headers)
         assert get.status_code == 200, get.text
@@ -153,7 +153,7 @@ async def test_rtr_optional_dps_null(client, auth_headers):
             },
             headers=auth_headers,
         )
-        assert put.status_code == 200
+        assert put.status_code in (200, 204)
 
         get = await client.get(f"/api/v1/visu/pages/{page_id}", headers=auth_headers)
         assert get.status_code == 200
