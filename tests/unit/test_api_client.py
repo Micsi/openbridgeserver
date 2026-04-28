@@ -1,5 +1,4 @@
-"""
-Unit tests for the api_client logic node.
+"""Unit tests for the api_client logic node.
 
 Covers:
   - Executor: placeholder outputs (trigger, body, response, status, success)
@@ -8,22 +7,20 @@ Covers:
   - Manager: WS broadcast happens AFTER HTTP call (success=True visible)
   - Manager: Downstream nodes receive real api_client outputs (second-pass fix)
 """
+
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-from obs.logic.executor import GraphExecutor
 from obs.logic.manager import LogicManager
 from obs.logic.models import FlowData
 from tests.unit.conftest import edge, make_executor, node
 
-
 # ===========================================================================
 # Helpers
 # ===========================================================================
+
 
 def _flow(nodes: list[dict], edges: list[dict] | None = None) -> FlowData:
     return FlowData.model_validate({"nodes": nodes, "edges": edges or []})
@@ -55,6 +52,7 @@ def _mock_response(status_code: int, json_data: object | None = None, text: str 
 # ===========================================================================
 # Executor: placeholder behaviour
 # ===========================================================================
+
 
 class TestApiClientExecutorPlaceholder:
     """The executor returns a placeholder dict; real HTTP happens in manager."""
@@ -97,13 +95,14 @@ class TestApiClientExecutorPlaceholder:
 # Manager: HTTP execution
 # ===========================================================================
 
+
 class TestApiClientManagerHttp:
     """Tests that verify the real HTTP call path in LogicManager._execute_graph."""
 
     def _build_graph(self, method: str = "GET", extra_data: dict | None = None) -> tuple[str, FlowData]:
         """Return (node_id, flow) for a single api_client node with trigger=True."""
         data = {
-            "url":    "http://example.com/api",
+            "url": "http://example.com/api",
             "method": method,
             **(extra_data or {}),
         }
@@ -117,7 +116,12 @@ class TestApiClientManagerHttp:
         manager._graphs[graph_id] = ("test", True, flow)
         manager._node_state[graph_id] = {}
         return asyncio.run(
-            manager._execute_graph(graph_id, "test", flow, overrides if overrides is not None else {"ac": {"trigger": True}})
+            manager._execute_graph(
+                graph_id,
+                "test",
+                flow,
+                overrides if overrides is not None else {"ac": {"trigger": True}},
+            ),
         )
 
     @patch("obs.logic.manager.httpx.AsyncClient")
@@ -210,14 +214,13 @@ class TestApiClientManagerHttp:
 # Manager: Authentication
 # ===========================================================================
 
+
 class TestApiClientAuthentication:
     """Tests for Basic, Digest and Bearer auth configuration."""
 
     def _run_with_auth(self, auth_data: dict) -> tuple[dict, list]:
         """Run a graph with auth config; return (outputs, captured_httpx_auth_args)."""
         captured_auth: list = []
-
-        import httpx as _httpx
 
         class _FakeClient:
             def __init__(self, auth=None, verify=True):
@@ -244,41 +247,45 @@ class TestApiClientAuthentication:
 
         with patch("obs.logic.manager.httpx.AsyncClient", _FakeClient):
             with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-                outputs = asyncio.run(
-                    manager._execute_graph(
-                        graph_id, "test", flow, {"ac": {"trigger": True}}
-                    )
-                )
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"ac": {"trigger": True}}))
         return outputs, captured_auth
 
     def test_basic_auth_passes_httpx_basic_auth(self):
         import httpx as _httpx
-        outputs, captured = self._run_with_auth({
-            "auth_type":     "basic",
-            "auth_username": "alice",
-            "auth_password": "secret",
-        })
+
+        outputs, captured = self._run_with_auth(
+            {
+                "auth_type": "basic",
+                "auth_username": "alice",
+                "auth_password": "secret",
+            },
+        )
         assert outputs["ac"]["success"] is True
         assert len(captured) == 1
         assert isinstance(captured[0], _httpx.BasicAuth)
 
     def test_digest_auth_passes_httpx_digest_auth(self):
         import httpx as _httpx
-        outputs, captured = self._run_with_auth({
-            "auth_type":     "digest",
-            "auth_username": "bob",
-            "auth_password": "pass",
-        })
+
+        outputs, captured = self._run_with_auth(
+            {
+                "auth_type": "digest",
+                "auth_username": "bob",
+                "auth_password": "pass",
+            },
+        )
         assert outputs["ac"]["success"] is True
         assert isinstance(captured[0], _httpx.DigestAuth)
 
     def test_basic_auth_empty_username_skipped(self):
         """If username is empty, no auth object must be passed."""
-        outputs, captured = self._run_with_auth({
-            "auth_type":     "basic",
-            "auth_username": "",
-            "auth_password": "ignored",
-        })
+        outputs, captured = self._run_with_auth(
+            {
+                "auth_type": "basic",
+                "auth_username": "",
+                "auth_password": "ignored",
+            },
+        )
         assert captured[0] is None
 
     @patch("obs.logic.manager.httpx.AsyncClient")
@@ -296,9 +303,9 @@ class TestApiClientAuthentication:
 
         manager = _make_manager()
         data = {
-            "url":        "http://example.com/",
-            "method":     "GET",
-            "auth_type":  "bearer",
+            "url": "http://example.com/",
+            "method": "GET",
+            "auth_type": "bearer",
             "auth_token": "my-token-xyz",
         }
         n = node("ac", "api_client", data)
@@ -308,9 +315,7 @@ class TestApiClientAuthentication:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            asyncio.run(
-                manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
-            )
+            asyncio.run(manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}}))
 
         assert len(captured_headers) == 1
         assert captured_headers[0].get("Authorization") == "Bearer my-token-xyz"
@@ -330,9 +335,9 @@ class TestApiClientAuthentication:
 
         manager = _make_manager()
         data = {
-            "url":        "http://example.com/",
-            "method":     "GET",
-            "auth_type":  "bearer",
+            "url": "http://example.com/",
+            "method": "GET",
+            "auth_type": "bearer",
             "auth_token": "",
         }
         n = node("ac", "api_client", data)
@@ -342,9 +347,7 @@ class TestApiClientAuthentication:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            asyncio.run(
-                manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
-            )
+            asyncio.run(manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}}))
 
         assert "Authorization" not in captured_headers[0]
 
@@ -364,9 +367,7 @@ class TestApiClientAuthentication:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            asyncio.run(
-                manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
-            )
+            asyncio.run(manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}}))
 
         # Called with auth=None
         _, kwargs = mock_client_cls.call_args
@@ -377,16 +378,15 @@ class TestApiClientAuthentication:
 # Manager: downstream re-propagation (second-pass fix)
 # ===========================================================================
 
+
 class TestApiClientDownstreamPropagation:
-    """
-    The core bug fix: downstream nodes must see the real api_client outputs
+    """The core bug fix: downstream nodes must see the real api_client outputs
     (success=True for 200 OK), not the executor's placeholder (success=False).
     """
 
     @patch("obs.logic.manager.httpx.AsyncClient")
     def test_downstream_node_receives_real_success(self, mock_client_cls):
-        """
-        Graph: const_value(True) → api_client.trigger
+        """Graph: const_value(True) → api_client.trigger
                api_client.success → const_value_gate (and gate as proxy)
         After the second-pass fix, the downstream node must see success=True.
         """
@@ -397,15 +397,15 @@ class TestApiClientDownstreamPropagation:
 
         # Graph: cv_trig → ac.trigger,  ac.success → gate.in1, cv_true → gate.in2
         nodes = [
-            node("cv_trig", "const_value", {"value": "true",  "data_type": "bool"}),
-            node("cv_true", "const_value", {"value": "true",  "data_type": "bool"}),
-            node("ac",      "api_client",  {"url": "http://x.com", "method": "GET"}),
-            node("gate",    "and",         {"input_count": 2}),
+            node("cv_trig", "const_value", {"value": "true", "data_type": "bool"}),
+            node("cv_true", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://x.com", "method": "GET"}),
+            node("gate", "and", {"input_count": 2}),
         ]
         edges = [
-            edge("cv_trig", "ac",   "value",   "trigger"),
-            edge("ac",      "gate", "success", "in1"),
-            edge("cv_true", "gate", "value",   "in2"),
+            edge("cv_trig", "ac", "value", "trigger"),
+            edge("ac", "gate", "success", "in1"),
+            edge("cv_true", "gate", "value", "in2"),
         ]
         flow = _flow(nodes, edges)
 
@@ -415,9 +415,7 @@ class TestApiClientDownstreamPropagation:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = asyncio.run(
-                manager._execute_graph(graph_id, "t", flow, {})
-            )
+            outputs = asyncio.run(manager._execute_graph(graph_id, "t", flow, {}))
 
         # api_client must show real success
         assert outputs["ac"]["success"] is True
@@ -436,13 +434,13 @@ class TestApiClientDownstreamPropagation:
         nodes = [
             node("cv_trig", "const_value", {"value": "true", "data_type": "bool"}),
             node("cv_true", "const_value", {"value": "true", "data_type": "bool"}),
-            node("ac",      "api_client",  {"url": "http://x.com"}),
-            node("gate",    "and",         {"input_count": 2}),
+            node("ac", "api_client", {"url": "http://x.com"}),
+            node("gate", "and", {"input_count": 2}),
         ]
         edges = [
-            edge("cv_trig", "ac",   "value",   "trigger"),
-            edge("ac",      "gate", "success", "in1"),
-            edge("cv_true", "gate", "value",   "in2"),
+            edge("cv_trig", "ac", "value", "trigger"),
+            edge("ac", "gate", "success", "in1"),
+            edge("cv_true", "gate", "value", "in2"),
         ]
         flow = _flow(nodes, edges)
 
@@ -452,9 +450,7 @@ class TestApiClientDownstreamPropagation:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = asyncio.run(
-                manager._execute_graph(graph_id, "t", flow, {})
-            )
+            outputs = asyncio.run(manager._execute_graph(graph_id, "t", flow, {}))
 
         assert outputs["ac"]["success"] is False
         assert outputs["gate"]["out"] is False
@@ -463,6 +459,7 @@ class TestApiClientDownstreamPropagation:
 # ===========================================================================
 # Manager: WS broadcast receives final (post-HTTP) outputs
 # ===========================================================================
+
 
 class TestApiClientWsBroadcast:
     """WS broadcast must show real api_client results, not initial placeholders."""
@@ -487,9 +484,7 @@ class TestApiClientWsBroadcast:
         manager._node_state[graph_id] = {}
 
         with patch("obs.api.v1.websocket.get_ws_manager", return_value=mock_ws_manager):
-            asyncio.run(
-                manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
-            )
+            asyncio.run(manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}}))
 
         assert len(ws_payloads) == 1
         ac_out = ws_payloads[0]["outputs"]["ac"]
@@ -502,17 +497,23 @@ class TestApiClientWsBroadcast:
 # Manager: response_type values (issue #208)
 # ===========================================================================
 
+
 class TestApiClientResponseType:
     """response_type 'application/json' and 'text/plain' (new MIME-style values)
-    must behave identically to the legacy 'json' / 'text' values."""
+    must behave identically to the legacy 'json' / 'text' values.
+    """
 
     def _run_with_response_type(self, response_type: str, mock_resp) -> dict:
         manager = _make_manager()
-        n = node("ac", "api_client", {
-            "url": "http://example.com/api",
-            "method": "GET",
-            "response_type": response_type,
-        })
+        n = node(
+            "ac",
+            "api_client",
+            {
+                "url": "http://example.com/api",
+                "method": "GET",
+                "response_type": response_type,
+            },
+        )
         flow = _flow([n])
         graph_id = "g"
         manager._graphs[graph_id] = ("t", True, flow)
@@ -524,9 +525,7 @@ class TestApiClientResponseType:
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_client.request = AsyncMock(return_value=mock_resp)
             with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-                return asyncio.run(
-                    manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}})
-                )
+                return asyncio.run(manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}}))
 
     def test_application_json_parses_json(self):
         resp = _mock_response(200, {"key": "value"})

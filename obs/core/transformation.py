@@ -1,5 +1,4 @@
-"""
-Shared value-transformation helpers.
+"""Shared value-transformation helpers.
 
 Extracted from the MQTT adapter so that the same coercion + mapping
 logic can be reused by other adapters, the logic engine, etc.
@@ -12,6 +11,7 @@ apply_source_type(raw, auto_value, source_data_type, json_key, xml_path, binding
 apply_value_map(value, value_map)
     Apply a string-keyed substitution map to an incoming or outgoing value.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,8 +29,7 @@ def apply_source_type(
     xml_path: str | None,
     binding_id: Any = None,
 ) -> Any:
-    """
-    Coerce / extract *raw* (a decoded string payload) to a Python value.
+    """Coerce / extract *raw* (a decoded string payload) to a Python value.
 
     Parameters
     ----------
@@ -45,6 +44,7 @@ def apply_source_type(
     Returns
     -------
     Coerced Python value.
+
     """
     pub_value = auto_value
 
@@ -58,6 +58,7 @@ def apply_source_type(
     elif source_data_type == "xml":
         try:
             import xml.etree.ElementTree as ET
+
             root = ET.fromstring(raw)
             if xml_path:
                 el = root.find(xml_path)
@@ -73,19 +74,26 @@ def apply_source_type(
                 else:
                     logger.warning(
                         "Transformation XML: path %r not found in payload for binding %s",
-                        xml_path, binding_id,
+                        xml_path,
+                        binding_id,
                     )
             else:
                 pub_value = (root.text or "").strip()
         except Exception as xml_exc:
-            logger.warning("Transformation XML: parse error for binding %s: %s", binding_id, xml_exc)
+            logger.warning(
+                "Transformation XML: parse error for binding %s: %s",
+                binding_id,
+                xml_exc,
+            )
 
     elif source_data_type == "int":
         try:
             pub_value = int(float(pub_value)) if isinstance(pub_value, str) else int(pub_value)
         except (ValueError, TypeError):
             logger.warning(
-                "Transformation: cannot coerce %r to int for binding %s", pub_value, binding_id
+                "Transformation: cannot coerce %r to int for binding %s",
+                pub_value,
+                binding_id,
             )
 
     elif source_data_type == "float":
@@ -93,7 +101,9 @@ def apply_source_type(
             pub_value = float(pub_value)
         except (ValueError, TypeError):
             logger.warning(
-                "Transformation: cannot coerce %r to float for binding %s", pub_value, binding_id
+                "Transformation: cannot coerce %r to float for binding %s",
+                pub_value,
+                binding_id,
             )
 
     elif source_data_type == "bool":
@@ -113,8 +123,7 @@ def apply_source_type(
 
 
 def apply_value_map(value: Any, value_map: dict[str, Any] | None) -> Any:
-    """
-    Apply a string-keyed substitution map.
+    """Apply a string-keyed substitution map.
 
     The incoming *value* is converted to str for the lookup; if no entry
     is found the original *value* is returned unchanged.
@@ -135,6 +144,7 @@ def apply_value_map(value: Any, value_map: dict[str, Any] | None) -> Any:
     Returns
     -------
     Mapped value or original *value* if no match / no map.
+
     """
     if not value_map:
         return value

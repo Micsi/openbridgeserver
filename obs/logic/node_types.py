@@ -1,4 +1,5 @@
 """Registry of all built-in node type definitions."""
+
 from __future__ import annotations
 
 from obs.logic.models import NodeTypeDef, NodeTypePort
@@ -6,6 +7,7 @@ from obs.logic.models import NodeTypeDef, NodeTypePort
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _port(id_: str, label: str, type_: str = "value") -> NodeTypePort:
     return NodeTypePort(id=id_, label=label, type=type_)
@@ -16,7 +18,6 @@ def _port(id_: str, label: str, type_: str = "value") -> NodeTypePort:
 # ---------------------------------------------------------------------------
 
 BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
-
     # ── Constant ─────────────────────────────────────────────────────────
     NodeTypeDef(
         type="const_value",
@@ -26,13 +27,16 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[],
         outputs=[_port("value", "Wert")],
         config_schema={
-            "value":     {"type": "string", "default": "0",      "label": "Wert"},
-            "data_type": {"type": "string", "enum": ["number", "bool", "string"],
-                          "default": "number", "label": "Datentyp"},
+            "value": {"type": "string", "default": "0", "label": "Wert"},
+            "data_type": {
+                "type": "string",
+                "enum": ["number", "bool", "string"],
+                "default": "number",
+                "label": "Datentyp",
+            },
         },
         color="#475569",
     ),
-
     # ── Logic ────────────────────────────────────────────────────────────
     NodeTypeDef(
         type="and",
@@ -42,7 +46,13 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("in1", "IN 1"), _port("in2", "IN 2")],
         outputs=[_port("out", "Out")],
         config_schema={
-            "input_count": {"type": "number", "default": 2, "min": 2, "max": 30, "label": "Anzahl Eingänge"},
+            "input_count": {
+                "type": "number",
+                "default": 2,
+                "min": 2,
+                "max": 30,
+                "label": "Anzahl Eingänge",
+            },
         },
         color="#1d4ed8",
     ),
@@ -54,7 +64,13 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("in1", "IN 1"), _port("in2", "IN 2")],
         outputs=[_port("out", "Out")],
         config_schema={
-            "input_count": {"type": "number", "default": 2, "min": 2, "max": 30, "label": "Anzahl Eingänge"},
+            "input_count": {
+                "type": "number",
+                "default": 2,
+                "min": 2,
+                "max": 30,
+                "label": "Anzahl Eingänge",
+            },
         },
         color="#1d4ed8",
     ),
@@ -75,7 +91,13 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("in1", "IN 1"), _port("in2", "IN 2")],
         outputs=[_port("out", "Out")],
         config_schema={
-            "input_count": {"type": "number", "default": 2, "min": 2, "max": 30, "label": "Anzahl Eingänge"},
+            "input_count": {
+                "type": "number",
+                "default": 2,
+                "min": 2,
+                "max": 30,
+                "label": "Anzahl Eingänge",
+            },
         },
         color="#1d4ed8",
     ),
@@ -114,7 +136,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#1d4ed8",
     ),
-
     # ── Comparison ────────────────────────────────────────────────────────
     NodeTypeDef(
         type="compare",
@@ -124,7 +145,11 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("in1", "IN 1"), _port("in2", "IN 2")],
         outputs=[_port("out", "Ergebnis")],
         config_schema={
-            "operator": {"type": "string", "enum": [">", "<", "=", ">=", "<=", "!="], "default": ">"}
+            "operator": {
+                "type": "string",
+                "enum": [">", "<", "=", ">=", "<=", "!="],
+                "default": ">",
+            },
         },
         color="#1d4ed8",
     ),
@@ -136,7 +161,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("value", "Wert")],
         outputs=[_port("out", "Out")],
         config_schema={
-            "threshold_on":  {"type": "number", "default": 25.0},
+            "threshold_on": {"type": "number", "default": 25.0},
             "threshold_off": {"type": "number", "default": 20.0},
             "persist_state": {
                 "type": "boolean",
@@ -146,7 +171,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#1d4ed8",
     ),
-
     # ── DataPoint ─────────────────────────────────────────────────────────
     NodeTypeDef(
         type="datapoint_read",
@@ -156,16 +180,16 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[],
         outputs=[_port("value", "Wert"), _port("changed", "Geändert", "trigger")],
         config_schema={
-            "datapoint_id":      {"type": "string", "format": "datapoint"},
-            "datapoint_name":    {"type": "string"},
+            "datapoint_id": {"type": "string", "format": "datapoint"},
+            "datapoint_name": {"type": "string"},
             # ── Transformation ────────────────────────────────────────────
-            "value_formula":     {"type": "string",  "default": ""},
+            "value_formula": {"type": "string", "default": ""},
             # ── Filter ────────────────────────────────────────────────────
             "trigger_on_change": {"type": "boolean", "default": False},
-            "min_delta":         {"type": "number",  "default": ""},
-            "min_delta_pct":     {"type": "number",  "default": ""},
-            "throttle_value":    {"type": "number",  "default": ""},
-            "throttle_unit":     {"type": "string",  "default": "s"},
+            "min_delta": {"type": "number", "default": ""},
+            "min_delta_pct": {"type": "number", "default": ""},
+            "throttle_value": {"type": "number", "default": ""},
+            "throttle_unit": {"type": "string", "default": "s"},
         },
         color="#0f766e",
     ),
@@ -177,19 +201,18 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("value", "Wert"), _port("trigger", "Trigger", "trigger")],
         outputs=[],
         config_schema={
-            "datapoint_id":   {"type": "string",  "format": "datapoint"},
+            "datapoint_id": {"type": "string", "format": "datapoint"},
             "datapoint_name": {"type": "string"},
             # ── Transformation ────────────────────────────────────────────
-            "value_formula":  {"type": "string",  "default": ""},
+            "value_formula": {"type": "string", "default": ""},
             # ── Filter ────────────────────────────────────────────────────
             "only_on_change": {"type": "boolean", "default": False},
-            "min_delta":      {"type": "number",  "default": ""},
-            "throttle_value": {"type": "number",  "default": ""},
-            "throttle_unit":  {"type": "string",  "default": "s"},
+            "min_delta": {"type": "number", "default": ""},
+            "throttle_value": {"type": "number", "default": ""},
+            "throttle_unit": {"type": "string", "default": "s"},
         },
         color="#0f766e",
     ),
-
     # ── Math ──────────────────────────────────────────────────────────────
     NodeTypeDef(
         type="math_formula",
@@ -199,7 +222,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("in1", "IN 1"), _port("in2", "IN 2")],
         outputs=[_port("result", "Ergebnis")],
         config_schema={
-            "formula":        {"type": "string", "default": "a + b"},
+            "formula": {"type": "string", "default": "a + b"},
             "output_formula": {"type": "string", "default": ""},
         },
         color="#7c3aed",
@@ -212,8 +235,8 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("value", "Wert")],
         outputs=[_port("result", "Ergebnis")],
         config_schema={
-            "in_min":  {"type": "number", "default": 0},
-            "in_max":  {"type": "number", "default": 100},
+            "in_min": {"type": "number", "default": 0},
+            "in_max": {"type": "number", "default": 100},
             "out_min": {"type": "number", "default": 0},
             "out_max": {"type": "number", "default": 1},
         },
@@ -227,7 +250,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("value", "Wert")],
         outputs=[_port("result", "Ergebnis")],
         config_schema={
-            "min": {"type": "number", "default": 0,   "label": "Minimum"},
+            "min": {"type": "number", "default": 0, "label": "Minimum"},
             "max": {"type": "number", "default": 100, "label": "Maximum"},
         },
         color="#7c3aed",
@@ -239,9 +262,9 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         description="Berechnet Min/Max/Mittelwert laufend über alle empfangenen Werte. Reset-Eingang setzt zurück.",
         inputs=[_port("value", "Wert"), _port("reset", "Reset", "trigger")],
         outputs=[
-            _port("min",   "Min"),
-            _port("max",   "Max"),
-            _port("avg",   "Mittelwert"),
+            _port("min", "Min"),
+            _port("max", "Max"),
+            _port("avg", "Mittelwert"),
             _port("count", "Anzahl"),
         ],
         config_schema={
@@ -253,7 +276,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#7c3aed",
     ),
-
     # ── Mittelwert / Gleitender Mittelwert ───────────────────────────────
     NodeTypeDef(
         type="avg_multi",
@@ -267,13 +289,13 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         ),
         inputs=[],  # dynamic — generated by frontend based on input_count
         outputs=[
-            _port("avg",      "Mittelwert (aktuell)"),
-            _port("avg_1m",   "Gleit. ∅ 1 min"),
-            _port("avg_1h",   "Gleit. ∅ 1 Stunde"),
-            _port("avg_1d",   "Gleit. ∅ 1 Tag"),
-            _port("avg_7d",   "Gleit. ∅ 7 Tage"),
-            _port("avg_14d",  "Gleit. ∅ 14 Tage"),
-            _port("avg_30d",  "Gleit. ∅ 30 Tage"),
+            _port("avg", "Mittelwert (aktuell)"),
+            _port("avg_1m", "Gleit. ∅ 1 min"),
+            _port("avg_1h", "Gleit. ∅ 1 Stunde"),
+            _port("avg_1d", "Gleit. ∅ 1 Tag"),
+            _port("avg_7d", "Gleit. ∅ 7 Tage"),
+            _port("avg_14d", "Gleit. ∅ 14 Tage"),
+            _port("avg_30d", "Gleit. ∅ 30 Tage"),
             _port("avg_180d", "Gleit. ∅ 180 Tage"),
             _port("avg_365d", "Gleit. ∅ 365 Tage"),
         ],
@@ -293,7 +315,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#7c3aed",
     ),
-
     # ── String ───────────────────────────────────────────────────────────
     NodeTypeDef(
         type="string_concat",
@@ -303,12 +324,17 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[],  # dynamic — generated by frontend based on count
         outputs=[_port("result", "Ergebnis", "string")],
         config_schema={
-            "count":     {"type": "integer", "default": 2, "min": 2, "max": 20, "label": "Anzahl Eingänge"},
-            "separator": {"type": "string",  "default": "",  "label": "Trennzeichen"},
+            "count": {
+                "type": "integer",
+                "default": 2,
+                "min": 2,
+                "max": 20,
+                "label": "Anzahl Eingänge",
+            },
+            "separator": {"type": "string", "default": "", "label": "Trennzeichen"},
         },
         color="#0891b2",
     ),
-
     # ── Heating Circuit ───────────────────────────────────────────────────
     NodeTypeDef(
         type="heating_circuit",
@@ -325,15 +351,23 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         ],
         outputs=[
             _port("heating_mode", "Heizmodus"),
-            _port("daily_avg",    "Tagesmittel"),
-            _port("monthly_avg",  "Monatsmittel"),
-            _port("t1",           "T1 (debug)"),
-            _port("t2",           "T2 (debug)"),
-            _port("t3",           "T3 (debug)"),
+            _port("daily_avg", "Tagesmittel"),
+            _port("monthly_avg", "Monatsmittel"),
+            _port("t1", "T1 (debug)"),
+            _port("t2", "T2 (debug)"),
+            _port("t3", "T3 (debug)"),
         ],
         config_schema={
-            "temp_winter": {"type": "number", "default": 15.0, "label": "Temp. Winter °C (Heizen EIN)"},
-            "temp_summer": {"type": "number", "default": 20.0, "label": "Temp. Sommer °C (Heizen AUS)"},
+            "temp_winter": {
+                "type": "number",
+                "default": 15.0,
+                "label": "Temp. Winter °C (Heizen EIN)",
+            },
+            "temp_summer": {
+                "type": "number",
+                "default": 20.0,
+                "label": "Temp. Sommer °C (Heizen AUS)",
+            },
             "persist_state": {
                 "type": "boolean",
                 "default": True,
@@ -342,7 +376,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#7c3aed",
     ),
-
     # ── Min/Max Tracker ───────────────────────────────────────────────────
     NodeTypeDef(
         type="min_max_tracker",
@@ -355,26 +388,58 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         ),
         inputs=[_port("value", "Wert")],
         outputs=[
-            _port("min_daily",   "Min täglich"),
-            _port("max_daily",   "Max täglich"),
-            _port("min_weekly",  "Min wöchentlich"),
-            _port("max_weekly",  "Max wöchentlich"),
+            _port("min_daily", "Min täglich"),
+            _port("max_daily", "Max täglich"),
+            _port("min_weekly", "Min wöchentlich"),
+            _port("max_weekly", "Max wöchentlich"),
             _port("min_monthly", "Min monatlich"),
             _port("max_monthly", "Max monatlich"),
-            _port("min_yearly",  "Min jährlich"),
-            _port("max_yearly",  "Max jährlich"),
-            _port("min_abs",     "Min absolut"),
-            _port("max_abs",     "Max absolut"),
+            _port("min_yearly", "Min jährlich"),
+            _port("max_yearly", "Max jährlich"),
+            _port("min_abs", "Min absolut"),
+            _port("max_abs", "Max absolut"),
         ],
         config_schema={
-            "init_abs_min":   {"type": "number", "default": None, "label": "Startwert Min absolut"},
-            "init_abs_max":   {"type": "number", "default": None, "label": "Startwert Max absolut"},
-            "init_day_min":   {"type": "number", "default": None, "label": "Startwert Min täglich"},
-            "init_day_max":   {"type": "number", "default": None, "label": "Startwert Max täglich"},
-            "init_month_min": {"type": "number", "default": None, "label": "Startwert Min monatlich"},
-            "init_month_max": {"type": "number", "default": None, "label": "Startwert Max monatlich"},
-            "init_year_min":  {"type": "number", "default": None, "label": "Startwert Min jährlich"},
-            "init_year_max":  {"type": "number", "default": None, "label": "Startwert Max jährlich"},
+            "init_abs_min": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Min absolut",
+            },
+            "init_abs_max": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Max absolut",
+            },
+            "init_day_min": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Min täglich",
+            },
+            "init_day_max": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Max täglich",
+            },
+            "init_month_min": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Min monatlich",
+            },
+            "init_month_max": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Max monatlich",
+            },
+            "init_year_min": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Min jährlich",
+            },
+            "init_year_max": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Max jährlich",
+            },
             "persist_state": {
                 "type": "boolean",
                 "default": True,
@@ -383,7 +448,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#7c3aed",
     ),
-
     # ── Consumption Counter ───────────────────────────────────────────────
     NodeTypeDef(
         type="consumption_counter",
@@ -396,21 +460,41 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         ),
         inputs=[_port("value", "Zählerwert")],
         outputs=[
-            _port("daily",        "Täglich"),
-            _port("weekly",       "Wöchentlich"),
-            _port("monthly",      "Monatlich"),
-            _port("yearly",       "Jährlich"),
-            _port("prev_daily",   "Vorgestern"),
-            _port("prev_weekly",  "Vorwoche"),
+            _port("daily", "Täglich"),
+            _port("weekly", "Wöchentlich"),
+            _port("monthly", "Monatlich"),
+            _port("yearly", "Jährlich"),
+            _port("prev_daily", "Vorgestern"),
+            _port("prev_weekly", "Vorwoche"),
             _port("prev_monthly", "Vormonat"),
-            _port("prev_yearly",  "Vorjahr"),
+            _port("prev_yearly", "Vorjahr"),
         ],
         config_schema={
-            "init_meter":   {"type": "number", "default": None, "label": "Startwert Zählerstand"},
-            "init_daily":   {"type": "number", "default": None, "label": "Startwert täglich"},
-            "init_weekly":  {"type": "number", "default": None, "label": "Startwert wöchentlich"},
-            "init_monthly": {"type": "number", "default": None, "label": "Startwert monatlich"},
-            "init_yearly":  {"type": "number", "default": None, "label": "Startwert jährlich"},
+            "init_meter": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert Zählerstand",
+            },
+            "init_daily": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert täglich",
+            },
+            "init_weekly": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert wöchentlich",
+            },
+            "init_monthly": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert monatlich",
+            },
+            "init_yearly": {
+                "type": "number",
+                "default": None,
+                "label": "Startwert jährlich",
+            },
             "persist_state": {
                 "type": "boolean",
                 "default": True,
@@ -419,7 +503,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#7c3aed",
     ),
-
     # ── Timer ─────────────────────────────────────────────────────────────
     NodeTypeDef(
         type="timer_delay",
@@ -456,7 +539,10 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         label="Betriebsstunden",
         category="timer",
         description="Zählt Betriebsstunden solange 'Aktiv' wahr ist. Reset setzt den Zähler zurück.",
-        inputs=[_port("active", "Aktiv", "trigger"), _port("reset", "Reset", "trigger")],
+        inputs=[
+            _port("active", "Aktiv", "trigger"),
+            _port("reset", "Reset", "trigger"),
+        ],
         outputs=[_port("hours", "Stunden")],
         config_schema={
             "persist_state": {
@@ -467,7 +553,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#b45309",
     ),
-
     # ── Script ────────────────────────────────────────────────────────────
     NodeTypeDef(
         type="python_script",
@@ -476,10 +561,14 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         description="Führt ein Python-Skript aus. Verfügbar: inputs dict → return value",
         inputs=[_port("in1", "IN 1"), _port("in2", "IN 2"), _port("in3", "IN 3")],
         outputs=[_port("result", "Ergebnis")],
-        config_schema={"script": {"type": "string", "default": "# inputs['in1'], inputs['in2']\nresult = inputs.get('in1', 0)"}},
+        config_schema={
+            "script": {
+                "type": "string",
+                "default": "# inputs['in1'], inputs['in2']\nresult = inputs.get('in1', 0)",
+            },
+        },
         color="#be185d",
     ),
-
     # ── AI ────────────────────────────────────────────────────────────────
     NodeTypeDef(
         type="ai_logic",
@@ -491,7 +580,6 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         config_schema={},
         color="#7c3aed",
     ),
-
     # ── Astro ─────────────────────────────────────────────────────────────
     NodeTypeDef(
         type="astro_sun",
@@ -501,16 +589,15 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[],
         outputs=[
             _port("sunrise", "Aufgang"),
-            _port("sunset",  "Untergang"),
-            _port("is_day",  "Tagsüber", "trigger"),
+            _port("sunset", "Untergang"),
+            _port("is_day", "Tagsüber", "trigger"),
         ],
         config_schema={
-            "latitude":  {"type": "number", "default": 47.37, "label": "Breitengrad"},
-            "longitude": {"type": "number", "default": 8.54,  "label": "Längengrad"},
+            "latitude": {"type": "number", "default": 47.37, "label": "Breitengrad"},
+            "longitude": {"type": "number", "default": 8.54, "label": "Längengrad"},
         },
         color="#d97706",
     ),
-
     # ── Notification ──────────────────────────────────────────────────────
     NodeTypeDef(
         type="notify_pushover",
@@ -518,27 +605,43 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         category="notification",
         description="Sendet eine Push-Benachrichtigung via Pushover API (api.pushover.net). Wird automatisch ausgelöst wenn eine Nachricht am Eingang ankommt.",
         inputs=[
-            _port("trigger",   "Trigger"),
-            _port("message",   "Nachricht"),
-            _port("url",       "URL"),
+            _port("trigger", "Trigger"),
+            _port("message", "Nachricht"),
+            _port("url", "URL"),
             _port("url_title", "URL-Titel"),
             _port("image_url", "Bild-URL"),
         ],
         outputs=[_port("sent", "Gesendet", "trigger")],
         config_schema={
             "app_token": {"type": "string", "default": "", "label": "App-Token"},
-            "user_key":  {"type": "string", "default": "", "label": "User-Key"},
-            "title":     {"type": "string", "default": "open bridge server", "label": "Titel"},
-            "message":   {"type": "string", "default": "", "label": "Nachricht (Fallback)"},
-            "priority":  {
+            "user_key": {"type": "string", "default": "", "label": "User-Key"},
+            "title": {
+                "type": "string",
+                "default": "open bridge server",
+                "label": "Titel",
+            },
+            "message": {
+                "type": "string",
+                "default": "",
+                "label": "Nachricht (Fallback)",
+            },
+            "priority": {
                 "type": "string",
                 "enum": ["-1", "0", "1"],
                 "default": "0",
                 "label": "Priorität (-1=leise, 0=normal, 1=hoch)",
             },
-            "url":       {"type": "string", "default": "", "label": "URL (optional)"},
-            "url_title": {"type": "string", "default": "", "label": "URL-Titel (optional)"},
-            "image_url": {"type": "string", "default": "", "label": "Bild-URL (optional)"},
+            "url": {"type": "string", "default": "", "label": "URL (optional)"},
+            "url_title": {
+                "type": "string",
+                "default": "",
+                "label": "URL-Titel (optional)",
+            },
+            "image_url": {
+                "type": "string",
+                "default": "",
+                "label": "Bild-URL (optional)",
+            },
         },
         color="#e11d48",
     ),
@@ -551,13 +654,20 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         outputs=[_port("sent", "Gesendet", "trigger")],
         config_schema={
             "api_key": {"type": "string", "default": "", "label": "API-Key"},
-            "to":      {"type": "string", "default": "", "label": "Empfänger (+41…)"},
-            "sender":  {"type": "string", "default": "obs", "label": "Absender (max 11 Zeichen)"},
-            "message": {"type": "string", "default": "", "label": "Nachricht (Fallback)"},
+            "to": {"type": "string", "default": "", "label": "Empfänger (+41…)"},
+            "sender": {
+                "type": "string",
+                "default": "obs",
+                "label": "Absender (max 11 Zeichen)",
+            },
+            "message": {
+                "type": "string",
+                "default": "",
+                "label": "Nachricht (Fallback)",
+            },
         },
         color="#e11d48",
     ),
-
     # ── Integration ───────────────────────────────────────────────────────
     NodeTypeDef(
         type="json_extractor",
@@ -591,21 +701,67 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[_port("trigger", "Trigger", "trigger"), _port("body", "Body")],
         outputs=[
             _port("response", "Antwort"),
-            _port("status",   "Status"),
-            _port("success",  "Erfolg", "trigger"),
+            _port("status", "Status"),
+            _port("success", "Erfolg", "trigger"),
         ],
         config_schema={
-            "url":           {"type": "string", "default": "",    "label": "URL"},
-            "method":        {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "default": "GET", "label": "Methode"},
-            "content_type":  {"type": "string", "enum": ["application/json", "text/plain", "application/x-www-form-urlencoded"], "default": "application/json", "label": "Request Content-Type"},
-            "response_type": {"type": "string", "enum": ["application/json", "text/plain"], "default": "application/json", "label": "Response Content-Typ"},
-            "verify_ssl":    {"type": "boolean", "default": True,  "label": "SSL-Zertifikat prüfen"},
-            "headers":       {"type": "string",  "default": "",    "label": "Header (JSON-Objekt, optional)"},
-            "timeout_s":     {"type": "number",  "default": 10,    "label": "Timeout (s)"},
-            "auth_type":     {"type": "string",  "enum": ["none", "basic", "digest", "bearer"], "default": "none", "label": "Authentifizierung"},
-            "auth_username": {"type": "string",  "default": "",    "label": "Benutzername (Basic/Digest)"},
-            "auth_password": {"type": "string",  "default": "",    "label": "Passwort (Basic/Digest)", "subtype": "password"},
-            "auth_token":    {"type": "string",  "default": "",    "label": "Bearer Token", "subtype": "password"},
+            "url": {"type": "string", "default": "", "label": "URL"},
+            "method": {
+                "type": "string",
+                "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                "default": "GET",
+                "label": "Methode",
+            },
+            "content_type": {
+                "type": "string",
+                "enum": [
+                    "application/json",
+                    "text/plain",
+                    "application/x-www-form-urlencoded",
+                ],
+                "default": "application/json",
+                "label": "Request Content-Type",
+            },
+            "response_type": {
+                "type": "string",
+                "enum": ["application/json", "text/plain"],
+                "default": "application/json",
+                "label": "Response Content-Typ",
+            },
+            "verify_ssl": {
+                "type": "boolean",
+                "default": True,
+                "label": "SSL-Zertifikat prüfen",
+            },
+            "headers": {
+                "type": "string",
+                "default": "",
+                "label": "Header (JSON-Objekt, optional)",
+            },
+            "timeout_s": {"type": "number", "default": 10, "label": "Timeout (s)"},
+            "auth_type": {
+                "type": "string",
+                "enum": ["none", "basic", "digest", "bearer"],
+                "default": "none",
+                "label": "Authentifizierung",
+            },
+            "auth_username": {
+                "type": "string",
+                "default": "",
+                "label": "Benutzername (Basic/Digest)",
+            },
+            "auth_password": {
+                "type": "string",
+                "default": "",
+                "label": "Passwort (Basic/Digest)",
+                "subtype": "password",
+            },
+            "auth_token": {
+                "type": "string",
+                "default": "",
+                "label": "Bearer Token",
+                "subtype": "password",
+            },
         },
         color="#0e7490",
     ),

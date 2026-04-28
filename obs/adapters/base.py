@@ -1,11 +1,11 @@
-"""
-AdapterBase ABC — Phase 2 / erweitert Phase 3 / Phase 5 (Multi-Instance)
+"""AdapterBase ABC — Phase 2 / erweitert Phase 3 / Phase 5 (Multi-Instance)
 
 Alle Protokoll-Adapter erben von dieser Klasse.
 Phase-5-Erweiterungen:
   - instance_id: uuid.UUID  – eindeutige Instanz-ID (aus DB)
   - name: str               – benutzerfreundlicher Name (z.B. "KNX EG")
 """
+
 from __future__ import annotations
 
 import uuid
@@ -16,8 +16,7 @@ from pydantic import BaseModel
 
 
 class AdapterBase(ABC):
-    """
-    Abstract base class for all protocol adapters.
+    """Abstract base class for all protocol adapters.
 
     Concrete subclasses must:
       1. Set adapter_type = "KNX"
@@ -27,10 +26,10 @@ class AdapterBase(ABC):
       5. Decorate with @register from adapters.registry
     """
 
-    adapter_type: str                              # e.g. "KNX"
-    config_schema: type[BaseModel]                 # API: /adapters/{type}/schema
-    binding_config_schema: type[BaseModel]         # API: /adapters/{type}/binding-schema
-    hidden: bool = False                           # True = not shown in "create instance" UI
+    adapter_type: str  # e.g. "KNX"
+    config_schema: type[BaseModel]  # API: /adapters/{type}/schema
+    binding_config_schema: type[BaseModel]  # API: /adapters/{type}/binding-schema
+    hidden: bool = False  # True = not shown in "create instance" UI
 
     def __init__(
         self,
@@ -40,10 +39,11 @@ class AdapterBase(ABC):
         name: str | None = None,
     ) -> None:
         from obs.core.event_bus import EventBus
+
         self._bus: EventBus = event_bus
         self._config: dict = config or {}
         self._connected: bool = False
-        self._bindings: list[Any] = []                  # list[AdapterBinding]
+        self._bindings: list[Any] = []  # list[AdapterBinding]
         self._instance_id: uuid.UUID = instance_id or uuid.uuid4()
         self._instance_name: str = name or getattr(self, "adapter_type", "unknown")
 
@@ -72,7 +72,6 @@ class AdapterBase(ABC):
 
     async def _on_bindings_reloaded(self) -> None:
         """Hook: called after reload_bindings(). Override to reconfigure."""
-        pass
 
     def get_bindings(self) -> list[Any]:
         return list(self._bindings)
@@ -101,11 +100,14 @@ class AdapterBase(ABC):
 
     async def _publish_status(self, connected: bool, detail: str = "") -> None:
         from obs.core.event_bus import AdapterStatusEvent
+
         self._connected = connected
-        await self._bus.publish(AdapterStatusEvent(
-            adapter_type=self.adapter_type,
-            instance_id=self._instance_id,
-            instance_name=self._instance_name,
-            connected=connected,
-            detail=detail,
-        ))
+        await self._bus.publish(
+            AdapterStatusEvent(
+                adapter_type=self.adapter_type,
+                instance_id=self._instance_id,
+                instance_name=self._instance_name,
+                connected=connected,
+                detail=detail,
+            ),
+        )

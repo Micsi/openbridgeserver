@@ -1,5 +1,4 @@
-"""
-open bridge server entry point — startup and graceful shutdown.
+"""open bridge server entry point — startup and graceful shutdown.
 
 Startup-Sequenz:
   1. Database (SQLite + migrations)
@@ -10,36 +9,37 @@ Startup-Sequenz:
   6. Write Router (MQTT dp/+/set → adapter.write)
   7. Adapters (load configs + bindings, connect all)
 """
+
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI
-
-from obs import __version__
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+
+from obs import __version__
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    from obs.adapters import registry as adapter_registry
+    from obs.api.auth import ensure_default_user
+    from obs.api.v1.websocket import init_ws_manager
     from obs.config import get_settings
-    from obs.db.database import init_db, get_db
-    from obs.core.event_bus import init_event_bus, DataValueEvent
+    from obs.core.event_bus import DataValueEvent, init_event_bus
     from obs.core.mqtt_client import init_mqtt_client
     from obs.core.registry import init_registry
     from obs.core.write_router import init_write_router
-    from obs.api.auth import ensure_default_user
-    from obs.api.v1.websocket import init_ws_manager
-    from obs.adapters import registry as adapter_registry
-    from obs.ringbuffer.ringbuffer import init_ringbuffer
+    from obs.db.database import get_db, init_db
     from obs.history.factory import init_history_plugin
+    from obs.ringbuffer.ringbuffer import init_ringbuffer
 
     settings = get_settings()
 
@@ -55,7 +55,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Rebuild Mosquitto passwd file from DB on every startup (keeps it in sync).
     # SIGHUP is sent after MQTT connects (see below) so Mosquitto reloads cleanly.
-    from obs.core.mqtt_passwd import rebuild_passwd_file, reload_mosquitto as _reload_mqtt
+    from obs.core.mqtt_passwd import (
+        rebuild_passwd_file,
+    )
+    from obs.core.mqtt_passwd import (
+        reload_mosquitto as _reload_mqtt,
+    )
+
     _m = settings.mosquitto
     await rebuild_passwd_file(db, _m.passwd_file, _m.service_username, _m.service_password)
 
@@ -86,6 +92,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 6. History plugin
     await init_history_plugin(db)
     from obs.history.factory import handle_value_event as history_handler
+
     bus.subscribe(DataValueEvent, history_handler)
 
     # 7. WebSocket Manager
@@ -105,18 +112,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await _reload_mqtt(_m.reload_command, _m.reload_pid)
 
     # 8. Adapters — import triggers @register, then start_all loads DB configs + bindings
-    import obs.adapters.knx.adapter              # noqa: F401
-    import obs.adapters.modbus_tcp.adapter       # noqa: F401
-    import obs.adapters.modbus_rtu.adapter       # noqa: F401
-    import obs.adapters.onewire.adapter          # noqa: F401
-    import obs.adapters.mqtt.adapter             # noqa: F401
-    import obs.adapters.zeitschaltuhr.adapter    # noqa: F401
-    import obs.adapters.homeassistant.adapter    # noqa: F401
-    import obs.adapters.iobroker.adapter         # noqa: F401
+    import obs.adapters.homeassistant.adapter
+    import obs.adapters.iobroker.adapter
+    import obs.adapters.knx.adapter
+    import obs.adapters.modbus_rtu.adapter
+    import obs.adapters.modbus_tcp.adapter
+    import obs.adapters.mqtt.adapter
+    import obs.adapters.onewire.adapter
+    import obs.adapters.zeitschaltuhr.adapter  # noqa: F401
+
     await adapter_registry.start_all(bus, db, value_getter=registry.get_value)
 
     # 9. Logic Engine
     from obs.logic.manager import init_logic_manager
+
     logic_mgr = init_logic_manager(db=db, event_bus=bus, registry=registry)
     await logic_mgr.start()
 
@@ -139,10 +148,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     from pathlib import Path
-    from fastapi.staticfiles import StaticFiles
+
     from fastapi.responses import FileResponse
-    from obs.api.router import router
+    from fastapi.staticfiles import StaticFiles
+
     from obs.api.auth import limiter as auth_limiter
+    from obs.api.router import router
     from obs.config import get_settings
 
     settings = get_settings()
@@ -207,7 +218,7 @@ def create_app() -> FastAPI:
             app.mount("/visu/assets", StaticFiles(directory=_visu_assets), name="visu_assets")
 
         @app.get("/visu/{path:path}", include_in_schema=False)
-        async def visu_spa(path: str):  # noqa: ARG001
+        async def visu_spa(path: str):
             """Alle /visu/... Pfade → index.html (Vue Router history mode)."""
             index = _visu_dist / "index.html"
             if index.exists():
@@ -236,6 +247,7 @@ def create_app() -> FastAPI:
 
 async def main() -> None:
     from obs.config import get_settings
+
     settings = get_settings()
     app = create_app()
 

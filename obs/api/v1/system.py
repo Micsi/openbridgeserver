@@ -1,5 +1,4 @@
-"""
-System API — Phase 4 / Phase 5 (Multi-Instance)
+"""System API — Phase 4 / Phase 5 (Multi-Instance)
 
 GET    /api/v1/system/health           liveness check (no auth required)
 GET    /api/v1/system/adapters         detailed adapter instances + binding stats
@@ -14,18 +13,20 @@ POST   /api/v1/system/nav-links        create a custom nav link (admin only)
 PATCH  /api/v1/system/nav-links/{id}   update a custom nav link (admin only)
 DELETE /api/v1/system/nav-links/{id}   delete a custom nav link (admin only)
 """
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi import status as http_status
 from pydantic import BaseModel
 
 from obs import __version__
-from obs.api.auth import get_current_user, get_admin_user
 from obs.adapters import registry as adapter_registry
-from obs.db.database import get_db, Database
+from obs.api.auth import get_admin_user, get_current_user
+from obs.db.database import Database, get_db
 from obs.models.types import DataTypeRegistry
 
 router = APIRouter(tags=["system"])
@@ -35,8 +36,9 @@ router = APIRouter(tags=["system"])
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class HealthOut(BaseModel):
-    status: str   # "ok"
+    status: str  # "ok"
     version: str
     datapoints: int
     adapters_running: int
@@ -67,7 +69,7 @@ class AppSettingsIn(BaseModel):
 
 
 class HistorySettingsOut(BaseModel):
-    plugin: str            # sqlite | influxdb | timescaledb
+    plugin: str  # sqlite | influxdb | timescaledb
     influx_url: str
     influx_version: int
     influx_token: str
@@ -126,11 +128,13 @@ class NavLinkPatch(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @router.get("/health", response_model=HealthOut)
 async def health() -> HealthOut:
     """Liveness probe — no auth required."""
     try:
         from obs.core.registry import get_registry
+
         dp_count = get_registry().count()
     except RuntimeError:
         dp_count = 0
@@ -154,15 +158,17 @@ async def adapters_detail(
     all_instances = adapter_registry.get_all_instances()
     result = []
     for instance_id, instance in all_instances.items():
-        result.append(AdapterDetailOut(
-            id=instance._instance_id,
-            adapter_type=instance.adapter_type,
-            name=instance._instance_name,
-            registered=True,
-            running=True,
-            connected=instance.connected,
-            bindings=len(instance.get_bindings()),
-        ))
+        result.append(
+            AdapterDetailOut(
+                id=instance._instance_id,
+                adapter_type=instance.adapter_type,
+                name=instance._instance_name,
+                registered=True,
+                running=True,
+                connected=instance.connected,
+                bindings=len(instance.get_bindings()),
+            ),
+        )
     return result
 
 
@@ -200,10 +206,13 @@ async def update_app_settings(
     # Validate timezone using zoneinfo
     try:
         from zoneinfo import ZoneInfo
+
         ZoneInfo(body.timezone)
     except Exception:
-        raise HTTPException(status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
-                            detail=f"Unknown timezone: {body.timezone!r}")
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Unknown timezone: {body.timezone!r}",
+        )
 
     await db.execute_and_commit(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('timezone', ?)",
@@ -213,6 +222,7 @@ async def update_app_settings(
     # Hot-reload LogicManager so astro_sun picks up new timezone immediately
     try:
         from obs.logic.manager import get_logic_manager
+
         get_logic_manager().update_app_config({"timezone": body.timezone})
     except Exception:
         pass  # Manager may not be running — non-critical
@@ -226,32 +236,36 @@ async def update_app_settings(
 
 _HISTORY_KEYS = [
     "plugin",
-    "influx_url", "influx_version", "influx_token", "influx_org",
-    "influx_bucket", "influx_database", "influx_username", "influx_password",
+    "influx_url",
+    "influx_version",
+    "influx_token",
+    "influx_org",
+    "influx_bucket",
+    "influx_database",
+    "influx_username",
+    "influx_password",
     "timescale_dsn",
 ]
 
 _HISTORY_DEFAULTS: dict[str, str] = {
-    "plugin":           "sqlite",
-    "influx_url":       "http://localhost:8086",
-    "influx_version":   "2",
-    "influx_token":     "",
-    "influx_org":       "",
-    "influx_bucket":    "obs",
-    "influx_database":  "obs",
-    "influx_username":  "",
-    "influx_password":  "",
-    "timescale_dsn":    "",
+    "plugin": "sqlite",
+    "influx_url": "http://localhost:8086",
+    "influx_version": "2",
+    "influx_token": "",
+    "influx_org": "",
+    "influx_bucket": "obs",
+    "influx_database": "obs",
+    "influx_username": "",
+    "influx_password": "",
+    "timescale_dsn": "",
 }
 
 
 async def _read_history_cfg(db: Database) -> dict[str, str]:
-    rows = await db.fetchall(
-        "SELECT key, value FROM app_settings WHERE key LIKE 'history.%'"
-    )
+    rows = await db.fetchall("SELECT key, value FROM app_settings WHERE key LIKE 'history.%'")
     cfg = dict(_HISTORY_DEFAULTS)
     for r in rows:
-        short_key = r["key"][len("history."):]
+        short_key = r["key"][len("history.") :]
         if short_key in cfg:
             cfg[short_key] = r["value"] or ""
     return cfg
@@ -292,16 +306,16 @@ async def update_history_settings(
         )
 
     data: dict[str, str] = {
-        "plugin":           body.plugin,
-        "influx_url":       body.influx_url,
-        "influx_version":   str(body.influx_version),
-        "influx_token":     body.influx_token,
-        "influx_org":       body.influx_org,
-        "influx_bucket":    body.influx_bucket,
-        "influx_database":  body.influx_database,
-        "influx_username":  body.influx_username,
-        "influx_password":  body.influx_password,
-        "timescale_dsn":    body.timescale_dsn,
+        "plugin": body.plugin,
+        "influx_url": body.influx_url,
+        "influx_version": str(body.influx_version),
+        "influx_token": body.influx_token,
+        "influx_org": body.influx_org,
+        "influx_bucket": body.influx_bucket,
+        "influx_database": body.influx_database,
+        "influx_username": body.influx_username,
+        "influx_password": body.influx_password,
+        "timescale_dsn": body.timescale_dsn,
     }
 
     for k, v in data.items():
@@ -313,6 +327,7 @@ async def update_history_settings(
     # Hot-reload the history plugin
     try:
         from obs.history.factory import reload_history_plugin
+
         await reload_history_plugin(db)
     except Exception as exc:
         raise HTTPException(
@@ -346,6 +361,7 @@ async def test_history_connection(
 
         if body.plugin == "influxdb":
             from obs.history.influxdb_plugin import InfluxDBHistoryPlugin
+
             plugin = InfluxDBHistoryPlugin(
                 url=body.influx_url,
                 version=body.influx_version,
@@ -358,11 +374,18 @@ async def test_history_connection(
             )
             ok = await plugin.ping()
             if ok:
-                return HistoryTestResult(ok=True, message=f"InfluxDB v{body.influx_version} reachable at {body.influx_url}")
-            return HistoryTestResult(ok=False, message=f"InfluxDB v{body.influx_version} not reachable at {body.influx_url}")
+                return HistoryTestResult(
+                    ok=True,
+                    message=f"InfluxDB v{body.influx_version} reachable at {body.influx_url}",
+                )
+            return HistoryTestResult(
+                ok=False,
+                message=f"InfluxDB v{body.influx_version} not reachable at {body.influx_url}",
+            )
 
         if body.plugin == "timescaledb":
             from obs.history.timescaledb_plugin import TimescaleDBHistoryPlugin
+
             plugin = TimescaleDBHistoryPlugin(dsn=body.timescale_dsn)
             ok = await plugin.ping()
             if ok:
@@ -382,15 +405,14 @@ async def test_history_connection(
 # Nav Links
 # ---------------------------------------------------------------------------
 
+
 @router.get("/nav-links", response_model=list[NavLinkOut])
 async def list_nav_links(
     db: Database = Depends(get_db),
     _user: str = Depends(get_current_user),
 ) -> list[NavLinkOut]:
     """List all custom navigation links, ordered by sort_order."""
-    rows = await db.fetchall(
-        "SELECT id, label, url, icon, sort_order, open_new_tab FROM nav_links ORDER BY sort_order, created_at"
-    )
+    rows = await db.fetchall("SELECT id, label, url, icon, sort_order, open_new_tab FROM nav_links ORDER BY sort_order, created_at")
     return [
         NavLinkOut(
             id=r["id"],
@@ -412,10 +434,18 @@ async def create_nav_link(
 ) -> NavLinkOut:
     """Create a new custom navigation link. Admin only."""
     link_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute_and_commit(
         "INSERT INTO nav_links (id, label, url, icon, sort_order, open_new_tab, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (link_id, body.label, body.url, body.icon, body.sort_order, int(body.open_new_tab), now),
+        (
+            link_id,
+            body.label,
+            body.url,
+            body.icon,
+            body.sort_order,
+            int(body.open_new_tab),
+            now,
+        ),
     )
     return NavLinkOut(
         id=link_id,
@@ -442,10 +472,10 @@ async def update_nav_link(
     if row is None:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Link not found")
 
-    new_label       = body.label       if body.label       is not None else row["label"]
-    new_url         = body.url         if body.url         is not None else row["url"]
-    new_icon        = body.icon        if body.icon        is not None else row["icon"]
-    new_sort_order  = body.sort_order  if body.sort_order  is not None else row["sort_order"]
+    new_label = body.label if body.label is not None else row["label"]
+    new_url = body.url if body.url is not None else row["url"]
+    new_icon = body.icon if body.icon is not None else row["icon"]
+    new_sort_order = body.sort_order if body.sort_order is not None else row["sort_order"]
     new_open_new_tab = body.open_new_tab if body.open_new_tab is not None else bool(row["open_new_tab"])
 
     await db.execute_and_commit(

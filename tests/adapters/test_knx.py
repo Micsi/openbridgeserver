@@ -1,14 +1,19 @@
-"""
-Unit tests for the KNX adapter.
+"""Unit tests for the KNX adapter.
 
 Tests that require xknx (Telegram objects) are skipped automatically if
 xknx is not installed — so the test suite stays green on environments
 without the optional dependency.
 """
-from __future__ import annotations
 
-import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from __future__ import annotations
+from xknx.dpt import DPTArray, DPTBinary
+from xknx.telegram import Telegram
+from xknx.telegram.address import GroupAddress
+from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
+
+from obs.adapters.knx.adapter import KnxAdapter, KnxBindingConfig, _telegram_to_bytes
+from obs.adapters.knx.dpt_registry import DPTRegistry
+
 
 import pytest
 
@@ -20,18 +25,10 @@ from tests.adapters.conftest import make_binding
 
 xknx = pytest.importorskip("xknx", reason="xknx not installed")
 
-from xknx.dpt import DPTArray, DPTBinary
-from xknx.telegram import Telegram
-from xknx.telegram.address import GroupAddress
-from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
-
-from obs.adapters.knx.adapter import KnxAdapter, KnxBindingConfig, _telegram_to_bytes
-from obs.adapters.knx.dpt_registry import DPTRegistry
-
-
 # ---------------------------------------------------------------------------
 # Config validation
 # ---------------------------------------------------------------------------
+
 
 class TestKnxBindingConfig:
     def test_defaults(self):
@@ -57,6 +54,7 @@ class TestKnxBindingConfig:
 # _telegram_to_bytes
 # ---------------------------------------------------------------------------
 
+
 class TestTelegramToBytes:
     def _make_telegram(self, ga: str, raw_bytes: bytes) -> Telegram:
         return Telegram(
@@ -79,7 +77,7 @@ class TestTelegramToBytes:
     def test_dpt_array_single_byte(self):
         t = self._make_telegram("1/2/3", b"\xff")
         result = _telegram_to_bytes(t)
-        assert b"\xff" == result
+        assert result == b"\xff"
 
     def test_dpt_binary_true(self):
         t = self._make_bool_telegram("0/0/1", 1)
@@ -97,6 +95,7 @@ class TestTelegramToBytes:
 # ---------------------------------------------------------------------------
 # _on_telegram — DataValueEvent dispatch
 # ---------------------------------------------------------------------------
+
 
 class TestOnTelegram:
     def _make_adapter(self, mock_bus) -> KnxAdapter:
@@ -213,6 +212,7 @@ class TestOnTelegram:
 # ---------------------------------------------------------------------------
 # DPTRegistry
 # ---------------------------------------------------------------------------
+
 
 class TestDPTRegistry:
     def test_get_known_dpt(self):

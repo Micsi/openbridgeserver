@@ -1,17 +1,17 @@
-"""
-Unit tests for obs/adapters/modbus_base.py — pure functions only.
+"""Unit tests for obs/adapters/modbus_base.py — pure functions only.
 No hardware, no network, no mocks needed.
 """
+
 from __future__ import annotations
 
 import struct
-import pytest
-from obs.adapters.modbus_base import decode_registers, encode_value, register_count
 
+from obs.adapters.modbus_base import decode_registers, encode_value, register_count
 
 # ---------------------------------------------------------------------------
 # register_count
 # ---------------------------------------------------------------------------
+
 
 class TestRegisterCount:
     def test_uint16_is_1(self):
@@ -42,6 +42,7 @@ class TestRegisterCount:
 # ---------------------------------------------------------------------------
 # decode_registers — uint16 / int16
 # ---------------------------------------------------------------------------
+
 
 class TestDecodeUint16:
     def test_simple_value(self):
@@ -81,6 +82,7 @@ class TestDecodeInt16:
 # decode_registers — uint32 / int32 / float32
 # ---------------------------------------------------------------------------
 
+
 class TestDecodeUint32:
     def test_simple(self):
         # 0x00010000 → registers [1, 0] big word order
@@ -112,6 +114,7 @@ class TestDecodeInt32:
 class TestDecodeFloat32:
     def test_pi(self):
         import math
+
         regs = list(struct.unpack(">HH", struct.pack(">f", math.pi)))
         result = decode_registers(regs, "float32")
         assert abs(result - math.pi) < 1e-6
@@ -130,6 +133,7 @@ class TestDecodeFloat32:
 # ---------------------------------------------------------------------------
 # decode_registers — uint64 / int64
 # ---------------------------------------------------------------------------
+
 
 class TestDecodeUint64:
     def test_large_value(self):
@@ -150,6 +154,7 @@ class TestDecodeInt64:
 # ---------------------------------------------------------------------------
 # encode_value
 # ---------------------------------------------------------------------------
+
 
 class TestEncodeUint16:
     def test_simple(self):
@@ -202,6 +207,7 @@ class TestEncodeUint64:
 # ---------------------------------------------------------------------------
 # Edge cases — too few registers
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeCases:
     def test_uint32_too_few_registers_returns_0(self):

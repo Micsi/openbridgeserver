@@ -1,14 +1,16 @@
-"""
-SQLite Database Layer — Phase 1
+"""SQLite Database Layer — Phase 1
 
 Uses aiosqlite for async access.
 Includes a simple version-based migration system.
 """
+
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from datetime import UTC
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import aiosqlite
 
@@ -98,17 +100,16 @@ UPDATE users SET is_admin=1 WHERE username='admin';
 
 
 async def _migration_v5(conn: aiosqlite.Connection) -> None:
-    """
-    Multi-Instance Support:
+    """Multi-Instance Support:
     - Neue Tabelle adapter_instances (UUID PK, N Instanzen pro Typ)
     - adapter_bindings bekommt adapter_instance_id Spalte
     - Bestehende adapter_configs Daten werden migriert
     - Bestehende Bindings erhalten die passende adapter_instance_id
     """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # 1. adapter_instances Tabelle erstellen
     await conn.executescript("""
@@ -126,9 +127,7 @@ async def _migration_v5(conn: aiosqlite.Connection) -> None:
 
     # 2. adapter_instance_id Spalte zu adapter_bindings hinzufügen (ignoriere Fehler wenn schon vorhanden)
     try:
-        await conn.execute(
-            "ALTER TABLE adapter_bindings ADD COLUMN adapter_instance_id TEXT"
-        )
+        await conn.execute("ALTER TABLE adapter_bindings ADD COLUMN adapter_instance_id TEXT")
         await conn.commit()
     except Exception:
         pass  # Spalte existiert bereits
@@ -148,7 +147,7 @@ async def _migration_v5(conn: aiosqlite.Connection) -> None:
             (
                 instance_id,
                 row["adapter_type"],
-                row["adapter_type"],   # Name = Typ-String als Default
+                row["adapter_type"],  # Name = Typ-String als Default
                 row["config"],
                 row["enabled"],
                 now,
@@ -366,6 +365,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
 # Database class
 # ---------------------------------------------------------------------------
 
+
 class Database:
     """Async SQLite database wrapper with built-in migration support."""
 
@@ -406,9 +406,7 @@ class Database:
         await self._conn.execute(_SCHEMA_VERSION_DDL)
         await self._conn.commit()
 
-        async with self._conn.execute(
-            "SELECT MAX(version) AS v FROM schema_version"
-        ) as cur:
+        async with self._conn.execute("SELECT MAX(version) AS v FROM schema_version") as cur:
             row = await cur.fetchone()
             return row["v"] if row["v"] is not None else 0
 
@@ -421,9 +419,7 @@ class Database:
                     await migration(self._conn)
                 else:
                     await self._conn.executescript(migration)
-                await self._conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (version,)
-                )
+                await self._conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
                 await self._conn.commit()
                 logger.info("DB migration v%d applied", version)
 

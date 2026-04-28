@@ -1,35 +1,33 @@
-"""
-Unit tests for the Zeitschaltuhr adapter — pure logic functions.
+"""Unit tests for the Zeitschaltuhr adapter — pure logic functions.
 
 _should_fire, _calculate_target_time, _is_vacation_n, _is_vacation, _is_holiday
 are all pure / near-pure methods that can be tested without asyncio.
 """
+
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
-
-import pytest
 
 from obs.adapters.zeitschaltuhr.adapter import (
     HolidayMode,
-    TimerType,
     TimeRef,
+    TimerType,
     ZeitschaltuhrAdapter,
     ZeitschaltuhrBindingConfig,
     ZeitschaltuhrConfig,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_adapter(**cfg_overrides) -> ZeitschaltuhrAdapter:
     """Create an adapter instance pre-configured with UTC + empty holidays."""
     bus = MagicMock()
     adapter = ZeitschaltuhrAdapter(event_bus=bus, config={})
-    adapter._tz = timezone.utc
+    adapter._tz = UTC
     adapter._hol = {}  # no holidays by default
     adapter._cfg = ZeitschaltuhrConfig(**cfg_overrides)
     return adapter
@@ -41,18 +39,19 @@ def _cfg(**kwargs) -> ZeitschaltuhrBindingConfig:
 
 
 def _now(hour: int = 8, minute: int = 0, weekday_offset: int = 0) -> datetime:
-    """
-    Return a UTC datetime for a Monday (2026-04-06) + weekday_offset days,
+    """Return a UTC datetime for a Monday (2026-04-06) + weekday_offset days,
     at hour:minute.  weekday_offset=0 → Monday, 1 → Tuesday, …, 6 → Sunday.
     """
     from datetime import timedelta
-    base = datetime(2026, 4, 6, hour, minute, 0, tzinfo=timezone.utc)  # a Monday
+
+    base = datetime(2026, 4, 6, hour, minute, 0, tzinfo=UTC)  # a Monday
     return base + timedelta(days=weekday_offset)
 
 
 # ---------------------------------------------------------------------------
 # _should_fire — basic absolute time
 # ---------------------------------------------------------------------------
+
 
 class TestShouldFireAbsoluteTime:
     def test_fires_at_exact_time(self):
@@ -85,6 +84,7 @@ class TestShouldFireAbsoluteTime:
 # _should_fire — weekday filter
 # ---------------------------------------------------------------------------
 
+
 class TestShouldFireWeekdays:
     def test_fires_on_matching_weekday(self):
         adapter = _make_adapter()
@@ -110,6 +110,7 @@ class TestShouldFireWeekdays:
 # _should_fire — every_minute / every_hour
 # ---------------------------------------------------------------------------
 
+
 class TestShouldFireCycles:
     def test_every_minute_fires_regardless_of_time(self):
         adapter = _make_adapter()
@@ -131,8 +132,9 @@ class TestShouldFireCycles:
 # _should_fire — holiday mode
 # ---------------------------------------------------------------------------
 
+
 class TestShouldFireHolidayMode:
-    def _monday_with_holiday(self) -> "tuple[ZeitschaltuhrAdapter, datetime]":
+    def _monday_with_holiday(self) -> tuple[ZeitschaltuhrAdapter, datetime]:
         adapter = _make_adapter()
         monday = date(2026, 4, 6)
         adapter._hol = {monday: "Test Holiday"}
@@ -142,7 +144,9 @@ class TestShouldFireHolidayMode:
     def test_holiday_skip_prevents_fire(self):
         adapter, now = self._monday_with_holiday()
         cfg = _cfg(
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             holiday_mode=HolidayMode.SKIP,
         )
         assert adapter._should_fire(cfg, now) is False
@@ -150,7 +154,9 @@ class TestShouldFireHolidayMode:
     def test_holiday_only_fires_on_holiday(self):
         adapter, now = self._monday_with_holiday()
         cfg = _cfg(
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             holiday_mode=HolidayMode.ONLY,
         )
         assert adapter._should_fire(cfg, now) is True
@@ -159,7 +165,9 @@ class TestShouldFireHolidayMode:
         adapter = _make_adapter()  # no holidays
         now = _now(hour=8, minute=0)  # normal Monday
         cfg = _cfg(
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             holiday_mode=HolidayMode.ONLY,
         )
         assert adapter._should_fire(cfg, now) is False
@@ -168,8 +176,10 @@ class TestShouldFireHolidayMode:
         adapter, now = self._monday_with_holiday()
         # Monday (0) promoted to Sunday (6) → Sunday-only cfg should fire
         cfg = _cfg(
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
-            weekdays=[6],   # only Sunday
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
+            weekdays=[6],  # only Sunday
             holiday_mode=HolidayMode.AS_SUNDAY,
         )
         assert adapter._should_fire(cfg, now) is True
@@ -177,7 +187,9 @@ class TestShouldFireHolidayMode:
     def test_holiday_ignore_fires_normally(self):
         adapter, now = self._monday_with_holiday()
         cfg = _cfg(
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             holiday_mode=HolidayMode.IGNORE,
         )
         assert adapter._should_fire(cfg, now) is True
@@ -187,8 +199,9 @@ class TestShouldFireHolidayMode:
 # _should_fire — vacation mode
 # ---------------------------------------------------------------------------
 
+
 class TestShouldFireVacationMode:
-    def _adapter_in_vacation(self) -> "tuple[ZeitschaltuhrAdapter, datetime]":
+    def _adapter_in_vacation(self) -> tuple[ZeitschaltuhrAdapter, datetime]:
         adapter = _make_adapter(
             vacation_1_start="2026-04-01",
             vacation_1_end="2026-04-10",
@@ -199,7 +212,9 @@ class TestShouldFireVacationMode:
     def test_vacation_skip_prevents_fire(self):
         adapter, now = self._adapter_in_vacation()
         cfg = _cfg(
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             vacation_mode=HolidayMode.SKIP,
         )
         assert adapter._should_fire(cfg, now) is False
@@ -207,7 +222,9 @@ class TestShouldFireVacationMode:
     def test_vacation_only_fires_during_vacation(self):
         adapter, now = self._adapter_in_vacation()
         cfg = _cfg(
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             vacation_mode=HolidayMode.ONLY,
         )
         assert adapter._should_fire(cfg, now) is True
@@ -217,12 +234,15 @@ class TestShouldFireVacationMode:
 # _should_fire — annual timer
 # ---------------------------------------------------------------------------
 
+
 class TestShouldFireAnnual:
     def test_annual_fires_in_matching_month(self):
         adapter = _make_adapter()
         cfg = _cfg(
             timer_type=TimerType.ANNUAL,
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             months=[4],  # April
         )
         # _now uses April 6, 2026 (Monday)
@@ -232,7 +252,9 @@ class TestShouldFireAnnual:
         adapter = _make_adapter()
         cfg = _cfg(
             timer_type=TimerType.ANNUAL,
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             months=[5],  # May only
         )
         assert adapter._should_fire(cfg, _now(8, 0)) is False  # April
@@ -241,7 +263,9 @@ class TestShouldFireAnnual:
         adapter = _make_adapter()
         cfg = _cfg(
             timer_type=TimerType.ANNUAL,
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             months=[4],
             day_of_month=6,  # April 6
         )
@@ -249,7 +273,9 @@ class TestShouldFireAnnual:
 
         cfg2 = _cfg(
             timer_type=TimerType.ANNUAL,
-            time_ref=TimeRef.ABSOLUTE, hour=8, minute=0,
+            time_ref=TimeRef.ABSOLUTE,
+            hour=8,
+            minute=0,
             months=[4],
             day_of_month=7,  # April 7 — should NOT fire on April 6
         )
@@ -259,6 +285,7 @@ class TestShouldFireAnnual:
 # ---------------------------------------------------------------------------
 # _calculate_target_time — absolute
 # ---------------------------------------------------------------------------
+
 
 class TestCalculateTargetTime:
     def test_absolute_no_offset(self):
@@ -287,6 +314,7 @@ class TestCalculateTargetTime:
 # ---------------------------------------------------------------------------
 # _is_vacation_n / _is_vacation
 # ---------------------------------------------------------------------------
+
 
 class TestIsVacation:
     def _adapter_with_vacation(self) -> ZeitschaltuhrAdapter:

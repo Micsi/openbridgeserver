@@ -1,5 +1,4 @@
-"""
-Integration Tests — DataPoints CRUD
+"""Integration Tests — DataPoints CRUD
 
 Covers:
   - POST   /api/v1/datapoints/          create
@@ -11,10 +10,10 @@ Covers:
   - GET    /api/v1/datapoints/{id}/value  read value
   - Binding cascade delete
 """
+
 from __future__ import annotations
 
 import pytest
-
 
 pytestmark = pytest.mark.integration
 
@@ -46,6 +45,7 @@ async def _create_dp(client, auth_headers, payload: dict | None = None) -> dict:
 # Create
 # ---------------------------------------------------------------------------
 
+
 async def test_create_datapoint(client, auth_headers):
     body = await _create_dp(client, auth_headers)
 
@@ -70,6 +70,7 @@ async def test_create_datapoint_unknown_type_returns_422(client, auth_headers):
 # Read
 # ---------------------------------------------------------------------------
 
+
 async def test_read_datapoint(client, auth_headers):
     created = await _create_dp(client, auth_headers, {**_DP_PAYLOAD, "name": "Read-Test DP"})
     dp_id = created["id"]
@@ -88,6 +89,7 @@ async def test_read_nonexistent_returns_404(client, auth_headers):
 # ---------------------------------------------------------------------------
 # List + pagination
 # ---------------------------------------------------------------------------
+
 
 async def test_list_datapoints_returns_paged_result(client, auth_headers):
     # Ensure at least one datapoint exists
@@ -130,7 +132,7 @@ async def test_list_size_above_500_accepted(client, auth_headers):
 
 
 async def test_list_size_above_10000_rejected(client, auth_headers):
-    """size > 10000 muss mit 422 abgelehnt werden."""
+    """Size > 10000 muss mit 422 abgelehnt werden."""
     resp = await client.get(
         "/api/v1/datapoints/",
         params={"page": 0, "size": 10001},
@@ -173,6 +175,7 @@ async def test_pagination_covers_all_items(client, auth_headers):
 # Update
 # ---------------------------------------------------------------------------
 
+
 async def test_update_datapoint_name(client, auth_headers):
     created = await _create_dp(client, auth_headers, {**_DP_PAYLOAD, "name": "Before-Update"})
     dp_id = created["id"]
@@ -194,6 +197,7 @@ async def test_update_datapoint_name(client, auth_headers):
 # Delete
 # ---------------------------------------------------------------------------
 
+
 async def test_delete_datapoint_and_verify_404(client, auth_headers):
     created = await _create_dp(client, auth_headers, {**_DP_PAYLOAD, "name": "To-Delete"})
     dp_id = created["id"]
@@ -208,6 +212,7 @@ async def test_delete_datapoint_and_verify_404(client, auth_headers):
 # ---------------------------------------------------------------------------
 # Value read / write
 # ---------------------------------------------------------------------------
+
 
 async def test_write_and_read_value(client, auth_headers):
     created = await _create_dp(client, auth_headers, {**_DP_PAYLOAD, "name": "Value-RW"})

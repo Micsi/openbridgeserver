@@ -1,5 +1,4 @@
-"""
-Mosquitto passwd file management.
+"""Mosquitto passwd file management.
 
 Mosquitto stores passwords in format version 7 (PBKDF2-SHA512):
   username:$7$<iterations>$<salt_base64>$<hash_base64>
@@ -8,6 +7,7 @@ Changes are applied in two steps:
   1. Rebuild the passwd file from DB (all mqtt_enabled users + service account)
   2. Send SIGHUP to Mosquitto so it reloads without dropping connections
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +17,6 @@ import logging
 import os
 import signal
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +27,7 @@ def mosquitto_hash(password: str) -> str:
     """Return a Mosquitto-compatible PBKDF2-SHA512 password hash."""
     salt = os.urandom(12)
     dk = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, _ITERATIONS, dklen=64)
-    return (
-        f"$7${_ITERATIONS}$"
-        f"{base64.b64encode(salt).decode()}$"
-        f"{base64.b64encode(dk).decode()}"
-    )
+    return f"$7${_ITERATIONS}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
 
 
 async def rebuild_passwd_file(
@@ -41,16 +36,12 @@ async def rebuild_passwd_file(
     service_username: str,
     service_password: str,
 ) -> None:
-    """
-    Rewrite the Mosquitto passwd file.
+    """Rewrite the Mosquitto passwd file.
 
     Always includes the open bridge server service account (fresh hash each rebuild).
     Appends all users with mqtt_enabled=1 and a stored password hash.
     """
-    rows = await db.fetchall(
-        "SELECT username, mqtt_password_hash FROM users "
-        "WHERE mqtt_enabled=1 AND mqtt_password_hash IS NOT NULL"
-    )
+    rows = await db.fetchall("SELECT username, mqtt_password_hash FROM users WHERE mqtt_enabled=1 AND mqtt_password_hash IS NOT NULL")
     Path(passwd_path).parent.mkdir(parents=True, exist_ok=True)
 
     lines = [f"{service_username}:{mosquitto_hash(service_password)}"]
@@ -60,16 +51,17 @@ async def rebuild_passwd_file(
     Path(passwd_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     logger.info(
         "Mosquitto passwd file rebuilt: %d account(s) (%s + %d user(s))",
-        len(lines), service_username, len(rows),
+        len(lines),
+        service_username,
+        len(rows),
     )
 
 
 async def reload_mosquitto(
-    reload_command: Optional[str] = None,
-    reload_pid: Optional[int] = None,
+    reload_command: str | None = None,
+    reload_pid: int | None = None,
 ) -> None:
-    """
-    Signal Mosquitto to reload its passwd file (no client disconnection).
+    """Signal Mosquitto to reload its passwd file (no client disconnection).
 
     Priority:
       1. reload_command — run this shell command (most flexible)
@@ -87,7 +79,8 @@ async def reload_mosquitto(
             if proc.returncode != 0:
                 logger.warning(
                     "Mosquitto reload command failed (rc=%d): %s",
-                    proc.returncode, stderr.decode().strip(),
+                    proc.returncode,
+                    stderr.decode().strip(),
                 )
             else:
                 logger.info("Mosquitto reloaded via reload_command")
@@ -105,8 +98,7 @@ async def reload_mosquitto(
             logger.warning("Mosquitto PID %d not found — is Mosquitto running?", reload_pid)
         except PermissionError:
             logger.warning(
-                "Permission denied sending SIGHUP to PID %d "
-                "(hint: use pid: container:mosquitto in docker-compose.yml)",
+                "Permission denied sending SIGHUP to PID %d (hint: use pid: container:mosquitto in docker-compose.yml)",
                 reload_pid,
             )
         except Exception as exc:
@@ -116,5 +108,5 @@ async def reload_mosquitto(
     logger.warning(
         "Mosquitto passwd file updated but reload skipped — "
         "configure mosquitto.reload_pid or mosquitto.reload_command "
-        "for changes to take effect without restarting Mosquitto"
+        "for changes to take effect without restarting Mosquitto",
     )

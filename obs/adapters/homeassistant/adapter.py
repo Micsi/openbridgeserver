@@ -1,5 +1,4 @@
-"""
-Home Assistant Adapter
+"""Home Assistant Adapter
 
 Verbindet open bridge server mit einer Home Assistant Instanz.
 Liest Entitätszustände über die WebSocket-API (Echtzeit state_changed Events)
@@ -34,6 +33,7 @@ Attribut-Auflösung (SOURCE/read):
   attribute="brightness" → new_state.attributes["brightness"]
   Numerische Strings werden automatisch nach int/float konvertiert.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -65,6 +65,7 @@ def _next_ws_id() -> int:
 # Config schemas
 # ---------------------------------------------------------------------------
 
+
 class HaAdapterConfig(BaseModel):
     host: str = "homeassistant.local"
     port: int = 8123
@@ -73,16 +74,17 @@ class HaAdapterConfig(BaseModel):
 
 
 class HaBindingConfig(BaseModel):
-    entity_id: str                                  # e.g. "light.living_room"
-    attribute: str | None = None                    # None → state field; "brightness" → attribute
-    service_domain: str | None = None              # override: e.g. "homeassistant"
-    service_name: str | None = None                # override: e.g. "toggle", "set_value"
-    service_data_key: str | None = None            # numeric/string write key, e.g. "value", "brightness"
+    entity_id: str  # e.g. "light.living_room"
+    attribute: str | None = None  # None → state field; "brightness" → attribute
+    service_domain: str | None = None  # override: e.g. "homeassistant"
+    service_name: str | None = None  # override: e.g. "toggle", "set_value"
+    service_data_key: str | None = None  # numeric/string write key, e.g. "value", "brightness"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _coerce_state(raw: str) -> Any:
     """Auto-convert HA state string to Python type."""
@@ -105,12 +107,13 @@ def _coerce_state(raw: str) -> Any:
 
 def _domain_from_entity(entity_id: str) -> str:
     """Extract domain from entity_id (part before first '.')."""
-    return entity_id.split(".")[0]
+    return entity_id.split(".", maxsplit=1)[0]
 
 
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
+
 
 @register
 class HomeAssistantAdapter(AdapterBase):
@@ -153,7 +156,12 @@ class HomeAssistantAdapter(AdapterBase):
         )
 
         await self._publish_status(True, f"Verbunden mit {self._cfg.host}:{self._cfg.port}")
-        logger.info("Home Assistant adapter started → %s:%d ssl=%s", self._cfg.host, self._cfg.port, self._cfg.ssl)
+        logger.info(
+            "Home Assistant adapter started → %s:%d ssl=%s",
+            self._cfg.host,
+            self._cfg.port,
+            self._cfg.ssl,
+        )
 
     async def disconnect(self) -> None:
         if self._ws_task:
@@ -186,13 +194,17 @@ class HomeAssistantAdapter(AdapterBase):
             try:
                 bc = HaBindingConfig(**binding.config)
             except Exception:
-                logger.warning("Ungültige HA Binding-Konfiguration für %s — übersprungen", binding.id)
+                logger.warning(
+                    "Ungültige HA Binding-Konfiguration für %s — übersprungen",
+                    binding.id,
+                )
                 continue
             self._entity_map.setdefault(bc.entity_id, []).append(binding)
 
         logger.info(
             "HA adapter: %d entity subscription(s): %s",
-            len(self._entity_map), list(self._entity_map.keys()),
+            len(self._entity_map),
+            list(self._entity_map.keys()),
         )
 
         # Restart WebSocket subscriber with updated entity list
@@ -207,9 +219,7 @@ class HomeAssistantAdapter(AdapterBase):
         if self._entity_map:
             # Initial read: publish current state for all SOURCE/BOTH bindings immediately
             asyncio.create_task(self._initial_read_all(), name="ha-adapter-init-read")
-            self._ws_task = asyncio.create_task(
-                self._ws_loop(), name="ha-adapter-ws"
-            )
+            self._ws_task = asyncio.create_task(self._ws_loop(), name="ha-adapter-ws")
 
     async def _initial_read_all(self) -> None:
         """Read and publish current state for all SOURCE/BOTH bindings via REST on startup."""
@@ -233,19 +243,25 @@ class HomeAssistantAdapter(AdapterBase):
                     pub_value = apply_value_map(raw_val, binding.value_map)
                     if binding.value_formula and pub_value is not None:
                         from obs.core.formula import apply_formula
+
                         pub_value = apply_formula(binding.value_formula, pub_value)
 
                     logger.info(
                         "HA adapter initial read: entity=%s attr=%s → dp=%s value=%r",
-                        bc.entity_id, bc.attribute or "state", binding.datapoint_id, pub_value,
+                        bc.entity_id,
+                        bc.attribute or "state",
+                        binding.datapoint_id,
+                        pub_value,
                     )
-                    await self._bus.publish(DataValueEvent(
-                        datapoint_id=binding.datapoint_id,
-                        value=pub_value,
-                        quality="good",
-                        source_adapter=self.adapter_type,
-                        binding_id=binding.id,
-                    ))
+                    await self._bus.publish(
+                        DataValueEvent(
+                            datapoint_id=binding.datapoint_id,
+                            value=pub_value,
+                            quality="good",
+                            source_adapter=self.adapter_type,
+                            binding_id=binding.id,
+                        ),
+                    )
                 except Exception:
                     logger.exception("HA adapter initial read failed for binding %s", binding.id)
 
@@ -284,16 +300,23 @@ class HomeAssistantAdapter(AdapterBase):
                         await asyncio.sleep(10)
                         continue
 
-                    logger.info("HA WebSocket authenticated (ha_version=%s)", msg.get("ha_version", "?"))
+                    logger.info(
+                        "HA WebSocket authenticated (ha_version=%s)",
+                        msg.get("ha_version", "?"),
+                    )
                     await self._publish_status(True, f"Verbunden mit HA {msg.get('ha_version', '')}")
 
                     # Step 3: subscribe to state_changed events
                     sub_id = _next_ws_id()
-                    await ws.send(json.dumps({
-                        "id": sub_id,
-                        "type": "subscribe_events",
-                        "event_type": "state_changed",
-                    }))
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "id": sub_id,
+                                "type": "subscribe_events",
+                                "event_type": "state_changed",
+                            },
+                        ),
+                    )
                     msg = json.loads(await ws.recv())
                     if not msg.get("success", False):
                         logger.error("HA WebSocket: subscribe failed: %s", msg)
@@ -312,9 +335,11 @@ class HomeAssistantAdapter(AdapterBase):
                                 eid = data.get("entity_id", "?")
                                 logger.debug("HA WS event: entity=%s", eid)
                                 if eid in self._entity_map:
-                                    logger.info("HA WS event (subscribed): entity=%s new_state=%s",
-                                                eid,
-                                                (data.get("new_state") or {}).get("state", "?"))
+                                    logger.info(
+                                        "HA WS event (subscribed): entity=%s new_state=%s",
+                                        eid,
+                                        (data.get("new_state") or {}).get("state", "?"),
+                                    )
                                 await self._on_state_changed(data)
 
             except asyncio.CancelledError:
@@ -352,6 +377,7 @@ class HomeAssistantAdapter(AdapterBase):
 
                 if binding.value_formula and pub_value is not None:
                     from obs.core.formula import apply_formula
+
                     pub_value = apply_formula(binding.value_formula, pub_value)
 
             except Exception:
@@ -360,15 +386,20 @@ class HomeAssistantAdapter(AdapterBase):
 
             logger.info(
                 "HA adapter state_changed: entity=%s attr=%s → dp=%s value=%r",
-                entity_id, bc.attribute or "state", binding.datapoint_id, pub_value,
+                entity_id,
+                bc.attribute or "state",
+                binding.datapoint_id,
+                pub_value,
             )
-            await self._bus.publish(DataValueEvent(
-                datapoint_id=binding.datapoint_id,
-                value=pub_value,
-                quality="good",
-                source_adapter=self.adapter_type,
-                binding_id=binding.id,
-            ))
+            await self._bus.publish(
+                DataValueEvent(
+                    datapoint_id=binding.datapoint_id,
+                    value=pub_value,
+                    quality="good",
+                    source_adapter=self.adapter_type,
+                    binding_id=binding.id,
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Read
@@ -387,9 +418,8 @@ class HomeAssistantAdapter(AdapterBase):
             if bc.attribute:
                 attrs = state_obj.get("attributes") or {}
                 return attrs.get(bc.attribute)
-            else:
-                raw = state_obj.get("state", "unavailable")
-                return _coerce_state(raw) if raw not in ("unavailable", "unknown") else None
+            raw = state_obj.get("state", "unavailable")
+            return _coerce_state(raw) if raw not in ("unavailable", "unknown") else None
         except Exception:
             logger.exception("HA adapter read failed for binding %s", binding.id)
             return None
@@ -431,7 +461,10 @@ class HomeAssistantAdapter(AdapterBase):
             resp.raise_for_status()
             logger.info(
                 "HA adapter write: %s.%s entity=%s value=%r",
-                domain, service, bc.entity_id, mapped,
+                domain,
+                service,
+                bc.entity_id,
+                mapped,
             )
         except Exception:
             logger.exception("HA adapter write failed for binding %s", binding.id)

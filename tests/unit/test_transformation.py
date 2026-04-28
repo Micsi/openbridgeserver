@@ -1,5 +1,4 @@
-"""
-Unit tests for obs/core/transformation.py
+"""Unit tests for obs/core/transformation.py
 
 Covers:
   - apply_value_map: 2-value and N-value maps
@@ -8,16 +7,17 @@ Covers:
   - apply_value_map: passthrough when no map / no match
   - apply_source_type: type coercions (int, float, bool, string, json, xml)
 """
+
 from __future__ import annotations
 
 import pytest
 
 from obs.core.transformation import apply_source_type, apply_value_map
 
-
 # ===========================================================================
 # apply_value_map
 # ===========================================================================
+
 
 class TestApplyValueMapBasic:
     def test_none_map_returns_value_unchanged(self):
@@ -40,16 +40,16 @@ class TestApplyValueMapNValues:
     """N-value maps with numeric keys — the primary use case from issue #208."""
 
     MAP_11 = {
-        "0":  "Aus",
-        "1":  "Initialisierung",
-        "2":  "Isolationsmessung",
-        "3":  "Netzprüfung",
-        "4":  "Einschalten",
-        "5":  "Betrieb",
-        "6":  "Abschalten",
-        "7":  "Fehler",
-        "8":  "Wartung",
-        "9":  "Update",
+        "0": "Aus",
+        "1": "Initialisierung",
+        "2": "Isolationsmessung",
+        "3": "Netzprüfung",
+        "4": "Einschalten",
+        "5": "Betrieb",
+        "6": "Abschalten",
+        "7": "Fehler",
+        "8": "Wartung",
+        "9": "Update",
         "10": "Standby",
     }
 
@@ -73,7 +73,8 @@ class TestApplyValueMapNValues:
 class TestApplyValueMapFloatNormalisation:
     """Modbus and similar adapters often deliver integer-valued floats (5.0, 10.0).
     The map keys are always strings of integers ("5", "10").
-    The lookup must normalise 5.0 → "5" so the map is applied correctly."""
+    The lookup must normalise 5.0 → "5" so the map is applied correctly.
+    """
 
     MAP = {"0": "Aus", "5": "Betrieb", "10": "Standby"}
 
@@ -125,9 +126,11 @@ class TestApplyValueMapStringValues:
 # apply_source_type
 # ===========================================================================
 
+
 def _run(raw, source_data_type=None, json_key=None, xml_path=None):
     try:
         import json
+
         auto = json.loads(raw)
     except Exception:
         auto = raw
@@ -180,6 +183,7 @@ class TestApplySourceTypeJson:
 
     def test_missing_key_returns_auto(self):
         import json
+
         raw = '{"temp": 22.5}'
         auto = json.loads(raw)
         result = apply_source_type(raw, auto, "json", "humidity", None)
@@ -187,6 +191,7 @@ class TestApplySourceTypeJson:
 
     def test_no_key_returns_full_object(self):
         import json
+
         raw = '{"a": 1, "b": 2}'
         auto = json.loads(raw)
         result = apply_source_type(raw, auto, "json", None, None)

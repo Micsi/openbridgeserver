@@ -1,11 +1,11 @@
-"""
-Config Backup / Restore — Phase 5 (Multi-Instance)
+"""Config Backup / Restore — Phase 5 (Multi-Instance)
 
 GET  /api/v1/config/export   → JSON-Sicherung: DataPoints + Bindings + AdapterInstances + KNX-GAs
 POST /api/v1/config/import   ← JSON, upsert-Semantik (existierende IDs werden aktualisiert)
 
 Rückwärtskompatibel: Alter Export mit adapter_configs wird beim Import erkannt und migriert.
 """
+
 from __future__ import annotations
 
 import base64
@@ -14,18 +14,16 @@ import os
 import sqlite3
 import tempfile
 import uuid
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from obs.api.auth import get_current_user, get_admin_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.core.registry import get_registry
-from obs.db.database import get_db, Database
-from obs.models.datapoint import DataPoint, DataPointCreate
-from obs.models.binding import AdapterBinding
+from obs.db.database import Database, get_db
+from obs.models.datapoint import DataPoint
 
 router = APIRouter(tags=["config"])
 
@@ -35,6 +33,7 @@ _EXPORT_VERSION = "4"
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+
 
 class ExportedDataPoint(BaseModel):
     id: str
@@ -91,8 +90,8 @@ class ExportedLogicGraph(BaseModel):
 
 
 class ExportedIcon(BaseModel):
-    name: str           # Stem ohne .svg, z.B. "abacus-solid"
-    content_b64: str    # base64-kodierter SVG-Inhalt
+    name: str  # Stem ohne .svg, z.B. "abacus-solid"
+    content_b64: str  # base64-kodierter SVG-Inhalt
 
 
 class ConfigExport(BaseModel):
@@ -144,6 +143,7 @@ class ClearResult(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @router.get("/export", response_model=ConfigExport)
 async def export_config(
     _user: str = Depends(get_current_user),
@@ -164,9 +164,7 @@ async def export_config(
         for dp in all_dps
     ]
 
-    binding_rows = await db.fetchall(
-        "SELECT * FROM adapter_bindings ORDER BY created_at"
-    )
+    binding_rows = await db.fetchall("SELECT * FROM adapter_bindings ORDER BY created_at")
     bindings = [
         ExportedBinding(
             id=r["id"],
@@ -197,9 +195,7 @@ async def export_config(
         for r in instance_rows
     ]
 
-    ga_rows = await db.fetchall(
-        "SELECT address, name, description, dpt FROM knx_group_addresses ORDER BY address"
-    )
+    ga_rows = await db.fetchall("SELECT address, name, description, dpt FROM knx_group_addresses ORDER BY address")
     knx_group_addresses = [
         ExportedKnxGroupAddress(
             address=r["address"],
@@ -224,28 +220,29 @@ async def export_config(
 
     # Icons — alle SVG-Dateien als base64
     from obs.api.v1.icons import _icons_dir
+
     icons: list[ExportedIcon] = []
     try:
         for svg_file in sorted(_icons_dir().glob("*.svg")):
             try:
-                icons.append(ExportedIcon(
-                    name=svg_file.stem,
-                    content_b64=base64.b64encode(svg_file.read_bytes()).decode(),
-                ))
+                icons.append(
+                    ExportedIcon(
+                        name=svg_file.stem,
+                        content_b64=base64.b64encode(svg_file.read_bytes()).decode(),
+                    ),
+                )
             except OSError:
                 pass
     except Exception:
         pass
 
     # FontAwesome API Key
-    fa_key_row = await db.fetchone(
-        "SELECT value FROM app_settings WHERE key = 'icons.fontawesome_api_key'"
-    )
+    fa_key_row = await db.fetchone("SELECT value FROM app_settings WHERE key = 'icons.fontawesome_api_key'")
     fa_api_key = fa_key_row["value"] if fa_key_row else None
 
     return ConfigExport(
         obs_version=_EXPORT_VERSION,
-        exported_at=datetime.now(timezone.utc).isoformat(),
+        exported_at=datetime.now(UTC).isoformat(),
         datapoints=datapoints,
         bindings=bindings,
         adapter_instances=adapter_instances,
@@ -263,6 +260,7 @@ async def export_db(
 ) -> FileResponse:
     """Erstellt eine konsistente SQLite-Sicherung via sqlite3.backup() und gibt sie als Datei zurück."""
     from obs.config import get_settings
+
     src_path = get_settings().database.path
 
     if not os.path.exists(src_path):
@@ -307,7 +305,7 @@ async def import_config(
         errors=[],
     )
     reg = get_registry()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # --- DataPoints ---
     for dp_data in body.datapoints:
@@ -316,13 +314,17 @@ async def import_config(
             existing = reg.get(dp_id)
             if existing:
                 from obs.models.datapoint import DataPointUpdate
-                await reg.update(dp_id, DataPointUpdate(
-                    name=dp_data.name,
-                    data_type=dp_data.data_type,
-                    unit=dp_data.unit,
-                    tags=dp_data.tags,
-                    mqtt_alias=dp_data.mqtt_alias,
-                ))
+
+                await reg.update(
+                    dp_id,
+                    DataPointUpdate(
+                        name=dp_data.name,
+                        data_type=dp_data.data_type,
+                        unit=dp_data.unit,
+                        tags=dp_data.tags,
+                        mqtt_alias=dp_data.mqtt_alias,
+                    ),
+                )
                 result.datapoints_updated += 1
             else:
                 dp = DataPoint(
@@ -337,10 +339,20 @@ async def import_config(
                     """INSERT OR IGNORE INTO datapoints
                        (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, created_at, updated_at)
                        VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (str(dp.id), dp.name, dp.data_type, dp.unit,
-                     json.dumps(dp.tags), dp.mqtt_topic, dp.mqtt_alias, now, now),
+                    (
+                        str(dp.id),
+                        dp.name,
+                        dp.data_type,
+                        dp.unit,
+                        json.dumps(dp.tags),
+                        dp.mqtt_topic,
+                        dp.mqtt_alias,
+                        now,
+                        now,
+                    ),
                 )
                 from obs.core.registry import ValueState
+
                 reg._points[dp_id] = dp
                 reg._values[dp_id] = ValueState()
                 result.datapoints_created += 1
@@ -353,13 +365,15 @@ async def import_config(
     if not instances_to_upsert and body.adapter_configs:
         # Legacy v1: adapter_configs → neue Instanzen mit neuer UUID
         for ac in body.adapter_configs:
-            instances_to_upsert.append(ExportedAdapterInstance(
-                id=str(uuid.uuid4()),
-                adapter_type=ac.adapter_type,
-                name=ac.adapter_type,
-                config=ac.config,
-                enabled=ac.enabled,
-            ))
+            instances_to_upsert.append(
+                ExportedAdapterInstance(
+                    id=str(uuid.uuid4()),
+                    adapter_type=ac.adapter_type,
+                    name=ac.adapter_type,
+                    config=ac.config,
+                    enabled=ac.enabled,
+                ),
+            )
 
     for ai in instances_to_upsert:
         try:
@@ -370,8 +384,15 @@ async def import_config(
                    ON CONFLICT(id) DO UPDATE
                    SET name=excluded.name, config=excluded.config,
                        enabled=excluded.enabled, updated_at=excluded.updated_at""",
-                (ai.id, ai.adapter_type, ai.name,
-                 json.dumps(ai.config), int(ai.enabled), now, now),
+                (
+                    ai.id,
+                    ai.adapter_type,
+                    ai.name,
+                    json.dumps(ai.config),
+                    int(ai.enabled),
+                    now,
+                    now,
+                ),
             )
             result.adapter_instances_upserted += 1
         except Exception as exc:
@@ -381,9 +402,7 @@ async def import_config(
     for b_data in body.bindings:
         try:
             b_id = b_data.id
-            row = await db.fetchone(
-                "SELECT id FROM adapter_bindings WHERE id=?", (b_id,)
-            )
+            row = await db.fetchone("SELECT id FROM adapter_bindings WHERE id=?", (b_id,))
             if row:
                 await db.execute_and_commit(
                     """UPDATE adapter_bindings
@@ -392,10 +411,18 @@ async def import_config(
                            send_min_delta=?, send_min_delta_pct=?,
                            updated_at=?
                        WHERE id=?""",
-                    (b_data.direction, json.dumps(b_data.config), int(b_data.enabled),
-                     b_data.value_formula, b_data.send_throttle_ms, int(b_data.send_on_change),
-                     b_data.send_min_delta, b_data.send_min_delta_pct,
-                     now, b_id),
+                    (
+                        b_data.direction,
+                        json.dumps(b_data.config),
+                        int(b_data.enabled),
+                        b_data.value_formula,
+                        b_data.send_throttle_ms,
+                        int(b_data.send_on_change),
+                        b_data.send_min_delta,
+                        b_data.send_min_delta_pct,
+                        now,
+                        b_id,
+                    ),
                 )
                 result.bindings_updated += 1
             else:
@@ -407,12 +434,22 @@ async def import_config(
                         send_min_delta, send_min_delta_pct,
                         created_at, updated_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (b_id, b_data.datapoint_id, b_data.adapter_type,
-                     b_data.adapter_instance_id, b_data.direction,
-                     json.dumps(b_data.config), int(b_data.enabled),
-                     b_data.value_formula, b_data.send_throttle_ms, int(b_data.send_on_change),
-                     b_data.send_min_delta, b_data.send_min_delta_pct,
-                     now, now),
+                    (
+                        b_id,
+                        b_data.datapoint_id,
+                        b_data.adapter_type,
+                        b_data.adapter_instance_id,
+                        b_data.direction,
+                        json.dumps(b_data.config),
+                        int(b_data.enabled),
+                        b_data.value_formula,
+                        b_data.send_throttle_ms,
+                        int(b_data.send_on_change),
+                        b_data.send_min_delta,
+                        b_data.send_min_delta_pct,
+                        now,
+                        now,
+                    ),
                 )
                 result.bindings_created += 1
         except Exception as exc:
@@ -450,7 +487,15 @@ async def import_config(
                     """INSERT INTO logic_graphs
                        (id, name, description, enabled, flow_data, created_at, updated_at)
                        VALUES (?,?,?,?,?,?,?)""",
-                    (lg.id, lg.name, lg.description, int(lg.enabled), flow_json, now, now),
+                    (
+                        lg.id,
+                        lg.name,
+                        lg.description,
+                        int(lg.enabled),
+                        flow_json,
+                        now,
+                        now,
+                    ),
                 )
                 result.logic_graphs_created += 1
         except Exception as exc:
@@ -459,14 +504,16 @@ async def import_config(
     if body.logic_graphs:
         try:
             from obs.logic.manager import get_logic_manager
+
             await get_logic_manager().reload()
         except Exception as exc:
             result.errors.append(f"Logic manager reload: {exc}")
 
     # Restart all adapter instances so they pick up new configs and bindings
     try:
-        from obs.core.event_bus import get_event_bus
         from obs.adapters import registry as adapter_registry
+        from obs.core.event_bus import get_event_bus
+
         event_bus = get_event_bus()
         await adapter_registry.stop_all()
         await adapter_registry.start_all(event_bus, db)
@@ -487,6 +534,7 @@ async def import_config(
     # --- Icons ---
     if body.icons:
         from obs.api.v1.icons import _icons_dir, _is_svg, _safe_name
+
         icons_dir = _icons_dir()
         for icon in body.icons:
             try:
@@ -523,6 +571,7 @@ async def factory_reset(
 
     try:
         from obs.adapters import registry as adapter_registry
+
         await adapter_registry.stop_all()
     except Exception as exc:
         result.errors.append(f"Adapter stop failed: {exc}")
@@ -532,6 +581,7 @@ async def factory_reset(
         result.logic_graphs_deleted = row["n"] if row else 0
         await db.execute_and_commit("DELETE FROM logic_graphs")
         from obs.logic.manager import get_logic_manager
+
         await get_logic_manager().reload()
     except Exception as exc:
         result.errors.append(f"Logic graphs reset failed: {exc}")
@@ -570,6 +620,7 @@ async def factory_reset(
     # Icons (SVG-Dateien) löschen
     try:
         from obs.api.v1.icons import _icons_dir
+
         icons_dir = _icons_dir()
         for svg_file in list(icons_dir.glob("*.svg")):
             svg_file.unlink()
@@ -579,9 +630,7 @@ async def factory_reset(
 
     # FontAwesome API Key löschen
     try:
-        await db.execute_and_commit(
-            "DELETE FROM app_settings WHERE key = 'icons.fontawesome_api_key'"
-        )
+        await db.execute_and_commit("DELETE FROM app_settings WHERE key = 'icons.fontawesome_api_key'")
     except Exception as exc:
         result.errors.append(f"FA API Key reset failed: {exc}")
 
@@ -598,6 +647,7 @@ async def clear_bindings(
     try:
         from obs.adapters import registry as adapter_registry
         from obs.core.event_bus import get_event_bus
+
         await adapter_registry.stop_all()
         row = await db.fetchone("SELECT COUNT(*) as n FROM adapter_bindings")
         result.deleted = row["n"] if row else 0
@@ -618,6 +668,7 @@ async def clear_datapoints(
     try:
         from obs.adapters import registry as adapter_registry
         from obs.core.event_bus import get_event_bus
+
         await adapter_registry.stop_all()
         row = await db.fetchone("SELECT COUNT(*) as n FROM adapter_bindings")
         result.bindings_deleted = row["n"] if row else 0
@@ -646,6 +697,7 @@ async def clear_logic(
         result.deleted = row["n"] if row else 0
         await db.execute_and_commit("DELETE FROM logic_graphs")
         from obs.logic.manager import get_logic_manager
+
         await get_logic_manager().reload()
     except Exception as exc:
         result.errors.append(f"Logic graphs clear failed: {exc}")
@@ -661,6 +713,7 @@ async def clear_adapters(
     result = ClearResult(deleted=0, bindings_deleted=0)
     try:
         from obs.adapters import registry as adapter_registry
+
         await adapter_registry.stop_all()
         row = await db.fetchone("SELECT COUNT(*) as n FROM adapter_bindings")
         result.bindings_deleted = row["n"] if row else 0

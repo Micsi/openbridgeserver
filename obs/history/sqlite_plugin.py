@@ -1,5 +1,4 @@
-"""
-SQLite History Plugin — Phase 5
+"""SQLite History Plugin — Phase 5
 
 Speichert Werte in der Hauptdatenbank (history_values Tabelle, Migration V3).
 Aggregation über SQLite strftime-Groupierung.
@@ -7,12 +6,13 @@ Aggregation über SQLite strftime-Groupierung.
 Unterstützte Intervalle: 1m | 5m | 15m | 30m | 1h | 6h | 12h | 1d
 Unterstützte Funktionen: avg | min | max | last
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from obs.history.base import HistoryPlugin
@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 
 # Interval → (truncation_fmt, minutes)
 _INTERVALS: dict[str, tuple[str, int]] = {
-    "1m":  ("%Y-%m-%dT%H:%M:00", 1),
-    "5m":  ("%Y-%m-%dT%H:%M:00", 5),    # rounded in Python
+    "1m": ("%Y-%m-%dT%H:%M:00", 1),
+    "5m": ("%Y-%m-%dT%H:%M:00", 5),  # rounded in Python
     "15m": ("%Y-%m-%dT%H:%M:00", 15),
     "30m": ("%Y-%m-%dT%H:%M:00", 30),
-    "1h":  ("%Y-%m-%dT%H:00:00", 60),
-    "6h":  ("%Y-%m-%dT%H:00:00", 360),
+    "1h": ("%Y-%m-%dT%H:00:00", 60),
+    "6h": ("%Y-%m-%dT%H:00:00", 360),
     "12h": ("%Y-%m-%dT%H:00:00", 720),
-    "1d":  ("%Y-%m-%dT00:00:00", 1440),
+    "1d": ("%Y-%m-%dT00:00:00", 1440),
 }
 
 
@@ -37,6 +37,7 @@ class SQLiteHistoryPlugin(HistoryPlugin):
 
     def __init__(self, db: Any) -> None:
         from obs.db.database import Database
+
         self._db: Database = db
 
     # ------------------------------------------------------------------
@@ -52,11 +53,18 @@ class SQLiteHistoryPlugin(HistoryPlugin):
         ts: datetime | None = None,
         source_adapter: str | None = None,
     ) -> None:
-        ts_str = (ts or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        ts_str = (ts or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         await self._db.execute_and_commit(
             """INSERT INTO history_values (datapoint_id, value, unit, quality, ts, source_adapter)
                VALUES (?,?,?,?,?,?)""",
-            (str(datapoint_id), json.dumps(value), unit, quality, ts_str, source_adapter),
+            (
+                str(datapoint_id),
+                json.dumps(value),
+                unit,
+                quality,
+                ts_str,
+                source_adapter,
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -84,7 +92,13 @@ class SQLiteHistoryPlugin(HistoryPlugin):
             ),
         )
         return [
-            {"ts": r["ts"], "v": _safe_loads(r["value"]), "u": r["unit"], "q": r["quality"], "a": r["source_adapter"]}
+            {
+                "ts": r["ts"],
+                "v": _safe_loads(r["value"]),
+                "u": r["unit"],
+                "q": r["quality"],
+                "a": r["source_adapter"],
+            }
             for r in rows
         ]
 
@@ -124,15 +138,14 @@ class SQLiteHistoryPlugin(HistoryPlugin):
                 (str(datapoint_id), from_ts.isoformat(), to_ts.isoformat()),
             )
             return [{"bucket": r["bucket"], "v": r["v"]} for r in rows]
-        else:
-            # Sub-hourly: fetch raw, group in Python
-            rows = await self._db.fetchall(
-                """SELECT ts, value FROM history_values
+        # Sub-hourly: fetch raw, group in Python
+        rows = await self._db.fetchall(
+            """SELECT ts, value FROM history_values
                    WHERE datapoint_id=? AND ts >= ? AND ts <= ?
                    ORDER BY ts""",
-                (str(datapoint_id), from_ts.isoformat(), to_ts.isoformat()),
-            )
-            return _aggregate_python(rows, fn, minutes)
+            (str(datapoint_id), from_ts.isoformat(), to_ts.isoformat()),
+        )
+        return _aggregate_python(rows, fn, minutes)
 
     async def _aggregate_last(
         self,
@@ -180,6 +193,7 @@ class SQLiteHistoryPlugin(HistoryPlugin):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _safe_loads(s: str | None) -> Any:
     if s is None:

@@ -1,9 +1,9 @@
-"""
-Logic Graph Executor.
+"""Logic Graph Executor.
 
 Topologically sorts the graph and evaluates each node in order.
 Returns a dict of node_id → output_values.
 """
+
 from __future__ import annotations
 
 import ast
@@ -11,8 +11,8 @@ import logging
 import math
 import operator
 import re
-from decimal import Decimal, ROUND_HALF_UP
 from datetime import date as _date
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from obs.logic.models import FlowData, LogicNode
@@ -20,9 +20,9 @@ from obs.logic.models import FlowData, LogicNode
 logger = logging.getLogger(__name__)
 
 _COMPARE_OPS = {
-    ">":  operator.gt,
-    "<":  operator.lt,
-    "=":  operator.eq,
+    ">": operator.gt,
+    "<": operator.lt,
+    "=": operator.eq,
     ">=": operator.ge,
     "<=": operator.le,
     "!=": operator.ne,
@@ -149,7 +149,7 @@ class GraphExecutor:
 
         match t:
             case "const_value":
-                raw   = d.get("value", "0")
+                raw = d.get("value", "0")
                 dtype = d.get("data_type", "number")
                 if dtype == "bool":
                     val: Any = self._to_bool(raw)
@@ -199,7 +199,7 @@ class GraphExecutor:
                 return {"out": out_val}
 
             case "compare":
-                op  = _COMPARE_OPS.get(d.get("operator", ">"), operator.gt)
+                op = _COMPARE_OPS.get(d.get("operator", ">"), operator.gt)
                 a, b = inputs.get("in1"), inputs.get("in2")
                 if a is None or b is None:
                     return {"out": False}
@@ -211,7 +211,7 @@ class GraphExecutor:
 
             case "hysteresis":
                 val = inputs.get("value")
-                on_thr  = float(d.get("threshold_on",  25.0))
+                on_thr = float(d.get("threshold_on", 25.0))
                 off_thr = float(d.get("threshold_off", 20.0))
                 prev = self.hysteresis_state.get(node.id, False)
                 if val is None:
@@ -238,9 +238,9 @@ class GraphExecutor:
                 return {"result": result}
 
             case "math_map":
-                val     = self._to_num(inputs.get("value"))
-                in_min  = float(d.get("in_min", 0))
-                in_max  = float(d.get("in_max", 100))
+                val = self._to_num(inputs.get("value"))
+                in_min = float(d.get("in_min", 0))
+                in_max = float(d.get("in_max", 100))
                 out_min = float(d.get("out_min", 0))
                 out_max = float(d.get("out_max", 1))
                 if in_max == in_min:
@@ -261,6 +261,7 @@ class GraphExecutor:
                 value_map = d.get("value_map")
                 if value_map and raw is not None:
                     from obs.core.transformation import apply_value_map
+
                     raw = apply_value_map(raw, value_map)
                 return {"value": raw, "changed": inputs.get("changed", False)}
 
@@ -276,6 +277,7 @@ class GraphExecutor:
                 value_map = d.get("value_map")
                 if value_map and write_val is not None:
                     from obs.core.transformation import apply_value_map
+
                     write_val = apply_value_map(write_val, value_map)
                 return {"_write_value": write_val, "_triggered": inputs.get("trigger")}
 
@@ -285,14 +287,14 @@ class GraphExecutor:
                 return {"result": result}
 
             case "clamp":
-                lo  = float(d.get("min", 0))
-                hi  = float(d.get("max", 100))
+                lo = float(d.get("min", 0))
+                hi = float(d.get("max", 100))
                 val = self._to_num(inputs.get("value"))
                 return {"result": max(lo, min(hi, val))}
 
             case "string_concat":
                 count = max(2, min(20, int(d.get("count", 2))))
-                sep   = str(d.get("separator", ""))
+                sep = str(d.get("separator", ""))
                 parts: list[str] = []
                 for i in range(1, count + 1):
                     val = inputs.get(f"in_{i}")
@@ -305,9 +307,7 @@ class GraphExecutor:
 
             case "statistics":
                 # State stored in hysteresis_state keyed by node.id
-                state = self.hysteresis_state.setdefault(node.id, {
-                    "s_min": None, "s_max": None, "s_sum": 0.0, "s_count": 0
-                })
+                state = self.hysteresis_state.setdefault(node.id, {"s_min": None, "s_max": None, "s_sum": 0.0, "s_count": 0})
                 if self._to_bool(inputs.get("reset")):
                     state.update({"s_min": None, "s_max": None, "s_sum": 0.0, "s_count": 0})
                 val = inputs.get("value")
@@ -320,31 +320,33 @@ class GraphExecutor:
                 cnt = state["s_count"]
                 avg = (state["s_sum"] / cnt) if cnt > 0 else None
                 return {
-                    "min":   state["s_min"],
-                    "max":   state["s_max"],
-                    "avg":   round(avg, 6) if avg is not None else None,
+                    "min": state["s_min"],
+                    "max": state["s_max"],
+                    "avg": round(avg, 6) if avg is not None else None,
                     "count": cnt,
                 }
 
             case "astro_sun":
                 try:
-                    from astral import LocationInfo             # noqa: PLC0415
+                    import datetime as _dt  # noqa: PLC0415
+                    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+                    from astral import LocationInfo  # noqa: PLC0415
                     from astral.sun import sun as _astral_sun  # noqa: PLC0415
-                    from zoneinfo import ZoneInfo               # noqa: PLC0415
-                    import datetime as _dt                      # noqa: PLC0415
-                    lat     = float(d.get("latitude",  47.37))
-                    lon     = float(d.get("longitude",  8.54))
+
+                    lat = float(d.get("latitude", 47.37))
+                    lon = float(d.get("longitude", 8.54))
                     tz_name = self.app_config.get("timezone", "Europe/Zurich")
-                    tz      = ZoneInfo(tz_name)
-                    loc     = LocationInfo(latitude=lat, longitude=lon, timezone=tz_name)
-                    today   = _dt.datetime.now(tz).date()
-                    s       = _astral_sun(loc.observer, date=today, tzinfo=tz)
-                    now_dt  = _dt.datetime.now(tz)
-                    is_day  = s["sunrise"] <= now_dt <= s["sunset"]
+                    tz = ZoneInfo(tz_name)
+                    loc = LocationInfo(latitude=lat, longitude=lon, timezone=tz_name)
+                    today = _dt.datetime.now(tz).date()
+                    s = _astral_sun(loc.observer, date=today, tzinfo=tz)
+                    now_dt = _dt.datetime.now(tz)
+                    is_day = s["sunrise"] <= now_dt <= s["sunset"]
                     return {
                         "sunrise": s["sunrise"].strftime("%H:%M"),
-                        "sunset":  s["sunset"].strftime("%H:%M"),
-                        "is_day":  is_day,
+                        "sunset": s["sunset"].strftime("%H:%M"),
+                        "is_day": is_day,
                     }
                 except ImportError:
                     logger.warning("astral not installed — astro_sun needs: pip install astral")
@@ -357,9 +359,9 @@ class GraphExecutor:
                 # _computed_hours is injected as override by LogicManager before execution
                 hours = self._to_num(inputs.get("_computed_hours", 0.0))
                 return {
-                    "hours":   round(hours, 4),
+                    "hours": round(hours, 4),
                     "_active": self._to_bool(inputs.get("active")),
-                    "_reset":  self._to_bool(inputs.get("reset")),
+                    "_reset": self._to_bool(inputs.get("reset")),
                 }
 
             case "notify_pushover":
@@ -367,12 +369,12 @@ class GraphExecutor:
                 msg = inputs.get("message")
                 triggered = self._to_bool(inputs.get("trigger")) if "trigger" in inputs else False
                 return {
-                    "_trigger":    msg is not None or triggered,
-                    "_message":    msg,
-                    "_url":        inputs.get("url"),
-                    "_url_title":  inputs.get("url_title"),
-                    "_image_url":  inputs.get("image_url"),
-                    "sent":        False,
+                    "_trigger": msg is not None or triggered,
+                    "_message": msg,
+                    "_url": inputs.get("url"),
+                    "_url_title": inputs.get("url_title"),
+                    "_image_url": inputs.get("image_url"),
+                    "sent": False,
                 }
 
             case "notify_sms":
@@ -382,21 +384,22 @@ class GraphExecutor:
                 return {
                     "_trigger": msg is not None or triggered,
                     "_message": msg,
-                    "sent":     False,
+                    "sent": False,
                 }
 
             case "api_client":
                 # Async — fully handled by LogicManager after executor run
                 return {
                     "_trigger": inputs.get("trigger"),
-                    "_body":    inputs.get("body"),
+                    "_body": inputs.get("body"),
                     "response": None,
-                    "status":   None,
-                    "success":  False,
+                    "status": None,
+                    "success": False,
                 }
 
             case "json_extractor":
                 import json as _json_mod  # noqa: PLC0415
+
                 raw = inputs.get("data")
                 json_path = (d.get("json_path") or "").strip()
 
@@ -434,6 +437,7 @@ class GraphExecutor:
 
             case "xml_extractor":
                 import xml.etree.ElementTree as _ET  # noqa: PLC0415
+
                 raw_xml = inputs.get("data")
                 xml_path = (d.get("xml_path") or "").strip()
 
@@ -469,13 +473,22 @@ class GraphExecutor:
                 # T_avg = (T1 + T2 + 2×T3) / 4
                 # heating_mode=1 wenn ref_temp < temp_winter, bleibt 1 bis ref_temp > temp_summer
                 import datetime as _dt
-                state = self.hysteresis_state.setdefault(node.id, {
-                    "t1": None, "t1_date": None,
-                    "t2": None, "t2_date": None,
-                    "t3": None, "t3_date": None,
-                    "daily_temps": [], "daily_avg": None, "monthly_avg": None,
-                    "heating_mode": 0,
-                })
+
+                state = self.hysteresis_state.setdefault(
+                    node.id,
+                    {
+                        "t1": None,
+                        "t1_date": None,
+                        "t2": None,
+                        "t2_date": None,
+                        "t3": None,
+                        "t3_date": None,
+                        "daily_temps": [],
+                        "daily_avg": None,
+                        "monthly_avg": None,
+                        "heating_mode": 0,
+                    },
+                )
                 val = inputs.get("value")
                 temp_winter = float(d.get("temp_winter", 15.0))
                 temp_summer = float(d.get("temp_summer", 20.0))
@@ -496,15 +509,12 @@ class GraphExecutor:
                         state[slot] = fval
                         state[f"{slot}_date"] = today
                     # Compute daily avg once all three slots have today's date
-                    if (state["t1_date"] == today and state["t2_date"] == today
-                            and state["t3_date"] == today):
+                    if state["t1_date"] == today and state["t2_date"] == today and state["t3_date"] == today:
                         daily_avg = (state["t1"] + state["t2"] + 2 * state["t3"]) / 4
                         state["daily_avg"] = daily_avg
                         state["daily_temps"].append(daily_avg)
                         state["daily_temps"] = state["daily_temps"][-31:]
-                        state["monthly_avg"] = (
-                            sum(state["daily_temps"]) / len(state["daily_temps"])
-                        )
+                        state["monthly_avg"] = sum(state["daily_temps"]) / len(state["daily_temps"])
                         # Reset slots for next day
                         for k in ("t1", "t2", "t3", "t1_date", "t2_date", "t3_date"):
                             state[k] = None
@@ -518,27 +528,39 @@ class GraphExecutor:
                     # between thresholds: keep last state (hysteresis)
                 return {
                     "heating_mode": state["heating_mode"],
-                    "daily_avg":    state["daily_avg"],
-                    "monthly_avg":  state["monthly_avg"],
-                    "t1":           state["t1"],
-                    "t2":           state["t2"],
-                    "t3":           state["t3"],
+                    "daily_avg": state["daily_avg"],
+                    "monthly_avg": state["monthly_avg"],
+                    "t1": state["t1"],
+                    "t2": state["t2"],
+                    "t3": state["t3"],
                 }
 
             case "min_max_tracker":
-                state = self.hysteresis_state.setdefault(node.id, {
-                    "abs_min": None, "abs_max": None,
-                    "day_min": None, "day_max": None, "last_day": None,
-                    "week_min": None, "week_max": None, "last_week": None,
-                    "month_min": None, "month_max": None, "last_month": None,
-                    "year_min": None, "year_max": None, "last_year": None,
-                    "initialized": False,
-                })
+                state = self.hysteresis_state.setdefault(
+                    node.id,
+                    {
+                        "abs_min": None,
+                        "abs_max": None,
+                        "day_min": None,
+                        "day_max": None,
+                        "last_day": None,
+                        "week_min": None,
+                        "week_max": None,
+                        "last_week": None,
+                        "month_min": None,
+                        "month_max": None,
+                        "last_month": None,
+                        "year_min": None,
+                        "year_max": None,
+                        "last_year": None,
+                        "initialized": False,
+                    },
+                )
                 today = _date.today()
-                day_key   = today.isoformat()
-                week_key  = f"{today.isocalendar()[0]}-W{today.isocalendar()[1]:02d}"
+                day_key = today.isoformat()
+                week_key = f"{today.isocalendar()[0]}-W{today.isocalendar()[1]:02d}"
                 month_key = f"{today.year}-{today.month:02d}"
-                year_key  = str(today.year)
+                year_key = str(today.year)
                 # Period resets FIRST — so seeds applied afterwards survive the next call
                 if state["last_day"] != day_key:
                     state["day_min"] = state["day_max"] = None
@@ -555,10 +577,14 @@ class GraphExecutor:
                 # Apply seed values AFTER resets (once, e.g. migrated from predecessor system)
                 if not state["initialized"]:
                     for key, cfg_key in [
-                        ("abs_min", "init_abs_min"), ("abs_max", "init_abs_max"),
-                        ("day_min", "init_day_min"), ("day_max", "init_day_max"),
-                        ("month_min", "init_month_min"), ("month_max", "init_month_max"),
-                        ("year_min", "init_year_min"), ("year_max", "init_year_max"),
+                        ("abs_min", "init_abs_min"),
+                        ("abs_max", "init_abs_max"),
+                        ("day_min", "init_day_min"),
+                        ("day_max", "init_day_max"),
+                        ("month_min", "init_month_min"),
+                        ("month_max", "init_month_max"),
+                        ("year_min", "init_year_min"),
+                        ("year_max", "init_year_max"),
                     ]:
                         v = d.get(cfg_key)
                         if v not in (None, ""):
@@ -568,22 +594,30 @@ class GraphExecutor:
                 if val is not None:
                     fval = self._to_num(val)
                     for mn_key, mx_key in [
-                        ("abs_min", "abs_max"), ("day_min", "day_max"),
-                        ("week_min", "week_max"), ("month_min", "month_max"),
+                        ("abs_min", "abs_max"),
+                        ("day_min", "day_max"),
+                        ("week_min", "week_max"),
+                        ("month_min", "month_max"),
                         ("year_min", "year_max"),
                     ]:
                         state[mn_key] = fval if state[mn_key] is None else min(state[mn_key], fval)
                         state[mx_key] = fval if state[mx_key] is None else max(state[mx_key], fval)
                 return {
-                    "min_daily": state["day_min"],   "max_daily": state["day_max"],
-                    "min_weekly": state["week_min"],  "max_weekly": state["week_max"],
-                    "min_monthly": state["month_min"],"max_monthly": state["month_max"],
-                    "min_yearly": state["year_min"],  "max_yearly": state["year_max"],
-                    "min_abs": state["abs_min"],      "max_abs": state["abs_max"],
+                    "min_daily": state["day_min"],
+                    "max_daily": state["day_max"],
+                    "min_weekly": state["week_min"],
+                    "max_weekly": state["week_max"],
+                    "min_monthly": state["month_min"],
+                    "max_monthly": state["month_max"],
+                    "min_yearly": state["year_min"],
+                    "max_yearly": state["year_max"],
+                    "min_abs": state["abs_min"],
+                    "max_abs": state["abs_max"],
                 }
 
             case "avg_multi":
                 import datetime as _dt  # noqa: PLC0415
+
                 state = self.hysteresis_state.setdefault(node.id, {"samples": []})
                 count = max(2, min(20, int(d.get("input_count", 2))))
                 # Collect all non-None inputs
@@ -594,7 +628,7 @@ class GraphExecutor:
                         values.append(self._to_num(v))
                 if values:
                     current_avg: float | None = sum(values) / len(values)
-                    now_utc = _dt.datetime.now(_dt.timezone.utc)
+                    now_utc = _dt.datetime.now(_dt.UTC)
                     state["samples"].append([now_utc.isoformat(), current_avg])
                     # Trim buffer: keep only samples within the max window (365 days)
                     cutoff_iso = (now_utc - _dt.timedelta(days=365)).isoformat()
@@ -603,19 +637,17 @@ class GraphExecutor:
                     current_avg = None
                 # Compute moving averages for each time window
                 _WINDOWS = {
-                    "avg_1m":   60,
-                    "avg_1h":   3_600,
-                    "avg_1d":   86_400,
-                    "avg_7d":   604_800,
-                    "avg_14d":  1_209_600,
-                    "avg_30d":  2_592_000,
+                    "avg_1m": 60,
+                    "avg_1h": 3_600,
+                    "avg_1d": 86_400,
+                    "avg_7d": 604_800,
+                    "avg_14d": 1_209_600,
+                    "avg_30d": 2_592_000,
                     "avg_180d": 15_552_000,
                     "avg_365d": 31_536_000,
                 }
-                now_utc2 = _dt.datetime.now(_dt.timezone.utc)
-                result: dict[str, Any] = {
-                    "avg": round(current_avg, 6) if current_avg is not None else None
-                }
+                now_utc2 = _dt.datetime.now(_dt.UTC)
+                result: dict[str, Any] = {"avg": round(current_avg, 6) if current_avg is not None else None}
                 for key, seconds in _WINDOWS.items():
                     cutoff = (now_utc2 - _dt.timedelta(seconds=seconds)).isoformat()
                     window_vals = [s[1] for s in state["samples"] if s[0] >= cutoff]
@@ -623,19 +655,30 @@ class GraphExecutor:
                 return result
 
             case "consumption_counter":
-                state = self.hysteresis_state.setdefault(node.id, {
-                    "last_value": None,
-                    "daily": 0.0,   "prev_daily": 0.0,   "last_day": None,
-                    "weekly": 0.0,  "prev_weekly": 0.0,  "last_week": None,
-                    "monthly": 0.0, "prev_monthly": 0.0, "last_month": None,
-                    "yearly": 0.0,  "prev_yearly": 0.0,  "last_year": None,
-                    "initialized": False,
-                })
+                state = self.hysteresis_state.setdefault(
+                    node.id,
+                    {
+                        "last_value": None,
+                        "daily": 0.0,
+                        "prev_daily": 0.0,
+                        "last_day": None,
+                        "weekly": 0.0,
+                        "prev_weekly": 0.0,
+                        "last_week": None,
+                        "monthly": 0.0,
+                        "prev_monthly": 0.0,
+                        "last_month": None,
+                        "yearly": 0.0,
+                        "prev_yearly": 0.0,
+                        "last_year": None,
+                        "initialized": False,
+                    },
+                )
                 today = _date.today()
-                day_key   = today.isoformat()
-                week_key  = f"{today.isocalendar()[0]}-W{today.isocalendar()[1]:02d}"
+                day_key = today.isoformat()
+                week_key = f"{today.isocalendar()[0]}-W{today.isocalendar()[1]:02d}"
                 month_key = f"{today.year}-{today.month:02d}"
-                year_key  = str(today.year)
+                year_key = str(today.year)
                 # Period resets FIRST (save previous period total before clearing)
                 if state["last_day"] != day_key:
                     state["prev_daily"] = state["daily"]
@@ -659,10 +702,10 @@ class GraphExecutor:
                     if v_meter not in (None, ""):
                         state["last_value"] = float(v_meter)
                     for key, cfg_key in [
-                        ("daily",   "init_daily"),
-                        ("weekly",  "init_weekly"),
+                        ("daily", "init_daily"),
+                        ("weekly", "init_weekly"),
                         ("monthly", "init_monthly"),
-                        ("yearly",  "init_yearly"),
+                        ("yearly", "init_yearly"),
                     ]:
                         v = d.get(cfg_key)
                         if v not in (None, ""):
@@ -675,20 +718,20 @@ class GraphExecutor:
                     prev = state["last_value"]
                     if prev is not None and fval >= prev:
                         delta = fval - prev
-                        state["daily"]   += delta
-                        state["weekly"]  += delta
+                        state["daily"] += delta
+                        state["weekly"] += delta
                         state["monthly"] += delta
-                        state["yearly"]  += delta
+                        state["yearly"] += delta
                     state["last_value"] = fval
                 return {
-                    "daily":        state["daily"],
-                    "weekly":       state["weekly"],
-                    "monthly":      state["monthly"],
-                    "yearly":       state["yearly"],
-                    "prev_daily":   state["prev_daily"],
-                    "prev_weekly":  state["prev_weekly"],
+                    "daily": state["daily"],
+                    "weekly": state["weekly"],
+                    "monthly": state["monthly"],
+                    "yearly": state["yearly"],
+                    "prev_daily": state["prev_daily"],
+                    "prev_weekly": state["prev_weekly"],
                     "prev_monthly": state["prev_monthly"],
-                    "prev_yearly":  state["prev_yearly"],
+                    "prev_yearly": state["prev_yearly"],
                 }
 
             case _:
@@ -706,8 +749,8 @@ class GraphExecutor:
           "a[0].b"        → obj["a"][0]["b"]  (bracket notation normalised)
         """
         # Normalise array brackets: "items[0]" → "items.0"
-        path = re.sub(r'\[(\d+)\]', r'.\1', path)
-        parts = [p for p in path.split('.') if p]
+        path = re.sub(r"\[(\d+)\]", r".\1", path)
+        parts = [p for p in path.split(".") if p]
         current = obj
         for part in parts:
             if isinstance(current, dict):
@@ -774,10 +817,25 @@ class GraphExecutor:
         """Run a restricted Python script."""
         local_ns: dict[str, Any] = {"inputs": inputs, "result": None, "math": math}
         try:
-            exec(script, {"__builtins__": {"range": range, "len": len, "int": int,  # noqa: S102
-                                           "float": float, "str": str, "bool": bool,
-                                           "abs": abs, "min": min, "max": max,
-                                           "round": GraphExecutor._round_half_up, "math": math}}, local_ns)
+            exec(
+                script,
+                {
+                    "__builtins__": {
+                        "range": range,
+                        "len": len,
+                        "int": int,
+                        "float": float,
+                        "str": str,
+                        "bool": bool,
+                        "abs": abs,
+                        "min": min,
+                        "max": max,
+                        "round": GraphExecutor._round_half_up,
+                        "math": math,
+                    },
+                },
+                local_ns,
+            )
             return local_ns.get("result")
         except Exception as exc:
             raise ExecutionError(f"Script error: {exc}") from exc

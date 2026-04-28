@@ -1,19 +1,28 @@
-"""
-KNX Project Import API
+"""KNX Project Import API
 
 POST /api/v1/knxproj/import          — .knxproj hochladen, GAs importieren
 POST /api/v1/knxproj/import-csv      — ETS GA-CSV hochladen (optional: DataPoints+Bindings anlegen)
 GET  /api/v1/knxproj/group-addresses — importierte GAs abfragen (Suche)
 DELETE /api/v1/knxproj/group-addresses — alle GAs löschen
 """
+
 from __future__ import annotations
 
 import json
 import uuid as uuid_mod
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
 
 from obs.api.auth import get_current_user
@@ -28,45 +37,46 @@ router = APIRouter(tags=["knxproj"])
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class ImportResult(BaseModel):
     imported: int
-    created:  int = 0
-    updated:  int = 0
-    message:  str
+    created: int = 0
+    updated: int = 0
+    message: str
 
 
 class GroupAddressOut(BaseModel):
-    address:     str
-    name:        str
+    address: str
+    name: str
     description: str
-    dpt:         str | None
+    dpt: str | None
     imported_at: str
 
 
 class GroupAddressPage(BaseModel):
-    total:   int
-    items:   list[GroupAddressOut]
+    total: int
+    items: list[GroupAddressOut]
 
 
 # ---------------------------------------------------------------------------
 # Bulk DataPoint + Binding import helper
 # ---------------------------------------------------------------------------
 
+
 async def _bulk_import_datapoints(
-    records:      list[Any],
+    records: list[Any],
     adapter_name: str,
-    direction:    str,
-    db:           Database,
-    now:          str,
+    direction: str,
+    db: Database,
+    now: str,
 ) -> tuple[int, int]:
-    """
-    Erstellt DataPoints + KNX-Bindings für alle records in einer DB-Transaktion.
+    """Erstellt DataPoints + KNX-Bindings für alle records in einer DB-Transaktion.
     Bestehende Bindings (gleiche group_address + adapter_instance) werden aktualisiert.
 
     Returns: (created, updated)
     """
     from obs.adapters.knx.dpt_registry import DPTRegistry
-    from obs.core.registry import get_registry, ValueState, _row_to_datapoint
+    from obs.core.registry import ValueState, _row_to_datapoint, get_registry
 
     # --- Adapter-Instanz ermitteln ---
     instance_row = await db.fetchone(
@@ -92,16 +102,19 @@ async def _bulk_import_datapoints(
             cfg = json.loads(row["config"])
             ga = cfg.get("group_address")
             if ga:
-                existing_map[ga] = {"binding_id": row["id"], "dp_id": row["datapoint_id"]}
+                existing_map[ga] = {
+                    "binding_id": row["id"],
+                    "dp_id": row["datapoint_id"],
+                }
         except (json.JSONDecodeError, KeyError):
             pass
 
     # --- Batch-Listen aufbauen ---
-    dp_inserts:       list[tuple] = []
-    binding_inserts:  list[tuple] = []
-    dp_updates:       list[tuple] = []
-    binding_updates:  list[tuple] = []
-    new_dp_ids:       list[str]   = []   # für Registry-Update
+    dp_inserts: list[tuple] = []
+    binding_inserts: list[tuple] = []
+    dp_updates: list[tuple] = []
+    binding_updates: list[tuple] = []
+    new_dp_ids: list[str] = []  # für Registry-Update
 
     base_time = datetime.fromisoformat(now)
 
@@ -110,10 +123,10 @@ async def _bulk_import_datapoints(
         dpt_def = DPTRegistry.get(record.dpt) if record.dpt else None
         if dpt_def and dpt_def.dpt_id != "UNKNOWN":
             data_type = dpt_def.data_type
-            unit      = dpt_def.unit or None
+            unit = dpt_def.unit or None
         else:
             data_type = "UNKNOWN"
-            unit      = None
+            unit = None
 
         config_dict = {"group_address": record.address}
         if record.dpt:
@@ -128,15 +141,37 @@ async def _bulk_import_datapoints(
             dp_updates.append((record.name, data_type, unit, row_ts, existing["dp_id"]))
             binding_updates.append((config_json, direction, row_ts, existing["binding_id"]))
         else:
-            dp_id      = str(uuid_mod.uuid4())
+            dp_id = str(uuid_mod.uuid4())
             mqtt_topic = f"dp/{dp_id}/value"
-            dp_inserts.append((dp_id, record.name, data_type, unit, "[]", mqtt_topic, None, 1, row_ts, row_ts))
+            dp_inserts.append(
+                (
+                    dp_id,
+                    record.name,
+                    data_type,
+                    unit,
+                    "[]",
+                    mqtt_topic,
+                    None,
+                    1,
+                    row_ts,
+                    row_ts,
+                ),
+            )
 
             binding_id = str(uuid_mod.uuid4())
-            binding_inserts.append((
-                binding_id, dp_id, adapter_type, adapter_instance_id,
-                direction, config_json, 1, now, now,
-            ))
+            binding_inserts.append(
+                (
+                    binding_id,
+                    dp_id,
+                    adapter_type,
+                    adapter_instance_id,
+                    direction,
+                    config_json,
+                    1,
+                    now,
+                    now,
+                ),
+            )
             new_dp_ids.append(dp_id)
 
     # --- Alle DB-Operationen in einer Transaktion ---
@@ -174,7 +209,7 @@ async def _bulk_import_datapoints(
         try:
             reg = get_registry()
             rows = await db.fetchall(
-                f"SELECT * FROM datapoints WHERE id IN ({','.join('?'*len(all_registry_ids))})",
+                f"SELECT * FROM datapoints WHERE id IN ({','.join('?' * len(all_registry_ids))})",
                 all_registry_ids,
             )
             for row in rows:
@@ -187,7 +222,8 @@ async def _bulk_import_datapoints(
 
     # --- Adapter-Instanz neu laden ---
     try:
-        from obs.adapters.registry import get_instance_by_id, _row_to_binding
+        from obs.adapters.registry import _row_to_binding, get_instance_by_id
+
         adapter_instance = get_instance_by_id(adapter_instance_id)
         if adapter_instance:
             binding_rows = await db.fetchall(
@@ -205,17 +241,20 @@ async def _bulk_import_datapoints(
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.post("/import", response_model=ImportResult)
 async def import_knxproj_file(
-    file:         UploadFile = File(...),
-    password:     str | None = Form(None),
-    adapter_name: str | None = Query(None, description="Adapter-Instanzname — wenn angegeben, werden DataPoints und Bindings angelegt"),
-    direction:    str        = Query("SOURCE", pattern="^(SOURCE|DEST|BOTH)$", description="Verknüpfungsrichtung"),
-    _user:        str        = Depends(get_current_user),
-    db:           Database   = Depends(get_db),
+    file: UploadFile = File(...),
+    password: str | None = Form(None),
+    adapter_name: str | None = Query(
+        None,
+        description="Adapter-Instanzname — wenn angegeben, werden DataPoints und Bindings angelegt",
+    ),
+    direction: str = Query("SOURCE", pattern="^(SOURCE|DEST|BOTH)$", description="Verknüpfungsrichtung"),
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
 ) -> ImportResult:
-    """
-    .knxproj Datei hochladen und Gruppenadressen in die DB importieren.
+    """.knxproj Datei hochladen und Gruppenadressen in die DB importieren.
     Bestehende Einträge werden mit UPSERT-Semantik aktualisiert.
 
     Mit adapter_name: zusätzlich DataPoints + KNX-Bindings anlegen.
@@ -250,7 +289,7 @@ async def import_knxproj_file(
             "Eine Produktdatenbank (nur M-XXXX/ Ordner) enthält keine Gruppenadressen.",
         )
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     await db.executemany(
         """INSERT INTO knx_group_addresses (address, name, description, dpt, imported_at)
@@ -260,10 +299,7 @@ async def import_knxproj_file(
                description = excluded.description,
                dpt         = excluded.dpt,
                imported_at = excluded.imported_at""",
-        [
-            (r.address, r.name, r.description, r.dpt, now)
-            for r in records
-        ],
+        [(r.address, r.name, r.description, r.dpt, now) for r in records],
     )
     await db.commit()
 
@@ -287,14 +323,16 @@ async def import_knxproj_file(
 
 @router.post("/import-csv", response_model=ImportResult)
 async def import_ga_csv_file(
-    file:         UploadFile = File(...),
-    adapter_name: str | None = Query(None, description="Adapter-Instanzname — wenn angegeben, werden DataPoints und Bindings angelegt"),
-    direction:    str        = Query("SOURCE", pattern="^(SOURCE|DEST|BOTH)$", description="Verknüpfungsrichtung"),
-    _user:        str        = Depends(get_current_user),
-    db:           Database   = Depends(get_db),
+    file: UploadFile = File(...),
+    adapter_name: str | None = Query(
+        None,
+        description="Adapter-Instanzname — wenn angegeben, werden DataPoints und Bindings angelegt",
+    ),
+    direction: str = Query("SOURCE", pattern="^(SOURCE|DEST|BOTH)$", description="Verknüpfungsrichtung"),
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
 ) -> ImportResult:
-    """
-    ETS GA-CSV hochladen.
+    """ETS GA-CSV hochladen.
 
     Ohne adapter_name: nur knx_group_addresses Tabelle befüllen (schnelle Vorschau).
     Mit adapter_name:  zusätzlich DataPoints + KNX-Bindings in einer Transaktion anlegen
@@ -325,11 +363,10 @@ async def import_ga_csv_file(
     if not records:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "Keine Gruppenadressen gefunden. "
-            "Bitte prüfe ob du den ETS GA-Export als CSV verwendet hast.",
+            "Keine Gruppenadressen gefunden. Bitte prüfe ob du den ETS GA-Export als CSV verwendet hast.",
         )
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     # GA-Tabelle immer befüllen (für Vorschau / manuelle Bindung im GUI)
     await db.executemany(
@@ -340,10 +377,7 @@ async def import_ga_csv_file(
                description = excluded.description,
                dpt         = excluded.dpt,
                imported_at = excluded.imported_at""",
-        [
-            (r.address, r.name, r.description, r.dpt, now)
-            for r in records
-        ],
+        [(r.address, r.name, r.description, r.dpt, now) for r in records],
     )
     await db.commit()
 
@@ -367,11 +401,11 @@ async def import_ga_csv_file(
 
 @router.get("/group-addresses", response_model=GroupAddressPage)
 async def list_group_addresses(
-    q:     str = Query("", description="Suche in Adresse, Name oder Beschreibung"),
-    page:  int = Query(0, ge=0),
-    size:  int = Query(100, ge=1, le=500),
+    q: str = Query("", description="Suche in Adresse, Name oder Beschreibung"),
+    page: int = Query(0, ge=0),
+    size: int = Query(100, ge=1, le=500),
     _user: str = Depends(get_current_user),
-    db:    Database = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> GroupAddressPage:
     """Importierte KNX Gruppenadressen abfragen. Unterstützt Volltextsuche."""
     if q:
@@ -410,8 +444,8 @@ async def list_group_addresses(
 
 @router.delete("/group-addresses", status_code=status.HTTP_204_NO_CONTENT)
 async def clear_group_addresses(
-    _user: str      = Depends(get_current_user),
-    db:    Database = Depends(get_db),
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
 ) -> None:
     """Alle importierten KNX Gruppenadressen löschen."""
     await db.execute_and_commit("DELETE FROM knx_group_addresses")

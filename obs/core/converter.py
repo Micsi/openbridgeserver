@@ -1,15 +1,16 @@
-"""
-Type Converter — Phase 1
+"""Type Converter — Phase 1
 
 Converts values between DataTypes.
 - Conversion losses are silently accepted at runtime (no exception, no log).
 - loss / loss_description are for configuration-time GUI warnings only.
 - STRING → anything is always marked as lossy.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 
 @dataclass
@@ -22,6 +23,7 @@ class ConversionResult:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def convert(value: Any, from_type: str, to_type: str) -> ConversionResult:
     """Convert *value* from *from_type* to *to_type*.
@@ -39,10 +41,7 @@ def convert(value: Any, from_type: str, to_type: str) -> ConversionResult:
     return ConversionResult(
         value=str(value),
         loss=True,
-        loss_description=(
-            f"No direct conversion from {from_type} to {to_type}; "
-            "used string representation"
-        ),
+        loss_description=(f"No direct conversion from {from_type} to {to_type}; used string representation"),
     )
 
 
@@ -66,6 +65,7 @@ def conversion_has_loss(from_type: str, to_type: str) -> bool:
 # ---------------------------------------------------------------------------
 # Individual converters
 # ---------------------------------------------------------------------------
+
 
 def _float_to_int(value: Any) -> ConversionResult:
     f = float(value)
@@ -184,25 +184,25 @@ def _string_to_bool(value: Any) -> ConversionResult:
 _Converter = Callable[[Any], ConversionResult]
 
 _CONVERTERS: dict[tuple[str, str], _Converter] = {
-    ("FLOAT",   "INTEGER"): _float_to_int,
-    ("FLOAT",   "BOOLEAN"): _float_to_bool,
-    ("FLOAT",   "STRING"):  _float_to_string,
-    ("INTEGER", "FLOAT"):   _int_to_float,
+    ("FLOAT", "INTEGER"): _float_to_int,
+    ("FLOAT", "BOOLEAN"): _float_to_bool,
+    ("FLOAT", "STRING"): _float_to_string,
+    ("INTEGER", "FLOAT"): _int_to_float,
     ("INTEGER", "BOOLEAN"): _int_to_bool,
-    ("INTEGER", "STRING"):  _int_to_string,
+    ("INTEGER", "STRING"): _int_to_string,
     ("BOOLEAN", "INTEGER"): _bool_to_int,
-    ("BOOLEAN", "FLOAT"):   _bool_to_float,
-    ("BOOLEAN", "STRING"):  _bool_to_string,
-    ("STRING",  "FLOAT"):   _string_to_float,
-    ("STRING",  "INTEGER"): _string_to_int,
-    ("STRING",  "BOOLEAN"): _string_to_bool,
+    ("BOOLEAN", "FLOAT"): _bool_to_float,
+    ("BOOLEAN", "STRING"): _bool_to_string,
+    ("STRING", "FLOAT"): _string_to_float,
+    ("STRING", "INTEGER"): _string_to_int,
+    ("STRING", "BOOLEAN"): _string_to_bool,
 }
 
 # Representative sample values used only for loss-detection queries
 _SAMPLE_VALUES: dict[str, Any] = {
-    "FLOAT":   1.5,
+    "FLOAT": 1.5,
     "INTEGER": 1,
     "BOOLEAN": True,
-    "STRING":  "1",
+    "STRING": "1",
     "UNKNOWN": b"",
 }

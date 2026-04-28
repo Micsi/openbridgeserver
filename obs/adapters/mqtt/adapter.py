@@ -1,5 +1,4 @@
-"""
-MQTT Adapter
+"""MQTT Adapter
 
 Verbindet sich mit einem externen MQTT-Broker als Datenquelle oder -senke.
 
@@ -52,6 +51,7 @@ payload_template:
   ersetzt wird. Nicht-String-Werte werden als JSON serialisiert (z.B. true statt True).
   Leer = Wert wird direkt als Payload gesendet.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -73,6 +73,7 @@ logger = logging.getLogger(__name__)
 # Config schemas
 # ---------------------------------------------------------------------------
 
+
 class MqttAdapterConfig(BaseModel):
     host: str = "localhost"
     port: int = 1883
@@ -81,18 +82,19 @@ class MqttAdapterConfig(BaseModel):
 
 
 class MqttBindingConfig(BaseModel):
-    topic: str                                        # subscribe (SOURCE/BOTH) or publish (DEST)
-    publish_topic: str | None = None                  # DEST/BOTH: publish here if set, else use topic
-    retain: bool = False                              # retain flag when publishing
-    payload_template: str | None = None              # DEST/BOTH: template with ###DP### placeholder
-    source_data_type: str | None = None              # SOURCE/BOTH: "string"|"int"|"float"|"bool"|"json"|"xml"|None
-    json_key: str | None = None                      # key to extract when source_data_type=="json"
-    xml_path: str | None = None                      # ET-XPath path when source_data_type=="xml"
+    topic: str  # subscribe (SOURCE/BOTH) or publish (DEST)
+    publish_topic: str | None = None  # DEST/BOTH: publish here if set, else use topic
+    retain: bool = False  # retain flag when publishing
+    payload_template: str | None = None  # DEST/BOTH: template with ###DP### placeholder
+    source_data_type: str | None = None  # SOURCE/BOTH: "string"|"int"|"float"|"bool"|"json"|"xml"|None
+    json_key: str | None = None  # key to extract when source_data_type=="json"
+    xml_path: str | None = None  # ET-XPath path when source_data_type=="xml"
 
 
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
+
 
 @register
 class MqttAdapter(AdapterBase):
@@ -161,7 +163,8 @@ class MqttAdapter(AdapterBase):
 
         logger.info(
             "MQTT adapter: %d subscribe topic(s): %s",
-            len(self._topic_map), list(self._topic_map.keys()),
+            len(self._topic_map),
+            list(self._topic_map.keys()),
         )
 
         # Restart subscriber with updated topics
@@ -174,9 +177,7 @@ class MqttAdapter(AdapterBase):
             self._sub_task = None
 
         if self._topic_map:
-            self._sub_task = asyncio.create_task(
-                self._subscriber_loop(), name="mqtt-adapter-sub"
-            )
+            self._sub_task = asyncio.create_task(self._subscriber_loop(), name="mqtt-adapter-sub")
 
     # ------------------------------------------------------------------
     # Subscriber loop
@@ -184,12 +185,15 @@ class MqttAdapter(AdapterBase):
 
     async def _subscriber_loop(self) -> None:
         import aiomqtt
+
         cfg = self._cfg
         while True:
             try:
                 logger.info(
                     "MQTT adapter subscriber connecting → %s:%d user=%s",
-                    cfg.host, cfg.port, cfg.username,
+                    cfg.host,
+                    cfg.port,
+                    cfg.username,
                 )
                 async with aiomqtt.Client(
                     hostname=cfg.host,
@@ -227,8 +231,11 @@ class MqttAdapter(AdapterBase):
 
                 # --- source_data_type coercion / extraction ---
                 pub_value = apply_source_type(
-                    raw, auto_value,
-                    bc.source_data_type, bc.json_key, bc.xml_path,
+                    raw,
+                    auto_value,
+                    bc.source_data_type,
+                    bc.json_key,
+                    bc.xml_path,
                     binding.id,
                 )
 
@@ -239,15 +246,23 @@ class MqttAdapter(AdapterBase):
 
             if binding.value_formula and pub_value is not None:
                 from obs.core.formula import apply_formula
+
                 pub_value = apply_formula(binding.value_formula, pub_value)
-            logger.info("MQTT adapter received: topic=%s → dp=%s value=%r", topic, binding.datapoint_id, pub_value)
-            await self._bus.publish(DataValueEvent(
-                datapoint_id=binding.datapoint_id,
-                value=pub_value,
-                quality="good",
-                source_adapter=self.adapter_type,
-                binding_id=binding.id,
-            ))
+            logger.info(
+                "MQTT adapter received: topic=%s → dp=%s value=%r",
+                topic,
+                binding.datapoint_id,
+                pub_value,
+            )
+            await self._bus.publish(
+                DataValueEvent(
+                    datapoint_id=binding.datapoint_id,
+                    value=pub_value,
+                    quality="good",
+                    source_adapter=self.adapter_type,
+                    binding_id=binding.id,
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Publisher loop
@@ -255,12 +270,15 @@ class MqttAdapter(AdapterBase):
 
     async def _publisher_loop(self) -> None:
         import aiomqtt
+
         cfg = self._cfg
         while True:
             try:
                 logger.info(
                     "MQTT adapter publisher connecting → %s:%d user=%s",
-                    cfg.host, cfg.port, cfg.username,
+                    cfg.host,
+                    cfg.port,
+                    cfg.username,
                 )
                 async with aiomqtt.Client(
                     hostname=cfg.host,
@@ -303,6 +321,11 @@ class MqttAdapter(AdapterBase):
                 payload = mapped if isinstance(mapped, str) else json.dumps(mapped)
 
             await self._publish_queue.put((topic, payload, bc.retain))
-            logger.info("MQTT adapter write queued: topic=%s value=%r retain=%s", topic, mapped, bc.retain)
+            logger.info(
+                "MQTT adapter write queued: topic=%s value=%r retain=%s",
+                topic,
+                mapped,
+                bc.retain,
+            )
         except Exception:
             logger.exception("MQTT adapter write failed for binding %s", binding.id)

@@ -1,5 +1,4 @@
-"""
-Adapters API — Phase 5 (Multi-Instance)
+"""Adapters API — Phase 5 (Multi-Instance)
 
 Instanz-Routen (NEU):
   GET    /api/v1/adapters/instances                list all instances + status
@@ -18,21 +17,22 @@ Typ-Routen (unverändert):
   POST   /api/v1/adapters/{type}/test              test with given config (legacy)
   PATCH  /api/v1/adapters/{type}/config            update legacy adapter_configs
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from obs.api.auth import get_current_user
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
-from obs.db.database import get_db, Database
+from obs.api.auth import get_current_user
+from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["adapters"])
 
@@ -41,13 +41,14 @@ router = APIRouter(tags=["adapters"])
 # Response / Request models
 # ---------------------------------------------------------------------------
 
+
 class AdapterInstanceOut(BaseModel):
     id: uuid.UUID
     adapter_type: str
     name: str
     config: dict
     enabled: bool
-    registered: bool   # Typ-Klasse geladen?
+    registered: bool  # Typ-Klasse geladen?
     running: bool
     connected: bool
     bindings: int
@@ -149,6 +150,7 @@ class ConfigPatch(BaseModel):
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def _instance_out(row: Any, instance: Any | None) -> AdapterInstanceOut:
     cls = adapter_registry.get_class(row["adapter_type"])
     return AdapterInstanceOut(
@@ -169,6 +171,7 @@ def _instance_out(row: Any, instance: Any | None) -> AdapterInstanceOut:
 # ---------------------------------------------------------------------------
 # Instanz-Routen  (WICHTIG: vor /{adapter_type}/... registrieren!)
 # ---------------------------------------------------------------------------
+
 
 @router.get("/instances", response_model=list[AdapterInstanceOut])
 async def list_instances(
@@ -209,19 +212,27 @@ async def create_instance(
         ) from exc
 
     instance_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     await db.execute_and_commit(
         """INSERT INTO adapter_instances
            (id, adapter_type, name, config, enabled, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?)""",
-        (instance_id, body.adapter_type, body.name,
-         json.dumps(body.config), int(body.enabled), now, now),
+        (
+            instance_id,
+            body.adapter_type,
+            body.name,
+            json.dumps(body.config),
+            int(body.enabled),
+            now,
+            now,
+        ),
     )
 
     # Hot-start wenn enabled
     if body.enabled:
         from obs.core.event_bus import get_event_bus
+
         try:
             await adapter_registry.start_instance(instance_id, get_event_bus(), db)
         except Exception:
@@ -238,9 +249,7 @@ async def get_instance(
     _user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
-    row = await db.fetchone(
-        "SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
     instance = adapter_registry.get_instance_by_id(str(instance_id))
@@ -254,16 +263,14 @@ async def update_instance(
     _user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
-    row = await db.fetchone(
-        "SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
 
     # Neue Werte bestimmen
-    name_new    = body.name    if body.name    is not None else row["name"]
+    name_new = body.name if body.name is not None else row["name"]
     enabled_new = body.enabled if body.enabled is not None else bool(row["enabled"])
-    config_raw  = row["config"]
+    config_raw = row["config"]
     if body.config is not None:
         cls = adapter_registry.get_class(row["adapter_type"])
         if cls:
@@ -276,7 +283,7 @@ async def update_instance(
                 ) from exc
         config_raw = json.dumps(body.config)
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute_and_commit(
         """UPDATE adapter_instances
            SET name=?, config=?, enabled=?, updated_at=?
@@ -286,6 +293,7 @@ async def update_instance(
 
     # Hot-reload: Instanz neu starten
     from obs.core.event_bus import get_event_bus
+
     if enabled_new:
         await adapter_registry.restart_instance(str(instance_id), get_event_bus(), db)
     else:
@@ -302,20 +310,14 @@ async def delete_instance(
     _user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
 ) -> None:
-    row = await db.fetchone(
-        "SELECT id FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    row = await db.fetchone("SELECT id FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
 
     await adapter_registry.stop_instance(str(instance_id))
     # Bindings werden per DB (ON DELETE CASCADE via Trigger oder manuell) gelöscht
-    await db.execute_and_commit(
-        "DELETE FROM adapter_bindings WHERE adapter_instance_id=?", (str(instance_id),)
-    )
-    await db.execute_and_commit(
-        "DELETE FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    await db.execute_and_commit("DELETE FROM adapter_bindings WHERE adapter_instance_id=?", (str(instance_id),))
+    await db.execute_and_commit("DELETE FROM adapter_instances WHERE id=?", (str(instance_id),))
 
 
 @router.post("/instances/{instance_id}/test", response_model=TestResult)
@@ -326,15 +328,16 @@ async def test_instance(
     db: Database = Depends(lambda: get_db()),
 ) -> TestResult:
     """Verbindungstest mit aktuellem oder gegebenem Config (ephemer, kein Persist)."""
-    row = await db.fetchone(
-        "SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
 
     cls = adapter_registry.get_class(row["adapter_type"])
     if cls is None:
-        return TestResult(success=False, detail=f"Adapter-Typ '{row['adapter_type']}' nicht registriert")
+        return TestResult(
+            success=False,
+            detail=f"Adapter-Typ '{row['adapter_type']}' nicht registriert",
+        )
 
     if body and body.config:
         config_dict = body.config  # bereits dict durch Pydantic
@@ -348,6 +351,7 @@ async def test_instance(
         return TestResult(success=False, detail=f"Config-Fehler: {exc}")
 
     from obs.core.event_bus import EventBus
+
     dummy_bus = EventBus()
     test_instance = cls(event_bus=dummy_bus, config=config_dict)
     try:
@@ -367,13 +371,12 @@ async def restart_instance_route(
     _user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
-    row = await db.fetchone(
-        "SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
 
     from obs.core.event_bus import get_event_bus
+
     await adapter_registry.restart_instance(str(instance_id), get_event_bus(), db)
 
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -416,9 +419,7 @@ async def mqtt_browse_topics(
     db: Database = Depends(lambda: get_db()),
 ) -> list[str]:
     """Subscribe to # for up to `timeout` seconds (max 10) and return observed topics."""
-    row = await db.fetchone(
-        "SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
     if row["adapter_type"] != "MQTT":
@@ -428,6 +429,7 @@ async def mqtt_browse_topics(
     config_dict = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
 
     from obs.adapters.mqtt.adapter import MqttAdapterConfig
+
     try:
         cfg = MqttAdapterConfig(**config_dict)
     except Exception as exc:
@@ -452,7 +454,7 @@ async def mqtt_browse_topics(
                 async with asyncio.timeout(scan_secs):
                     async for message in client.messages:
                         topics.add(str(message.topic))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
     except Exception as exc:
         raise HTTPException(
@@ -472,9 +474,7 @@ async def mqtt_sample_payload(
     db: Database = Depends(lambda: get_db()),
 ) -> dict:
     """Subscribe to a specific topic and return the first received payload (useful for retained messages)."""
-    row = await db.fetchone(
-        "SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
     if row["adapter_type"] != "MQTT":
@@ -484,6 +484,7 @@ async def mqtt_sample_payload(
     config_dict = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
 
     from obs.adapters.mqtt.adapter import MqttAdapterConfig
+
     try:
         cfg = MqttAdapterConfig(**config_dict)
     except Exception as exc:
@@ -510,7 +511,7 @@ async def mqtt_sample_payload(
                             "topic": str(message.topic),
                             "payload": message.payload.decode("utf-8", errors="replace"),
                         }
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
     except Exception as exc:
         raise HTTPException(
@@ -533,9 +534,7 @@ async def iobroker_browse_states(
     db: Database = Depends(lambda: get_db()),
 ) -> list[IoBrokerStateOut]:
     """Durchsuchbare ioBroker-State-Liste für Binding-Auswahl."""
-    row = await db.fetchone(
-        "SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),)
-    )
+    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
     if row["adapter_type"] != "IOBROKER":
@@ -632,20 +631,25 @@ async def _iobroker_candidates(
     for state in states:
         dp_type, _source_type = _iobroker_obs_type(state.get("type"))
         exists = state["id"] in existing_states
-        result.append(IoBrokerImportItem(
-            state_id=state["id"],
-            name=_iobroker_name(state),
-            data_type=dp_type,
-            unit=state.get("unit"),
-            direction=_iobroker_direction(state, body.direction),
-            tags=_iobroker_tags(state, body.tags),
-            exists=exists,
-            reason="Binding existiert bereits" if exists else None,
-        ))
+        result.append(
+            IoBrokerImportItem(
+                state_id=state["id"],
+                name=_iobroker_name(state),
+                data_type=dp_type,
+                unit=state.get("unit"),
+                direction=_iobroker_direction(state, body.direction),
+                tags=_iobroker_tags(state, body.tags),
+                exists=exists,
+                reason="Binding existiert bereits" if exists else None,
+            ),
+        )
     return result
 
 
-@router.post("/instances/{instance_id}/iobroker/import-preview", response_model=IoBrokerImportResult)
+@router.post(
+    "/instances/{instance_id}/iobroker/import-preview",
+    response_model=IoBrokerImportResult,
+)
 async def iobroker_import_preview(
     instance_id: uuid.UUID,
     body: IoBrokerImportRequest,
@@ -673,10 +677,10 @@ async def iobroker_import_states(
     if row["adapter_type"] != "IOBROKER":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nur für IOBROKER-Instanzen verfügbar")
 
-    from obs.core.registry import get_registry
-    from obs.models.datapoint import DataPointCreate
-    from obs.models.binding import AdapterBindingCreate
     from obs.api.v1.bindings import create_binding
+    from obs.core.registry import get_registry
+    from obs.models.binding import AdapterBindingCreate
+    from obs.models.datapoint import DataPointCreate
 
     candidates = await _iobroker_candidates(str(instance_id), body, db)
     result = IoBrokerImportResult(preview=candidates)
@@ -688,14 +692,16 @@ async def iobroker_import_states(
             continue
         try:
             source_type = _iobroker_source_type(item.data_type)
-            dp = await registry.create(DataPointCreate(
-                name=item.name,
-                data_type=item.data_type,
-                unit=item.unit,
-                tags=item.tags,
-                persist_value=body.persist_value,
-                record_history=body.record_history,
-            ))
+            dp = await registry.create(
+                DataPointCreate(
+                    name=item.name,
+                    data_type=item.data_type,
+                    unit=item.unit,
+                    tags=item.tags,
+                    persist_value=body.persist_value,
+                    record_history=body.record_history,
+                ),
+            )
             result.created_datapoints += 1
             config: dict[str, Any] = {"state_id": item.state_id}
             if source_type:
@@ -721,15 +727,13 @@ async def iobroker_import_states(
 # Typ-Routen (unverändert — Schema-Abfragen + Legacy-Config)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/", response_model=list[AdapterStatusOut])
 async def list_adapters(
     _user: str = Depends(get_current_user),
 ) -> list[AdapterStatusOut]:
     status_map = adapter_registry.get_status()
-    return [
-        AdapterStatusOut(adapter_type=k, **v)
-        for k, v in status_map.items()
-    ]
+    return [AdapterStatusOut(adapter_type=k, **v) for k, v in status_map.items()]
 
 
 @router.get("/knx/dpts")
@@ -739,10 +743,10 @@ async def list_knx_dpts(
     """Alle registrierten KNX DPTs — gruppiert nach Familie (DPT1, DPT9, …)."""
     return [
         {
-            "dpt_id":    d.dpt_id,
-            "name":      d.name,
+            "dpt_id": d.dpt_id,
+            "name": d.name,
             "data_type": d.data_type,
-            "unit":      d.unit,
+            "unit": d.unit,
         }
         for d in sorted(DPTRegistry.all().values(), key=lambda x: x.dpt_id)
     ]
@@ -791,6 +795,7 @@ async def test_adapter(
         return TestResult(success=False, detail=f"Config-Validierungsfehler: {exc}")
 
     from obs.core.event_bus import EventBus
+
     dummy_bus = EventBus()
     test_instance = cls(event_bus=dummy_bus, config=body.config)
     try:
@@ -822,7 +827,7 @@ async def update_adapter_config(
             f"Config-Validierungsfehler: {exc}",
         ) from exc
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute_and_commit(
         """INSERT INTO adapter_configs (adapter_type, config, enabled, updated_at)
            VALUES (?,?,?,?)
@@ -844,13 +849,9 @@ async def get_adapter_config(
     _user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterConfigOut:
-    row = await db.fetchone(
-        "SELECT * FROM adapter_configs WHERE adapter_type=?", (adapter_type,)
-    )
+    row = await db.fetchone("SELECT * FROM adapter_configs WHERE adapter_type=?", (adapter_type,))
     if row is None:
-        return AdapterConfigOut(
-            adapter_type=adapter_type, config={}, enabled=True, updated_at=None
-        )
+        return AdapterConfigOut(adapter_type=adapter_type, config={}, enabled=True, updated_at=None)
     return AdapterConfigOut(
         adapter_type=adapter_type,
         config=json.loads(row["config"]),

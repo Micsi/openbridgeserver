@@ -1,5 +1,4 @@
-"""
-Internal async Event Bus — Phase 2
+"""Internal async Event Bus — Phase 2
 
 Decouples adapters from the core engine.
 Adapters publish DataValueEvent; the core engine routes them to MQTT
@@ -10,14 +9,16 @@ Usage:
     bus.subscribe(DataValueEvent, my_handler)
     await bus.publish(DataValueEvent(datapoint_id=..., value=21.4, ...))
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine, Type
 import uuid
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,26 +26,29 @@ logger = logging.getLogger(__name__)
 # Event types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DataValueEvent:
     """Fired by an adapter when it receives or reads a new value."""
+
     datapoint_id: uuid.UUID
     value: Any
-    quality: str                        # "good" | "bad" | "uncertain"
-    source_adapter: str                 # adapter_type string
-    ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    quality: str  # "good" | "bad" | "uncertain"
+    source_adapter: str  # adapter_type string
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))
     binding_id: uuid.UUID | None = None
 
 
 @dataclass
 class AdapterStatusEvent:
     """Fired when an adapter connection state changes."""
+
     adapter_type: str
     connected: bool
     detail: str = ""
     instance_id: uuid.UUID | None = None
     instance_name: str = ""
-    ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 # All event types that the bus understands
@@ -57,9 +61,9 @@ Handler = Callable[[AnyEvent], Coroutine[Any, Any, None]]
 # EventBus
 # ---------------------------------------------------------------------------
 
+
 class EventBus:
-    """
-    Async publish/subscribe bus for internal use only.
+    """Async publish/subscribe bus for internal use only.
 
     - Subscribers are async coroutine functions.
     - Exceptions in handlers are logged but do not crash the bus.
@@ -69,11 +73,11 @@ class EventBus:
     def __init__(self) -> None:
         self._handlers: dict[type, list[Handler]] = {}
 
-    def subscribe(self, event_type: Type[AnyEvent], handler: Handler) -> None:
+    def subscribe(self, event_type: type[AnyEvent], handler: Handler) -> None:
         """Register *handler* to be called for every event of *event_type*."""
         self._handlers.setdefault(event_type, []).append(handler)
 
-    def unsubscribe(self, event_type: Type[AnyEvent], handler: Handler) -> None:
+    def unsubscribe(self, event_type: type[AnyEvent], handler: Handler) -> None:
         handlers = self._handlers.get(event_type, [])
         try:
             handlers.remove(handler)

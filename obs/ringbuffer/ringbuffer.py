@@ -1,5 +1,4 @@
-"""
-RingBuffer Debug Log — Phase 5
+"""RingBuffer Debug Log — Phase 5
 
 Zeichnet jede Werteänderung auf. Speicher umschaltbar zur Laufzeit:
   memory  — SQLite :memory: (verschwindet bei Neustart)
@@ -13,15 +12,14 @@ Filterfunktionen:
 
 Überschreibt älteste Einträge wenn max_entries erreicht.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
-import uuid
 
 import aiosqlite
 
@@ -57,8 +55,7 @@ class RingBufferEntry:
 
 
 class RingBuffer:
-    """
-    Async RingBuffer backed by SQLite.
+    """Async RingBuffer backed by SQLite.
 
     Lifecycle:
         rb = RingBuffer("memory", max_entries=10000)
@@ -78,7 +75,7 @@ class RingBuffer:
         self._max_entries = max_entries
         self._disk_path = disk_path
         self._conn: aiosqlite.Connection | None = None
-        self._last_values: dict[str, Any] = {}     # dp_id → last recorded value
+        self._last_values: dict[str, Any] = {}  # dp_id → last recorded value
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -137,13 +134,23 @@ class RingBuffer:
                     """INSERT INTO ringbuffer
                        (ts, datapoint_id, topic, old_value, new_value, source_adapter, quality)
                        VALUES (?,?,?,?,?,?,?)""",
-                    (row["ts"], row["datapoint_id"], row["topic"],
-                     row["old_value"], row["new_value"],
-                     row["source_adapter"], row["quality"]),
+                    (
+                        row["ts"],
+                        row["datapoint_id"],
+                        row["topic"],
+                        row["old_value"],
+                        row["new_value"],
+                        row["source_adapter"],
+                        row["quality"],
+                    ),
                 )
             await self._conn.commit()
-            logger.info("RingBuffer reconfigured → %s, max=%d (%d entries kept)",
-                        storage, max_entries, len(to_import))
+            logger.info(
+                "RingBuffer reconfigured → %s, max=%d (%d entries kept)",
+                storage,
+                max_entries,
+                len(to_import),
+            )
 
     # ------------------------------------------------------------------
     # Record
@@ -166,9 +173,15 @@ class RingBuffer:
                 """INSERT INTO ringbuffer
                    (ts, datapoint_id, topic, old_value, new_value, source_adapter, quality)
                    VALUES (?,?,?,?,?,?,?)""",
-                (ts, datapoint_id, topic,
-                 json.dumps(old_value), json.dumps(new_value),
-                 source_adapter, quality),
+                (
+                    ts,
+                    datapoint_id,
+                    topic,
+                    json.dumps(old_value),
+                    json.dumps(new_value),
+                    source_adapter,
+                    quality,
+                ),
             )
             await self._conn.commit()
             await self._trim()
@@ -181,8 +194,7 @@ class RingBuffer:
         if count > self._max_entries:
             excess = count - self._max_entries
             await self._conn.execute(
-                "DELETE FROM ringbuffer WHERE id IN "
-                "(SELECT id FROM ringbuffer ORDER BY id ASC LIMIT ?)",
+                "DELETE FROM ringbuffer WHERE id IN (SELECT id FROM ringbuffer ORDER BY id ASC LIMIT ?)",
                 (excess,),
             )
             await self._conn.commit()
@@ -201,6 +213,7 @@ class RingBuffer:
 
         try:
             from obs.core.registry import get_registry
+
             dp = get_registry().get(event.datapoint_id)
             topic = dp.mqtt_topic if dp else f"dp/{dp_id}/value"
         except RuntimeError:
@@ -271,11 +284,14 @@ class RingBuffer:
 
     async def stats(self) -> dict:
         if not self._conn:
-            return {"total": 0, "oldest_ts": None, "newest_ts": None,
-                    "storage": self._storage, "max_entries": self._max_entries}
-        async with self._conn.execute(
-            "SELECT COUNT(*) AS c, MIN(ts) AS oldest, MAX(ts) AS newest FROM ringbuffer"
-        ) as cur:
+            return {
+                "total": 0,
+                "oldest_ts": None,
+                "newest_ts": None,
+                "storage": self._storage,
+                "max_entries": self._max_entries,
+            }
+        async with self._conn.execute("SELECT COUNT(*) AS c, MIN(ts) AS oldest, MAX(ts) AS newest FROM ringbuffer") as cur:
             row = await cur.fetchone()
         return {
             "total": row[0] if row else 0,

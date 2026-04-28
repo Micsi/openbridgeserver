@@ -1,26 +1,27 @@
-"""
-DataTypeRegistry — Phase 1
+"""DataTypeRegistry — Phase 1
 
 Defines the 8 built-in data types and the registry they live in.
 New types (e.g. from adapters) are added via DataTypeRegistry.register().
 """
+
 from __future__ import annotations
 
 import datetime
 import json
-from dataclasses import dataclass, field
-from typing import Any, Callable
-
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Definition
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DataTypeDefinition:
     name: str
     python_type: type
-    mqtt_serializer: Callable[[Any], str]    # value → JSON string
+    mqtt_serializer: Callable[[Any], str]  # value → JSON string
     mqtt_deserializer: Callable[[str], Any]  # JSON string → value
     description: str = ""
 
@@ -28,6 +29,7 @@ class DataTypeDefinition:
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 class DataTypeRegistry:
     """Global registry for DataTypeDefinitions. Thread-safe for reads."""
@@ -61,6 +63,7 @@ class DataTypeRegistry:
 # ---------------------------------------------------------------------------
 # Built-in type registrations
 # ---------------------------------------------------------------------------
+
 
 def _register_builtin_types() -> None:
     defs: list[DataTypeDefinition] = [

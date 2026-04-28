@@ -1,6 +1,5 @@
-"""
-Shared fixtures and helpers for adapter unit tests.
-"""
+"""Shared fixtures and helpers for adapter unit tests."""
+
 from __future__ import annotations
 
 import uuid

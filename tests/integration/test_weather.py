@@ -1,5 +1,4 @@
-"""
-Integration Tests — Wetter-Proxy
+"""Integration Tests — Wetter-Proxy
 
 GET /api/v1/weather/fetch
 
@@ -22,6 +21,7 @@ SSRF-Schutz:
   14. Link-local / Cloud-Metadata (169.254.169.254) → 400
   15. Loopback IPv6 (::1) → 400
 """
+
 from __future__ import annotations
 
 import json
@@ -36,10 +36,9 @@ import obs.api.v1.weather as _weather_module
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture()
+@pytest.fixture
 def bypass_ssrf():
-    """
-    Deaktiviert SSRF-Blocking für Tests die einen lokalen Mock-Server auf
+    """Deaktiviert SSRF-Blocking für Tests die einen lokalen Mock-Server auf
     127.0.0.1 verwenden. Die SSRF-Tests (12–15) dürfen diese Fixture NICHT nutzen.
     """
     with unittest.mock.patch.object(_weather_module, "_BLOCKED_NETWORKS", []):
@@ -72,9 +71,7 @@ _SAMPLE_WEATHER = {
 
 
 class _MockWeatherServer:
-    """
-    Einfacher HTTP-Server der Wetter-API-Antworten simuliert.
-    """
+    """Einfacher HTTP-Server der Wetter-API-Antworten simuliert."""
 
     def __init__(
         self,
@@ -121,6 +118,7 @@ class _MockWeatherServer:
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
+
 # 1. Kein Token
 async def test_fetch_no_auth_returns_401(client):
     resp = await client.get("/api/v1/weather/fetch?url=http://example.com/weather")
@@ -129,9 +127,7 @@ async def test_fetch_no_auth_returns_401(client):
 
 # 2. Ungültiger Token
 async def test_fetch_invalid_token_returns_401(client):
-    resp = await client.get(
-        "/api/v1/weather/fetch?url=http://example.com/weather&_token=not.valid.jwt"
-    )
+    resp = await client.get("/api/v1/weather/fetch?url=http://example.com/weather&_token=not.valid.jwt")
     assert resp.status_code == 401
 
 
@@ -260,6 +256,7 @@ async def test_fetch_json_charset_accepted(client, auth_headers, bypass_ssrf):
 
 
 # ── SSRF-Schutz ────────────────────────────────────────────────────────────────
+
 
 # 12. Loopback IPv4 direkt als IP-Literal
 async def test_fetch_ssrf_loopback_ipv4_blocked(client, auth_headers):

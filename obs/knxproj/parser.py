@@ -1,5 +1,4 @@
-"""
-KNX Project File Parser (.knxproj)
+"""KNX Project File Parser (.knxproj)
 
 Verwendet xknxproject (Home Assistant's KNX library) für robustes Parsing:
 - ETS4, ETS5, ETS6
@@ -8,6 +7,7 @@ Verwendet xknxproject (Home Assistant's KNX library) für robustes Parsing:
 
 https://github.com/XKNX/xknxproject
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,38 +20,44 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GroupAddressRecord:
-    address:     str         # "1/2/3"
-    name:        str
+    address: str  # "1/2/3"
+    name: str
     description: str
-    dpt:         str | None  # "DPT9.001" oder None
+    dpt: str | None  # "DPT9.001" oder None
 
 
 def _dpt_from_xknxproject(dpt: dict | None) -> str | None:
-    """xknxproject DPT-Dict → open bridge server DPT-ID.
+    """Xknxproject DPT-Dict → open bridge server DPT-ID.
 
     xknxproject liefert: {"main": 9, "sub": 1} oder None
     """
     if not dpt:
         return None
     main = dpt.get("main")
-    sub  = dpt.get("sub")
+    sub = dpt.get("sub")
     if main is None:
         return None
     if sub is not None:
         return f"DPT{main}.{str(sub).zfill(3)}"
     # Nur Haupttyp → Default-Subtyp
     defaults = {
-        1: "DPT1.001", 2: "DPT2.001",  5: "DPT5.001",
-        6: "DPT6.010", 7: "DPT7.001",  8: "DPT8.001",
-        9: "DPT9.001", 12: "DPT12.001", 13: "DPT13.001",
-        14: "DPT14.054", 16: "DPT16.000",
+        1: "DPT1.001",
+        2: "DPT2.001",
+        5: "DPT5.001",
+        6: "DPT6.010",
+        7: "DPT7.001",
+        8: "DPT8.001",
+        9: "DPT9.001",
+        12: "DPT12.001",
+        13: "DPT13.001",
+        14: "DPT14.054",
+        16: "DPT16.000",
     }
     return defaults.get(main, f"DPT{main}.001")
 
 
 def parse_knxproj(file_bytes: bytes, password: str | None = None) -> list[GroupAddressRecord]:
-    """
-    .knxproj Datei parsen und alle Gruppenadressen zurückgeben.
+    """.knxproj Datei parsen und alle Gruppenadressen zurückgeben.
 
     Args:
         file_bytes: Rohe Bytes der .knxproj Datei
@@ -62,13 +68,12 @@ def parse_knxproj(file_bytes: bytes, password: str | None = None) -> list[GroupA
 
     Raises:
         ValueError: wenn die Datei nicht geparst werden kann
+
     """
     try:
         from xknxproject import XKNXProj
     except ImportError as e:
-        raise ValueError(
-            "xknxproject nicht installiert. Bitte 'pip install xknxproject' ausführen."
-        ) from e
+        raise ValueError("xknxproject nicht installiert. Bitte 'pip install xknxproject' ausführen.") from e
 
     # xknxproject benötigt einen Dateipfad → temporäre Datei erstellen
     tmp_path = None
@@ -90,40 +95,53 @@ def parse_knxproj(file_bytes: bytes, password: str | None = None) -> list[GroupA
             os.unlink(tmp_path)
 
     # KNXProject ist ein TypedDict → dict-Zugriff, nicht Attribut-Zugriff
-    logger.info("parse() Typ: %s, Keys: %s", type(project).__name__,
-                list(project.keys()) if isinstance(project, dict) else dir(project))
+    logger.info(
+        "parse() Typ: %s, Keys: %s",
+        type(project).__name__,
+        list(project.keys()) if isinstance(project, dict) else dir(project),
+    )
 
     if isinstance(project, dict):
         group_addresses = project.get("group_addresses", {}) or {}
     else:
         group_addresses = getattr(project, "group_addresses", {}) or {}
 
-    logger.info("group_addresses Typ: %s, Anzahl: %d",
-                type(group_addresses).__name__, len(group_addresses))
+    logger.info(
+        "group_addresses Typ: %s, Anzahl: %d",
+        type(group_addresses).__name__,
+        len(group_addresses),
+    )
 
     # Ersten Eintrag zur Diagnose loggen
     if group_addresses:
         first_key = next(iter(group_addresses))
         first_val = group_addresses[first_key]
-        logger.info("Beispiel GA: key=%r val_type=%s val=%r", first_key, type(first_val).__name__, first_val)
+        logger.info(
+            "Beispiel GA: key=%r val_type=%s val=%r",
+            first_key,
+            type(first_val).__name__,
+            first_val,
+        )
 
     records: list[GroupAddressRecord] = []
     for addr_str, ga in group_addresses.items():
         # ga kann dict (TypedDict) oder Objekt sein
         if isinstance(ga, dict):
-            name        = ga.get("name", "") or ""
+            name = ga.get("name", "") or ""
             description = ga.get("comment", "") or ga.get("description", "") or ""
-            dpt_raw     = ga.get("dpt")
+            dpt_raw = ga.get("dpt")
         else:
-            name        = getattr(ga, "name", "") or ""
+            name = getattr(ga, "name", "") or ""
             description = getattr(ga, "comment", "") or getattr(ga, "description", "") or ""
-            dpt_raw     = getattr(ga, "dpt", None)
-        records.append(GroupAddressRecord(
-            address=     addr_str,
-            name=        name,
-            description= description,
-            dpt=         _dpt_from_xknxproject(dpt_raw),
-        ))
+            dpt_raw = getattr(ga, "dpt", None)
+        records.append(
+            GroupAddressRecord(
+                address=addr_str,
+                name=name,
+                description=description,
+                dpt=_dpt_from_xknxproject(dpt_raw),
+            ),
+        )
 
     logger.info("xknxproject: %d Gruppenadressen gelesen", len(records))
     return records

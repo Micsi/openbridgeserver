@@ -1,5 +1,4 @@
-"""
-1-Wire Adapter — Phase 3
+"""1-Wire Adapter — Phase 3
 
 Liest Temperatursensoren vom Linux 1-Wire Bus (/sys/bus/w1/).
 Funktioniert nur auf Linux (Raspberry Pi, etc.). Auf anderen Systemen
@@ -13,6 +12,7 @@ Binding-Konfiguration (AdapterBinding.config):
   sensor_id:  str   — z.B. "28-000000000001"
   sensor_type: str  — "DS18B20" | "DS18S20" | "DS1822" (default: "DS18B20")
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -36,19 +36,21 @@ _W1_BASE = Path("/sys/bus/w1/devices")
 # Config schemas
 # ---------------------------------------------------------------------------
 
+
 class OneWireAdapterConfig(BaseModel):
     poll_interval: float = 30.0
     w1_path: str = "/sys/bus/w1/devices"
 
 
 class OneWireBindingConfig(BaseModel):
-    sensor_id: str              # z.B. "28-000000000001"
+    sensor_id: str  # z.B. "28-000000000001"
     sensor_type: str = "DS18B20"
 
 
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
+
 
 @register
 class OneWireAdapter(AdapterBase):
@@ -125,35 +127,39 @@ class OneWireAdapter(AdapterBase):
 
         while True:
             try:
-                value = await asyncio.get_event_loop().run_in_executor(
-                    None, _read_sensor_file, Path(self._cfg.w1_path) / bc.sensor_id
-                )
+                value = await asyncio.get_event_loop().run_in_executor(None, _read_sensor_file, Path(self._cfg.w1_path) / bc.sensor_id)
                 quality = "good" if value is not None else "bad"
                 if quality == "good":
                     if binding.value_formula:
                         from obs.core.formula import apply_formula
+
                         value = apply_formula(binding.value_formula, value)
                     if binding.value_map:
                         from obs.core.transformation import apply_value_map
+
                         value = apply_value_map(value, binding.value_map)
-                await self._bus.publish(DataValueEvent(
-                    datapoint_id=binding.datapoint_id,
-                    value=value,
-                    quality=quality,
-                    source_adapter=self.adapter_type,
-                    binding_id=binding.id,
-                ))
+                await self._bus.publish(
+                    DataValueEvent(
+                        datapoint_id=binding.datapoint_id,
+                        value=value,
+                        quality=quality,
+                        source_adapter=self.adapter_type,
+                        binding_id=binding.id,
+                    ),
+                )
             except asyncio.CancelledError:
                 return
             except Exception as exc:
                 logger.warning("1-Wire poll error (sensor %s): %s", bc.sensor_id, exc)
-                await self._bus.publish(DataValueEvent(
-                    datapoint_id=binding.datapoint_id,
-                    value=None,
-                    quality="bad",
-                    source_adapter=self.adapter_type,
-                    binding_id=binding.id,
-                ))
+                await self._bus.publish(
+                    DataValueEvent(
+                        datapoint_id=binding.datapoint_id,
+                        value=None,
+                        quality="bad",
+                        source_adapter=self.adapter_type,
+                        binding_id=binding.id,
+                    ),
+                )
             await asyncio.sleep(self._cfg.poll_interval)
 
     # ------------------------------------------------------------------
@@ -165,9 +171,7 @@ class OneWireAdapter(AdapterBase):
             return None
         try:
             bc = OneWireBindingConfig(**binding.config)
-            return await asyncio.get_event_loop().run_in_executor(
-                None, _read_sensor_file, Path(self._cfg.w1_path) / bc.sensor_id
-            )
+            return await asyncio.get_event_loop().run_in_executor(None, _read_sensor_file, Path(self._cfg.w1_path) / bc.sensor_id)
         except Exception:
             logger.exception("1-Wire read failed for binding %s", binding.id)
             return None
@@ -181,9 +185,9 @@ class OneWireAdapter(AdapterBase):
 # Sensor file reader (synchronous, run in executor)
 # ---------------------------------------------------------------------------
 
+
 def _read_sensor_file(sensor_path: Path) -> float | None:
-    """
-    Liest den Temperatursensor direkt aus dem sysfs (w1_slave Datei).
+    """Liest den Temperatursensor direkt aus dem sysfs (w1_slave Datei).
     Format:
       50 05 4b 46 7f ff 0c 10 1c : crc=1c YES
       50 05 4b 46 7f ff 0c 10 1c t=21312
@@ -214,7 +218,4 @@ def scan_sensors(w1_path: str = "/sys/bus/w1/devices") -> list[str]:
     base = Path(w1_path)
     if not base.exists():
         return []
-    return [
-        p.name for p in base.iterdir()
-        if p.is_dir() and p.name != "w1_bus_master1"
-    ]
+    return [p.name for p in base.iterdir() if p.is_dir() and p.name != "w1_bus_master1"]

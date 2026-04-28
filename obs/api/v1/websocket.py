@@ -1,5 +1,4 @@
-"""
-WebSocket API — Phase 4
+"""WebSocket API — Phase 4
 
 Preferred auth: Authorization: Bearer {jwt}   (header — token not logged)
 Legacy fallback: WS /api/v1/ws?token={jwt}    (query param — avoid in production)
@@ -15,6 +14,7 @@ Server → Client (on value change):
 Server → Client (pong):
   {"action": "pong"}
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,8 +22,7 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +32,7 @@ router = APIRouter(tags=["websocket"])
 # ---------------------------------------------------------------------------
 # WebSocketManager
 # ---------------------------------------------------------------------------
+
 
 class WebSocketManager:
     """Tracks all connected WebSocket clients and their DataPoint subscriptions."""
@@ -58,7 +58,11 @@ class WebSocketManager:
                 await ws.close()
             except Exception:
                 pass
-        logger.debug("WS client disconnected: %s  (total: %d)", conn_id[:8], len(self._connections))
+        logger.debug(
+            "WS client disconnected: %s  (total: %d)",
+            conn_id[:8],
+            len(self._connections),
+        )
 
     def subscribe(self, conn_id: str, dp_ids: list[str]) -> None:
         if conn_id in self._connections:
@@ -108,23 +112,24 @@ class WebSocketManager:
             return
 
         from obs.core.registry import get_registry
+
         try:
             reg = get_registry()
         except RuntimeError:
             return
 
         dp_id_str = str(event.datapoint_id)
-        dp        = reg.get(event.datapoint_id)
-        state     = reg.get_value(event.datapoint_id)
-        ts_str    = event.ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        dp = reg.get(event.datapoint_id)
+        state = reg.get_value(event.datapoint_id)
+        ts_str = event.ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
         # ── 1. Per-subscription DP value events ──────────────────────────
         dp_msg = {
-            "id":    dp_id_str,
-            "v":     event.value,
-            "u":     dp.unit if dp else None,
-            "t":     ts_str,
-            "q":     event.quality,
+            "id": dp_id_str,
+            "v": event.value,
+            "u": dp.unit if dp else None,
+            "t": ts_str,
+            "q": event.quality,
             "old_v": state.old_value if state else None,
         }
         dead: list[str] = []
@@ -140,12 +145,12 @@ class WebSocketManager:
         rb_msg = {
             "action": "ringbuffer_entry",
             "entry": {
-                "ts":             ts_str,
-                "datapoint_id":   dp_id_str,
-                "name":           dp.name if dp else None,
-                "new_value":      event.value,
-                "old_value":      state.old_value if state else None,
-                "quality":        event.quality,
+                "ts": ts_str,
+                "datapoint_id": dp_id_str,
+                "name": dp.name if dp else None,
+                "new_value": event.value,
+                "old_value": state.old_value if state else None,
+                "quality": event.quality,
                 "source_adapter": event.source_adapter,
             },
         }
@@ -185,6 +190,7 @@ def init_ws_manager() -> WebSocketManager:
 # Route
 # ---------------------------------------------------------------------------
 
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     ws: WebSocket,
@@ -193,6 +199,7 @@ async def websocket_endpoint(
     # Auth: optional — authenticated users get a user context, anonymous users
     # can still subscribe to public datapoints (read-only push channel).
     from obs.api.auth import decode_token
+
     auth_header = ws.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
         resolved_token: str | None = auth_header[7:]
@@ -216,7 +223,7 @@ async def websocket_endpoint(
         while True:
             try:
                 data = await asyncio.wait_for(ws.receive_json(), timeout=60.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send keepalive
                 await ws.send_json({"action": "ping"})
                 continue

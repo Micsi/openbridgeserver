@@ -1,5 +1,4 @@
-"""
-Unit tests for json_extractor and xml_extractor logic nodes.
+"""Unit tests for json_extractor and xml_extractor logic nodes.
 
 Covers:
   - json_extractor: simple top-level key extraction
@@ -15,18 +14,17 @@ Covers:
   - xml_extractor: _preview output is populated
   - Downstream: json_extractor output flows to next node
 """
+
 from __future__ import annotations
 
 import json
 
-import pytest
-
 from tests.unit.conftest import edge, make_executor, node
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _jnode(node_id: str, path: str = "", data_override: dict | None = None) -> dict:
     return node(node_id, "json_extractor", {**(data_override or {}), "json_path": path})
@@ -45,8 +43,8 @@ def _run(nodes, edges=None, input_overrides=None):
 # json_extractor
 # ===========================================================================
 
-class TestJsonExtractor:
 
+class TestJsonExtractor:
     def test_simple_key(self):
         payload = json.dumps({"temperature": 21.5})
         nodes = [_jnode("j1", "temperature")]
@@ -133,8 +131,8 @@ class TestJsonExtractor:
 # xml_extractor
 # ===========================================================================
 
-class TestXmlExtractor:
 
+class TestXmlExtractor:
     def test_simple_element(self):
         xml = "<root><temperature>21.5</temperature></root>"
         nodes = [_xnode("x1", ".//temperature")]
@@ -193,8 +191,8 @@ class TestXmlExtractor:
 # Downstream integration
 # ===========================================================================
 
-class TestExtractorDownstream:
 
+class TestExtractorDownstream:
     def test_json_extractor_output_flows_to_next_node(self):
         """Value from json_extractor should reach a downstream const_value successor."""
         payload = json.dumps({"level": 75})

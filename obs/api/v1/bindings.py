@@ -1,5 +1,4 @@
-"""
-Bindings API — Phase 4 / Phase 5 (Multi-Instance)
+"""Bindings API — Phase 4 / Phase 5 (Multi-Instance)
 
 GET    /api/v1/datapoints/{id}/bindings
 POST   /api/v1/datapoints/{id}/bindings
@@ -9,11 +8,12 @@ DELETE /api/v1/datapoints/{id}/bindings/{binding_id}
 Phase 5: Bindings referenzieren adapter_instance_id (UUID), nicht mehr adapter_type.
 adapter_type wird aus der Instanz abgeleitet und denormalisiert gespeichert.
 """
+
 from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,8 +21,11 @@ from pydantic import BaseModel
 
 from obs.api.auth import get_current_user
 from obs.core.registry import get_registry
-from obs.db.database import get_db, Database
-from obs.models.binding import AdapterBindingCreate, AdapterBindingUpdate, AdapterBinding
+from obs.db.database import Database, get_db
+from obs.models.binding import (
+    AdapterBindingCreate,
+    AdapterBindingUpdate,
+)
 
 router = APIRouter(tags=["bindings"])
 
@@ -30,6 +33,7 @@ router = APIRouter(tags=["bindings"])
 # ---------------------------------------------------------------------------
 # Response model
 # ---------------------------------------------------------------------------
+
 
 class BindingOut(BaseModel):
     id: uuid.UUID
@@ -54,6 +58,7 @@ class BindingOut(BaseModel):
 # DB helpers
 # ---------------------------------------------------------------------------
 
+
 async def _get_instance_name_map(db: Database) -> dict[str, str]:
     """instance_id → name Mapping aus DB."""
     rows = await db.fetchall("SELECT id, name FROM adapter_instances")
@@ -71,7 +76,8 @@ async def _get_bindings_for_dp(db: Database, dp_id: uuid.UUID) -> list[BindingOu
 
 async def _reload_adapter_instance(instance_id: str, db: Database) -> None:
     """Laufende Adapter-Instanz über ihre Bindings aus DB informieren."""
-    from obs.adapters.registry import get_instance_by_id, _row_to_binding
+    from obs.adapters.registry import _row_to_binding, get_instance_by_id
+
     instance = get_instance_by_id(instance_id)
     if instance is None:
         return
@@ -85,8 +91,8 @@ async def _reload_adapter_instance(instance_id: str, db: Database) -> None:
 
 def _row_out(row: Any, name_map: dict[str, str] | None = None) -> BindingOut:
     instance_id = row["adapter_instance_id"]
-    throttle    = row["send_throttle_ms"]
-    min_delta   = row["send_min_delta"]
+    throttle = row["send_throttle_ms"]
+    min_delta = row["send_min_delta"]
     min_delta_p = row["send_min_delta_pct"]
     return BindingOut(
         id=uuid.UUID(row["id"]),
@@ -111,6 +117,7 @@ def _row_out(row: Any, name_map: dict[str, str] | None = None) -> BindingOut:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("/{dp_id}/bindings", response_model=list[BindingOut])
 async def list_bindings(
@@ -138,9 +145,7 @@ async def create_binding(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} nicht gefunden")
 
     # Instanz aus DB laden → adapter_type ableiten
-    instance_row = await db.fetchone(
-        "SELECT * FROM adapter_instances WHERE id=?", (str(body.adapter_instance_id),)
-    )
+    instance_row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(body.adapter_instance_id),))
     if instance_row is None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -150,6 +155,7 @@ async def create_binding(
 
     # Binding-Config gegen Schema validieren
     from obs.adapters.registry import get_class
+
     cls = get_class(adapter_type)
     if cls and hasattr(cls, "binding_config_schema"):
         try:
@@ -163,12 +169,13 @@ async def create_binding(
     # Formel validieren
     if body.value_formula:
         from obs.core.formula import validate_formula
+
         err = validate_formula(body.value_formula)
         if err:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Ungültige Formel: {err}")
 
     binding_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     await db.execute_and_commit(
         """INSERT INTO adapter_bindings
@@ -177,14 +184,21 @@ async def create_binding(
             value_formula, value_map, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            binding_id, str(dp_id), adapter_type,
-            str(body.adapter_instance_id), body.direction,
-            json.dumps(body.config), int(body.enabled),
-            body.send_throttle_ms, int(body.send_on_change),
-            body.send_min_delta, body.send_min_delta_pct,
+            binding_id,
+            str(dp_id),
+            adapter_type,
+            str(body.adapter_instance_id),
+            body.direction,
+            json.dumps(body.config),
+            int(body.enabled),
+            body.send_throttle_ms,
+            int(body.send_on_change),
+            body.send_min_delta,
+            body.send_min_delta_pct,
             body.value_formula or None,
             json.dumps(body.value_map) if body.value_map else None,
-            now, now,
+            now,
+            now,
         ),
     )
     await _reload_adapter_instance(str(body.adapter_instance_id), db)
@@ -210,22 +224,23 @@ async def update_binding(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding nicht gefunden")
 
     updates = body.model_dump(exclude_unset=True)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
-    direction       = updates.get("direction", row["direction"])
-    config_val      = json.dumps(updates.get("config", json.loads(row["config"])))
-    enabled         = int(updates.get("enabled", bool(row["enabled"])))
-    throttle_ms     = updates.get("send_throttle_ms", row["send_throttle_ms"])
-    on_change       = int(updates.get("send_on_change", bool(row["send_on_change"])))
-    min_delta       = updates.get("send_min_delta", row["send_min_delta"])
-    min_delta_pct   = updates.get("send_min_delta_pct", row["send_min_delta_pct"])
-    formula         = updates.get("value_formula", row["value_formula"]) or None
-    value_map_new   = updates.get("value_map", json.loads(row["value_map"]) if row["value_map"] else None)
-    value_map_json  = json.dumps(value_map_new) if value_map_new else None
+    direction = updates.get("direction", row["direction"])
+    config_val = json.dumps(updates.get("config", json.loads(row["config"])))
+    enabled = int(updates.get("enabled", bool(row["enabled"])))
+    throttle_ms = updates.get("send_throttle_ms", row["send_throttle_ms"])
+    on_change = int(updates.get("send_on_change", bool(row["send_on_change"])))
+    min_delta = updates.get("send_min_delta", row["send_min_delta"])
+    min_delta_pct = updates.get("send_min_delta_pct", row["send_min_delta_pct"])
+    formula = updates.get("value_formula", row["value_formula"]) or None
+    value_map_new = updates.get("value_map", json.loads(row["value_map"]) if row["value_map"] else None)
+    value_map_json = json.dumps(value_map_new) if value_map_new else None
 
     # Formel validieren
     if formula:
         from obs.core.formula import validate_formula
+
         err = validate_formula(formula)
         if err:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Ungültige Formel: {err}")
@@ -236,9 +251,19 @@ async def update_binding(
                send_throttle_ms=?, send_on_change=?, send_min_delta=?, send_min_delta_pct=?,
                value_formula=?, value_map=?, updated_at=?
            WHERE id=?""",
-        (direction, config_val, enabled,
-         throttle_ms, on_change, min_delta, min_delta_pct,
-         formula, value_map_json, now, str(binding_id)),
+        (
+            direction,
+            config_val,
+            enabled,
+            throttle_ms,
+            on_change,
+            min_delta,
+            min_delta_pct,
+            formula,
+            value_map_json,
+            now,
+            str(binding_id),
+        ),
     )
 
     instance_id = row["adapter_instance_id"]
@@ -265,8 +290,6 @@ async def delete_binding(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding nicht gefunden")
 
     instance_id = row["adapter_instance_id"]
-    await db.execute_and_commit(
-        "DELETE FROM adapter_bindings WHERE id=?", (str(binding_id),)
-    )
+    await db.execute_and_commit("DELETE FROM adapter_bindings WHERE id=?", (str(binding_id),))
     if instance_id:
         await _reload_adapter_instance(instance_id, db)

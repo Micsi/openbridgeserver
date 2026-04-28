@@ -1,22 +1,18 @@
-"""
-Unit tests for the MQTT adapter — _on_message and write() logic.
+"""Unit tests for the MQTT adapter — _on_message and write() logic.
 No broker connection; uses mocked bus and direct method calls.
 """
-from __future__ import annotations
 
-import asyncio
-import json
-import uuid
+from __future__ import annotations
 
 import pytest
 
+from obs.adapters.mqtt.adapter import MqttAdapter
 from tests.adapters.conftest import make_binding
-from obs.adapters.mqtt.adapter import MqttAdapter, MqttBindingConfig
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def adapter(mock_bus):
@@ -33,6 +29,7 @@ def _add_binding(adapter: MqttAdapter, topic: str, **kwargs) -> object:
 # ---------------------------------------------------------------------------
 # _on_message — auto-parse
 # ---------------------------------------------------------------------------
+
 
 class TestOnMessageAutoParse:
     @pytest.mark.asyncio
@@ -84,6 +81,7 @@ class TestOnMessageAutoParse:
 # _on_message — source_data_type coercion
 # ---------------------------------------------------------------------------
 
+
 class TestOnMessageSourceDataType:
     @pytest.mark.asyncio
     async def test_source_type_float(self, adapter, mock_bus):
@@ -130,9 +128,7 @@ class TestOnMessageSourceDataType:
 
     @pytest.mark.asyncio
     async def test_json_key_extraction(self, adapter, mock_bus):
-        binding = make_binding(
-            {"topic": "t", "source_data_type": "json", "json_key": "temperature"}
-        )
+        binding = make_binding({"topic": "t", "source_data_type": "json", "json_key": "temperature"})
         adapter._topic_map["t"] = [binding]
         await adapter._on_message("t", b'{"temperature": 23.1, "humidity": 55}')
 
@@ -143,6 +139,7 @@ class TestOnMessageSourceDataType:
 # ---------------------------------------------------------------------------
 # _on_message — value_map
 # ---------------------------------------------------------------------------
+
 
 class TestOnMessageValueMap:
     @pytest.mark.asyncio
@@ -174,6 +171,7 @@ class TestOnMessageValueMap:
 # _on_message — unknown topic
 # ---------------------------------------------------------------------------
 
+
 class TestOnMessageUnknownTopic:
     @pytest.mark.asyncio
     async def test_unknown_topic_no_event(self, adapter, mock_bus):
@@ -184,6 +182,7 @@ class TestOnMessageUnknownTopic:
 # ---------------------------------------------------------------------------
 # write()
 # ---------------------------------------------------------------------------
+
 
 class TestWrite:
     @pytest.mark.asyncio
@@ -215,10 +214,12 @@ class TestWrite:
 
     @pytest.mark.asyncio
     async def test_write_with_payload_template(self, adapter):
-        binding = make_binding({
-            "topic": "home/light",
-            "payload_template": '{"state": "###DP###"}',
-        })
+        binding = make_binding(
+            {
+                "topic": "home/light",
+                "payload_template": '{"state": "###DP###"}',
+            },
+        )
         await adapter.write(binding, "on")
 
         _, payload, _ = await adapter._publish_queue.get()
@@ -226,10 +227,12 @@ class TestWrite:
 
     @pytest.mark.asyncio
     async def test_write_with_payload_template_non_string_value(self, adapter):
-        binding = make_binding({
-            "topic": "home/dim",
-            "payload_template": '{"brightness": ###DP###}',
-        })
+        binding = make_binding(
+            {
+                "topic": "home/dim",
+                "payload_template": '{"brightness": ###DP###}',
+            },
+        )
         await adapter.write(binding, 75)
 
         _, payload, _ = await adapter._publish_queue.get()

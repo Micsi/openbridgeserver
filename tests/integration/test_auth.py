@@ -1,5 +1,4 @@
-"""
-Integration Tests — Authentication
+"""Integration Tests — Authentication
 
 Covers:
   - POST /api/v1/auth/login  (valid / invalid credentials)
@@ -7,10 +6,10 @@ Covers:
   - Protected endpoint behaviour (401 without token, 200 with token)
   - Malformed / expired token → 401
 """
+
 from __future__ import annotations
 
 import pytest
-
 
 pytestmark = pytest.mark.integration
 
@@ -18,6 +17,7 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 # Login
 # ---------------------------------------------------------------------------
+
 
 async def test_login_returns_token(client):
     resp = await client.post(
@@ -51,6 +51,7 @@ async def test_login_invalid_user(client):
 # Protected endpoint
 # ---------------------------------------------------------------------------
 
+
 async def test_protected_endpoint_without_token(client):
     """GET /datapoints/ without auth → 401."""
     resp = await client.get("/api/v1/datapoints/")
@@ -75,6 +76,7 @@ async def test_protected_endpoint_with_malformed_token(client):
 # ---------------------------------------------------------------------------
 # Token refresh
 # ---------------------------------------------------------------------------
+
 
 async def test_refresh_token(client):
     """POST /auth/login → refresh → new access_token."""
@@ -115,6 +117,7 @@ async def test_refresh_with_access_token_rejected(client, auth_headers):
 # ---------------------------------------------------------------------------
 # /me endpoint
 # ---------------------------------------------------------------------------
+
 
 async def test_me_returns_admin_info(client, auth_headers):
     resp = await client.get("/api/v1/auth/me", headers=auth_headers)

@@ -1,6 +1,9 @@
 """Pydantic models for Logic Engine graphs."""
+
 from __future__ import annotations
+
 from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -11,6 +14,7 @@ class NodePosition(BaseModel):
 
 class LogicNodeData(BaseModel):
     """Node-type-specific configuration stored in the node."""
+
     label: str = ""
     # type-specific fields — stored as arbitrary dict
     model_config = {"extra": "allow"}
@@ -18,7 +22,7 @@ class LogicNodeData(BaseModel):
 
 class LogicNode(BaseModel):
     id: str
-    type: str                    # e.g. "and", "or", "datapoint_read"
+    type: str  # e.g. "and", "or", "datapoint_read"
     position: NodePosition
     data: dict[str, Any] = {}
 
@@ -62,7 +66,8 @@ class LogicGraphOut(BaseModel):
 
 class LogicGraphImport(BaseModel):
     """Import-Payload für einen exportierten Logic Graph."""
-    obs_export: str              # muss "logic_graph" sein
+
+    obs_export: str  # muss "logic_graph" sein
     version: int
     name: str
     description: str = ""
@@ -73,15 +78,15 @@ class LogicGraphImport(BaseModel):
 class NodeTypePort(BaseModel):
     id: str
     label: str
-    type: str = "value"          # "value" | "trigger"
+    type: str = "value"  # "value" | "trigger"
 
 
 class NodeTypeDef(BaseModel):
-    type: str                    # unique identifier
-    label: str                   # display name
-    category: str                # "logic" | "datapoint" | "timer" | "math" | "script" | "ai"
+    type: str  # unique identifier
+    label: str  # display name
+    category: str  # "logic" | "datapoint" | "timer" | "math" | "script" | "ai"
     description: str = ""
     inputs: list[NodeTypePort] = []
     outputs: list[NodeTypePort] = []
-    config_schema: dict[str, Any] = {}   # JSON schema for node data
-    color: str = "#475569"       # default node color (tailwind slate-600)
+    config_schema: dict[str, Any] = {}  # JSON schema for node data
+    color: str = "#475569"  # default node color (tailwind slate-600)

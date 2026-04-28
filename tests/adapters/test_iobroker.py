@@ -1,16 +1,16 @@
-"""
-Unit-Tests für den ioBroker Adapter.
+"""Unit-Tests für den ioBroker Adapter.
 
 Keine echte ioBroker-Instanz erforderlich — Socket.IO-Client wird gemockt.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tests.adapters.conftest import make_binding
 from obs.adapters.iobroker.adapter import IoBrokerAdapter, _coerce_iobroker_value
+from tests.adapters.conftest import make_binding
 
 
 @pytest.fixture
@@ -77,9 +77,7 @@ class TestRead:
         value = await adapter.read(binding)
 
         assert value == pytest.approx(21.5)
-        adapter._socket.call.assert_awaited_once_with(
-            "getState", "0_userdata.0.temp", timeout=10.0
-        )
+        adapter._socket.call.assert_awaited_once_with("getState", "0_userdata.0.temp", timeout=10.0)
 
     @pytest.mark.asyncio
     async def test_get_state_text_is_coerced(self, adapter):
@@ -118,15 +116,18 @@ class TestSubscribe:
     async def test_subscribe_uses_state_list_and_initial_read(self, adapter, mock_bus):
         binding = make_binding({"state_id": "0_userdata.0.temp"})
         adapter._state_map["0_userdata.0.temp"] = [binding]
-        adapter._socket.call = AsyncMock(side_effect=[
-            [None, None],                    # subscribe
-            [None, {"val": 22.0}],           # getState initial read
-        ])
+        adapter._socket.call = AsyncMock(
+            side_effect=[
+                [None, None],  # subscribe
+                [None, {"val": 22.0}],  # getState initial read
+            ],
+        )
 
         await adapter._subscribe_bound_states()
 
         assert adapter._socket.call.await_args_list[0].args == (
-            "subscribe", ["0_userdata.0.temp"]
+            "subscribe",
+            ["0_userdata.0.temp"],
         )
         event = mock_bus.publish.call_args[0][0]
         assert event.value == pytest.approx(22.0)
@@ -135,22 +136,48 @@ class TestSubscribe:
 class TestBrowseStates:
     @pytest.mark.asyncio
     async def test_short_query_prefers_iobroker_namespace(self, adapter):
-        adapter._socket.call = AsyncMock(side_effect=[
-            [None, {"rows": [
-                {
-                    "id": "hue.0.SZ_Hue_white_lamp_1.on",
-                    "value": {"common": {"name": "Lamp on", "type": "boolean", "role": "switch.light", "write": True}},
-                },
-            ]}],
-            [None, {"rows": [
-                {
-                    "id": "system.adapter.hue.0.alive",
-                    "value": {"common": {"name": "hue alive", "type": "boolean", "role": "indicator.state", "write": False}},
-                },
-            ]}],
-            [None, {"val": False}],
-            [None, {"val": True}],
-        ])
+        adapter._socket.call = AsyncMock(
+            side_effect=[
+                [
+                    None,
+                    {
+                        "rows": [
+                            {
+                                "id": "hue.0.SZ_Hue_white_lamp_1.on",
+                                "value": {
+                                    "common": {
+                                        "name": "Lamp on",
+                                        "type": "boolean",
+                                        "role": "switch.light",
+                                        "write": True,
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                ],
+                [
+                    None,
+                    {
+                        "rows": [
+                            {
+                                "id": "system.adapter.hue.0.alive",
+                                "value": {
+                                    "common": {
+                                        "name": "hue alive",
+                                        "type": "boolean",
+                                        "role": "indicator.state",
+                                        "write": False,
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                ],
+                [None, {"val": False}],
+                [None, {"val": True}],
+            ],
+        )
 
         result = await adapter.browse_states("hue", 10)
 
@@ -163,16 +190,29 @@ class TestBrowseStates:
 
     @pytest.mark.asyncio
     async def test_short_query_falls_back_to_full_text(self, adapter):
-        adapter._socket.call = AsyncMock(side_effect=[
-            [None, {"rows": []}],
-            [None, {"rows": [
-                {
-                    "id": "system.adapter.hue.0.alive",
-                    "value": {"common": {"name": "hue alive", "type": "boolean", "role": "indicator.state"}},
-                },
-            ]}],
-            [None, {"val": True}],
-        ])
+        adapter._socket.call = AsyncMock(
+            side_effect=[
+                [None, {"rows": []}],
+                [
+                    None,
+                    {
+                        "rows": [
+                            {
+                                "id": "system.adapter.hue.0.alive",
+                                "value": {
+                                    "common": {
+                                        "name": "hue alive",
+                                        "type": "boolean",
+                                        "role": "indicator.state",
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                ],
+                [None, {"val": True}],
+            ],
+        )
 
         result = await adapter.browse_states("alive", 10)
 
@@ -197,11 +237,13 @@ class TestWrite:
 
     @pytest.mark.asyncio
     async def test_write_uses_command_state_id_and_ack(self, adapter):
-        binding = make_binding({
-            "state_id": "device.0.light.STATE",
-            "command_state_id": "device.0.light.SET",
-            "ack": True,
-        })
+        binding = make_binding(
+            {
+                "state_id": "device.0.light.STATE",
+                "command_state_id": "device.0.light.SET",
+                "ack": True,
+            },
+        )
         adapter._socket.call = AsyncMock(return_value=[None, None])
 
         await adapter.write(binding, "ON")

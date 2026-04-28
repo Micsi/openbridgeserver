@@ -1,5 +1,4 @@
-"""
-ETS Gruppen-Adressen CSV-Import
+"""ETS Gruppen-Adressen CSV-Import
 
 ETS exportiert je nach Konfiguration in UTF-8 (mit oder ohne BOM)
 oder Windows-1252 (ANSI). Diese Funktion erkennt die Kodierung automatisch.
@@ -7,6 +6,7 @@ oder Windows-1252 (ANSI). Diese Funktion erkennt die Kodierung automatisch.
 CSV-Format (Semikolon-getrennt):
   "Group name";"Address";"Central";"Unfiltered";"Description";"DatapointType";"Security"
 """
+
 from __future__ import annotations
 
 import csv
@@ -43,12 +43,23 @@ def _dpt_from_csv(dpt_str: str | None) -> str | None:
     if m:
         main = int(m.group(1))
         defaults = {
-            1: "DPT1.001",  2: "DPT2.001",  3: "DPT3.007",
-            5: "DPT5.001",  6: "DPT6.010",  7: "DPT7.001",
-            8: "DPT8.001",  9: "DPT9.001", 10: "DPT10.001",
-            11: "DPT11.001", 12: "DPT12.001", 13: "DPT13.001",
-            14: "DPT14.054", 16: "DPT16.000", 18: "DPT18.001",
-            19: "DPT19.001", 20: "DPT20.102",
+            1: "DPT1.001",
+            2: "DPT2.001",
+            3: "DPT3.007",
+            5: "DPT5.001",
+            6: "DPT6.010",
+            7: "DPT7.001",
+            8: "DPT8.001",
+            9: "DPT9.001",
+            10: "DPT10.001",
+            11: "DPT11.001",
+            12: "DPT12.001",
+            13: "DPT13.001",
+            14: "DPT14.054",
+            16: "DPT16.000",
+            18: "DPT18.001",
+            19: "DPT19.001",
+            20: "DPT20.102",
         }
         return defaults.get(main, f"DPT{main}.001")
 
@@ -80,6 +91,7 @@ def parse_ga_csv(content: bytes) -> list[GroupAddressRecord]:
 
     Raises:
         ValueError: wenn das CSV-Format nicht erkannt wird
+
     """
     try:
         text = _decode_csv(content)
@@ -97,10 +109,7 @@ def parse_ga_csv(content: bytes) -> list[GroupAddressRecord]:
     normalized = {f.strip('" ') for f in reader.fieldnames}
     missing = expected - normalized
     if missing:
-        raise ValueError(
-            f"Unbekanntes CSV-Format. Fehlende Spalten: {missing}. "
-            "Bitte ETS GA-Export als CSV (Semikolon-getrennt) verwenden."
-        )
+        raise ValueError(f"Unbekanntes CSV-Format. Fehlende Spalten: {missing}. Bitte ETS GA-Export als CSV (Semikolon-getrennt) verwenden.")
 
     # Feldnamen-Mapping (falls mit Anführungszeichen)
     field_map: dict[str, str] = {}
@@ -123,19 +132,22 @@ def parse_ga_csv(content: bytes) -> list[GroupAddressRecord]:
             skipped += 1
             continue
 
-        name        = get(row, "Group name")
+        name = get(row, "Group name")
         description = get(row, "Description")
-        dpt_raw     = get(row, "DatapointType") or None
+        dpt_raw = get(row, "DatapointType") or None
 
-        records.append(GroupAddressRecord(
-            address=     address,
-            name=        name,
-            description= description,
-            dpt=         _dpt_from_csv(dpt_raw),
-        ))
+        records.append(
+            GroupAddressRecord(
+                address=address,
+                name=name,
+                description=description,
+                dpt=_dpt_from_csv(dpt_raw),
+            ),
+        )
 
     logger.info(
         "CSV-Parser: %d Gruppenadressen gelesen, %d Ordner-Zeilen übersprungen",
-        len(records), skipped,
+        len(records),
+        skipped,
     )
     return records
