@@ -66,6 +66,21 @@ jobs:
             echo "PRERELEASE=false" >> $GITHUB_ENV
           fi
 
+      - name: Append Docker image link to release notes
+        run: |
+          REPO="${{ github.repository }}"
+          IMAGE="ghcr.io/${REPO,,}:${VERSION}"
+          cat >> release_notes.txt <<EOF
+
+          ## Docker Image
+
+          \`\`\`bash
+          docker pull ${IMAGE}
+          \`\`\`
+
+          [View on GitHub Container Registry](https://github.com/${{ github.repository }}/pkgs/container/${{ env.PROJECT_NAME }})
+          EOF
+
       - name: Create GitHub Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
