@@ -1,5 +1,4 @@
-"""
-Zeitschaltuhr Adapter — Tages- und Jahresschaltuhr
+"""Zeitschaltuhr Adapter — Tages- und Jahresschaltuhr
 
 Nur SOURCE-Bindings sind gültig (Zeitschaltuhr ist eine reine Quelle).
 DEST- und BOTH-Bindings werden beim Laden ignoriert (mit Warnung).
@@ -55,11 +54,12 @@ Binding-Konfiguration (1 Binding = 1 Schaltpunkt):
           Gültige Werte: "0"/"1", "true"/"false", "on"/"off", "ein"/"aus",
           Ganzzahl, Dezimalzahl oder beliebiger String
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -74,6 +74,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
 
 class TimerType(str, Enum):
     DAILY = "daily"
@@ -118,6 +119,7 @@ class MetaType(str, Enum):
 # ---------------------------------------------------------------------------
 # Config schemas
 # ---------------------------------------------------------------------------
+
 
 class ZeitschaltuhrConfig(BaseModel):
     latitude: float = Field(47.5, description="Breitengrad für Sonnenauf/-untergang")
@@ -165,7 +167,9 @@ class ZeitschaltuhrBindingConfig(BaseModel):
         description="Aktive Monate 1-12 (leer = alle; nur Jahresschaltuhr)",
     )
     day_of_month: int = Field(
-        0, ge=0, le=31,
+        0,
+        ge=0,
+        le=31,
         description="Tag im Monat (0 = alle; nur Jahresschaltuhr)",
     )
 
@@ -205,10 +209,7 @@ class ZeitschaltuhrBindingConfig(BaseModel):
     # ── Ausgabe ───────────────────────────────────────────────────────────────
     value: str = Field(
         "1",
-        description=(
-            "Ausgabewert beim Schalten. "
-            "Erlaubt: 0/1, true/false, on/off, ein/aus, Ganzzahl, Dezimalzahl oder String"
-        ),
+        description=("Ausgabewert beim Schalten. Erlaubt: 0/1, true/false, on/off, ein/aus, Ganzzahl, Dezimalzahl oder String"),
     )
 
 
@@ -216,10 +217,10 @@ class ZeitschaltuhrBindingConfig(BaseModel):
 # Adapter
 # ---------------------------------------------------------------------------
 
+
 @register
 class ZeitschaltuhrAdapter(AdapterBase):
-    """
-    Zeitschaltuhr (Timer) Adapter — virtuelle Schaltuhr ohne physische Verbindung.
+    """Zeitschaltuhr (Timer) Adapter — virtuelle Schaltuhr ohne physische Verbindung.
 
     Nur SOURCE-Bindings sind gültig. DEST- und BOTH-Bindings werden beim
     Laden ignoriert (mit Warnung im Log).
@@ -246,7 +247,7 @@ class ZeitschaltuhrAdapter(AdapterBase):
     ) -> None:
         super().__init__(event_bus, config, instance_id, name)
         self._cfg = ZeitschaltuhrConfig(**(config or {}))
-        self._tz: Any = timezone.utc
+        self._tz: Any = UTC
         self._task: asyncio.Task | None = None
         self._hol: Any = {}
         self._last_date: date | None = None
@@ -289,9 +290,10 @@ class ZeitschaltuhrAdapter(AdapterBase):
         for b in bindings:
             if b.direction != "SOURCE":
                 logger.warning(
-                    "Zeitschaltuhr '%s': Binding %s hat Richtung '%s' — "
-                    "nur SOURCE ist erlaubt, Binding wird ignoriert.",
-                    self._instance_name, b.id, b.direction,
+                    "Zeitschaltuhr '%s': Binding %s hat Richtung '%s' — nur SOURCE ist erlaubt, Binding wird ignoriert.",
+                    self._instance_name,
+                    b.id,
+                    b.direction,
                 )
             else:
                 valid.append(b)
@@ -372,17 +374,15 @@ class ZeitschaltuhrAdapter(AdapterBase):
         if is_holiday:
             if cfg.holiday_mode == HolidayMode.SKIP:
                 return False
-        else:
-            if cfg.holiday_mode == HolidayMode.ONLY:
-                return False
+        elif cfg.holiday_mode == HolidayMode.ONLY:
+            return False
 
         # Vacation gate
         if is_vacation:
             if cfg.vacation_mode == HolidayMode.SKIP:
                 return False
-        else:
-            if cfg.vacation_mode == HolidayMode.ONLY:
-                return False
+        elif cfg.vacation_mode == HolidayMode.ONLY:
+            return False
 
         # Weekday gate
         if effective_weekday not in cfg.weekdays:
@@ -407,18 +407,18 @@ class ZeitschaltuhrAdapter(AdapterBase):
             return False
         return now.hour == target.hour and now.minute == target.minute
 
-    def _calculate_target_time(
-        self, cfg: ZeitschaltuhrBindingConfig, for_date: date
-    ) -> datetime | None:
+    def _calculate_target_time(self, cfg: ZeitschaltuhrBindingConfig, for_date: date) -> datetime | None:
         if cfg.time_ref == TimeRef.ABSOLUTE:
             base: datetime | None = datetime(
-                for_date.year, for_date.month, for_date.day,
-                cfg.hour, cfg.minute, tzinfo=self._tz,
+                for_date.year,
+                for_date.month,
+                for_date.day,
+                cfg.hour,
+                cfg.minute,
+                tzinfo=self._tz,
             )
         elif cfg.time_ref == TimeRef.SOLAR_ALTITUDE:
-            base = self._get_solar_altitude_time(
-                cfg.solar_altitude_deg, cfg.sun_direction, for_date
-            )
+            base = self._get_solar_altitude_time(cfg.solar_altitude_deg, cfg.sun_direction, for_date)
         else:
             base = self._get_sun_event(cfg.time_ref, for_date)
 
@@ -440,14 +440,9 @@ class ZeitschaltuhrAdapter(AdapterBase):
                 longitude=self._cfg.longitude,
             )
             s = sun(location.observer, date=for_date, tzinfo=self._tz)
-            return s.get(
-                {"sunrise": "sunrise", "sunset": "sunset", "solar_noon": "noon"}[ref.value]
-            )
+            return s.get({"sunrise": "sunrise", "sunset": "sunset", "solar_noon": "noon"}[ref.value])
         except ImportError:
-            logger.warning(
-                "astral nicht installiert — Sonnenzeit-Berechnungen nicht verfügbar "
-                "(pip install astral)"
-            )
+            logger.warning("astral nicht installiert — Sonnenzeit-Berechnungen nicht verfügbar (pip install astral)")
         except Exception as exc:
             logger.warning("Sonnenzeit-Berechnung für %s fehlgeschlagen: %s", for_date, exc)
         return None
@@ -461,8 +456,8 @@ class ZeitschaltuhrAdapter(AdapterBase):
         """Zeitpunkt, zu dem die Sonne den angegebenen Höhenwinkel erreicht."""
         try:
             from astral import LocationInfo
-            from astral.sun import time_at_elevation
             from astral import SunDirection as AstralDir
+            from astral.sun import time_at_elevation
 
             location = LocationInfo(
                 name="open bridge server",
@@ -471,9 +466,7 @@ class ZeitschaltuhrAdapter(AdapterBase):
                 latitude=self._cfg.latitude,
                 longitude=self._cfg.longitude,
             )
-            astral_dir = (
-                AstralDir.RISING if direction == SunDirection.RISING else AstralDir.SETTING
-            )
+            astral_dir = AstralDir.RISING if direction == SunDirection.RISING else AstralDir.SETTING
             result = time_at_elevation(
                 location.observer,
                 elevation=altitude_deg,
@@ -483,14 +476,14 @@ class ZeitschaltuhrAdapter(AdapterBase):
             )
             return result
         except ImportError:
-            logger.warning(
-                "astral nicht installiert — Sonnenhöhenwinkel-Berechnung nicht verfügbar "
-                "(pip install astral)"
-            )
+            logger.warning("astral nicht installiert — Sonnenhöhenwinkel-Berechnung nicht verfügbar (pip install astral)")
         except Exception as exc:
             logger.warning(
                 "Sonnenhöhenwinkel-Berechnung für %s°/%s am %s fehlgeschlagen: %s",
-                altitude_deg, direction.value, for_date, exc,
+                altitude_deg,
+                direction.value,
+                for_date,
+                exc,
             )
         return None
 
@@ -498,9 +491,7 @@ class ZeitschaltuhrAdapter(AdapterBase):
     # Publish helper
     # ------------------------------------------------------------------
 
-    async def _fire_binding(
-        self, binding: Any, cfg: ZeitschaltuhrBindingConfig
-    ) -> None:
+    async def _fire_binding(self, binding: Any, cfg: ZeitschaltuhrBindingConfig) -> None:
         from obs.core.event_bus import DataValueEvent
 
         raw = cfg.value.strip()
@@ -518,7 +509,10 @@ class ZeitschaltuhrAdapter(AdapterBase):
                     value = raw
 
         logger.debug(
-            "Zeitschaltuhr '%s': Binding %s → %r", self._instance_name, binding.id, value
+            "Zeitschaltuhr '%s': Binding %s → %r",
+            self._instance_name,
+            binding.id,
+            value,
         )
         await self._bus.publish(
             DataValueEvent(
@@ -527,7 +521,7 @@ class ZeitschaltuhrAdapter(AdapterBase):
                 quality="good",
                 source_adapter=self.adapter_type,
                 binding_id=binding.id,
-            )
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -567,7 +561,7 @@ class ZeitschaltuhrAdapter(AdapterBase):
                                 quality="good",
                                 source_adapter=self.adapter_type,
                                 binding_id=binding.id,
-                            )
+                            ),
                         )
             except Exception:
                 logger.exception("Fehler beim Publishen von Meta-Binding %s", binding.id)
@@ -593,14 +587,12 @@ class ZeitschaltuhrAdapter(AdapterBase):
                 kwargs.pop("language", None)
                 logger.debug(
                     "Sprache '%s' für Land '%s' nicht unterstützt — nutze Standardsprache",
-                    self._cfg.holiday_language, self._cfg.holiday_country,
+                    self._cfg.holiday_language,
+                    self._cfg.holiday_country,
                 )
                 return hol_lib.country_holidays(self._cfg.holiday_country, **kwargs)
         except ImportError:
-            logger.info(
-                "holidays-Bibliothek nicht installiert — Feiertagserkennung deaktiviert "
-                "(pip install holidays)"
-            )
+            logger.info("holidays-Bibliothek nicht installiert — Feiertagserkennung deaktiviert (pip install holidays)")
             return {}
         except Exception as exc:
             logger.warning("Feiertagskalender konnte nicht geladen werden: %s", exc)
@@ -645,9 +637,8 @@ class ZeitschaltuhrAdapter(AdapterBase):
         if not tz_name:
             try:
                 from obs.db.database import get_db
-                row = await get_db().fetchone(
-                    "SELECT value FROM app_settings WHERE key='timezone'"
-                )
+
+                row = await get_db().fetchone("SELECT value FROM app_settings WHERE key='timezone'")
                 if row:
                     tz_name = row["value"]
             except Exception:
@@ -658,4 +649,4 @@ class ZeitschaltuhrAdapter(AdapterBase):
             return zoneinfo.ZoneInfo(tz_name)
         except Exception:
             logger.warning("Zeitzone '%s' unbekannt — nutze UTC", tz_name)
-            return timezone.utc
+            return UTC

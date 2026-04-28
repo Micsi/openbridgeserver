@@ -1,5 +1,4 @@
-"""
-Modbus RTU Adapter — Phase 3
+"""Modbus RTU Adapter — Phase 3
 
 Verbindet sich via serieller Schnittstelle (RS-485/RS-232).
 Teilt die Polling-Logik mit dem TCP-Adapter (modbus_base.py).
@@ -14,6 +13,7 @@ Adapter-Konfiguration (adapter_configs.config):
 
 Binding-Konfiguration: identisch mit Modbus TCP (ModbusBindingConfig).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,10 +23,13 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from obs.adapters.base import AdapterBase
-from obs.adapters.registry import register
 from obs.adapters.modbus_base import (
-    ModbusBindingConfig, decode_registers, encode_value, register_count
+    ModbusBindingConfig,
+    decode_registers,
+    encode_value,
+    register_count,
 )
+from obs.adapters.registry import register
 from obs.core.event_bus import DataValueEvent
 
 logger = logging.getLogger(__name__)
@@ -35,6 +38,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Adapter Config
 # ---------------------------------------------------------------------------
+
 
 class ModbusRtuAdapterConfig(BaseModel):
     port: str = "/dev/ttyUSB0"
@@ -48,6 +52,7 @@ class ModbusRtuAdapterConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
+
 
 @register
 class ModbusRtuAdapter(AdapterBase):
@@ -139,28 +144,34 @@ class ModbusRtuAdapter(AdapterBase):
                 if quality == "good":
                     if binding.value_formula:
                         from obs.core.formula import apply_formula
+
                         value = apply_formula(binding.value_formula, value)
                     if binding.value_map:
                         from obs.core.transformation import apply_value_map
+
                         value = apply_value_map(value, binding.value_map)
-                await self._bus.publish(DataValueEvent(
-                    datapoint_id=binding.datapoint_id,
-                    value=value,
-                    quality=quality,
-                    source_adapter=self.adapter_type,
-                    binding_id=binding.id,
-                ))
+                await self._bus.publish(
+                    DataValueEvent(
+                        datapoint_id=binding.datapoint_id,
+                        value=value,
+                        quality=quality,
+                        source_adapter=self.adapter_type,
+                        binding_id=binding.id,
+                    ),
+                )
             except asyncio.CancelledError:
                 return
             except Exception as exc:
                 logger.warning("Modbus RTU poll error (binding %s): %s", binding.id, exc)
-                await self._bus.publish(DataValueEvent(
-                    datapoint_id=binding.datapoint_id,
-                    value=None,
-                    quality="bad",
-                    source_adapter=self.adapter_type,
-                    binding_id=binding.id,
-                ))
+                await self._bus.publish(
+                    DataValueEvent(
+                        datapoint_id=binding.datapoint_id,
+                        value=None,
+                        quality="bad",
+                        source_adapter=self.adapter_type,
+                        binding_id=binding.id,
+                    ),
+                )
             await asyncio.sleep(bc.poll_interval)
 
     # ------------------------------------------------------------------
@@ -191,7 +202,12 @@ class ModbusRtuAdapter(AdapterBase):
 
     async def _modbus_call(self, fn, *pos_args, unit_id: int, **extra_kwargs) -> Any:
         """Version-safe pymodbus call across 2.x / 3.x / 3.12+."""
-        slave_variants = [{"device_id": unit_id}, {"slave": unit_id}, {"unit": unit_id}, {}]
+        slave_variants = [
+            {"device_id": unit_id},
+            {"slave": unit_id},
+            {"unit": unit_id},
+            {},
+        ]
 
         for sk in slave_variants:
             try:
@@ -208,9 +224,7 @@ class ModbusRtuAdapter(AdapterBase):
                 except TypeError:
                     continue
 
-        raise RuntimeError(
-            f"pymodbus: cannot call {fn.__name__} with any known API variant"
-        )
+        raise RuntimeError(f"pymodbus: cannot call {fn.__name__} with any known API variant")
 
     async def _read_register(self, bc: ModbusBindingConfig) -> Any:
         if not self._client or not self._client.connected:
@@ -219,7 +233,12 @@ class ModbusRtuAdapter(AdapterBase):
         count = register_count(bc.data_format)
 
         if bc.register_type == "holding":
-            r = await self._modbus_call(self._client.read_holding_registers, bc.address, count, unit_id=bc.unit_id)
+            r = await self._modbus_call(
+                self._client.read_holding_registers,
+                bc.address,
+                count,
+                unit_id=bc.unit_id,
+            )
         elif bc.register_type == "input":
             r = await self._modbus_call(self._client.read_input_registers, bc.address, count, unit_id=bc.unit_id)
         elif bc.register_type == "coil":
@@ -235,9 +254,7 @@ class ModbusRtuAdapter(AdapterBase):
         if bc.register_type in ("coil", "discrete_input"):
             return bool(r.bits[0])
 
-        return decode_registers(
-            r.registers, bc.data_format, bc.byte_order, bc.word_order, bc.scale_factor
-        )
+        return decode_registers(r.registers, bc.data_format, bc.byte_order, bc.word_order, bc.scale_factor)
 
     async def _write_register(self, bc: ModbusBindingConfig, value: Any) -> None:
         if bc.register_type == "coil":
@@ -245,6 +262,16 @@ class ModbusRtuAdapter(AdapterBase):
         elif bc.register_type == "holding":
             registers = encode_value(value, bc.data_format, bc.byte_order, bc.word_order, bc.scale_factor)
             if len(registers) == 1:
-                await self._modbus_call(self._client.write_register, bc.address, registers[0], unit_id=bc.unit_id)
+                await self._modbus_call(
+                    self._client.write_register,
+                    bc.address,
+                    registers[0],
+                    unit_id=bc.unit_id,
+                )
             else:
-                await self._modbus_call(self._client.write_registers, bc.address, registers, unit_id=bc.unit_id)
+                await self._modbus_call(
+                    self._client.write_registers,
+                    bc.address,
+                    registers,
+                    unit_id=bc.unit_id,
+                )

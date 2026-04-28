@@ -1,5 +1,4 @@
-"""
-Integration Tests — History Objekt-Filter (issue #178)
+"""Integration Tests — History Objekt-Filter (issue #178)
 
 Deckt ab:
   - record_history=True  (Standard): Werte werden in die Historie geschrieben
@@ -7,6 +6,7 @@ Deckt ab:
   - PATCH /api/v1/datapoints/{id} setzt record_history korrekt
   - record_history wird im GET-Response zurückgeliefert
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,10 +22,16 @@ pytestmark = pytest.mark.integration
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _create_dp(client, auth_headers, name: str, record_history: bool = True) -> dict:
     resp = await client.post(
         "/api/v1/datapoints/",
-        json={"name": name, "data_type": "FLOAT", "unit": "°C", "record_history": record_history},
+        json={
+            "name": name,
+            "data_type": "FLOAT",
+            "unit": "°C",
+            "record_history": record_history,
+        },
         headers=auth_headers,
     )
     assert resp.status_code == 201, f"create failed: {resp.text}"
@@ -42,7 +48,7 @@ async def _write_value(client, auth_headers, dp_id: str, value: float) -> None:
 
 
 async def _query_history(client, auth_headers, dp_id: str) -> list:
-    past = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)).isoformat()
+    past = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)).isoformat()
     resp = await client.get(
         f"/api/v1/history/{dp_id}",
         params={"from": past, "limit": 100},
@@ -56,6 +62,7 @@ async def _query_history(client, auth_headers, dp_id: str) -> list:
 # Tests: record_history field returned in API responses
 # ---------------------------------------------------------------------------
 
+
 async def test_create_datapoint_default_record_history(client, auth_headers):
     """record_history defaults to True when not specified."""
     dp = await _create_dp(client, auth_headers, f"HistTest-Default-{uuid.uuid4().hex[:6]}")
@@ -65,7 +72,8 @@ async def test_create_datapoint_default_record_history(client, auth_headers):
 async def test_create_datapoint_record_history_false(client, auth_headers):
     """record_history=False is stored and returned correctly."""
     dp = await _create_dp(
-        client, auth_headers,
+        client,
+        auth_headers,
         f"HistTest-Excluded-{uuid.uuid4().hex[:6]}",
         record_history=False,
     )
@@ -74,7 +82,12 @@ async def test_create_datapoint_record_history_false(client, auth_headers):
 
 async def test_get_datapoint_returns_record_history(client, auth_headers):
     """GET /datapoints/{id} includes record_history field."""
-    created = await _create_dp(client, auth_headers, f"HistTest-Get-{uuid.uuid4().hex[:6]}", record_history=False)
+    created = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-Get-{uuid.uuid4().hex[:6]}",
+        record_history=False,
+    )
     resp = await client.get(f"/api/v1/datapoints/{created['id']}", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["record_history"] is False
@@ -82,7 +95,12 @@ async def test_get_datapoint_returns_record_history(client, auth_headers):
 
 async def test_patch_datapoint_enables_record_history(client, auth_headers):
     """PATCH can enable record_history after creation."""
-    created = await _create_dp(client, auth_headers, f"HistTest-Patch-{uuid.uuid4().hex[:6]}", record_history=False)
+    created = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-Patch-{uuid.uuid4().hex[:6]}",
+        record_history=False,
+    )
     dp_id = created["id"]
 
     resp = await client.patch(
@@ -100,7 +118,12 @@ async def test_patch_datapoint_enables_record_history(client, auth_headers):
 
 async def test_patch_datapoint_disables_record_history(client, auth_headers):
     """PATCH can disable record_history after creation."""
-    created = await _create_dp(client, auth_headers, f"HistTest-Disable-{uuid.uuid4().hex[:6]}", record_history=True)
+    created = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-Disable-{uuid.uuid4().hex[:6]}",
+        record_history=True,
+    )
     dp_id = created["id"]
 
     resp = await client.patch(
@@ -116,9 +139,15 @@ async def test_patch_datapoint_disables_record_history(client, auth_headers):
 # Tests: History recording behaviour
 # ---------------------------------------------------------------------------
 
+
 async def test_history_recorded_when_enabled(client, auth_headers):
     """Values are written to history when record_history=True."""
-    dp = await _create_dp(client, auth_headers, f"HistTest-Enabled-{uuid.uuid4().hex[:6]}", record_history=True)
+    dp = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-Enabled-{uuid.uuid4().hex[:6]}",
+        record_history=True,
+    )
     dp_id = dp["id"]
 
     await _write_value(client, auth_headers, dp_id, 21.5)
@@ -132,7 +161,12 @@ async def test_history_recorded_when_enabled(client, auth_headers):
 
 async def test_history_not_recorded_when_disabled(client, auth_headers):
     """Values are NOT written to history when record_history=False."""
-    dp = await _create_dp(client, auth_headers, f"HistTest-Disabled-{uuid.uuid4().hex[:6]}", record_history=False)
+    dp = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-Disabled-{uuid.uuid4().hex[:6]}",
+        record_history=False,
+    )
     dp_id = dp["id"]
 
     await _write_value(client, auth_headers, dp_id, 99.9)
@@ -144,7 +178,12 @@ async def test_history_not_recorded_when_disabled(client, auth_headers):
 
 async def test_history_stops_after_disabling(client, auth_headers):
     """After disabling record_history, subsequent values are no longer recorded."""
-    dp = await _create_dp(client, auth_headers, f"HistTest-Stop-{uuid.uuid4().hex[:6]}", record_history=True)
+    dp = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-Stop-{uuid.uuid4().hex[:6]}",
+        record_history=True,
+    )
     dp_id = dp["id"]
 
     # Write while enabled
@@ -166,14 +205,17 @@ async def test_history_stops_after_disabling(client, auth_headers):
     entries_after = await _query_history(client, auth_headers, dp_id)
 
     # Count must not have increased — no new entry with value 20.0
-    assert not any(abs(e["v"] - 20.0) < 0.01 for e in entries_after), (
-        "Value 20.0 was recorded even though record_history=False"
-    )
+    assert not any(abs(e["v"] - 20.0) < 0.01 for e in entries_after), "Value 20.0 was recorded even though record_history=False"
 
 
 async def test_history_resumes_after_enabling(client, auth_headers):
     """After re-enabling record_history, values are recorded again."""
-    dp = await _create_dp(client, auth_headers, f"HistTest-Resume-{uuid.uuid4().hex[:6]}", record_history=False)
+    dp = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-Resume-{uuid.uuid4().hex[:6]}",
+        record_history=False,
+    )
     dp_id = dp["id"]
 
     # Write while disabled — must not be recorded

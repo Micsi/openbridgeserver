@@ -1,13 +1,13 @@
-"""
-History API — Phase 5
+"""History API — Phase 5
 
 GET /api/v1/history/{id}?from=&to=&limit=
 GET /api/v1/history/{id}/aggregate?fn=avg&interval=1h&from=&to=
 """
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from obs.api.auth import optional_current_user
 from obs.api.v1.sessions import validate_session
 from obs.core.registry import get_registry
-from obs.db.database import get_db, Database
+from obs.db.database import Database, get_db
 from obs.history.factory import get_history_plugin
 
 router = APIRouter(tags=["history"])
@@ -26,12 +26,13 @@ router = APIRouter(tags=["history"])
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class HistoryPoint(BaseModel):
     ts: str
     v: Any
     u: str | None
     q: str
-    a: str | None = None   # source_adapter
+    a: str | None = None  # source_adapter
 
 
 class AggregatedPoint(BaseModel):
@@ -42,6 +43,7 @@ class AggregatedPoint(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_ts(s: str | None, default: datetime) -> datetime:
     if not s:
@@ -68,9 +70,7 @@ async def _check_history_access(
     if not page_id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
-    async with db.conn.execute(
-        "SELECT access, parent_id FROM visu_nodes WHERE id = ?", (page_id,)
-    ) as cur:
+    async with db.conn.execute("SELECT access, parent_id FROM visu_nodes WHERE id = ?", (page_id,)) as cur:
         row = await cur.fetchone()
 
     access = row["access"] if row and row["access"] else "public"
@@ -90,6 +90,7 @@ async def _check_history_access(
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{dp_id}", response_model=list[HistoryPoint])
 async def query_history(
     dp_id: uuid.UUID,
@@ -104,7 +105,7 @@ async def query_history(
     if get_registry().get(dp_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     from_dt = _parse_ts(from_ts, now - timedelta(hours=24))
     to_dt = _parse_ts(to_ts, now)
 
@@ -133,7 +134,7 @@ async def aggregate_history(
             "fn must be one of: avg, min, max, last",
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     from_dt = _parse_ts(from_ts, now - timedelta(hours=24))
     to_dt = _parse_ts(to_ts, now)
 

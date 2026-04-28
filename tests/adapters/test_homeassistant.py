@@ -1,29 +1,27 @@
-"""
-Unit-Tests für den Home Assistant Adapter.
+"""Unit-Tests für den Home Assistant Adapter.
 
 Keine echte HA-Instanz erforderlich — HTTP-Client und WebSocket werden
 gemockt. Direkte Tests von _on_state_changed() und write().
 """
+
 from __future__ import annotations
 
-import asyncio
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.adapters.conftest import make_binding
 from obs.adapters.homeassistant.adapter import (
-    HomeAssistantAdapter,
     HaBindingConfig,
+    HomeAssistantAdapter,
     _coerce_state,
     _domain_from_entity,
 )
-
+from tests.adapters.conftest import make_binding
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def adapter(mock_bus):
@@ -54,6 +52,7 @@ def _add_entity_binding(adapter: HomeAssistantAdapter, entity_id: str, **kwargs)
 # ---------------------------------------------------------------------------
 # _coerce_state — pure function tests
 # ---------------------------------------------------------------------------
+
 
 class TestCoerceState:
     def test_on_returns_true(self):
@@ -87,6 +86,7 @@ class TestCoerceState:
 # _domain_from_entity — pure function tests
 # ---------------------------------------------------------------------------
 
+
 class TestDomainFromEntity:
     def test_light(self):
         assert _domain_from_entity("light.living_room") == "light"
@@ -105,14 +105,17 @@ class TestDomainFromEntity:
 # _on_state_changed — state field
 # ---------------------------------------------------------------------------
 
+
 class TestOnStateChangedStateField:
     @pytest.mark.asyncio
     async def test_numeric_state_published(self, adapter, mock_bus):
         binding = _add_entity_binding(adapter, "sensor.temperature")
-        await adapter._on_state_changed({
-            "entity_id": "sensor.temperature",
-            "new_state": {"state": "21.5", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "sensor.temperature",
+                "new_state": {"state": "21.5", "attributes": {}},
+            },
+        )
 
         assert mock_bus.publish.called
         event = mock_bus.publish.call_args[0][0]
@@ -124,10 +127,12 @@ class TestOnStateChangedStateField:
     @pytest.mark.asyncio
     async def test_boolean_on_state(self, adapter, mock_bus):
         _add_entity_binding(adapter, "switch.fan")
-        await adapter._on_state_changed({
-            "entity_id": "switch.fan",
-            "new_state": {"state": "on", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "switch.fan",
+                "new_state": {"state": "on", "attributes": {}},
+            },
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value is True
@@ -135,10 +140,12 @@ class TestOnStateChangedStateField:
     @pytest.mark.asyncio
     async def test_boolean_off_state(self, adapter, mock_bus):
         _add_entity_binding(adapter, "switch.fan")
-        await adapter._on_state_changed({
-            "entity_id": "switch.fan",
-            "new_state": {"state": "off", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "switch.fan",
+                "new_state": {"state": "off", "attributes": {}},
+            },
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value is False
@@ -146,10 +153,12 @@ class TestOnStateChangedStateField:
     @pytest.mark.asyncio
     async def test_string_state_passthrough(self, adapter, mock_bus):
         _add_entity_binding(adapter, "media_player.living_room")
-        await adapter._on_state_changed({
-            "entity_id": "media_player.living_room",
-            "new_state": {"state": "playing", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "media_player.living_room",
+                "new_state": {"state": "playing", "attributes": {}},
+            },
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value == "playing"
@@ -157,10 +166,12 @@ class TestOnStateChangedStateField:
     @pytest.mark.asyncio
     async def test_unavailable_state_publishes_none(self, adapter, mock_bus):
         _add_entity_binding(adapter, "sensor.broken")
-        await adapter._on_state_changed({
-            "entity_id": "sensor.broken",
-            "new_state": {"state": "unavailable", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "sensor.broken",
+                "new_state": {"state": "unavailable", "attributes": {}},
+            },
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value is None
@@ -168,10 +179,12 @@ class TestOnStateChangedStateField:
     @pytest.mark.asyncio
     async def test_unknown_state_publishes_none(self, adapter, mock_bus):
         _add_entity_binding(adapter, "sensor.broken")
-        await adapter._on_state_changed({
-            "entity_id": "sensor.broken",
-            "new_state": {"state": "unknown", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "sensor.broken",
+                "new_state": {"state": "unknown", "attributes": {}},
+            },
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value is None
@@ -180,20 +193,24 @@ class TestOnStateChangedStateField:
     async def test_new_state_none_skipped(self, adapter, mock_bus):
         """Entity removed (new_state is None) → no event published."""
         _add_entity_binding(adapter, "sensor.gone")
-        await adapter._on_state_changed({
-            "entity_id": "sensor.gone",
-            "new_state": None,
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "sensor.gone",
+                "new_state": None,
+            },
+        )
 
         mock_bus.publish.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unknown_entity_ignored(self, adapter, mock_bus):
         """state_changed for an entity with no binding → no event."""
-        await adapter._on_state_changed({
-            "entity_id": "sensor.not_bound",
-            "new_state": {"state": "42", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "sensor.not_bound",
+                "new_state": {"state": "42", "attributes": {}},
+            },
+        )
 
         mock_bus.publish.assert_not_called()
 
@@ -202,17 +219,20 @@ class TestOnStateChangedStateField:
 # _on_state_changed — attribute field
 # ---------------------------------------------------------------------------
 
+
 class TestOnStateChangedAttribute:
     @pytest.mark.asyncio
     async def test_attribute_extracted(self, adapter, mock_bus):
         _add_entity_binding(adapter, "light.bedroom", attribute="brightness")
-        await adapter._on_state_changed({
-            "entity_id": "light.bedroom",
-            "new_state": {
-                "state": "on",
-                "attributes": {"brightness": 128, "color_temp": 370},
+        await adapter._on_state_changed(
+            {
+                "entity_id": "light.bedroom",
+                "new_state": {
+                    "state": "on",
+                    "attributes": {"brightness": 128, "color_temp": 370},
+                },
             },
-        })
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value == 128
@@ -220,13 +240,15 @@ class TestOnStateChangedAttribute:
     @pytest.mark.asyncio
     async def test_missing_attribute_returns_none(self, adapter, mock_bus):
         _add_entity_binding(adapter, "light.bedroom", attribute="color_temp")
-        await adapter._on_state_changed({
-            "entity_id": "light.bedroom",
-            "new_state": {
-                "state": "on",
-                "attributes": {},  # attribute missing
+        await adapter._on_state_changed(
+            {
+                "entity_id": "light.bedroom",
+                "new_state": {
+                    "state": "on",
+                    "attributes": {},  # attribute missing
+                },
             },
-        })
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value is None
@@ -236,6 +258,7 @@ class TestOnStateChangedAttribute:
 # _on_state_changed — value_map
 # ---------------------------------------------------------------------------
 
+
 class TestOnStateChangedValueMap:
     @pytest.mark.asyncio
     async def test_value_map_applied_to_state(self, adapter, mock_bus):
@@ -244,10 +267,12 @@ class TestOnStateChangedValueMap:
             value_map={"home": "1", "away": "0"},
         )
         adapter._entity_map["input_select.mode"] = [binding]
-        await adapter._on_state_changed({
-            "entity_id": "input_select.mode",
-            "new_state": {"state": "home", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "input_select.mode",
+                "new_state": {"state": "home", "attributes": {}},
+            },
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value == "1"
@@ -259,10 +284,12 @@ class TestOnStateChangedValueMap:
             value_map={"home": "1"},
         )
         adapter._entity_map["input_select.mode"] = [binding]
-        await adapter._on_state_changed({
-            "entity_id": "input_select.mode",
-            "new_state": {"state": "vacation", "attributes": {}},
-        })
+        await adapter._on_state_changed(
+            {
+                "entity_id": "input_select.mode",
+                "new_state": {"state": "vacation", "attributes": {}},
+            },
+        )
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value == "vacation"
@@ -271,6 +298,7 @@ class TestOnStateChangedValueMap:
 # ---------------------------------------------------------------------------
 # write() — service call logic
 # ---------------------------------------------------------------------------
+
 
 class TestWrite:
     @pytest.mark.asyncio
@@ -305,10 +333,12 @@ class TestWrite:
         mock_response.raise_for_status = MagicMock()
         adapter._http_client.post = AsyncMock(return_value=mock_response)
 
-        binding = make_binding({
-            "entity_id": "input_number.heating",
-            "service_data_key": "value",
-        })
+        binding = make_binding(
+            {
+                "entity_id": "input_number.heating",
+                "service_data_key": "value",
+            },
+        )
         await adapter.write(binding, 21.5)
 
         call_args = adapter._http_client.post.call_args
@@ -323,11 +353,13 @@ class TestWrite:
         mock_response.raise_for_status = MagicMock()
         adapter._http_client.post = AsyncMock(return_value=mock_response)
 
-        binding = make_binding({
-            "entity_id": "cover.blind",
-            "service_name": "set_cover_position",
-            "service_data_key": "position",
-        })
+        binding = make_binding(
+            {
+                "entity_id": "cover.blind",
+                "service_name": "set_cover_position",
+                "service_data_key": "position",
+            },
+        )
         await adapter.write(binding, 75)
 
         call_args = adapter._http_client.post.call_args
@@ -341,11 +373,13 @@ class TestWrite:
         mock_response.raise_for_status = MagicMock()
         adapter._http_client.post = AsyncMock(return_value=mock_response)
 
-        binding = make_binding({
-            "entity_id": "scene.night_mode",
-            "service_domain": "homeassistant",
-            "service_name": "turn_on",
-        })
+        binding = make_binding(
+            {
+                "entity_id": "scene.night_mode",
+                "service_domain": "homeassistant",
+                "service_name": "turn_on",
+            },
+        )
         await adapter.write(binding, True)
 
         call_args = adapter._http_client.post.call_args
@@ -390,16 +424,19 @@ class TestWrite:
 # read()
 # ---------------------------------------------------------------------------
 
+
 class TestRead:
     @pytest.mark.asyncio
     async def test_read_state_field(self, adapter):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.json = MagicMock(return_value={
-            "entity_id": "sensor.temperature",
-            "state": "22.3",
-            "attributes": {},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "entity_id": "sensor.temperature",
+                "state": "22.3",
+                "attributes": {},
+            },
+        )
         adapter._http_client.get = AsyncMock(return_value=mock_response)
 
         binding = make_binding({"entity_id": "sensor.temperature"})
@@ -410,11 +447,13 @@ class TestRead:
     async def test_read_attribute_field(self, adapter):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.json = MagicMock(return_value={
-            "entity_id": "light.kitchen",
-            "state": "on",
-            "attributes": {"brightness": 200, "color_temp": 350},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "entity_id": "light.kitchen",
+                "state": "on",
+                "attributes": {"brightness": 200, "color_temp": 350},
+            },
+        )
         adapter._http_client.get = AsyncMock(return_value=mock_response)
 
         binding = make_binding({"entity_id": "light.kitchen", "attribute": "brightness"})
@@ -425,11 +464,13 @@ class TestRead:
     async def test_read_unavailable_returns_none(self, adapter):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.json = MagicMock(return_value={
-            "entity_id": "sensor.broken",
-            "state": "unavailable",
-            "attributes": {},
-        })
+        mock_response.json = MagicMock(
+            return_value={
+                "entity_id": "sensor.broken",
+                "state": "unavailable",
+                "attributes": {},
+            },
+        )
         adapter._http_client.get = AsyncMock(return_value=mock_response)
 
         binding = make_binding({"entity_id": "sensor.broken"})
@@ -455,6 +496,7 @@ class TestRead:
 # connect() — config validation
 # ---------------------------------------------------------------------------
 
+
 class TestConnect:
     @pytest.mark.asyncio
     async def test_connect_without_token_publishes_error_status(self, mock_bus):
@@ -469,6 +511,7 @@ class TestConnect:
         assert mock_bus.publish.called
         event = mock_bus.publish.call_args[0][0]
         from obs.core.event_bus import AdapterStatusEvent
+
         assert isinstance(event, AdapterStatusEvent)
         assert event.connected is False
 
@@ -476,7 +519,12 @@ class TestConnect:
     async def test_connect_sets_cfg(self, mock_bus):
         adapter = HomeAssistantAdapter(
             event_bus=mock_bus,
-            config={"host": "192.168.1.10", "port": 8123, "token": "mytoken", "ssl": False},
+            config={
+                "host": "192.168.1.10",
+                "port": 8123,
+                "token": "mytoken",
+                "ssl": False,
+            },
         )
         with patch("obs.adapters.homeassistant.adapter.httpx.AsyncClient") as mock_client_cls:
             mock_client_cls.return_value = MagicMock(aclose=AsyncMock())
@@ -490,6 +538,7 @@ class TestConnect:
 # ---------------------------------------------------------------------------
 # HaBindingConfig — Pydantic schema validation
 # ---------------------------------------------------------------------------
+
 
 class TestHaBindingConfig:
     def test_minimal_config(self):

@@ -1,5 +1,4 @@
-"""
-Safe formula evaluator for binding value transformations.
+"""Safe formula evaluator for binding value transformations.
 
 Variable: x  — der aktuelle Wert (float)
 Erlaubte Operatoren: + - * / // % **
@@ -11,6 +10,7 @@ Beispiele:
   round(x * 0.01)  → auf ganze Zahlen runden
   max(0, x - 20)   → Untergrenze 0
 """
+
 from __future__ import annotations
 
 import ast
@@ -26,27 +26,34 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_NODES = (
     ast.Expression,
-    ast.BinOp, ast.UnaryOp,
-    ast.Constant,                      # Python 3.8+
-    ast.Name,                          # für 'x' und math-Funktionen
-    ast.Attribute,                     # für math.sqrt etc.
-    ast.Call,                          # für abs(), round() etc.
-    ast.Add, ast.Sub, ast.Mult, ast.Div,
-    ast.FloorDiv, ast.Mod, ast.Pow,
-    ast.UAdd, ast.USub,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.Constant,  # Python 3.8+
+    ast.Name,  # für 'x' und math-Funktionen
+    ast.Attribute,  # für math.sqrt etc.
+    ast.Call,  # für abs(), round() etc.
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.FloorDiv,
+    ast.Mod,
+    ast.Pow,
+    ast.UAdd,
+    ast.USub,
     ast.Load,
 )
 
 _SAFE_GLOBALS: dict[str, Any] = {
-    "__builtins__": {},                # kein Zugriff auf builtins
-    "x": 0.0,                         # Platzhalter; wird pro Aufruf überschrieben
+    "__builtins__": {},  # kein Zugriff auf builtins
+    "x": 0.0,  # Platzhalter; wird pro Aufruf überschrieben
     # Eingebaute Funktionen
-    "abs":   abs,
+    "abs": abs,
     "round": round,
-    "min":   min,
-    "max":   max,
+    "min": min,
+    "max": max,
     # math-Modul als Namespace und direkte Funktionen
-    "math":  math,
+    "math": math,
     **{k: v for k, v in math.__dict__.items() if not k.startswith("_")},
 }
 
@@ -55,9 +62,9 @@ _SAFE_GLOBALS: dict[str, Any] = {
 # Öffentliche API
 # ---------------------------------------------------------------------------
 
+
 def validate_formula(formula: str) -> str | None:
-    """
-    Prüft Syntax und erlaubte Knoten.
+    """Prüft Syntax und erlaubte Knoten.
     Gibt eine Fehlermeldung zurück oder None wenn gültig.
     """
     formula = formula.strip()
@@ -85,8 +92,7 @@ def validate_formula(formula: str) -> str | None:
 
 
 def apply_formula(formula: str, value: Any) -> Any:
-    """
-    Wendet die Formel auf *value* an.
+    """Wendet die Formel auf *value* an.
     Bei Division durch Null oder anderen Fehlern wird der Originalwert zurückgegeben.
     """
     formula = formula.strip()
@@ -99,9 +105,9 @@ def apply_formula(formula: str, value: Any) -> Any:
 
     try:
         locals_: dict[str, Any] = {**_SAFE_GLOBALS, "x": x}
-        tree  = ast.parse(formula, mode="eval")
-        code  = compile(tree, "<formula>", "eval")
-        result = eval(code, {"__builtins__": {}}, locals_)   # noqa: S307
+        tree = ast.parse(formula, mode="eval")
+        code = compile(tree, "<formula>", "eval")
+        result = eval(code, {"__builtins__": {}}, locals_)  # noqa: S307
 
         if not isinstance(result, (int, float)):
             logger.warning("Formula '%s' returned non-numeric: %r", formula, result)
@@ -112,7 +118,11 @@ def apply_formula(formula: str, value: Any) -> Any:
         return result
 
     except ZeroDivisionError:
-        logger.warning("Formula '%s': Division durch Null für x=%s — Originalwert behalten", formula, x)
+        logger.warning(
+            "Formula '%s': Division durch Null für x=%s — Originalwert behalten",
+            formula,
+            x,
+        )
         return value
     except Exception:
         logger.exception("Formula '%s' fehlgeschlagen für x=%s", formula, x)
@@ -123,13 +133,14 @@ def apply_formula(formula: str, value: Any) -> Any:
 # Intern
 # ---------------------------------------------------------------------------
 
+
 def _try_eval(formula: str, x: float) -> str | None:
     """Gibt Fehlermeldung oder None zurück."""
     try:
         locals_: dict[str, Any] = {**_SAFE_GLOBALS, "x": x}
-        tree   = ast.parse(formula, mode="eval")
-        code   = compile(tree, "<formula>", "eval")
-        result = eval(code, {"__builtins__": {}}, locals_)   # noqa: S307
+        tree = ast.parse(formula, mode="eval")
+        code = compile(tree, "<formula>", "eval")
+        result = eval(code, {"__builtins__": {}}, locals_)  # noqa: S307
         if isinstance(result, (int, float)) and (math.isnan(result) or math.isinf(result)):
             return "Ergebnis ist nan oder inf"
         return None

@@ -1,5 +1,4 @@
-"""
-InfluxDB History Plugin — Phase 5
+"""InfluxDB History Plugin — Phase 5
 
 Supports InfluxDB v1, v2, and v3.
 
@@ -22,12 +21,13 @@ Configuration keys (from app_settings):
 Line protocol schema:
   obs,dp_id=<uuid> raw="<json>",quality="<q>",unit="<u>"[,v=<float>] <timestamp_ns>
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -38,20 +38,20 @@ logger = logging.getLogger(__name__)
 
 # Map interval strings to InfluxQL duration literals
 _INFLUX_INTERVALS: dict[str, str] = {
-    "1m":  "1m",
-    "5m":  "5m",
+    "1m": "1m",
+    "5m": "5m",
     "15m": "15m",
     "30m": "30m",
-    "1h":  "1h",
-    "6h":  "6h",
+    "1h": "1h",
+    "6h": "6h",
     "12h": "12h",
-    "1d":  "1d",
+    "1d": "1d",
 }
 
 _INFLUX_AGGFN: dict[str, str] = {
-    "avg":  "MEAN",
-    "min":  "MIN",
-    "max":  "MAX",
+    "avg": "MEAN",
+    "min": "MIN",
+    "max": "MAX",
     "last": "LAST",
 }
 
@@ -74,8 +74,8 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         self._version = int(version)
         self._token = token
         self._org = org
-        self._bucket = bucket        # v2 write target / query db alias
-        self._database = database    # v1/v3 db name
+        self._bucket = bucket  # v2 write target / query db alias
+        self._database = database  # v1/v3 db name
         self._username = username
         self._password = password
 
@@ -90,26 +90,26 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
                 f"{self._url}/write",
                 {"db": self._database, "precision": "ns"},
             )
-        elif self._version == 2:
+        if self._version == 2:
             return (
                 f"{self._url}/api/v2/write",
                 {"org": self._org, "bucket": self._bucket, "precision": "ns"},
             )
-        else:  # v3
-            return (
-                f"{self._url}/api/v3/write_lp",
-                {"database": self._database, "precision": "nanosecond"},
-            )
+        # v3
+        return (
+            f"{self._url}/api/v3/write_lp",
+            {"database": self._database, "precision": "nanosecond"},
+        )
 
     def _query_url_params(self) -> tuple[str, dict]:
         """Return (url, base_query_params) for InfluxQL queries."""
         if self._version == 1:
             return f"{self._url}/query", {"db": self._database}
-        elif self._version == 2:
+        if self._version == 2:
             # v2 InfluxQL compat: db = bucket name
             return f"{self._url}/query", {"db": self._bucket}
-        else:  # v3
-            return f"{self._url}/query", {"db": self._database}
+        # v3
+        return f"{self._url}/query", {"db": self._database}
 
     def _headers(self, content_type: str = "application/json") -> dict:
         h: dict[str, str] = {"Accept": "application/json"}
@@ -118,16 +118,14 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         if self._version == 1:
             if self._username:
                 import base64
-                cred = base64.b64encode(
-                    f"{self._username}:{self._password}".encode()
-                ).decode()
+
+                cred = base64.b64encode(f"{self._username}:{self._password}".encode()).decode()
                 h["Authorization"] = f"Basic {cred}"
         elif self._version == 2:
             if self._token:
                 h["Authorization"] = f"Token {self._token}"
-        else:  # v3
-            if self._token:
-                h["Authorization"] = f"Bearer {self._token}"
+        elif self._token:
+            h["Authorization"] = f"Bearer {self._token}"
         return h
 
     def _escape_tag(self, s: str) -> str:
@@ -167,9 +165,7 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
 
         return f"obs,dp_id={dp_tag} {','.join(fields)} {ts_ns}"
 
-    def _parse_influxql_series(
-        self, data: dict, raw_field: bool = True
-    ) -> list[dict]:
+    def _parse_influxql_series(self, data: dict, raw_field: bool = True) -> list[dict]:
         """Parse the standard InfluxQL JSON response into our list-of-dicts format."""
         results = data.get("results", [])
         if not results:
@@ -224,7 +220,7 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         ts: datetime | None = None,
         source_adapter: str | None = None,
     ) -> None:
-        ts_dt = ts or datetime.now(timezone.utc)
+        ts_dt = ts or datetime.now(UTC)
         line = self._build_line(datapoint_id, value, unit, quality, ts_dt)
 
         url, params = self._write_url_params()
@@ -255,7 +251,7 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         dp = str(datapoint_id)
 
         q = (
-            f"SELECT raw, quality, unit FROM \"obs\" "
+            f'SELECT raw, quality, unit FROM "obs" '
             f"WHERE dp_id='{dp}' "
             f"AND time >= '{from_rfc}' AND time <= '{to_rfc}' "
             f"ORDER BY time DESC "
@@ -283,7 +279,7 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         dp = str(datapoint_id)
 
         q = (
-            f"SELECT {influx_fn}(v) FROM \"obs\" "
+            f'SELECT {influx_fn}(v) FROM "obs" '
             f"WHERE dp_id='{dp}' "
             f"AND time >= '{from_rfc}' AND time <= '{to_rfc}' "
             f"GROUP BY time({influx_interval}) fill(none)"
@@ -315,9 +311,7 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
                     return r.status_code < 300
             else:  # v3
                 # Try a trivial InfluxQL query against the database
-                data = await self._run_influxql(
-                    f"SHOW MEASUREMENTS ON \"{self._database}\" LIMIT 1"
-                )
+                data = await self._run_influxql(f'SHOW MEASUREMENTS ON "{self._database}" LIMIT 1')
                 return "results" in data
         except Exception as exc:
             logger.debug("InfluxDB ping failed: %s", exc)
@@ -328,8 +322,9 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _to_rfc3339(dt: datetime) -> str:
     """Convert datetime to RFC3339/ISO8601 with Z suffix."""
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"

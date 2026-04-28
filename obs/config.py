@@ -1,5 +1,4 @@
-"""
-open bridge server Configuration
+"""open bridge server Configuration
 
 Priority (highest → lowest):
   1. Environment variables  OBS_<SECTION>__<KEY>=value
@@ -11,20 +10,25 @@ Example env overrides:
   OBS_DATABASE__PATH=/mnt/data/obs.db
   OBS_SECURITY__JWT_SECRET=supersecret
 """
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
-
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 # ---------------------------------------------------------------------------
 # Sub-sections
 # ---------------------------------------------------------------------------
+
 
 class ServerSettings(BaseModel):
     host: str = "0.0.0.0"
@@ -35,8 +39,8 @@ class ServerSettings(BaseModel):
 class MqttSettings(BaseModel):
     host: str = "localhost"
     port: int = 1883
-    username: Optional[str] = None
-    password: Optional[str] = None
+    username: str | None = None
+    password: str | None = None
 
 
 class DatabaseSettings(BaseModel):
@@ -45,7 +49,7 @@ class DatabaseSettings(BaseModel):
 
 
 class RingBufferSettings(BaseModel):
-    storage: str = "disk"    # memory | disk
+    storage: str = "disk"  # memory | disk
     max_entries: int = 10000
 
 
@@ -57,10 +61,11 @@ class SecuritySettings(BaseModel):
     @classmethod
     def _check_secret_strength(cls, v: str) -> str:
         import logging
+
         if len(v) < 32:
             logging.getLogger(__name__).warning(
                 "⚠️  JWT secret is too short (%d chars) — use at least 32 random characters. "
-                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"",
+                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"',
                 len(v),
             )
         return v
@@ -73,13 +78,14 @@ class CorsSettings(BaseModel):
 
 class MosquittoSettings(BaseModel):
     """Settings for managing the internal Mosquitto passwd file."""
+
     passwd_file: str = "/mosquitto/passwd/passwd"
     # PID to send SIGHUP to after passwd file changes.
     # In Docker Compose with pid: "container:mosquitto", Mosquitto runs as PID 1.
-    reload_pid: Optional[int] = None
+    reload_pid: int | None = None
     # Shell command to trigger Mosquitto reload (takes precedence over reload_pid).
     # Example bare-metal: "kill -HUP $(cat /var/run/mosquitto/mosquitto.pid)"
-    reload_command: Optional[str] = None
+    reload_command: str | None = None
     # Credentials open bridge server uses to connect to Mosquitto (must match OBS_MQTT__*).
     service_username: str = "obs"
     service_password: str = "changeme"
@@ -88,6 +94,7 @@ class MosquittoSettings(BaseModel):
 # ---------------------------------------------------------------------------
 # YAML source
 # ---------------------------------------------------------------------------
+
 
 class YamlConfigSource(PydanticBaseSettingsSource):
     """Load settings from a YAML file. Missing file is silently ignored."""
@@ -138,7 +145,7 @@ class Settings(BaseSettings):
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
-        **kwargs: Any,                  # absorbs secrets_settings / file_secret_settings
+        **kwargs: Any,  # absorbs secrets_settings / file_secret_settings
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (
             init_settings,

@@ -1,5 +1,4 @@
-"""
-MQTT Client Wrapper — Phase 2
+"""MQTT Client Wrapper — Phase 2
 
 Wraps aiomqtt. Implements the MQTT topic strategy from ARCHITECTURE.md §6:
 
@@ -17,14 +16,15 @@ Architecture note (aiomqtt ≥ 2.0):
   instances: one persistent subscriber loop and one persistent publisher loop
   fed by an asyncio.Queue.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any
 import uuid
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +33,17 @@ logger = logging.getLogger(__name__)
 # MQTT Payload helpers
 # ---------------------------------------------------------------------------
 
+
 def build_payload(value: Any, unit: str | None, quality: str, ts: datetime | None = None) -> str:
     """Serialize a DataPoint value to the standard MQTT JSON payload."""
-    return json.dumps({
-        "v": value,
-        "u": unit,
-        "t": (ts or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
-        "q": quality,
-    })
+    return json.dumps(
+        {
+            "v": value,
+            "u": unit,
+            "t": (ts or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            "q": quality,
+        },
+    )
 
 
 def topic_value(datapoint_id: uuid.UUID) -> str:
@@ -67,9 +70,9 @@ def topic_alias(tag: str, name: str) -> str:
 # MqttClient
 # ---------------------------------------------------------------------------
 
+
 class MqttClient:
-    """
-    Async MQTT publish/subscribe wrapper.
+    """Async MQTT publish/subscribe wrapper.
 
     Uses two separate aiomqtt.Client connections:
       - subscriber loop: receives dp/+/set messages
@@ -160,6 +163,7 @@ class MqttClient:
 
     async def _publisher_loop(self) -> None:
         import aiomqtt
+
         while True:
             try:
                 async with aiomqtt.Client(
@@ -185,6 +189,7 @@ class MqttClient:
 
     async def _subscriber_loop(self) -> None:
         import aiomqtt
+
         while True:
             try:
                 async with aiomqtt.Client(
@@ -196,7 +201,11 @@ class MqttClient:
                     logger.info("MQTT subscriber connected, listening dp/+/set")
                     await client.subscribe("dp/+/set")
                     async for message in client.messages:
-                        logger.info("MQTT set received: topic=%s payload=%r", message.topic, message.payload)
+                        logger.info(
+                            "MQTT set received: topic=%s payload=%r",
+                            message.topic,
+                            message.payload,
+                        )
                         await self._handle_set_message(str(message.topic), message.payload)
             except asyncio.CancelledError:
                 raise

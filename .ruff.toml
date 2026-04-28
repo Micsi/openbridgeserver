@@ -1,0 +1,33 @@
+# The contents of this file is based on https://github.com/home-assistant/core/blob/dev/pyproject.toml
+
+target-version = "py313"
+
+line-length = 150
+
+#[lint]
+#select = [
+#    "ALL",
+#]
+
+#ignore = [
+#    "D203", # no-blank-line-before-class (incompatible with formatter)
+#]
+
+# Relaxed rules for tests
+[lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # Use of assert detected
+    "ANN",     # Type annotations
+    "D",       # Docstrings
+    "SLF001",  # Private member access
+    "PLR2004", # Magic values
+]
+
+[lint.flake8-pytest-style]
+fixture-parentheses = false
+
+[lint.pyupgrade]
+keep-runtime-typing = true
+
+[lint.mccabe]
+max-complexity = 25

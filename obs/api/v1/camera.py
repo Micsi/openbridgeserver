@@ -1,5 +1,4 @@
-"""
-Kamera-Proxy — leitet Kamera-Streams vom Backend weiter.
+"""Kamera-Proxy — leitet Kamera-Streams vom Backend weiter.
 
 GET /api/v1/camera/proxy   Proxyt einen HTTP-Stream zur Kamera
 
@@ -9,6 +8,7 @@ SSRF-Schutz:
     gesperrte Netzwerkbereiche geprüft (Loopback, Link-local, Metadata)
   - follow_redirects=False im Stream-Client verhindert Redirect-basiertes SSRF
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,8 +44,7 @@ _BLOCKED_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
 
 
 async def _check_ssrf(url: str) -> None:
-    """
-    Löst den Hostnamen der URL auf und verwirft alle Adressen, die in
+    """Löst den Hostnamen der URL auf und verwirft alle Adressen, die in
     einem gesperrten Netzwerk liegen (SSRF-Prävention).
 
     Private Netzwerke (192.168.x.x, 10.x.x.x) sind bewusst erlaubt,
@@ -54,6 +53,7 @@ async def _check_ssrf(url: str) -> None:
     Raises:
         HTTPException 400 — ungültige URL oder gesperrte Ziel-IP
         HTTPException 502 — Hostname nicht auflösbar
+
     """
     try:
         parsed = urlparse(url)
@@ -72,9 +72,7 @@ async def _check_ssrf(url: str) -> None:
 
     # DNS-Auflösung asynchron im Thread-Pool (blockiert den Event-Loop nicht)
     try:
-        addr_infos = await asyncio.to_thread(
-            socket.getaddrinfo, hostname, None, 0, socket.SOCK_STREAM
-        )
+        addr_infos = await asyncio.to_thread(socket.getaddrinfo, hostname, None, 0, socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -91,21 +89,18 @@ async def _check_ssrf(url: str) -> None:
             if ip in net:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"URL-Ziel nicht erlaubt: die aufgelöste Adresse {ip} "
-                        f"liegt in einem gesperrten Netzwerkbereich"
-                    ),
+                    detail=(f"URL-Ziel nicht erlaubt: die aufgelöste Adresse {ip} liegt in einem gesperrten Netzwerkbereich"),
                 )
 
 
 # ── Authentifizierung ──────────────────────────────────────────────────────────
 
+
 async def _camera_auth(
     request: Request,
     _token: str = Query("", alias="_token", description="JWT als Query-Parameter"),
 ) -> str:
-    """
-    Akzeptiert JWT entweder als 'Authorization: Bearer …'-Header
+    """Akzeptiert JWT entweder als 'Authorization: Bearer …'-Header
     oder als URL-Query-Parameter '?_token=…' (nötig für <img>/<video>-Tags).
     """
     auth_header = request.headers.get("Authorization", "")
@@ -122,6 +117,7 @@ async def _camera_auth(
 
 # ── Proxy-Endpunkt ─────────────────────────────────────────────────────────────
 
+
 @router.get("/proxy")
 async def proxy_camera(
     url: str = Query(..., description="Vollständige Kamera-URL (http://…)"),
@@ -131,8 +127,7 @@ async def proxy_camera(
     apikey_value: str = Query("", description="API-Key Wert"),
     _user: str = Depends(_camera_auth),
 ) -> StreamingResponse:
-    """
-    Proxyt den Kamera-Stream vom Backend aus.
+    """Proxyt den Kamera-Stream vom Backend aus.
     Ermöglicht HTTPS-Browser → Server → HTTP-Kamera (Mixed-Content-Bypass).
     """
     # 1. Schema-Validierung
@@ -192,7 +187,7 @@ async def proxy_camera(
         ) from exc
 
     # 5. Streaming-Generator (kein follow_redirects)
-    async def _stream() -> AsyncGenerator[bytes, None]:
+    async def _stream() -> AsyncGenerator[bytes]:
         async with httpx.AsyncClient(
             timeout=None,
             follow_redirects=False,

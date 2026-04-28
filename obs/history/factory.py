@@ -1,5 +1,4 @@
-"""
-History Plugin Factory — Phase 5
+"""History Plugin Factory — Phase 5
 
 Reads configuration from the app_settings DB table and creates the
 appropriate HistoryPlugin instance.
@@ -20,6 +19,7 @@ Settings keys:
   -- TimescaleDB / PostgreSQL --
   history.timescale_dsn    DSN, e.g. "postgresql://user:pass@host:5432/db"
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,6 +35,7 @@ _plugin: HistoryPlugin | None = None
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def reset_history_plugin() -> None:
     """Reset the history plugin singleton. For testing only."""
@@ -57,6 +58,7 @@ async def handle_value_event(event: Any) -> None:
         unit: str | None = None
         try:
             from obs.core.registry import get_registry
+
             dp = get_registry().get(event.datapoint_id)
             if dp:
                 if not dp.record_history:
@@ -78,8 +80,7 @@ async def handle_value_event(event: Any) -> None:
 
 
 async def init_history_plugin(db: Any) -> HistoryPlugin:
-    """
-    Read settings from DB and initialize the appropriate HistoryPlugin.
+    """Read settings from DB and initialize the appropriate HistoryPlugin.
     Called once at startup from main.py lifespan.
     """
     global _plugin
@@ -96,14 +97,14 @@ async def init_history_plugin(db: Any) -> HistoryPlugin:
     else:
         # Default: SQLite (uses existing main DB)
         from obs.history.sqlite_plugin import SQLiteHistoryPlugin
+
         _plugin = SQLiteHistoryPlugin(db)
 
     return _plugin
 
 
 async def reload_history_plugin(db: Any) -> HistoryPlugin:
-    """
-    Recreate the history plugin from current DB settings.
+    """Recreate the history plugin from current DB settings.
     Called after the user changes history settings through the GUI.
     """
     global _plugin
@@ -123,15 +124,14 @@ async def reload_history_plugin(db: Any) -> HistoryPlugin:
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 async def _load_history_settings(db: Any) -> dict[str, str]:
     """Load all history.* keys from app_settings into a plain dict."""
     prefix = "history."
-    rows = await db.fetchall(
-        "SELECT key, value FROM app_settings WHERE key LIKE 'history.%'"
-    )
+    rows = await db.fetchall("SELECT key, value FROM app_settings WHERE key LIKE 'history.%'")
     cfg: dict[str, str] = {}
     for r in rows:
-        short_key = r["key"][len(prefix):]
+        short_key = r["key"][len(prefix) :]
         cfg[short_key] = r["value"] or ""
     return cfg
 
@@ -156,9 +156,7 @@ async def _create_timescaledb_plugin(cfg: dict[str, str]) -> HistoryPlugin:
 
     dsn = cfg.get("timescale_dsn", "")
     if not dsn:
-        raise ValueError(
-            "history.timescale_dsn is required for the timescaledb plugin"
-        )
+        raise ValueError("history.timescale_dsn is required for the timescaledb plugin")
 
     plugin = TimescaleDBHistoryPlugin(dsn=dsn)
     await plugin.connect()

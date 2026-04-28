@@ -1,7 +1,7 @@
-"""
-Unit tests for the 1-Wire adapter — filesystem-level functions.
+"""Unit tests for the 1-Wire adapter — filesystem-level functions.
 Uses tmp_path; no hardware, no asyncio required.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,10 +10,10 @@ import pytest
 
 from obs.adapters.onewire.adapter import _read_sensor_file, scan_sensors
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_sensor(base: Path, sensor_id: str, line0: str, line1: str) -> Path:
     """Create a fake sysfs sensor directory."""
@@ -28,10 +28,12 @@ def _make_sensor(base: Path, sensor_id: str, line0: str, line1: str) -> Path:
 # _read_sensor_file — happy path
 # ---------------------------------------------------------------------------
 
+
 class TestReadSensorFileHappyPath:
     def test_valid_ds18b20_21_degrees(self, tmp_path):
         _make_sensor(
-            tmp_path, "28-000000000001",
+            tmp_path,
+            "28-000000000001",
             "50 05 4b 46 7f ff 0c 10 1c : crc=1c YES",
             "50 05 4b 46 7f ff 0c 10 1c t=21312",
         )
@@ -40,7 +42,8 @@ class TestReadSensorFileHappyPath:
 
     def test_zero_degrees(self, tmp_path):
         _make_sensor(
-            tmp_path, "28-zero",
+            tmp_path,
+            "28-zero",
             "xx xx xx xx : crc=xx YES",
             "xx xx xx xx t=0",
         )
@@ -49,7 +52,8 @@ class TestReadSensorFileHappyPath:
 
     def test_negative_temperature(self, tmp_path):
         _make_sensor(
-            tmp_path, "28-negative",
+            tmp_path,
+            "28-negative",
             "xx : crc=xx YES",
             "xx t=-5000",
         )
@@ -58,7 +62,8 @@ class TestReadSensorFileHappyPath:
 
     def test_rounding_to_3_decimals(self, tmp_path):
         _make_sensor(
-            tmp_path, "28-precise",
+            tmp_path,
+            "28-precise",
             "xx : crc=xx YES",
             "xx t=21875",  # 21.875 exactly
         )
@@ -69,6 +74,7 @@ class TestReadSensorFileHappyPath:
 # ---------------------------------------------------------------------------
 # _read_sensor_file — error paths
 # ---------------------------------------------------------------------------
+
 
 class TestReadSensorFileErrors:
     def test_missing_w1_slave_returns_none(self, tmp_path):
@@ -84,8 +90,9 @@ class TestReadSensorFileErrors:
 
     def test_crc_error_returns_none(self, tmp_path):
         _make_sensor(
-            tmp_path, "28-crcfail",
-            "50 05 4b 46 7f ff 0c 10 1c : crc=1c NO",   # NO instead of YES
+            tmp_path,
+            "28-crcfail",
+            "50 05 4b 46 7f ff 0c 10 1c : crc=1c NO",  # NO instead of YES
             "50 05 4b 46 7f ff 0c 10 1c t=21312",
         )
         result = _read_sensor_file(tmp_path / "28-crcfail")
@@ -100,7 +107,8 @@ class TestReadSensorFileErrors:
 
     def test_missing_t_field_returns_none(self, tmp_path):
         _make_sensor(
-            tmp_path, "28-nofield",
+            tmp_path,
+            "28-nofield",
             "xx : crc=xx YES",
             "xx no_temperature_here",
         )
@@ -111,6 +119,7 @@ class TestReadSensorFileErrors:
 # ---------------------------------------------------------------------------
 # scan_sensors
 # ---------------------------------------------------------------------------
+
 
 class TestScanSensors:
     def test_empty_path_returns_empty(self, tmp_path):

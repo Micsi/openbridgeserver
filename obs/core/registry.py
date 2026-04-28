@@ -1,5 +1,4 @@
-"""
-DataPoint Registry — Phase 2
+"""DataPoint Registry — Phase 2
 
 In-memory store of all DataPoints, kept in sync with SQLite.
 Acts as the single source of truth at runtime — DB is only read on startup.
@@ -11,16 +10,16 @@ Responsibilities:
   - Persist create/update/delete operations to DB
   - Maintain the last known value + quality per DataPoint
 """
+
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any
 import uuid
+from datetime import UTC, datetime
+from typing import Any
 
 from obs.models.datapoint import DataPoint, DataPointCreate, DataPointUpdate
-from obs.models.types import DataTypeRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +28,14 @@ logger = logging.getLogger(__name__)
 # ValueState — last known value per DataPoint
 # ---------------------------------------------------------------------------
 
+
 class ValueState:
-    __slots__ = ("value", "quality", "ts", "old_value")
+    __slots__ = ("old_value", "quality", "ts", "value")
 
     def __init__(self) -> None:
         self.value: Any = None
         self.quality: str = "uncertain"
-        self.ts: datetime = datetime.now(timezone.utc)
+        self.ts: datetime = datetime.now(UTC)
         self.old_value: Any = None
 
     def update(self, value: Any, quality: str) -> bool:
@@ -45,7 +45,7 @@ class ValueState:
             self.old_value = self.value
             self.value = value
             self.quality = quality
-            self.ts = datetime.now(timezone.utc)
+            self.ts = datetime.now(UTC)
         return changed
 
 
@@ -53,9 +53,9 @@ class ValueState:
 # DataPointRegistry
 # ---------------------------------------------------------------------------
 
+
 class DataPointRegistry:
-    """
-    In-memory registry of all DataPoints, backed by SQLite.
+    """In-memory registry of all DataPoints, backed by SQLite.
 
     Typical usage in startup:
         registry = DataPointRegistry(db, mqtt_client, event_bus)
@@ -64,9 +64,9 @@ class DataPointRegistry:
     """
 
     def __init__(self, db: Any, mqtt_client: Any, event_bus: Any) -> None:
-        from obs.db.database import Database
-        from obs.core.mqtt_client import MqttClient
         from obs.core.event_bus import EventBus
+        from obs.core.mqtt_client import MqttClient
+        from obs.db.database import Database
 
         self._db: Database = db
         self._mqtt: MqttClient = mqtt_client
@@ -98,16 +98,18 @@ class DataPointRegistry:
                 continue
             try:
                 import json as _json
+
                 value = _json.loads(row["value"])
             except Exception:
                 value = row["value"]
             state.value = value
             state.quality = "good"
-            from datetime import datetime, timezone
+            from datetime import datetime
+
             try:
                 state.ts = datetime.fromisoformat(row["ts"])
             except Exception:
-                state.ts = datetime.now(timezone.utc)
+                state.ts = datetime.now(UTC)
             restored += 1
         if restored:
             logger.info("DataPointRegistry: restored %d persisted values", restored)
@@ -171,10 +173,17 @@ class DataPointRegistry:
                (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, persist_value, record_history, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                str(dp.id), dp.name, dp.data_type, dp.unit,
-                json.dumps(dp.tags), dp.mqtt_topic, dp.mqtt_alias,
-                int(dp.persist_value), int(dp.record_history),
-                dp.created_at.isoformat(), dp.updated_at.isoformat(),
+                str(dp.id),
+                dp.name,
+                dp.data_type,
+                dp.unit,
+                json.dumps(dp.tags),
+                dp.mqtt_topic,
+                dp.mqtt_alias,
+                int(dp.persist_value),
+                int(dp.record_history),
+                dp.created_at.isoformat(),
+                dp.updated_at.isoformat(),
             ),
         )
         self._points[dp.id] = dp
@@ -185,7 +194,7 @@ class DataPointRegistry:
     async def update(self, dp_id: uuid.UUID, payload: DataPointUpdate) -> DataPoint:
         dp = self.get_or_raise(dp_id)
         updates = payload.model_dump(exclude_none=True)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for key, val in updates.items():
             setattr(dp, key, val)
@@ -196,17 +205,20 @@ class DataPointRegistry:
                SET name=?, data_type=?, unit=?, tags=?, mqtt_alias=?, persist_value=?, record_history=?, updated_at=?
                WHERE id=?""",
             (
-                dp.name, dp.data_type, dp.unit,
-                json.dumps(dp.tags), dp.mqtt_alias,
-                int(dp.persist_value), int(dp.record_history),
-                now.isoformat(), str(dp_id),
+                dp.name,
+                dp.data_type,
+                dp.unit,
+                json.dumps(dp.tags),
+                dp.mqtt_alias,
+                int(dp.persist_value),
+                int(dp.record_history),
+                now.isoformat(),
+                str(dp_id),
             ),
         )
         # If persistence was just disabled, remove any stored last value
         if not dp.persist_value:
-            await self._db.execute_and_commit(
-                "DELETE FROM datapoint_last_values WHERE datapoint_id=?", (str(dp_id),)
-            )
+            await self._db.execute_and_commit("DELETE FROM datapoint_last_values WHERE datapoint_id=?", (str(dp_id),))
 
         self._points[dp_id] = dp
         logger.debug("DataPoint updated: %s (%s)", dp.name, dp_id)
@@ -214,9 +226,7 @@ class DataPointRegistry:
 
     async def delete(self, dp_id: uuid.UUID) -> None:
         self.get_or_raise(dp_id)  # raises KeyError if not found
-        await self._db.execute_and_commit(
-            "DELETE FROM datapoints WHERE id=?", (str(dp_id),)
-        )
+        await self._db.execute_and_commit("DELETE FROM datapoints WHERE id=?", (str(dp_id),))
         del self._points[dp_id]
         del self._values[dp_id]
         logger.debug("DataPoint deleted: %s", dp_id)
@@ -227,8 +237,6 @@ class DataPointRegistry:
 
     async def handle_value_event(self, event: Any) -> None:
         """Handle a DataValueEvent: update state, publish to MQTT."""
-        from obs.core.event_bus import DataValueEvent  # avoid circular at module level
-
         dp = self._points.get(event.datapoint_id)
         if dp is None:
             logger.debug("ValueEvent for unknown DataPoint %s — ignored", event.datapoint_id)
@@ -257,7 +265,10 @@ class DataPointRegistry:
         # Publish to MQTT on every event (alias only on value change)
         alias_topic = dp.mqtt_alias if changed else None
         await self._mqtt.publish_value(
-            dp.id, event.value, dp.unit, event.quality,
+            dp.id,
+            event.value,
+            dp.unit,
+            event.quality,
             mqtt_alias_topic=alias_topic,
             ts=event.ts,
         )
@@ -266,6 +277,7 @@ class DataPointRegistry:
 # ---------------------------------------------------------------------------
 # DB row → DataPoint
 # ---------------------------------------------------------------------------
+
 
 def _row_to_datapoint(row: Any) -> DataPoint:
     return DataPoint(

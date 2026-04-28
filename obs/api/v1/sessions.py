@@ -1,10 +1,10 @@
-"""
-Gemeinsamer In-Memory PIN-Session-Store.
+"""Gemeinsamer In-Memory PIN-Session-Store.
 
 token → (node_id, expires_at)
 
 In Multi-Instance-Deployments: durch Redis oder DB-Tabelle ersetzen.
 """
+
 from __future__ import annotations
 
 import secrets

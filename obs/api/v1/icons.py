@@ -1,5 +1,4 @@
-"""
-Icons Library API
+"""Icons Library API
 
 GET    /icons/            — list all installed SVG icons
 POST   /icons/import      — upload SVG file(s) or ZIP containing SVGs
@@ -8,6 +7,7 @@ GET    /icons/{name}      — get raw SVG content of a single icon
 DELETE /icons/            — delete one or multiple icons by name
 POST   /icons/fontawesome — import icons from FontAwesome
 """
+
 from __future__ import annotations
 
 import io
@@ -30,8 +30,7 @@ _SVG_RE = re.compile(rb"<svg[\s>]", re.IGNORECASE)
 
 
 def _secure_filename(filename: str) -> str:
-    """
-    Minimal werkzeug-free secure_filename:
+    """Minimal werkzeug-free secure_filename:
     strips path separators, keeps only alphanumeric, hyphens, underscores, dots,
     and strips leading dots/underscores. Returns '' for empty/unsafe input.
     """
@@ -40,54 +39,56 @@ def _secure_filename(filename: str) -> str:
     filename = filename.lstrip("._")
     return filename
 
+
 # ---------------------------------------------------------------------------
 # FontAwesome 5 → FontAwesome 6 icon name aliases
 # Many FA5 icons were renamed in FA6 (word order reversed for shape-based names).
 # The backend tries the user-supplied name first, then falls back to these aliases.
 # ---------------------------------------------------------------------------
 _FA5_TO_FA6: dict[str, str] = {
-    "question-circle":       "circle-question",
-    "check-circle":          "circle-check",
-    "times-circle":          "circle-xmark",
-    "exclamation-circle":    "circle-exclamation",
-    "info-circle":           "circle-info",
-    "plus-circle":           "circle-plus",
-    "minus-circle":          "circle-minus",
-    "dot-circle":            "circle-dot",
-    "play-circle":           "circle-play",
-    "pause-circle":          "circle-pause",
-    "stop-circle":           "circle-stop",
-    "arrow-circle-left":     "circle-arrow-left",
-    "arrow-circle-right":    "circle-arrow-right",
-    "arrow-circle-up":       "circle-arrow-up",
-    "arrow-circle-down":     "circle-arrow-down",
-    "arrow-alt-circle-left":  "circle-left",
+    "question-circle": "circle-question",
+    "check-circle": "circle-check",
+    "times-circle": "circle-xmark",
+    "exclamation-circle": "circle-exclamation",
+    "info-circle": "circle-info",
+    "plus-circle": "circle-plus",
+    "minus-circle": "circle-minus",
+    "dot-circle": "circle-dot",
+    "play-circle": "circle-play",
+    "pause-circle": "circle-pause",
+    "stop-circle": "circle-stop",
+    "arrow-circle-left": "circle-arrow-left",
+    "arrow-circle-right": "circle-arrow-right",
+    "arrow-circle-up": "circle-arrow-up",
+    "arrow-circle-down": "circle-arrow-down",
+    "arrow-alt-circle-left": "circle-left",
     "arrow-alt-circle-right": "circle-right",
-    "arrow-alt-circle-up":    "circle-up",
-    "arrow-alt-circle-down":  "circle-down",
-    "cog":                   "gear",
-    "cogs":                  "gears",
-    "home":                  "house",
-    "times":                 "xmark",
-    "trash-alt":             "trash-can",
-    "edit":                  "pen-to-square",
-    "external-link-alt":     "arrow-up-right-from-square",
-    "sign-out-alt":          "right-from-bracket",
-    "sign-in-alt":           "right-to-bracket",
-    "save":                  "floppy-disk",
-    "search":                "magnifying-glass",
-    "phone-alt":             "phone-flip",
-    "calendar-alt":          "calendar-days",
-    "map-marker-alt":        "location-dot",
-    "thumbtack":             "thumbtack",  # unchanged — explicit for clarity
-    "sort-up":               "sort-up",    # unchanged
-    "sort-down":             "sort-down",  # unchanged
+    "arrow-alt-circle-up": "circle-up",
+    "arrow-alt-circle-down": "circle-down",
+    "cog": "gear",
+    "cogs": "gears",
+    "home": "house",
+    "times": "xmark",
+    "trash-alt": "trash-can",
+    "edit": "pen-to-square",
+    "external-link-alt": "arrow-up-right-from-square",
+    "sign-out-alt": "right-from-bracket",
+    "sign-in-alt": "right-to-bracket",
+    "save": "floppy-disk",
+    "search": "magnifying-glass",
+    "phone-alt": "phone-flip",
+    "calendar-alt": "calendar-days",
+    "map-marker-alt": "location-dot",
+    "thumbtack": "thumbtack",  # unchanged — explicit for clarity
+    "sort-up": "sort-up",  # unchanged
+    "sort-down": "sort-down",  # unchanged
 }
 
 
 # ---------------------------------------------------------------------------
 # Storage helpers
 # ---------------------------------------------------------------------------
+
 
 def _icons_dir() -> Path:
     """Return (and create) the directory where SVG icon files are stored."""
@@ -107,8 +108,7 @@ def _is_svg(content: bytes) -> bool:
 
 
 def _safe_name(filename: str) -> str | None:
-    """
-    Return a sanitised icon name (stem only, alphanumeric + hyphen/underscore,
+    """Return a sanitised icon name (stem only, alphanumeric + hyphen/underscore,
     lowercase). Returns None if the name cannot be made safe.
 
     Path-traversal characters ("..", "/", "\\") are checked on the ORIGINAL
@@ -122,12 +122,13 @@ def _safe_name(filename: str) -> str | None:
     if not stem or stem.startswith("."):
         return None
     clean = re.sub(r"[^\w\-]", "_", stem, flags=re.ASCII).lower().strip("_")
-    return clean if clean else None
+    return clean or None
 
 
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+
 
 class IconOut(BaseModel):
     name: str
@@ -145,7 +146,7 @@ class ImportResult(BaseModel):
     skipped: int
     names: list[str]
     message: str
-    debug: list[str] = []   # temporäre Debug-Infos (Token-Exchange, GraphQL-Response)
+    debug: list[str] = []  # temporäre Debug-Infos (Token-Exchange, GraphQL-Response)
 
 
 class DeleteRequest(BaseModel):
@@ -153,14 +154,15 @@ class DeleteRequest(BaseModel):
 
 
 class FontAwesomeRequest(BaseModel):
-    icons: list[str]             # icon names, e.g. ["home", "star"]
-    style: str = "solid"         # solid | regular | brands
-    api_key: str | None = None   # None → free CDN
+    icons: list[str]  # icon names, e.g. ["home", "star"]
+    style: str = "solid"  # solid | regular | brands
+    api_key: str | None = None  # None → free CDN
 
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.get("/", response_model=IconListOut)
 async def list_icons(
@@ -172,11 +174,13 @@ async def list_icons(
     for svg_file in sorted(icons_dir.glob("*.svg")):
         try:
             raw = svg_file.read_bytes()
-            items.append(IconOut(
-                name=svg_file.stem,
-                size=len(raw),
-                content=raw.decode("utf-8", errors="replace"),
-            ))
+            items.append(
+                IconOut(
+                    name=svg_file.stem,
+                    size=len(raw),
+                    content=raw.decode("utf-8", errors="replace"),
+                ),
+            )
         except OSError:
             pass
     return IconListOut(total=len(items), icons=items)
@@ -187,8 +191,7 @@ async def import_icons(
     files: list[UploadFile] = File(...),
     _user: str = Depends(get_current_user),
 ) -> ImportResult:
-    """
-    Upload one or more SVG files or a ZIP archive containing SVGs.
+    """Upload one or more SVG files or a ZIP archive containing SVGs.
     Each file is validated to confirm it actually contains SVG markup,
     regardless of its file extension.
     """
@@ -254,15 +257,12 @@ async def import_icons(
         imported=len(imported),
         skipped=skipped,
         names=imported,
-        message=(
-            f"{len(imported)} Icon(s) importiert"
-            + (f", {skipped} übersprungen" if skipped else "")
-        ),
+        message=(f"{len(imported)} Icon(s) importiert" + (f", {skipped} übersprungen" if skipped else "")),
     )
 
 
 class ExportRequest(BaseModel):
-    names: list[str] = []   # leer = alle exportieren
+    names: list[str] = []  # leer = alle exportieren
 
 
 def _build_export_zip(icons_dir: Path, names: list[str]) -> io.BytesIO:
@@ -291,8 +291,7 @@ async def export_icons_post(
     body: ExportRequest,
     _user: str = Depends(get_current_user),
 ) -> StreamingResponse:
-    """
-    Export Icons als ZIP (POST-Variante, empfohlen).
+    """Export Icons als ZIP (POST-Variante, empfohlen).
     Übergibt die Namen im JSON-Body — kein URL-Längenlimit.
     Leere Namen-Liste = alle Icons exportieren.
     """
@@ -302,7 +301,6 @@ async def export_icons_post(
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=obs_icons.zip"},
     )
-
 
 
 @router.delete("/", status_code=status.HTTP_200_OK)
@@ -345,11 +343,11 @@ _FA_KEY_SETTING = "icons.fontawesome_api_key"
 
 
 class IconsSettingsOut(BaseModel):
-    fa_api_key: str | None = None       # None = kein Key gespeichert
+    fa_api_key: str | None = None  # None = kein Key gespeichert
 
 
 class IconsSettingsIn(BaseModel):
-    fa_api_key: str | None = None       # None / leer = Key löschen
+    fa_api_key: str | None = None  # None / leer = Key löschen
 
 
 @router.get("/settings", response_model=IconsSettingsOut)
@@ -358,9 +356,7 @@ async def get_icons_settings(
     db: Database = Depends(get_db),
 ) -> IconsSettingsOut:
     """Gibt die gespeicherten Icons-Einstellungen zurück (FA API Key)."""
-    row = await db.fetchone(
-        "SELECT value FROM app_settings WHERE key = ?", (_FA_KEY_SETTING,)
-    )
+    row = await db.fetchone("SELECT value FROM app_settings WHERE key = ?", (_FA_KEY_SETTING,))
     return IconsSettingsOut(fa_api_key=row["value"] if row else None)
 
 
@@ -378,11 +374,8 @@ async def update_icons_settings(
             (_FA_KEY_SETTING, key),
         )
         return IconsSettingsOut(fa_api_key=key)
-    else:
-        await db.execute_and_commit(
-            "DELETE FROM app_settings WHERE key = ?", (_FA_KEY_SETTING,)
-        )
-        return IconsSettingsOut(fa_api_key=None)
+    await db.execute_and_commit("DELETE FROM app_settings WHERE key = ?", (_FA_KEY_SETTING,))
+    return IconsSettingsOut(fa_api_key=None)
 
 
 @router.get("/{name}")
@@ -431,8 +424,7 @@ async def _fa_exchange_token(
     api_key: str,
     dbg: list[str],
 ) -> str | None:
-    """
-    Tauscht einen FontAwesome API-Key gegen einen kurzlebigen Access-Token.
+    """Tauscht einen FontAwesome API-Key gegen einen kurzlebigen Access-Token.
     POST https://api.fontawesome.com/token  (OAuth2 Bearer)
     Gibt None zurück wenn der Austausch scheitert.
     """
@@ -446,7 +438,7 @@ async def _fa_exchange_token(
             token = resp.json().get("access_token")
             # dbg.append(f"[token-exchange] access_token erhalten: {'ja' if token else 'NEIN (Feld fehlt)'}")
             return token
-    except Exception as exc:
+    except Exception:
         # dbg.append(f"[token-exchange] Exception: {exc}")
         pass
     return None
@@ -457,15 +449,17 @@ async def _fa_get_version(
     access_token: str,
     dbg: list[str],
 ) -> str:
-    """
-    Ermittelt die aktuellste FontAwesome Release-Version über die GraphQL API.
+    """Ermittelt die aktuellste FontAwesome Release-Version über die GraphQL API.
     Fallback: "7.2.0" (neueste bekannte Version).
     """
     query = "{ releases { version isLatest } }"
     try:
         resp = await http.post(
             f"{_FA_GRAPHQL_URL}/graphql",
-            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
             json={"query": query},
         )
         # dbg.append(f"[version-discovery] HTTP {resp.status_code}: {resp.text[:400]}")
@@ -480,7 +474,7 @@ async def _fa_get_version(
                 v = releases[0]["version"]
                 # dbg.append(f"[version-discovery] erstes Release → {v}")
                 return v
-    except Exception as exc:
+    except Exception:
         # dbg.append(f"[version-discovery] Exception: {exc}")
         pass
     # dbg.append("[version-discovery] Fallback → 7.2.0")
@@ -495,8 +489,7 @@ async def _fa_graphql_svg(
     version: str,
     dbg: list[str],
 ) -> bytes | None:
-    """
-    Ruft das fertige SVG-HTML eines Icons über die FontAwesome GraphQL API ab.
+    """Ruft das fertige SVG-HTML eines Icons über die FontAwesome GraphQL API ab.
     Korrekte Signatur: release(version: $version) { icon(name: $name) { ... } }
     Filtert client-seitig nach Style (robuster als server-seitiger Enum-Filter).
     """
@@ -528,11 +521,7 @@ async def _fa_graphql_svg(
         if resp.status_code != 200:
             return None
         data = resp.json()
-        icon_data = (
-            data.get("data", {})
-            .get("release", {})
-            .get("icon")
-        )
+        icon_data = data.get("data", {}).get("release", {}).get("icon")
         if not icon_data:
             # dbg.append(f"[graphql:{icon_name}] icon=null (kein Icon unter dieser ID/Version)")
             return None
@@ -552,7 +541,7 @@ async def _fa_graphql_svg(
                 # dbg.append(f"[graphql:{icon_name}] kein '{style}' → Fallback auf {item.get('familyStyle')}")
                 return item["html"].encode()
 
-    except Exception as exc:
+    except Exception:
         # dbg.append(f"[graphql:{icon_name}] Exception: {exc}")
         pass
     return None
@@ -563,8 +552,7 @@ async def _fa_cdn_svg(
     icon_name: str,
     style: str,
 ) -> bytes | None:
-    """
-    Lädt ein Icon vom öffentlichen unpkg-CDN (FontAwesome Free).
+    """Lädt ein Icon vom öffentlichen unpkg-CDN (FontAwesome Free).
     Versucht automatisch den FA5→FA6-Alias wenn der erste Aufruf fehlschlägt.
     """
     style_path = {"solid": "solid", "regular": "regular", "brands": "brands"}.get(style, "solid")
@@ -590,8 +578,7 @@ async def import_fontawesome(
     _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> ImportResult:
-    """
-    Icons von FontAwesome importieren.
+    """Icons von FontAwesome importieren.
 
     Ohne api_key: Free-CDN (unpkg, FontAwesome 7 Free).
     Mit api_key:  1. Token-Exchange gegen api.fontawesome.com/token
@@ -614,9 +601,7 @@ async def import_fontawesome(
     # API Key: explizit übergeben > gespeichert in DB > keiner
     effective_key = (body.api_key or "").strip()
     if not effective_key:
-        row = await db.fetchone(
-            "SELECT value FROM app_settings WHERE key = ?", (_FA_KEY_SETTING,)
-        )
+        row = await db.fetchone("SELECT value FROM app_settings WHERE key = ?", (_FA_KEY_SETTING,))
         if row:
             effective_key = row["value"]
             # dbg.append(f"[config] api_key aus DB geladen (Länge {len(effective_key)})")
@@ -647,7 +632,14 @@ async def import_fontawesome(
                 svg_bytes = await _fa_graphql_svg(http, access_token, icon_name, style, fa_version, dbg)
                 # FA5-Alias-Fallback für GraphQL
                 if svg_bytes is None and icon_name in _FA5_TO_FA6:
-                    svg_bytes = await _fa_graphql_svg(http, access_token, _FA5_TO_FA6[icon_name], style, fa_version, dbg)
+                    svg_bytes = await _fa_graphql_svg(
+                        http,
+                        access_token,
+                        _FA5_TO_FA6[icon_name],
+                        style,
+                        fa_version,
+                        dbg,
+                    )
 
             # 2. Versuch: Free-CDN (immer, auch wenn api_key gesetzt aber GraphQL erfolglos)
             if svg_bytes is None:
@@ -678,8 +670,5 @@ async def import_fontawesome(
         skipped=skipped,
         names=imported,
         debug=[],  # debug=dbg  ← Debug-Ausgabe bei Bedarf wieder aktivieren
-        message=(
-            f"{len(imported)} FontAwesome Icon(s) importiert"
-            + (f", {skipped} nicht gefunden/übersprungen" if skipped else "")
-        ),
+        message=(f"{len(imported)} FontAwesome Icon(s) importiert" + (f", {skipped} nicht gefunden/übersprungen" if skipped else "")),
     )

@@ -1,5 +1,4 @@
-"""
-Unit tests for obs/models/datapoint.py and obs/models/binding.py
+"""Unit tests for obs/models/datapoint.py and obs/models/binding.py
 
 Covers:
   - DataPoint: default values, auto-generated mqtt_topic, model_validator,
@@ -7,21 +6,25 @@ Covers:
   - AdapterBinding: direction semantics, send-filter fields, value_formula,
                     AdapterBindingCreate / AdapterBindingUpdate
 """
+
 from __future__ import annotations
 
 import uuid
-import datetime
 
 import pytest
 from pydantic import ValidationError
 
+from obs.models.binding import (
+    AdapterBinding,
+    AdapterBindingCreate,
+    AdapterBindingUpdate,
+)
 from obs.models.datapoint import DataPoint, DataPointCreate, DataPointUpdate
-from obs.models.binding import AdapterBinding, AdapterBindingCreate, AdapterBindingUpdate
-
 
 # ===========================================================================
 # DataPoint
 # ===========================================================================
+
 
 class TestDataPointDefaults:
     def test_id_is_uuid(self):
@@ -166,6 +169,7 @@ class TestDataPointUpdate:
 # AdapterBinding
 # ===========================================================================
 
+
 class TestAdapterBindingDefaults:
     def _make(self, **kwargs) -> AdapterBinding:
         defaults = {
@@ -241,7 +245,7 @@ class TestAdapterBindingDirection:
             AdapterBinding(
                 datapoint_id=uuid.uuid4(),
                 adapter_type="KNX",
-                direction="READ",   # invalid
+                direction="READ",  # invalid
             )
 
     def test_lowercase_direction_raises(self):
@@ -269,8 +273,12 @@ class TestAdapterBindingConfig:
             datapoint_id=uuid.uuid4(),
             adapter_type="MODBUS_TCP",
             direction="DEST",
-            config={"unit_id": 1, "register_type": "holding",
-                    "address": 100, "data_format": "float32"},
+            config={
+                "unit_id": 1,
+                "register_type": "holding",
+                "address": 100,
+                "data_format": "float32",
+            },
         )
         assert b.config["register_type"] == "holding"
 

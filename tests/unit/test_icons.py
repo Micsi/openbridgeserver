@@ -1,22 +1,17 @@
-"""
-Unit tests for the Icons Library helpers (obs.api.v1.icons).
+"""Unit tests for the Icons Library helpers (obs.api.v1.icons).
 
 These tests exercise the pure utility functions that do not require a running
 FastAPI app or database connection.
 """
+
 from __future__ import annotations
 
-import io
-import zipfile
-
-import pytest
-
 from obs.api.v1.icons import _is_svg, _safe_name
-
 
 # ---------------------------------------------------------------------------
 # _is_svg
 # ---------------------------------------------------------------------------
+
 
 class TestIsSvg:
     def test_simple_svg(self):
@@ -32,12 +27,12 @@ class TestIsSvg:
         assert _is_svg(content) is True
 
     def test_svg_with_closing_bracket(self):
-        content = b'<svg>'
+        content = b"<svg>"
         assert _is_svg(content) is True
 
     def test_not_svg_png(self):
         # PNG magic bytes
-        content = b'\x89PNG\r\n\x1a\n' + b'\x00' * 100
+        content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
         assert _is_svg(content) is False
 
     def test_not_svg_json(self):
@@ -45,22 +40,22 @@ class TestIsSvg:
         assert _is_svg(content) is False
 
     def test_not_svg_html(self):
-        content = b'<html><body><p>not an svg</p></body></html>'
+        content = b"<html><body><p>not an svg</p></body></html>"
         assert _is_svg(content) is False
 
     def test_not_svg_empty(self):
-        assert _is_svg(b'') is False
+        assert _is_svg(b"") is False
 
     def test_svg_detected_within_first_2kb(self):
         # Prefix muss exakt >= 2048 Bytes sein, damit <svg> ausserhalb des
         # [:2048]-Fensters liegt. 2000 < 2048 → würde fälschlicherweise True liefern.
-        prefix = b'X' * 2048
-        content = prefix + b'<svg>'
+        prefix = b"X" * 2048
+        content = prefix + b"<svg>"
         assert _is_svg(content) is False
 
     def test_svg_detected_just_before_limit(self):
-        prefix = b'X' * 2040
-        content = prefix + b'<svg>'
+        prefix = b"X" * 2040
+        content = prefix + b"<svg>"
         # Within first 2048 characters? prefix is 2040, tag starts at 2040 < 2048
         assert _is_svg(content) is True
 
@@ -68,6 +63,7 @@ class TestIsSvg:
 # ---------------------------------------------------------------------------
 # _safe_name
 # ---------------------------------------------------------------------------
+
 
 class TestSafeName:
     def test_simple_name(self):
@@ -106,7 +102,8 @@ class TestSafeName:
         assert result is not None
         # Should contain only alphanumeric, hyphens, underscores
         import re
-        assert re.match(r'^[\w\-]+$', result)
+
+        assert re.match(r"^[\w\-]+$", result)
 
     def test_no_extension(self):
         assert _safe_name("justname") == "justname"
@@ -117,6 +114,7 @@ class TestSafeName:
 
     def test_zip_member_basename(self):
         from pathlib import Path
+
         # Der ZIP-Handler ruft _safe_name(Path(member).name) auf, nicht
         # _safe_name(member) — dadurch wird der Slash vorher entfernt.
         member = "folder/home.svg"

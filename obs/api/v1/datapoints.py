@@ -1,5 +1,4 @@
-"""
-DataPoints API — Phase 4
+"""DataPoints API — Phase 4
 
 GET    /api/v1/datapoints            paginated list
 POST   /api/v1/datapoints            create
@@ -9,6 +8,7 @@ DELETE /api/v1/datapoints/{id}       delete
 GET    /api/v1/datapoints/{id}/value current value only
 POST   /api/v1/datapoints/{id}/value write value (fires DataValueEvent)
 """
+
 from __future__ import annotations
 
 import uuid
@@ -20,7 +20,7 @@ from pydantic import BaseModel, field_serializer
 from obs.api.auth import get_current_user, optional_current_user
 from obs.api.v1.sessions import validate_session
 from obs.core.registry import get_registry
-from obs.db.database import get_db, Database
+from obs.db.database import Database, get_db
 from obs.models.datapoint import DataPointCreate, DataPointUpdate
 
 router = APIRouter(tags=["datapoints"])
@@ -29,6 +29,7 @@ router = APIRouter(tags=["datapoints"])
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+
 
 class DataPointOut(BaseModel):
     id: uuid.UUID
@@ -79,6 +80,7 @@ class WriteValueIn(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _enrich(dp: Any) -> DataPointOut:
     """Add current value/quality from registry ValueState."""
     reg = get_registry()
@@ -105,8 +107,8 @@ def _enrich(dp: Any) -> DataPointOut:
 # ---------------------------------------------------------------------------
 
 _SORT_KEYS = {
-    "name":       lambda dp: dp.name.lower(),
-    "data_type":  lambda dp: dp.data_type.lower(),
+    "name": lambda dp: dp.name.lower(),
+    "data_type": lambda dp: dp.data_type.lower(),
     "created_at": lambda dp: dp.created_at.isoformat(),
     "updated_at": lambda dp: dp.updated_at.isoformat(),
 }
@@ -114,17 +116,17 @@ _SORT_KEYS = {
 
 @router.get("/", response_model=DataPointPage)
 async def list_datapoints(
-    page:  int = Query(0, ge=0),
-    size:  int = Query(50, ge=1, le=10000),
-    sort:  str = Query("created_at", pattern="^(name|data_type|created_at|updated_at)$"),
-    order: str = Query("asc",        pattern="^(asc|desc)$"),
+    page: int = Query(0, ge=0),
+    size: int = Query(50, ge=1, le=10000),
+    sort: str = Query("created_at", pattern="^(name|data_type|created_at|updated_at)$"),
+    order: str = Query("asc", pattern="^(asc|desc)$"),
     _user: str = Depends(get_current_user),
 ) -> DataPointPage:
-    reg     = get_registry()
+    reg = get_registry()
     all_dps = sorted(reg.all(), key=_SORT_KEYS[sort], reverse=(order == "desc"))
-    total   = len(all_dps)
-    offset  = page * size
-    items   = [_enrich(dp) for dp in all_dps[offset : offset + size]]
+    total = len(all_dps)
+    offset = page * size
+    items = [_enrich(dp) for dp in all_dps[offset : offset + size]]
     return DataPointPage(
         items=items,
         total=total,
@@ -140,11 +142,11 @@ async def create_datapoint(
     _user: str = Depends(get_current_user),
 ) -> DataPointOut:
     from obs.models.types import DataTypeRegistry
+
     if not DataTypeRegistry.is_registered(body.data_type):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Unknown data_type '{body.data_type}'. "
-            f"Available: {DataTypeRegistry.names()}",
+            f"Unknown data_type '{body.data_type}'. Available: {DataTypeRegistry.names()}",
         )
     reg = get_registry()
     dp = await reg.create(body)
@@ -173,6 +175,7 @@ async def update_datapoint(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
     if body.data_type is not None:
         from obs.models.types import DataTypeRegistry
+
         if not DataTypeRegistry.is_registered(body.data_type):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -216,12 +219,10 @@ async def _resolve_page_access(db: Database, node_id: str) -> str:
     """Traversiert die parent_id-Kette und gibt das effektive Access-Level zurück."""
     current_id: str | None = node_id
     while current_id:
-        async with db.conn.execute(
-            "SELECT access, parent_id FROM visu_nodes WHERE id = ?", (current_id,)
-        ) as cur:
+        async with db.conn.execute("SELECT access, parent_id FROM visu_nodes WHERE id = ?", (current_id,)) as cur:
             row = await cur.fetchone()
         if not row:
-            return "private"   # Unbekannter Knoten → sicher ablehnen
+            return "private"  # Unbekannter Knoten → sicher ablehnen
         if row["access"] is not None:
             return row["access"]
         current_id = row["parent_id"]
@@ -246,7 +247,7 @@ async def write_value(
     - Seite ist 'private' ohne JWT → 401
     - Kein Auth-Kontext → 401
     """
-    from obs.core.event_bus import get_event_bus, DataValueEvent
+    from obs.core.event_bus import DataValueEvent, get_event_bus
 
     reg = get_registry()
     if reg.get(dp_id) is None:
@@ -261,13 +262,13 @@ async def write_value(
 
         if access == "readonly":
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Page is read-only")
-        elif access == "public":
-            pass   # Erlaubt — keine weitere Prüfung nötig
+        if access == "public":
+            pass  # Erlaubt — keine weitere Prüfung nötig
         elif access == "protected":
             session_token = request.headers.get("X-Session-Token")
             if not session_token or not validate_session(session_token, page_id):
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Valid session token required")
-        else:   # user, unbekannt oder sonstige → 401
+        else:  # user, unbekannt oder sonstige → 401
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     else:
         # Benutzer ist eingeloggt — prüfe ob er Zugang zur Seite hat
@@ -276,6 +277,7 @@ async def write_value(
             access = await _resolve_page_access(db, page_id)
             if access == "user":
                 from obs.api.v1.visu import _check_user_access
+
                 if not await _check_user_access(db, page_id, user):
                     raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
 

@@ -1,5 +1,4 @@
-"""
-Unit tests for obs/adapters/knx/dpt_registry.py
+"""Unit tests for obs/adapters/knx/dpt_registry.py
 
 Covers:
   - Registry lookups (known / unknown DPTs)
@@ -16,17 +15,15 @@ Covers:
   - Roundtrip consistency for all major DPTs
   - UNKNOWN fallback behaviour
 """
+
 from __future__ import annotations
 
-import struct
-import pytest
-
-from obs.adapters.knx.dpt_registry import DPTRegistry, DPTDefinition
-
+from obs.adapters.knx.dpt_registry import DPTDefinition, DPTRegistry
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
+
 
 def encode(dpt_id: str, value) -> bytes:
     return DPTRegistry.get(dpt_id).encoder(value)
@@ -50,6 +47,7 @@ def roundtrip(dpt_id: str, value, abs_tol=0.0):
 # Registry lookups
 # ===========================================================================
 
+
 class TestRegistryLookup:
     def test_known_dpt_returns_definition(self):
         d = DPTRegistry.get("DPT9.001")
@@ -69,7 +67,7 @@ class TestRegistryLookup:
     def test_all_returns_dict(self):
         all_dpts = DPTRegistry.all()
         assert isinstance(all_dpts, dict)
-        assert len(all_dpts) > 50   # sanity: we registered many DPTs
+        assert len(all_dpts) > 50  # sanity: we registered many DPTs
 
     def test_by_data_type_float(self):
         floats = DPTRegistry.by_data_type("FLOAT")
@@ -97,6 +95,7 @@ class TestRegistryLookup:
 # DPT 1 — 1-bit Boolean
 # ===========================================================================
 
+
 class TestDPT1:
     def test_encode_true(self):
         assert encode("DPT1.001", True) == bytes([0x01])
@@ -113,7 +112,7 @@ class TestDPT1:
     def test_decode_only_lsb_matters(self):
         # KNX 1-bit uses only LSB of the byte
         assert decode("DPT1.001", bytes([0xFE])) is False  # LSB=0
-        assert decode("DPT1.001", bytes([0xFF])) is True   # LSB=1
+        assert decode("DPT1.001", bytes([0xFF])) is True  # LSB=1
 
     def test_roundtrip_true(self):
         roundtrip("DPT1.001", True)
@@ -131,6 +130,7 @@ class TestDPT1:
 # ===========================================================================
 # DPT 5 — 8-bit unsigned
 # ===========================================================================
+
 
 class TestDPT5:
     # DPT5.001 — percentage 0–100%
@@ -177,12 +177,13 @@ class TestDPT5:
     def test_angle_180_roundtrip(self):
         raw = encode("DPT5.003", 180.0)
         val = decode("DPT5.003", raw)
-        assert abs(val - 180.0) < 1.5   # EIS resolution
+        assert abs(val - 180.0) < 1.5  # EIS resolution
 
 
 # ===========================================================================
 # DPT 6 — 8-bit signed
 # ===========================================================================
+
 
 class TestDPT6:
     def test_positive(self):
@@ -213,6 +214,7 @@ class TestDPT6:
 # DPT 7 — 16-bit unsigned
 # ===========================================================================
 
+
 class TestDPT7:
     def test_zero(self):
         roundtrip("DPT7.001", 0)
@@ -231,6 +233,7 @@ class TestDPT7:
 # DPT 8 — 16-bit signed
 # ===========================================================================
 
+
 class TestDPT8:
     def test_positive(self):
         roundtrip("DPT8.001", 1000)
@@ -247,9 +250,9 @@ class TestDPT8:
 # DPT 9 — 16-bit KNX float (EIS5)  ← most critical
 # ===========================================================================
 
+
 class TestDPT9:
-    """
-    DPT9 uses a proprietary 2-byte float format (sign + exponent + mantissa).
+    """DPT9 uses a proprietary 2-byte float format (sign + exponent + mantissa).
     Precision is limited — typical tolerance is ±0.02 for temperature values.
     """
 
@@ -272,7 +275,7 @@ class TestDPT9:
         # Absolute zero — near lower bound of DPT9
         raw = encode("DPT9.001", -273.0)
         val = decode("DPT9.001", raw)
-        assert abs(val - (-273.0)) < 1.0   # wider tolerance at extremes
+        assert abs(val - (-273.0)) < 1.0  # wider tolerance at extremes
 
     def test_temperature_high(self):
         raw = encode("DPT9.001", 670760.0)  # near max representable
@@ -317,6 +320,7 @@ class TestDPT9:
 # DPT 12 — 32-bit unsigned
 # ===========================================================================
 
+
 class TestDPT12:
     def test_zero(self):
         roundtrip("DPT12.001", 0)
@@ -335,6 +339,7 @@ class TestDPT12:
 # DPT 13 — 32-bit signed
 # ===========================================================================
 
+
 class TestDPT13:
     def test_positive_energy(self):
         roundtrip("DPT13.013", 5000)  # 5000 kWh
@@ -351,6 +356,7 @@ class TestDPT13:
 # DPT 14 — 32-bit IEEE 754 float
 # ===========================================================================
 
+
 class TestDPT14:
     def test_power_kw(self):
         roundtrip("DPT14.055", 3.5, abs_tol=1e-4)
@@ -360,7 +366,7 @@ class TestDPT14:
         roundtrip("DPT14.027", 230.0, abs_tol=1e-3)
 
     def test_negative_value(self):
-        roundtrip("DPT14.019", -5.0, abs_tol=1e-4)   # current
+        roundtrip("DPT14.019", -5.0, abs_tol=1e-4)  # current
 
     def test_byte_length(self):
         assert len(encode("DPT14.055", 1.0)) == 4
@@ -373,6 +379,7 @@ class TestDPT14:
 # ===========================================================================
 # DPT 16 — 14-byte ASCII string
 # ===========================================================================
+
 
 class TestDPT16:
     def test_short_string(self):
@@ -406,6 +413,7 @@ class TestDPT16:
 # UNKNOWN DPT fallback
 # ===========================================================================
 
+
 class TestUnknownDPT:
     def test_unknown_dpt_id_returns_unknown(self):
         d = DPTRegistry.get("DPT99.001")
@@ -413,8 +421,8 @@ class TestUnknownDPT:
 
     def test_unknown_encoder_accepts_bytes(self):
         d = DPTRegistry.get("DPT99.001")
-        raw = d.encoder(b"\xAB\xCD")
-        assert raw == b"\xAB\xCD"
+        raw = d.encoder(b"\xab\xcd")
+        assert raw == b"\xab\xcd"
 
     def test_unknown_encoder_accepts_other(self):
         d = DPTRegistry.get("DPT99.001")
@@ -423,6 +431,6 @@ class TestUnknownDPT:
 
     def test_unknown_decoder_returns_hex_string(self):
         d = DPTRegistry.get("DPT99.001")
-        result = d.decoder(b"\xDE\xAD")
+        result = d.decoder(b"\xde\xad")
         assert result == "dead"
         assert isinstance(result, str)

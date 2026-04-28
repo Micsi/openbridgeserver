@@ -1,5 +1,4 @@
-"""
-Modbus TCP Adapter — Phase 3
+"""Modbus TCP Adapter — Phase 3
 
 Verbindet sich mit einem Modbus TCP Server (z.B. SPS, Wechselrichter).
 Pollt SOURCE-Bindings zyklisch, schreibt DEST-Bindings auf Anfrage.
@@ -18,6 +17,7 @@ Binding-Konfiguration (AdapterBinding.config):
   scale_factor:   float   (Rohwert × scale_factor = Ingenieurwert)
   poll_interval:  float   (Sekunden, nur für SOURCE/BOTH)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,10 +27,13 @@ from typing import Any
 from pydantic import BaseModel
 
 from obs.adapters.base import AdapterBase
-from obs.adapters.registry import register
 from obs.adapters.modbus_base import (
-    ModbusBindingConfig, decode_registers, encode_value, register_count
+    ModbusBindingConfig,
+    decode_registers,
+    encode_value,
+    register_count,
 )
+from obs.adapters.registry import register
 from obs.core.event_bus import DataValueEvent
 
 logger = logging.getLogger(__name__)
@@ -39,6 +42,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Adapter Config
 # ---------------------------------------------------------------------------
+
 
 class ModbusTcpAdapterConfig(BaseModel):
     host: str = "192.168.1.1"
@@ -49,6 +53,7 @@ class ModbusTcpAdapterConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
+
 
 @register
 class ModbusTcpAdapter(AdapterBase):
@@ -109,9 +114,7 @@ class ModbusTcpAdapter(AdapterBase):
         self._poll_tasks.clear()
 
         # Start a poller task per unique poll_interval group
-        source_bindings = [
-            b for b in self._bindings if b.direction in ("SOURCE", "BOTH")
-        ]
+        source_bindings = [b for b in self._bindings if b.direction in ("SOURCE", "BOTH")]
         for binding in source_bindings:
             t = asyncio.create_task(
                 self._poll_loop(binding),
@@ -139,28 +142,34 @@ class ModbusTcpAdapter(AdapterBase):
                 if quality == "good":
                     if binding.value_formula:
                         from obs.core.formula import apply_formula
+
                         value = apply_formula(binding.value_formula, value)
                     if binding.value_map:
                         from obs.core.transformation import apply_value_map
+
                         value = apply_value_map(value, binding.value_map)
-                await self._bus.publish(DataValueEvent(
-                    datapoint_id=binding.datapoint_id,
-                    value=value,
-                    quality=quality,
-                    source_adapter=self.adapter_type,
-                    binding_id=binding.id,
-                ))
+                await self._bus.publish(
+                    DataValueEvent(
+                        datapoint_id=binding.datapoint_id,
+                        value=value,
+                        quality=quality,
+                        source_adapter=self.adapter_type,
+                        binding_id=binding.id,
+                    ),
+                )
             except asyncio.CancelledError:
                 return
             except Exception as exc:
                 logger.warning("Modbus TCP poll error (binding %s): %s", binding.id, exc)
-                await self._bus.publish(DataValueEvent(
-                    datapoint_id=binding.datapoint_id,
-                    value=None,
-                    quality="bad",
-                    source_adapter=self.adapter_type,
-                    binding_id=binding.id,
-                ))
+                await self._bus.publish(
+                    DataValueEvent(
+                        datapoint_id=binding.datapoint_id,
+                        value=None,
+                        quality="bad",
+                        source_adapter=self.adapter_type,
+                        binding_id=binding.id,
+                    ),
+                )
             await asyncio.sleep(bc.poll_interval)
 
     # ------------------------------------------------------------------
@@ -195,7 +204,12 @@ class ModbusTcpAdapter(AdapterBase):
         Tries every combination of slave kwarg name and whether positional args
         need to become keyword args (pymodbus 3.12+ made count keyword-only).
         """
-        slave_variants = [{"device_id": unit_id}, {"slave": unit_id}, {"unit": unit_id}, {}]
+        slave_variants = [
+            {"device_id": unit_id},
+            {"slave": unit_id},
+            {"unit": unit_id},
+            {},
+        ]
 
         # First: try all args positional (works for 2.x and 3.0-3.11)
         for sk in slave_variants:
@@ -214,9 +228,7 @@ class ModbusTcpAdapter(AdapterBase):
                 except TypeError:
                     continue
 
-        raise RuntimeError(
-            f"pymodbus: cannot call {fn.__name__} with any known API variant"
-        )
+        raise RuntimeError(f"pymodbus: cannot call {fn.__name__} with any known API variant")
 
     async def _read_register(self, bc: ModbusBindingConfig) -> Any:
         if not self._client or not self._client.connected:
@@ -225,7 +237,12 @@ class ModbusTcpAdapter(AdapterBase):
         count = register_count(bc.data_format)
 
         if bc.register_type == "holding":
-            r = await self._modbus_call(self._client.read_holding_registers, bc.address, count, unit_id=bc.unit_id)
+            r = await self._modbus_call(
+                self._client.read_holding_registers,
+                bc.address,
+                count,
+                unit_id=bc.unit_id,
+            )
         elif bc.register_type == "input":
             r = await self._modbus_call(self._client.read_input_registers, bc.address, count, unit_id=bc.unit_id)
         elif bc.register_type == "coil":
@@ -241,9 +258,7 @@ class ModbusTcpAdapter(AdapterBase):
         if bc.register_type in ("coil", "discrete_input"):
             return bool(r.bits[0])
 
-        return decode_registers(
-            r.registers, bc.data_format, bc.byte_order, bc.word_order, bc.scale_factor
-        )
+        return decode_registers(r.registers, bc.data_format, bc.byte_order, bc.word_order, bc.scale_factor)
 
     async def _write_register(self, bc: ModbusBindingConfig, value: Any) -> None:
         if bc.register_type == "coil":
@@ -251,6 +266,16 @@ class ModbusTcpAdapter(AdapterBase):
         elif bc.register_type == "holding":
             registers = encode_value(value, bc.data_format, bc.byte_order, bc.word_order, bc.scale_factor)
             if len(registers) == 1:
-                await self._modbus_call(self._client.write_register, bc.address, registers[0], unit_id=bc.unit_id)
+                await self._modbus_call(
+                    self._client.write_register,
+                    bc.address,
+                    registers[0],
+                    unit_id=bc.unit_id,
+                )
             else:
-                await self._modbus_call(self._client.write_registers, bc.address, registers, unit_id=bc.unit_id)
+                await self._modbus_call(
+                    self._client.write_registers,
+                    bc.address,
+                    registers,
+                    unit_id=bc.unit_id,
+                )

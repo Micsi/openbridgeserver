@@ -1,5 +1,4 @@
-"""
-KNX Adapter — Phase 3
+"""KNX Adapter — Phase 3
 
 Verbindet sich mit einem KNX/IP-Gateway (Tunneling oder Routing).
 Nutzt xknx für das Protokoll, eigenen DPTRegistry für Codierung.
@@ -20,6 +19,7 @@ Adapter-Konfiguration (adapter_configs.config in DB):
   individual_address: str                     (default: "1.1.255")
   local_ip:        str?                       (für Routing/Multicast)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +35,8 @@ from obs.core.event_bus import DataValueEvent
 
 # Import APCI classes at module level so missing symbols fail loudly at startup
 try:
-    from xknx.telegram.apci import GroupValueWrite, GroupValueResponse, GroupValueRead
+    from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
+
     _APCI_IMPORTED = True
 except ImportError:
     GroupValueWrite = None  # type: ignore[assignment,misc]
@@ -50,6 +51,7 @@ logger = logging.getLogger(__name__)
 # Config schemas
 # ---------------------------------------------------------------------------
 
+
 class KnxAdapterConfig(BaseModel):
     connection_type: Literal["tunneling", "routing"] = "tunneling"
     host: str = "192.168.1.100"
@@ -59,15 +61,16 @@ class KnxAdapterConfig(BaseModel):
 
 
 class KnxBindingConfig(BaseModel):
-    group_address: str                          # z.B. "1/2/3"
+    group_address: str  # z.B. "1/2/3"
     dpt_id: str = "DPT1.001"
-    state_group_address: str | None = None      # DEST-Bindings Rückmelde-GA
-    respond_to_read: bool = False               # SOURCE: antworte auf GroupValueRead mit aktuellem Wert
+    state_group_address: str | None = None  # DEST-Bindings Rückmelde-GA
+    respond_to_read: bool = False  # SOURCE: antworte auf GroupValueRead mit aktuellem Wert
 
 
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
+
 
 @register
 class KnxAdapter(AdapterBase):
@@ -119,11 +122,7 @@ class KnxAdapter(AdapterBase):
             self._xknx = None
 
         cfg = KnxAdapterConfig(**self._config)
-        conn_type = (
-            ConnectionType.ROUTING
-            if cfg.connection_type == "routing"
-            else ConnectionType.TUNNELING
-        )
+        conn_type = ConnectionType.ROUTING if cfg.connection_type == "routing" else ConnectionType.TUNNELING
         conn_cfg = ConnectionConfig(
             connection_type=conn_type,
             gateway_ip=cfg.host,
@@ -136,7 +135,12 @@ class KnxAdapter(AdapterBase):
         try:
             await self._xknx.start()
             await self._publish_status(True, f"Connected to {cfg.host}:{cfg.port}")
-            logger.info("KNX adapter connected: %s:%d (%s)", cfg.host, cfg.port, cfg.connection_type)
+            logger.info(
+                "KNX adapter connected: %s:%d (%s)",
+                cfg.host,
+                cfg.port,
+                cfg.connection_type,
+            )
             # Rebuild sniffer on the new xknx instance
             await self._on_bindings_reloaded()
         except Exception as exc:
@@ -200,7 +204,9 @@ class KnxAdapter(AdapterBase):
 
         logger.info(
             "KNX: %d source GAs from %d bindings: %s",
-            len(self._ga_source_map), len(self._bindings), list(self._ga_source_map.keys()),
+            len(self._ga_source_map),
+            len(self._bindings),
+            list(self._ga_source_map.keys()),
         )
 
         if not self._xknx:
@@ -228,7 +234,8 @@ class KnxAdapter(AdapterBase):
             devices_after = len(list(self._xknx.devices))
             logger.info(
                 "KNX: sniffer created, devices count: %d → %d",
-                devices_before, devices_after,
+                devices_before,
+                devices_after,
             )
 
             if devices_after == devices_before:
@@ -280,18 +287,22 @@ class KnxAdapter(AdapterBase):
 
                 if binding.value_formula and quality == "good":
                     from obs.core.formula import apply_formula
+
                     value = apply_formula(binding.value_formula, value)
                 if binding.value_map:
                     from obs.core.transformation import apply_value_map
+
                     value = apply_value_map(value, binding.value_map)
                 logger.info("KNX value: GA=%s → dp=%s value=%s", ga, binding.datapoint_id, value)
-                await self._bus.publish(DataValueEvent(
-                    datapoint_id=binding.datapoint_id,
-                    value=value,
-                    quality=quality,
-                    source_adapter=self.adapter_type,
-                    binding_id=binding.id,
-                ))
+                await self._bus.publish(
+                    DataValueEvent(
+                        datapoint_id=binding.datapoint_id,
+                        value=value,
+                        quality=quality,
+                        source_adapter=self.adapter_type,
+                        binding_id=binding.id,
+                    ),
+                )
         except Exception:
             logger.exception("KNX _on_telegram unhandled exception")
 
@@ -306,12 +317,14 @@ class KnxAdapter(AdapterBase):
                 if state is None or state.quality != "good" or state.value is None:
                     logger.debug(
                         "KNX read request for GA=%s: no good value for dp=%s — not responding",
-                        ga, binding.datapoint_id,
+                        ga,
+                        binding.datapoint_id,
                     )
                     continue
+                from xknx.dpt import DPTArray, DPTBinary
                 from xknx.telegram import Telegram
                 from xknx.telegram.address import GroupAddress
-                from xknx.dpt import DPTArray, DPTBinary
+
                 raw = dpt.encoder(state.value)
                 # DPTBinary only for 1-bit boolean DPTs; all others need DPTArray
                 if dpt.data_type == "BOOLEAN":
@@ -325,10 +338,17 @@ class KnxAdapter(AdapterBase):
                 await self._xknx.telegrams.put(telegram)
                 logger.info(
                     "KNX read response: GA=%s dp=%s value=%s raw=%s",
-                    ga, binding.datapoint_id, state.value, raw.hex(),
+                    ga,
+                    binding.datapoint_id,
+                    state.value,
+                    raw.hex(),
                 )
             except Exception:
-                logger.exception("KNX _handle_read_request failed for GA=%s binding=%s", ga, binding.id)
+                logger.exception(
+                    "KNX _handle_read_request failed for GA=%s binding=%s",
+                    ga,
+                    binding.id,
+                )
 
     # ------------------------------------------------------------------
     # Read / Write
@@ -357,10 +377,10 @@ class KnxAdapter(AdapterBase):
         if not self._xknx:
             return
         try:
+            from xknx.dpt import DPTArray, DPTBinary  # xknx ≥ 3.x
             from xknx.telegram import Telegram
             from xknx.telegram.address import GroupAddress
             from xknx.telegram.apci import GroupValueWrite as _GVW
-            from xknx.dpt import DPTArray, DPTBinary  # xknx ≥ 3.x
 
             bc = KnxBindingConfig(**binding.config)
             dpt = DPTRegistry.get(bc.dpt_id)
@@ -386,9 +406,9 @@ class KnxAdapter(AdapterBase):
 # Sniffer Device factory — defined outside class to avoid closure issues
 # ---------------------------------------------------------------------------
 
+
 def _build_sniffer(xknx_instance: Any, ga_source_map: dict, adapter: KnxAdapter) -> Any:
-    """
-    Build and register a minimal xknx Device that receives all source GAs.
+    """Build and register a minimal xknx Device that receives all source GAs.
 
     In xknx ≥ 3.x, Device.__init__ calls xknx.devices.async_add(self), which
     reads _iter_remote_values() to build the internal GA→device dispatch map.
@@ -436,6 +456,7 @@ def _build_sniffer(xknx_instance: Any, ga_source_map: dict, adapter: KnxAdapter)
             # xknx 3.x calls device.process() WITHOUT await (devices.py:108),
             # so this must be synchronous. Schedule the async handler as a task.
             import asyncio
+
             ga = str(telegram.destination_address)
             logger.info("KNX sniffer.process: GA=%s", ga)
             asyncio.ensure_future(adapter._on_telegram(telegram))
@@ -447,6 +468,7 @@ def _build_sniffer(xknx_instance: Any, ga_source_map: dict, adapter: KnxAdapter)
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def _telegram_to_bytes(telegram: Any) -> bytes:
     """Extract raw payload bytes from a KNX telegram."""

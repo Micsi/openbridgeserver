@@ -1,14 +1,13 @@
-"""
-Integration tests for the Icons Library API (/api/v1/icons/).
+"""Integration tests for the Icons Library API (/api/v1/icons/).
 
 Requires a running FastAPI app with lifespan (session fixture from conftest.py).
 Each test uses its own temporary icons directory to avoid cross-test pollution.
 """
+
 from __future__ import annotations
 
 import io
 import zipfile
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -24,6 +23,7 @@ _MINIMAL_SVG2 = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><c
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def _make_zip(*files: tuple[str, bytes]) -> bytes:
     """Build an in-memory ZIP from (filename, content) pairs."""
     buf = io.BytesIO()
@@ -35,8 +35,7 @@ def _make_zip(*files: tuple[str, bytes]) -> bytes:
 
 @pytest_asyncio.fixture
 async def icons_tmp(tmp_path, monkeypatch):
-    """
-    Patch _icons_dir() to use a fresh temporary directory for each test.
+    """Patch _icons_dir() to use a fresh temporary directory for each test.
     Returns the Path to that directory.
     """
     icons_dir = tmp_path / "icons"
@@ -49,6 +48,7 @@ async def icons_tmp(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # GET /icons/ — list
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_list_icons_empty(client, auth_headers, icons_tmp):
@@ -82,6 +82,7 @@ async def test_list_icons_requires_auth(client, icons_tmp):
 # POST /icons/import — upload SVG
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_import_single_svg(client, auth_headers, icons_tmp):
     resp = await client.post(
@@ -102,8 +103,8 @@ async def test_import_multiple_svgs(client, auth_headers, icons_tmp):
         "/api/v1/icons/import",
         headers=auth_headers,
         files=[
-            ("files", ("home.svg",  _MINIMAL_SVG,  "image/svg+xml")),
-            ("files", ("star.svg",  _MINIMAL_SVG2, "image/svg+xml")),
+            ("files", ("home.svg", _MINIMAL_SVG, "image/svg+xml")),
+            ("files", ("star.svg", _MINIMAL_SVG2, "image/svg+xml")),
         ],
     )
     assert resp.status_code == 200
@@ -172,6 +173,7 @@ async def test_import_invalid_zip(client, auth_headers, icons_tmp):
 # GET /icons/{name} — get single icon
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_get_icon(client, auth_headers, icons_tmp):
     (icons_tmp / "home.svg").write_bytes(_MINIMAL_SVG)
@@ -191,6 +193,7 @@ async def test_get_icon_not_found(client, auth_headers, icons_tmp):
 # ---------------------------------------------------------------------------
 # DELETE /icons/ — delete
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_delete_icons(client, auth_headers, icons_tmp):
@@ -229,6 +232,7 @@ async def test_delete_icons_not_found(client, auth_headers, icons_tmp):
 # POST /icons/export — export ZIP (JSON-Body, kein URL-Limit)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_export_all_icons(client, auth_headers, icons_tmp):
     (icons_tmp / "home.svg").write_bytes(_MINIMAL_SVG)
@@ -237,7 +241,7 @@ async def test_export_all_icons(client, auth_headers, icons_tmp):
     resp = await client.post(
         "/api/v1/icons/export",
         headers=auth_headers,
-        json={"names": []},   # leer = alle
+        json={"names": []},  # leer = alle
     )
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/zip"
@@ -298,10 +302,12 @@ async def test_export_large_selection(client, auth_headers, icons_tmp):
 # POST /icons/fontawesome — FontAwesome import (mocked HTTP)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_fontawesome_import_free(client, auth_headers, icons_tmp):
     """FontAwesome free CDN path — mock the HTTP response."""
-    from unittest.mock import AsyncMock, MagicMock, patch as _patch
+    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import patch as _patch
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -328,7 +334,8 @@ async def test_fontawesome_import_free(client, auth_headers, icons_tmp):
 @pytest.mark.asyncio
 async def test_fontawesome_import_skips_failed(client, auth_headers, icons_tmp):
     """If CDN returns 404 for an icon, it should be counted as skipped."""
-    from unittest.mock import AsyncMock, MagicMock, patch as _patch
+    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import patch as _patch
 
     mock_response = MagicMock()
     mock_response.status_code = 404

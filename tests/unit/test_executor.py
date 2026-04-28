@@ -1,5 +1,4 @@
-"""
-Unit tests for obs/logic/executor.py
+"""Unit tests for obs/logic/executor.py
 
 Covers:
   - _safe_eval: mathematical rounding, all math functions, sandboxing
@@ -11,6 +10,7 @@ Covers:
   - Full graph execution via execute()
   - Topological sort (multi-node graphs)
 """
+
 from __future__ import annotations
 
 import pytest
@@ -18,14 +18,13 @@ import pytest
 from obs.logic.executor import ExecutionError, GraphExecutor
 from tests.unit.conftest import edge, make_executor, node
 
-
 # ===========================================================================
 # _round_half_up
 # ===========================================================================
 
+
 class TestRoundHalfUp:
-    """
-    Python's built-in round() uses banker's rounding (round-half-to-even) AND
+    """Python's built-in round() uses banker's rounding (round-half-to-even) AND
     is affected by IEEE 754 representation: round(21.16, 1) → 21.1 (not 21.2).
     _round_half_up must always round 0.5 up and use Decimal to avoid float errors.
     """
@@ -46,7 +45,7 @@ class TestRoundHalfUp:
 
     def test_zero_decimals(self):
         assert GraphExecutor._round_half_up(2.5) == 3
-        assert GraphExecutor._round_half_up(3.5) == 4   # not 4 via banker's
+        assert GraphExecutor._round_half_up(3.5) == 4  # not 4 via banker's
 
     def test_two_decimals(self):
         assert GraphExecutor._round_half_up(1.005, 2) == pytest.approx(1.01)
@@ -61,6 +60,7 @@ class TestRoundHalfUp:
 # ===========================================================================
 # _safe_eval
 # ===========================================================================
+
 
 class TestSafeEval:
     def test_simple_arithmetic(self):
@@ -126,6 +126,7 @@ class TestSafeEval:
 # Single-node execution helpers
 # ===========================================================================
 
+
 def run_single(node_type: str, data: dict, inputs: dict | None = None) -> dict:
     """Execute a single-node graph and return its outputs."""
     n = node("n1", node_type, data)
@@ -137,6 +138,7 @@ def run_single(node_type: str, data: dict, inputs: dict | None = None) -> dict:
 # ===========================================================================
 # const_value node
 # ===========================================================================
+
 
 class TestConstValue:
     def test_number(self):
@@ -160,40 +162,56 @@ class TestConstValue:
 # Logic nodes: and, or, not, xor
 # ===========================================================================
 
+
 class TestLogicNodes:
-    @pytest.mark.parametrize("a, b, expected", [
-        (True,  True,  True),
-        (True,  False, False),
-        (False, True,  False),
-        (False, False, False),
-    ])
+    @pytest.mark.parametrize(
+        "a, b, expected",
+        [
+            (True, True, True),
+            (True, False, False),
+            (False, True, False),
+            (False, False, False),
+        ],
+    )
     def test_and(self, a, b, expected):
         out = run_single("and", {}, {"in1": a, "in2": b})
         assert out["out"] is expected
 
-    @pytest.mark.parametrize("a, b, expected", [
-        (True,  True,  True),
-        (True,  False, True),
-        (False, True,  True),
-        (False, False, False),
-    ])
+    @pytest.mark.parametrize(
+        "a, b, expected",
+        [
+            (True, True, True),
+            (True, False, True),
+            (False, True, True),
+            (False, False, False),
+        ],
+    )
     def test_or(self, a, b, expected):
         out = run_single("or", {}, {"in1": a, "in2": b})
         assert out["out"] is expected
 
-    @pytest.mark.parametrize("inp, expected", [
-        (True, False), (False, True), (1, False), (0, True),
-    ])
+    @pytest.mark.parametrize(
+        "inp, expected",
+        [
+            (True, False),
+            (False, True),
+            (1, False),
+            (0, True),
+        ],
+    )
     def test_not(self, inp, expected):
         out = run_single("not", {}, {"in1": inp})
         assert out["out"] is expected
 
-    @pytest.mark.parametrize("a, b, expected", [
-        (True,  True,  False),
-        (True,  False, True),
-        (False, True,  True),
-        (False, False, False),
-    ])
+    @pytest.mark.parametrize(
+        "a, b, expected",
+        [
+            (True, True, False),
+            (True, False, True),
+            (False, True, True),
+            (False, False, False),
+        ],
+    )
     def test_xor(self, a, b, expected):
         out = run_single("xor", {}, {"in1": a, "in2": b})
         assert out["out"] is expected
@@ -207,18 +225,22 @@ class TestLogicNodes:
 # compare node
 # ===========================================================================
 
+
 class TestCompareNode:
-    @pytest.mark.parametrize("op, a, b, expected", [
-        (">",  5, 3, True),
-        (">",  3, 5, False),
-        ("<",  3, 5, True),
-        ("=",  5, 5, True),
-        ("=",  5, 6, False),
-        (">=", 5, 5, True),
-        ("<=", 4, 5, True),
-        ("!=", 4, 5, True),
-        ("!=", 5, 5, False),
-    ])
+    @pytest.mark.parametrize(
+        "op, a, b, expected",
+        [
+            (">", 5, 3, True),
+            (">", 3, 5, False),
+            ("<", 3, 5, True),
+            ("=", 5, 5, True),
+            ("=", 5, 6, False),
+            (">=", 5, 5, True),
+            ("<=", 4, 5, True),
+            ("!=", 4, 5, True),
+            ("!=", 5, 5, False),
+        ],
+    )
     def test_numeric_operators(self, op, a, b, expected):
         out = run_single("compare", {"operator": op}, {"in1": a, "in2": b})
         assert out["out"] is expected
@@ -235,6 +257,7 @@ class TestCompareNode:
 # ===========================================================================
 # hysteresis node
 # ===========================================================================
+
 
 class TestHysteresisNode:
     def test_turns_on_above_threshold(self):
@@ -270,21 +293,19 @@ class TestHysteresisNode:
         n1 = node("h", "hysteresis", {"threshold_on": 25.0, "threshold_off": 20.0})
 
         exc = make_executor([n1], hysteresis_state=state)
-        exc.execute({"h": {"value": 26.0}})   # turns on
+        exc.execute({"h": {"value": 26.0}})  # turns on
         assert state["h"] is True
 
         exc2 = make_executor([n1], hysteresis_state=state)
         out = exc2.execute({"h": {"value": 22.0}})  # in hysteresis zone
-        assert out["h"]["out"] is True   # still on
+        assert out["h"]["out"] is True  # still on
 
     def test_empty_state_dict_is_not_replaced(self):
         """Regression: hysteresis_state={} must not be treated as None."""
         state = {}
         n1 = node("h", "hysteresis", {"threshold_on": 25.0, "threshold_off": 20.0})
         exc = GraphExecutor(
-            flow=__import__("obs.logic.models", fromlist=["FlowData"]).FlowData.model_validate(
-                {"nodes": [n1], "edges": []}
-            ),
+            flow=__import__("obs.logic.models", fromlist=["FlowData"]).FlowData.model_validate({"nodes": [n1], "edges": []}),
             hysteresis_state=state,
         )
         exc.execute({"h": {"value": 26.0}})
@@ -295,6 +316,7 @@ class TestHysteresisNode:
 # ===========================================================================
 # math_formula node
 # ===========================================================================
+
 
 class TestMathFormulaNode:
     def test_simple_addition(self):
@@ -310,27 +332,35 @@ class TestMathFormulaNode:
         assert out["result"] == 0
 
     def test_output_formula_transforms_result(self):
-        out = run_single("math_formula",
-                         {"formula": "a + b", "output_formula": "x * 2"},
-                         {"in1": 5, "in2": 5})
-        assert out["result"] == 20   # (5+5)*2
+        out = run_single(
+            "math_formula",
+            {"formula": "a + b", "output_formula": "x * 2"},
+            {"in1": 5, "in2": 5},
+        )
+        assert out["result"] == 20  # (5+5)*2
 
     def test_output_formula_round(self):
-        out = run_single("math_formula",
-                         {"formula": "a / b", "output_formula": "round(x, 1)"},
-                         {"in1": 10, "in2": 3})
+        out = run_single(
+            "math_formula",
+            {"formula": "a / b", "output_formula": "round(x, 1)"},
+            {"in1": 10, "in2": 3},
+        )
         assert out["result"] == pytest.approx(3.3)
 
     def test_output_formula_empty_string_ignored(self):
-        out = run_single("math_formula",
-                         {"formula": "a + b", "output_formula": ""},
-                         {"in1": 2, "in2": 3})
+        out = run_single(
+            "math_formula",
+            {"formula": "a + b", "output_formula": ""},
+            {"in1": 2, "in2": 3},
+        )
         assert out["result"] == 5
 
     def test_formula_uses_mathematical_rounding(self):
-        out = run_single("math_formula",
-                         {"formula": "a", "output_formula": "round(x, 1)"},
-                         {"in1": 21.15})
+        out = run_single(
+            "math_formula",
+            {"formula": "a", "output_formula": "round(x, 1)"},
+            {"in1": 21.15},
+        )
         assert out["result"] == pytest.approx(21.2)
 
 
@@ -338,37 +368,47 @@ class TestMathFormulaNode:
 # math_map node
 # ===========================================================================
 
+
 class TestMathMapNode:
     def test_linear_scale(self):
         # 0–255 → 0–100
-        out = run_single("math_map",
-                         {"in_min": 0, "in_max": 255, "out_min": 0, "out_max": 100},
-                         {"value": 127.5})
+        out = run_single(
+            "math_map",
+            {"in_min": 0, "in_max": 255, "out_min": 0, "out_max": 100},
+            {"value": 127.5},
+        )
         assert out["result"] == pytest.approx(50.0, abs=0.5)
 
     def test_min_boundary(self):
-        out = run_single("math_map",
-                         {"in_min": 0, "in_max": 100, "out_min": 0, "out_max": 1},
-                         {"value": 0})
+        out = run_single(
+            "math_map",
+            {"in_min": 0, "in_max": 100, "out_min": 0, "out_max": 1},
+            {"value": 0},
+        )
         assert out["result"] == pytest.approx(0.0)
 
     def test_max_boundary(self):
-        out = run_single("math_map",
-                         {"in_min": 0, "in_max": 100, "out_min": 0, "out_max": 1},
-                         {"value": 100})
+        out = run_single(
+            "math_map",
+            {"in_min": 0, "in_max": 100, "out_min": 0, "out_max": 1},
+            {"value": 100},
+        )
         assert out["result"] == pytest.approx(1.0)
 
     def test_divide_by_zero_returns_out_min(self):
         # in_min == in_max → return out_min
-        out = run_single("math_map",
-                         {"in_min": 50, "in_max": 50, "out_min": 7, "out_max": 42},
-                         {"value": 50})
+        out = run_single(
+            "math_map",
+            {"in_min": 50, "in_max": 50, "out_min": 7, "out_max": 42},
+            {"value": 50},
+        )
         assert out["result"] == 7
 
 
 # ===========================================================================
 # clamp node
 # ===========================================================================
+
 
 class TestClampNode:
     def test_value_within_range_unchanged(self):
@@ -397,6 +437,7 @@ class TestClampNode:
 # ===========================================================================
 # statistics node
 # ===========================================================================
+
 
 class TestStatisticsNode:
     def test_single_value(self):
@@ -454,6 +495,7 @@ class TestStatisticsNode:
 # ===========================================================================
 # datapoint_read / datapoint_write nodes
 # ===========================================================================
+
 
 class TestDatapointNodes:
     def test_read_passes_value_through(self):
@@ -536,15 +578,14 @@ class TestDatapointNodes:
 # python_script node
 # ===========================================================================
 
+
 class TestPythonScriptNode:
     def test_simple_result(self):
-        out = run_single("python_script", {"script": "result = inputs['a'] * 2"},
-                         {"a": 5})
+        out = run_single("python_script", {"script": "result = inputs['a'] * 2"}, {"a": 5})
         assert out["result"] == 10
 
     def test_math_available(self):
-        out = run_single("python_script", {"script": "result = math.sqrt(inputs['a'])"},
-                         {"a": 9})
+        out = run_single("python_script", {"script": "result = math.sqrt(inputs['a'])"}, {"a": 9})
         assert out["result"] == pytest.approx(3.0)
 
     def test_script_error_returns_empty_output(self):
@@ -552,7 +593,7 @@ class TestPythonScriptNode:
         n1 = node("p", "python_script", {"script": "result = 1 / 0"})
         exc = make_executor([n1])
         out = exc.execute({"p": {}})
-        assert out.get("p") == {}   # node output is empty on error
+        assert out.get("p") == {}  # node output is empty on error
 
     def test_os_import_blocked_returns_empty_output(self):
         # __import__ is not in builtins → ExecutionError caught internally → empty output
@@ -562,15 +603,14 @@ class TestPythonScriptNode:
         assert out.get("p") == {}
 
     def test_round_uses_mathematical_rounding(self):
-        out = run_single("python_script",
-                         {"script": "result = round(inputs['a'], 1)"},
-                         {"a": 21.15})
+        out = run_single("python_script", {"script": "result = round(inputs['a'], 1)"}, {"a": 21.15})
         assert out["result"] == pytest.approx(21.2)
 
 
 # ===========================================================================
 # Multi-node graph execution (topological order)
 # ===========================================================================
+
 
 class TestMultiNodeGraph:
     def test_two_node_pipeline(self):
@@ -585,14 +625,14 @@ class TestMultiNodeGraph:
         assert out["f"]["result"] == pytest.approx(10.0)  # in2/b defaults to 0
 
     def test_three_node_pipeline(self):
-        """const → formula → clamp"""
+        """Const → formula → clamp"""
         nodes = [
             node("c", "const_value", {"value": "150", "data_type": "number"}),
             node("f", "math_formula", {"formula": "a"}),
             node("cl", "clamp", {"min": 0, "max": 100}),
         ]
         edges = [
-            edge("c", "f",  source_handle="value", target_handle="in1"),
+            edge("c", "f", source_handle="value", target_handle="in1"),
             edge("f", "cl", source_handle="result", target_handle="value"),
         ]
         exc = make_executor(nodes, edges)
@@ -602,7 +642,7 @@ class TestMultiNodeGraph:
     def test_logic_pipeline(self):
         """Two const_value booleans → AND → NOT"""
         nodes = [
-            node("t", "const_value", {"value": "true",  "data_type": "bool"}),
+            node("t", "const_value", {"value": "true", "data_type": "bool"}),
             node("f", "const_value", {"value": "false", "data_type": "bool"}),
             node("a", "and", {}),
             node("n", "not", {}),
@@ -610,12 +650,12 @@ class TestMultiNodeGraph:
         edges = [
             edge("t", "a", source_handle="value", target_handle="in1"),
             edge("f", "a", source_handle="value", target_handle="in2"),
-            edge("a", "n", source_handle="out",   target_handle="in1"),
+            edge("a", "n", source_handle="out", target_handle="in1"),
         ]
         exc = make_executor(nodes, edges)
         out = exc.execute()
-        assert out["a"]["out"] is False   # True AND False
-        assert out["n"]["out"] is True    # NOT False
+        assert out["a"]["out"] is False  # True AND False
+        assert out["n"]["out"] is True  # NOT False
 
     def test_input_override_wins_over_const(self):
         """input_override for a node replaces whatever the graph computes."""
@@ -633,6 +673,7 @@ class TestMultiNodeGraph:
 # ===========================================================================
 # Enhanced AND / OR / XOR  (variable inputs 2–30, per-input/output negation)
 # ===========================================================================
+
 
 class TestEnhancedGateInputs:
     """Variable-input count and negation for AND, OR, XOR."""
@@ -737,6 +778,7 @@ class TestEnhancedGateInputs:
 # gate (TOR) node
 # ===========================================================================
 
+
 class TestGateNode:
     """Tests for the 'gate' (TOR) function block.
 
@@ -770,16 +812,32 @@ class TestGateNode:
         assert out["out"] is None
 
     def test_gate_closed_default_value_numeric(self):
-        out = run_single("gate", {"closed_behavior": "default_value", "default_value": "7"}, {"in": 99, "enable": False})
+        out = run_single(
+            "gate",
+            {"closed_behavior": "default_value", "default_value": "7"},
+            {"in": 99, "enable": False},
+        )
         assert out["out"] == pytest.approx(7.0)
 
     def test_gate_closed_default_value_string(self):
-        out = run_single("gate", {"closed_behavior": "default_value", "default_value": "aus"}, {"in": "ein", "enable": False})
+        out = run_single(
+            "gate",
+            {"closed_behavior": "default_value", "default_value": "aus"},
+            {"in": "ein", "enable": False},
+        )
         assert out["out"] == "aus"
 
     def test_gate_negate_enable_closed_when_true(self):
         # negate_enable: enable=True → inverted → gate closed
-        out = run_single("gate", {"negate_enable": True, "closed_behavior": "default_value", "default_value": "0"}, {"in": 55, "enable": True})
+        out = run_single(
+            "gate",
+            {
+                "negate_enable": True,
+                "closed_behavior": "default_value",
+                "default_value": "0",
+            },
+            {"in": 55, "enable": True},
+        )
         assert out["out"] == pytest.approx(0.0)
 
     def test_gate_negate_enable_open_when_false(self):
@@ -792,7 +850,11 @@ class TestGateNode:
         assert out["out"] == 10
 
     def test_gate_enable_string_false(self):
-        out = run_single("gate", {"closed_behavior": "default_value", "default_value": "0"}, {"in": 10, "enable": "false"})
+        out = run_single(
+            "gate",
+            {"closed_behavior": "default_value", "default_value": "0"},
+            {"in": 10, "enable": "false"},
+        )
         assert out["out"] == pytest.approx(0.0)
 
     def test_gate_updates_stored_value_on_each_open(self):
@@ -810,6 +872,7 @@ class TestGateNode:
 # ===========================================================================
 # heating_circuit  (Winter/Sommer-Umschaltung, DIN-Norm)
 # ===========================================================================
+
 
 class TestHeatingCircuit:
     """Tests for the redesigned heating_circuit node.
@@ -887,7 +950,7 @@ class TestHeatingCircuit:
         the rolling monthly average exceeds temp_summer=20 °C.
         """
         state = {}
-        self._run_full_day(5, 6, 4, state=state)      # cold day → ON
+        self._run_full_day(5, 6, 4, state=state)  # cold day → ON
         # 9 warm days: monthly_avg ≈ (4.75 + 9×22.5) / 10 = 206.75/10 = 20.675 > 20
         for _ in range(9):
             self._run_full_day(22, 24, 22, state=state)
@@ -941,6 +1004,7 @@ class TestHeatingCircuit:
 # min_max_tracker
 # ===========================================================================
 
+
 class TestMinMaxTracker:
     def _run(self, value, state=None):
         if state is None:
@@ -972,9 +1036,18 @@ class TestMinMaxTracker:
 
     def test_all_periods_track_simultaneously(self):
         out, _ = self._run(7.5)
-        for key in ("min_daily", "max_daily", "min_weekly", "max_weekly",
-                    "min_monthly", "max_monthly", "min_yearly", "max_yearly",
-                    "min_abs", "max_abs"):
+        for key in (
+            "min_daily",
+            "max_daily",
+            "min_weekly",
+            "max_weekly",
+            "min_monthly",
+            "max_monthly",
+            "min_yearly",
+            "max_yearly",
+            "min_abs",
+            "max_abs",
+        ):
             assert out[key] == pytest.approx(7.5), f"{key} should be 7.5"
 
     def test_no_value_returns_current_state(self):
@@ -995,7 +1068,7 @@ class TestMinMaxTracker:
         # Daily min/max reset; absolute stays
         assert out["min_daily"] == pytest.approx(5.0)
         assert out["max_daily"] == pytest.approx(5.0)
-        assert out["min_abs"] == pytest.approx(5.0)   # 5 < 100
+        assert out["min_abs"] == pytest.approx(5.0)  # 5 < 100
         assert out["max_abs"] == pytest.approx(100.0)
 
     def test_seed_abs_min_max_applied_once(self):
@@ -1005,7 +1078,7 @@ class TestMinMaxTracker:
         n1 = node("m", "min_max_tracker", cfg)
         exc = make_executor([n1], hysteresis_state=state)
         out = exc.execute({"m": {"value": 50.0}})["m"]
-        assert out["min_abs"] == pytest.approx(-10.0)   # seed beats first value
+        assert out["min_abs"] == pytest.approx(-10.0)  # seed beats first value
         assert out["max_abs"] == pytest.approx(999.0)
 
     def test_seed_not_reapplied_after_first_run(self):
@@ -1019,18 +1092,22 @@ class TestMinMaxTracker:
         # Second run with a value below seed — abs_min must be updated
         exc2 = make_executor([n1], hysteresis_state=state)
         out = exc2.execute({"m": {"value": 50.0}})["m"]
-        assert out["min_abs"] == pytest.approx(50.0)   # new minimum, seed not re-applied
+        assert out["min_abs"] == pytest.approx(50.0)  # new minimum, seed not re-applied
 
     def test_seed_period_values(self):
         """Startwerte für Tages- und Monats-Min/Max werden korrekt gesetzt."""
-        cfg = {"init_day_min": 5.0, "init_day_max": 25.0,
-               "init_year_min": -5.0, "init_year_max": 40.0}
+        cfg = {
+            "init_day_min": 5.0,
+            "init_day_max": 25.0,
+            "init_year_min": -5.0,
+            "init_year_max": 40.0,
+        }
         state = {}
         n1 = node("m", "min_max_tracker", cfg)
         exc = make_executor([n1], hysteresis_state=state)
         out = exc.execute({"m": {"value": 15.0}})["m"]
-        assert out["min_daily"]  == pytest.approx(5.0)
-        assert out["max_daily"]  == pytest.approx(25.0)
+        assert out["min_daily"] == pytest.approx(5.0)
+        assert out["max_daily"] == pytest.approx(25.0)
         assert out["min_yearly"] == pytest.approx(-5.0)
         assert out["max_yearly"] == pytest.approx(40.0)
 
@@ -1038,6 +1115,7 @@ class TestMinMaxTracker:
 # ===========================================================================
 # consumption_counter
 # ===========================================================================
+
 
 class TestConsumptionCounter:
     def _run(self, value, state=None):
@@ -1100,10 +1178,10 @@ class TestConsumptionCounter:
         state = {}
         self._run(0.0, state)
         out, _ = self._run(100.0, state)
-        assert out["daily"]   == pytest.approx(100.0)
-        assert out["weekly"]  == pytest.approx(100.0)
+        assert out["daily"] == pytest.approx(100.0)
+        assert out["weekly"] == pytest.approx(100.0)
         assert out["monthly"] == pytest.approx(100.0)
-        assert out["yearly"]  == pytest.approx(100.0)
+        assert out["yearly"] == pytest.approx(100.0)
 
     def test_seed_meter_used_as_first_value(self):
         """init_meter setzt den Startzählerstand; erster Delta rechnet korrekt."""
@@ -1123,8 +1201,8 @@ class TestConsumptionCounter:
         n1 = node("c", "consumption_counter", cfg)
         exc = make_executor([n1], hysteresis_state=state)
         out = exc.execute({"c": {"value": 510.0}})["c"]
-        assert out["monthly"] == pytest.approx(310.0)   # 300 seed + 10 delta
-        assert out["yearly"]  == pytest.approx(1210.0)  # 1200 seed + 10 delta
+        assert out["monthly"] == pytest.approx(310.0)  # 300 seed + 10 delta
+        assert out["yearly"] == pytest.approx(1210.0)  # 1200 seed + 10 delta
 
     def test_seed_not_reapplied_after_first_run(self):
         """Seed wird nur einmal angewendet, nicht bei jedem Executor-Aufruf."""
@@ -1132,7 +1210,7 @@ class TestConsumptionCounter:
         state = {}
         n1 = node("c", "consumption_counter", cfg)
         exc = make_executor([n1], hysteresis_state=state)
-        exc.execute({"c": {"value": 10.0}})    # daily = 50 + 10 = 60
+        exc.execute({"c": {"value": 10.0}})  # daily = 50 + 10 = 60
         exc2 = make_executor([n1], hysteresis_state=state)
         out = exc2.execute({"c": {"value": 20.0}})["c"]  # daily = 60 + 10 = 70
-        assert out["daily"] == pytest.approx(70.0)       # seed NOT added again
+        assert out["daily"] == pytest.approx(70.0)  # seed NOT added again

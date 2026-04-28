@@ -1,5 +1,4 @@
-"""
-Logic Engine API
+"""Logic Engine API
 
 GET    /api/v1/logic/node-types               list all node type definitions
 GET    /api/v1/logic/graphs                   list all logic graphs
@@ -13,20 +12,27 @@ POST   /api/v1/logic/graphs/{id}/run          manually trigger execution
 POST   /api/v1/logic/graphs/{id}/duplicate    duplicate graph with new node IDs
 GET    /api/v1/logic/graphs/{id}/export       export graph as JSON download
 """
+
 from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 
 from obs.api.auth import get_current_user
-from obs.db.database import get_db, Database
+from obs.db.database import Database, get_db
 from obs.logic.models import (
-    FlowData, LogicEdge, LogicNode, LogicGraphCreate, LogicGraphImport,
-    LogicGraphOut, LogicGraphUpdate, NodeTypeDef,
+    FlowData,
+    LogicEdge,
+    LogicGraphCreate,
+    LogicGraphImport,
+    LogicGraphOut,
+    LogicGraphUpdate,
+    LogicNode,
+    NodeTypeDef,
 )
 from obs.logic.node_types import list_node_types
 
@@ -66,18 +72,26 @@ async def create_graph(
     _user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     gid = str(uuid.uuid4())
     await db.execute_and_commit(
         """INSERT INTO logic_graphs (id, name, description, enabled, flow_data, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?)""",
-        (gid, body.name, body.description, int(body.enabled),
-         body.flow_data.model_dump_json(), now, now),
+        (
+            gid,
+            body.name,
+            body.description,
+            int(body.enabled),
+            body.flow_data.model_dump_json(),
+            now,
+            now,
+        ),
     )
     row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (gid,))
     # Load into executor cache so the graph is immediately runnable
     try:
         from obs.logic.manager import get_logic_manager
+
         await get_logic_manager().reload()
     except Exception:
         pass
@@ -103,7 +117,7 @@ async def update_graph_full(
     _user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     row = await db.fetchone("SELECT id FROM logic_graphs WHERE id=?", (graph_id,))
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Graph nicht gefunden")
@@ -111,12 +125,19 @@ async def update_graph_full(
         """UPDATE logic_graphs
            SET name=?, description=?, enabled=?, flow_data=?, updated_at=?
            WHERE id=?""",
-        (body.name, body.description, int(body.enabled),
-         body.flow_data.model_dump_json(), now, graph_id),
+        (
+            body.name,
+            body.description,
+            int(body.enabled),
+            body.flow_data.model_dump_json(),
+            now,
+            graph_id,
+        ),
     )
     # Invalidate executor cache
     try:
         from obs.logic.manager import get_logic_manager
+
         get_logic_manager().invalidate_cache(graph_id)
         await get_logic_manager().reload()
     except Exception:
@@ -132,13 +153,13 @@ async def update_graph_partial(
     _user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Graph nicht gefunden")
-    name        = body.name        if body.name        is not None else row["name"]
+    name = body.name if body.name is not None else row["name"]
     description = body.description if body.description is not None else row["description"]
-    enabled     = body.enabled     if body.enabled     is not None else bool(row["enabled"])
+    enabled = body.enabled if body.enabled is not None else bool(row["enabled"])
     if body.flow_data is not None:
         flow_json = body.flow_data.model_dump_json()
     else:
@@ -151,6 +172,7 @@ async def update_graph_partial(
     )
     try:
         from obs.logic.manager import get_logic_manager
+
         get_logic_manager().invalidate_cache(graph_id)
         await get_logic_manager().reload()
     except Exception:
@@ -171,6 +193,7 @@ async def delete_graph(
     await db.execute_and_commit("DELETE FROM logic_graphs WHERE id=?", (graph_id,))
     try:
         from obs.logic.manager import get_logic_manager
+
         get_logic_manager().invalidate_cache(graph_id)
     except Exception:
         pass
@@ -183,7 +206,10 @@ async def import_graph(
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     if body.obs_export != "logic_graph":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ungültiges Export-Format (erwartet 'logic_graph')")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Ungültiges Export-Format (erwartet 'logic_graph')",
+        )
 
     known_types = {nt.type for nt in list_node_types()}
 
@@ -191,27 +217,40 @@ async def import_graph(
     processed_nodes: list[LogicNode] = []
     for node in body.flow_data.nodes:
         if node.type not in known_types and node.type != "missing_node":
-            processed_nodes.append(LogicNode(
-                id=node.id,
-                type="missing_node",
-                position=node.position,
-                data={"original_type": node.type, "label": f"[Fehlend: {node.type}]"},
-            ))
+            processed_nodes.append(
+                LogicNode(
+                    id=node.id,
+                    type="missing_node",
+                    position=node.position,
+                    data={
+                        "original_type": node.type,
+                        "label": f"[Fehlend: {node.type}]",
+                    },
+                ),
+            )
         else:
             processed_nodes.append(node)
 
     processed_flow = FlowData(nodes=processed_nodes, edges=body.flow_data.edges)
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     gid = str(uuid.uuid4())
     await db.execute_and_commit(
         """INSERT INTO logic_graphs (id, name, description, enabled, flow_data, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?)""",
-        (gid, body.name, body.description, int(body.enabled),
-         processed_flow.model_dump_json(), now, now),
+        (
+            gid,
+            body.name,
+            body.description,
+            int(body.enabled),
+            processed_flow.model_dump_json(),
+            now,
+            now,
+        ),
     )
     try:
         from obs.logic.manager import get_logic_manager
+
         await get_logic_manager().reload()
     except Exception:
         pass
@@ -230,13 +269,18 @@ async def run_graph(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Graph nicht gefunden")
     try:
         from obs.logic.manager import get_logic_manager
+
         outputs = await get_logic_manager().execute_graph(graph_id)
         return {"status": "ok", "outputs": outputs}
     except Exception as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
 
 
-@router.post("/graphs/{graph_id}/duplicate", response_model=LogicGraphOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/graphs/{graph_id}/duplicate",
+    response_model=LogicGraphOut,
+    status_code=status.HTTP_201_CREATED,
+)
 async def duplicate_graph(
     graph_id: str,
     _user: str = Depends(get_current_user),
@@ -264,17 +308,25 @@ async def duplicate_graph(
     ]
     new_flow = FlowData(nodes=new_nodes, edges=new_edges)
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     new_id = str(uuid.uuid4())
     new_name = f"Kopie von {row['name']}"
     await db.execute_and_commit(
         """INSERT INTO logic_graphs (id, name, description, enabled, flow_data, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?)""",
-        (new_id, new_name, row["description"] or "", int(row["enabled"]),
-         new_flow.model_dump_json(), now, now),
+        (
+            new_id,
+            new_name,
+            row["description"] or "",
+            int(row["enabled"]),
+            new_flow.model_dump_json(),
+            now,
+            now,
+        ),
     )
     try:
         from obs.logic.manager import get_logic_manager
+
         await get_logic_manager().reload()
     except Exception:
         pass
@@ -295,7 +347,7 @@ async def export_graph(
     export_data = {
         "obs_export": "logic_graph",
         "version": 1,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "name": row["name"],
         "description": row["description"] or "",
         "enabled": bool(row["enabled"]),

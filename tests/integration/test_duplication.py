@@ -1,5 +1,4 @@
-"""
-Integration Tests — Duplizierung (Issue #240)
+"""Integration Tests — Duplizierung (Issue #240)
 
 Logic Graphs:
   POST /api/v1/logic/graphs/{id}/duplicate  → Kopie mit neuen Node/Edge-IDs
@@ -10,6 +9,7 @@ Visu Nodes:
   GET  /api/v1/visu/nodes/{id}/export       → Teilbaum als JSON
   POST /api/v1/visu/nodes/import            → Import mit neuen IDs
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,6 +20,7 @@ pytestmark = pytest.mark.integration
 # Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
+
 async def _create_graph(client, auth_headers, name: str = "Test Graph") -> dict:
     resp = await client.post(
         "/api/v1/logic/graphs",
@@ -29,14 +30,27 @@ async def _create_graph(client, auth_headers, name: str = "Test Graph") -> dict:
             "enabled": True,
             "flow_data": {
                 "nodes": [
-                    {"id": "n1", "type": "and", "position": {"x": 0, "y": 0},
-                     "data": {"label": "AND", "input_count": 2}},
-                    {"id": "n2", "type": "or",  "position": {"x": 200, "y": 0},
-                     "data": {"label": "OR", "input_count": 2}},
+                    {
+                        "id": "n1",
+                        "type": "and",
+                        "position": {"x": 0, "y": 0},
+                        "data": {"label": "AND", "input_count": 2},
+                    },
+                    {
+                        "id": "n2",
+                        "type": "or",
+                        "position": {"x": 200, "y": 0},
+                        "data": {"label": "OR", "input_count": 2},
+                    },
                 ],
                 "edges": [
-                    {"id": "e1", "source": "n1", "target": "n2",
-                     "sourceHandle": "out", "targetHandle": "in1"},
+                    {
+                        "id": "e1",
+                        "source": "n1",
+                        "target": "n2",
+                        "sourceHandle": "out",
+                        "targetHandle": "in1",
+                    },
                 ],
             },
         },
@@ -68,6 +82,7 @@ async def _delete_visu_node(client, auth_headers, nid: str) -> None:
 # Logic — Duplizieren
 # ===========================================================================
 
+
 async def test_duplicate_graph_creates_copy(client, auth_headers):
     g = await _create_graph(client, auth_headers, "Original")
     try:
@@ -90,10 +105,7 @@ async def test_duplicate_graph_creates_copy(client, auth_headers):
         assert orig_edge_ids.isdisjoint(copy_edge_ids), "Edge-IDs müssen sich unterscheiden"
 
         # Kantenverbindungen müssen auf neue Node-IDs zeigen
-        copy_nodes_by_idx = {
-            old_id: new_id
-            for old_id, new_id in zip(orig_node_ids, copy_node_ids)
-        }
+        _ = {old_id: new_id for old_id, new_id in zip(orig_node_ids, copy_node_ids)}
         for edge in copy["flow_data"]["edges"]:
             assert edge["source"] in copy_node_ids
             assert edge["target"] in copy_node_ids
@@ -119,6 +131,7 @@ async def test_duplicate_graph_requires_auth(client):
 # ===========================================================================
 # Logic — Exportieren
 # ===========================================================================
+
 
 async def test_export_graph_returns_json(client, auth_headers):
     g = await _create_graph(client, auth_headers, "Export Test")
@@ -151,6 +164,7 @@ async def test_export_graph_not_found(client, auth_headers):
 # Logic — Importieren
 # ===========================================================================
 
+
 async def test_import_graph_creates_graph(client, auth_headers):
     payload = {
         "obs_export": "logic_graph",
@@ -160,7 +174,12 @@ async def test_import_graph_creates_graph(client, auth_headers):
         "enabled": True,
         "flow_data": {
             "nodes": [
-                {"id": "x1", "type": "and", "position": {"x": 0, "y": 0}, "data": {"label": "AND"}},
+                {
+                    "id": "x1",
+                    "type": "and",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"label": "AND"},
+                },
             ],
             "edges": [],
         },
@@ -181,10 +200,18 @@ async def test_import_graph_unknown_type_becomes_missing_node(client, auth_heade
         "enabled": True,
         "flow_data": {
             "nodes": [
-                {"id": "u1", "type": "does_not_exist_v99",
-                 "position": {"x": 0, "y": 0}, "data": {"label": "Unbekannt"}},
-                {"id": "u2", "type": "and",
-                 "position": {"x": 200, "y": 0}, "data": {"label": "AND"}},
+                {
+                    "id": "u1",
+                    "type": "does_not_exist_v99",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"label": "Unbekannt"},
+                },
+                {
+                    "id": "u2",
+                    "type": "and",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"label": "AND"},
+                },
             ],
             "edges": [],
         },
@@ -203,8 +230,12 @@ async def test_import_graph_unknown_type_becomes_missing_node(client, auth_heade
 async def test_import_graph_wrong_format(client, auth_headers):
     resp = await client.post(
         "/api/v1/logic/graphs/import",
-        json={"obs_export": "wrong_format", "version": 1, "name": "x",
-              "flow_data": {"nodes": [], "edges": []}},
+        json={
+            "obs_export": "wrong_format",
+            "version": 1,
+            "name": "x",
+            "flow_data": {"nodes": [], "edges": []},
+        },
         headers=auth_headers,
     )
     assert resp.status_code == 400
@@ -213,6 +244,7 @@ async def test_import_graph_wrong_format(client, auth_headers):
 # ===========================================================================
 # Visu — Exportieren
 # ===========================================================================
+
 
 async def test_export_visu_node_returns_json(client, auth_headers):
     node = await _create_visu_node(client, auth_headers, "Export Seite")
@@ -243,6 +275,7 @@ async def test_export_visu_node_not_found(client, auth_headers):
 # Visu — Importieren
 # ===========================================================================
 
+
 async def test_import_visu_node_creates_node(client, auth_headers):
     payload = {
         "obs_export": "visu_subtree",
@@ -258,17 +291,19 @@ async def test_import_visu_node_creates_node(client, auth_headers):
                 "icon": None,
                 "access": None,
                 "page_config": {
-                    "grid_cols": 12, "grid_row_height": 80,
-                    "background": None, "widgets": []
+                    "grid_cols": 12,
+                    "grid_row_height": 80,
+                    "background": None,
+                    "widgets": [],
                 },
-            }
+            },
         ],
     }
     resp = await client.post("/api/v1/visu/nodes/import", json=payload, headers=auth_headers)
     assert resp.status_code == 201, resp.text
     created = resp.json()
     assert created["name"] == "Importierte Seite"
-    assert created["id"] != "old-id-1"   # neue ID vergeben
+    assert created["id"] != "old-id-1"  # neue ID vergeben
     await _delete_visu_node(client, auth_headers, created["id"])
 
 
@@ -289,6 +324,7 @@ async def test_import_visu_node_requires_auth(client):
 # ===========================================================================
 # Visu — Kopieren (vorhandene copy-Route, nun mit null parent)
 # ===========================================================================
+
 
 async def test_copy_visu_node_to_root(client, auth_headers):
     node = await _create_visu_node(client, auth_headers, "Original Seite")

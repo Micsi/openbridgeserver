@@ -1,5 +1,4 @@
-"""
-TimescaleDB History Plugin — Phase 5
+"""TimescaleDB History Plugin — Phase 5
 
 Uses asyncpg for async PostgreSQL / TimescaleDB access.
 
@@ -21,12 +20,13 @@ Schema (auto-created on first connect):
 Configuration keys (from app_settings):
   history.timescale_dsn   e.g. "postgresql://user:pass@localhost:5432/obs"
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from obs.history.base import HistoryPlugin
@@ -35,20 +35,20 @@ logger = logging.getLogger(__name__)
 
 # Map interval strings → (time_bucket_interval, date_trunc_unit)
 _INTERVALS: dict[str, tuple[str, str | None]] = {
-    "1m":  ("1 minute",  None),
-    "5m":  ("5 minutes", None),
+    "1m": ("1 minute", None),
+    "5m": ("5 minutes", None),
     "15m": ("15 minutes", None),
     "30m": ("30 minutes", None),
-    "1h":  ("1 hour",    "hour"),
-    "6h":  ("6 hours",   None),
-    "12h": ("12 hours",  None),
-    "1d":  ("1 day",     "day"),
+    "1h": ("1 hour", "hour"),
+    "6h": ("6 hours", None),
+    "12h": ("12 hours", None),
+    "1d": ("1 day", "day"),
 }
 
 _AGGFN: dict[str, str] = {
-    "avg":  "AVG",
-    "min":  "MIN",
-    "max":  "MAX",
+    "avg": "AVG",
+    "min": "MIN",
+    "max": "MAX",
     "last": "LAST",
 }
 
@@ -66,10 +66,7 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
         try:
             import asyncpg
         except ImportError:
-            raise RuntimeError(
-                "asyncpg is required for the TimescaleDB history plugin. "
-                "Install it with: pip install asyncpg"
-            )
+            raise RuntimeError("asyncpg is required for the TimescaleDB history plugin. Install it with: pip install asyncpg")
 
         self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
         await self._ensure_schema()
@@ -98,27 +95,18 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
 
             # Try to create TimescaleDB hypertable (silently skip if not available)
             try:
-                await conn.execute(
-                    "SELECT create_hypertable('dp_history', 'time', if_not_exists => TRUE)"
-                )
+                await conn.execute("SELECT create_hypertable('dp_history', 'time', if_not_exists => TRUE)")
                 self._has_timescaledb = True
                 logger.info("TimescaleDB hypertable active for dp_history")
             except Exception:
                 self._has_timescaledb = False
-                logger.info(
-                    "TimescaleDB extension not available — using plain PostgreSQL for history"
-                )
+                logger.info("TimescaleDB extension not available — using plain PostgreSQL for history")
 
-            await conn.execute(
-                "CREATE INDEX IF NOT EXISTS dp_history_dp_id_time "
-                "ON dp_history (dp_id, time DESC)"
-            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS dp_history_dp_id_time ON dp_history (dp_id, time DESC)")
 
     def _require_pool(self):
         if self._pool is None:
-            raise RuntimeError(
-                "TimescaleDB plugin not connected. Call connect() first."
-            )
+            raise RuntimeError("TimescaleDB plugin not connected. Call connect() first.")
 
     # ------------------------------------------------------------------
     # Write
@@ -134,7 +122,7 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
         source_adapter: str | None = None,
     ) -> None:
         self._require_pool()
-        ts_dt = ts or datetime.now(timezone.utc)
+        ts_dt = ts or datetime.now(UTC)
 
         try:
             v_float = float(value)
@@ -151,7 +139,12 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
                 INSERT INTO dp_history (time, dp_id, v, raw, unit, quality)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 """,
-                ts_dt, str(datapoint_id), v_float, raw_str, unit, quality,
+                ts_dt,
+                str(datapoint_id),
+                v_float,
+                raw_str,
+                unit,
+                quality,
             )
 
     # ------------------------------------------------------------------
@@ -176,7 +169,10 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
                 ORDER BY time DESC
                 LIMIT $4
                 """,
-                str(datapoint_id), from_ts, to_ts, limit,
+                str(datapoint_id),
+                from_ts,
+                to_ts,
+                limit,
             )
 
         result = []
@@ -185,12 +181,14 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
                 v = json.loads(r["raw"]) if r["raw"] is not None else None
             except Exception:
                 v = r["raw"]
-            result.append({
-                "ts": r["time"].isoformat(),
-                "v": v,
-                "u": r["unit"],
-                "q": r["quality"] or "",
-            })
+            result.append(
+                {
+                    "ts": r["time"].isoformat(),
+                    "v": v,
+                    "u": r["unit"],
+                    "q": r["quality"] or "",
+                },
+            )
         return result
 
     # ------------------------------------------------------------------
@@ -232,11 +230,16 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
                 GROUP BY bucket
                 ORDER BY bucket
                 """,
-                str(datapoint_id), from_ts, to_ts,
+                str(datapoint_id),
+                from_ts,
+                to_ts,
             )
 
         return [
-            {"bucket": r["bucket"].isoformat() if hasattr(r["bucket"], "isoformat") else str(r["bucket"]), "v": r["v"]}
+            {
+                "bucket": r["bucket"].isoformat() if hasattr(r["bucket"], "isoformat") else str(r["bucket"]),
+                "v": r["v"],
+            }
             for r in rows
         ]
 
@@ -259,7 +262,9 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
                     GROUP BY bucket
                     ORDER BY bucket
                     """,
-                    str(datapoint_id), from_ts, to_ts,
+                    str(datapoint_id),
+                    from_ts,
+                    to_ts,
                 )
         else:
             bucket_expr = _pg_bucket_expr(bucket_str)
@@ -272,11 +277,16 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
                     WHERE dp_id = $1 AND time >= $2 AND time <= $3 AND v IS NOT NULL
                     ORDER BY {bucket_expr}, time DESC
                     """,
-                    str(datapoint_id), from_ts, to_ts,
+                    str(datapoint_id),
+                    from_ts,
+                    to_ts,
                 )
 
         return [
-            {"bucket": r["bucket"].isoformat() if hasattr(r["bucket"], "isoformat") else str(r["bucket"]), "v": r["v"]}
+            {
+                "bucket": r["bucket"].isoformat() if hasattr(r["bucket"], "isoformat") else str(r["bucket"]),
+                "v": r["v"],
+            }
             for r in rows
         ]
 
@@ -288,15 +298,13 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
         """Return True if the database is reachable."""
         try:
             import asyncpg
+
             conn = await asyncpg.connect(self._dsn, timeout=5)
             await conn.fetchval("SELECT 1")
             await conn.close()
             return True
         except ImportError:
-            raise RuntimeError(
-                "asyncpg is required for the TimescaleDB history plugin. "
-                "Install it with: pip install asyncpg"
-            )
+            raise RuntimeError("asyncpg is required for the TimescaleDB history plugin. Install it with: pip install asyncpg")
         except Exception as exc:
             logger.debug("TimescaleDB ping failed: %s", exc)
             return False
@@ -306,6 +314,7 @@ class TimescaleDBHistoryPlugin(HistoryPlugin):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _pg_bucket_expr(bucket_str: str) -> str:
     """Build a PostgreSQL expression to truncate time to the given bucket.
 
@@ -313,14 +322,14 @@ def _pg_bucket_expr(bucket_str: str) -> str:
     Uses date_trunc for clean intervals, arithmetic for others.
     """
     mapping = {
-        "1 hour":    "date_trunc('hour', time)",
-        "1 day":     "date_trunc('day', time)",
-        "1 minute":  "date_trunc('minute', time)",
+        "1 hour": "date_trunc('hour', time)",
+        "1 day": "date_trunc('day', time)",
+        "1 minute": "date_trunc('minute', time)",
         # Sub-hour buckets: round down via epoch arithmetic
-        "5 minutes":  "to_timestamp(floor(extract(epoch from time) / 300)  * 300)  AT TIME ZONE 'UTC'",
+        "5 minutes": "to_timestamp(floor(extract(epoch from time) / 300)  * 300)  AT TIME ZONE 'UTC'",
         "15 minutes": "to_timestamp(floor(extract(epoch from time) / 900)  * 900)  AT TIME ZONE 'UTC'",
         "30 minutes": "to_timestamp(floor(extract(epoch from time) / 1800) * 1800) AT TIME ZONE 'UTC'",
-        "6 hours":    "to_timestamp(floor(extract(epoch from time) / 21600) * 21600) AT TIME ZONE 'UTC'",
-        "12 hours":   "to_timestamp(floor(extract(epoch from time) / 43200) * 43200) AT TIME ZONE 'UTC'",
+        "6 hours": "to_timestamp(floor(extract(epoch from time) / 21600) * 21600) AT TIME ZONE 'UTC'",
+        "12 hours": "to_timestamp(floor(extract(epoch from time) / 43200) * 43200) AT TIME ZONE 'UTC'",
     }
     return mapping.get(bucket_str, "date_trunc('hour', time)")

@@ -1,5 +1,4 @@
-"""
-Unit tests for obs/core/converter.py
+"""Unit tests for obs/core/converter.py
 
 Covers:
   - ConversionResult dataclass
@@ -8,6 +7,7 @@ Covers:
   - Generic fallback path
   - can_convert() / conversion_has_loss() helpers
 """
+
 from __future__ import annotations
 
 import pytest
@@ -19,10 +19,10 @@ from obs.core.converter import (
     convert,
 )
 
-
 # ===========================================================================
 # Helpers
 # ===========================================================================
+
 
 def assert_ok(result: ConversionResult, expected_value, expected_type=None):
     assert not result.loss, f"Unexpected loss: {result.loss_description}"
@@ -42,6 +42,7 @@ def assert_lossy(result: ConversionResult, expected_value=None):
 # ConversionResult dataclass
 # ===========================================================================
 
+
 class TestConversionResult:
     def test_defaults(self):
         r = ConversionResult(value=42)
@@ -57,6 +58,7 @@ class TestConversionResult:
 # ===========================================================================
 # FLOAT → *
 # ===========================================================================
+
 
 class TestFloatToInteger:
     def test_whole_number_no_loss(self):
@@ -96,12 +98,12 @@ class TestFloatToBoolean:
     def test_non_binary_positive_is_lossy(self):
         r = convert(0.5, "FLOAT", "BOOLEAN")
         assert_lossy(r)
-        assert r.value is True   # bool(0.5) == True
+        assert r.value is True  # bool(0.5) == True
 
     def test_non_binary_negative_is_lossy(self):
         r = convert(-1.0, "FLOAT", "BOOLEAN")
         assert_lossy(r)
-        assert r.value is True   # bool(-1.0) == True
+        assert r.value is True  # bool(-1.0) == True
 
     def test_large_float_is_lossy(self):
         r = convert(99.9, "FLOAT", "BOOLEAN")
@@ -123,6 +125,7 @@ class TestFloatToString:
 # ===========================================================================
 # INTEGER → *
 # ===========================================================================
+
 
 class TestIntegerToFloat:
     def test_positive(self):
@@ -166,6 +169,7 @@ class TestIntegerToString:
 # BOOLEAN → *
 # ===========================================================================
 
+
 class TestBooleanToInteger:
     def test_true_to_one(self):
         assert_ok(convert(True, "BOOLEAN", "INTEGER"), 1, int)
@@ -198,11 +202,12 @@ class TestBooleanToString:
 # STRING → *
 # ===========================================================================
 
+
 class TestStringToFloat:
     def test_valid_number(self):
         r = convert("3.14", "STRING", "FLOAT")
         assert r.value == pytest.approx(3.14)
-        assert r.loss is True   # STRING → anything is always lossy
+        assert r.loss is True  # STRING → anything is always lossy
 
     def test_integer_string(self):
         r = convert("42", "STRING", "FLOAT")
@@ -232,16 +237,27 @@ class TestStringToInteger:
 
 
 class TestStringToBoolean:
-    @pytest.mark.parametrize("s, expected", [
-        ("true", True), ("True", True), ("TRUE", True),
-        ("1", True), ("yes", True), ("on", True),
-        ("false", False), ("False", False), ("FALSE", False),
-        ("0", False), ("no", False), ("off", False),
-    ])
+    @pytest.mark.parametrize(
+        "s, expected",
+        [
+            ("true", True),
+            ("True", True),
+            ("TRUE", True),
+            ("1", True),
+            ("yes", True),
+            ("on", True),
+            ("false", False),
+            ("False", False),
+            ("FALSE", False),
+            ("0", False),
+            ("no", False),
+            ("off", False),
+        ],
+    )
     def test_recognized_strings(self, s, expected):
         r = convert(s, "STRING", "BOOLEAN")
         assert r.value is expected
-        assert r.loss is True   # always lossy for STRING source
+        assert r.loss is True  # always lossy for STRING source
 
     def test_ambiguous_string_is_lossy(self):
         r = convert("maybe", "STRING", "BOOLEAN")
@@ -253,13 +269,17 @@ class TestStringToBoolean:
 # Same-type → no conversion
 # ===========================================================================
 
+
 class TestSameType:
-    @pytest.mark.parametrize("value, dtype", [
-        (3.14, "FLOAT"),
-        (42, "INTEGER"),
-        (True, "BOOLEAN"),
-        ("hello", "STRING"),
-    ])
+    @pytest.mark.parametrize(
+        "value, dtype",
+        [
+            (3.14, "FLOAT"),
+            (42, "INTEGER"),
+            (True, "BOOLEAN"),
+            ("hello", "STRING"),
+        ],
+    )
     def test_same_type_returns_original(self, value, dtype):
         r = convert(value, dtype, dtype)
         assert r.value == value
@@ -271,6 +291,7 @@ class TestSameType:
 # Generic fallback (no direct converter)
 # ===========================================================================
 
+
 class TestFallback:
     def test_unknown_to_float_uses_string_fallback(self):
         r = convert(b"\x01\x02", "UNKNOWN", "FLOAT")
@@ -279,7 +300,7 @@ class TestFallback:
     def test_float_to_date_uses_string_fallback(self):
         r = convert(1.0, "FLOAT", "DATE")
         assert r.loss is True
-        assert r.value == str(float(1.0))
+        assert r.value == str(1.0)
 
     def test_fallback_never_raises(self):
         # Should never raise regardless of inputs
@@ -291,21 +312,25 @@ class TestFallback:
 # can_convert()
 # ===========================================================================
 
+
 class TestCanConvert:
-    @pytest.mark.parametrize("f, t", [
-        ("FLOAT",   "INTEGER"),
-        ("FLOAT",   "BOOLEAN"),
-        ("FLOAT",   "STRING"),
-        ("INTEGER", "FLOAT"),
-        ("INTEGER", "BOOLEAN"),
-        ("INTEGER", "STRING"),
-        ("BOOLEAN", "INTEGER"),
-        ("BOOLEAN", "FLOAT"),
-        ("BOOLEAN", "STRING"),
-        ("STRING",  "FLOAT"),
-        ("STRING",  "INTEGER"),
-        ("STRING",  "BOOLEAN"),
-    ])
+    @pytest.mark.parametrize(
+        "f, t",
+        [
+            ("FLOAT", "INTEGER"),
+            ("FLOAT", "BOOLEAN"),
+            ("FLOAT", "STRING"),
+            ("INTEGER", "FLOAT"),
+            ("INTEGER", "BOOLEAN"),
+            ("INTEGER", "STRING"),
+            ("BOOLEAN", "INTEGER"),
+            ("BOOLEAN", "FLOAT"),
+            ("BOOLEAN", "STRING"),
+            ("STRING", "FLOAT"),
+            ("STRING", "INTEGER"),
+            ("STRING", "BOOLEAN"),
+        ],
+    )
     def test_known_conversions(self, f, t):
         assert can_convert(f, t) is True
 
@@ -321,6 +346,7 @@ class TestCanConvert:
 # ===========================================================================
 # conversion_has_loss()
 # ===========================================================================
+
 
 class TestConversionHasLoss:
     def test_same_type_no_loss(self):

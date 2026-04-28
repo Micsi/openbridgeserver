@@ -1,5 +1,4 @@
-"""
-Wetter-Proxy — holt Wetterdaten von einer konfigurierten API-URL.
+"""Wetter-Proxy — holt Wetterdaten von einer konfigurierten API-URL.
 
 GET /api/v1/weather/fetch?url=…
 
@@ -11,6 +10,7 @@ SSRF-Schutz:
     gesperrte Netzwerkbereiche geprüft (Loopback, Link-local, Metadata)
   - follow_redirects=False verhindert Redirect-basiertes SSRF
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -45,8 +45,7 @@ _BLOCKED_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
 
 
 async def _check_ssrf(url: str) -> None:
-    """
-    Löst den Hostnamen der URL auf und verwirft alle Adressen, die in
+    """Löst den Hostnamen der URL auf und verwirft alle Adressen, die in
     einem gesperrten Netzwerk liegen (SSRF-Prävention).
 
     Private Netzwerke (192.168.x.x, 10.x.x.x) sind bewusst erlaubt,
@@ -55,6 +54,7 @@ async def _check_ssrf(url: str) -> None:
     Raises:
         HTTPException 400 — ungültige URL oder gesperrte Ziel-IP
         HTTPException 502 — Hostname nicht auflösbar
+
     """
     try:
         parsed = urlparse(url)
@@ -72,9 +72,7 @@ async def _check_ssrf(url: str) -> None:
         )
 
     try:
-        addr_infos = await asyncio.to_thread(
-            socket.getaddrinfo, hostname, None, 0, socket.SOCK_STREAM
-        )
+        addr_infos = await asyncio.to_thread(socket.getaddrinfo, hostname, None, 0, socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -91,21 +89,18 @@ async def _check_ssrf(url: str) -> None:
             if ip in net:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"URL-Ziel nicht erlaubt: die aufgelöste Adresse {ip} "
-                        f"liegt in einem gesperrten Netzwerkbereich"
-                    ),
+                    detail=(f"URL-Ziel nicht erlaubt: die aufgelöste Adresse {ip} liegt in einem gesperrten Netzwerkbereich"),
                 )
 
 
 # ── Authentifizierung ──────────────────────────────────────────────────────────
 
+
 async def _weather_auth(
     request: Request,
     _token: str = Query("", alias="_token", description="JWT als Query-Parameter"),
 ) -> str:
-    """
-    Akzeptiert JWT entweder als 'Authorization: Bearer …'-Header
+    """Akzeptiert JWT entweder als 'Authorization: Bearer …'-Header
     oder als URL-Query-Parameter '?_token=…'.
     """
     auth_header = request.headers.get("Authorization", "")
@@ -122,13 +117,13 @@ async def _weather_auth(
 
 # ── Fetch-Endpunkt ─────────────────────────────────────────────────────────────
 
+
 @router.get("/fetch")
 async def fetch_weather(
     url: str = Query(..., description="Vollständige Wetter-API-URL (inkl. API-Key)"),
     _user: str = Depends(_weather_auth),
 ) -> JSONResponse:
-    """
-    Holt Wetterdaten von der konfigurierten API-URL und gibt sie als JSON zurück.
+    """Holt Wetterdaten von der konfigurierten API-URL und gibt sie als JSON zurück.
     Der API-Key wird als Teil der URL übergeben (z.B. OpenWeatherMap appid=…).
 
     Unterstützte Dienste:

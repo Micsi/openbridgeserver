@@ -1,0 +1,117 @@
+name: "Release"
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions: {}
+
+env:
+  PROJECT_NAME: openbridgeserver
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Extract release notes
+        run: |
+          TAG_NAME="${GITHUB_REF##*/}"
+          REPO="${{ github.repository }}"
+          PROJECT="${{ env.PROJECT_NAME }}"
+          python3 <<EOF
+          import re, os
+          tag = "${TAG_NAME}"
+          repo = "${REPO}"
+          project = "${PROJECT}"
+          # Remove -RC* suffix for release candidates
+          base_version = re.sub(r'-RC\d*$', '', tag)
+          with open('RELEASENOTES.md', 'r') as f:
+              lines = f.readlines()
+          pattern = re.compile(r'^##\s+' + re.escape(base_version) + r'\s*$')
+          notes = []
+          in_section = False
+          for line in lines:
+              if pattern.match(line):
+                  in_section = True
+                  continue
+              if in_section and line.startswith('## '):
+                  break
+              if in_section:
+                  notes.append(line.rstrip())
+          image = f"ghcr.io/{repo.lower()}:{tag}"
+          notes += [
+              '',
+              '### Docker Image',
+              '',
+              '```bash',
+              f'docker pull {image}',
+              '```',
+              '',
+              f'[View on GitHub Container Registry](https://github.com/{repo}/pkgs/container/{project})',
+          ]
+          with open('.github/RELEASENOTES_FOOTER.md', 'r') as footer:
+              notes += ['', footer.read().strip()]
+          with open('release_notes.txt', 'w') as out:
+              out.write('\n'.join(notes).strip())
+          EOF
+
+      - name: Set version and hash variables
+        run: |
+          echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
+          echo "GITHASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Set prerelease flag
+        run: |
+          if [[ "${GITHUB_REF##*/}" =~ -RC ]]; then
+            echo "PRERELEASE=true" >> $GITHUB_ENV
+          else
+            echo "PRERELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create GitHub Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body_path: release_notes.txt
+          prerelease: ${{ env.PRERELEASE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

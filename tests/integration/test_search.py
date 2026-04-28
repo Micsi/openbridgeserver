@@ -1,5 +1,4 @@
-"""
-Integration Tests — Search API (Issue #182)
+"""Integration Tests — Search API (Issue #182)
 
 Covers enhanced search features:
   - Name substring match
@@ -12,11 +11,12 @@ Covers enhanced search features:
   - Pagination
   - Empty results
 """
+
 from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -65,8 +65,9 @@ async def _insert_binding(dp_id: str, config: dict) -> None:
     Only the minimum required columns are set; nullable columns use defaults.
     """
     from obs.db.database import get_db
+
     db = get_db()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute_and_commit(
         """INSERT INTO adapter_bindings
                (id, datapoint_id, adapter_type, direction, config, enabled, created_at, updated_at)
@@ -97,6 +98,7 @@ def _ids(body: dict) -> set[str]:
 # ---------------------------------------------------------------------------
 # Name substring
 # ---------------------------------------------------------------------------
+
 
 async def test_search_by_name_substring(client, auth_headers):
     name = f"SRH-Name-{uuid.uuid4().hex[:8]}"
@@ -134,6 +136,7 @@ async def test_search_by_name_case_insensitive(client, auth_headers):
 # UUID search
 # ---------------------------------------------------------------------------
 
+
 async def test_search_by_full_uuid(client, auth_headers):
     dp = await _create(client, auth_headers, f"SRH-UUID-full-{uuid.uuid4().hex[:6]}")
     try:
@@ -158,6 +161,7 @@ async def test_search_by_partial_uuid(client, auth_headers):
 # Binding config substring
 # ---------------------------------------------------------------------------
 
+
 async def test_search_by_binding_config_substring(client, auth_headers):
     unique_ga = f"9/{uuid.uuid4().int % 100}/{uuid.uuid4().int % 256}"
     dp = await _create(client, auth_headers, f"SRH-Binding-{uuid.uuid4().hex[:6]}")
@@ -171,7 +175,7 @@ async def test_search_by_binding_config_substring(client, auth_headers):
 
 async def test_search_binding_config_does_not_match_other_dp(client, auth_headers):
     unique_ga = f"7/{uuid.uuid4().int % 100}/{uuid.uuid4().int % 256}"
-    dp_with    = await _create(client, auth_headers, f"SRH-Bind-With-{uuid.uuid4().hex[:6]}")
+    dp_with = await _create(client, auth_headers, f"SRH-Bind-With-{uuid.uuid4().hex[:6]}")
     dp_without = await _create(client, auth_headers, f"SRH-Bind-None-{uuid.uuid4().hex[:6]}")
     try:
         await _insert_binding(dp_with["id"], {"group_address": unique_ga})
@@ -187,10 +191,11 @@ async def test_search_binding_config_does_not_match_other_dp(client, auth_header
 # Type filter
 # ---------------------------------------------------------------------------
 
+
 async def test_search_type_filter(client, auth_headers):
     suffix = uuid.uuid4().hex[:6]
     dp_float = await _create(client, auth_headers, f"SRH-Type-F-{suffix}", data_type="FLOAT")
-    dp_bool  = await _create(client, auth_headers, f"SRH-Type-B-{suffix}", data_type="BOOLEAN")
+    dp_bool = await _create(client, auth_headers, f"SRH-Type-B-{suffix}", data_type="BOOLEAN")
     try:
         body = await _search(client, auth_headers, type="BOOLEAN")
         assert dp_bool["id"] in _ids(body)
@@ -204,9 +209,10 @@ async def test_search_type_filter(client, auth_headers):
 # Tag filter
 # ---------------------------------------------------------------------------
 
+
 async def test_search_tag_filter(client, auth_headers):
     unique_tag = f"zone-{uuid.uuid4().hex[:8]}"
-    dp_tagged  = await _create(client, auth_headers, f"SRH-Tag-Y-{uuid.uuid4().hex[:6]}", tags=[unique_tag])
+    dp_tagged = await _create(client, auth_headers, f"SRH-Tag-Y-{uuid.uuid4().hex[:6]}", tags=[unique_tag])
     dp_untagged = await _create(client, auth_headers, f"SRH-Tag-N-{uuid.uuid4().hex[:6]}", tags=[])
     try:
         body = await _search(client, auth_headers, tag=unique_tag)
@@ -220,6 +226,7 @@ async def test_search_tag_filter(client, auth_headers):
 # ---------------------------------------------------------------------------
 # Quality filter
 # ---------------------------------------------------------------------------
+
 
 async def test_search_quality_good(client, auth_headers):
     """A DP that received a value has quality=good; must appear in quality=good search."""
@@ -257,6 +264,7 @@ async def test_search_quality_uncertain(client, auth_headers):
 # Sort
 # ---------------------------------------------------------------------------
 
+
 async def test_search_sort_name_asc(client, auth_headers):
     suffix = uuid.uuid4().hex[:6]
     dp_a = await _create(client, auth_headers, f"AAA-SRH-Sort-{suffix}")
@@ -287,6 +295,7 @@ async def test_search_sort_name_desc(client, auth_headers):
 # Pagination
 # ---------------------------------------------------------------------------
 
+
 async def test_search_pagination(client, auth_headers):
     prefix = f"SRH-Pag-{uuid.uuid4().hex[:6]}"
     created = []
@@ -312,6 +321,7 @@ async def test_search_pagination(client, auth_headers):
 # ---------------------------------------------------------------------------
 # Empty results
 # ---------------------------------------------------------------------------
+
 
 async def test_search_no_results(client, auth_headers):
     body = await _search(client, auth_headers, q="ZZZZ-NORESULT-XYZXYZ-99999")

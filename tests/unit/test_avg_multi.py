@@ -1,5 +1,4 @@
-"""
-Unit tests for the avg_multi node (Mittelwert / Gleitender Mittelwert)
+"""Unit tests for the avg_multi node (Mittelwert / Gleitender Mittelwert)
 and the persist_state toggle in the manager's persistence logic.
 
 Covers:
@@ -11,18 +10,19 @@ Covers:
   - persist_state: False → Node-Zustand wird aus dem zu persistierenden Snapshot ausgeschlossen
   - persist_state: True (Standard) → Node-Zustand wird persistiert
 """
+
 from __future__ import annotations
 
 import datetime
+
 import pytest
 
-from obs.logic.executor import GraphExecutor
 from tests.unit.conftest import make_executor, node
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _run_avg(data: dict, inputs: dict, state: dict | None = None) -> dict:
     """Execute a single avg_multi node and return its outputs."""
@@ -36,6 +36,7 @@ def _run_avg(data: dict, inputs: dict, state: dict | None = None) -> dict:
 # ===========================================================================
 # avg_multi — aktueller Mittelwert
 # ===========================================================================
+
 
 class TestAvgMultiCurrentAverage:
     def test_two_equal_inputs(self):
@@ -82,23 +83,49 @@ class TestAvgMultiCurrentAverage:
 # avg_multi — Zeitfenster-Ausgänge
 # ===========================================================================
 
+
 class TestAvgMultiWindowOutputs:
     def test_all_window_outputs_present(self):
         out, _ = _run_avg({"input_count": 2}, {"in_1": 5.0, "in_2": 5.0})
-        for key in ("avg", "avg_1m", "avg_1h", "avg_1d", "avg_7d",
-                    "avg_14d", "avg_30d", "avg_180d", "avg_365d"):
+        for key in (
+            "avg",
+            "avg_1m",
+            "avg_1h",
+            "avg_1d",
+            "avg_7d",
+            "avg_14d",
+            "avg_30d",
+            "avg_180d",
+            "avg_365d",
+        ):
             assert key in out, f"Output '{key}' missing"
 
     def test_first_value_appears_in_all_windows(self):
         out, _ = _run_avg({"input_count": 2}, {"in_1": 20.0, "in_2": 20.0})
-        for key in ("avg_1m", "avg_1h", "avg_1d", "avg_7d",
-                    "avg_14d", "avg_30d", "avg_180d", "avg_365d"):
+        for key in (
+            "avg_1m",
+            "avg_1h",
+            "avg_1d",
+            "avg_7d",
+            "avg_14d",
+            "avg_30d",
+            "avg_180d",
+            "avg_365d",
+        ):
             assert out[key] == pytest.approx(20.0), f"Window '{key}' should be 20.0"
 
     def test_no_inputs_all_windows_none(self):
         out, _ = _run_avg({"input_count": 2}, {})
-        for key in ("avg_1m", "avg_1h", "avg_1d", "avg_7d",
-                    "avg_14d", "avg_30d", "avg_180d", "avg_365d"):
+        for key in (
+            "avg_1m",
+            "avg_1h",
+            "avg_1d",
+            "avg_7d",
+            "avg_14d",
+            "avg_30d",
+            "avg_180d",
+            "avg_365d",
+        ):
             assert out[key] is None, f"Window '{key}' should be None when no inputs"
 
     def test_window_avg_is_mean_of_stored_samples(self):
@@ -120,10 +147,7 @@ class TestAvgMultiWindowOutputs:
         exc.execute({"a": {"in_1": 100.0}})
 
         # Backdate the one existing sample to 2 minutes ago
-        old_ts = (
-            datetime.datetime.now(datetime.timezone.utc)
-            - datetime.timedelta(minutes=2)
-        ).isoformat()
+        old_ts = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=2)).isoformat()
         state["a"]["samples"][0][0] = old_ts
 
         # New value = 10.0; the 1-min window must contain ONLY this sample
@@ -139,10 +163,7 @@ class TestAvgMultiWindowOutputs:
         exc.execute({"a": {"in_1": 100.0}})
 
         # Backdate to 2 minutes ago
-        old_ts = (
-            datetime.datetime.now(datetime.timezone.utc)
-            - datetime.timedelta(minutes=2)
-        ).isoformat()
+        old_ts = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=2)).isoformat()
         state["a"]["samples"][0][0] = old_ts
 
         exc2 = make_executor([n], hysteresis_state=state)
@@ -157,6 +178,7 @@ class TestAvgMultiWindowOutputs:
 # avg_multi — Puffer-Verwaltung
 # ===========================================================================
 
+
 class TestAvgMultiBuffer:
     def test_samples_accumulate_across_runs(self):
         state: dict = {}
@@ -167,10 +189,7 @@ class TestAvgMultiBuffer:
     def test_buffer_trimmed_to_365_days(self):
         """Very old samples (>365 days) must be removed."""
         state: dict = {"a": {"samples": []}}
-        old_ts = (
-            datetime.datetime.now(datetime.timezone.utc)
-            - datetime.timedelta(days=400)
-        ).isoformat()
+        old_ts = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=400)).isoformat()
         # Inject a sample that is 400 days old
         state["a"]["samples"].append([old_ts, 999.0])
 
@@ -191,9 +210,9 @@ class TestAvgMultiBuffer:
 # persist_state toggle — manager-level filtering
 # ===========================================================================
 
+
 class TestPersistStateFiltering:
-    """
-    Tests for the manager's persist_state filtering logic.
+    """Tests for the manager's persist_state filtering logic.
 
     We test the filtering logic in isolation without running the full
     LogicManager stack by replicating the exact filter the manager applies:
@@ -204,6 +223,7 @@ class TestPersistStateFiltering:
     def _apply_filter(self, flow_nodes: list[dict], hyst: dict) -> dict:
         """Simulate the manager's persist_state filter (same logic as manager.py)."""
         from obs.logic.models import FlowData
+
         flow = FlowData.model_validate({"nodes": flow_nodes, "edges": []})
         no_persist = {n.id for n in flow.nodes if n.data.get("persist_state") is False}
         return {nid: s for nid, s in hyst.items() if nid not in no_persist}
@@ -243,13 +263,13 @@ class TestPersistStateFiltering:
 
     def test_avg_multi_persist_state_false_excluded(self):
         n = node("m", "avg_multi", {"persist_state": False})
-        hyst = {"m": {"samples": [[datetime.datetime.now(datetime.timezone.utc).isoformat(), 42.0]]}}
+        hyst = {"m": {"samples": [[datetime.datetime.now(datetime.UTC).isoformat(), 42.0]]}}
         result = self._apply_filter([n], hyst)
         assert "m" not in result
 
     def test_avg_multi_persist_state_true_included(self):
         n = node("m", "avg_multi", {"persist_state": True})
-        hyst = {"m": {"samples": [[datetime.datetime.now(datetime.timezone.utc).isoformat(), 42.0]]}}
+        hyst = {"m": {"samples": [[datetime.datetime.now(datetime.UTC).isoformat(), 42.0]]}}
         result = self._apply_filter([n], hyst)
         assert "m" in result
 

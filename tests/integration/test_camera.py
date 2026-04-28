@@ -1,5 +1,4 @@
-"""
-Integration Tests — Kamera-Proxy
+"""Integration Tests — Kamera-Proxy
 
 GET /api/v1/camera/proxy
 
@@ -22,6 +21,7 @@ SSRF-Schutz:
   14. Link-local / Cloud-Metadata (169.254.169.254) → 400
   15. Loopback IPv6 (::1) → 400
 """
+
 from __future__ import annotations
 
 import base64
@@ -37,10 +37,9 @@ import obs.api.v1.camera as _camera_module
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture()
+@pytest.fixture
 def bypass_ssrf():
-    """
-    Deaktiviert SSRF-Blocking für Tests die einen lokalen Mock-Server auf
+    """Deaktiviert SSRF-Blocking für Tests die einen lokalen Mock-Server auf
     127.0.0.1 verwenden. Die SSRF-Tests (12–15) dürfen diese Fixture NICHT nutzen.
     """
     with unittest.mock.patch.object(_camera_module, "_BLOCKED_NETWORKS", []):
@@ -49,14 +48,19 @@ def bypass_ssrf():
 
 # ── Hilfs-HTTP-Server ──────────────────────────────────────────────────────────
 
+
 class _MockCameraServer:
-    """
-    Einfacher HTTP-Server in einem Daemon-Thread der Testanfragen der Kamera simuliert.
+    """Einfacher HTTP-Server in einem Daemon-Thread der Testanfragen der Kamera simuliert.
     Über `status` und `content_type` lässt sich das Verhalten pro Test steuern.
     """
 
-    def __init__(self, status: int = 200, content_type: str = "image/jpeg",
-                 body: bytes = b"\xff\xd8\xff\xe0JFIF", head_status: int | None = None):
+    def __init__(
+        self,
+        status: int = 200,
+        content_type: str = "image/jpeg",
+        body: bytes = b"\xff\xd8\xff\xe0JFIF",
+        head_status: int | None = None,
+    ):
         self.status = status
         self.content_type = content_type
         self.body = body
@@ -102,6 +106,7 @@ class _MockCameraServer:
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
+
 # 1. Kein Token
 async def test_proxy_no_auth_returns_401(client):
     resp = await client.get("/api/v1/camera/proxy?url=http://example.com/cam")
@@ -110,9 +115,7 @@ async def test_proxy_no_auth_returns_401(client):
 
 # 2. Ungültiger Token
 async def test_proxy_invalid_token_returns_401(client):
-    resp = await client.get(
-        "/api/v1/camera/proxy?url=http://example.com/cam&_token=not.a.valid.jwt"
-    )
+    resp = await client.get("/api/v1/camera/proxy?url=http://example.com/cam&_token=not.a.valid.jwt")
     assert resp.status_code == 401
 
 
@@ -200,8 +203,7 @@ async def test_proxy_basic_auth_forwarded(client, auth_headers, bypass_ssrf):
     cam = _MockCameraServer()
     try:
         resp = await client.get(
-            f"/api/v1/camera/proxy?url={cam.base_url}/cam"
-            "&username=testuser&password=s3cr3t",
+            f"/api/v1/camera/proxy?url={cam.base_url}/cam&username=testuser&password=s3cr3t",
             headers=auth_headers,
         )
         assert resp.status_code == 200
@@ -218,8 +220,7 @@ async def test_proxy_apikey_appended_to_url(client, auth_headers, bypass_ssrf):
     cam = _MockCameraServer()
     try:
         resp = await client.get(
-            f"/api/v1/camera/proxy?url={cam.base_url}/cam"
-            "&apikey_param=token&apikey_value=secret123",
+            f"/api/v1/camera/proxy?url={cam.base_url}/cam&apikey_param=token&apikey_value=secret123",
             headers=auth_headers,
         )
         assert resp.status_code == 200
@@ -244,6 +245,7 @@ async def test_proxy_head_405_proceeds(client, auth_headers, bypass_ssrf):
 
 
 # ── SSRF-Schutz ────────────────────────────────────────────────────────────────
+
 
 # 12. Loopback IPv4 direkt als IP-Literal
 async def test_proxy_ssrf_loopback_ipv4_blocked(client, auth_headers):

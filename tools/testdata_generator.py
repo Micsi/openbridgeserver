@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-open bridge server Test Data Generator — Issue #110
+"""open bridge server Test Data Generator — Issue #110
 
 Generates configurable test traffic for KNX, Modbus TCP, and MQTT adapters.
 Each protocol runs as an independent async task; all three can run in parallel.
@@ -23,6 +22,7 @@ KNX mode:
     open bridge server KNX adapter connects to this server with connection_type: tunneling.
     No physical KNX bus or external gateway required.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,7 +33,7 @@ import random
 import struct
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +50,7 @@ logger = logging.getLogger("testdata")
 # ---------------------------------------------------------------------------
 # Value generation
 # ---------------------------------------------------------------------------
+
 
 class ValueGenerator:
     """Stateful value generator; call .next() to get the next value."""
@@ -101,18 +102,18 @@ class ValueGenerator:
 # ---------------------------------------------------------------------------
 
 # Service type identifiers
-_SVC_CONNECT_REQUEST     = 0x0205
-_SVC_CONNECT_RESPONSE    = 0x0206
-_SVC_CONNSTATE_REQUEST   = 0x0207
-_SVC_CONNSTATE_RESPONSE  = 0x0208
-_SVC_DISCONNECT_REQUEST  = 0x0209
+_SVC_CONNECT_REQUEST = 0x0205
+_SVC_CONNECT_RESPONSE = 0x0206
+_SVC_CONNSTATE_REQUEST = 0x0207
+_SVC_CONNSTATE_RESPONSE = 0x0208
+_SVC_DISCONNECT_REQUEST = 0x0209
 _SVC_DISCONNECT_RESPONSE = 0x020A
-_SVC_TUNNELING_REQUEST   = 0x0420
-_SVC_TUNNELING_ACK       = 0x0421
+_SVC_TUNNELING_REQUEST = 0x0420
+_SVC_TUNNELING_ACK = 0x0421
 
 # Error codes
-_E_NO_ERROR            = 0x00
-_E_CONNECTION_ID       = 0x21
+_E_NO_ERROR = 0x00
+_E_CONNECTION_ID = 0x21
 _E_NO_MORE_CONNECTIONS = 0x24
 
 # Individual address used as telegram source (15.15.255 — typical tool address)
@@ -137,8 +138,7 @@ def _ga_to_int(ga: str) -> int:
 
 
 def _build_cemi(src_ia: int, ga: int, raw: bytes, is_boolean: bool) -> bytes:
-    """
-    Build a cEMI L_DATA.ind frame for a GroupValueWrite.
+    """Build a cEMI L_DATA.ind frame for a GroupValueWrite.
 
     Short format (is_boolean=True, 1-bit value):
         NPDU_LEN=1, APDU=[0x00, 0x80 | value]
@@ -146,9 +146,9 @@ def _build_cemi(src_ia: int, ga: int, raw: bytes, is_boolean: bool) -> bytes:
     Standard format (multi-byte payload):
         NPDU_LEN=1+len(raw), APDU=[0x00, 0x80] + raw
     """
-    mc    = 0x29   # L_DATA.ind
-    ctrl1 = 0xBC   # standard frame, broadcast, normal priority, no repeat
-    ctrl2 = 0xE0   # group address, hop count 6
+    mc = 0x29  # L_DATA.ind
+    ctrl1 = 0xBC  # standard frame, broadcast, normal priority, no repeat
+    ctrl2 = 0xE0  # group address, hop count 6
 
     src_h, src_l = (src_ia >> 8) & 0xFF, src_ia & 0xFF
     dst_h, dst_l = (ga >> 8) & 0xFF, ga & 0xFF
@@ -166,7 +166,7 @@ def _build_cemi(src_ia: int, ga: int, raw: bytes, is_boolean: bool) -> bytes:
 @dataclass
 class _TunnelClient:
     channel_id: int
-    data_addr: tuple[str, int]   # where to send TUNNELING_REQUEST
+    data_addr: tuple[str, int]  # where to send TUNNELING_REQUEST
     seq_send: int = 0
 
 
@@ -188,8 +188,7 @@ class _KnxServerProtocol(asyncio.DatagramProtocol):
 
 
 class KnxTunnelingServer:
-    """
-    Minimal KNX/IP tunneling server (gateway simulator).
+    """Minimal KNX/IP tunneling server (gateway simulator).
 
     Accepts up to 4 simultaneous tunneling connections.
     Pushes GroupValueWrite telegrams to every connected client via
@@ -234,9 +233,7 @@ class KnxTunnelingServer:
         ga_int = _ga_to_int(ga_str)
         cemi = _build_cemi(_SERVER_IA, ga_int, raw, is_boolean)
         for client in list(self._clients.values()):
-            body = struct.pack(
-                ">BBBB", 0x04, client.channel_id, client.seq_send & 0xFF, 0x00
-            ) + cemi
+            body = struct.pack(">BBBB", 0x04, client.channel_id, client.seq_send & 0xFF, 0x00) + cemi
             frame = _knxip_frame(_SVC_TUNNELING_REQUEST, body)
             try:
                 self._transport.sendto(frame, client.data_addr)
@@ -283,7 +280,7 @@ class KnxTunnelingServer:
             return
 
         # Parse data endpoint HPAI from CONNECT_REQUEST body (offset 8..15)
-        data_addr = addr   # default: use UDP source
+        data_addr = addr  # default: use UDP source
         if len(body) >= 16:
             hpai = body[8:16]
             if hpai[0] == 0x08 and hpai[1] == 0x01:
@@ -310,7 +307,10 @@ class KnxTunnelingServer:
             self._transport.sendto(resp, addr)
         logger.info(
             "KNX: client connected from %s → data=%s  channel=%d  (total=%d)",
-            addr, data_addr, channel_id, len(self._clients),
+            addr,
+            data_addr,
+            channel_id,
+            len(self._clients),
         )
 
     # ------------------------------------------------------------------
@@ -340,7 +340,8 @@ class KnxTunnelingServer:
             self._transport.sendto(resp, addr)
         logger.info(
             "KNX: client disconnected channel=%d  (remaining=%d)",
-            channel_id, len(self._clients),
+            channel_id,
+            len(self._clients),
         )
 
     # ------------------------------------------------------------------
@@ -363,6 +364,7 @@ class KnxTunnelingServer:
 # Rate limiter — token-bucket style, max N calls per second
 # ---------------------------------------------------------------------------
 
+
 class _RateLimiter:
     """Serialises async callers to at most `rate` calls per second."""
 
@@ -383,6 +385,7 @@ class _RateLimiter:
 # ---------------------------------------------------------------------------
 # KNX generator — starts the tunneling server and sends configured telegrams
 # ---------------------------------------------------------------------------
+
 
 async def knx_generator(cfg: dict) -> None:
     _root = Path(__file__).resolve().parent.parent
@@ -425,15 +428,15 @@ async def knx_generator(cfg: dict) -> None:
                 server.send_telegram(ga_str, raw, is_boolean)
                 logger.info(
                     "KNX  GA=%-10s DPT=%-12s value=%-10s  clients=%d",
-                    ga_str, dpt_id, value, server.client_count,
+                    ga_str,
+                    dpt_id,
+                    value,
+                    server.client_count,
                 )
             except Exception:
                 logger.exception("KNX send failed GA=%s", ga_str)
 
-    tasks = [
-        asyncio.create_task(send_loop(tc), name=f"knx-{tc['group_address']}")
-        for tc in cfg.get("telegrams", [])
-    ]
+    tasks = [asyncio.create_task(send_loop(tc), name=f"knx-{tc['group_address']}") for tc in cfg.get("telegrams", [])]
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
@@ -447,6 +450,7 @@ async def knx_generator(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 # Modbus TCP generator (acts as a server/slave — open bridge server polls it)
 # ---------------------------------------------------------------------------
+
 
 async def modbus_generator(cfg: dict) -> None:
     try:
@@ -525,15 +529,18 @@ async def modbus_generator(cfg: dict) -> None:
                     else:
                         regs = encode_value(value, data_format, scale_factor=scale_factor)
                         await ctx.async_setValues(unit_id, fc, address, regs)
-                        logger.info("Modbus %-16s[%d] = %s  raw=%s", reg_type, address, value, regs)
+                        logger.info(
+                            "Modbus %-16s[%d] = %s  raw=%s",
+                            reg_type,
+                            address,
+                            value,
+                            regs,
+                        )
                 except Exception:
                     logger.exception("Modbus update failed register=%d", address)
                 await asyncio.sleep(interval)
 
-        tasks = [
-            asyncio.create_task(update_one(rc), name=f"modbus-reg-{rc.get('address', 0)}")
-            for rc in cfg.get("registers", [])
-        ]
+        tasks = [asyncio.create_task(update_one(rc), name=f"modbus-reg-{rc.get('address', 0)}") for rc in cfg.get("registers", [])]
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
@@ -559,6 +566,7 @@ async def modbus_generator(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 # MQTT generator (publisher — open bridge server subscribes to these topics)
 # ---------------------------------------------------------------------------
+
 
 async def mqtt_generator(cfg: dict) -> None:
     try:
@@ -629,6 +637,7 @@ async def mqtt_generator(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 async def _main(config_path: str) -> None:
     config_file = Path(config_path)

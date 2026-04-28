@@ -1,5 +1,4 @@
-"""
-Integration Tests — Value Event Pipeline
+"""Integration Tests — Value Event Pipeline
 
 Why ringbuffer instead of direct MQTT subscribe
 ================================================
@@ -23,11 +22,11 @@ Covered scenarios
 - Sequential writes track old_value → new_value correctly
 - Test Mosquitto broker is reachable (basic connectivity smoke-test)
 """
+
 from __future__ import annotations
 
-import pytest
 import aiomqtt
-
+import pytest
 
 pytestmark = pytest.mark.integration
 
@@ -37,10 +36,10 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 _DP_BASE = {
-    "name":          "PropTest DP",
-    "data_type":     "FLOAT",
-    "unit":          "W",
-    "tags":          ["propagation-test"],
+    "name": "PropTest DP",
+    "data_type": "FLOAT",
+    "unit": "W",
+    "tags": ["propagation-test"],
     "persist_value": False,
 }
 
@@ -79,9 +78,9 @@ async def _ringbuffer_for_dp(client, auth_headers, dp_id: str, limit: int = 10) 
 # Ringbuffer-based propagation tests
 # ---------------------------------------------------------------------------
 
+
 async def test_rest_write_creates_ringbuffer_entry(client, auth_headers):
-    """
-    Writing a value via REST fires a DataValueEvent which the RingBuffer
+    """Writing a value via REST fires a DataValueEvent which the RingBuffer
     handler records.  After the POST /value call returns, the entry must
     already be present (EventBus.publish uses asyncio.gather, same loop).
     """
@@ -90,14 +89,13 @@ async def test_rest_write_creates_ringbuffer_entry(client, auth_headers):
 
     entries = await _ringbuffer_for_dp(client, auth_headers, dp["id"])
     assert len(entries) >= 1
-    latest = entries[0]   # newest-first order
+    latest = entries[0]  # newest-first order
     assert latest["datapoint_id"] == dp["id"]
     assert latest["new_value"] == pytest.approx(42.0)
 
 
 async def test_ringbuffer_entry_has_required_fields(client, auth_headers):
-    """
-    Each ringbuffer entry must carry: ts, datapoint_id, new_value, old_value,
+    """Each ringbuffer entry must carry: ts, datapoint_id, new_value, old_value,
     quality, source_adapter.  These fields drive the debug log UI.
     """
     dp = await _create_dp(client, auth_headers, "RingBuf Fields Test")
@@ -107,14 +105,19 @@ async def test_ringbuffer_entry_has_required_fields(client, auth_headers):
     assert entries, "No ringbuffer entry found after write"
     entry = entries[0]
 
-    for field in ("ts", "datapoint_id", "new_value", "old_value", "quality", "source_adapter"):
+    for field in (
+        "ts",
+        "datapoint_id",
+        "new_value",
+        "old_value",
+        "quality",
+        "source_adapter",
+    ):
         assert field in entry, f"Missing field '{field}' in ringbuffer entry: {entry}"
 
 
 async def test_rest_write_source_adapter_is_api(client, auth_headers):
-    """
-    Values written through the REST endpoint must carry source_adapter='api'.
-    """
+    """Values written through the REST endpoint must carry source_adapter='api'."""
     dp = await _create_dp(client, auth_headers, "RingBuf SourceAdapter Test")
     await _write_value(client, auth_headers, dp["id"], 1.0)
 
@@ -124,8 +127,7 @@ async def test_rest_write_source_adapter_is_api(client, auth_headers):
 
 
 async def test_sequential_writes_track_old_value(client, auth_headers):
-    """
-    After two sequential writes the second ringbuffer entry's old_value must
+    """After two sequential writes the second ringbuffer entry's old_value must
     equal the first write's value (chain: None → 10.0 → 20.0).
     """
     dp = await _create_dp(client, auth_headers, "RingBuf OldValue Test")
@@ -158,9 +160,9 @@ async def test_three_writes_all_appear_in_ringbuffer(client, auth_headers):
 # MQTT broker connectivity smoke-test
 # ---------------------------------------------------------------------------
 
+
 async def test_mqtt_broker_reachable(mosquitto_port):
-    """
-    Basic smoke-test: connect to the test Mosquitto broker, publish one
+    """Basic smoke-test: connect to the test Mosquitto broker, publish one
     message, and disconnect cleanly.  Does not test the app's MQTT path.
     """
     async with aiomqtt.Client(hostname="localhost", port=mosquitto_port) as mqtt:

@@ -1,6 +1,5 @@
-"""
-HistoryPlugin ABC — Phase 5
-"""
+"""HistoryPlugin ABC — Phase 5"""
+
 from __future__ import annotations
 
 import uuid
@@ -10,8 +9,7 @@ from typing import Any
 
 
 class HistoryPlugin(ABC):
-    """
-    Abstract base for history backends (SQLite, InfluxDB, TimescaleDB, ...).
+    """Abstract base for history backends (SQLite, InfluxDB, TimescaleDB, ...).
     Implement all three methods to add a new backend.
     """
 
@@ -36,8 +34,7 @@ class HistoryPlugin(ABC):
         to_ts: datetime,
         limit: int = 1000,
     ) -> list[dict]:
-        """
-        Return raw values in [from_ts, to_ts].
+        """Return raw values in [from_ts, to_ts].
         Each dict: {ts: str, v: Any, u: str|None, q: str}
         """
         ...
@@ -46,13 +43,12 @@ class HistoryPlugin(ABC):
     async def aggregate(
         self,
         datapoint_id: uuid.UUID,
-        fn: str,        # avg | min | max | last
+        fn: str,  # avg | min | max | last
         interval: str,  # 1m | 5m | 15m | 30m | 1h | 6h | 12h | 1d
         from_ts: datetime,
         to_ts: datetime,
     ) -> list[dict]:
-        """
-        Return aggregated values bucketed by *interval*.
+        """Return aggregated values bucketed by *interval*.
         Each dict: {bucket: str, v: float|Any}
         """
         ...

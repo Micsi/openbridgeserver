@@ -1,5 +1,4 @@
-"""
-Write Router — Phase 4 / Phase 5 (Multi-Instance)
+"""Write Router — Phase 4 / Phase 5 (Multi-Instance)
 
 Two write paths:
 
@@ -15,6 +14,7 @@ Two write paths:
 Phase 5: Adapter-Lookup erfolgt per adapter_instance_id (UUID), nicht mehr per Typ-String.
 Fallback auf Typ-String für Bindings ohne instance_id (Rückwärtskompatibilität).
 """
+
 from __future__ import annotations
 
 import json
@@ -28,8 +28,9 @@ logger = logging.getLogger(__name__)
 
 class WriteRouter:
     def __init__(self, db: Any, registry: Any) -> None:
-        from obs.db.database import Database
         from obs.core.registry import DataPointRegistry
+        from obs.db.database import Database
+
         self._db: Database = db
         self._registry: DataPointRegistry = registry
         # binding_id → timestamp of last successful send (monotonic seconds)
@@ -68,19 +69,18 @@ class WriteRouter:
     # ------------------------------------------------------------------
 
     async def handle_value_event(self, event: Any) -> None:
-        """
-        Propagate a DataValueEvent to all DEST/BOTH bindings of the same DataPoint.
+        """Propagate a DataValueEvent to all DEST/BOTH bindings of the same DataPoint.
 
         Called by the EventBus whenever a SOURCE/BOTH binding delivers a new value.
         The originating binding (event.binding_id) is skipped to avoid loopback.
         """
         logger.info(
             "WriteRouter.handle_value_event: dp=%s value=%r source_binding=%s",
-            event.datapoint_id, event.value, event.binding_id,
+            event.datapoint_id,
+            event.value,
+            event.binding_id,
         )
-        await self._write_to_dest_bindings(
-            event.datapoint_id, event.value, skip_binding_id=event.binding_id
-        )
+        await self._write_to_dest_bindings(event.datapoint_id, event.value, skip_binding_id=event.binding_id)
 
     # ------------------------------------------------------------------
     # Shared helper
@@ -120,9 +120,10 @@ class WriteRouter:
 
             if instance is None:
                 logger.warning(
-                    "Adapter-Instanz nicht gefunden — write für binding %s übersprungen "
-                    "(type=%s, instance_id=%s)",
-                    binding.id, binding.adapter_type, binding.adapter_instance_id,
+                    "Adapter-Instanz nicht gefunden — write für binding %s übersprungen (type=%s, instance_id=%s)",
+                    binding.id,
+                    binding.adapter_type,
+                    binding.adapter_instance_id,
                 )
                 continue
             # --- Filter 1: Send-Throttle ---
@@ -131,47 +132,50 @@ class WriteRouter:
                 last_ts = self._last_sent.get(binding.id)
                 if last_ts is not None and (time.monotonic() - last_ts) < min_interval:
                     logger.debug(
-                        "WriteRouter: throttle — skipping binding %s "
-                        "(min=%.3fs elapsed=%.3fs)",
-                        binding.id, min_interval, time.monotonic() - last_ts,
+                        "WriteRouter: throttle — skipping binding %s (min=%.3fs elapsed=%.3fs)",
+                        binding.id,
+                        min_interval,
+                        time.monotonic() - last_ts,
                     )
                     continue
 
             # --- Filter 2 & 3: Wert-basierte Filter (nur wenn Vorgänger bekannt) ---
             last_val = self._last_value.get(binding.id)
             if last_val is not None:
-
                 # Filter 2: Nur bei Änderung
                 if binding.send_on_change and value == last_val:
                     logger.debug(
                         "WriteRouter: on-change — skipping binding %s (value unchanged: %r)",
-                        binding.id, value,
+                        binding.id,
+                        value,
                     )
                     continue
 
                 # Filter 3: Mindest-Abweichung (abs./rel.) — nur für numerische Werte
                 if binding.send_min_delta is not None or binding.send_min_delta_pct is not None:
                     try:
-                        v_new  = float(value)
+                        v_new = float(value)
                         v_last = float(last_val)
-                        diff   = abs(v_new - v_last)
+                        diff = abs(v_new - v_last)
 
                         if binding.send_min_delta is not None and diff < binding.send_min_delta:
                             logger.debug(
-                                "WriteRouter: min_delta — skipping binding %s "
-                                "(diff=%.4f < min=%.4f)",
-                                binding.id, diff, binding.send_min_delta,
+                                "WriteRouter: min_delta — skipping binding %s (diff=%.4f < min=%.4f)",
+                                binding.id,
+                                diff,
+                                binding.send_min_delta,
                             )
                             continue
 
                         if binding.send_min_delta_pct is not None:
                             base = abs(v_last) if v_last != 0 else abs(v_new)
-                            pct  = (diff / base * 100) if base != 0 else 0.0
+                            pct = (diff / base * 100) if base != 0 else 0.0
                             if pct < binding.send_min_delta_pct:
                                 logger.debug(
-                                    "WriteRouter: min_delta_pct — skipping binding %s "
-                                    "(%.2f%% < %.2f%%)",
-                                    binding.id, pct, binding.send_min_delta_pct,
+                                    "WriteRouter: min_delta_pct — skipping binding %s (%.2f%% < %.2f%%)",
+                                    binding.id,
+                                    pct,
+                                    binding.send_min_delta_pct,
                                 )
                                 continue
                     except (TypeError, ValueError):
@@ -181,29 +185,40 @@ class WriteRouter:
             write_value = value
             if binding.value_formula:
                 from obs.core.formula import apply_formula
+
                 write_value = apply_formula(binding.value_formula, write_value)
                 logger.debug(
                     "WriteRouter: DEST formula '%s' applied: %r → %r",
-                    binding.value_formula, value, write_value,
+                    binding.value_formula,
+                    value,
+                    write_value,
                 )
             if binding.value_map:
                 from obs.core.transformation import apply_value_map
+
                 write_value = apply_value_map(write_value, binding.value_map)
                 logger.debug(
-                    "WriteRouter: DEST value_map applied: %r → %r", value, write_value,
+                    "WriteRouter: DEST value_map applied: %r → %r",
+                    value,
+                    write_value,
                 )
 
             try:
                 await instance.write(binding, write_value)
-                self._last_sent[binding.id]  = time.monotonic()
+                self._last_sent[binding.id] = time.monotonic()
                 self._last_value[binding.id] = value  # Original für Delta/OnChange
                 logger.info(
                     "WriteRouter: wrote to adapter=%s instance=%s binding=%s value=%r",
-                    binding.adapter_type, binding.adapter_instance_id, binding.id, value,
+                    binding.adapter_type,
+                    binding.adapter_instance_id,
+                    binding.id,
+                    value,
                 )
             except Exception:
                 logger.exception(
-                    "Write failed: adapter=%s, binding=%s", binding.adapter_type, binding.id
+                    "Write failed: adapter=%s, binding=%s",
+                    binding.adapter_type,
+                    binding.id,
                 )
 
 
