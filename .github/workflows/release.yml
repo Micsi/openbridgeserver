@@ -29,9 +29,13 @@ jobs:
       - name: Extract release notes
         run: |
           TAG_NAME="${GITHUB_REF##*/}"
+          REPO="${{ github.repository }}"
+          PROJECT="${{ env.PROJECT_NAME }}"
           python3 <<EOF
-          import re
+          import re, os
           tag = "${TAG_NAME}"
+          repo = "${REPO}"
+          project = "${PROJECT}"
           # Remove -RC* suffix for release candidates
           base_version = re.sub(r'-RC\d*$', '', tag)
           with open('RELEASENOTES.md', 'r') as f:
@@ -47,8 +51,19 @@ jobs:
                   break
               if in_section:
                   notes.append(line.rstrip())
+          image = f"ghcr.io/{repo.lower()}:{tag}"
+          notes += [
+              '',
+              '### Docker Image',
+              '',
+              '```bash',
+              f'docker pull {image}',
+              '```',
+              '',
+              f'[View on GitHub Container Registry](https://github.com/{repo}/pkgs/container/{project})',
+          ]
           with open('.github/RELEASENOTES_FOOTER.md', 'r') as footer:
-              notes.append(footer.read().strip())
+              notes += ['', footer.read().strip()]
           with open('release_notes.txt', 'w') as out:
               out.write('\n'.join(notes).strip())
           EOF
@@ -65,21 +80,6 @@ jobs:
           else
             echo "PRERELEASE=false" >> $GITHUB_ENV
           fi
-
-      - name: Append Docker image link to release notes
-        run: |
-          REPO="${{ github.repository }}"
-          IMAGE="ghcr.io/${REPO,,}:${VERSION}"
-          cat >> release_notes.txt <<EOF
-
-          ## Docker Image
-
-          \`\`\`bash
-          docker pull ${IMAGE}
-          \`\`\`
-
-          [View on GitHub Container Registry](https://github.com/${{ github.repository }}/pkgs/container/${{ env.PROJECT_NAME }})
-          EOF
 
       - name: Create GitHub Release and Upload Asset
         uses: softprops/action-gh-release@v2
