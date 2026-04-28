@@ -421,10 +421,19 @@ async function onImportFile(event) {
   try {
     const text = await file.text()
     const payload = JSON.parse(text)
+    const namesBefore = new Set(store.graphs.map(g => g.name))
     const imported = await store.importGraph(payload)
     activeGraphId.value = imported.id
     await loadGraph()
-    showStatus(true, `Graph „${imported.name}" importiert`)
+    if (namesBefore.has(imported.name)) {
+      // Name bereits vergeben → Rename-Dialog sofort öffnen
+      renameGraphName.value = imported.name
+      renameGraphDesc.value = imported.description ?? ''
+      showRenameGraph.value = true
+      showStatus(true, `Graph importiert – bitte umbenennen (Name bereits vorhanden)`)
+    } else {
+      showStatus(true, `Graph „${imported.name}" importiert`)
+    }
   } catch (err) {
     showStatus(false, err?.response?.data?.detail ?? 'Ungültige oder fehlerhafte Export-Datei')
   }

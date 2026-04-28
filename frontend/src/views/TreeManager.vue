@@ -411,6 +411,13 @@ async function onImportFile(event: Event) {
     await store.loadTree()
     if (importParentId.value) expanded.value.add(importParentId.value)
     selectNode(created)
+    // Name-Konflikt: Geschwister mit gleichem Namen → Hinweis im Eigenschaften-Panel
+    const siblings = store.nodes.filter(
+      n => n.parent_id === created.parent_id && n.id !== created.id && n.name === created.name,
+    )
+    if (siblings.length > 0) {
+      errorMsg.value = 'Name bereits vorhanden – bitte umbenennen und speichern.'
+    }
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : 'Ungültige oder fehlerhafte Export-Datei'
   } finally {

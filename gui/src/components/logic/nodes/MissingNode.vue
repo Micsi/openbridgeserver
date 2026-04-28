@@ -2,9 +2,9 @@
   <div class="missing-node">
     <Handle v-for="h in inputs" :key="h.id" type="target" :id="h.id" :position="Position.Left" />
     <div class="missing-node__body">
-      <span class="missing-node__icon">⚠️</span>
+      <span class="missing-node__badge" aria-label="Unbekannter Block-Typ">!</span>
       <div>
-        <div class="missing-node__title">Fehlender Block</div>
+        <div class="missing-node__title">Unbekannter Block</div>
         <div class="missing-node__type">{{ data.original_type ?? data.label }}</div>
       </div>
     </div>
@@ -18,7 +18,6 @@ import { Handle, Position } from '@vue-flow/core'
 
 const props = defineProps({ data: { type: Object, default: () => ({}) } })
 
-// Fehlende Blöcke zeigen je einen Eingang und einen Ausgang
 const inputs  = computed(() => [{ id: 'in' }])
 const outputs = computed(() => [{ id: 'out' }])
 </script>
@@ -27,9 +26,9 @@ const outputs = computed(() => [{ id: 'out' }])
 .missing-node {
   position: relative;
   min-width: 180px;
-  border: 2px dashed #f59e0b;
+  border: 2px dashed #ef4444;
   border-radius: 8px;
-  background: rgba(245, 158, 11, 0.08);
+  background: rgba(239, 68, 68, 0.07);
   padding: 10px 14px;
 }
 .missing-node__body {
@@ -37,11 +36,23 @@ const outputs = computed(() => [{ id: 'out' }])
   align-items: center;
   gap: 8px;
 }
-.missing-node__icon { font-size: 1.2rem; }
+.missing-node__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ef4444;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
 .missing-node__title {
   font-size: 0.7rem;
   font-weight: 600;
-  color: #f59e0b;
+  color: #ef4444;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }

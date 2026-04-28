@@ -30,6 +30,7 @@ import { useRouter } from 'vue-router'
 import { useVisuStore } from '@/stores/visu'
 import { useThemeStore } from '@/stores/theme'
 import { WidgetRegistry } from '@/widgets/registry'
+import MissingWidget from '@/widgets/MissingWidget.vue'
 import DataPointPicker from '@/components/DataPointPicker.vue'
 import Breadcrumb from '@/components/Breadcrumb.vue'
 import AuthButton from '@/components/AuthButton.vue'
@@ -437,9 +438,7 @@ const showSettings = ref(false)
                 :editor-mode="true"
                 :h="w.h"
               />
-              <div v-else class="flex items-center justify-center h-full text-gray-400 dark:text-gray-600 text-xs">
-                {{ w.type }}
-              </div>
+              <MissingWidget v-else :widget-type="w.type" />
             </div>
 
             <!-- Widget-Label (nur sichtbar wenn selektiert oder hover) -->

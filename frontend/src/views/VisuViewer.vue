@@ -6,6 +6,7 @@ import { useDatapointsStore } from '@/stores/datapoints'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useThemeStore } from '@/stores/theme'
 import { WidgetRegistry } from '@/widgets/registry'
+import MissingWidget from '@/widgets/MissingWidget.vue'
 import Breadcrumb from '@/components/Breadcrumb.vue'
 import NodeOverview from '@/components/NodeOverview.vue'
 import AuthButton from '@/components/AuthButton.vue'
@@ -228,9 +229,7 @@ function gridStyle(w: WidgetInstance) {
             :readonly="isReadOnly"
             :h="w.h"
           />
-          <div v-else class="flex items-center justify-center h-full text-gray-400 dark:text-gray-600 text-xs">
-            Unbekannter Widget-Typ: {{ w.type }}
-          </div>
+          <MissingWidget v-else :widget-type="w.type" />
         </div>
       </div>
     </main>
