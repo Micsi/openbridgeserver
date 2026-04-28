@@ -107,6 +107,21 @@ const NODE_DEFS = {
   // Notification
   notify_pushover:    { label: 'Pushover',       color: '#e11d48', inputs: [{id:'trigger',label:'Trigger'},{id:'message',label:'Nachricht'},{id:'url',label:'URL'},{id:'url_title',label:'URL-Titel'},{id:'image_url',label:'Bild-URL'}], outputs: [{id:'sent',label:'Gesendet'}] },
   notify_sms:         { label: 'SMS (seven.io)', color: '#e11d48', inputs: [{id:'trigger',label:'Trigger'},{id:'message',label:'Nachricht'}],           outputs: [{id:'sent',label:'Gesendet'}]    },
+  // Math — avg_multi (dynamic inputs, fixed outputs)
+  avg_multi: { label: 'Mittelwert', color: '#7c3aed',
+    inputs: [{id:'in_1',label:'IN 1'},{id:'in_2',label:'IN 2'}],
+    outputs: [
+      {id:'avg',     label:'∅ aktuell'},
+      {id:'avg_1m',  label:'∅ 1 min'},
+      {id:'avg_1h',  label:'∅ 1 h'},
+      {id:'avg_1d',  label:'∅ 1 Tag'},
+      {id:'avg_7d',  label:'∅ 7 Tage'},
+      {id:'avg_14d', label:'∅ 14 Tage'},
+      {id:'avg_30d', label:'∅ 30 Tage'},
+      {id:'avg_180d',label:'∅ 180 Tage'},
+      {id:'avg_365d',label:'∅ 365 Tage'},
+    ]
+  },
   // String
   string_concat:      { label: 'String Verketten', color: '#0891b2', inputs: [{id:'in_1',label:'1'},{id:'in_2',label:'2'}], outputs: [{id:'result',label:'Ergebnis'}] },
   // Integration
@@ -139,6 +154,14 @@ const def = computed(() => {
     }))
     return { ...base, inputs, outputs: [{ id: 'result', label: 'Ergebnis' }] }
   }
+  if (props.type === 'avg_multi') {
+    const count = Math.max(2, Math.min(20, Number(props.data?.input_count) || 2))
+    const inputs = Array.from({ length: count }, (_, i) => ({
+      id:    `in_${i + 1}`,
+      label: `IN ${i + 1}`,
+    }))
+    return { ...base, inputs }
+  }
   return base
 })
 
@@ -166,6 +189,10 @@ const summary = computed(() => {
   if (props.type === 'operating_hours') return null
   if (props.type === 'notify_pushover')     return d.title || 'open bridge server'
   if (props.type === 'notify_sms')          return d.to || '—'
+  if (props.type === 'avg_multi') {
+    const count = Math.max(2, Math.min(20, Number(d.input_count) || 2))
+    return `${count} Eingänge`
+  }
   if (props.type === 'string_concat') {
     const count = Math.max(2, Math.min(20, Number(d.count) || 2))
     const sep = d.separator != null && d.separator !== '' ? `"${String(d.separator).slice(0, 6)}"` : null
