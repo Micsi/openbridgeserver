@@ -23,12 +23,15 @@
         title="Debug-Modus: zeigt Werte nach Ausführen" data-testid="btn-debug">
         &#128270; Debug
       </button>
+      <button v-if="activeGraphId" @click="openRenameGraph" class="btn-secondary btn-sm" title="Graph umbenennen" data-testid="btn-rename">
+        ✏ Umbenennen
+      </button>
       <button v-if="activeGraphId" @click="doDuplicateGraph" class="btn-secondary btn-sm" title="Graph duplizieren" data-testid="btn-duplicate">
         ⧉ Duplizieren
       </button>
-      <a v-if="activeGraphId" :href="exportUrl" :download="exportFilename" class="btn-secondary btn-sm" title="Graph als JSON exportieren" data-testid="btn-export">
+      <button v-if="activeGraphId" @click="doExportGraph" class="btn-secondary btn-sm" title="Graph als JSON exportieren" data-testid="btn-export">
         ↓ Exportieren
-      </a>
+      </button>
       <label class="btn-secondary btn-sm cursor-pointer" title="Graph aus JSON importieren" data-testid="btn-import">
         ↑ Importieren
         <input type="file" accept=".json" class="hidden" @change="onImportFile" data-testid="input-import-file" />
@@ -104,6 +107,24 @@
         <div class="flex justify-end gap-3">
           <button type="button" @click="showNewGraph = false" class="btn-secondary">Abbrechen</button>
           <button type="submit" class="btn-primary">Erstellen</button>
+        </div>
+      </form>
+    </Modal>
+
+    <!-- Rename Graph Modal -->
+    <Modal v-model="showRenameGraph" title="Graph umbenennen" max-width="sm">
+      <form @submit.prevent="doRenameGraph" class="flex flex-col gap-4">
+        <div class="form-group">
+          <label class="label">Name</label>
+          <input v-model="renameGraphName" type="text" class="input" required autofocus />
+        </div>
+        <div class="form-group">
+          <label class="label">Beschreibung <span class="text-slate-600 font-normal">(optional)</span></label>
+          <input v-model="renameGraphDesc" type="text" class="input" />
+        </div>
+        <div class="flex justify-end gap-3">
+          <button type="button" @click="showRenameGraph = false" class="btn-secondary">Abbrechen</button>
+          <button type="submit" class="btn-primary" data-testid="btn-rename-confirm">Speichern</button>
         </div>
       </form>
     </Modal>
@@ -350,14 +371,47 @@ async function doDuplicateGraph() {
   }
 }
 
-// ── Exportieren ────────────────────────────────────────────────────────────
-const exportUrl = computed(() =>
-  activeGraphId.value ? logicApi.exportGraphUrl(activeGraphId.value) : '#'
-)
-const exportFilename = computed(() => {
+// ── Exportieren (programmatisch mit Auth-Header) ───────────────────────────
+async function doExportGraph() {
+  if (!activeGraphId.value) return
+  try {
+    const { data } = await logicApi.exportGraph(activeGraphId.value)
+    const g = store.graphs.find(g => g.id === activeGraphId.value)
+    const filename = g ? `${g.name.replace(/ /g, '_')}.json` : 'logic_graph.json'
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url; a.download = filename
+    document.body.appendChild(a); a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    showStatus(false, err.response?.data?.detail ?? 'Fehler beim Exportieren')
+  }
+}
+
+// ── Umbenennen ─────────────────────────────────────────────────────────────
+const showRenameGraph  = ref(false)
+const renameGraphName  = ref('')
+const renameGraphDesc  = ref('')
+
+function openRenameGraph() {
   const g = store.graphs.find(g => g.id === activeGraphId.value)
-  return g ? `${g.name.replace(/ /g, '_')}.json` : 'logic_graph.json'
-})
+  renameGraphName.value = g?.name ?? ''
+  renameGraphDesc.value = g?.description ?? ''
+  showRenameGraph.value = true
+}
+
+async function doRenameGraph() {
+  if (!activeGraphId.value || !renameGraphName.value.trim()) return
+  try {
+    await store.renameGraph(activeGraphId.value, renameGraphName.value.trim(), renameGraphDesc.value)
+    showRenameGraph.value = false
+    showStatus(true, 'Graph umbenannt')
+  } catch (err) {
+    showStatus(false, err.response?.data?.detail ?? 'Fehler beim Umbenennen')
+  }
+}
 
 // ── Importieren ────────────────────────────────────────────────────────────
 async function onImportFile(event) {

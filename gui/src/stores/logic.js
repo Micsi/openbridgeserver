@@ -52,6 +52,13 @@ export const useLogicStore = defineStore('logic', () => {
     return data
   }
 
+  async function renameGraph(id, name, description) {
+    const { data } = await logicApi.patchGraph(id, { name, description })
+    const idx = graphs.value.findIndex(g => g.id === id)
+    if (idx !== -1) graphs.value[idx] = data
+    return data
+  }
+
   async function duplicateGraph(id) {
     const { data } = await logicApi.duplicateGraph(id)
     graphs.value.push(data)
@@ -64,5 +71,5 @@ export const useLogicStore = defineStore('logic', () => {
     return data
   }
 
-  return { graphs, nodeTypes, loading, fetchNodeTypes, fetchGraphs, createGraph, saveGraph, deleteGraph, runGraph, duplicateGraph, importGraph }
+  return { graphs, nodeTypes, loading, fetchNodeTypes, fetchGraphs, createGraph, saveGraph, deleteGraph, runGraph, renameGraph, duplicateGraph, importGraph }
 })

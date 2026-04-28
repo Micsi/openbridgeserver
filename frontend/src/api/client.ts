@@ -213,7 +213,7 @@ export const visu = {
       body: JSON.stringify({ usernames }),
     }),
 
-  exportNodeUrl: (id: string) => `/api/v1/visu/nodes/${id}/export`,
+  exportNode: (id: string) => request<unknown>(`/visu/nodes/${id}/export`),
 
   importNodes: (payload: unknown) =>
     request<VisuNode>('/visu/nodes/import', {

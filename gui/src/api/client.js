@@ -200,5 +200,5 @@ export const logicApi = {
   deleteGraph:    (id)         => api.delete(`/logic/graphs/${id}`),
   runGraph:       (id)         => api.post(`/logic/graphs/${id}/run`),
   duplicateGraph: (id)         => api.post(`/logic/graphs/${id}/duplicate`),
-  exportGraphUrl: (id)         => `/api/v1/logic/graphs/${id}/export`,
+  exportGraph:    (id)         => api.get(`/logic/graphs/${id}/export`),
 }

@@ -88,15 +88,12 @@ test('Visu: Kopieren-Button öffnet das Kopieren-Modal', async ({ page }) => {
 // Test 3: Exportieren-Link ist sichtbar und zeigt auf korrekten Endpoint
 // ---------------------------------------------------------------------------
 
-test('Visu: Exportieren-Link zeigt auf Export-Endpoint', async ({ page }) => {
+test('Visu: Exportieren-Button ist im Eigenschaften-Panel sichtbar', async ({ page }) => {
   const name = `E2E-Exp-${Date.now()}`
   const nid  = await createVisuNodeViaApi(name)
   try {
     await gotoManageAndSelectNode(page, name)
-    const exportLink = page.locator('a:has-text("Exportieren")')
-    await expect(exportLink).toBeVisible({ timeout: 5_000 })
-    const href = await exportLink.getAttribute('href')
-    expect(href).toContain(`/api/v1/visu/nodes/${nid}/export`)
+    await expect(page.locator('[data-testid="btn-export-visu-panel"]')).toBeVisible({ timeout: 5_000 })
   } finally {
     await deleteVisuNodeViaApi(nid)
   }

@@ -83,17 +83,14 @@ test('Logic: Graph duplizieren erzeugt Kopie', async ({ page }) => {
 })
 
 // ---------------------------------------------------------------------------
-// Test 3: Exportieren-Link ist vorhanden und zeigt auf korrekte URL
+// Test 3: Exportieren-Button ist vorhanden
 // ---------------------------------------------------------------------------
 
-test('Logic: Exportieren-Link zeigt auf Export-Endpoint', async ({ page }) => {
+test('Logic: Exportieren-Button ist sichtbar wenn Graph aktiv', async ({ page }) => {
   const gid = await createGraphViaApi(`E2E-Export-${Date.now()}`)
   try {
     await gotoLogicWithGraph(page, gid)
-    const exportLink = page.locator('[data-testid="btn-export"]')
-    await expect(exportLink).toBeVisible()
-    const href = await exportLink.getAttribute('href')
-    expect(href).toContain(`/api/v1/logic/graphs/${gid}/export`)
+    await expect(page.locator('[data-testid="btn-export"]')).toBeVisible()
   } finally {
     await deleteGraphViaApi(gid)
   }

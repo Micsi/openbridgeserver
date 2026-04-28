@@ -371,6 +371,23 @@ async function doCopy() {
   }
 }
 
+// ── Export ────────────────────────────────────────────────────────────────────
+async function doExportNode(node: VisuNode) {
+  try {
+    const data = await visuApi.exportNode(node.id)
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url
+    a.download = `${node.name.replace(/ /g, '_')}_visu.json`
+    document.body.appendChild(a); a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : 'Fehler beim Exportieren'
+  }
+}
+
 // ── Import ────────────────────────────────────────────────────────────────────
 const importFileRef = ref<HTMLInputElement | null>(null)
 const importParentId = ref<string | null>(null)
@@ -705,11 +722,11 @@ onMounted(async () => {
               >⧉ Kopieren</button>
             </div>
             <div class="flex gap-2 flex-wrap">
-              <a
-                :href="visuApi.exportNodeUrl(selectedNode.id)"
-                :download="`${selectedNode.name.replace(/ /g, '_')}_visu.json`"
-                class="flex-1 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors text-center"
-              >↓ Exportieren</a>
+              <button
+                class="flex-1 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                data-testid="btn-export-visu-panel"
+                @click="doExportNode(selectedNode)"
+              >↓ Exportieren</button>
               <button
                 class="flex-1 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
                 data-testid="btn-import-visu-panel"
