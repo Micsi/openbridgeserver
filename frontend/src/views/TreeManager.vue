@@ -371,18 +371,6 @@ async function doCopy() {
   }
 }
 
-// ── Export ────────────────────────────────────────────────────────────────────
-function exportNode(nodeId: string) {
-  const url = visuApi.exportNodeUrl(nodeId)
-  const a   = document.createElement('a')
-  a.href    = url
-  const node = store.getNode(nodeId)
-  a.download = node ? `${node.name.replace(/ /g, '_')}_visu.json` : 'visu_export.json'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-}
-
 // ── Import ────────────────────────────────────────────────────────────────────
 const importFileRef = ref<HTMLInputElement | null>(null)
 const importParentId = ref<string | null>(null)
