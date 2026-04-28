@@ -120,7 +120,7 @@ test('Visu: Importieren-Button ist im Eigenschaften-Panel sichtbar', async ({ pa
   const nid  = await createVisuNodeViaApi(name)
   try {
     await gotoManageAndSelectNode(page, name)
-    await expect(page.locator('button:has-text("Importieren")')).toBeVisible({ timeout: 5_000 })
+    await expect(page.locator('[data-testid="btn-import-visu-panel"]')).toBeVisible({ timeout: 5_000 })
   } finally {
     await deleteVisuNodeViaApi(nid)
   }
