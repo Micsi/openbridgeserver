@@ -30,9 +30,11 @@ import { useRouter } from 'vue-router'
 import { useVisuStore } from '@/stores/visu'
 import { useThemeStore } from '@/stores/theme'
 import { WidgetRegistry } from '@/widgets/registry'
+import MissingWidget from '@/widgets/MissingWidget.vue'
 import DataPointPicker from '@/components/DataPointPicker.vue'
 import Breadcrumb from '@/components/Breadcrumb.vue'
 import AuthButton from '@/components/AuthButton.vue'
+import { datapoints as dpApi } from '@/api/client'
 import type { PageConfig, WidgetInstance } from '@/types'
 
 import '@/widgets/ValueDisplay/index'
@@ -80,6 +82,38 @@ const selectedWidget = computed(() =>
 const selectedDef = computed(() =>
   selectedWidget.value ? WidgetRegistry.get(selectedWidget.value.type) : null,
 )
+
+// ── Datenpunkt-Validierung ────────────────────────────────────────────────────
+const brokenDpIds = ref<Set<string>>(new Set())
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function collectWidgetDpIds(w: WidgetInstance): string[] {
+  const ids = new Set<string>()
+  if (w.datapoint_id) ids.add(w.datapoint_id)
+  if (w.status_datapoint_id) ids.add(w.status_datapoint_id)
+  for (const val of Object.values(w.config ?? {})) {
+    if (typeof val === 'string' && UUID_RE.test(val)) ids.add(val)
+  }
+  return [...ids]
+}
+
+async function validateDatapointRefs() {
+  const allIds = new Set<string>()
+  for (const w of config.value.widgets) {
+    for (const id of collectWidgetDpIds(w)) allIds.add(id)
+  }
+  const broken = new Set<string>()
+  await Promise.allSettled(
+    [...allIds].map(async (id) => {
+      try { await dpApi.get(id) } catch { broken.add(id) }
+    })
+  )
+  brokenDpIds.value = broken
+}
+
+function widgetHasError(w: WidgetInstance): boolean {
+  return collectWidgetDpIds(w).some(id => brokenDpIds.value.has(id))
+}
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
 const canvasEl = ref<HTMLElement | null>(null)
@@ -204,6 +238,8 @@ onMounted(async () => {
         w.status_datapoint_id ??= null
         w.name ??= ''
       }
+      // Datenpunkt-Referenzen im Hintergrund validieren (non-blocking)
+      validateDatapointRefs()
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'Fehler beim Laden'
@@ -437,10 +473,15 @@ const showSettings = ref(false)
                 :editor-mode="true"
                 :h="w.h"
               />
-              <div v-else class="flex items-center justify-center h-full text-gray-400 dark:text-gray-600 text-xs">
-                {{ w.type }}
-              </div>
+              <MissingWidget v-else :widget-type="w.type" />
             </div>
+
+            <!-- Fehler-Badge: fehlende Datenpunkt-Referenz -->
+            <div
+              v-if="widgetHasError(w)"
+              class="absolute top-1 right-7 z-20 flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white font-bold text-xs leading-none pointer-events-none shadow"
+              title="Mindestens ein Datenpunkt-Verweis wurde nicht gefunden"
+            >!</div>
 
             <!-- Widget-Label (nur sichtbar wenn selektiert oder hover) -->
             <div
