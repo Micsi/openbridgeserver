@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       template_file: ${{ steps.meta.outputs.template_file }}
+      app_bundle_file: ${{ steps.meta.outputs.app_bundle_file }}
       version: ${{ steps.meta.outputs.version }}
 
     steps:
@@ -32,8 +33,10 @@ jobs:
             VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "0.0.0")
           fi
           TEMPLATE_FILE="${{ env.BASE_OS }}-${{ env.TEMPLATE_NAME }}_${VERSION}_${{ env.ARCH }}.tar.zst"
+          APP_BUNDLE_FILE="${{ env.TEMPLATE_NAME }}-app-bundle_${VERSION}.tar.gz"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "template_file=$TEMPLATE_FILE" >> "$GITHUB_OUTPUT"
+          echo "app_bundle_file=$APP_BUNDLE_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Install debootstrap and tools
         run: |
@@ -61,6 +64,69 @@ jobs:
           cd frontend
           npm install --prefer-offline
           npm run build
+
+      - name: Create app bundle
+        run: |
+          tar -czf "${{ runner.temp }}/${{ steps.meta.outputs.app_bundle_file }}" \
+            obs/ gui_dist/ frontend_dist/ requirements.txt
+          cd "${{ runner.temp }}"
+          sha512sum "${{ steps.meta.outputs.app_bundle_file }}" \
+            > "${{ steps.meta.outputs.app_bundle_file }}.sha512"
+
+      - name: Write obs-update script
+        run: |
+          cat > /tmp/obs-update << 'SCRIPTEOF'
+          #!/bin/bash
+          set -euo pipefail
+
+          REPO="__REPO__"
+          INSTALL_DIR="/opt/obs"
+          SERVICE="obs"
+
+          echo "Checking for updates..."
+          LATEST_JSON=$(curl -sf "https://api.github.com/repos/${REPO}/releases/latest")
+          LATEST_TAG=$(echo "$LATEST_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+          CURRENT=$(cat "$INSTALL_DIR/version" 2>/dev/null || echo "unknown")
+
+          if [[ "$LATEST_TAG" == "$CURRENT" ]]; then
+              echo "Already up to date ($CURRENT)"
+              exit 0
+          fi
+
+          echo "Updating $CURRENT -> $LATEST_TAG ..."
+
+          BUNDLE_URL=$(echo "$LATEST_JSON" | python3 -c "
+          import sys, json
+          for a in json.load(sys.stdin)['assets']:
+              if 'app-bundle' in a['name'] and a['name'].endswith('.tar.gz'):
+                  print(a['browser_download_url'])
+                  break
+          ")
+
+          if [[ -z "$BUNDLE_URL" ]]; then
+              echo "Error: no app-bundle asset found in release $LATEST_TAG" >&2
+              exit 1
+          fi
+
+          TMP=$(mktemp -d)
+          trap "rm -rf $TMP" EXIT
+
+          echo "Downloading $BUNDLE_URL ..."
+          curl -fL "$BUNDLE_URL" -o "$TMP/app-bundle.tar.gz"
+
+          systemctl stop "$SERVICE"
+
+          tar -xzf "$TMP/app-bundle.tar.gz" -C "$INSTALL_DIR"
+          "$INSTALL_DIR/venv/bin/pip" install --no-cache-dir -q -r "$INSTALL_DIR/requirements.txt"
+
+          echo "$LATEST_TAG" > "$INSTALL_DIR/version"
+
+          systemctl start "$SERVICE"
+          echo "Updated to $LATEST_TAG"
+          SCRIPTEOF
+
+          sed -i "s|__REPO__|${{ github.repository }}|g" /tmp/obs-update
+          chmod +x /tmp/obs-update
 
       # ── Base system ───────────────────────────────────────────────────────────
       - name: Cache base system
@@ -179,6 +245,8 @@ jobs:
           sudo cp -r gui_dist         "$ROOTFS/opt/obs/"
           sudo cp -r frontend_dist    "$ROOTFS/opt/obs/"
           sudo cp    requirements.txt "$ROOTFS/opt/obs/"
+          echo "${{ steps.meta.outputs.version }}" | sudo tee "$ROOTFS/opt/obs/version" > /dev/null
+          sudo cp /tmp/obs-update "$ROOTFS/usr/local/bin/obs-update"
 
           sudo chroot "$ROOTFS" /bin/bash <<'INSTALL'
           set -euo pipefail
@@ -269,6 +337,8 @@ jobs:
           path: |
             ${{ runner.temp }}/${{ steps.meta.outputs.template_file }}
             ${{ runner.temp }}/${{ steps.meta.outputs.template_file }}.sha512
+            ${{ runner.temp }}/${{ steps.meta.outputs.app_bundle_file }}
+            ${{ runner.temp }}/${{ steps.meta.outputs.app_bundle_file }}.sha512
 
   release:
     needs: build
@@ -290,15 +360,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ github.ref_name }}" \
-            artifacts/*.tar.zst artifacts/*.sha512 \
+            artifacts/*.tar.zst artifacts/*.tar.gz artifacts/*.sha512 \
             --repo "${{ github.repository }}" \
             --clobber
 
-      - name: Insert LXC checksum into release notes
+      - name: Insert LXC checksums into release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat artifacts/*.sha512 > /tmp/lxc_checksum.txt
+          cat "artifacts/${{ needs.build.outputs.template_file }}.sha512"    > /tmp/lxc_checksum.txt
+          cat "artifacts/${{ needs.build.outputs.app_bundle_file }}.sha512"  > /tmp/bundle_checksum.txt
           gh release view "${{ github.ref_name }}" \
             --repo "${{ github.repository }}" --json body -q .body \
             > /tmp/release_body.txt
@@ -307,9 +378,18 @@ jobs:
           with open('/tmp/release_body.txt') as f:
               body = f.read()
           with open('/tmp/lxc_checksum.txt') as f:
-              checksum = f.read().strip()
+              lxc_checksum = f.read().strip()
+          with open('/tmp/bundle_checksum.txt') as f:
+              bundle_checksum = f.read().strip()
           marker = "<!-- LXC_INSERT -->"
-          section = f"### LXC Template Checksum\n\n```\n{checksum}\n```\n\n{marker}"
+          section = (
+              "### LXC Template\n\n"
+              "**LXC Template** (`.tar.zst` — Proxmox CT template):\n"
+              f"```\n{lxc_checksum}\n```\n\n"
+              "**App Bundle** (`.tar.gz` — for in-place updates via `obs-update`):\n"
+              f"```\n{bundle_checksum}\n```\n\n"
+              f"{marker}"
+          )
           print(body.replace(marker, section), end='')
           PYEOF
 
