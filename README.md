@@ -22,7 +22,7 @@ open bridge verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitli
 | **Verlauf** | Werteverlauf mit Diagramm, Aggregation nach Zeit (Std / Tag / Woche …); pro Datenpunkt konfigurierbar |
 | **Änderungsprotokoll** | Letzten N Wertänderungen einsehbar (RingBuffer) — aktualisiert sich live |
 | **Alles sofort** | Änderungen greifen ohne Neustart |
-| **Installation** | Docker Compose oder direkt als Python-Programm |
+| **Installation** | Docker Compose, direkt als Python-Programm oder als Proxmox LXC-Template |
 | **Lizenz** | MIT (kostenlos und quelloffen) |
 
 ---
@@ -30,25 +30,26 @@ open bridge verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitli
 ## Inhaltsverzeichnis
 
 1. [Schnellstart — Docker](#schnellstart--docker)
-2. [Schnellstart — Direkt](#schnellstart--direkt)
-3. [Konfiguration](#konfiguration)
-4. [Wie funktioniert open bridge?](#wie-funktioniert-open-bridge)
-5. [Datenpunkte](#datenpunkte)
-6. [Verknüpfungen (Bindings)](#verknüpfungen-bindings)
-7. [Suche](#suche)
-8. [Adapter](#adapter)
-9. [Verlauf (History)](#verlauf-history)
-10. [Änderungsprotokoll (RingBuffer)](#änderungsprotokoll-ringbuffer)
-11. [Sicherung & Wiederherstellung](#sicherung--wiederherstellung)
-12. [Systemstatus](#systemstatus)
-13. [Live-Verbindung (WebSocket)](#live-verbindung-websocket)
-14. [Logik-Editor](#logik-editor)
-15. [Adapter-Konfiguration](#adapter-konfiguration)
-16. [MQTT-Topics](#mqtt-topics)
-17. [Datentypen](#datentypen)
-18. [Einstellungen](#einstellungen)
-19. [Hilfsskripte](#hilfsskripte)
-20. [Entwicklung](#entwicklung)
+2. [Schnellstart — Proxmox LXC](#schnellstart--proxmox-lxc)
+3. [Schnellstart — Direkt](#schnellstart--direkt)
+4. [Konfiguration](#konfiguration)
+5. [Wie funktioniert open bridge?](#wie-funktioniert-open-bridge)
+6. [Datenpunkte](#datenpunkte)
+7. [Verknüpfungen (Bindings)](#verknüpfungen-bindings)
+8. [Suche](#suche)
+9. [Adapter](#adapter)
+10. [Verlauf (History)](#verlauf-history)
+11. [Änderungsprotokoll (RingBuffer)](#änderungsprotokoll-ringbuffer)
+12. [Sicherung & Wiederherstellung](#sicherung--wiederherstellung)
+13. [Systemstatus](#systemstatus)
+14. [Live-Verbindung (WebSocket)](#live-verbindung-websocket)
+15. [Logik-Editor](#logik-editor)
+16. [Adapter-Konfiguration](#adapter-konfiguration)
+17. [MQTT-Topics](#mqtt-topics)
+18. [Datentypen](#datentypen)
+19. [Einstellungen](#einstellungen)
+20. [Hilfsskripte](#hilfsskripte)
+21. [Entwicklung](#entwicklung)
 
 ---
 
@@ -83,6 +84,49 @@ curl http://localhost:8080/api/v1/system/health
 | open bridge server Weboberfläche + API | http://localhost:8080 | HTTP |
 | Mosquitto MQTT (intern) | localhost:1883 | MQTT |
 | Mosquitto MQTT über WebSocket | localhost:9001 | MQTT/WS |
+
+---
+
+## Schnellstart — Proxmox LXC
+
+Das LXC-Template enthält ein vollständiges Ubuntu 26.04-System mit **open bridge server** und startet den Dienst automatisch beim Hochfahren des Containers.
+
+**Schritt 1 — Template herunterladen**
+
+1. Auf der [Release-Seite](../../releases/latest) die URL der `.tar.zst`-Datei sowie den SHA512-Hash aus dem Abschnitt **LXC Template** kopieren.
+2. In der Proxmox-Weboberfläche zu **Datacenter → Storage → local → CT Templates** navigieren.
+3. **Download from URL** klicken.
+4. Die kopierte URL einfügen und auf **Query URL** klicken.
+5. Als Hash-Algorithmus **SHA512** auswählen.
+6. Den kopierten Hash einfügen.
+7. Auf **Download** klicken.
+
+**Schritt 2 — Container erstellen**
+
+1. Im Proxmox-Menü **Create CT** wählen.
+2. Als Template das gerade heruntergeladene `ubuntu-plucky-openbridgeserver_…` auswählen.
+3. Hostname, Passwort, CPU, RAM und Netzwerk nach Bedarf konfigurieren — empfohlen: mindestens 512 MB RAM.
+4. Container starten.
+
+**Schritt 3 — Zugriff**
+
+| Dienst | Adresse |
+|---|---|
+| **open bridge server** Weboberfläche + API | `http://<container-ip>:8080` |
+
+**Standardzugang:** Benutzername `admin`, Passwort `admin`
+⚠️ Das Passwort sofort nach der ersten Anmeldung ändern (Einstellungen → Passwort).
+
+**Konfiguration anpassen** (optional):
+
+```bash
+# Umgebungsvariablen in /etc/obs.env setzen, z. B.:
+OBS_MQTT__HOST=192.168.1.10
+OBS_SECURITY__JWT_SECRET=mein-geheimes-passwort
+
+# Dienst neu starten
+systemctl restart obs
+```
 
 ---
 
