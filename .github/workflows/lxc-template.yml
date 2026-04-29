@@ -309,7 +309,7 @@ jobs:
           with open('/tmp/lxc_checksum.txt') as f:
               checksum = f.read().strip()
           marker = "<!-- LXC_INSERT -->"
-          section = f"### LXC Template\n\n```\n{checksum}\n```\n\n{marker}"
+          section = f"### LXC Template Checksum\n\n```\n{checksum}\n```\n\n{marker}"
           print(body.replace(marker, section), end='')
           PYEOF
 
