@@ -149,6 +149,7 @@ const activeLabel  = computed(() => currentStep.value?.label ?? '—')
 
     <!-- Icon-Bereich -->
     <div
+      data-testid="stufenschalter-icon"
       class="min-h-0 flex items-center justify-center w-full"
       style="flex: 3; aspect-ratio: 1; max-width: 100%"
       :style="{ color: activeColor }"
@@ -181,6 +182,7 @@ const activeLabel  = computed(() => currentStep.value?.label ?? '—')
     <!-- Stufen-Bezeichnung -->
     <div class="min-h-0 flex items-center justify-center text-center" style="flex: 1.5">
       <span
+        data-testid="stufenschalter-label"
         class="text-sm font-semibold leading-tight"
         :style="{ color: activeColor }"
       >{{ activeLabel }}</span>
