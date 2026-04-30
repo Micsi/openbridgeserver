@@ -93,12 +93,12 @@ jobs:
           echo "Fetching release information..."
           ALL_RELEASES=$(curl -sf "https://api.github.com/repos/${REPO}/releases")
 
-          # Build ordered list: RCs newest-first (numeric sort), then latest stable
+          # Build ordered list: latest stable, all RCs newest-first, previous stable
           VERSION_LIST=$(echo "$ALL_RELEASES" | python3 -c "
           import sys, json, re
 
           releases = json.load(sys.stdin)
-          stable = next((r for r in releases if not r['prerelease'] and not r['draft']), None)
+          stables = [r for r in releases if not r['prerelease'] and not r['draft']]
 
           def rc_num(r):
               m = re.search(r'RC(\d+)$', r['tag_name'], re.IGNORECASE)
@@ -109,10 +109,12 @@ jobs:
               key=rc_num, reverse=True
           )
 
+          if stables:
+              print('stable ' + stables[0]['tag_name'])
           for r in rcs:
               print('rc ' + r['tag_name'])
-          if stable:
-              print('stable ' + stable['tag_name'])
+          if len(stables) > 1:
+              print('stable ' + stables[1]['tag_name'])
           ")
 
           echo "Current version: $CURRENT"
