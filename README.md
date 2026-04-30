@@ -1,6 +1,6 @@
 # open bridge multiprotocol ai server
 
-![open bridge server Logo](logo/obs_logo_dark.svg)
+![**open bridge server** Logo](logo/obs_logo_dark.svg)
 
 **Offene Gebäudeautomations-Plattform — verbindet KNX, Modbus, MQTT, Home Assistant und mehr**
 
@@ -22,7 +22,7 @@ open bridge verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitli
 | **Verlauf** | Werteverlauf mit Diagramm, Aggregation nach Zeit (Std / Tag / Woche …); pro Datenpunkt konfigurierbar |
 | **Änderungsprotokoll** | Letzten N Wertänderungen einsehbar (RingBuffer) — aktualisiert sich live |
 | **Alles sofort** | Änderungen greifen ohne Neustart |
-| **Installation** | Docker Compose oder direkt als Python-Programm |
+| **Installation** | Docker Compose, direkt als Python-Programm oder als Proxmox LXC-Template |
 | **Lizenz** | MIT (kostenlos und quelloffen) |
 
 ---
@@ -30,25 +30,26 @@ open bridge verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitli
 ## Inhaltsverzeichnis
 
 1. [Schnellstart — Docker](#schnellstart--docker)
-2. [Schnellstart — Direkt](#schnellstart--direkt)
-3. [Konfiguration](#konfiguration)
-4. [Wie funktioniert open bridge?](#wie-funktioniert-open-bridge)
-5. [Datenpunkte](#datenpunkte)
-6. [Verknüpfungen (Bindings)](#verknüpfungen-bindings)
-7. [Suche](#suche)
-8. [Adapter](#adapter)
-9. [Verlauf (History)](#verlauf-history)
-10. [Änderungsprotokoll (RingBuffer)](#änderungsprotokoll-ringbuffer)
-11. [Sicherung & Wiederherstellung](#sicherung--wiederherstellung)
-12. [Systemstatus](#systemstatus)
-13. [Live-Verbindung (WebSocket)](#live-verbindung-websocket)
-14. [Logik-Editor](#logik-editor)
-15. [Adapter-Konfiguration](#adapter-konfiguration)
-16. [MQTT-Topics](#mqtt-topics)
-17. [Datentypen](#datentypen)
-18. [Einstellungen](#einstellungen)
-19. [Hilfsskripte](#hilfsskripte)
-20. [Entwicklung](#entwicklung)
+2. [Schnellstart — Proxmox LXC](#schnellstart--proxmox-lxc)
+3. [Schnellstart — Direkt](#schnellstart--direkt)
+4. [Konfiguration](#konfiguration)
+5. [Wie funktioniert open bridge?](#wie-funktioniert-open-bridge)
+6. [Datenpunkte](#datenpunkte)
+7. [Verknüpfungen (Bindings)](#verknüpfungen-bindings)
+8. [Suche](#suche)
+9. [Adapter](#adapter)
+10. [Verlauf (History)](#verlauf-history)
+11. [Änderungsprotokoll (RingBuffer)](#änderungsprotokoll-ringbuffer)
+12. [Sicherung & Wiederherstellung](#sicherung--wiederherstellung)
+13. [Systemstatus](#systemstatus)
+14. [Live-Verbindung (WebSocket)](#live-verbindung-websocket)
+15. [Logik-Editor](#logik-editor)
+16. [Adapter-Konfiguration](#adapter-konfiguration)
+17. [MQTT-Topics](#mqtt-topics)
+18. [Datentypen](#datentypen)
+19. [Einstellungen](#einstellungen)
+20. [Hilfsskripte](#hilfsskripte)
+21. [Entwicklung](#entwicklung)
 
 ---
 
@@ -80,9 +81,54 @@ curl http://localhost:8080/api/v1/system/health
 
 | Dienst | Adresse | Protokoll |
 |---|---|---|
-| open bridge server Weboberfläche + API | http://localhost:8080 | HTTP |
+| **open bridge server** Weboberfläche + API | http://localhost:8080 | HTTP |
 | Mosquitto MQTT (intern) | localhost:1883 | MQTT |
 | Mosquitto MQTT über WebSocket | localhost:9001 | MQTT/WS |
+
+---
+
+## Schnellstart — Proxmox LXC
+
+Das LXC-Template enthält ein vollständiges Ubuntu 26.04-System mit **open bridge server** und startet den Dienst automatisch beim Hochfahren des Containers.
+
+**Schritt 1 — Template herunterladen**
+
+1. Auf der [Release-Seite](../../releases/latest) die URL der `.tar.zst`-Datei sowie den SHA512-Hash aus dem Abschnitt **LXC Template** kopieren.
+2. In der Proxmox-Weboberfläche zu **Datacenter → Storage → local → CT Templates** navigieren.
+3. **Download from URL** klicken.
+4. Die kopierte URL einfügen und auf **Query URL** klicken.
+5. Als Hash-Algorithmus **SHA512** auswählen.
+6. Den kopierten Hash einfügen.
+7. Auf **Download** klicken.
+
+![ProxmoxDownloadFromURL](docs/ProxmoxDownloadFromURL.png)
+
+**Schritt 2 — Container erstellen**
+
+1. Im Proxmox-Menü **Create CT** wählen.
+2. Als Template das gerade heruntergeladene `ubuntu-plucky-openbridgeserver_…` auswählen.
+3. Hostname, Passwort, CPU, RAM und Netzwerk nach Bedarf konfigurieren — empfohlen: mindestens 512 MB RAM.
+4. Container starten.
+
+**Schritt 3 — Zugriff**
+
+| Dienst | Adresse |
+|---|---|
+| **open bridge server** Weboberfläche + API | `http://<container-ip>:8080` |
+
+**Standardzugang:** Benutzername `admin`, Passwort `admin`
+⚠️ Das Passwort sofort nach der ersten Anmeldung ändern (Einstellungen → Passwort).
+
+**Konfiguration anpassen** (optional):
+
+```bash
+# Umgebungsvariablen in /etc/obs.env setzen, z. B.:
+OBS_MQTT__HOST=192.168.1.10
+OBS_SECURITY__JWT_SECRET=mein-geheimes-passwort
+
+# Dienst neu starten
+systemctl restart obs
+```
 
 ---
 
@@ -150,29 +196,29 @@ security:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                        open bridge server                               │
+│                        open bridge server                    │
 │                                                              │
-│  ┌─────────────────────┐  Wertänderung  ┌─────────────────┐ │
-│  │   Adapter-Instanzen │ ─────────────▶ │   Ereignisbus   │ │
-│  │                     │ ◀── schreiben  │  (verteilt an   │ │
-│  │  KNX, Modbus,       │                │  alle Abnehmer) │ │
-│  │  MQTT, 1-Wire …     │                └──┬──────┬────────┘ │
-│  └─────────────────────┘                   │      │         │
-│                                     ┌──────▼─┐ ┌──▼──────┐ │
-│                                     │ Werte- │ │ Verlauf │ │
-│                                     │ Abbild │ │ RingBuf │ │
-│                                     │        │ │ MQTT    │ │
-│                                     └────────┘ │ WS      │ │
-│                                                └─────────┘ │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │                  Logik-Editor                         │  │
-│  │  Wertänderung → Graph ausführen → DataPoint schreiben │  │
-│  └───────────────────────────────────────────────────────┘  │
+│  ┌─────────────────────┐  Wertänderung  ┌─────────────────┐  │
+│  │   Adapter-Instanzen │ ─────────────▶ │   Ereignisbus   │  │
+│  │                     │ ◀── schreiben  │  (verteilt an   │  │
+│  │  KNX, Modbus,       │                │  alle Abnehmer) │  │
+│  │  MQTT, 1-Wire …     │                └──┬──────┬───────┘  │
+│  └─────────────────────┘                   │      │          │
+│                                     ┌──────▼─┐ ┌──▼──────┐   │
+│                                     │ Werte- │ │ Verlauf │   │
+│                                     │ Abbild │ │ RingBuf │   │
+│                                     │        │ │ MQTT    │   │
+│                                     └────────┘ │ WS      │   │
+│                                                └─────────┘   │
 │                                                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │                   REST-API + WebSocket                │  │
-│  └───────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────┐   │
+│  │                  Logik-Editor                         │   │
+│  │  Wertänderung → Graph ausführen → DataPoint schreiben │   │
+│  └───────────────────────────────────────────────────────┘   │
+│                                                              │
+│  ┌───────────────────────────────────────────────────────┐   │
+│  │                   REST-API + WebSocket                │   │
+│  └───────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -180,13 +226,13 @@ security:
 - **Adapter** lesen Werte aus dem Gebäude (KNX-Telegramm, Modbus-Register, MQTT-Nachricht, …) und melden sie an den Ereignisbus.
 - Der **Ereignisbus** verteilt jeden Wert gleichzeitig an: Werteabbild (aktueller Stand), Verlauf, Änderungsprotokoll, MQTT-Broker, WebSocket-Clients und den Logik-Editor.
 - Der **Logik-Editor** reagiert auf Wertänderungen, führt Automatisierungslogiken aus und schreibt Ergebnisse zurück in DataPoints.
-- **Protokoll-Brücke:** Wenn ein Wert über ein Protokoll empfangen wird, schreibt open bridge server ihn automatisch über alle anderen verknüpften Protokolle weiter — ohne zusätzliche Konfiguration.
+- **Protokoll-Brücke:** Wenn ein Wert über ein Protokoll empfangen wird, schreibt **open bridge server** ihn automatisch über alle anderen verknüpften Protokolle weiter — ohne zusätzliche Konfiguration.
 
 ---
 
 ## Datenpunkte
 
-Ein Datenpunkt ist das zentrale Objekt in open bridge server. Jeder physische oder virtuelle Wert im System — eine Temperatur, ein Schaltzustand, ein Energiezähler — ist ein Datenpunkt.
+Ein Datenpunkt ist das zentrale Objekt in **open bridge server**. Jeder physische oder virtuelle Wert im System — eine Temperatur, ein Schaltzustand, ein Energiezähler — ist ein Datenpunkt.
 
 ```
 GET    /api/v1/datapoints?page=0&size=50       # Liste (seitenweise)
@@ -240,8 +286,8 @@ DELETE /api/v1/datapoints/{id}/bindings/{binding_id}
 
 | Richtung | Bedeutung |
 |---|---|
-| `SOURCE` | Lesen: Adapter empfängt Werte und leitet sie an open bridge server weiter |
-| `DEST` | Schreiben: open bridge server sendet Werte an den Adapter |
+| `SOURCE` | Lesen: Adapter empfängt Werte und leitet sie an **open bridge server** weiter |
+| `DEST` | Schreiben: **open bridge server** sendet Werte an den Adapter |
 | `BOTH` | Beides gleichzeitig |
 
 **Wert-Transformation (`value_formula`):**
@@ -346,7 +392,7 @@ GET    /api/v1/adapters/{type}/binding-schema  # JSON-Schema der Verknüpfungs-K
 
 ### Anmeldung und Zugangsverwaltung
 
-open bridge server unterstützt zwei Anmeldemethoden:
+**open bridge server** unterstützt zwei Anmeldemethoden:
 
 | Methode | Verwendung |
 |---|---|
@@ -501,7 +547,7 @@ Der Logik-Editor ermöglicht das visuelle Erstellen von Automatisierungsregeln �
 
 **Ablauf:**
 1. Ein **DP Lesen**-Block beobachtet einen Datenpunkt.
-2. Ändert sich der Wert, führt open bridge server den gesamten Graphen aus.
+2. Ändert sich der Wert, führt **open bridge server** den gesamten Graphen aus.
 3. Die Blöcke werden der Reihe nach berechnet.
 4. Ein **DP Schreiben**-Block schreibt das Ergebnis zurück — das löst automatisch alle Adapter, MQTT, den Verlauf und den RingBuffer aus.
 5. Der **Trigger**-Block löst den Graphen nach einem Zeitplan aus (z. B. täglich um 07:00 Uhr).
@@ -766,11 +812,11 @@ Zeigt berechnete Zwischenwerte direkt auf den Blöcken an — live und automatis
 | `group_address` | KNX-Gruppenadresse (dreiteilig, z. B. `27/6/6`) |
 | `dpt_id` | DPT-Kennung — Tabelle unten |
 | `state_group_address` | Optionale Rückmelde-Adresse für DEST-Verknüpfungen |
-| `respond_to_read` | `true`: open bridge server beantwortet KNX-Leseanfragen (GroupValueRead) mit dem aktuellen Wert. Standard: `false` |
+| `respond_to_read` | `true`: **open bridge server** beantwortet KNX-Leseanfragen (GroupValueRead) mit dem aktuellen Wert. Standard: `false` |
 
 **Unterstützte DPTs:**
 
-open bridge server unterstützt über 85 KNX-Datentypen. Die vollständige Liste ist über `GET /api/v1/adapters/knx/dpts` abrufbar.
+**open bridge server** unterstützt über 85 KNX-Datentypen. Die vollständige Liste ist über `GET /api/v1/adapters/knx/dpts` abrufbar.
 
 **DPT 1 — 1-Bit Boolean**
 
@@ -1063,7 +1109,7 @@ Verbindet sich mit einem **externen** MQTT-Broker (getrennt vom internen Mosquit
 
 ### Home-Assistant-Adapter
 
-Verbindet open bridge server bidirektional mit einer Home-Assistant-Instanz. Empfängt Zustandsänderungen in Echtzeit über WebSocket (`state_changed`-Ereignisse) und schreibt Werte über die HA-REST-API (Dienst-Aufrufe).
+Verbindet **open bridge server** bidirektional mit einer Home-Assistant-Instanz. Empfängt Zustandsänderungen in Echtzeit über WebSocket (`state_changed`-Ereignisse) und schreibt Werte über die HA-REST-API (Dienst-Aufrufe).
 
 **Instanz-Konfiguration:**
 
@@ -1090,7 +1136,7 @@ Textzustände wie `"on"`/`"off"`, `"true"`/`"false"` werden automatisch in Boole
 
 ### ioBroker-Adapter
 
-Verbindet open bridge server bidirektional mit einer ioBroker-Instanz über Socket.IO. Werte werden beim Verknüpfen initial gelesen und danach in Echtzeit über `stateChange`-Ereignisse aktualisiert; Schreibbefehle werden per `setState` an ioBroker gesendet.
+Verbindet **open bridge server** bidirektional mit einer ioBroker-Instanz über Socket.IO. Werte werden beim Verknüpfen initial gelesen und danach in Echtzeit über `stateChange`-Ereignisse aktualisiert; Schreibbefehle werden per `setState` an ioBroker gesendet.
 
 **Instanz-Konfiguration:**
 
@@ -1131,7 +1177,7 @@ Erzeugt zeitgesteuerte Ereignisse ohne externe Hardware — für tageszeit- oder
 | `latitude` | `47.5` | Breitengrad für Sonnenstandsberechnung |
 | `longitude` | `8.0` | Längengrad für Sonnenstandsberechnung |
 | `altitude` | `400.0` | Höhe über NN in Metern |
-| `timezone` | (App-Zeitzone) | IANA-Zeitzone; leer = Systemzeitzone von open bridge server verwenden |
+| `timezone` | (App-Zeitzone) | IANA-Zeitzone; leer = Systemzeitzone von **open bridge server** verwenden |
 | `holiday_country` | `CH` | ISO-3166-Ländercode für Feiertagskalender |
 | `holiday_subdivision` | — | Kanton/Bundesland, z. B. `ZH` oder `BY` |
 | `holiday_language` | `de` | Sprache für Feiertagsnamen |
@@ -1170,7 +1216,7 @@ Erzeugt zeitgesteuerte Ereignisse ohne externe Hardware — für tageszeit- oder
 
 ## MQTT-Topics
 
-open bridge server verwendet zwei parallele Topic-Strategien:
+**open bridge server** verwendet zwei parallele Topic-Strategien:
 
 | Topic | Beschreibung |
 |---|---|
@@ -1244,16 +1290,16 @@ Das Skript `scripts/Import-EtsGaCsv.ps1` liest einen ETS-GA-CSV-Export und legt 
 automatisch einen DataPoint mit passendem Typ und Einheit an. Anschliessend wird eine
 Verknüpfung zur angegebenen KNX-Adapter-Instanz erstellt.
 
-**Voraussetzungen:** PowerShell 5.1 oder neuer, erreichbare open bridge server-Instanz, gültiger API-Schlüssel.
+**Voraussetzungen:** PowerShell 5.1 oder neuer, erreichbare **open bridge server**-Instanz, gültiger API-Schlüssel.
 
 **Parameter:**
 
 | Parameter | Pflicht | Beschreibung |
 |---|---|---|
-| `-Url` | ja | Basis-URL der open bridge server-Instanz, z.B. `http://localhost:8080` |
+| `-Url` | ja | Basis-URL der **open bridge server**-Instanz, z.B. `http://localhost:8080` |
 | `-ApiKey` | ja | API-Schlüssel (`obs_…`) |
 | `-File` | ja | Pfad zur ETS-GA-CSV-Datei |
-| `-Adapter` | ja | Name der KNX-Adapter-Instanz in open bridge server |
+| `-Adapter` | ja | Name der KNX-Adapter-Instanz in **open bridge server** |
 | `-LogFile` | nein | Pfad für Fehlerprotokoll; ohne Angabe werden Fehler auf der Konsole ausgegeben |
 | `-Direction` | nein | Verknüpfungsrichtung: `SOURCE` (Standard), `DEST` oder `BOTH` |
 | `-Encoding` | nein | Zeichenkodierung der CSV-Datei: `UTF8` (Standard) oder `Default` (ANSI/Windows-1252). ETS 5 exportiert i.d.R. ANSI, ETS 6 UTF-8. |
@@ -1271,7 +1317,7 @@ Komma-Trennzeichen sowie deutschsprachige und englischsprachige Spaltenköpfe au
 ```
 
 DPT-Angaben im Format `DPST-X-Y` (Haupt- und Subtyp) oder `DPT-X` (nur Haupttyp) werden
-automatisch in das open bridge server-Format (`DPT9.001`) umgewandelt und der passende Datentyp (`FLOAT`,
+automatisch in das **open bridge server**-Format (`DPT9.001`) umgewandelt und der passende Datentyp (`FLOAT`,
 `INTEGER`, `BOOLEAN`, `STRING`) sowie die Einheit werden gesetzt. Fehlt der DPT, wird `FLOAT`
 ohne Einheit verwendet.
 

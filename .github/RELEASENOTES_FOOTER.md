@@ -1,4 +1,6 @@
 
+<!-- LXC_INSERT -->
+
 ### Thank you!
 
 Thank you for using the **open bridge server**!
