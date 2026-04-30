@@ -195,18 +195,24 @@ function makeDataset(color: string) {
 }
 
 async function fetchPoints() {
-  if (!props.datapointId || props.editorMode) return []
-  const now  = new Date()
-  const from = new Date(now.getTime() - historyHours.value * 3_600_000).toISOString()
-  const data = await history.query(props.datapointId, from, now.toISOString())
+  if (!props.datapointId || props.editorMode) return { pts: [], minMs: 0, maxMs: 0 }
+  const now     = new Date()
+  const fromDate = new Date(now.getTime() - historyHours.value * 3_600_000)
+  const data    = await history.query(props.datapointId, fromDate.toISOString(), now.toISOString())
   histUnit = data[0]?.u ?? ''
-  return data.map(d => ({ x: new Date(d.ts).getTime(), y: Number(d.v) }))
+  return {
+    pts:   data.map(d => ({ x: new Date(d.ts).getTime(), y: Number(d.v) })),
+    minMs: fromDate.getTime(),
+    maxMs: now.getTime(),
+  }
 }
 
 async function updateMiniChart() {
   if (mode.value !== 'history' || !miniChart) return
-  const pts = await fetchPoints()
+  const { pts, minMs, maxMs } = await fetchPoints()
   miniChart.data.datasets[0].data = pts
+  const xAxis = miniChart.options.scales?.x as any
+  if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
   miniChart.update()
 }
 
@@ -233,7 +239,7 @@ watch(modalOpen, async (open) => {
   if (!open) { modalChart?.destroy(); modalChart = null; return }
   await new Promise<void>(r => setTimeout(r, 50))
   if (!modalCanvasEl.value) return
-  const pts = await fetchPoints()
+  const { pts, minMs, maxMs } = await fetchPoints()
   modalChart = new Chart(modalCanvasEl.value, {
     type: 'line',
     data: { datasets: [{ ...makeDataset(activeColor.value), data: pts }] },
@@ -252,6 +258,8 @@ watch(modalOpen, async (open) => {
       scales: {
         x: {
           type: 'linear',
+          min: minMs,
+          max: maxMs,
           ticks: { color: '#6b7280', maxTicksLimit: 6, maxRotation: 0, callback: (ms: any) => fmtMs(Number(ms)) },
           grid: { color: '#1f2937' },
         },

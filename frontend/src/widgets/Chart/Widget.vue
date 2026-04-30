@@ -31,15 +31,19 @@ function fmtMs(ms: number): string {
 async function loadData() {
   if (!props.datapointId || props.editorMode) return
   const now = new Date()
-  const from = new Date(now.getTime() - hours.value * 3_600_000).toISOString()
-  const data = await history.query(props.datapointId, from, now.toISOString())
+  const fromDate = new Date(now.getTime() - hours.value * 3_600_000)
+  const data = await history.query(props.datapointId, fromDate.toISOString(), now.toISOString())
 
   const points = data.map((d) => ({ x: new Date(d.ts).getTime(), y: Number(d.v) }))
   currentUnit = data[0]?.u ?? ''
 
   if (chart) {
     chart.data.datasets[0].data = points
-    // Update Y-axis title with unit if available
+    const xAxis = chart.options.scales?.x as any
+    if (xAxis) {
+      xAxis.min = fromDate.getTime()
+      xAxis.max = now.getTime()
+    }
     const yAxis = chart.options.scales?.y as any
     if (yAxis) {
       yAxis.title = { display: !!currentUnit, text: currentUnit, color: '#6b7280', font: { size: 11 } }
