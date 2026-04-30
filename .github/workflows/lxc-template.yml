@@ -92,44 +92,45 @@ jobs:
           CURRENT=$(cat "$INSTALL_DIR/version" 2>/dev/null || echo "unknown")
           echo "Fetching release information..."
           ALL_RELEASES=$(curl -sf "https://api.github.com/repos/${REPO}/releases")
-          
-          LATEST_STABLE=$(echo "$ALL_RELEASES" | python3 -c "
-          import sys, json
+
+          # Build ordered list: RCs newest-first (numeric sort), then latest stable
+          VERSION_LIST=$(echo "$ALL_RELEASES" | python3 -c "
+          import sys, json, re
+
           releases = json.load(sys.stdin)
-          r = next((r for r in releases if not r['prerelease'] and not r['draft']), None)
-          print(r['tag_name'] if r else 'none')
+          stable = next((r for r in releases if not r['prerelease'] and not r['draft']), None)
+
+          def rc_num(r):
+              m = re.search(r'RC(\d+)$', r['tag_name'], re.IGNORECASE)
+              return int(m.group(1)) if m else 0
+
+          rcs = sorted(
+              [r for r in releases if r['prerelease'] and not r['draft']],
+              key=rc_num, reverse=True
+          )
+
+          for r in rcs:
+              print('rc ' + r['tag_name'])
+          if stable:
+              print('stable ' + stable['tag_name'])
           ")
-          
-          LATEST_RC=$(echo "$ALL_RELEASES" | python3 -c "
-          import sys, json
-          releases = json.load(sys.stdin)
-          r = next((r for r in releases if r['prerelease'] and not r['draft']), None)
-          print(r['tag_name'] if r else 'none')
-          ")
-          
+
           echo "Current version: $CURRENT"
           echo ""
-          
+
           OPTIONS=()
           LABELS=()
-          
-          if [[ "$LATEST_STABLE" != "none" ]]; then
-              OPTIONS+=("$LATEST_STABLE")
-              if [[ "$LATEST_STABLE" == "$CURRENT" ]]; then
-                  LABELS+=("$LATEST_STABLE  (stable, current)")
+
+          while IFS=' ' read -r TYPE TAG; do
+              OPTIONS+=("$TAG")
+              MARKER=""
+              [[ "$TAG" == "$CURRENT" ]] && MARKER=", current"
+              if [[ "$TYPE" == "stable" ]]; then
+                  LABELS+=("$TAG  (stable${MARKER})")
               else
-                  LABELS+=("$LATEST_STABLE  (stable)")
+                  LABELS+=("$TAG  (release candidate${MARKER})")
               fi
-          fi
-          
-          if [[ "$LATEST_RC" != "none" ]]; then
-              OPTIONS+=("$LATEST_RC")
-              if [[ "$LATEST_RC" == "$CURRENT" ]]; then
-                  LABELS+=("$LATEST_RC  (release candidate, current)")
-              else
-                  LABELS+=("$LATEST_RC  (release candidate)")
-              fi
-          fi
+          done <<< "$VERSION_LIST"
           
           if [[ ${#OPTIONS[@]} -eq 0 ]]; then
               echo "No releases found."
