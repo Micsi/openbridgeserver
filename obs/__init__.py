@@ -1,3 +1,8 @@
 """open bridge server — Open-Source Multiprotocol Server for Building Automation."""
 
-__version__ = "2026.4.4-beta"
+from pathlib import Path as _Path
+
+try:
+    __version__ = (_Path(__file__).parent / "version").read_text().strip()
+except OSError:
+    __version__ = "dev-version"

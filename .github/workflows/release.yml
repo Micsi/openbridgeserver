@@ -73,6 +73,12 @@ jobs:
           echo "VERSION=${GITHUB_REF##*/}" >> $GITHUB_ENV
           echo "GITHASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
+      - name: Stamp version file
+        run: |
+          BASE=$(grep -m1 '^## ' RELEASENOTES.md | sed 's/^## *//')
+          RC=$(echo "${GITHUB_REF##*/}" | grep -oP -- '-RC\d*$' || true)
+          echo "${BASE}${RC}" > obs/version
+
       - name: Set prerelease flag
         run: |
           if [[ "${GITHUB_REF##*/}" =~ -RC ]]; then

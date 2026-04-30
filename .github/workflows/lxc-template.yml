@@ -65,6 +65,12 @@ jobs:
           npm install --prefer-offline
           npm run build
 
+      - name: Stamp version file
+        run: |
+          BASE=$(grep -m1 '^## ' RELEASENOTES.md | sed 's/^## *//')
+          RC=$(echo "${{ steps.meta.outputs.version }}" | grep -oP -- '-RC\d*$' || true)
+          echo "${BASE}${RC}" > obs/version
+
       - name: Create app bundle
         run: |
           tar -czf "${{ runner.temp }}/${{ steps.meta.outputs.app_bundle_file }}" \
