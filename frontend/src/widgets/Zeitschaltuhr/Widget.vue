@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { useDatapointsStore } from '@/stores/datapoints'
 import { getJwt, datapoints as dpApi } from '@/api/client'
 import type { BindingOut } from '@/api/client'
@@ -102,6 +102,14 @@ function openEdit(e: MouseEvent) {
   if (!canInteract.value) return
   showModal.value = true
 }
+
+watch(showModal, async (open) => {
+  if (!open && cfgDatapointId.value) {
+    try {
+      bindings.value = await dpApi.listBindings(cfgDatapointId.value)
+    } catch { /* ignore */ }
+  }
+})
 </script>
 
 <template>
