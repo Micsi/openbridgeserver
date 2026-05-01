@@ -174,31 +174,33 @@ class MetaType(str, Enum):
 
 
 class ZeitschaltuhrConfig(BaseModel):
-    latitude: float = Field(47.5, description="Breitengrad für Sonnenauf/-untergang")
-    longitude: float = Field(8.0, description="Längengrad für Sonnenauf/-untergang")
-    altitude: float = Field(400.0, description="Höhe ü.M. in Metern")
-    timezone: str = Field("", description="Zeitzone (leer = App-Zeitzone, z.B. Europe/Zurich)")
-    holiday_country: str = Field("CH", description="Feiertagsland (ISO 3166-1: DE, AT, CH, FR …)")
+    latitude: float = Field(47.5, title="Breitengrad", description="Breitengrad für Sonnenauf/-untergang")
+    longitude: float = Field(8.0, title="Längengrad", description="Längengrad für Sonnenauf/-untergang")
+    altitude: float = Field(400.0, title="Höhe ü.M. (m)", description="Höhe ü.M. in Metern")
+    timezone: str = Field("", title="Zeitzone", description="Zeitzone (leer = App-Zeitzone, z.B. Europe/Zurich)")
+    holiday_country: str = Field("CH", title="Feiertagsland", description="Feiertagsland (ISO 3166-1: DE, AT, CH, FR …)")
     holiday_subdivision: str = Field(
         "",
+        title="Kanton / Bundesland",
         description="Kanton/Bundesland (z.B. ZH, BY, OÖ) — leer = nur nationale Feiertage",
     )
     holiday_language: str = Field(
         "de",
+        title="Feiertagssprache",
         description="Sprache der Feiertagsnamen (de, fr, it, en) — Standard: de",
     )
-    vacation_1_start: str = Field("", description="Ferienperiode 1 Beginn (JJJJ-MM-TT)")
-    vacation_1_end: str = Field("", description="Ferienperiode 1 Ende (JJJJ-MM-TT)")
-    vacation_2_start: str = Field("", description="Ferienperiode 2 Beginn (JJJJ-MM-TT)")
-    vacation_2_end: str = Field("", description="Ferienperiode 2 Ende (JJJJ-MM-TT)")
-    vacation_3_start: str = Field("", description="Ferienperiode 3 Beginn (JJJJ-MM-TT)")
-    vacation_3_end: str = Field("", description="Ferienperiode 3 Ende (JJJJ-MM-TT)")
-    vacation_4_start: str = Field("", description="Ferienperiode 4 Beginn (JJJJ-MM-TT)")
-    vacation_4_end: str = Field("", description="Ferienperiode 4 Ende (JJJJ-MM-TT)")
-    vacation_5_start: str = Field("", description="Ferienperiode 5 Beginn (JJJJ-MM-TT)")
-    vacation_5_end: str = Field("", description="Ferienperiode 5 Ende (JJJJ-MM-TT)")
-    vacation_6_start: str = Field("", description="Ferienperiode 6 Beginn (JJJJ-MM-TT)")
-    vacation_6_end: str = Field("", description="Ferienperiode 6 Ende (JJJJ-MM-TT)")
+    vacation_1_start: str = Field("", title="Ferien 1 Beginn", description="Ferienperiode 1 Beginn (JJJJ-MM-TT)")
+    vacation_1_end: str = Field("", title="Ferien 1 Ende", description="Ferienperiode 1 Ende (JJJJ-MM-TT)")
+    vacation_2_start: str = Field("", title="Ferien 2 Beginn", description="Ferienperiode 2 Beginn (JJJJ-MM-TT)")
+    vacation_2_end: str = Field("", title="Ferien 2 Ende", description="Ferienperiode 2 Ende (JJJJ-MM-TT)")
+    vacation_3_start: str = Field("", title="Ferien 3 Beginn", description="Ferienperiode 3 Beginn (JJJJ-MM-TT)")
+    vacation_3_end: str = Field("", title="Ferien 3 Ende", description="Ferienperiode 3 Ende (JJJJ-MM-TT)")
+    vacation_4_start: str = Field("", title="Ferien 4 Beginn", description="Ferienperiode 4 Beginn (JJJJ-MM-TT)")
+    vacation_4_end: str = Field("", title="Ferien 4 Ende", description="Ferienperiode 4 Ende (JJJJ-MM-TT)")
+    vacation_5_start: str = Field("", title="Ferien 5 Beginn", description="Ferienperiode 5 Beginn (JJJJ-MM-TT)")
+    vacation_5_end: str = Field("", title="Ferien 5 Ende", description="Ferienperiode 5 Ende (JJJJ-MM-TT)")
+    vacation_6_start: str = Field("", title="Ferien 6 Beginn", description="Ferienperiode 6 Beginn (JJJJ-MM-TT)")
+    vacation_6_end: str = Field("", title="Ferien 6 Ende", description="Ferienperiode 6 Ende (JJJJ-MM-TT)")
     custom_holidays: list[str] = Field(
         default=[],
         description=(
