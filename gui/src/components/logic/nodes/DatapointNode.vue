@@ -28,7 +28,7 @@
           <span ref="portRef2" class="gn-port-label">Geändert</span>
         </div>
       </div>
-      <div v-if="data._dbg" class="gn-debug">{{ data._dbg }}</div>
+      <div v-if="data._dbg" class="gn-debug" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <template v-if="!isWrite">
