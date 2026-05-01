@@ -119,34 +119,38 @@ function openEdit(e: MouseEvent) {
       </template>
     </div>
 
-    <!-- Ausgang: AKTIV / INAKTIV -->
+    <!-- Ausgang: effektiver Objektwert -->
     <div class="flex items-center gap-2 mt-1">
       <span
-        class="inline-flex items-center px-2.5 py-1 rounded-md text-sm font-semibold leading-none"
+        class="inline-flex items-center px-2.5 py-1 rounded-md font-semibold leading-none text-base"
         :class="outputActive === null
           ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500'
           : outputActive
             ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
             : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'"
       >
-        {{ outputActive === null ? (editorMode ? '—' : '…') : outputActive ? 'AKTIV' : 'INAKTIV' }}
+        {{ liveValue !== null ? String(liveValue.v) : (editorMode ? '—' : '…') }}
       </span>
     </div>
 
-    <!-- Fusszeile: Zeitplan-Status + Edit-Button -->
-    <div v-if="hasConfig" class="flex items-center gap-1.5 mt-auto">
+    <!-- Zeitplan-Status + Edit-Button -->
+    <div v-if="hasConfig" class="flex items-center gap-2 mt-2">
       <span
-        class="w-1.5 h-1.5 rounded-full flex-shrink-0"
+        class="w-3 h-3 rounded-full flex-shrink-0"
         :class="instanceBindings.length === 0 || editorMode
           ? 'bg-gray-300 dark:bg-gray-600'
-          : anyEnabled ? 'bg-blue-400' : 'bg-gray-400 dark:bg-gray-600'"
+          : anyEnabled ? 'bg-green-500' : 'bg-red-500'"
       />
-      <span class="text-xs text-gray-400 dark:text-gray-500 truncate">
+      <span class="text-xs font-medium truncate"
+        :class="instanceBindings.length === 0 || editorMode
+          ? 'text-gray-400 dark:text-gray-500'
+          : anyEnabled ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'"
+      >
         <template v-if="editorMode">
           {{ cfgMode === 'full' ? 'Vollzugriff' : cfgMode === 'restricted' ? 'Eingeschränkt' : 'Minimal' }}
         </template>
         <template v-else-if="instanceBindings.length === 0">Keine Schaltpunkte</template>
-        <template v-else>{{ anyEnabled ? 'Zeitplan aktiv' : 'Zeitplan inaktiv' }}</template>
+        <template v-else>{{ anyEnabled ? 'Zeitschaltuhr aktiv' : 'Zeitschaltuhr inaktiv' }}</template>
       </span>
       <button
         v-if="canInteract"
