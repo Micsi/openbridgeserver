@@ -148,9 +148,6 @@ function openEdit(e: MouseEvent) {
         </span>
       </div>
 
-      <!-- Spacer -->
-      <div class="flex-1" />
-
       <!-- Zeitplan-Status: immer einzeilig, kein Umbruch -->
       <div v-if="hasConfig" class="flex items-center gap-2 min-w-0">
         <span
@@ -172,6 +169,9 @@ function openEdit(e: MouseEvent) {
           <template v-else>{{ anyEnabled ? 'Zeitschaltuhr aktiv' : 'Zeitschaltuhr inaktiv' }}</template>
         </span>
       </div>
+
+      <!-- Spacer -->
+      <div class="flex-1" />
 
       <!-- Edit-Button am unteren Rand -->
       <div v-if="canInteract" class="flex justify-end mt-1">
