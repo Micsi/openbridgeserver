@@ -80,10 +80,10 @@ function deriveState(
   return 'unknown'
 }
 
-// Kipp nur für Einzelflügelfenster auswerten — bei Türen/Schiebetüren ignorieren
+// Kipp nur für Einzelflügelfenster und Eintürer auswerten — bei Türe/Schiebetüre ignorieren
 const stateMain  = computed(() => {
-  const tiltId = (mode.value === 'fenster' || mode.value === 'fenster_r') ? dpTilt.value : null
-  return deriveState(dpContact.value, invContact.value, tiltId, invTilt.value)
+  const usesTilt = mode.value === 'fenster' || mode.value === 'fenster_r' || mode.value === 'eintuer_l' || mode.value === 'eintuer_r'
+  return deriveState(dpContact.value, invContact.value, usesTilt ? dpTilt.value : null, invTilt.value)
 })
 const stateLeft  = computed(() => deriveState(dpContactLeft.value, invContactLeft.value, dpTiltLeft.value, invTiltLeft.value))
 const stateRight = computed(() => deriveState(dpContactRight.value, invContactRight.value, dpTiltRight.value, invTiltRight.value))
@@ -468,9 +468,14 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
         viewBox 92×200. Rahmen x=2..90, y=2..194. Boden y=196.
         Anschlag links (x=2), freie Kante rechts (x=90).
       -->
+      <!-- ── Single door LEFT-hinged, Zweitürer-style (eintuer_l) ────────── -->
+      <!--
+        Gleiche Geometrie wie linker Flügel des Zweitürers inkl. Kipp.
+        viewBox "-8 0 106 200" — Kipp-Polygon ragt links bis x=-6 hinaus.
+      -->
       <svg
         v-else-if="mode === 'eintuer_l'"
-        viewBox="0 0 92 200"
+        viewBox="-8 0 106 200"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
@@ -488,6 +493,15 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
             <line x1="76" y1="100" x2="76" y2="115" stroke-width="3" stroke-linecap="round"/>
           </g>
         </template>
+        <template v-else-if="stateMain === 'tilted'">
+          <!-- Freie rechte Kante: (70,7)→(83,190), bei y=100 → x≈77. Griff 5px vom Rand, Arm dx=−1 pro 15px -->
+          <polygon points="-6,7 70,7 83,190 7,190" stroke-width="2"
+                   class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
+            <circle cx="72" cy="100" r="2"/>
+            <line x1="72" y1="100" x2="71" y2="85" stroke-width="3" stroke-linecap="round"/>
+          </g>
+        </template>
         <template v-else-if="stateMain === 'open'">
           <polygon points="7,7 67,16 67,199 7,190" stroke-width="2" stroke-linejoin="round"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
@@ -503,9 +517,12 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
       </svg>
 
       <!-- ── Single door RIGHT-hinged, Zweitürer-style (eintuer_r) ───────── -->
+      <!--
+        Gespiegelt zu eintuer_l. Kipp-Polygon ragt rechts bis x=96 hinaus.
+      -->
       <svg
         v-else-if="mode === 'eintuer_r'"
-        viewBox="0 0 92 200"
+        viewBox="-8 0 106 200"
         class="w-full h-full max-h-full"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
@@ -521,6 +538,15 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
             <circle cx="14" cy="100" r="2"/>
             <line x1="14" y1="100" x2="14" y2="115" stroke-width="3" stroke-linecap="round"/>
+          </g>
+        </template>
+        <template v-else-if="stateMain === 'tilted'">
+          <!-- Freie linke Kante (R-angeschlagen): (20,7)→(7,190), bei y=100 → x≈13. Griff 5px vom Rand, Arm dx=+1 pro 15px -->
+          <polygon points="96,7 20,7 7,190 83,190" stroke-width="2"
+                   class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
+            <circle cx="18" cy="100" r="2"/>
+            <line x1="18" y1="100" x2="19" y2="85" stroke-width="3" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="stateMain === 'open'">

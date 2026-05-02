@@ -40,7 +40,8 @@ const isRoof        = computed(() => cfg.mode === 'dachfenster')
 
 // Dachflächenfenster hat keine Kontakt-/Kippschalter mehr — nur noch Positionswerte
 const showContact  = computed(() => isSingleWing.value || isDoor.value || isSlidingDoor.value)
-const showTilt     = computed(() => isSingleWing.value)
+const isEintuer    = computed(() => cfg.mode === 'eintuer_l' || cfg.mode === 'eintuer_r')
+const showTilt     = computed(() => isSingleWing.value || isEintuer.value)
 const showWings    = computed(() => isDoubleWing.value)
 const showPosition = computed(() => isRoof.value)
 
@@ -92,14 +93,14 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
         <option value="fenster">Einflügelfenster (links angeschlagen)</option>
         <option value="fenster_r">Einflügelfenster (rechts angeschlagen)</option>
         <option value="fenster_2">Zweiflügelfenster</option>
-        <option value="zweituerer">Zweitürer</option>
-        <option value="tuere">Türe (links angeschlagen)</option>
-        <option value="tuere_r">Türe (rechts angeschlagen)</option>
         <option value="eintuer_l">Eintürer (links angeschlagen)</option>
         <option value="eintuer_r">Eintürer (rechts angeschlagen)</option>
+        <option value="zweituerer">Zweitürer</option>
         <option value="schiebetuer">Schiebetüre (fixer Teil links)</option>
         <option value="schiebetuer_r">Schiebetüre (fixer Teil rechts)</option>
         <option value="dachfenster">Dachflächenfenster</option>
+        <option value="tuere">Türe (links angeschlagen)</option>
+        <option value="tuere_r">Türe (rechts angeschlagen)</option>
       </select>
     </div>
 
