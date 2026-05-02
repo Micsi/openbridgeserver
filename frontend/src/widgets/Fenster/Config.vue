@@ -34,7 +34,7 @@ const cfg = reactive({
 
 const isSingleWing  = computed(() => cfg.mode === 'fenster' || cfg.mode === 'fenster_r')
 const isDoubleWing  = computed(() => cfg.mode === 'fenster_2' || cfg.mode === 'zweituerer')
-const isDoor        = computed(() => cfg.mode === 'tuere' || cfg.mode === 'tuere_r')
+const isDoor        = computed(() => cfg.mode === 'tuere' || cfg.mode === 'tuere_r' || cfg.mode === 'eintuer_l' || cfg.mode === 'eintuer_r')
 const isSlidingDoor = computed(() => cfg.mode === 'schiebetuer' || cfg.mode === 'schiebetuer_r')
 const isRoof        = computed(() => cfg.mode === 'dachfenster')
 
@@ -95,6 +95,8 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
         <option value="zweituerer">Zweitürer</option>
         <option value="tuere">Türe (links angeschlagen)</option>
         <option value="tuere_r">Türe (rechts angeschlagen)</option>
+        <option value="eintuer_l">Eintürer (links angeschlagen)</option>
+        <option value="eintuer_r">Eintürer (rechts angeschlagen)</option>
         <option value="schiebetuer">Schiebetüre (fixer Teil links)</option>
         <option value="schiebetuer_r">Schiebetüre (fixer Teil rechts)</option>
         <option value="dachfenster">Dachflächenfenster</option>
