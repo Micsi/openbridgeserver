@@ -165,11 +165,11 @@ const openPct = computed(() => {
   return Math.max(0, Math.min(100, pos))
 })
 
-// Sichtbare Paneelhöhe (perspektivische Verkürzung bei geöffnetem Dachflächenfenster)
-// Drehachse oben: Scheibe klappt nach unten weg, bei 100% nur noch schmaler Streifen
-const roofPaneH = computed(() => {
-  if (mode.value !== 'dachfenster') return 42
-  return Math.max(2, Math.round(42 * Math.cos(openPct.value * Math.PI / 200)))
+// Halbe sichtbare Paneelhöhe (Drehachse Mitte, beide Hälften gleichmässig verkürzt)
+// Innenhöhe = 42px → jede Hälfte = 21px. Bei 100% steht Scheibe hochkant → halfH = 1px
+const roofHalfH = computed(() => {
+  if (mode.value !== 'dachfenster') return 21
+  return Math.max(1, Math.round(21 * Math.cos(openPct.value * Math.PI / 200)))
 })
 
 // Rollladenhöhe in SVG-Einheiten (42 = volle Innenhöhe)
@@ -600,9 +600,10 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
 
       <!-- ── Dachflächenfenster (dachfenster) ─────────────────────────── -->
       <!--
-        viewBox 72×56. Rahmen rect(2,2,68,52). Innenfläche: x=7…65, y=7…49 (w=58, h=42).
-        Drehachse oben (y=7): Scheibe klappt nach unten weg.
-        0% = geschlossen (Vollfläche), 100% = schmaler Streifen (Cosinus-Projektion).
+        Horizontale Drehachse in der Mitte (center-pivot, Velux-Typ).
+        viewBox 72×56. Rahmen rect(2,2,68,52). Innenfläche: x=7…65, y=7…49 (h=42).
+        Drehachse bei y=28 (Mitte). Beide Hälften kürzen sich gleichmässig ein.
+        0% = geschlossen (Vollfläche), 100% = hochkant (1px Streifen).
         Optional: Rollladen-Overlay von oben nach unten.
       -->
       <svg
@@ -615,24 +616,25 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
         <!-- Outer frame -->
         <rect x="2" y="2" width="68" height="52" rx="1" stroke="currentColor" stroke-width="2.5"/>
 
-        <!-- Geschlossen: volle Scheibe -->
+        <!-- Geschlossen: volle Scheibe + subtile Drehachsen-Linie -->
         <template v-if="roofState === 'closed'">
           <rect x="7" y="7" width="58" height="42" stroke-width="1.5"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
+          <line x1="7" y1="28" x2="65" y2="28" stroke="currentColor" stroke-width="0.5" opacity="0.25"/>
         </template>
 
-        <!-- Teilweise/ganz offen: perspektivisch verkürzte Scheibe -->
+        <!-- Teilweise/ganz offen: Cosinus-Verkürzung um Mittelachse -->
         <template v-else-if="roofState !== 'unknown'">
           <!-- Geisterumriss der vollen Innenfläche -->
           <rect x="7" y="7" width="58" height="42" stroke-width="1" stroke-dasharray="2,2"
                 class="fill-gray-100 dark:fill-gray-800 stroke-gray-300 dark:stroke-gray-600" opacity="0.4"/>
-          <!-- Verkürzte Scheibe (Cosinus-Projektion, Drehachse oben) -->
-          <rect x="7" y="7" width="58" :height="roofPaneH" stroke-width="1.5"
+          <!-- Drehachse (horizontal, Mitte) -->
+          <line x1="7" y1="28" x2="65" y2="28"
+                stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+          <!-- Verkürzte Scheibe: beide Hälften symmetrisch um y=28 -->
+          <rect x="7" :y="28 - roofHalfH" width="58" :height="roofHalfH * 2" stroke-width="1.5"
                 class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- Unterkante der sichtbaren Scheibe hervorheben -->
-          <line x1="7" :y1="7 + roofPaneH" x2="65" :y2="7 + roofPaneH"
-                stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
-          <!-- Öffnungsgrad in Prozent -->
+          <!-- Öffnungsgrad in Prozent (unterhalb der Drehachse) -->
           <text
             v-if="displayPosition !== null"
             x="36" y="44"
@@ -649,10 +651,8 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
 
         <!-- Rollladen-Overlay (optional, von oben nach unten) -->
         <template v-if="enableShutter && shutterBarH > 0">
-          <!-- Rollladen-Fläche -->
           <rect x="7" y="7" width="58" :height="shutterBarH"
                 class="fill-gray-500 dark:fill-gray-400" opacity="0.75"/>
-          <!-- Lamellen-Linien alle 4 SVG-Einheiten -->
           <line
             v-for="i in shutterSlatCount" :key="i"
             x1="7" :y1="7 + i * 4" x2="65" :y2="7 + i * 4"
