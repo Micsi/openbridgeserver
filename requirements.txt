@@ -21,7 +21,7 @@ pymodbus>=3.13.0,<3.14.0
 w1thermsensor>=2.3.0
 
 # Authentication
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]>=3.5.0
 bcrypt>=5.0.0
 # passlib removed — password hashing via stdlib hashlib.pbkdf2_hmac
 
