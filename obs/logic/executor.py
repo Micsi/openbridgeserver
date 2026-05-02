@@ -549,8 +549,15 @@ class GraphExecutor:
 
             case "heating_circuit":
                 # DIN-Norm Sommer/Winter-Umschaltung mit Hysterese
-                # Eingang: Temperaturwert (wird je nach Tageszeit T1/T2/T3 zugeordnet)
-                # T1 ≈ 07:00, T2 ≈ 14:00, T3 ≈ 22:00 (doppelt gewichtet)
+                # Eingang: Aussentemperatur (kontinuierlicher Datenpunkt, keine Zeitschaltuhr nötig).
+                # Der Block puffert den zuletzt empfangenen Wert und übernimmt ihn als Slot-Wert
+                # in dem Moment, in dem die Uhr genau die Zielstunde erreicht:
+                #   T1 = "anliegender Wert" bei Stunde 7  (07:xx Uhr)
+                #   T2 = "anliegender Wert" bei Stunde 12 (12:xx Uhr)
+                #   T3 = "anliegender Wert" bei Stunde 22 (22:xx Uhr)
+                # "anliegender Wert" = letzter bekannter Wert zum Zeitpunkt des Übergangs,
+                # d.h. wenn um 07:05 ein Wert eintrifft, wird last_value (06:55-Wert) als T1 gespeichert.
+                # Jeder Slot wird pro Tag nur EINMAL erfasst; Folgewerte werden verworfen.
                 # T_avg = (T1 + T2 + 2×T3) / 4
                 # heating_mode=1 wenn ref_temp < temp_winter, bleibt 1 bis ref_temp > temp_summer
                 import datetime as _dt
@@ -558,6 +565,7 @@ class GraphExecutor:
                 state = self.hysteresis_state.setdefault(
                     node.id,
                     {
+                        "last_value": None,
                         "t1": None,
                         "t1_date": None,
                         "t2": None,
@@ -566,47 +574,75 @@ class GraphExecutor:
                         "t3_date": None,
                         "daily_temps": [],
                         "daily_avg": None,
+                        "daily_avg_date": None,
                         "monthly_avg": None,
                         "heating_mode": 0,
                     },
                 )
+                # Migrate states persisted before these fields were introduced
+                state.setdefault("last_value", None)
+                state.setdefault("daily_avg_date", None)
+
                 val = inputs.get("value")
                 temp_winter = float(d.get("temp_winter", 15.0))
                 temp_summer = float(d.get("temp_summer", 20.0))
                 if val is not None:
                     fval = self._to_num(val)
-                    today = _dt.date.today().isoformat()
-                    # _slot allows unit tests to force a specific slot without mocking time
+                    # _date / _hour allow unit tests to override wall-clock without mocking
+                    today = inputs.get("_date") or _dt.date.today().isoformat()
                     slot = inputs.get("_slot")
-                    if slot is None:
-                        hour = _dt.datetime.now().hour
-                        if 5 <= hour <= 10:
-                            slot = "t1"
-                        elif 12 <= hour <= 16:
-                            slot = "t2"
-                        elif 20 <= hour <= 23:
-                            slot = "t3"
+
                     if slot in ("t1", "t2", "t3"):
+                        # Test-Override: Slot direkt mit dem eingehenden Wert belegen
                         state[slot] = fval
                         state[f"{slot}_date"] = today
-                    # Compute daily avg once all three slots have today's date
-                    if state["t1_date"] == today and state["t2_date"] == today and state["t3_date"] == today:
+                    elif state["daily_avg_date"] != today:
+                        # "Anliegender Wert"-Logik: T1/T2/T3 = last_value beim Überqueren der
+                        # Zielstunde.  Ist noch kein last_value vorhanden (erster Wert des Tages),
+                        # wird der aktuelle Wert als bestmögliche Näherung verwendet.
+                        hour = inputs.get("_hour", _dt.datetime.now().hour)
+                        capture_val = state["last_value"] if state["last_value"] is not None else fval
+                        if hour == 7 and state["t1_date"] != today:
+                            state["t1"] = capture_val
+                            state["t1_date"] = today
+                        elif hour == 12 and state["t2_date"] != today:
+                            state["t2"] = capture_val
+                            state["t2_date"] = today
+                        elif hour == 22 and state["t3_date"] != today:
+                            state["t3"] = capture_val
+                            state["t3_date"] = today
+
+                    # last_value nach dem Slot-Check aktualisieren, damit beim NÄCHSTEN
+                    # Zeitpunkt der gerade empfangene Wert als "anliegender Wert" dient.
+                    state["last_value"] = fval
+
+                    # Tagesmittel berechnen sobald alle drei Slots das gleiche Datum tragen
+                    if (
+                        state["t1_date"] == today
+                        and state["t2_date"] == today
+                        and state["t3_date"] == today
+                        and state["daily_avg_date"] != today
+                    ):
                         daily_avg = (state["t1"] + state["t2"] + 2 * state["t3"]) / 4
                         state["daily_avg"] = daily_avg
+                        state["daily_avg_date"] = today
                         state["daily_temps"].append(daily_avg)
                         state["daily_temps"] = state["daily_temps"][-31:]
                         state["monthly_avg"] = sum(state["daily_temps"]) / len(state["daily_temps"])
-                        # Reset slots for next day
+                        # Slots für den nächsten Tag zurücksetzen
                         for k in ("t1", "t2", "t3", "t1_date", "t2_date", "t3_date"):
                             state[k] = None
-                # Hysteresis: switch ON below temp_winter, OFF above temp_summer
+                # Hysterese: EIN wenn < temp_winter, AUS wenn > temp_summer
                 ref_temp = state["monthly_avg"] if state["monthly_avg"] is not None else state["daily_avg"]
                 if ref_temp is not None:
                     if ref_temp < temp_winter:
                         state["heating_mode"] = 1
                     elif ref_temp > temp_summer:
                         state["heating_mode"] = 0
-                    # between thresholds: keep last state (hysteresis)
+                    # zwischen den Schwellwerten: letzten Zustand beibehalten (Hysterese)
+                elif val is not None:
+                    # Noch keine Historik: Modus sofort aus dem aktuellen Wert ableiten
+                    state["heating_mode"] = 1 if self._to_num(val) < temp_winter else 0
                 return {
                     "heating_mode": state["heating_mode"],
                     "daily_avg": state["daily_avg"],
