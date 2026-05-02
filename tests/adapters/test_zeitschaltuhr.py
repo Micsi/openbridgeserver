@@ -16,6 +16,7 @@ from obs.adapters.zeitschaltuhr.adapter import (
     ZeitschaltuhrAdapter,
     ZeitschaltuhrBindingConfig,
     ZeitschaltuhrConfig,
+    _advent1_date,
     _easter_date,
     _last_weekday_of_month,
     _nth_weekday_of_month,
@@ -364,6 +365,35 @@ class TestIsVacation:
 # ---------------------------------------------------------------------------
 
 
+class TestAdvent1Date:
+    def test_advent1_2025(self):
+        # Dec 25, 2025 = Thursday → 4. Advent = Dec 21 → 1. Advent = Nov 30
+        assert _advent1_date(2025) == date(2025, 11, 30)
+
+    def test_advent1_2024(self):
+        # Dec 25, 2024 = Wednesday → 4. Advent = Dec 22 → 1. Advent = Dec 1
+        assert _advent1_date(2024) == date(2024, 12, 1)
+
+    def test_advent1_2023(self):
+        # Dec 25, 2023 = Monday → 4. Advent = Dec 24 → 1. Advent = Dec 3
+        assert _advent1_date(2023) == date(2023, 12, 3)
+
+    def test_advent1_2022(self):
+        # Dec 25, 2022 = Sunday → 4. Advent = Dec 18 → 1. Advent = Nov 27
+        assert _advent1_date(2022) == date(2022, 11, 27)
+
+    def test_advent1_is_sunday(self):
+        for year in range(2020, 2031):
+            assert _advent1_date(year).weekday() == 6, f"1. Advent {year} is not a Sunday"
+
+    def test_advent1_range(self):
+        # 1. Advent always falls between Nov 27 and Dec 3
+        for year in range(2020, 2031):
+            d = _advent1_date(year)
+            assert (d.month == 11 and d.day >= 27) or (d.month == 12 and d.day <= 3), \
+                f"1. Advent {year} = {d} out of expected range"
+
+
 class TestEasterDate:
     def test_easter_2026(self):
         # Easter Sunday 2026 is April 5
@@ -467,6 +497,31 @@ class TestParseCustomHolidayEntry:
         result = adapter._parse_custom_holiday_entry("2_SO_OKT:Erntedank", 2026)
         expected_date = _nth_weekday_of_month(2026, 10, 6, 2)
         assert result == {expected_date: "Erntedank"}
+
+    def test_advent_zero_offset(self):
+        adapter = self._adapter()
+        result = adapter._parse_custom_holiday_entry("advent+0:1. Advent", 2025)
+        assert result == {_advent1_date(2025): "1. Advent"}
+
+    def test_advent_plus_7_second_advent(self):
+        from datetime import timedelta
+        adapter = self._adapter()
+        result = adapter._parse_custom_holiday_entry("advent+7:2. Advent", 2025)
+        assert result == {_advent1_date(2025) + timedelta(days=7): "2. Advent"}
+
+    def test_advent_plus_24_heiligabend(self):
+        from datetime import timedelta
+        adapter = self._adapter()
+        result = adapter._parse_custom_holiday_entry("advent+24:Heiligabend", 2025)
+        expected = _advent1_date(2025) + timedelta(days=24)
+        assert result == {expected: "Heiligabend"}
+        # Verify: 1. Advent 2025 = Nov 30, +24 = Dec 24
+        assert expected == date(2025, 12, 24)
+
+    def test_advent_no_offset(self):
+        adapter = self._adapter()
+        result = adapter._parse_custom_holiday_entry("advent:Adventszeit", 2025)
+        assert result == {_advent1_date(2025): "Adventszeit"}
 
     def test_unknown_format_returns_empty(self):
         adapter = self._adapter()

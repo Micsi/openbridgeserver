@@ -87,6 +87,19 @@ _MONTH_ABBR: dict[str, int] = {
 }
 
 
+def _advent1_date(year: int) -> date:
+    """Returns the 1st Advent Sunday for the given year.
+
+    1. Advent is always the 4th Sunday before Christmas (Dec 25),
+    i.e. the last Sunday of November/first Sunday of December (Nov 27 – Dec 3).
+    """
+    dec25 = date(year, 12, 25)
+    # weekday(): 0=Mon … 6=Sun  →  days to step back to reach Sunday before Dec 25
+    days_back = dec25.weekday() + 1   # Mon→1, Tue→2, …, Sun→7
+    advent4 = dec25 - timedelta(days=days_back)
+    return advent4 - timedelta(days=21)
+
+
 def _easter_date(year: int) -> date:
     """Computes Easter Sunday for the given year (Gregorian calendar, Anonymous algorithm)."""
     a = year % 19
@@ -208,6 +221,7 @@ class ZeitschaltuhrConfig(BaseModel):
             "Formate: "
             "'MM-TT[:Name]' (fixes Datum, z.B. '12-26:Stephanstag'), "
             "'easter+N[:Name]' / 'easter-N[:Name]' (relativ zu Ostersonntag, z.B. 'easter+1:Ostermontag', 'easter-47:Rosenmontag'), "
+            "'advent+N[:Name]' / 'advent-N[:Name]' (relativ zum 1. Advent, z.B. 'advent+0:1. Advent', 'advent+13:Heiligabend'), "
             "'last_WT_MON[:Name]' (letzter Wochentag des Monats, z.B. 'last_SO_NOV:Buß+Bettag'), "
             "'N_WT_MON[:Name]' (n-ter Wochentag, z.B. '2_SO_OKT:Erntedank'). "
             "Wochentags-Kürzel: MO DI MI DO FR SA SO (dt.) oder MON TUE WED THU FRI SAT SUN (en.). "
@@ -693,6 +707,8 @@ class ZeitschaltuhrAdapter(AdapterBase):
           MM-TT[:Name]              — fixed annual date (e.g. "12-26:Stephanstag")
           easter+N[:Name]           — N days after Easter Sunday (e.g. "easter+1:Ostermontag")
           easter-N[:Name]           — N days before Easter Sunday (e.g. "easter-47:Rosenmontag")
+          advent+N[:Name]           — N days after 1st Advent (e.g. "advent+0:1. Advent")
+          advent-N[:Name]           — N days before 1st Advent
           last_WT_MON[:Name]        — last weekday of month (e.g. "last_SO_NOV:Buß- und Bettag")
           N_WT_MON[:Name]           — n-th weekday of month (e.g. "2_SO_OKT:Erntedank")
         """
@@ -711,6 +727,12 @@ class ZeitschaltuhrAdapter(AdapterBase):
         if m:
             offset = int(m.group(1)) if m.group(1) else 0
             return {_easter_date(year) + timedelta(days=offset): name}
+
+        # Advent-relative: advent / advent+N / advent-N
+        m = re.fullmatch(r"ADVENT([+-]\d+)?", expr_up)
+        if m:
+            offset = int(m.group(1)) if m.group(1) else 0
+            return {_advent1_date(year) + timedelta(days=offset): name}
 
         # Nth or last weekday of month: (LAST|N)_WT_MON
         m2 = re.fullmatch(r"(LAST|\d+)_([A-ZÄÖÜa-z]{2,3})_([A-ZÄÖÜa-z]{2,3})", expr_up)

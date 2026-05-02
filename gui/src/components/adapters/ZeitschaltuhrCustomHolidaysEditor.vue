@@ -35,7 +35,8 @@
         <label class="label">Typ</label>
         <select v-model="form.type" class="input text-sm">
           <option value="fixed">Festes Datum (z.B. 26. März)</option>
-          <option value="easter">Ostern-relativ (z.B. Karfreitag = easter−2)</option>
+          <option value="easter">Relativ zu Ostern (z.B. Karfreitag = Ostern−2)</option>
+          <option value="advent">Relativ zum 1. Advent (z.B. advent+0 = 1. Advent)</option>
           <option value="last_weekday">Letzter Wochentag im Monat</option>
           <option value="nth_weekday">N-ter Wochentag im Monat</option>
         </select>
@@ -57,7 +58,7 @@
         </div>
       </template>
 
-      <!-- Easter-relative inputs -->
+      <!-- Ostern-relativ inputs -->
       <template v-if="form.type === 'easter'">
         <div class="form-group">
           <label class="label">Abstand von Ostersonntag</label>
@@ -70,6 +71,22 @@
             <span class="text-xs text-slate-400 whitespace-nowrap flex-shrink-0">Tage</span>
           </div>
           <p class="hint">Beispiele: 0 = Ostersonntag, +1 = Ostermontag, −2 = Karfreitag, −47 = Rosenmontag</p>
+        </div>
+      </template>
+
+      <!-- 1. Advent-relativ inputs -->
+      <template v-if="form.type === 'advent'">
+        <div class="form-group">
+          <label class="label">Abstand vom 1. Advent</label>
+          <div class="flex gap-2 items-center">
+            <select v-model="form.easterSign" class="input text-sm" style="width: 4rem">
+              <option value="+">+</option>
+              <option value="-">−</option>
+            </select>
+            <input v-model.number="form.easterOffset" type="number" min="0" max="400" class="input text-sm flex-1" placeholder="Tage" />
+            <span class="text-xs text-slate-400 whitespace-nowrap flex-shrink-0">Tage</span>
+          </div>
+          <p class="hint">Beispiele: 0 = 1. Advent, +7 = 2. Advent, +14 = 3. Advent, +21 = 4. Advent, +24 = Heiligabend</p>
         </div>
       </template>
 
@@ -211,6 +228,11 @@ function buildEntry() {
       if (offset === 0) return `easter+0:${name}`
       return `easter${form.easterSign}${offset}:${name}`
     }
+    case 'advent': {
+      const offset = Number(form.easterOffset) || 0
+      if (offset === 0) return `advent+0:${name}`
+      return `advent${form.easterSign}${offset}:${name}`
+    }
     case 'last_weekday':
       return `last_${form.weekday}_${form.month}:${name}`
     case 'nth_weekday':
@@ -264,12 +286,20 @@ function formatEntry(entry) {
     return `${day}. ${mon ? mon.label : fixedMatch[1]}: ${label}`
   }
 
-  // Easter relative
+  // Ostern-relativ
   const easterMatch = exprUp.match(/^EASTER([+-]\d+)?$/)
   if (easterMatch) {
     const offset = easterMatch[1] ? parseInt(easterMatch[1], 10) : 0
     if (offset === 0) return `Ostersonntag: ${label}`
     return `Ostern ${offset > 0 ? '+' : ''}${offset} Tage: ${label}`
+  }
+
+  // 1. Advent-relativ
+  const adventMatch = exprUp.match(/^ADVENT([+-]\d+)?$/)
+  if (adventMatch) {
+    const offset = adventMatch[1] ? parseInt(adventMatch[1], 10) : 0
+    if (offset === 0) return `1. Advent: ${label}`
+    return `1. Advent ${offset > 0 ? '+' : ''}${offset} Tage: ${label}`
   }
 
   // Last / Nth weekday
