@@ -215,10 +215,10 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
           <!-- Kipp: Drehachse unten, Oberkante kippt nach innen (links) -->
           <polygon points="27,5 77,5 85,55 35,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
-          <!-- Griff auf freier rechter Kante (L-angeschlagen): bei y=30 interpoliert x=81 -->
+          <!-- Griff auf freier rechter Kante (x=81 bei y=30), Arm parallel zur Kante (77,5)→(85,55): dx=−2 pro 10px -->
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
             <circle cx="81" cy="30" r="1.5"/>
-            <line x1="81" y1="30" x2="81" y2="20" stroke-width="2" stroke-linecap="round"/>
+            <line x1="81" y1="30" x2="79" y2="20" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="stateMain === 'open'">
@@ -254,12 +254,13 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
         </template>
         <template v-else-if="stateMain === 'tilted'">
           <!-- Kipp R-angeschlagen: Spiegel zu L-angeschlagen → Oberkante verschiebt sich RECHTS (+8)
-               Polygon: oben x=43..93, unten x=35..85. Freie Linkskante bei y=30: x=39 -->
+               Polygon: oben x=43..93, unten x=35..85. Freie Linkskante bei y=30: x=39
+               Arm parallel zur Kante (43,5)→(35,55): dx=+2 pro 10px -->
           <polygon points="43,5 93,5 85,55 35,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
           <g class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
             <circle cx="39" cy="30" r="1.5"/>
-            <line x1="39" y1="30" x2="39" y2="20" stroke-width="2" stroke-linecap="round"/>
+            <line x1="39" y1="30" x2="41" y2="20" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="stateMain === 'open'">
@@ -314,12 +315,12 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
           </g>
         </template>
         <template v-else-if="effectiveStateLeft === 'tilted'">
-          <!-- Freie rechte Kante: (47,5)→(55,55), bei y=30 → x=51 -->
+          <!-- Freie rechte Kante: (47,5)→(55,55), bei y=30 → x=51. Arm parallel zur Kante: dx=−2 pro 10px -->
           <polygon points="-3,5 47,5 55,55 5,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
           <g v-if="showHandleLeft" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
             <circle cx="51" cy="30" r="1.5"/>
-            <line x1="51" y1="30" x2="51" y2="20" stroke-width="2" stroke-linecap="round"/>
+            <line x1="51" y1="30" x2="49" y2="20" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="effectiveStateLeft === 'open'">
@@ -345,12 +346,13 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
         </template>
         <template v-else-if="effectiveStateRight === 'tilted'">
           <!-- Kipp R-angeschlagen: Spiegel zu linkem Flügel → Oberkante verschiebt sich RECHTS (+8)
-               Polygon: oben x=73..123, unten x=65..115. Freie Linkskante bei y=30: x=69 -->
+               Polygon: oben x=73..123, unten x=65..115. Freie Linkskante bei y=30: x=69
+               Arm parallel zur Kante (73,5)→(65,55): dx=+2 pro 10px -->
           <polygon points="73,5 123,5 115,55 65,55" stroke-width="1.5"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
           <g v-if="showHandleRight" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
             <circle cx="69" cy="30" r="1.5"/>
-            <line x1="69" y1="30" x2="69" y2="20" stroke-width="2" stroke-linecap="round"/>
+            <line x1="69" y1="30" x2="71" y2="20" stroke-width="2" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="effectiveStateRight === 'open'">
@@ -403,12 +405,12 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
           </g>
         </template>
         <template v-else-if="effectiveStateLeft === 'tilted'">
-          <!-- Freie rechte Kante: (70,7)→(83,190), bei y=100 → x≈77 -->
+          <!-- Freie rechte Kante: (70,7)→(83,190), bei y=100 → x≈77. Arm parallel zur Kante: dx=−1 pro 15px -->
           <polygon points="-6,7 70,7 83,190 7,190" stroke-width="2"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
           <g v-if="showHandleLeft" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
             <circle cx="77" cy="100" r="2"/>
-            <line x1="77" y1="100" x2="77" y2="85" stroke-width="3" stroke-linecap="round"/>
+            <line x1="77" y1="100" x2="76" y2="85" stroke-width="3" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="effectiveStateLeft === 'open'">
@@ -433,12 +435,12 @@ const shutterSlatCount = computed(() => Math.floor(shutterBarH.value / 4))
           </g>
         </template>
         <template v-else-if="effectiveStateRight === 'tilted'">
-          <!-- Freie linke Kante (R-angeschlagen): (110,7)→(97,190), bei y=100 → x≈103 -->
+          <!-- Freie linke Kante (R-angeschlagen): (110,7)→(97,190), bei y=100 → x≈103. Arm parallel zur Kante: dx=+1 pro 15px -->
           <polygon points="110,7 186,7 173,190 97,190" stroke-width="2"
                    class="fill-gray-300 dark:fill-gray-600 stroke-gray-400 dark:stroke-gray-500"/>
           <g v-if="showHandleRight" class="stroke-gray-500 dark:stroke-gray-400 fill-gray-500 dark:fill-gray-400">
             <circle cx="103" cy="100" r="2"/>
-            <line x1="103" y1="100" x2="103" y2="85" stroke-width="3" stroke-linecap="round"/>
+            <line x1="103" y1="100" x2="104" y2="85" stroke-width="3" stroke-linecap="round"/>
           </g>
         </template>
         <template v-else-if="effectiveStateRight === 'open'">
