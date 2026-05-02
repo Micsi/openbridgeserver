@@ -96,7 +96,7 @@ async def query_history(
     dp_id: uuid.UUID,
     from_ts: str | None = Query(None, alias="from"),
     to_ts: str | None = Query(None, alias="to"),
-    limit: int = Query(1000, ge=1, le=10000),
+    limit: int = Query(10000, ge=1, le=100000),
     request: Request = None,
     user: str | None = Depends(optional_current_user),
     db: Database = Depends(get_db),

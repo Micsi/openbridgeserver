@@ -76,7 +76,7 @@ class SQLiteHistoryPlugin(HistoryPlugin):
         datapoint_id: uuid.UUID,
         from_ts: datetime,
         to_ts: datetime,
-        limit: int = 1000,
+        limit: int = 10000,
     ) -> list[dict]:
         rows = await self._db.fetchall(
             """SELECT ts, value, unit, quality, source_adapter

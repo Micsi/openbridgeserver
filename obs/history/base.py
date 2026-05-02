@@ -32,7 +32,7 @@ class HistoryPlugin(ABC):
         datapoint_id: uuid.UUID,
         from_ts: datetime,
         to_ts: datetime,
-        limit: int = 1000,
+        limit: int = 10000,
     ) -> list[dict]:
         """Return raw values in [from_ts, to_ts].
         Each dict: {ts: str, v: Any, u: str|None, q: str}
