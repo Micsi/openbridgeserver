@@ -163,7 +163,7 @@ async function load() {
     const to   = fromDatetimeLocal(toTs.value)
 
     if (mode.value === 'raw') {
-      const { data } = await historyApi.query(selectedDp.value, { from, to, limit: 1000 })
+      const { data } = await historyApi.query(selectedDp.value, { from, to })
       points.value = data
     } else {
       const { data } = await historyApi.aggregate(selectedDp.value, { fn: aggFn.value, interval: aggInterval.value, from, to })

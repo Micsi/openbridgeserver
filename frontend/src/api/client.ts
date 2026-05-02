@@ -343,7 +343,7 @@ export const icons = {
 // ── History ───────────────────────────────────────────────────────────────────
 
 export const history = {
-  query: (id: string, from: string, to: string, limit = 500) => {
+  query: (id: string, from: string, to: string, limit = 10000) => {
     const headers: Record<string, string> = {}
     if (_writeContext.pageId)      headers['X-Page-Id']       = _writeContext.pageId
     if (_writeContext.sessionToken) headers['X-Session-Token'] = _writeContext.sessionToken
