@@ -124,7 +124,7 @@ watch(showModal, async (open) => {
       <!-- Kopfzeile -->
       <div class="flex items-center gap-1.5 min-w-0">
         <span class="text-sm leading-none flex-shrink-0">🕐</span>
-        <span class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ label }}</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400 truncate" data-testid="zsu-label">{{ label }}</span>
         <template v-if="toggling">
           <span class="ml-auto text-xs text-gray-400 dark:text-gray-600">…</span>
         </template>
@@ -173,8 +173,8 @@ watch(showModal, async (open) => {
           <template v-if="editorMode">
             {{ cfgMode === 'full' ? 'Vollzugriff' : cfgMode === 'restricted' ? 'Eingeschränkt' : 'Minimal' }}
           </template>
-          <template v-else-if="instanceBindings.length === 0">Keine Schaltpunkte</template>
-          <template v-else>{{ anyEnabled ? 'Zeitschaltuhr aktiv' : 'Zeitschaltuhr inaktiv' }}</template>
+          <template v-else-if="instanceBindings.length === 0"><span data-testid="zsu-status">Keine Schaltpunkte</span></template>
+          <template v-else><span data-testid="zsu-status">{{ anyEnabled ? 'Zeitschaltuhr aktiv' : 'Zeitschaltuhr inaktiv' }}</span></template>
         </span>
       </div>
 
@@ -186,6 +186,7 @@ watch(showModal, async (open) => {
         <button
           type="button"
           title="Schaltpunkte bearbeiten"
+          data-testid="zsu-edit-btn"
           class="text-xs text-gray-400 dark:text-gray-600 hover:text-blue-500 dark:hover:text-blue-400 px-1 rounded transition-colors leading-none"
           @click="openEdit"
         >✏️</button>
@@ -201,6 +202,7 @@ watch(showModal, async (open) => {
     >
       <div
         v-if="confirmPending"
+        data-testid="zsu-confirm-overlay"
         class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 rounded bg-white/95 dark:bg-gray-900/95 z-10"
         @click.stop
       >
@@ -210,11 +212,13 @@ watch(showModal, async (open) => {
         <div class="flex gap-2">
           <button
             type="button"
+            data-testid="zsu-confirm-no"
             class="px-3 py-1 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
             @click.stop="cancelToggle"
           >Nein</button>
           <button
             type="button"
+            data-testid="zsu-confirm-yes"
             class="px-3 py-1 rounded text-xs text-white transition-colors"
             :class="pendingTarget ? 'bg-green-600 hover:bg-green-500' : 'bg-red-600 hover:bg-red-500'"
             @click.stop="executeToggle"
