@@ -208,6 +208,32 @@ async def test_history_stops_after_disabling(client, auth_headers):
     assert not any(abs(e["v"] - 20.0) < 0.01 for e in entries_after), "Value 20.0 was recorded even though record_history=False"
 
 
+async def test_history_limit_above_1000(client, auth_headers):
+    """API must accept limit values above 1000 (bug #316 regression guard)."""
+    dp = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-Limit-{uuid.uuid4().hex[:6]}",
+        record_history=True,
+    )
+    dp_id = dp["id"]
+
+    # Write two values
+    for v in (1.0, 2.0):
+        await _write_value(client, auth_headers, dp_id, v)
+    await asyncio.sleep(0.1)
+
+    # Requesting limit=10000 must be accepted (not rejected with 422)
+    past = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)).isoformat()
+    resp = await client.get(
+        f"/api/v1/history/{dp_id}",
+        params={"from": past, "limit": 10000},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, f"limit=10000 was rejected: {resp.text}"
+    assert len(resp.json()) >= 2
+
+
 async def test_history_resumes_after_enabling(client, auth_headers):
     """After re-enabling record_history, values are recorded again."""
     dp = await _create_dp(

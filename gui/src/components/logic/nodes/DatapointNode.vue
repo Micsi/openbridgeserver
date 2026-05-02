@@ -28,7 +28,7 @@
           <span ref="portRef2" class="gn-port-label">Geändert</span>
         </div>
       </div>
-      <div v-if="data._dbg" class="gn-debug">{{ data._dbg }}</div>
+      <div v-if="data._dbg" class="gn-debug" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <template v-if="!isWrite">
@@ -79,11 +79,12 @@ const hasFilter = computed(() => {
   const d = props.data
   return !!(
     (d.value_formula     && d.value_formula.trim())    ||
+    (d.value_map         && typeof d.value_map === 'object' && Object.keys(d.value_map).length) ||
     d.trigger_on_change === 'true'                     ||
     d.only_on_change    === 'true'                     ||
     (d.min_delta        && d.min_delta    !== '')       ||
     (d.min_delta_pct    && d.min_delta_pct !== '')      ||
-    (d.throttle_ms      && d.throttle_ms  !== '')
+    (d.throttle_value   && d.throttle_value !== '')
   )
 })
 </script>

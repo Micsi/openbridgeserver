@@ -268,6 +268,15 @@ export const datapoints = {
       body: JSON.stringify(data),
     }),
 
+  createBinding: (dpId: string, data: { adapter_instance_id: string; direction: string; config?: Record<string, unknown>; enabled?: boolean }) =>
+    request<BindingOut>(`/datapoints/${dpId}/bindings`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteBinding: (dpId: string, bindingId: string) =>
+    request<void>(`/datapoints/${dpId}/bindings/${bindingId}`, { method: 'DELETE' }),
+
   write: (id: string, value: unknown) => {
     const headers: Record<string, string> = {}
     if (_writeContext.pageId)      headers['X-Page-Id']       = _writeContext.pageId
@@ -298,12 +307,20 @@ export interface InstanceBindingEntry {
   config: Record<string, unknown>
 }
 
+export interface HolidayEntry {
+  date: string
+  name: string
+}
+
 export const adapters = {
   listInstances: () =>
     request<AdapterInstanceSummary[]>('/adapters/instances'),
 
   instanceBindings: (instanceId: string) =>
     request<InstanceBindingEntry[]>(`/adapters/instances/${instanceId}/bindings`),
+
+  zsuHolidays: (instanceId: string, year = 0) =>
+    request<HolidayEntry[]>(`/adapters/instances/${instanceId}/holidays${year ? `?year=${year}` : ''}`),
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -326,7 +343,7 @@ export const icons = {
 // ── History ───────────────────────────────────────────────────────────────────
 
 export const history = {
-  query: (id: string, from: string, to: string, limit = 500) => {
+  query: (id: string, from: string, to: string, limit = 10000) => {
     const headers: Record<string, string> = {}
     if (_writeContext.pageId)      headers['X-Page-Id']       = _writeContext.pageId
     if (_writeContext.sessionToken) headers['X-Session-Token'] = _writeContext.sessionToken

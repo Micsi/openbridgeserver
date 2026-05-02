@@ -372,9 +372,13 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         category="math",
         description=(
             "Sommer/Winter-Umschaltung nach DIN. Eingang: Aussentemperatur. "
-            "Der Wert wird je nach Tageszeit automatisch T1 (≈07:00), T2 (≈14:00) oder T3 (≈22:00) zugeordnet. "
+            "Messungen werden exakten Tageszeitpunkten zugeordnet: "
+            "T1 = Messung um 07:00 Uhr (Stunde 7), T2 = Messung um 12:00 Uhr (Stunde 12), T3 = Messung um 22:00 Uhr (Stunde 22). "
+            "Messungen zu anderen Uhrzeiten werden verworfen. Jeder Slot wird pro Tag nur einmal erfasst. "
             "Tagesmittel: T_avg = (T1 + T2 + 2×T3) / 4. "
-            "Heizmodus ON wenn Mittelwert < Temp. Winter, bleibt ON bis Mittelwert > Temp. Sommer (Hysterese)."
+            "Monatsmittel: gleitender Mittelwert der letzten 31 Tagesmittel. "
+            "Heizmodus ON wenn Mittelwert < Temp. Winter, bleibt ON bis Mittelwert > Temp. Sommer (Hysterese). "
+            "Ohne gespeicherte Historik wird der Modus sofort aus der aktuellen Temperatur abgeleitet."
         ),
         inputs=[
             _port("value", "Temp °C"),

@@ -295,3 +295,162 @@ test('Zweiflügler: handle_left=false → nur rechter Flügel hat Griff-Kreis', 
     await apiDelete(`/api/v1/datapoints/${dpRight.id}`)
   }
 })
+
+// ─── Test 8 (hoch): Zweiflügler handle_left=false → Flügel intern immer geschlossen ──
+
+test('Zweiflügler: handle_left=false → linker Flügel immer grün (geschlossen), auch wenn Kontakt offen', async ({ page }) => {
+  const dpLeft   = await createBoolDP('hl-state-left')
+  const dpRight  = await createBoolDP('hl-state-right')
+  const visuNode = await createVisuPage()
+  const pageId   = visuNode.id
+  const widgetId = randomUUID()
+
+  await buildFensterPage(pageId, widgetId, 'fenster_2', {
+    dp_contact_left:  dpLeft.id,
+    dp_contact_right: dpRight.id,
+    handle_left:      false,
+    handle_right:     true,
+  })
+
+  try {
+    await page.goto(`/visu/${pageId}`)
+    await page.waitForLoadState('networkidle')
+
+    // Linker Kontakt = offen (true), aber Griff deaktiviert → linker Flügel trotzdem grün
+    await pushBool(dpLeft.id,  true)
+    await pushBool(dpRight.id, false)
+
+    const widget        = page.locator(`[data-widget-id="${widgetId}"]`)
+    const coloredGroups = widget.locator('svg g[style]')
+
+    await expect(coloredGroups.first()).toHaveCSS('color', COLOR_CLOSED, { timeout: 3_000 })
+    await expect(coloredGroups.nth(1)).toHaveCSS('color', COLOR_CLOSED, { timeout: 3_000 })
+  } finally {
+    await apiDelete(`/api/v1/visu/nodes/${pageId}`)
+    await apiDelete(`/api/v1/datapoints/${dpLeft.id}`)
+    await apiDelete(`/api/v1/datapoints/${dpRight.id}`)
+  }
+})
+
+// ─── Test 9 (hoch): Dachflächenfenster — Position-Status steuert Anzeigefarbe ───────
+
+test('Dachflächenfenster: dp_position_status 0%=geschlossen (grün), 50%=teiloffen (orange), 100%=offen (rot)', async ({ page }) => {
+  const dpPosStatus = await apiPost('/api/v1/datapoints', {
+    name: `E2E-Dach-PosStatus-${Date.now()}`,
+    data_type: 'FLOAT',
+    tags: [],
+  }) as { id: string }
+
+  const visuNode = await createVisuPage()
+  const pageId   = visuNode.id
+  const widgetId = randomUUID()
+
+  await buildFensterPage(pageId, widgetId, 'dachfenster', {
+    dp_position_status: dpPosStatus.id,
+  })
+
+  try {
+    await page.goto(`/visu/${pageId}`)
+    await page.waitForLoadState('networkidle')
+
+    const colorDiv = page.locator(`[data-widget-id="${widgetId}"] div`).first()
+
+    await apiPost(`/api/v1/datapoints/${dpPosStatus.id}/value`, { value: 0 })
+    await expect(colorDiv).toHaveCSS('color', COLOR_CLOSED, { timeout: 3_000 })
+
+    await apiPost(`/api/v1/datapoints/${dpPosStatus.id}/value`, { value: 50 })
+    await expect(colorDiv).toHaveCSS('color', COLOR_TILTED, { timeout: 3_000 })
+
+    await apiPost(`/api/v1/datapoints/${dpPosStatus.id}/value`, { value: 100 })
+    await expect(colorDiv).toHaveCSS('color', COLOR_OPEN, { timeout: 3_000 })
+  } finally {
+    await apiDelete(`/api/v1/visu/nodes/${pageId}`)
+    await apiDelete(`/api/v1/datapoints/${dpPosStatus.id}`)
+  }
+})
+
+// ─── Test 10 (hoch): Dachflächenfenster — invert_position ────────────────────
+
+test('Dachflächenfenster: invert_position=true → Wert 0=offen (rot), 100=geschlossen (grün)', async ({ page }) => {
+  const dpPos = await apiPost('/api/v1/datapoints', {
+    name: `E2E-Dach-InvPos-${Date.now()}`,
+    data_type: 'FLOAT',
+    tags: [],
+  }) as { id: string }
+
+  const visuNode = await createVisuPage()
+  const pageId   = visuNode.id
+  const widgetId = randomUUID()
+
+  await buildFensterPage(pageId, widgetId, 'dachfenster', {
+    dp_position_status: dpPos.id,
+    invert_position:    true,
+  })
+
+  try {
+    await page.goto(`/visu/${pageId}`)
+    await page.waitForLoadState('networkidle')
+
+    const colorDiv = page.locator(`[data-widget-id="${widgetId}"] div`).first()
+
+    // Wert 0 → invertiert = 100 = offen → rot
+    await apiPost(`/api/v1/datapoints/${dpPos.id}/value`, { value: 0 })
+    await expect(colorDiv).toHaveCSS('color', COLOR_OPEN, { timeout: 3_000 })
+
+    // Wert 50 → invertiert = 50 = teiloffen → orange
+    await apiPost(`/api/v1/datapoints/${dpPos.id}/value`, { value: 50 })
+    await expect(colorDiv).toHaveCSS('color', COLOR_TILTED, { timeout: 3_000 })
+
+    // Wert 100 → invertiert = 0 = geschlossen → grün
+    await apiPost(`/api/v1/datapoints/${dpPos.id}/value`, { value: 100 })
+    await expect(colorDiv).toHaveCSS('color', COLOR_CLOSED, { timeout: 3_000 })
+  } finally {
+    await apiDelete(`/api/v1/visu/nodes/${pageId}`)
+    await apiDelete(`/api/v1/datapoints/${dpPos.id}`)
+  }
+})
+
+// ─── Test 11 (mittel): Dachflächenfenster — invert_shutter ───────────────────
+
+test('Dachflächenfenster: invert_shutter=true → Rollladen-Overlay bei Wert 0 vollständig sichtbar', async ({ page }) => {
+  const dpShutter = await apiPost('/api/v1/datapoints', {
+    name: `E2E-Dach-InvShutter-${Date.now()}`,
+    data_type: 'FLOAT',
+    tags: [],
+  }) as { id: string }
+
+  const visuNode = await createVisuPage()
+  const pageId   = visuNode.id
+  const widgetId = randomUUID()
+
+  await buildFensterPage(pageId, widgetId, 'dachfenster', {
+    enable_shutter:    true,
+    dp_shutter_status: dpShutter.id,
+    invert_shutter:    true,
+  })
+
+  try {
+    await page.goto(`/visu/${pageId}`)
+    await page.waitForLoadState('networkidle')
+
+    const widget = page.locator(`[data-widget-id="${widgetId}"]`)
+
+    // Wert 0 → invertiert = 100% geschlossen → Rollladen-Overlay rect sichtbar (height > 0)
+    await apiPost(`/api/v1/datapoints/${dpShutter.id}/value`, { value: 0 })
+    await page.waitForTimeout(500)
+    const shutterRect = widget.locator('svg rect[height]').last()
+    const h = await shutterRect.getAttribute('height')
+    expect(Number(h)).toBeGreaterThan(0)
+
+    // Wert 100 → invertiert = 0% geschlossen → kein Rollladen-Overlay
+    await apiPost(`/api/v1/datapoints/${dpShutter.id}/value`, { value: 100 })
+    await page.waitForTimeout(500)
+    await expect(widget.locator('svg rect[height="0"]')).toHaveCount(0)
+    // Overlay-Rect darf nicht mehr existieren (shutterBarH = 0 → v-if="enableShutter && shutterBarH > 0")
+    const shutterRects = widget.locator('svg rect.fill-gray-600, svg rect.fill-gray-500')
+    await expect(shutterRects).toHaveCount(0)
+  } finally {
+    await apiDelete(`/api/v1/visu/nodes/${pageId}`)
+    await apiDelete(`/api/v1/datapoints/${dpShutter.id}`)
+  }
+})

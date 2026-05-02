@@ -6,8 +6,8 @@ fastapi>=0.136.1
 uvicorn[standard]>=0.46.0
 
 # Data Validation & Settings
-pydantic>=2.7.0
-pydantic-settings>=2.3.0
+pydantic>=2.13.3
+pydantic-settings>=2.14.0
 
 # Database
 aiosqlite>=0.22.1
@@ -21,8 +21,8 @@ pymodbus>=3.13.0,<3.14.0
 w1thermsensor>=2.3.0
 
 # Authentication
-python-jose[cryptography]>=3.3.0
-bcrypt>=4.0.0
+python-jose[cryptography]>=3.5.0
+bcrypt>=5.0.0
 # passlib removed — password hashing via stdlib hashlib.pbkdf2_hmac
 
 # Rate limiting
@@ -30,24 +30,24 @@ slowapi>=0.1.9
 
 # Config
 pyyaml>=6.0.3
-python-multipart>=0.0.9
+python-multipart>=0.0.27
 
 # KNX Project File Import
 pyzipper>=0.3.6
-xknxproject>=1.0.0
+xknxproject>=3.8.2
 
 # Logic Engine — cron scheduling
 croniter>=6.2.2
 astral>=3.2
 
 # Zeitschaltuhr — holiday calendar
-holidays>=0.50
-httpx>=0.27.0
+holidays>=0.95
+httpx>=0.28.1
 websockets>=16.0
 # ioBroker socketio v7 still speaks Engine.IO v3; python-socketio v4 is compatible.
 python-socketio[asyncio_client]>=5.16.1,<6
 
 # History plugins — optional, install only the backend(s) you use:
-asyncpg>=0.29.0         # TimescaleDB / PostgreSQL history plugin
+asyncpg>=0.31.0         # TimescaleDB / PostgreSQL history plugin
 
 asgi_lifespan
