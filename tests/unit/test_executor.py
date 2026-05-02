@@ -1031,7 +1031,7 @@ class TestHeatingCircuit:
     def test_hysteresis_stays_on_between_thresholds(self):
         """Once ON, heating stays ON when temp is between winter and summer."""
         state = {}
-        self._run_full_day(5, 6, 4, state=state, date=self._d(0))   # cold → ON
+        self._run_full_day(5, 6, 4, state=state, date=self._d(0))  # cold → ON
         out, _ = self._run_full_day(17, 18, 17, state=state, date=self._d(1))  # mild → stays ON
         assert out["heating_mode"] == 1
 
@@ -1074,9 +1074,9 @@ class TestHeatingCircuit:
         06:55 value that was on the bus at 07:00), NOT 5.5.
         """
         state = {}
-        self._run_at_hour(6, 5.0, state=state)   # 06:xx → stored as last_value
+        self._run_at_hour(6, 5.0, state=state)  # 06:xx → stored as last_value
         out, _ = self._run_at_hour(7, 5.5, state=state)  # 07:xx crosses target
-        assert out["t1"] == pytest.approx(5.0)   # last_value, NOT 5.5
+        assert out["t1"] == pytest.approx(5.0)  # last_value, NOT 5.5
 
     def test_t1_uses_fval_when_no_prior_value(self):
         """If no prior measurement exists, the first 07:xx reading becomes T1."""
@@ -1104,10 +1104,10 @@ class TestHeatingCircuit:
     def test_t2_uses_last_value_at_1200_boundary(self):
         """T2 = value present at 12:00 (last_value from hour 11)."""
         state = {}
-        self._run_at_hour(7, 5.0, state=state)    # T1 captured; last_value=5.0
+        self._run_at_hour(7, 5.0, state=state)  # T1 captured; last_value=5.0
         self._run_at_hour(11, 12.0, state=state)  # 11:xx → no slot, last_value=12.0
         out, _ = self._run_at_hour(12, 12.5, state=state)  # 12:xx crosses target
-        assert out["t2"] == pytest.approx(12.0)   # last_value (11:xx), NOT 12.5
+        assert out["t2"] == pytest.approx(12.0)  # last_value (11:xx), NOT 12.5
 
     def test_t2_not_captured_at_hour_11(self):
         """Measurement at hour 11 must not fill T2."""
@@ -1124,9 +1124,9 @@ class TestHeatingCircuit:
     def test_t3_uses_last_value_at_2200_boundary(self):
         """T3 = value present at 22:00 (last_value from earlier)."""
         state = {}
-        self._run_at_hour(21, 7.0, state=state)   # 21:xx → no slot, last_value=7.0
+        self._run_at_hour(21, 7.0, state=state)  # 21:xx → no slot, last_value=7.0
         out, _ = self._run_at_hour(22, 7.5, state=state)  # 22:xx crosses target
-        assert out["t3"] == pytest.approx(7.0)    # last_value (21:xx), NOT 7.5
+        assert out["t3"] == pytest.approx(7.0)  # last_value (21:xx), NOT 7.5
 
     def test_t3_not_captured_at_hour_21(self):
         """Measurement at hour 21 must not fill T3."""
@@ -1143,11 +1143,11 @@ class TestHeatingCircuit:
         daily_avg = (10.0 + 14.0 + 2×8.0) / 4 = 10.0
         """
         state = {}
-        self._run_at_hour(6, 10.0, state=state)   # last_value before T1
-        self._run_at_hour(7, 10.5, state=state)   # T1 = 10.0 (last_value)
+        self._run_at_hour(6, 10.0, state=state)  # last_value before T1
+        self._run_at_hour(7, 10.5, state=state)  # T1 = 10.0 (last_value)
         self._run_at_hour(11, 14.0, state=state)  # last_value before T2
         self._run_at_hour(12, 14.2, state=state)  # T2 = 14.0 (last_value)
-        self._run_at_hour(21, 8.0, state=state)   # last_value before T3
+        self._run_at_hour(21, 8.0, state=state)  # last_value before T3
         out, _ = self._run_at_hour(22, 8.1, state=state)  # T3 = 8.0, daily computed
         assert out["daily_avg"] == pytest.approx(10.0)
 
@@ -1167,7 +1167,7 @@ class TestHeatingCircuit:
     def test_initial_heating_mode_below_winter_threshold(self):
         """With no historical data, first measurement below temp_winter → ON."""
         state = {}
-        out, _ = self._run_slot("t1", 5.0, state=state)   # 5 < 15
+        out, _ = self._run_slot("t1", 5.0, state=state)  # 5 < 15
         assert out["heating_mode"] == 1
 
     def test_initial_heating_mode_above_winter_threshold(self):

@@ -617,12 +617,7 @@ class GraphExecutor:
                     state["last_value"] = fval
 
                     # Tagesmittel berechnen sobald alle drei Slots das gleiche Datum tragen
-                    if (
-                        state["t1_date"] == today
-                        and state["t2_date"] == today
-                        and state["t3_date"] == today
-                        and state["daily_avg_date"] != today
-                    ):
+                    if state["t1_date"] == today and state["t2_date"] == today and state["t3_date"] == today and state["daily_avg_date"] != today:
                         daily_avg = (state["t1"] + state["t2"] + 2 * state["t3"]) / 4
                         state["daily_avg"] = daily_avg
                         state["daily_avg_date"] = today
