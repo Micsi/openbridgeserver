@@ -80,7 +80,11 @@ function deriveState(
   return 'unknown'
 }
 
-const stateMain  = computed(() => deriveState(dpContact.value, invContact.value, dpTilt.value, invTilt.value))
+// Kipp nur für Einzelflügelfenster auswerten — bei Türen/Schiebetüren ignorieren
+const stateMain  = computed(() => {
+  const tiltId = (mode.value === 'fenster' || mode.value === 'fenster_r') ? dpTilt.value : null
+  return deriveState(dpContact.value, invContact.value, tiltId, invTilt.value)
+})
 const stateLeft  = computed(() => deriveState(dpContactLeft.value, invContactLeft.value, dpTiltLeft.value, invTiltLeft.value))
 const stateRight = computed(() => deriveState(dpContactRight.value, invContactRight.value, dpTiltRight.value, invTiltRight.value))
 
