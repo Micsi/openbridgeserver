@@ -1,6 +1,35 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Shared Renovate config for all repos",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticPrefixFixDepsChoreOthers",
+    "group:monorepos",
+    ":separateMajorReleases"
+  ],
+  "timezone": "Europe/Zurich",
+  "schedule": ["before 8am on Monday"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "description": "Automerge patch updates",
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Group all Spring Boot updates",
+      "matchPackagePatterns": ["^org.springframework"],
+      "groupName": "Spring Boot"
+    },
+    {
+      "description": "Group all Home Assistant / Python minor updates",
+      "matchManagers": ["pip_requirements", "poetry"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Python dependencies"
+    }
   ]
 }
