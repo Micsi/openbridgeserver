@@ -147,9 +147,7 @@ async def test_import_resolves_datapoint_name_from_registry(client, auth_headers
 
         graph = await _get_graph(client, auth_headers, graph_id)
         node_data = graph["flow_data"]["nodes"][0]["data"]
-        assert node_data["datapoint_name"] == f"IT-Import-Current-{ts}", (
-            f"Expected current registry name, got '{node_data['datapoint_name']}'"
-        )
+        assert node_data["datapoint_name"] == f"IT-Import-Current-{ts}", f"Expected current registry name, got '{node_data['datapoint_name']}'"
 
     finally:
         await _cleanup(client, auth_headers, graph_ids=[graph_id] if graph_id else [], dp_ids=[dp_id])
