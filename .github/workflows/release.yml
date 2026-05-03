@@ -79,6 +79,9 @@ jobs:
           RC=$(echo "${GITHUB_REF##*/}" | grep -oP -- '-RC\d*$' || true)
           echo "${BASE}${RC}" > obs/version
 
+      - name: Stamp gui/package.json version
+        run: npm pkg set version="${VERSION}" --prefix gui
+
       - name: Set prerelease flag
         run: |
           if [[ "${GITHUB_REF##*/}" =~ -RC ]]; then
