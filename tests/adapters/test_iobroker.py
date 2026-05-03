@@ -1,4 +1,5 @@
-"""Unit-Tests für den ioBroker Adapter.
+"""
+Unit-Tests für den ioBroker Adapter.
 
 Keine echte ioBroker-Instanz erforderlich — Socket.IO-Client wird gemockt.
 """
@@ -9,8 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from obs.adapters.iobroker.adapter import IoBrokerAdapter, _coerce_iobroker_value
+from obs.core.event_bus import AdapterStatusEvent, DataValueEvent
 from tests.adapters.conftest import make_binding
+from obs.adapters.iobroker.adapter import IoBrokerAdapter, _coerce_iobroker_value
 
 
 @pytest.fixture
@@ -66,6 +68,13 @@ class TestCallSocket:
 
         with pytest.raises(RuntimeError):
             await adapter._call_socket("getState", "foo")
+
+    def test_connected_property_uses_engineio_state(self, adapter):
+        adapter._socket.connected = False
+        adapter._socket.eio = MagicMock()
+        adapter._socket.eio.state = "connected"
+
+        assert adapter.connected is True
 
 
 class TestRead:
@@ -144,6 +153,10 @@ class TestStateChange:
 
 
 class TestSubscribe:
+    @staticmethod
+    def _data_events(mock_bus):
+        return [call.args[0] for call in mock_bus.publish.await_args_list if isinstance(call.args[0], DataValueEvent)]
+
     @pytest.mark.asyncio
     async def test_subscribe_uses_state_list_and_initial_read(self, adapter, mock_bus):
         binding = make_binding({"state_id": "0_userdata.0.temp"})
@@ -152,7 +165,7 @@ class TestSubscribe:
             side_effect=[
                 [None, None],  # subscribe
                 [None, {"val": 22.0}],  # getState initial read
-            ],
+            ]
         )
 
         await adapter._subscribe_bound_states()
@@ -161,7 +174,7 @@ class TestSubscribe:
             "subscribe",
             ["0_userdata.0.temp"],
         )
-        event = mock_bus.publish.call_args[0][0]
+        event = self._data_events(mock_bus)[-1]
         assert event.value == pytest.approx(22.0)
 
     @pytest.mark.asyncio
@@ -180,7 +193,7 @@ class TestSubscribe:
         await adapter._subscribe_bound_states(force_publish_initial=True)
         await adapter._subscribe_bound_states(force_publish_initial=False)
 
-        assert mock_bus.publish.call_count == 1
+        assert len(self._data_events(mock_bus)) == 1
 
     @pytest.mark.asyncio
     async def test_watchdog_resync_publishes_changed_initial_values(self, adapter, mock_bus):
@@ -198,8 +211,8 @@ class TestSubscribe:
         await adapter._subscribe_bound_states(force_publish_initial=True)
         await adapter._subscribe_bound_states(force_publish_initial=False)
 
-        assert mock_bus.publish.call_count == 2
-        event = mock_bus.publish.call_args[0][0]
+        assert len(self._data_events(mock_bus)) == 2
+        event = self._data_events(mock_bus)[-1]
         assert event.value == pytest.approx(23.0)
 
     @pytest.mark.asyncio
@@ -216,7 +229,53 @@ class TestSubscribe:
         await adapter._subscribe_bound_states(force_publish_initial=True)
         await adapter._on_state_change_event("0_userdata.0.light", {"val": True})
 
-        assert mock_bus.publish.call_count == 1
+        assert len(self._data_events(mock_bus)) == 1
+
+    @pytest.mark.asyncio
+    async def test_subscribe_marks_connected_when_engineio_is_connected(self, adapter, mock_bus):
+        binding = make_binding({"state_id": "0_userdata.0.temp"})
+        adapter._state_map["0_userdata.0.temp"] = [binding]
+        adapter._socket.connected = False
+        adapter._socket.eio = MagicMock()
+        adapter._socket.eio.state = "connected"
+        adapter._socket.call = AsyncMock(
+            side_effect=[
+                [None, None],
+                [None, {"val": 22.0}],
+            ]
+        )
+
+        await adapter._subscribe_bound_states(force_publish_initial=True)
+
+        status_events = [call.args[0] for call in mock_bus.publish.await_args_list if isinstance(call.args[0], AdapterStatusEvent)]
+        assert status_events
+        assert status_events[-1].connected is True
+
+
+class TestReconnect:
+    @pytest.mark.asyncio
+    async def test_reconnect_loop_retries_until_connect_succeeds(self, adapter, monkeypatch):
+        adapter._disconnect_requested = False
+        adapter._cfg = adapter.config_schema(**{**adapter._config, "reconnect_interval_seconds": 1})
+        adapter._socket.connected = False
+        adapter._connect_socket = AsyncMock(side_effect=[False, False, True])
+        sleep_mock = AsyncMock()
+        monkeypatch.setattr("obs.adapters.iobroker.adapter.asyncio.sleep", sleep_mock)
+
+        await adapter._reconnect_loop()
+
+        assert adapter._connect_socket.await_count == 3
+        assert sleep_mock.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_reconnect_loop_stops_when_disconnect_requested(self, adapter):
+        adapter._disconnect_requested = True
+        adapter._cfg = adapter.config_schema(**adapter._config)
+        adapter._connect_socket = AsyncMock()
+
+        await adapter._reconnect_loop()
+
+        adapter._connect_socket.assert_not_called()
 
 
 class TestBrowseStates:
@@ -236,10 +295,10 @@ class TestBrowseStates:
                                         "type": "boolean",
                                         "role": "switch.light",
                                         "write": True,
-                                    },
+                                    }
                                 },
                             },
-                        ],
+                        ]
                     },
                 ],
                 [
@@ -254,15 +313,15 @@ class TestBrowseStates:
                                         "type": "boolean",
                                         "role": "indicator.state",
                                         "write": False,
-                                    },
+                                    }
                                 },
                             },
-                        ],
+                        ]
                     },
                 ],
                 [None, {"val": False}],
                 [None, {"val": True}],
-            ],
+            ]
         )
 
         result = await adapter.browse_states("hue", 10)
@@ -290,14 +349,14 @@ class TestBrowseStates:
                                         "name": "hue alive",
                                         "type": "boolean",
                                         "role": "indicator.state",
-                                    },
+                                    }
                                 },
                             },
-                        ],
+                        ]
                     },
                 ],
                 [None, {"val": True}],
-            ],
+            ]
         )
 
         result = await adapter.browse_states("alive", 10)
@@ -328,7 +387,7 @@ class TestWrite:
                 "state_id": "device.0.light.STATE",
                 "command_state_id": "device.0.light.SET",
                 "ack": True,
-            },
+            }
         )
         adapter._socket.call = AsyncMock(return_value=[None, None])
 
