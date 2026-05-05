@@ -682,54 +682,21 @@ async def import_from_ets(
                     links_created += 1
                     inserts.append(("__link__", node_id, dp["id"]))  # sentinel — handled below
 
-    else:  # "trades" — Gewerke-Hierarchie aus knx_functions grouped by usage_text
-        fn_rows = await db.fetchall(
-            """SELECT f.id, f.space_id, f.name, f.usage_text
-               FROM knx_functions f
-               ORDER BY f.usage_text, f.name"""
+    else:  # "trades" — Gewerke aus knx_trades Tabelle (ETS <Trades> XML-Sektion)
+        trade_rows = await db.fetchall(
+            "SELECT id, name, sort_order FROM knx_trades ORDER BY sort_order, name"
         )
-        if not fn_rows:
+        if not trade_rows:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Keine Gewerke-Daten importiert. Bitte zuerst eine .knxproj importieren.",
+                "Keine Gewerke-Daten importiert. Bitte zuerst eine .knxproj importieren "
+                "(die Datei muss einen <Trades>-Abschnitt enthalten).",
             )
 
-        fn_ga_rows = await db.fetchall("SELECT function_id, ga_address FROM knx_function_ga_links")
-        fn_gas: dict[str, list[str]] = {}
-        for r in fn_ga_rows:
-            fn_gas.setdefault(r["function_id"], []).append(r["ga_address"])
-
-        usage_nodes: dict[str, str] = {}  # usage_text → hierarchy node id
-        order_counter = 0
-        for fn in fn_rows:
-            usage = str(fn["usage_text"] or "Sonstige").strip() or "Sonstige"
-            if usage not in usage_nodes:
-                nid = _new_id()
-                _q_insert(nid, None, usage, "", order_counter)
-                usage_nodes[usage] = nid
-                nodes_created += 1
-                order_counter += 1
-
-            fn_nid = _new_id()
-            fn_name = str(fn["name"] or fn["id"]).strip() or fn["id"]
-            _q_insert(fn_nid, usage_nodes[usage], fn_name, "", 0)
+        for trade in trade_rows:
+            nid = _new_id()
+            _q_insert(nid, None, trade["name"] or trade["id"], "", trade["sort_order"])
             nodes_created += 1
-
-            if body.auto_link:
-                gas = fn_gas.get(fn["id"], [])
-                if gas:
-                    placeholders = ",".join("?" * len(gas))
-                    dp_rows = await db.fetchall(
-                        f"""SELECT DISTINCT dp.id
-                            FROM datapoints dp
-                            JOIN adapter_bindings ab ON ab.datapoint_id = dp.id
-                            WHERE ab.adapter_type = 'knx'
-                              AND JSON_EXTRACT(ab.config, '$.group_address') IN ({placeholders})""",
-                        gas,
-                    )
-                    for dp in dp_rows:
-                        links_created += 1
-                        inserts.append(("__link__", fn_nid, dp["id"]))
 
     # Separate node inserts from link sentinels
     node_inserts = [t for t in inserts if t[0] != "__link__"]

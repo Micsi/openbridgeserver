@@ -402,6 +402,15 @@ CREATE INDEX IF NOT EXISTS idx_knx_fga_fn ON knx_function_ga_links(function_id);
 CREATE INDEX IF NOT EXISTS idx_knx_fga_ga ON knx_function_ga_links(ga_address);
 """
 
+_MIGRATION_V26 = """
+CREATE TABLE IF NOT EXISTS knx_trades (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL DEFAULT '',
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    imported_at TEXT NOT NULL
+);
+"""
+
 # List of (version, sql_or_callable) tuples — append new migrations here
 MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
@@ -429,6 +438,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (23, _MIGRATION_V23),
     (24, _MIGRATION_V24),
     (25, _MIGRATION_V25),
+    (26, _MIGRATION_V26),
 ]
 
 

@@ -10,11 +10,14 @@ https://github.com/XKNX/xknxproject
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any
+from xml.etree import ElementTree
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,13 @@ class FunctionRecord:
     name: str
     usage_text: str       # e.g. "Bewegung", "Heizen/Klima", "Schalten/Dimmen"
     ga_addresses: list[str] = field(default_factory=list)  # ["1/2/3", …]
+
+
+@dataclass
+class TradeRecord:
+    identifier: str   # ETS Trade ID, e.g. "P-065E-0_T-1"
+    name: str         # e.g. "Bewegung", "Schalten/Dimmen"
+    sort_order: int = 0
 
 
 def _extract_group_names(project: Any) -> tuple[dict[str, str], dict[str, str]]:
@@ -116,6 +126,45 @@ def _dpt_from_xknxproject(dpt: dict | None) -> str | None:
         16: "DPT16.000",
     }
     return defaults.get(main, f"DPT{main}.001")
+
+
+def parse_knxproj_trades(file_bytes: bytes) -> list[TradeRecord]:
+    """Parse <Trades><Trade .../></Trades> directly from the .knxproj ZIP.
+
+    xknxproject does not expose this section. The Trades element is a sibling of
+    <Locations> and <GroupAddresses> inside <Installation>.  Each <Trade> is just a
+    named category — no GA links are stored here.
+
+    Returns: list of TradeRecord in document order.
+    """
+    records: list[TradeRecord] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            # Find the project 0.xml — path is like "P-XXXX/0.xml"
+            candidates = [n for n in zf.namelist() if n.endswith("0.xml") and "/" in n]
+            if not candidates:
+                logger.warning("parse_knxproj_trades: no 0.xml found in archive")
+                return records
+
+            xml_bytes = zf.read(candidates[0])
+            root = ElementTree.fromstring(xml_bytes)
+
+            # <Trades> sits inside .../Project/Installations/Installation
+            for trade_el in root.iter():
+                if trade_el.tag.endswith("}Trade") or trade_el.tag == "Trade":
+                    tid = trade_el.get("Id", "")
+                    name = trade_el.get("Name", "").strip()
+                    if tid and name:
+                        records.append(TradeRecord(
+                            identifier=tid,
+                            name=name,
+                            sort_order=len(records),
+                        ))
+    except Exception as e:
+        logger.warning("parse_knxproj_trades failed (ignored): %s", e)
+
+    logger.info("parse_knxproj_trades: %d Gewerke gefunden", len(records))
+    return records
 
 
 def _walk_spaces(

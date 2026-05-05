@@ -184,7 +184,7 @@
           </select>
         </div>
 
-        <div v-if="['buildings','trades'].includes(etsModal.mode)" class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+        <div v-if="etsModal.mode === 'buildings'" class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
           <input id="auto-link" v-model="etsModal.autoLink" type="checkbox" class="rounded" />
           <label for="auto-link">DataPoints automatisch verknüpfen (über Gruppenadresse)</label>
         </div>

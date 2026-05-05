@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from obs.api.auth import get_current_user
 from obs.db.database import Database, get_db
 from obs.knxproj.csv_parser import parse_ga_csv
-from obs.knxproj.parser import parse_knxproj, parse_knxproj_locations
+from obs.knxproj.parser import parse_knxproj, parse_knxproj_locations, parse_knxproj_trades
 
 router = APIRouter(tags=["knxproj"])
 
@@ -44,6 +44,7 @@ class ImportResult(BaseModel):
     updated: int = 0
     locations: int = 0
     functions: int = 0
+    trades: int = 0
     message: str
 
 
@@ -347,15 +348,36 @@ async def import_knxproj_file(
     except Exception as e:
         logger.warning("Gebäude/Gewerke-Import fehlgeschlagen (wird ignoriert): %s", e)
 
+    # Import Trades (Gewerke) — direct ZIP/XML parsing, no xknxproject needed
+    trades_count = 0
+    try:
+        trade_records = parse_knxproj_trades(content)
+        if trade_records:
+            await db.execute_and_commit("DELETE FROM knx_trades")
+            await db.executemany(
+                "INSERT INTO knx_trades (id, name, sort_order, imported_at) VALUES (?, ?, ?, ?)",
+                [(r.identifier, r.name, r.sort_order, now) for r in trade_records],
+            )
+            await db.commit()
+            trades_count = len(trade_records)
+    except Exception as e:
+        logger.warning("Trades-Import fehlgeschlagen (wird ignoriert): %s", e)
+
     # Ohne Adapter: nur GA-Tabelle → fertig
     if not adapter_name:
         msg = f"{len(records)} Gruppenadressen importiert"
+        extra = []
         if locations_count:
-            msg += f", {locations_count} Räume/Gebäude, {functions_count} Funktionen"
+            extra.append(f"{locations_count} Räume/Gebäude")
+        if trades_count:
+            extra.append(f"{trades_count} Gewerke")
+        if extra:
+            msg += ", " + ", ".join(extra)
         return ImportResult(
             imported=len(records),
             locations=locations_count,
             functions=functions_count,
+            trades=trades_count,
             message=msg,
         )
 
@@ -368,6 +390,7 @@ async def import_knxproj_file(
         updated=updated,
         locations=locations_count,
         functions=functions_count,
+        trades=trades_count,
         message=f"{len(records)} Gruppenadressen importiert, {created} DataPoints neu erstellt, {updated} aktualisiert",
     )
 
