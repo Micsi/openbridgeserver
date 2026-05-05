@@ -891,7 +891,18 @@ class GraphExecutor:
                     tomorrow = today + _dt_ic.timedelta(days=1)
                     window_end = today + _dt_ic.timedelta(days=365)
 
-                    cal = _ICal.from_ical(raw_text)
+                    # Some generators produce malformed property names (e.g.
+                    # X-WR-TIMEZONE','EUROPE/BERLIN: from steffisburg.ch).
+                    # icalendar v7 is strict and raises on these lines.
+                    # Strip them so the rest of the file parses correctly.
+                    _clean_lines = []
+                    for _ln in raw_text.splitlines(keepends=True):
+                        _prop = _re_ic.split(r"[;:]", _ln, maxsplit=1)[0]
+                        if _re_ic.search(r"['\"]", _prop):
+                            logger.debug("ical node %s: skipping malformed line %r", node.id[:8], _ln.rstrip())
+                            continue
+                        _clean_lines.append(_ln)
+                    cal = _ICal.from_ical("".join(_clean_lines))
 
                     if _HAS_RIE:
                         raw_events = _rie.of(cal).between(today, window_end)
