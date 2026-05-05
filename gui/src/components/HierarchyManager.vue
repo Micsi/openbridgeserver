@@ -1,0 +1,535 @@
+<template>
+  <div class="flex flex-col gap-4">
+
+    <!-- Toolbar -->
+    <div class="flex flex-wrap items-center gap-2">
+      <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">Hierarchieverwaltung</h3>
+      <div class="flex-1" />
+      <button @click="openCreateTree" class="btn-primary btn-sm" data-testid="btn-create-tree">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        Neuer Ast
+      </button>
+      <button @click="openEtsImport" class="btn-secondary btn-sm" data-testid="btn-ets-import">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>
+        </svg>
+        Aus ETS importieren
+      </button>
+    </div>
+
+    <!-- Feedback -->
+    <div v-if="msg" :class="['p-3 rounded-lg text-sm border', msg.ok ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30']">
+      {{ msg.text }}
+    </div>
+
+    <!-- Loading -->
+    <div v-if="loading" class="flex justify-center py-8"><Spinner /></div>
+
+    <!-- Empty state -->
+    <div v-else-if="trees.length === 0" class="text-center py-12 text-sm text-slate-500">
+      <svg class="w-10 h-10 mx-auto mb-3 text-slate-300 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7h18M3 12h12M3 17h8"/>
+      </svg>
+      Noch keine Hierarchieäste. Erstelle einen neuen Ast oder importiere aus ETS.
+    </div>
+
+    <!-- Tree list -->
+    <div v-else class="flex flex-col gap-3">
+      <div v-for="tree in trees" :key="tree.id" class="card" :data-testid="`tree-${tree.id}`">
+        <div class="card-header flex items-center gap-2">
+          <svg class="w-4 h-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h12M3 17h8"/>
+          </svg>
+          <span class="font-semibold text-sm text-slate-800 dark:text-slate-100 flex-1">{{ tree.name }}</span>
+          <span v-if="tree.description" class="text-xs text-slate-400 hidden sm:block">{{ tree.description }}</span>
+          <button @click="toggleTree(tree.id)" class="btn-secondary btn-xs" :data-testid="`btn-expand-${tree.id}`">
+            <svg class="w-3 h-3 transition-transform" :class="expandedTrees.has(tree.id) ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <button @click="openEditTree(tree)" class="btn-secondary btn-xs" :data-testid="`btn-edit-tree-${tree.id}`" title="Umbenennen">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 13l6.293-6.293a1 1 0 011.414 0l1.586 1.586a1 1 0 010 1.414L12 16H9v-3z"/>
+            </svg>
+          </button>
+          <button @click="addRootNode(tree)" class="btn-secondary btn-xs" :data-testid="`btn-add-root-${tree.id}`" title="Obersten Knoten hinzufügen">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+          </button>
+          <button @click="confirmDeleteTree(tree)" class="btn-danger btn-xs" :data-testid="`btn-delete-tree-${tree.id}`" title="Ast löschen">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0a1 1 0 011-1h4a1 1 0 011 1m-7 0h8"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Tree nodes (collapsible) -->
+        <div v-if="expandedTrees.has(tree.id)" class="card-body pt-0">
+          <div v-if="treeLoading.has(tree.id)" class="flex justify-center py-4"><Spinner size="sm" /></div>
+          <div v-else-if="!treeNodes[tree.id]?.length" class="text-xs text-slate-500 py-2 text-center">
+            Dieser Ast ist noch leer.
+          </div>
+          <div v-else class="tree-container">
+            <HierarchyNodeTree
+              :nodes="treeNodes[tree.id]"
+              :tree-id="tree.id"
+              @add-child="(parentNode) => openAddChildNode(tree, parentNode)"
+              @edit="openEditNode"
+              @delete="confirmDeleteNode"
+              @manage-links="openLinksPanel"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Create/Edit Tree ── -->
+    <div v-if="treeModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="treeModal.open = false">
+      <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-sm p-6 flex flex-col gap-4">
+        <h3 class="font-semibold text-slate-800 dark:text-slate-100">
+          {{ treeModal.isEdit ? 'Ast umbenennen' : 'Neuer Hierarchiebaum' }}
+        </h3>
+        <div class="form-group">
+          <label class="label">Name</label>
+          <input v-model="treeModal.name" ref="treeNameInput" type="text" class="input" placeholder="z.B. Gebäude, Gewerke, Funktion" @keydown.enter="saveTree" />
+        </div>
+        <div class="form-group">
+          <label class="label">Beschreibung</label>
+          <input v-model="treeModal.description" type="text" class="input" placeholder="Optional" @keydown.enter="saveTree" />
+        </div>
+        <div v-if="treeModal.msg" :class="['p-2 rounded text-sm', treeModal.msg.ok ? 'text-green-400' : 'text-red-400']">{{ treeModal.msg.text }}</div>
+        <div class="flex gap-2 justify-end">
+          <button @click="treeModal.open = false" class="btn-secondary">Abbrechen</button>
+          <button @click="saveTree" class="btn-primary" :disabled="treeModal.saving">
+            <Spinner v-if="treeModal.saving" size="sm" color="white" />
+            Speichern
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Create/Edit Node ── -->
+    <div v-if="nodeModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="nodeModal.open = false">
+      <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-sm p-6 flex flex-col gap-4">
+        <h3 class="font-semibold text-slate-800 dark:text-slate-100">
+          {{ nodeModal.isEdit ? 'Knoten bearbeiten' : 'Knoten hinzufügen' }}
+        </h3>
+        <div class="form-group">
+          <label class="label">Name</label>
+          <input v-model="nodeModal.name" ref="nodeNameInput" type="text" class="input" placeholder="z.B. Erdgeschoss, Heizung" @keydown.enter="saveNode" />
+        </div>
+        <div class="form-group">
+          <label class="label">Beschreibung</label>
+          <input v-model="nodeModal.description" type="text" class="input" placeholder="Optional" @keydown.enter="saveNode" />
+        </div>
+        <div v-if="nodeModal.msg" :class="['p-2 rounded text-sm', nodeModal.msg.ok ? 'text-green-400' : 'text-red-400']">{{ nodeModal.msg.text }}</div>
+        <div class="flex gap-2 justify-end">
+          <button @click="nodeModal.open = false" class="btn-secondary">Abbrechen</button>
+          <button @click="saveNode" class="btn-primary" :disabled="nodeModal.saving">
+            <Spinner v-if="nodeModal.saving" size="sm" color="white" />
+            Speichern
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: ETS Import ── -->
+    <div v-if="etsModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="etsModal.open = false">
+      <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6 flex flex-col gap-4">
+        <h3 class="font-semibold text-slate-800 dark:text-slate-100">Hierarchie aus ETS importieren</h3>
+        <p class="text-sm text-slate-500">
+          Erstellt einen neuen Hierarchiebaum aus den bereits importierten ETS-Gruppenadressen.
+          Die Baumstruktur wird anhand der Gruppenadress-Nummern (z.B. 1/2/3) aufgebaut.
+        </p>
+        <div class="form-group">
+          <label class="label">Name des neuen Astes</label>
+          <input v-model="etsModal.treeName" type="text" class="input" placeholder="z.B. ETS Topologie" />
+        </div>
+        <div class="form-group">
+          <label class="label">Strukturmodus</label>
+          <select v-model="etsModal.mode" class="input text-sm">
+            <option value="groups">Hauptgruppe → Mittelgruppe → GA (3-stufig)</option>
+            <option value="flat">Hauptgruppe → GA (2-stufig)</option>
+          </select>
+          <p class="text-xs text-slate-500 mt-1">
+            <span v-if="etsModal.mode === 'groups'">Erzeugt Knoten für jede Hauptgruppe und Mittelgruppe.</span>
+            <span v-else>Erzeugt nur Knoten für jede Hauptgruppe.</span>
+          </p>
+        </div>
+        <div v-if="etsModal.msg" :class="['p-2 rounded text-sm', etsModal.msg.ok ? 'text-green-400' : 'text-red-400']">{{ etsModal.msg.text }}</div>
+        <div class="flex gap-2 justify-end">
+          <button @click="etsModal.open = false" class="btn-secondary">Abbrechen</button>
+          <button @click="doEtsImport" class="btn-primary" :disabled="etsModal.saving || !etsModal.treeName.trim()">
+            <Spinner v-if="etsModal.saving" size="sm" color="white" />
+            Importieren
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Confirm Delete ── -->
+    <div v-if="deleteConfirm.open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="deleteConfirm.open = false">
+      <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-sm p-6 flex flex-col gap-4">
+        <h3 class="font-semibold text-slate-800 dark:text-slate-100">{{ deleteConfirm.title }}</h3>
+        <p class="text-sm text-slate-500">{{ deleteConfirm.message }}</p>
+        <div class="flex gap-2 justify-end">
+          <button @click="deleteConfirm.open = false" class="btn-secondary">Abbrechen</button>
+          <button @click="deleteConfirm.action" class="btn-danger" :disabled="deleteConfirm.saving">
+            <Spinner v-if="deleteConfirm.saving" size="sm" color="white" />
+            Löschen
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Slide-over: DataPoint Links ── -->
+    <div v-if="linksPanel.open" class="fixed inset-0 z-50 flex" @click.self="linksPanel.open = false">
+      <div class="ml-auto w-full max-w-md h-full bg-white dark:bg-slate-800 shadow-2xl flex flex-col">
+        <div class="flex items-center gap-2 p-4 border-b border-slate-200 dark:border-slate-700">
+          <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+          </svg>
+          <span class="font-semibold text-sm text-slate-800 dark:text-slate-100 flex-1">
+            Objekte verknüpfen — <span class="text-blue-500">{{ linksPanel.nodeName }}</span>
+          </span>
+          <button @click="linksPanel.open = false" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+          <!-- Linked DataPoints -->
+          <div>
+            <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Verknüpfte Objekte ({{ linksPanel.linked.length }})</h4>
+            <div v-if="linksPanel.linkedLoading" class="flex justify-center py-4"><Spinner size="sm" /></div>
+            <div v-else-if="linksPanel.linked.length === 0" class="text-xs text-slate-500 py-2">Noch keine Objekte verknüpft.</div>
+            <div v-else class="flex flex-col gap-1">
+              <div v-for="dp in linksPanel.linked" :key="dp.id"
+                class="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-700/50 group">
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-slate-800 dark:text-slate-100 truncate">{{ dp.name }}</p>
+                  <p class="text-xs text-slate-500">{{ dp.data_type }}<span v-if="dp.unit"> · {{ dp.unit }}</span></p>
+                </div>
+                <button @click="removeLink(dp)" class="opacity-0 group-hover:opacity-100 transition-opacity btn-danger btn-xs" title="Verknüpfung entfernen">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Add DataPoints -->
+          <div>
+            <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Objekt hinzufügen</h4>
+            <input v-model="linksPanel.search" type="text" class="input text-sm w-full mb-2"
+              placeholder="DataPoint suchen…" @input="searchDatapoints" />
+            <div v-if="linksPanel.searchLoading" class="flex justify-center py-3"><Spinner size="sm" /></div>
+            <div v-else class="flex flex-col gap-1 max-h-64 overflow-y-auto">
+              <button v-for="dp in linksPanel.searchResults" :key="dp.id"
+                @click="addLink(dp)"
+                :disabled="linksPanel.linked.some(l => l.id === dp.id)"
+                :class="['flex items-start gap-2 px-3 py-2 rounded-lg text-left transition-colors w-full',
+                  linksPanel.linked.some(l => l.id === dp.id)
+                    ? 'opacity-40 cursor-not-allowed bg-slate-50 dark:bg-slate-700/30'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-700/50']">
+                <svg class="w-3.5 h-3.5 text-green-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                <div class="min-w-0">
+                  <p class="text-sm text-slate-800 dark:text-slate-100 truncate">{{ dp.name }}</p>
+                  <p class="text-xs text-slate-500">{{ dp.data_type }}<span v-if="dp.unit"> · {{ dp.unit }}</span></p>
+                </div>
+              </button>
+              <p v-if="linksPanel.searchResults.length === 0 && linksPanel.search.length > 0 && !linksPanel.searchLoading"
+                class="text-xs text-slate-500 text-center py-2">Keine Treffer</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, nextTick, onMounted } from 'vue'
+import { hierarchyApi, dpApi } from '@/api/client.js'
+import HierarchyNodeTree from '@/components/HierarchyNodeTree.vue'
+import Spinner from '@/components/ui/Spinner.vue'
+
+// ── State ─────────────────────────────────────────────────────────────────
+
+const loading     = ref(false)
+const trees       = ref([])
+const treeNodes   = reactive({})
+const treeLoading = reactive(new Set())
+const expandedTrees = reactive(new Set())
+const msg         = ref(null)
+
+// ── Modals ─────────────────────────────────────────────────────────────────
+
+const treeNameInput = ref(null)
+const nodeNameInput = ref(null)
+
+const treeModal = reactive({ open: false, isEdit: false, id: null, name: '', description: '', saving: false, msg: null })
+const nodeModal = reactive({ open: false, isEdit: false, id: null, treeId: null, parentId: null, name: '', description: '', saving: false, msg: null })
+const etsModal  = reactive({ open: false, treeName: '', mode: 'groups', saving: false, msg: null })
+const deleteConfirm = reactive({ open: false, title: '', message: '', saving: false, action: null })
+
+const linksPanel = reactive({
+  open: false,
+  nodeId: null,
+  nodeName: '',
+  linked: [],
+  linkedLoading: false,
+  search: '',
+  searchResults: [],
+  searchLoading: false,
+})
+
+// ── Load ───────────────────────────────────────────────────────────────────
+
+async function loadTrees() {
+  loading.value = true
+  try {
+    const { data } = await hierarchyApi.listTrees()
+    trees.value = data
+  } catch {
+    showMsg('Fehler beim Laden der Hierarchien', false)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadTreeNodes(treeId) {
+  treeLoading.add(treeId)
+  try {
+    const { data } = await hierarchyApi.getTreeNodes(treeId)
+    treeNodes[treeId] = data
+  } catch {
+    showMsg('Fehler beim Laden der Knoten', false)
+  } finally {
+    treeLoading.delete(treeId)
+  }
+}
+
+function toggleTree(treeId) {
+  if (expandedTrees.has(treeId)) {
+    expandedTrees.delete(treeId)
+  } else {
+    expandedTrees.add(treeId)
+    if (!treeNodes[treeId]) loadTreeNodes(treeId)
+  }
+}
+
+// ── Tree CRUD ──────────────────────────────────────────────────────────────
+
+function openCreateTree() {
+  Object.assign(treeModal, { open: true, isEdit: false, id: null, name: '', description: '', saving: false, msg: null })
+  nextTick(() => treeNameInput.value?.focus())
+}
+
+function openEditTree(tree) {
+  Object.assign(treeModal, { open: true, isEdit: true, id: tree.id, name: tree.name, description: tree.description, saving: false, msg: null })
+  nextTick(() => treeNameInput.value?.focus())
+}
+
+async function saveTree() {
+  if (!treeModal.name.trim()) return
+  treeModal.saving = true
+  treeModal.msg = null
+  try {
+    if (treeModal.isEdit) {
+      await hierarchyApi.updateTree(treeModal.id, { name: treeModal.name, description: treeModal.description })
+    } else {
+      await hierarchyApi.createTree({ name: treeModal.name, description: treeModal.description })
+    }
+    treeModal.open = false
+    await loadTrees()
+  } catch (e) {
+    treeModal.msg = { ok: false, text: e.response?.data?.detail || 'Fehler beim Speichern' }
+  } finally {
+    treeModal.saving = false
+  }
+}
+
+function confirmDeleteTree(tree) {
+  deleteConfirm.title = `Ast löschen: ${tree.name}`
+  deleteConfirm.message = 'Dieser Ast und alle enthaltenen Knoten sowie Verknüpfungen werden unwiderruflich gelöscht.'
+  deleteConfirm.saving = false
+  deleteConfirm.action = async () => {
+    deleteConfirm.saving = true
+    try {
+      await hierarchyApi.deleteTree(tree.id)
+      deleteConfirm.open = false
+      expandedTrees.delete(tree.id)
+      delete treeNodes[tree.id]
+      await loadTrees()
+    } catch {
+      showMsg('Fehler beim Löschen', false)
+      deleteConfirm.open = false
+    }
+  }
+  deleteConfirm.open = true
+}
+
+// ── Node CRUD ──────────────────────────────────────────────────────────────
+
+function addRootNode(tree) {
+  Object.assign(nodeModal, { open: true, isEdit: false, id: null, treeId: tree.id, parentId: null, name: '', description: '', saving: false, msg: null })
+  if (!expandedTrees.has(tree.id)) {
+    expandedTrees.add(tree.id)
+    if (!treeNodes[tree.id]) loadTreeNodes(tree.id)
+  }
+  nextTick(() => nodeNameInput.value?.focus())
+}
+
+function openAddChildNode(tree, parentNode) {
+  Object.assign(nodeModal, { open: true, isEdit: false, id: null, treeId: tree.id, parentId: parentNode.id, name: '', description: '', saving: false, msg: null })
+  nextTick(() => nodeNameInput.value?.focus())
+}
+
+function openEditNode(node) {
+  Object.assign(nodeModal, { open: true, isEdit: true, id: node.id, treeId: node.tree_id, parentId: node.parent_id, name: node.name, description: node.description, saving: false, msg: null })
+  nextTick(() => nodeNameInput.value?.focus())
+}
+
+async function saveNode() {
+  if (!nodeModal.name.trim()) return
+  nodeModal.saving = true
+  nodeModal.msg = null
+  try {
+    if (nodeModal.isEdit) {
+      await hierarchyApi.updateNode(nodeModal.id, { name: nodeModal.name, description: nodeModal.description })
+    } else {
+      await hierarchyApi.createNode({ tree_id: nodeModal.treeId, parent_id: nodeModal.parentId, name: nodeModal.name, description: nodeModal.description })
+    }
+    nodeModal.open = false
+    await loadTreeNodes(nodeModal.treeId)
+  } catch (e) {
+    nodeModal.msg = { ok: false, text: e.response?.data?.detail || 'Fehler beim Speichern' }
+  } finally {
+    nodeModal.saving = false
+  }
+}
+
+function confirmDeleteNode(node) {
+  deleteConfirm.title = `Knoten löschen: ${node.name}`
+  deleteConfirm.message = 'Dieser Knoten und alle Unterknoten sowie Verknüpfungen werden unwiderruflich gelöscht.'
+  deleteConfirm.saving = false
+  deleteConfirm.action = async () => {
+    deleteConfirm.saving = true
+    try {
+      await hierarchyApi.deleteNode(node.id)
+      deleteConfirm.open = false
+      await loadTreeNodes(node.tree_id)
+    } catch {
+      showMsg('Fehler beim Löschen', false)
+      deleteConfirm.open = false
+    }
+  }
+  deleteConfirm.open = true
+}
+
+// ── ETS Import ─────────────────────────────────────────────────────────────
+
+function openEtsImport() {
+  Object.assign(etsModal, { open: true, treeName: '', mode: 'groups', saving: false, msg: null })
+}
+
+async function doEtsImport() {
+  if (!etsModal.treeName.trim()) return
+  etsModal.saving = true
+  etsModal.msg = null
+  try {
+    const { data } = await hierarchyApi.importFromEts({ tree_name: etsModal.treeName, mode: etsModal.mode })
+    etsModal.msg = { ok: true, text: data.message }
+    await loadTrees()
+    // Neuen Baum sofort öffnen
+    expandedTrees.add(data.tree_id)
+    await loadTreeNodes(data.tree_id)
+    setTimeout(() => { etsModal.open = false }, 1500)
+  } catch (e) {
+    etsModal.msg = { ok: false, text: e.response?.data?.detail || 'Fehler beim Importieren' }
+  } finally {
+    etsModal.saving = false
+  }
+}
+
+// ── Links (DataPoint ↔ Node) ───────────────────────────────────────────────
+
+async function openLinksPanel(node) {
+  linksPanel.nodeId = node.id
+  linksPanel.nodeName = node.name
+  linksPanel.search = ''
+  linksPanel.searchResults = []
+  linksPanel.linked = []
+  linksPanel.open = true
+  await loadLinked()
+  await searchDatapoints()
+}
+
+async function loadLinked() {
+  linksPanel.linkedLoading = true
+  try {
+    const { data } = await hierarchyApi.getNodeDatapoints(linksPanel.nodeId)
+    linksPanel.linked = data
+  } finally {
+    linksPanel.linkedLoading = false
+  }
+}
+
+let searchTimer = null
+async function searchDatapoints() {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(async () => {
+    linksPanel.searchLoading = true
+    try {
+      const q = linksPanel.search.trim()
+      const { data } = await dpApi.list(0, 50, 'name', 'asc')
+      const items = data.items || []
+      linksPanel.searchResults = q
+        ? items.filter(dp => dp.name.toLowerCase().includes(q.toLowerCase()))
+        : items
+    } catch {
+      linksPanel.searchResults = []
+    } finally {
+      linksPanel.searchLoading = false
+    }
+  }, 200)
+}
+
+async function addLink(dp) {
+  try {
+    await hierarchyApi.createLink({ node_id: linksPanel.nodeId, datapoint_id: dp.id })
+    await loadLinked()
+    showMsg(`${dp.name} verknüpft`, true)
+  } catch (e) {
+    showMsg(e.response?.data?.detail || 'Fehler beim Verknüpfen', false)
+  }
+}
+
+async function removeLink(dp) {
+  try {
+    await hierarchyApi.deleteLink(linksPanel.nodeId, dp.id)
+    await loadLinked()
+  } catch {
+    showMsg('Fehler beim Entfernen der Verknüpfung', false)
+  }
+}
+
+// ── Utils ──────────────────────────────────────────────────────────────────
+
+function showMsg(text, ok) {
+  msg.value = { text, ok }
+  setTimeout(() => { msg.value = null }, 4000)
+}
+
+onMounted(loadTrees)
+</script>

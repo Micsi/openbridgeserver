@@ -128,6 +128,31 @@ export const knxprojApi = {
   clearGA: ()         => api.delete('/knxproj/group-addresses'),
 }
 
+// ── Hierarchy Manager ─────────────────────────────────────────────────────
+export const hierarchyApi = {
+  // Trees
+  listTrees:    ()              => api.get('/hierarchy/trees'),
+  createTree:   (data)          => api.post('/hierarchy/trees', data),
+  updateTree:   (id, data)      => api.put(`/hierarchy/trees/${id}`, data),
+  deleteTree:   (id)            => api.delete(`/hierarchy/trees/${id}`),
+
+  // Nodes
+  getTreeNodes: (treeId)        => api.get(`/hierarchy/trees/${treeId}/nodes`),
+  createNode:   (data)          => api.post('/hierarchy/nodes', data),
+  updateNode:   (id, data)      => api.put(`/hierarchy/nodes/${id}`, data),
+  moveNode:     (id, data)      => api.put(`/hierarchy/nodes/${id}/move`, data),
+  deleteNode:   (id)            => api.delete(`/hierarchy/nodes/${id}`),
+
+  // Links
+  getNodeDatapoints:  (nodeId)  => api.get(`/hierarchy/nodes/${nodeId}/datapoints`),
+  getDatapointNodes:  (dpId)    => api.get(`/hierarchy/datapoints/${dpId}/nodes`),
+  createLink:   (data)          => api.post('/hierarchy/links', data),
+  deleteLink:   (nodeId, dpId)  => api.delete('/hierarchy/links', { params: { node_id: nodeId, datapoint_id: dpId } }),
+
+  // ETS import
+  importFromEts: (data)         => api.post('/hierarchy/import-from-ets', data),
+}
+
 // ── System ────────────────────────────────────────────────────────────────
 export const systemApi = {
   health:    () => axios.get('/api/v1/system/health'),  // no auth

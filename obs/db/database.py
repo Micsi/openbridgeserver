@@ -334,6 +334,40 @@ CREATE TABLE IF NOT EXISTS nav_links (
 );
 """
 
+_MIGRATION_V23 = """
+CREATE TABLE IF NOT EXISTS hierarchy_trees (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS hierarchy_nodes (
+    id          TEXT PRIMARY KEY,
+    tree_id     TEXT NOT NULL REFERENCES hierarchy_trees(id) ON DELETE CASCADE,
+    parent_id   TEXT REFERENCES hierarchy_nodes(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    node_order  INTEGER NOT NULL DEFAULT 0,
+    icon        TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hn_tree   ON hierarchy_nodes(tree_id);
+CREATE INDEX IF NOT EXISTS idx_hn_parent ON hierarchy_nodes(parent_id);
+
+CREATE TABLE IF NOT EXISTS hierarchy_datapoint_links (
+    id           TEXT PRIMARY KEY,
+    node_id      TEXT NOT NULL REFERENCES hierarchy_nodes(id) ON DELETE CASCADE,
+    datapoint_id TEXT NOT NULL REFERENCES datapoints(id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL,
+    UNIQUE(node_id, datapoint_id)
+);
+CREATE INDEX IF NOT EXISTS idx_hdl_node ON hierarchy_datapoint_links(node_id);
+CREATE INDEX IF NOT EXISTS idx_hdl_dp   ON hierarchy_datapoint_links(datapoint_id);
+"""
+
 # List of (version, sql_or_callable) tuples — append new migrations here
 MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
@@ -358,6 +392,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (20, _MIGRATION_V20),
     (21, _MIGRATION_V21),
     (22, _MIGRATION_V22),
+    (23, _MIGRATION_V23),
 ]
 
 
