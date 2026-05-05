@@ -411,6 +411,11 @@ CREATE TABLE IF NOT EXISTS knx_trades (
 );
 """
 
+_MIGRATION_V27 = """
+ALTER TABLE knx_functions ADD COLUMN trade_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_knx_fn_trade ON knx_functions(trade_id);
+"""
+
 # List of (version, sql_or_callable) tuples — append new migrations here
 MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
@@ -439,6 +444,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (24, _MIGRATION_V24),
     (25, _MIGRATION_V25),
     (26, _MIGRATION_V26),
+    (27, _MIGRATION_V27),
 ]
 
 

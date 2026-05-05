@@ -360,6 +360,36 @@ async def import_knxproj_file(
             )
             await db.commit()
             trades_count = len(trade_records)
+
+            # Link functions to their trade:
+            # Primary: XML DeviceInstanceRef.Links (exact function ID match)
+            # Fallback: usage_text case-insensitive match against trade name
+            fn_to_trade: dict[str, str] = {}
+            for tr in trade_records:
+                for fn_id in tr.function_ids:
+                    fn_to_trade[fn_id] = tr.identifier
+
+            if fn_to_trade:
+                await db.executemany(
+                    "UPDATE knx_functions SET trade_id = ? WHERE id = ?",
+                    [(trade_id, fn_id) for fn_id, trade_id in fn_to_trade.items()],
+                )
+                await db.commit()
+            else:
+                # Fallback: match usage_text to trade name (works for German projects)
+                trade_name_map = {tr.name.lower().strip(): tr.identifier for tr in trade_records}
+                fn_rows = await db.fetchall("SELECT id, usage_text FROM knx_functions WHERE trade_id IS NULL")
+                updates = []
+                for fn in fn_rows:
+                    usage = (fn["usage_text"] or "").lower().strip()
+                    if usage and usage in trade_name_map:
+                        updates.append((trade_name_map[usage], fn["id"]))
+                if updates:
+                    await db.executemany(
+                        "UPDATE knx_functions SET trade_id = ? WHERE id = ?",
+                        updates,
+                    )
+                    await db.commit()
     except Exception as e:
         logger.warning("Trades-Import fehlgeschlagen (wird ignoriert): %s", e)
 

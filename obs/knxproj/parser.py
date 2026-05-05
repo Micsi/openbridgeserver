@@ -55,6 +55,7 @@ class TradeRecord:
     identifier: str   # ETS Trade ID, e.g. "P-065E-0_T-1"
     name: str         # e.g. "Bewegung", "Schalten/Dimmen"
     sort_order: int = 0
+    function_ids: list[str] = field(default_factory=list)  # IDs from DeviceInstanceRef.Links
 
 
 def _extract_group_names(project: Any) -> tuple[dict[str, str], dict[str, str]]:
@@ -155,10 +156,19 @@ def parse_knxproj_trades(file_bytes: bytes) -> list[TradeRecord]:
                     tid = trade_el.get("Id", "")
                     name = trade_el.get("Name", "").strip()
                     if tid and name:
+                        # Collect function IDs referenced by this trade via DeviceInstanceRef.Links
+                        function_ids: list[str] = []
+                        for child in trade_el:
+                            child_tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                            if child_tag == "DeviceInstanceRef":
+                                links = child.get("Links", "").strip()
+                                if links:
+                                    function_ids.extend(links.split())
                         records.append(TradeRecord(
                             identifier=tid,
                             name=name,
                             sort_order=len(records),
+                            function_ids=function_ids,
                         ))
     except Exception as e:
         logger.warning("parse_knxproj_trades failed (ignored): %s", e)

@@ -693,10 +693,55 @@ async def import_from_ets(
                 "(die Datei muss einen <Trades>-Abschnitt enthalten).",
             )
 
+        # Check whether function→trade links exist (populated during knxproj upload)
+        fn_count_row = await db.fetchone(
+            "SELECT COUNT(*) AS cnt FROM knx_functions WHERE trade_id IS NOT NULL"
+        )
+        has_fn_links = fn_count_row and (fn_count_row["cnt"] or 0) > 0
+
         for trade in trade_rows:
-            nid = _new_id()
-            _q_insert(nid, None, trade["name"] or trade["id"], "", trade["sort_order"])
+            trade_nid = _new_id()
+            _q_insert(trade_nid, None, trade["name"] or trade["id"], "", trade["sort_order"])
             nodes_created += 1
+
+            if not has_fn_links:
+                continue
+
+            fn_rows = await db.fetchall(
+                "SELECT id, name, usage_text FROM knx_functions WHERE trade_id = ? ORDER BY name",
+                (trade["id"],),
+            )
+            for fn in fn_rows:
+                fn_nid = _new_id()
+                fn_label = fn["name"] or fn["id"]
+                fn_desc = fn["usage_text"] or ""
+                _q_insert(fn_nid, trade_nid, fn_label, fn_desc, nodes_created)
+                nodes_created += 1
+
+                if not body.auto_link:
+                    continue
+
+                # Auto-link DataPoints via GA addresses stored in knx_function_ga_links
+                ga_rows = await db.fetchall(
+                    "SELECT ga_address FROM knx_function_ga_links WHERE function_id = ?",
+                    (fn["id"],),
+                )
+                gas = [r["ga_address"] for r in ga_rows if r["ga_address"]]
+                if not gas:
+                    continue
+
+                placeholders = ",".join("?" * len(gas))
+                dp_rows = await db.fetchall(
+                    f"""SELECT DISTINCT dp.id
+                        FROM datapoints dp
+                        JOIN adapter_bindings ab ON ab.datapoint_id = dp.id
+                        WHERE ab.adapter_type = 'knx'
+                          AND JSON_EXTRACT(ab.config, '$.group_address') IN ({placeholders})""",
+                    gas,
+                )
+                for dp in dp_rows:
+                    links_created += 1
+                    inserts.append(("__link__", fn_nid, dp["id"]))
 
     # Separate node inserts from link sentinels
     node_inserts = [t for t in inserts if t[0] != "__link__"]
