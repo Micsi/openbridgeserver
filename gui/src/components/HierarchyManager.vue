@@ -80,6 +80,7 @@
               @edit="openEditNode"
               @delete="confirmDeleteNode"
               @manage-links="openLinksPanel"
+              @reorder="({ node, siblings, index, direction }) => reorderNode(tree, node, siblings, index, direction)"
             />
           </div>
         </div>
@@ -521,6 +522,28 @@ async function removeLink(dp) {
     await loadLinked()
   } catch {
     showMsg('Fehler beim Entfernen der Verknüpfung', false)
+  }
+}
+
+// ── Reorder ────────────────────────────────────────────────────────────────
+
+async function reorderNode(tree, node, siblings, index, direction) {
+  const swapIndex = direction === 'up' ? index - 1 : index + 1
+  if (swapIndex < 0 || swapIndex >= siblings.length) return
+
+  const other = siblings[swapIndex]
+  // Tausche die order-Werte beider Knoten
+  const orderA = index      // neuer order für "node" → Position von "other"
+  const orderB = swapIndex  // neuer order für "other" → Position von "node"
+
+  try {
+    await Promise.all([
+      hierarchyApi.updateNode(node.id,  { order: orderB }),
+      hierarchyApi.updateNode(other.id, { order: orderA }),
+    ])
+    await loadTreeNodes(tree.id)
+  } catch {
+    showMsg('Fehler beim Verschieben', false)
   }
 }
 
