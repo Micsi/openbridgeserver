@@ -124,35 +124,54 @@ class LogicManager:
     # ── Cron Scheduler ────────────────────────────────────────────────────
 
     def _start_cron_tasks(self) -> None:
-        """Start asyncio tasks for all timer_cron nodes in enabled graphs."""
+        """Start asyncio tasks for all timer_cron and ical nodes in enabled graphs."""
+        _has_croniter = True
         try:
             import croniter as _croniter_check  # noqa: F401
         except ImportError:
             logger.warning("croniter not installed — timer_cron nodes will not auto-execute. Install with: pip install croniter")
-            return
+            _has_croniter = False
 
         for graph_id, (name, enabled, flow) in self._graphs.items():
             if not enabled:
                 continue
             for node in flow.nodes:
-                if node.type != "timer_cron":
-                    continue
-                key = (graph_id, node.id)
-                if key in self._cron_tasks and not self._cron_tasks[key].done():
-                    continue  # already running
-                cron_expr = node.data.get("cron", "0 7 * * *")
-                task = asyncio.create_task(
-                    self._cron_loop(graph_id, node.id, cron_expr),
-                    name=f"cron-{graph_id[:8]}-{node.id[:8]}",
-                )
-                self._cron_tasks[key] = task
-                logger.info(
-                    "Cron scheduled: graph=%s (%s) node=%s expr=%r",
-                    graph_id[:8],
-                    name,
-                    node.id[:8],
-                    cron_expr,
-                )
+                if node.type == "timer_cron":
+                    if not _has_croniter:
+                        continue
+                    key = (graph_id, node.id)
+                    if key in self._cron_tasks and not self._cron_tasks[key].done():
+                        continue  # already running
+                    cron_expr = node.data.get("cron", "0 7 * * *")
+                    task = asyncio.create_task(
+                        self._cron_loop(graph_id, node.id, cron_expr),
+                        name=f"cron-{graph_id[:8]}-{node.id[:8]}",
+                    )
+                    self._cron_tasks[key] = task
+                    logger.info(
+                        "Cron scheduled: graph=%s (%s) node=%s expr=%r",
+                        graph_id[:8],
+                        name,
+                        node.id[:8],
+                        cron_expr,
+                    )
+                elif node.type == "ical":
+                    key = (graph_id, node.id)
+                    if key in self._cron_tasks and not self._cron_tasks[key].done():
+                        continue  # already running
+                    refresh_min = max(1.0, float(node.data.get("refresh_interval_min") or 60))
+                    task = asyncio.create_task(
+                        self._ical_loop(graph_id, node.id, refresh_min),
+                        name=f"ical-{graph_id[:8]}-{node.id[:8]}",
+                    )
+                    self._cron_tasks[key] = task
+                    logger.info(
+                        "iCal scheduled: graph=%s (%s) node=%s interval=%.0fmin",
+                        graph_id[:8],
+                        name,
+                        node.id[:8],
+                        refresh_min,
+                    )
 
     async def _cron_loop(self, graph_id: str, node_id: str, cron_expr: str) -> None:
         """Fires a timer_cron graph node on its cron schedule — runs indefinitely."""
@@ -188,6 +207,30 @@ class LogicManager:
                 raise
             except Exception as exc:
                 logger.error("Cron loop error graph=%s: %s", graph_id[:8], exc)
+                await asyncio.sleep(60)  # back-off on unexpected errors
+
+    async def _ical_loop(self, graph_id: str, node_id: str, refresh_min: float) -> None:
+        """Triggers the graph containing an ical node on its refresh schedule.
+
+        Fires once immediately (to populate outputs on startup), then every
+        refresh_min minutes.  The actual HTTP fetch is throttled inside
+        _execute_graph via the last_fetch_ts timestamp, so redundant calls are
+        cheap.
+        """
+        while True:
+            try:
+                entry = self._graphs.get(graph_id)
+                if entry and entry[1]:  # still exists and enabled
+                    g_name, _, flow = entry
+                    await self._execute_graph(graph_id, g_name, flow, {})
+                    logger.debug("iCal graph %s (%s) node %s refreshed", graph_id[:8], g_name, node_id[:8])
+
+                await asyncio.sleep(refresh_min * 60)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("iCal loop error graph=%s node=%s: %s", graph_id[:8], node_id[:8], exc)
                 await asyncio.sleep(60)  # back-off on unexpected errors
 
     # ── Event Handler ─────────────────────────────────────────────────────
