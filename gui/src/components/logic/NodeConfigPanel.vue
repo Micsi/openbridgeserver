@@ -656,6 +656,15 @@
             </div>
           </div>
 
+          <!-- Match mode: any / all fields -->
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox"
+              :checked="!!flt.match_all_fields"
+              @change="icalUpdateFilter(i, 'match_all_fields', $event.target.checked)"
+              class="accent-teal-500" :data-testid="`ical-filter-matchall-${i}`" />
+            <span class="text-xs text-slate-300">Alle Felder müssen matchen (UND)</span>
+          </label>
+
           <!-- Case sensitive -->
           <label class="flex items-center gap-2 cursor-pointer">
             <input type="checkbox"
@@ -890,7 +899,7 @@ function _icalSave(filters) {
 
 function icalAddFilter() {
   const filters = icalFilters.value.slice()
-  filters.push({ name: `Filter ${filters.length + 1}`, fields: ['summary'], pattern: '', case_sensitive: false })
+  filters.push({ name: `Filter ${filters.length + 1}`, fields: ['summary'], pattern: '', case_sensitive: false, match_all_fields: false })
   _icalSave(filters)
 }
 

@@ -227,6 +227,41 @@ class TestICalFieldFilter:
 
 
 # ---------------------------------------------------------------------------
+# match_all_fields (AND between fields)
+# ---------------------------------------------------------------------------
+
+
+class TestICalMatchAllFields:
+    def test_and_both_fields_match(self):
+        """Event with 'Abfuhr' in summary AND 'Strasse' in location → matches."""
+        ics = _make_ics(_allday_event("ev1", _TODAY, "Abfuhr", location="Strasse"))
+        flt = {"name": "and", "fields": ["summary", "location"], "pattern": "a", "match_all_fields": True}
+        out = _run_ical(ics, [flt])
+        assert out["f0_today"] is True
+
+    def test_and_only_one_field_matches(self):
+        """Pattern matches summary but not location → no match with match_all_fields."""
+        ics = _make_ics(_allday_event("ev1", _TODAY, "Abfuhr", location="Nichts"))
+        flt = {"name": "and", "fields": ["summary", "location"], "pattern": "Abfuhr", "match_all_fields": True}
+        out = _run_ical(ics, [flt])
+        assert out["f0_today"] is False
+
+    def test_and_vs_or_different_results(self):
+        """OR matches where AND does not when only one field contains the pattern."""
+        ics = _make_ics(_allday_event("ev1", _TODAY, "Müll", location="Bahnhof"))
+        flt_or  = {"name": "or",  "fields": ["summary", "location"], "pattern": "Müll", "match_all_fields": False}
+        flt_and = {"name": "and", "fields": ["summary", "location"], "pattern": "Müll", "match_all_fields": True}
+        assert _run_ical(ics, [flt_or])["f0_today"] is True
+        assert _run_ical(ics, [flt_and])["f0_today"] is False
+
+    def test_and_single_field_behaves_like_or(self):
+        """With only one field selected, match_all_fields is equivalent to OR."""
+        ics = _make_ics(_allday_event("ev1", _TODAY, "Biotonne"))
+        flt = {"name": "bio", "fields": ["summary"], "pattern": "Bio", "match_all_fields": True}
+        assert _run_ical(ics, [flt])["f0_today"] is True
+
+
+# ---------------------------------------------------------------------------
 # Case sensitivity
 # ---------------------------------------------------------------------------
 

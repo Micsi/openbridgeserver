@@ -942,19 +942,24 @@ class GraphExecutor:
                             return True
                         fields = flt.get("fields") or ["summary"]
                         case_sensitive = bool(flt.get("case_sensitive", False))
+                        match_all = bool(flt.get("match_all_fields", False))
                         flags = 0 if case_sensitive else _re_ic.IGNORECASE
-                        for field in fields:
+
+                        def _field_matches(field: str) -> bool:
                             idx = _FIELD_IDX.get(field)
-                            if idx is not None:
-                                try:
-                                    if _re_ic.search(pattern, row_data[idx], flags):
-                                        return True
-                                except _re_ic.error:
-                                    needle = pattern if case_sensitive else pattern.lower()
-                                    haystack = row_data[idx] if case_sensitive else row_data[idx].lower()
-                                    if needle in haystack:
-                                        return True
-                        return False
+                            if idx is None:
+                                return False
+                            try:
+                                return bool(_re_ic.search(pattern, row_data[idx], flags))
+                            except _re_ic.error:
+                                needle = pattern if case_sensitive else pattern.lower()
+                                haystack = row_data[idx] if case_sensitive else row_data[idx].lower()
+                                return needle in haystack
+
+                        active = [f for f in fields if f in _FIELD_IDX]
+                        if not active:
+                            return False
+                        return all(_field_matches(f) for f in active) if match_all else any(_field_matches(f) for f in active)
 
                     for i, flt in enumerate(filters):
                         matching = [(ev_date, row) for ev_date, row in event_rows if _matches(row, flt)]
