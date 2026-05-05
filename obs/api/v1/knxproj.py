@@ -9,6 +9,7 @@ DELETE /api/v1/knxproj/group-addresses — alle GAs löschen
 from __future__ import annotations
 
 import json
+import logging
 import uuid as uuid_mod
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -30,6 +31,7 @@ from obs.db.database import Database, get_db
 from obs.knxproj.csv_parser import parse_ga_csv
 from obs.knxproj.parser import parse_knxproj, parse_knxproj_locations, parse_knxproj_trades
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["knxproj"])
 
 
@@ -333,11 +335,7 @@ async def import_knxproj_file(
                    VALUES (?, ?, ?, ?, ?)""",
                 [(r.identifier, r.space_id, r.name, r.usage_text, now) for r in fn_records],
             )
-            ga_links = [
-                (r.identifier, addr)
-                for r in fn_records
-                for addr in r.ga_addresses
-            ]
+            ga_links = [(r.identifier, addr) for r in fn_records for addr in r.ga_addresses]
             if ga_links:
                 await db.executemany(
                     "INSERT OR IGNORE INTO knx_function_ga_links (function_id, ga_address) VALUES (?, ?)",
