@@ -584,7 +584,7 @@
         <!-- URL -->
         <div class="form-group">
           <label class="label">iCal-URL</label>
-          <input v-model="localData.url" type="url" class="input text-sm"
+          <input v-model="localData.url" type="text" class="input text-sm"
             placeholder="https://example.com/calendar.ics"
             @change="emitUpdate" data-testid="ical-url" />
         </div>

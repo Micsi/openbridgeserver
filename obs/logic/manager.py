@@ -396,7 +396,8 @@ class LogicManager:
             refresh_min = float(node.data.get("refresh_interval_min") or 60)
             hyst_node = hyst.setdefault(node.id, {})
             last_fetch: float | None = hyst_node.get("last_fetch_ts")
-            needs_fetch = last_fetch is None or (execute_now.timestamp() - last_fetch) >= refresh_min * 60
+            url_changed = hyst_node.get("fetched_url") != url
+            needs_fetch = url_changed or last_fetch is None or (execute_now.timestamp() - last_fetch) >= refresh_min * 60
             if needs_fetch:
                 try:
                     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as _hclient:
@@ -423,6 +424,7 @@ class LogicManager:
                         if not _raw_text.lstrip().startswith("BEGIN:VCALENDAR"):
                             raise ValueError(f"Response is not an iCal file (starts with {_raw_text[:60]!r})")
                         hyst_node["raw"] = _raw_text
+                        hyst_node["fetched_url"] = url
                         hyst_node["last_fetch_ts"] = execute_now.timestamp()
                         logger.info("Graph %s: iCal fetched from %s (%d bytes)", graph_id[:8], url, len(_raw_text))
                 except Exception as _exc:
