@@ -131,6 +131,13 @@ class NodeRef(BaseModel):
     tree_name: str
 
 
+class NodeSearchResult(BaseModel):
+    node_id: str
+    node_name: str
+    tree_id: str
+    tree_name: str
+
+
 class EtsImportRequest(BaseModel):
     tree_name: str
     mode: str  # "topology" | "buildings" | "trades" | "groups"
@@ -472,6 +479,44 @@ async def delete_link(
         "DELETE FROM hierarchy_datapoint_links WHERE node_id=? AND datapoint_id=?",
         (node_id, datapoint_id),
     )
+
+
+# ---------------------------------------------------------------------------
+# Node Search
+# ---------------------------------------------------------------------------
+
+
+@router.get("/nodes/search", response_model=list[NodeSearchResult])
+async def search_nodes(
+    q: str = Query("", description="Volltext-Suche in Knoten- und Ast-Namen"),
+    limit: int = Query(30, ge=1, le=200),
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> list[NodeSearchResult]:
+    """Knoten über alle Äste hinweg suchen. Gibt Knoten mit Ast-Kontext zurück."""
+    if q:
+        like = f"%{q}%"
+        rows = await db.fetchall(
+            """SELECT hn.id AS node_id, hn.name AS node_name,
+                      ht.id AS tree_id, ht.name AS tree_name
+               FROM hierarchy_nodes hn
+               JOIN hierarchy_trees ht ON ht.id = hn.tree_id
+               WHERE hn.name LIKE ? OR ht.name LIKE ?
+               ORDER BY ht.name, hn.name
+               LIMIT ?""",
+            (like, like, limit),
+        )
+    else:
+        rows = await db.fetchall(
+            """SELECT hn.id AS node_id, hn.name AS node_name,
+                      ht.id AS tree_id, ht.name AS tree_name
+               FROM hierarchy_nodes hn
+               JOIN hierarchy_trees ht ON ht.id = hn.tree_id
+               ORDER BY ht.name, hn.name
+               LIMIT ?""",
+            (limit,),
+        )
+    return [NodeSearchResult(**dict(r)) for r in rows]
 
 
 # ---------------------------------------------------------------------------

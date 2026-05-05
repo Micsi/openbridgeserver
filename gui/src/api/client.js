@@ -149,6 +149,9 @@ export const hierarchyApi = {
   createLink:   (data)          => api.post('/hierarchy/links', data),
   deleteLink:   (nodeId, dpId)  => api.delete('/hierarchy/links', { params: { node_id: nodeId, datapoint_id: dpId } }),
 
+  // Node search (for DP detail view)
+  searchNodes:   (q = '', limit = 30) => api.get('/hierarchy/nodes/search', { params: { q, limit } }),
+
   // ETS import
   importFromEts: (data)         => api.post('/hierarchy/import-from-ets', data),
 }

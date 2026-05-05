@@ -23,18 +23,6 @@
         <span class="text-sm text-slate-700 dark:text-slate-200 flex-1 truncate">{{ node.name }}</span>
         <span v-if="node.description" class="text-xs text-slate-400 hidden lg:block truncate max-w-24">{{ node.description }}</span>
 
-        <!-- ── Objekte-Pill (immer sichtbar) ── -->
-        <button
-          @click="emit('manage-links', node)"
-          class="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors shrink-0"
-          :data-testid="`btn-links-${node.id}`"
-          title="Objekte verknüpfen">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
-          </svg>
-          Objekte
-        </button>
-
         <!-- ── Reihenfolge ↑↓ (hover) ── -->
         <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
           <button
@@ -87,7 +75,6 @@
         @add-child="emit('add-child', $event)"
         @edit="emit('edit', $event)"
         @delete="emit('delete', $event)"
-        @manage-links="emit('manage-links', $event)"
         @reorder="emit('reorder', $event)"
       />
     </li>
@@ -104,7 +91,7 @@ const props = defineProps({
   selectedNode: { type: String, default: null },
 })
 
-const emit = defineEmits(['add-child', 'edit', 'delete', 'manage-links', 'reorder'])
+const emit = defineEmits(['add-child', 'edit', 'delete', 'reorder'])
 
 const expanded = reactive(new Set())
 
