@@ -40,10 +40,11 @@ test('MQTT Binding-Schema enthält json_key', async () => {
 
 test('BindingForm: verschachtelte JSON-Keys im Dropdown (Dot-Notation)', async ({ page }) => {
   // Create MQTT adapter instance + datapoint via API
-  const mqttAdapter = await apiPost('/api/v1/adapter-instances', {
+  const mqttAdapter = await apiPost('/api/v1/adapters/instances', {
     name: `E2E-MQTT-${Date.now()}`,
     adapter_type: 'MQTT',
     config: { host: 'localhost', port: 1883 },
+    enabled: false,
   }) as { id: string }
 
   const dp = await apiPost('/api/v1/datapoints', {
@@ -108,7 +109,7 @@ test('BindingForm: verschachtelte JSON-Keys im Dropdown (Dot-Notation)', async (
     expect(inputValue).toBe('channels.Temperature')
   } finally {
     await apiDelete(`/api/v1/datapoints/${dp.id}`)
-    await apiDelete(`/api/v1/adapter-instances/${mqttAdapter.id}`)
+    await apiDelete(`/api/v1/adapters/instances/${mqttAdapter.id}`)
   }
 })
 
@@ -121,10 +122,11 @@ test('MQTT Binding mit json_key channels.Temperature extrahiert korrekten Wert',
   // The actual extraction is covered by unit tests; here we verify the binding
   // accepts a dot-notation json_key without validation errors.
 
-  const mqttAdapter = await apiPost('/api/v1/adapter-instances', {
+  const mqttAdapter = await apiPost('/api/v1/adapters/instances', {
     name: `E2E-MQTT-DotKey-${Date.now()}`,
     adapter_type: 'MQTT',
     config: { host: 'localhost', port: 1883 },
+    enabled: false,
   }) as { id: string }
 
   const dp = await apiPost('/api/v1/datapoints', {
@@ -151,6 +153,6 @@ test('MQTT Binding mit json_key channels.Temperature extrahiert korrekten Wert',
     await apiDelete(`/api/v1/datapoints/${dp.id}/bindings/${binding.id}`)
   } finally {
     await apiDelete(`/api/v1/datapoints/${dp.id}`)
-    await apiDelete(`/api/v1/adapter-instances/${mqttAdapter.id}`)
+    await apiDelete(`/api/v1/adapters/instances/${mqttAdapter.id}`)
   }
 })
