@@ -64,7 +64,16 @@
       >
         <option value="behalten">Wert behalten</option>
         <option value="zuruecksetzen">Wert zurücksetzen (false / 0)</option>
+        <option value="setzen">Wert setzen auf …</option>
       </select>
+      <input
+        v-if="(modelValue.on_presence ?? 'behalten') === 'setzen'"
+        :value="modelValue.on_presence_value ?? ''"
+        type="text"
+        class="input mt-2"
+        placeholder="z.B. 0 / 1 / false / true / 21.5"
+        @input="emit('update:modelValue', { ...modelValue, on_presence_value: $event.target.value })"
+      />
       <p class="hint">Was passiert mit den simulierten Objekten wenn Anwesenheit erkannt wird.</p>
     </div>
 

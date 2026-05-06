@@ -825,7 +825,15 @@
               <option :value="null">Standard (Adapter)</option>
               <option value="behalten">Wert behalten</option>
               <option value="zuruecksetzen">Wert zurücksetzen (false / 0)</option>
+              <option value="setzen">Wert setzen auf …</option>
             </select>
+            <input
+              v-if="cfg.on_presence_override === 'setzen'"
+              v-model="cfg.on_presence_value"
+              type="text"
+              class="input mt-2"
+              placeholder="z.B. 0 / 1 / false / true / 21.5"
+            />
             <p class="hint">Leer = Verhalten aus der Adapter-Konfiguration verwenden.</p>
           </div>
         </div>
@@ -1030,6 +1038,7 @@ const cfg = reactive({
   // ANWESENHEITSSIMULATION
   offset_override: null,
   on_presence_override: null,
+  on_presence_value: '',
   // ZEITSCHALTUHR
   timer_type: 'daily', meta_type: 'none',
   weekdays: [0,1,2,3,4,5,6], months: [], day_of_month: 0,
@@ -1242,6 +1251,7 @@ watch(() => props.initial, val => {
   // ANWESENHEITSSIMULATION defaults + select sync
   if (cfg.offset_override      === undefined) cfg.offset_override      = null
   if (cfg.on_presence_override === undefined) cfg.on_presence_override = null
+  if (cfg.on_presence_value    === undefined) cfg.on_presence_value    = ''
   {
     const ANW_PRESETS = ['1', '7', '14']
     if (cfg.offset_override != null) {
@@ -1732,7 +1742,11 @@ function buildConfig() {
   if (type === 'ANWESENHEITSSIMULATION') {
     const c = {}
     if (cfg.offset_override != null) c.offset_override = cfg.offset_override
-    if (cfg.on_presence_override != null) c.on_presence_override = cfg.on_presence_override
+    if (cfg.on_presence_override != null) {
+      c.on_presence_override = cfg.on_presence_override
+      if (cfg.on_presence_override === 'setzen' && cfg.on_presence_value?.trim())
+        c.on_presence_value = cfg.on_presence_value.trim()
+    }
     return c
   }
   return {}

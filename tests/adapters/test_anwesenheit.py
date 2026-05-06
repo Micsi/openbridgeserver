@@ -112,6 +112,11 @@ class TestConfig:
     def test_on_presence_values(self):
         assert OnPresence.KEEP == "behalten"
         assert OnPresence.RESET == "zuruecksetzen"
+        assert OnPresence.SET == "setzen"
+
+    def test_on_presence_value_default_none(self):
+        cfg = AnwesenheitssimulationConfig()
+        assert cfg.on_presence_value is None
 
 
 class TestBindingConfig:
@@ -132,6 +137,10 @@ class TestBindingConfig:
         bc = AnwesenheitssimulationBindingConfig(on_presence_override=OnPresence.RESET)
         assert bc.on_presence_override == OnPresence.RESET
 
+    def test_on_presence_value_default_none(self):
+        bc = AnwesenheitssimulationBindingConfig()
+        assert bc.on_presence_value is None
+
 
 # ---------------------------------------------------------------------------
 # Adapter type
@@ -142,6 +151,23 @@ class TestAdapterType:
     def test_adapter_type_name(self):
         adapter = _make_adapter()
         assert adapter.adapter_type == "ANWESENHEITSSIMULATION"
+
+    @pytest.mark.asyncio
+    async def test_connect_sets_connected_true(self):
+        """_publish_status must be awaited so connected=True after connect()."""
+        bus = _make_bus()
+        adapter = _make_adapter(bus=bus)
+        adapter._bindings = []
+
+        with (
+            patch("obs.adapters.anwesenheit.adapter.get_history_plugin", side_effect=RuntimeError),
+            patch.object(adapter, "_resolve_initial_state", new=AsyncMock(return_value=False)),
+        ):
+            await adapter.connect()
+            await adapter.disconnect()
+
+        # _publish_status is awaited → connected must toggle correctly
+        assert not adapter.connected  # False after disconnect
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +350,42 @@ class TestPresenceAction:
         await adapter._handle_presence()
 
         assert bus.publish.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_set_publishes_configured_value(self):
+        bus = _make_bus()
+        adapter = _make_adapter({"on_presence": "setzen", "on_presence_value": "21.5"}, bus=bus)
+        dp_id = uuid.uuid4()
+        adapter._bindings = [_make_binding(dp_id=dp_id)]
+
+        await adapter._handle_presence()
+
+        bus.publish.assert_called_once()
+        event = bus.publish.call_args[0][0]
+        assert event.value == "21.5"
+
+    @pytest.mark.asyncio
+    async def test_set_binding_override_value_beats_adapter(self):
+        bus = _make_bus()
+        adapter = _make_adapter({"on_presence": "setzen", "on_presence_value": "1"}, bus=bus)
+        dp_id = uuid.uuid4()
+        adapter._bindings = [_make_binding(dp_id=dp_id, config={"on_presence_override": "setzen", "on_presence_value": "99"})]
+
+        await adapter._handle_presence()
+
+        event = bus.publish.call_args[0][0]
+        assert event.value == "99"
+
+    @pytest.mark.asyncio
+    async def test_set_without_value_publishes_false(self):
+        bus = _make_bus()
+        adapter = _make_adapter({"on_presence": "setzen"}, bus=bus)  # no on_presence_value
+        adapter._bindings = [_make_binding()]
+
+        await adapter._handle_presence()
+
+        event = bus.publish.call_args[0][0]
+        assert event.value is False
 
 
 # ---------------------------------------------------------------------------

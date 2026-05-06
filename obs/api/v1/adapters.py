@@ -806,7 +806,9 @@ async def anwesenheit_health(
 
         history = get_history_plugin()
     except RuntimeError:
-        return AnwesenheitHealthResult(healthy=False, message="History-Plugin nicht verfügbar — bitte History-Backend in den Einstellungen konfigurieren")
+        return AnwesenheitHealthResult(
+            healthy=False, message="History-Plugin nicht verfügbar — bitte History-Backend in den Einstellungen konfigurieren"
+        )
 
     binding_rows = await db.fetchall(
         "SELECT id, datapoint_id FROM adapter_bindings WHERE adapter_instance_id=? AND direction='SOURCE' AND enabled=1",

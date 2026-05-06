@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 class OnPresence(str, Enum):
     KEEP = "behalten"
     RESET = "zuruecksetzen"
+    SET = "setzen"
 
 
 class AnwesenheitssimulationConfig(BaseModel):
@@ -79,6 +80,11 @@ class AnwesenheitssimulationConfig(BaseModel):
         title="Verhalten bei Anwesenheit",
         description="Was passiert wenn Anwesenheit erkannt wird (Steuerobjekt = 1)",
     )
+    on_presence_value: str | None = Field(
+        default=None,
+        title="Wert bei Anwesenheit",
+        description="Wert der gesetzt wird wenn on_presence='setzen'; leer = false/0",
+    )
 
 
 class AnwesenheitssimulationBindingConfig(BaseModel):
@@ -93,6 +99,11 @@ class AnwesenheitssimulationBindingConfig(BaseModel):
         default=None,
         title="Verhalten bei Anwesenheit überschreiben",
         description="Überschreibt den Adapter-Standard; leer = Adapter-Standard",
+    )
+    on_presence_value: str | None = Field(
+        default=None,
+        title="Wert bei Anwesenheit",
+        description="Wert der gesetzt wird wenn on_presence_override='setzen'; leer = Adapter-Standard",
     )
 
 
@@ -140,7 +151,7 @@ class AnwesenheitssimulationAdapter(AdapterBase):
             self._simulation_loop(),
             name=f"anwesenheitssimulation_{self._instance_id}",
         )
-        self._publish_status(True, "Anwesenheitssimulation gestartet")
+        await self._publish_status(True, "Anwesenheitssimulation gestartet")
 
     async def disconnect(self) -> None:
         if self._task and not self._task.done():
@@ -152,7 +163,7 @@ class AnwesenheitssimulationAdapter(AdapterBase):
             self._task = None
         self._pending.clear()
         self._seq = 0
-        self._publish_status(False, "Anwesenheitssimulation gestoppt")
+        await self._publish_status(False, "Anwesenheitssimulation gestoppt")
 
     async def read(self, binding: Any) -> None:  # noqa: ARG002
         return None
@@ -216,16 +227,25 @@ class AnwesenheitssimulationAdapter(AdapterBase):
                 continue
             bc = AnwesenheitssimulationBindingConfig(**(binding.config or {}))
             effective = bc.on_presence_override if bc.on_presence_override is not None else self._cfg.on_presence
+
+            if effective == OnPresence.KEEP:
+                continue
+
             if effective == OnPresence.RESET:
-                await self._bus.publish(
-                    DataValueEvent(
-                        datapoint_id=binding.datapoint_id,
-                        value=False,
-                        quality="good",
-                        source_adapter=self.adapter_type,
-                        binding_id=binding.id,
-                    )
+                value: Any = False
+            else:  # SET
+                raw = bc.on_presence_value if bc.on_presence_value is not None else self._cfg.on_presence_value
+                value = raw if raw is not None else False
+
+            await self._bus.publish(
+                DataValueEvent(
+                    datapoint_id=binding.datapoint_id,
+                    value=value,
+                    quality="good",
+                    source_adapter=self.adapter_type,
+                    binding_id=binding.id,
                 )
+            )
 
     # ------------------------------------------------------------------
     # History pre-loading
