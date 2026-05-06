@@ -83,6 +83,7 @@ export const dpApi = {
   delete:        (id)                           => api.delete(`/datapoints/${id}`),
   value:         (id)                           => api.get(`/datapoints/${id}/value`),
   writeValue:    (id, value)                    => api.post(`/datapoints/${id}/value`, { value }),
+  tags:          ()                             => api.get('/datapoints/tags'),
   listBindings:  (id)                           => api.get(`/datapoints/${id}/bindings`),
   createBinding: (id, data)                     => api.post(`/datapoints/${id}/bindings`, data),
   updateBinding: (id, bindingId, data)          => api.patch(`/datapoints/${id}/bindings/${bindingId}`, data),
@@ -119,6 +120,9 @@ export const adapterApi = {
   iobrokerImportPreview: (id, data) => api.post(`/adapters/instances/${id}/iobroker/import-preview`, data),
   iobrokerImport:        (id, data) => api.post(`/adapters/instances/${id}/iobroker/import`, data),
   getZsuHolidays:        (id, year = 0) => api.get(`/adapters/instances/${id}/holidays`, { params: year ? { year } : {} }),
+  anwesenheitDatapoints:  (id)          => api.get(`/adapters/instances/${id}/anwesenheit/datapoints`),
+  anwesenheitSyncBindings:(id, dpIds)  => api.post(`/adapters/instances/${id}/anwesenheit/sync-bindings`, { datapoint_ids: dpIds }),
+  anwesenheitHealth:      (id)          => api.get(`/adapters/instances/${id}/anwesenheit/health`),
 }
 
 // ── KNX Project Import ────────────────────────────────────────────────────
@@ -126,6 +130,34 @@ export const knxprojApi = {
   import:  (formData, params = {}) => api.post('/knxproj/import', formData, { headers: { 'Content-Type': 'multipart/form-data' }, params }),
   listGA:  (params)   => api.get('/knxproj/group-addresses', { params }),
   clearGA: ()         => api.delete('/knxproj/group-addresses'),
+}
+
+// ── Hierarchy Manager ─────────────────────────────────────────────────────
+export const hierarchyApi = {
+  // Trees
+  listTrees:    ()              => api.get('/hierarchy/trees'),
+  createTree:   (data)          => api.post('/hierarchy/trees', data),
+  updateTree:   (id, data)      => api.put(`/hierarchy/trees/${id}`, data),
+  deleteTree:   (id)            => api.delete(`/hierarchy/trees/${id}`),
+
+  // Nodes
+  getTreeNodes: (treeId)        => api.get(`/hierarchy/trees/${treeId}/nodes`),
+  createNode:   (data)          => api.post('/hierarchy/nodes', data),
+  updateNode:   (id, data)      => api.put(`/hierarchy/nodes/${id}`, data),
+  moveNode:     (id, data)      => api.put(`/hierarchy/nodes/${id}/move`, data),
+  deleteNode:   (id)            => api.delete(`/hierarchy/nodes/${id}`),
+
+  // Links
+  getNodeDatapoints:  (nodeId)  => api.get(`/hierarchy/nodes/${nodeId}/datapoints`),
+  getDatapointNodes:  (dpId)    => api.get(`/hierarchy/datapoints/${dpId}/nodes`),
+  createLink:   (data)          => api.post('/hierarchy/links', data),
+  deleteLink:   (nodeId, dpId)  => api.delete('/hierarchy/links', { params: { node_id: nodeId, datapoint_id: dpId } }),
+
+  // Node search (for DP detail view)
+  searchNodes:   (q = '', limit = 30) => api.get('/hierarchy/nodes/search', { params: { q, limit } }),
+
+  // ETS import
+  importFromEts: (data)         => api.post('/hierarchy/import-from-ets', data),
 }
 
 // ── System ────────────────────────────────────────────────────────────────
