@@ -23,6 +23,14 @@ def adapter(mock_bus):
     return a
 
 
+def _mock_create_task(coro, *, name=None, context=None):
+    """Side-effect for patched asyncio.create_task — closes the coroutine so Python
+    does not emit 'coroutine was never awaited' RuntimeWarnings during GC."""
+    if asyncio.iscoroutine(coro):
+        coro.close()
+    return mock.MagicMock()
+
+
 def _add_binding(adapter: MqttAdapter, topic: str, **kwargs) -> object:
     binding = make_binding({"topic": topic, **kwargs})
     adapter._topic_map.setdefault(topic, []).append(binding)
@@ -271,7 +279,7 @@ class TestClientId:
         """connect() must always set non-empty client IDs — zero-length IDs are rejected
         by brokers configured with allow_zero_length_clientid false."""
         adapter = MqttAdapter(event_bus=mock_bus, config={"host": "broker.example.com"})
-        with mock.patch.object(asyncio, "create_task", return_value=mock.MagicMock()):
+        with mock.patch.object(asyncio, "create_task", side_effect=_mock_create_task):
             await adapter.connect()
 
         assert adapter._pub_client_id
@@ -285,7 +293,7 @@ class TestClientId:
             event_bus=mock_bus,
             config={"host": "broker.example.com", "client_id": "my-device"},
         )
-        with mock.patch.object(asyncio, "create_task", return_value=mock.MagicMock()):
+        with mock.patch.object(asyncio, "create_task", side_effect=_mock_create_task):
             await adapter.connect()
 
         assert adapter._pub_client_id == "my-device-pub"
@@ -296,7 +304,7 @@ class TestClientId:
         """Publisher and subscriber must use different client IDs — a broker rejects
         two simultaneous connections with the same ID."""
         adapter = MqttAdapter(event_bus=mock_bus, config={"host": "broker.example.com"})
-        with mock.patch.object(asyncio, "create_task", return_value=mock.MagicMock()):
+        with mock.patch.object(asyncio, "create_task", side_effect=_mock_create_task):
             await adapter.connect()
 
         assert adapter._pub_client_id != adapter._sub_client_id
@@ -323,7 +331,7 @@ class TestTlsConfig:
             event_bus=mock_bus,
             config={"host": "hivemq.cloud", "port": 8883, "tls": True},
         )
-        with mock.patch.object(asyncio, "create_task", return_value=mock.MagicMock()):
+        with mock.patch.object(asyncio, "create_task", side_effect=_mock_create_task):
             await adapter.connect()
 
         import ssl
@@ -333,7 +341,7 @@ class TestTlsConfig:
     @pytest.mark.asyncio
     async def test_connect_no_tls_context_when_tls_disabled(self, mock_bus):
         adapter = MqttAdapter(event_bus=mock_bus, config={"host": "localhost"})
-        with mock.patch.object(asyncio, "create_task", return_value=mock.MagicMock()):
+        with mock.patch.object(asyncio, "create_task", side_effect=_mock_create_task):
             await adapter.connect()
 
         assert adapter._tls_context is None
@@ -350,7 +358,7 @@ class TestConnectionStatus:
         """connect() must not set connected=True — that happens only after the broker
         accepts the MQTT CONNECT packet (inside _publisher_loop)."""
         adapter = MqttAdapter(event_bus=mock_bus, config={"host": "broker.example.com"})
-        with mock.patch.object(asyncio, "create_task", return_value=mock.MagicMock()):
+        with mock.patch.object(asyncio, "create_task", side_effect=_mock_create_task):
             await adapter.connect()
 
         assert adapter.connected is False
