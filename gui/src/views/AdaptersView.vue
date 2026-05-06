@@ -50,16 +50,22 @@
           <!-- Schema-based config form -->
           <div v-if="newForm.adapter_type && newSchema">
             <label class="label mb-2">Konfiguration</label>
-            <SchemaForm
-              :schema="newSchema"
+            <AnwesenheitConfigForm
+              v-if="newForm.adapter_type === 'ANWESENHEITSSIMULATION'"
               v-model="newForm.config"
-              :exclude="newForm.adapter_type.toLowerCase() === 'zeitschaltuhr' ? ['custom_holidays'] : []"
             />
-            <ZeitschaltuhrCustomHolidaysEditor
-              v-if="newForm.adapter_type.toLowerCase() === 'zeitschaltuhr'"
-              :model-value="newForm.config.custom_holidays ?? []"
-              @update:model-value="newForm.config.custom_holidays = $event"
-            />
+            <template v-else>
+              <SchemaForm
+                :schema="newSchema"
+                v-model="newForm.config"
+                :exclude="newForm.adapter_type.toLowerCase() === 'zeitschaltuhr' ? ['custom_holidays'] : []"
+              />
+              <ZeitschaltuhrCustomHolidaysEditor
+                v-if="newForm.adapter_type.toLowerCase() === 'zeitschaltuhr'"
+                :model-value="newForm.config.custom_holidays ?? []"
+                @update:model-value="newForm.config.custom_holidays = $event"
+              />
+            </template>
           </div>
           <div v-else-if="newForm.adapter_type && schemaLoading" class="flex items-center gap-2 text-sm text-slate-500">
             <Spinner size="xs" /> Schema wird geladen…
@@ -117,19 +123,39 @@
               <input v-model="drafts[a.id].name" type="text" class="input" />
             </div>
 
+            <!-- Anwesenheitssimulation: History-Verfügbarkeit -->
+            <div v-if="a.adapter_type === 'ANWESENHEITSSIMULATION' && anwesenheitHealth[a.id]" :class="[
+              'mt-4 flex items-start gap-2 p-3 rounded-lg text-sm',
+              anwesenheitHealth[a.id].healthy
+                ? 'bg-green-500/10 border border-green-500/30 text-green-400'
+                : 'bg-amber-500/10 border border-amber-500/30 text-amber-400'
+            ]">
+              <svg class="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path v-if="anwesenheitHealth[a.id].healthy" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              {{ anwesenheitHealth[a.id].message }}
+            </div>
+
             <!-- Schema-based config form -->
             <div v-if="schemas[a.adapter_type]" class="mt-4">
               <label class="label mb-2">Konfiguration</label>
-              <SchemaForm
-                :schema="schemas[a.adapter_type]"
+              <AnwesenheitConfigForm
+                v-if="a.adapter_type === 'ANWESENHEITSSIMULATION'"
                 v-model="drafts[a.id].config"
-                :exclude="a.adapter_type.toLowerCase() === 'zeitschaltuhr' ? ['custom_holidays'] : []"
               />
-              <ZeitschaltuhrCustomHolidaysEditor
-                v-if="a.adapter_type.toLowerCase() === 'zeitschaltuhr'"
-                :model-value="drafts[a.id].config.custom_holidays ?? []"
-                @update:model-value="drafts[a.id].config.custom_holidays = $event"
-              />
+              <template v-else>
+                <SchemaForm
+                  :schema="schemas[a.adapter_type]"
+                  v-model="drafts[a.id].config"
+                  :exclude="a.adapter_type.toLowerCase() === 'zeitschaltuhr' ? ['custom_holidays'] : []"
+                />
+                <ZeitschaltuhrCustomHolidaysEditor
+                  v-if="a.adapter_type.toLowerCase() === 'zeitschaltuhr'"
+                  :model-value="drafts[a.id].config.custom_holidays ?? []"
+                  @update:model-value="drafts[a.id].config.custom_holidays = $event"
+                />
+              </template>
             </div>
             <div v-else class="flex items-center gap-2 text-sm text-slate-500 mt-4">
               <Spinner size="xs" /> Schema wird geladen…
@@ -154,7 +180,7 @@
           </div>
 
           <div v-if="!isDemo" class="flex gap-3 flex-wrap">
-            <button @click="testConnection(a)" class="btn-secondary btn-sm" :disabled="busy[a.id] === 'test'"
+            <button v-if="a.adapter_type !== 'ANWESENHEITSSIMULATION'" @click="testConnection(a)" class="btn-secondary btn-sm" :disabled="busy[a.id] === 'test'"
               title="Prüft die Verbindung mit der aktuellen Konfiguration ohne zu speichern">
               <Spinner v-if="busy[a.id] === 'test'" size="xs" color="slate" />
               Verbindung testen
@@ -164,7 +190,7 @@
               <Spinner v-if="busy[a.id] === 'save'" size="xs" color="white" />
               Speichern
             </button>
-            <button @click="restartInstance(a)" class="btn-secondary btn-sm" :disabled="busy[a.id] === 'restart'"
+            <button v-if="a.adapter_type !== 'ANWESENHEITSSIMULATION'" @click="restartInstance(a)" class="btn-secondary btn-sm" :disabled="busy[a.id] === 'restart'"
               title="Verbindet den Adapter neu ohne die Konfiguration zu ändern">
               <Spinner v-if="busy[a.id] === 'restart'" size="xs" color="slate" />
               Neu verbinden
@@ -172,6 +198,10 @@
             <button v-if="a.adapter_type === 'IOBROKER'" @click="openIoBrokerImport(a)" class="btn-secondary btn-sm" :disabled="!a.connected"
               title="ioBroker-States als OBS-Objekte importieren">
               Importieren
+            </button>
+            <button v-if="a.adapter_type === 'ANWESENHEITSSIMULATION'" @click="openAnwesenheitSelector(a)" class="btn-secondary btn-sm"
+              title="Simulierte Objekte (Boolean/Integer) auswählen und Bindings verwalten">
+              Objekte verwalten
             </button>
             <button @click="confirmDelete(a)" class="ml-auto btn-danger btn-sm" :disabled="busy[a.id] === 'delete'"
               title="Löscht diese Instanz und alle zugehörigen Verknüpfungen unwiderruflich"
@@ -192,6 +222,11 @@
       confirm-label="Löschen"
       @confirm="executeDelete"
     />
+
+    <!-- Anwesenheitssimulation: Objekte verwalten -->
+    <Modal v-model="anwesenheitOpen" :title="anwesenheitInstance ? `Anwesenheitssimulation — ${anwesenheitInstance.name}` : 'Anwesenheitssimulation'" max-width="xl">
+      <AnwesenheitDatapointSelector v-if="anwesenheitOpen && anwesenheitInstance" :instance-id="anwesenheitInstance.id" />
+    </Modal>
 
     <Modal v-model="importOpen" :title="importInstance ? `ioBroker Import — ${importInstance.name}` : 'ioBroker Import'" max-width="2xl" resizable>
       <div class="flex flex-col gap-4">
@@ -273,7 +308,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { adapterApi } from '@/api/client'
 import { useAdapterStore } from '@/stores/adapters'
 import { useAuthStore } from '@/stores/auth'
@@ -282,6 +317,8 @@ import Spinner       from '@/components/ui/Spinner.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import SchemaForm    from '@/components/adapters/SchemaForm.vue'
 import ZeitschaltuhrCustomHolidaysEditor from '@/components/adapters/ZeitschaltuhrCustomHolidaysEditor.vue'
+import AnwesenheitDatapointSelector from '@/components/adapters/AnwesenheitDatapointSelector.vue'
+import AnwesenheitConfigForm from '@/components/adapters/AnwesenheitConfigForm.vue'
 import Modal         from '@/components/ui/Modal.vue'
 
 const store          = useAdapterStore()
@@ -306,6 +343,25 @@ const createError       = ref(null)
 const deleteTarget      = ref(null)
 const showDeleteConfirm = ref(false)
 
+// Anwesenheitssimulation — Objekte verwalten + Health
+const anwesenheitOpen     = ref(false)
+const anwesenheitInstance = ref(null)
+const anwesenheitHealth   = reactive({})  // id → { healthy, message, ... }
+
+function openAnwesenheitSelector(a) {
+  anwesenheitInstance.value = a
+  anwesenheitOpen.value = true
+}
+
+async function loadAnwesenheitHealth(a) {
+  try {
+    const { data } = await adapterApi.anwesenheitHealth(a.id)
+    anwesenheitHealth[a.id] = data
+  } catch {
+    // silently ignore — health is informational only
+  }
+}
+
 // ioBroker Import
 const importOpen = ref(false)
 const importInstance = ref(null)
@@ -328,15 +384,35 @@ const allImportSelected = computed(() => {
   return selectable.length > 0 && selectable.every(id => selectedImportStates.value.includes(id))
 })
 
+let refreshTimer = null
+
 // ------------------------------------------------------------------
 
-onMounted(async () => {
+async function refreshInstances() {
   await store.fetchAdapters()
   initDrafts()
+  for (const a of store.instances) {
+    const fb = feedback[a.id]
+    if (a.connected && fb && fb.success === false) {
+      delete feedback[a.id]
+    }
+  }
+}
+
+onMounted(async () => {
+  await refreshInstances()
   try {
     availableTypes.value = await store.fetchTypes()
   } catch {
     availableTypesErr.value = true
+  }
+  refreshTimer = window.setInterval(refreshInstances, 10000)
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer) {
+    window.clearInterval(refreshTimer)
+    refreshTimer = null
   }
 })
 
@@ -371,6 +447,7 @@ async function toggleExpand(a) {
   expanded[a.id] = !expanded[a.id]
   if (expanded[a.id]) {
     await loadSchema(a.adapter_type)
+    if (a.adapter_type === 'ANWESENHEITSSIMULATION') loadAnwesenheitHealth(a)
   }
 }
 
@@ -437,6 +514,7 @@ async function testConnection(a) {
   try {
     const result = await store.testInstance(a.id, drafts[a.id].config)
     feedback[a.id] = result
+    await refreshInstances()
   } catch (e) {
     feedback[a.id] = { success: false, detail: e.response?.data?.detail ?? 'Fehler' }
   } finally {
@@ -456,6 +534,8 @@ async function saveInstance(a) {
       enabled: drafts[a.id].enabled,
     })
     feedback[a.id] = { success: true, detail: 'Gespeichert und neu verbunden' }
+    if (a.adapter_type === 'ANWESENHEITSSIMULATION') loadAnwesenheitHealth(a)
+    await refreshInstances()
   } catch (e) {
     feedback[a.id] = { success: false, detail: e.response?.data?.detail ?? 'Fehler' }
   } finally {
@@ -471,6 +551,7 @@ async function restartInstance(a) {
   try {
     await store.restartInstance(a.id)
     feedback[a.id] = { success: true, detail: 'Verbindung neu aufgebaut' }
+    await refreshInstances()
   } catch (e) {
     feedback[a.id] = { success: false, detail: e.response?.data?.detail ?? 'Fehler' }
   } finally {
