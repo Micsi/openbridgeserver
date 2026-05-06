@@ -1,5 +1,17 @@
 # Changes
 
+## 2026.5.3
+### Breaking changes 🚨
+* none
+
+### New features 💡
+* none
+  
+### Fixes 🐞
+* #375: Confusing checksum field content within releasenotes
+
+
+
 ## 2026.5.2
 ### Breaking changes 🚨
 * none
@@ -12,6 +24,8 @@
 * #363: Adapter: The MQTT adapter did not send an MQTT client ID; the adapter now generates a random one, the client ID and TLS settings are now configurable
 * #356: Adapter: Nested JSON structures could not be processed by the JSON selector in the MQTT adapter and displayed for selection
 * #342: Visu: Some Visu widgets incorrectly displayed a red exclamation mark, which actually indicates a missing object after an import
+
+
 
 ## 2026.5.1
 ### New features:

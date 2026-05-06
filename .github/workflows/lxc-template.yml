@@ -556,7 +556,7 @@ jobs:
           bundle_checksum = None
 
           for f in sorted(glob.glob('artifacts/**/*.sha512', recursive=True)):
-              content = read(f)
+              content = read(f).split()[0]
               name = os.path.basename(f).removesuffix('.sha512')
               if 'app-bundle' in name:
                   bundle_checksum = content
