@@ -165,10 +165,7 @@ function cancelCurrentPolygon() {
 
 // ── Fullscreen Modal ──────────────────────────────────────────────────────────
 
-type FullscreenMode = 'draw' | 'place'
-
 const fullscreenOpen = ref(false)
-const fullscreenMode = ref<FullscreenMode>('draw')
 const canvasRef      = ref<HTMLDivElement>()
 const widgetRect     = ref<DOMRect | null>(null)
 
@@ -203,7 +200,6 @@ const canvasPositionStyle = computed(() => {
 
 function openFullscreen() {
   captureWidgetRect()
-  fullscreenMode.value = 'draw'
   placingMwId.value    = null
   fullscreenOpen.value = true
   drawingMode.value    = true
@@ -214,21 +210,13 @@ function closeFullscreen() {
   fullscreenOpen.value = false
   drawingMode.value    = false
   currentPoints.value  = []
-  fullscreenMode.value = 'draw'
   placingMwId.value    = null
+  draggingMwId.value   = null
 }
 
 function onCanvasClick(e: MouseEvent) {
-  if (!canvasRef.value) return
+  if (!canvasRef.value || placingMwId.value) return
   const pos = getImageCoords(e, canvasRef.value)
-
-  if (fullscreenMode.value === 'place') {
-    const mw = cfg.miniWidgets.find(m => m.id === placingMwId.value)
-    if (mw) { mw.x = pos[0]; mw.y = pos[1] }
-    closeFullscreen()
-    return
-  }
-
   if (currentPoints.value.length >= 3 && isNearFirst(pos)) {
     finishArea()
     return
@@ -237,8 +225,23 @@ function onCanvasClick(e: MouseEvent) {
 }
 
 function onCanvasMouseMove(e: MouseEvent) {
-  if (!canvasRef.value || fullscreenMode.value !== 'draw') return
-  mousePos.value = getImageCoords(e, canvasRef.value)
+  if (!canvasRef.value) return
+  const pos = getImageCoords(e, canvasRef.value)
+  if (draggingMwId.value) {
+    const mw = cfg.miniWidgets.find(m => m.id === draggingMwId.value)
+    if (mw) { mw.x = pos[0]; mw.y = pos[1] }
+    return
+  }
+  mousePos.value = pos
+}
+
+function startMarkerDrag(e: MouseEvent, mwId: string) {
+  e.stopPropagation()
+  draggingMwId.value = mwId
+}
+
+function onCanvasMouseUp() {
+  draggingMwId.value = null
 }
 
 // Live drawing preview
@@ -264,10 +267,9 @@ function onKeyDown(e: KeyboardEvent) {
   if (!fullscreenOpen.value) return
   if (e.key === 'Escape') {
     e.preventDefault()
-    if (fullscreenMode.value === 'place') { closeFullscreen(); return }
     if (currentPoints.value.length > 0) { cancelCurrentPolygon() } else { closeFullscreen() }
   }
-  if (e.key === 'Enter' && fullscreenMode.value === 'draw' && currentPoints.value.length >= 3) {
+  if (e.key === 'Enter' && !placingMwId.value && currentPoints.value.length >= 3) {
     e.preventDefault()
     finishArea()
   }
@@ -384,18 +386,19 @@ function updateMwConfig(id: string, newConfig: Record<string, unknown>) {
   if (mw) mw.config = newConfig
 }
 
-// Placement mode: opens fullscreen for click-to-place
-const placingMwId = ref<string | null>(null)
-const placingMw   = computed(() =>
+// Mini-widget placement (drag on canvas)
+const placingMwId  = ref<string | null>(null)
+const draggingMwId = ref<string | null>(null)
+
+const placingMw = computed(() =>
   placingMwId.value ? cfg.miniWidgets.find(m => m.id === placingMwId.value) ?? null : null
 )
 
 function openPlacement(mwId: string) {
   captureWidgetRect()
   placingMwId.value    = mwId
-  fullscreenMode.value = 'place'
   fullscreenOpen.value = true
-  drawingMode.value    = false
+  drawingMode.value    = true
   currentPoints.value  = []
 }
 </script>
@@ -842,10 +845,11 @@ function openPlacement(mwId: string) {
       <!-- Drawing / placement canvas — positioned over the widget, shadow dims the rest -->
       <div
         ref="canvasRef"
-        class="relative select-none cursor-crosshair pointer-events-auto"
-        :style="canvasPositionStyle"
+        class="relative select-none pointer-events-auto"
+        :style="[canvasPositionStyle, { cursor: draggingMwId ? 'grabbing' : 'crosshair' }]"
         @click="onCanvasClick"
         @mousemove="onCanvasMouseMove"
+        @mouseup="onCanvasMouseUp"
       >
 
         <!-- SVG overlay -->
@@ -873,26 +877,28 @@ function openPlacement(mwId: string) {
               >{{ area.name }}</text>
             </g>
 
-            <!-- Mini-widget position markers -->
+            <!-- Mini-widget position markers (draggable) -->
             <g v-for="mw in cfg.miniWidgets" :key="`fs-mw-${mw.id}`">
               <circle
                 :cx="mw.x" :cy="mw.y"
                 :r="cfg.imageNaturalW * 0.013"
-                :fill="mw.id === placingMwId ? 'rgba(239,68,68,0.9)' : 'rgba(239,68,68,0.5)'"
-                :stroke="mw.id === placingMwId ? '#fff' : '#ef4444'"
+                :fill="mw.id === placingMwId || mw.id === draggingMwId ? 'rgba(239,68,68,0.9)' : 'rgba(239,68,68,0.5)'"
+                :stroke="mw.id === placingMwId || mw.id === draggingMwId ? '#fff' : '#ef4444'"
                 :stroke-width="strokeW"
+                :style="{ cursor: draggingMwId === mw.id ? 'grabbing' : 'grab' }"
+                @mousedown.stop="startMarkerDrag($event, mw.id)"
               />
               <text
                 :x="mw.x" :y="mw.y + cfg.imageNaturalW * 0.02"
                 text-anchor="middle" dominant-baseline="hanging"
                 :font-size="fontSize * 0.55"
-                :fill="mw.id === placingMwId ? '#fff' : '#fca5a5'"
+                :fill="mw.id === placingMwId || mw.id === draggingMwId ? '#fff' : '#fca5a5'"
                 style="pointer-events: none; user-select: none;"
               >{{ mw.label || mw.widgetType }}</text>
             </g>
 
-            <!-- Live drawing (draw mode only) -->
-            <g v-if="fullscreenMode === 'draw' && livePoints.length > 0">
+            <!-- Live drawing preview -->
+            <g v-if="!placingMwId && livePoints.length > 0">
               <polygon
                 v-if="livePoints.length >= 3"
                 :points="ptStr(livePoints)"
@@ -930,11 +936,17 @@ function openPlacement(mwId: string) {
       <!-- Toolbar — above the dimming shadow -->
       <div class="absolute top-0 left-0 right-0 flex items-center gap-3 px-4 py-2.5 bg-gray-900 border-b border-gray-700 pointer-events-auto">
 
-        <!-- Draw mode toolbar -->
-        <template v-if="fullscreenMode === 'draw'">
-          <span class="text-sm font-semibold text-gray-100">Bereiche zeichnen</span>
-          <span class="text-xs text-gray-400 flex-1 min-w-0 truncate">{{ drawingHint }}</span>
+        <span class="text-sm font-semibold text-gray-100">
+          {{ placingMwId ? 'Mini-Widget positionieren' : 'Bereiche zeichnen' }}
+        </span>
+        <span class="text-xs text-gray-400 flex-1 min-w-0 truncate">
+          {{ placingMwId
+            ? `„${placingMw?.label || placingMw?.widgetType}" auf die gewünschte Position ziehen`
+            : drawingHint
+          }}
+        </span>
 
+        <template v-if="!placingMwId">
           <button
             type="button"
             :disabled="currentPoints.length < 3"
@@ -948,35 +960,20 @@ function openPlacement(mwId: string) {
             class="py-1 px-3 text-xs rounded border border-gray-600 text-gray-300 hover:border-gray-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
             @click="cancelCurrentPolygon"
           >Aktuelles verwerfen Esc</button>
-
-          <button
-            type="button"
-            class="py-1 px-4 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0"
-            @click="closeFullscreen"
-          >Fertig</button>
         </template>
 
-        <!-- Place mode toolbar -->
-        <template v-else>
-          <span class="text-sm font-semibold text-gray-100">Mini-Widget platzieren</span>
-          <span class="text-xs text-gray-400 flex-1 min-w-0 truncate">
-            Klicken um Mittelpunkt von „{{ placingMw?.label || placingMw?.widgetType }}" zu setzen
-          </span>
-          <button
-            type="button"
-            class="py-1 px-3 text-xs rounded border border-gray-600 text-gray-300 hover:border-gray-400 transition-colors shrink-0"
-            @click="closeFullscreen"
-          >Abbrechen Esc</button>
-        </template>
+        <button
+          type="button"
+          class="py-1 px-4 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors shrink-0"
+          @click="closeFullscreen"
+        >Fertig</button>
       </div>
 
       <!-- Status bar — above the dimming shadow -->
       <div class="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-2 bg-gray-900/80 border-t border-gray-800 text-xs text-gray-400 pointer-events-auto">
         <span>{{ cfg.areas.length }} Bereich(e) · {{ cfg.miniWidgets.length }} Mini-Widget(s)</span>
-        <span v-if="fullscreenMode === 'draw'">
-          Enter = Polygon schliessen · Esc = aktuelles Polygon verwerfen · Klick auf ersten Punkt = schliessen
-        </span>
-        <span v-else>Esc = Abbrechen</span>
+        <span v-if="placingMwId">Marker ziehen · Fertig zum Schliessen</span>
+        <span v-else>Enter = Polygon schliessen · Esc = verwerfen · Klick auf ersten Punkt = schliessen</span>
       </div>
     </div>
   </Teleport>

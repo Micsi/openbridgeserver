@@ -94,9 +94,9 @@ const innerStyle = computed(() => {
   }
 })
 
-// ── Mini-widget positioning (object-fit:contain letterbox math) ───────────────
-// The inner div dimensions before CSS rotation determine where the image lands.
-// For 0°/180° the inner div fills the wrapper; for 90°/270° its dimensions are swapped.
+// ── Letterbox / coordinate math ───────────────────────────────────────────────
+// The inner div (the rotated layer) has swapped dimensions for 90°/270°.
+// imgScale and offsets describe how the image lands inside that inner div.
 
 const innerW = computed(() =>
   (rotation.value === 90 || rotation.value === 270) ? wrapperH.value : wrapperW.value
@@ -104,19 +104,56 @@ const innerW = computed(() =>
 const innerH = computed(() =>
   (rotation.value === 90 || rotation.value === 270) ? wrapperW.value : wrapperH.value
 )
-// Scale at which the image is rendered inside the inner div
 const imgScale = computed(() =>
   Math.min(innerW.value / naturalW.value, innerH.value / naturalH.value)
 )
-// Letterbox offsets (pixels of empty space on each side inside the inner div)
 const imgOffX = computed(() => (innerW.value - naturalW.value * imgScale.value) / 2)
 const imgOffY = computed(() => (innerH.value - naturalH.value * imgScale.value) / 2)
 
+// Convert image-pixel coordinates to wrapper-relative screen coordinates.
+// These formulas are the closed-form result of: inner-div position → CSS rotation.
+function imageToScreen(px: number, py: number): [number, number] {
+  const s = imgScale.value
+  const ox = imgOffX.value
+  const oy = imgOffY.value
+  const W = wrapperW.value
+  const H = wrapperH.value
+  switch (rotation.value) {
+    case 90:  return [W - oy - py * s, ox + px * s]
+    case 180: return [W - ox - px * s, H - oy - py * s]
+    case 270: return [oy + py * s,     H - ox - px * s]
+    default:  return [ox + px * s,     oy + py * s]
+  }
+}
+
+// Label font size in screen pixels (proportional to rendered image width)
+const labelFontSz = computed(() => Math.max(8, naturalW.value * 0.018 * imgScale.value))
+
+function labelStyle(area: GrundrissArea) {
+  const [sx, sy] = imageToScreen(area.labelX, area.labelY)
+  return {
+    position:   'absolute' as const,
+    left:       `${sx}px`,
+    top:        `${sy}px`,
+    transform:  'translate(-50%, -50%)',
+    fontSize:   `${labelFontSz.value}px`,
+    fontWeight: '500',
+    lineHeight: '1',
+    color:      area.labelColor || '#ffffff',
+    textShadow: '0 0 3px rgba(0,0,0,0.9), 0 0 7px rgba(0,0,0,0.6)',
+    whiteSpace: 'nowrap' as const,
+    pointerEvents: 'none' as const,
+    userSelect: 'none' as const,
+    zIndex:     5,
+  }
+}
+
 function miniWidgetStyle(mw: GrundrissMiniWidget) {
+  const [sx, sy] = imageToScreen(mw.x, mw.y)
   return {
     position:      'absolute' as const,
-    left:          `${imgOffX.value + mw.x * imgScale.value - mw.wPx / 2}px`,
-    top:           `${imgOffY.value + mw.y * imgScale.value - mw.hPx / 2}px`,
+    left:          `${sx - mw.wPx / 2}px`,
+    top:           `${sy - mw.hPx / 2}px`,
     width:         `${mw.wPx}px`,
     height:        `${mw.hPx}px`,
     zIndex:        10,
@@ -130,9 +167,8 @@ function polygonPointsStr(area: GrundrissArea): string {
   return area.points.map(([x, y]) => `${x},${y}`).join(' ')
 }
 
-// stroke-width and font-size in SVG viewport units (proportional to naturalW)
-const svgStrokeW   = computed(() => naturalW.value * 0.0025)
-const labelFontSz  = computed(() => naturalW.value * 0.018)
+// stroke-width in SVG viewport units (proportional to naturalW)
+const svgStrokeW = computed(() => naturalW.value * 0.0025)
 
 // ── Area click action ─────────────────────────────────────────────────────────
 
@@ -154,7 +190,7 @@ function handleAreaClick(area: GrundrissArea) {
       <span class="text-xs text-gray-500">Kein Bild konfiguriert</span>
     </div>
 
-    <!-- Rotated inner: image + SVG overlay + mini-widgets move together -->
+    <!-- Rotated layer: image + polygon SVG (no labels — they must not rotate) -->
     <div v-if="image" :style="innerStyle">
       <img
         :src="image"
@@ -166,9 +202,9 @@ function handleAreaClick(area: GrundrissArea) {
 
       <!--
         SVG viewBox matches the image's native dimensions.
-        preserveAspectRatio="xMidYMid meet" mirrors object-fit:contain,
-        so polygon coordinates (in natural image pixels) align perfectly.
-        In editor mode pointer-events are off so drag/resize still works.
+        preserveAspectRatio="xMidYMid meet" mirrors object-fit:contain so polygon
+        coordinates (in natural image pixels) align perfectly with the rendered image.
+        Labels are intentionally NOT rendered here — see the unrotated overlay below.
       -->
       <svg
         class="absolute inset-0 w-full h-full"
@@ -176,34 +212,31 @@ function handleAreaClick(area: GrundrissArea) {
         preserveAspectRatio="xMidYMid meet"
         :style="{ pointerEvents: editorMode ? 'none' : 'all' }"
       >
-        <g v-for="area in areas" :key="area.id">
-          <!-- Polygon — transparent in viewer (but still receives pointer events) -->
-          <polygon
-            :points="polygonPointsStr(area)"
-            :fill="editorMode ? 'rgba(59,130,246,0.1)' : 'transparent'"
-            :stroke="editorMode ? '#3b82f6' : 'none'"
-            :stroke-width="svgStrokeW"
-            :style="{ cursor: !editorMode && area.actionType !== 'none' ? 'pointer' : 'default' }"
-            @click="handleAreaClick(area)"
-          />
-          <!-- Area label -->
-          <text
-            v-if="area.showLabel && showAreaNames"
-            :x="area.labelX"
-            :y="area.labelY"
-            text-anchor="middle"
-            dominant-baseline="middle"
-            :font-size="labelFontSz"
-            :fill="area.labelColor || '#ffffff'"
-            :stroke-width="labelFontSz * 0.18"
-            stroke="rgba(0,0,0,0.65)"
-            paint-order="stroke fill"
-            style="pointer-events: none; user-select: none;"
-          >{{ area.name }}</text>
-        </g>
+        <polygon
+          v-for="area in areas"
+          :key="area.id"
+          :points="polygonPointsStr(area)"
+          :fill="editorMode ? 'rgba(59,130,246,0.1)' : 'transparent'"
+          :stroke="editorMode ? '#3b82f6' : 'none'"
+          :stroke-width="svgStrokeW"
+          :style="{ cursor: !editorMode && area.actionType !== 'none' ? 'pointer' : 'default' }"
+          @click="handleAreaClick(area)"
+        />
       </svg>
+    </div>
 
-      <!-- Mini-widgets: absolutely positioned over the image using letterbox math -->
+    <!-- Unrotated overlay: area labels + mini-widgets
+         Positioned using imageToScreen() so they sit over the correct image spot
+         regardless of rotation, but remain visually upright. -->
+    <template v-if="image">
+      <!-- Area labels -->
+      <template v-for="area in areas" :key="`lbl-${area.id}`">
+        <div v-if="area.showLabel && showAreaNames" :style="labelStyle(area)">
+          {{ area.name }}
+        </div>
+      </template>
+
+      <!-- Mini-widgets -->
       <div
         v-for="mw in miniWidgets"
         :key="`mw-${mw.id}`"
@@ -225,6 +258,6 @@ function handleAreaClick(area: GrundrissArea) {
           {{ mw.widgetType }}?
         </div>
       </div>
-    </div>
+    </template>
   </div>
 </template>
