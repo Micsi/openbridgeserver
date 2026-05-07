@@ -487,11 +487,8 @@ class SnmpAdapter(AdapterBase):
         if error_status:
             raise RuntimeError(f"{error_status.prettyPrint()} bei Index {int(error_index)}")
 
-        # var_binds is 2D: list[list[ObjectType]]; each inner list is a row.
-        # With one requested OID, the row has exactly one ObjectType.
-        for row in var_binds:
-            obj_type = row[0]
-            return obj_type[1]  # obj_type[0]=OID, obj_type[1]=value
+        for var_bind in var_binds:
+            return var_bind[1]  # ObjectType[0]=OID, ObjectType[1]=value
         return None
 
     async def _snmp_set(self, bc: SnmpBindingConfig, value: Any) -> None:
@@ -565,12 +562,10 @@ class SnmpAdapter(AdapterBase):
             if not var_binds:
                 break
 
-            # var_binds is 2D: list[list[ObjectType]]; one row per step, one ObjectType per OID.
-            for row in var_binds:
-                obj_type = row[0]
-                obj_oid  = obj_type[0]  # ObjectType[0]=OID, [1]=value
-                value    = obj_type[1]
-                oid_str  = str(obj_oid)
+            for var_bind in var_binds:
+                obj_oid = var_bind[0]  # ObjectType[0]=OID, [1]=value
+                value   = var_bind[1]
+                oid_str = str(obj_oid)
 
                 # Stop when we leave the requested subtree
                 if not (oid_str == oid or oid_str.startswith(root_prefix)):
