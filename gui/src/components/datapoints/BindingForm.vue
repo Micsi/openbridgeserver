@@ -870,6 +870,14 @@
               placeholder="z.B. 1.3.6.1.2.1.1.1.0"
               required
             />
+          </div>
+          <!-- Walk root (independent from binding OID) -->
+          <div class="flex gap-2 mt-2">
+            <input
+              v-model="snmpWalkRoot"
+              class="input flex-1 font-mono text-xs"
+              placeholder="Walk ab OID, z.B. 1.3.6.1.2.1"
+            />
             <button
               type="button"
               class="btn-secondary px-3 text-sm whitespace-nowrap"
@@ -1224,6 +1232,7 @@ const snmpWalkResults = ref([])
 const snmpWalkLoading = ref(false)
 const snmpWalkError   = ref(null)
 const snmpWalkHasMore = ref(false)
+const snmpWalkRoot    = ref('1.3.6.1.2.1')
 
 // Zeitschaltuhr holiday list state (for Feiertagsschaltuhr)
 const ztHolidays = ref([])   // [{date, name}, …] sorted by date
@@ -1527,7 +1536,7 @@ async function snmpWalk(append = false) {
     snmpWalkResults.value = []
   }
   try {
-    const rootOid  = cfg.oid?.trim() || '1.3.6.1.2.1'
+    const rootOid  = snmpWalkRoot.value?.trim() || '1.3.6.1.2.1'
     const startOid = append && snmpWalkResults.value.length
       ? snmpWalkResults.value[snmpWalkResults.value.length - 1].oid
       : null
