@@ -1,6 +1,6 @@
 # Changes
 
-## 2026.5.3
+## 2026.6.0
 ### Breaking changes 🚨
 * none
 
