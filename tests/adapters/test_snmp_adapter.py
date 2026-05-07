@@ -6,8 +6,6 @@ Alle pysnmp-Aufrufe werden gemockt — kein echtes SNMP-Gerät erforderlich.
 from __future__ import annotations
 
 import asyncio
-import uuid
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -48,7 +46,7 @@ def snmp_symbols():
     fake_no_priv = MagicMock(name="noPriv")
 
     return {
-        "getCmd": None,      # wird pro Test gesetzt
+        "getCmd": None,  # wird pro Test gesetzt
         "setCmd": None,
         "nextCmd": None,
         "SnmpEngine": MagicMock(return_value=fake_engine),
@@ -203,6 +201,7 @@ class TestEncodeWriteValue:
     def test_int_type(self):
         try:
             from pysnmp.proto.rfc1902 import Integer32
+
             val = _encode_write_value(42, "int")
             assert isinstance(val, Integer32)
         except ImportError:
@@ -211,6 +210,7 @@ class TestEncodeWriteValue:
     def test_string_type(self):
         try:
             from pysnmp.proto.rfc1902 import OctetString
+
             val = _encode_write_value("hello", "string")
             assert isinstance(val, OctetString)
         except ImportError:
@@ -219,6 +219,7 @@ class TestEncodeWriteValue:
     def test_bool_auto(self):
         try:
             from pysnmp.proto.rfc1902 import Integer32
+
             val = _encode_write_value(True, "auto")
             assert isinstance(val, Integer32)
         except ImportError:
@@ -227,6 +228,7 @@ class TestEncodeWriteValue:
     def test_float_auto(self):
         try:
             from pysnmp.proto.rfc1902 import OctetString
+
             val = _encode_write_value(3.14, "auto")
             assert isinstance(val, OctetString)
         except ImportError:
@@ -281,8 +283,6 @@ class TestConnect:
             await adapter.connect()
 
         # Fake poll task
-        cancelled = []
-
         async def _dummy():
             await asyncio.sleep(9999)
 
@@ -480,9 +480,7 @@ class TestOnBindingsReloaded:
 
         snmp_symbols["getCmd"] = fake_get
 
-        binding = make_binding(
-            {"host": "192.168.1.1", "oid": "1.3.6.1.2.1.1.1.0", "poll_interval": 999}
-        )
+        binding = make_binding({"host": "192.168.1.1", "oid": "1.3.6.1.2.1.1.1.0", "poll_interval": 999})
 
         await adapter.reload_bindings([binding])
         old_task = adapter._poll_tasks[0]
