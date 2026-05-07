@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 class SnmpAdapterConfig(BaseModel):
     version: Literal["1", "2c", "3"] = Field(default="2c", title="SNMP-Version")
     community: str = Field(default="public", title="Community-String (v1/v2c)")
-    security_name: str = Field(default="", title="Security Name (v3)")
+    security_name: str = Field(default="", title="Security Name / Username (v3)")
     security_level: Literal["noAuthNoPriv", "authNoPriv", "authPriv"] = Field(default="noAuthNoPriv", title="Security Level (v3)")
     auth_protocol: Literal["MD5", "SHA", "SHA256", "SHA512"] = Field(default="MD5", title="Auth-Protokoll (v3)")
     auth_key: str = Field(default="", title="Auth-Key (v3)")
@@ -446,7 +446,7 @@ class SnmpAdapter(AdapterBase):
         s = self._snmp
         if cfg.version == "3":
             if not cfg.security_name:
-                raise ValueError("SNMPv3: Security Name darf nicht leer sein")
+                raise ValueError("SNMPv3: Security Name / Username darf nicht leer sein")
             auth_proto = s["_auth_map"].get(cfg.auth_protocol, s["_no_auth"])
             priv_proto = s["_priv_map"].get(cfg.priv_protocol, s["_no_priv"])
 
