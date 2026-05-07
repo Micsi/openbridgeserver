@@ -448,8 +448,7 @@ class SnmpAdapter(AdapterBase):
             raise RuntimeError(f"{error_status.prettyPrint()} bei Index {int(error_index)}")
 
         for var_bind in var_binds:
-            _oid, value = var_bind
-            return value
+            return var_bind[1]  # var_bind[0]=OID, var_bind[1]=value
         return None
 
     async def _snmp_set(self, bc: SnmpBindingConfig, value: Any) -> None:
@@ -524,7 +523,8 @@ class SnmpAdapter(AdapterBase):
                 break
 
             for var_bind in var_binds:
-                obj_oid, value = var_bind
+                obj_oid = var_bind[0]  # ObjectType[0]=OID, [1]=value
+                value   = var_bind[1]
                 oid_str = str(obj_oid)
 
                 # Stop when we leave the requested subtree
