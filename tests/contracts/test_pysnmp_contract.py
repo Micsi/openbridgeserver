@@ -143,9 +143,11 @@ def _import_auth_constants():
     """Auth/priv constants moved from hlapi to hlapi.asyncio in pysnmp 6.x."""
     try:
         from pysnmp.hlapi.v3arch.asyncio import usmHMACMD5AuthProtocol, usmDESPrivProtocol  # noqa: F401
+
         return usmHMACMD5AuthProtocol, usmDESPrivProtocol
     except ImportError:
         from pysnmp.hlapi.asyncio import usmHMACMD5AuthProtocol, usmDESPrivProtocol  # noqa: F401
+
         return usmHMACMD5AuthProtocol, usmDESPrivProtocol
 
 
@@ -211,9 +213,11 @@ def test_object_type_with_oid():
 def _hlapi_asyncio():
     try:
         import pysnmp.hlapi.v3arch.asyncio as m
+
         return m
     except ImportError:
         import pysnmp.hlapi.asyncio as m
+
         return m
 
 

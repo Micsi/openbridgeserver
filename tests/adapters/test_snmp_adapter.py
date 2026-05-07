@@ -583,11 +583,13 @@ class TestSnmpWalk:
         val_out = _make_snmp_value("x", "OctetString")
         type(val_out).__name__ = "OctetString"
 
-        responses = iter([
-            _make_walk_row("1.3.6.1.2.1.1.1.0", "Linux 5.15", "OctetString"),
-            _make_walk_row("1.3.6.1.2.1.1.2.0", "42", "Integer32", int_val=42),
-            (None, None, None, [[(oid_out, val_out)]]),  # outside subtree
-        ])
+        responses = iter(
+            [
+                _make_walk_row("1.3.6.1.2.1.1.1.0", "Linux 5.15", "OctetString"),
+                _make_walk_row("1.3.6.1.2.1.1.2.0", "42", "Integer32", int_val=42),
+                (None, None, None, [[(oid_out, val_out)]]),  # outside subtree
+            ]
+        )
 
         async def fake_next(*args, **kwargs):
             return next(responses)
@@ -638,7 +640,9 @@ class TestSnmpWalk:
         snmp_symbols["nextCmd"] = fake_next
 
         results = await adapter.snmp_walk(
-            host="192.168.1.1", oid="1.3.6.1.2.1", max_results=1,
+            host="192.168.1.1",
+            oid="1.3.6.1.2.1",
+            max_results=1,
             start_oid="1.3.6.1.2.1.1.8.0",
         )
         assert len(results) == 1

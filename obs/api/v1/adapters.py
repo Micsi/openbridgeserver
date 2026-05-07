@@ -1075,8 +1075,12 @@ async def snmp_walk(
 
     try:
         entries = await instance.snmp_walk(
-            host=host, oid=oid, port=port, timeout=timeout,
-            max_results=max_results, start_oid=start_oid,
+            host=host,
+            oid=oid,
+            port=port,
+            timeout=timeout,
+            max_results=max_results,
+            start_oid=start_oid,
         )
         return [SnmpWalkEntry(**e) for e in entries]
     except Exception as exc:

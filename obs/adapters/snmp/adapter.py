@@ -126,11 +126,11 @@ def _import_pysnmp() -> dict:
         except ImportError:
             import pysnmp.hlapi.asyncio as _hlapi_mod  # type: ignore[import]
 
-        usmHMACMD5AuthProtocol   = _hlapi_mod.usmHMACMD5AuthProtocol
-        usmHMACSHAAuthProtocol   = _hlapi_mod.usmHMACSHAAuthProtocol
-        usmNoAuthProtocol        = _hlapi_mod.usmNoAuthProtocol
-        usmNoPrivProtocol        = _hlapi_mod.usmNoPrivProtocol
-        usmDESPrivProtocol       = _hlapi_mod.usmDESPrivProtocol
+        usmHMACMD5AuthProtocol = _hlapi_mod.usmHMACMD5AuthProtocol
+        usmHMACSHAAuthProtocol = _hlapi_mod.usmHMACSHAAuthProtocol
+        usmNoAuthProtocol = _hlapi_mod.usmNoAuthProtocol
+        usmNoPrivProtocol = _hlapi_mod.usmNoPrivProtocol
+        usmDESPrivProtocol = _hlapi_mod.usmDESPrivProtocol
 
         auth_map: dict[str, Any] = {
             "MD5": usmHMACMD5AuthProtocol,
@@ -445,6 +445,8 @@ class SnmpAdapter(AdapterBase):
     def _build_auth(self, cfg: SnmpAdapterConfig) -> Any:
         s = self._snmp
         if cfg.version == "3":
+            if not cfg.security_name:
+                raise ValueError("SNMPv3: Security Name darf nicht leer sein")
             auth_proto = s["_auth_map"].get(cfg.auth_protocol, s["_no_auth"])
             priv_proto = s["_priv_map"].get(cfg.priv_protocol, s["_no_priv"])
 
@@ -569,10 +571,10 @@ class SnmpAdapter(AdapterBase):
             # nextCmd var_binds is 2D: list of rows; each row holds one ObjectType per
             # requested variable. We pass one OID → each row has exactly one entry.
             for row in var_binds:
-                var_bind = row[0]           # ObjectType for our single OID
-                obj_oid  = var_bind[0]      # ObjectType[0] = OID
-                value    = var_bind[1]      # ObjectType[1] = value
-                oid_str  = str(obj_oid)
+                var_bind = row[0]  # ObjectType for our single OID
+                obj_oid = var_bind[0]  # ObjectType[0] = OID
+                value = var_bind[1]  # ObjectType[1] = value
+                oid_str = str(obj_oid)
 
                 # Stop when we leave the requested subtree
                 if not (oid_str == oid or oid_str.startswith(root_prefix)):
