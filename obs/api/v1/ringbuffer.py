@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import csv
 import json
+import tempfile
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from obs.api.auth import get_admin_user
@@ -21,6 +26,25 @@ router = APIRouter(tags=["ringbuffer"])
 _FILTERSET_QUERY_LIMIT_CAP = 2000
 _FILTERSET_QUERY_OFFSET_CAP = 5000
 _FILTERSET_ACTIVE_RULES_CAP = 50
+
+_CSV_EXPORT_MAX_ROWS = 100000
+_CSV_EXPORT_CHUNK_SIZE = 1000
+_CSV_EXPORT_QUERY_TIMEOUT_SECONDS = 3.0
+_CSV_EXPORT_TOTAL_TIMEOUT_SECONDS = 20.0
+_CSV_EXPORT_SPOOL_MAX_BYTES = 1_000_000
+_CSV_EXPORT_HEADERS = (
+    "id",
+    "ts",
+    "datapoint_id",
+    "name",
+    "topic",
+    "old_value_json",
+    "new_value_json",
+    "source_adapter",
+    "quality",
+    "metadata_version",
+    "metadata_json",
+)
 
 
 def _now_iso() -> str:
@@ -286,6 +310,26 @@ def _cap_filterset_query(query: RingBufferQueryV2) -> RingBufferQueryV2:
             )
         }
     )
+
+
+def _csv_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _entry_to_csv_row(entry: RingBufferEntryOut) -> dict[str, str]:
+    return {
+        "id": str(entry.id),
+        "ts": entry.ts,
+        "datapoint_id": entry.datapoint_id,
+        "name": entry.name or "",
+        "topic": entry.topic,
+        "old_value_json": _csv_json(entry.old_value),
+        "new_value_json": _csv_json(entry.new_value),
+        "source_adapter": entry.source_adapter,
+        "quality": entry.quality,
+        "metadata_version": str(entry.metadata_version),
+        "metadata_json": _csv_json(entry.metadata),
+    }
 
 
 async def _query_v2_entries(
@@ -571,6 +615,99 @@ async def query_ringbuffer_v2(
     _user: str = Depends(get_current_user),
 ) -> list[RingBufferEntryOut]:
     return await _query_v2_entries(body)
+
+
+@router.post("/export/csv")
+async def export_ringbuffer_csv(
+    body: RingBufferQueryV2,
+    background_tasks: BackgroundTasks,
+    _user: str = Depends(get_current_user),
+) -> StreamingResponse:
+    # CSV export always returns the full filtered result set independent of UI pagination.
+    started = time.monotonic()
+    offset = 0
+    exported_rows = 0
+
+    spool = tempfile.SpooledTemporaryFile(
+        mode="w+",
+        encoding="utf-8",
+        newline="",
+        max_size=_CSV_EXPORT_SPOOL_MAX_BYTES,
+    )
+    writer = csv.DictWriter(spool, fieldnames=list(_CSV_EXPORT_HEADERS))
+    writer.writeheader()
+
+    try:
+        while True:
+            if time.monotonic() - started > _CSV_EXPORT_TOTAL_TIMEOUT_SECONDS:
+                raise HTTPException(
+                    status.HTTP_504_GATEWAY_TIMEOUT,
+                    "ringbuffer CSV export timed out",
+                )
+
+            remaining = _CSV_EXPORT_MAX_ROWS - exported_rows
+            if remaining <= 0:
+                break
+            chunk_size = min(_CSV_EXPORT_CHUNK_SIZE, remaining)
+
+            try:
+                chunk = await asyncio.wait_for(
+                    _query_v2_entries(
+                        body,
+                        limit_override=chunk_size,
+                        offset_override=offset,
+                    ),
+                    timeout=_CSV_EXPORT_QUERY_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise HTTPException(
+                    status.HTTP_504_GATEWAY_TIMEOUT,
+                    "ringbuffer CSV export timed out",
+                ) from exc
+
+            if not chunk:
+                break
+
+            for entry in chunk:
+                writer.writerow(_entry_to_csv_row(entry))
+
+            fetched = len(chunk)
+            exported_rows += fetched
+            offset += fetched
+
+            if fetched < chunk_size:
+                break
+
+        if exported_rows == _CSV_EXPORT_MAX_ROWS:
+            probe = await asyncio.wait_for(
+                _query_v2_entries(
+                    body,
+                    limit_override=1,
+                    offset_override=offset,
+                ),
+                timeout=_CSV_EXPORT_QUERY_TIMEOUT_SECONDS,
+            )
+            if probe:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"export row limit exceeded (max {_CSV_EXPORT_MAX_ROWS})",
+                )
+    except Exception:
+        spool.close()
+        raise
+
+    spool.seek(0)
+    filename = f"ringbuffer_export_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.csv"
+    background_tasks.add_task(spool.close)
+    return StreamingResponse(
+        spool,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-RingBuffer-Export-Rows": str(exported_rows),
+        },
+        background=background_tasks,
+    )
 
 
 @router.get("/filtersets", response_model=list[RingBufferFiltersetOut])

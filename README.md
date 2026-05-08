@@ -390,6 +390,7 @@ Der RingBuffer speichert die letzten N Wertänderungen als Protokoll. In der Web
 ```
 GET  /api/v1/ringbuffer?q=&adapter=&from=&limit=   # Einträge abfragen
 POST /api/v1/ringbuffer/query                       # v2 Query-DSL (Filtergruppen + Pagination + Sortierung)
+POST /api/v1/ringbuffer/export/csv                  # CSV-Export der vollständigen gefilterten Ergebnismenge
 GET  /api/v1/ringbuffer/stats                       # Anzahl Einträge, Kapazität
 POST /api/v1/ringbuffer/config                      # file-only + Kapazität ändern
 ```
@@ -404,6 +405,9 @@ Der Parameter `q` durchsucht sowohl den Namen als auch die ID des Datenpunkts.
 - Zeitfilter unterstützen offene Ränder (`from` ohne `to`, `to` ohne `from`) und die Kombination aus absoluten Grenzen (`from`/`to`) plus relativen Offsets (`from_relative_seconds`/`to_relative_seconds`).
 - Pagination über `pagination.limit` + `pagination.offset`, Sortierung über `sort.field` (`id|ts`) und `sort.order` (`asc|desc`).
 - Das versionierte Metadatenmodell ist dokumentiert in `docs/ringbuffer-metadata-model-v1.md` (`metadata_version: 1`).
+
+`POST /api/v1/ringbuffer/export/csv` nutzt denselben Request-Body wie `/query`, exportiert aber immer die vollständige gefilterte Ergebnismenge (Pagination der UI wird ignoriert).  
+CSV-Spalten: `id`, `ts`, `datapoint_id`, `name`, `topic`, `old_value_json`, `new_value_json`, `source_adapter`, `quality`, `metadata_version`, `metadata_json`.
 
 ---
 

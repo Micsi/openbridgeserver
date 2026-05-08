@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -58,6 +60,18 @@ async def _query_ringbuffer_v2(client, auth_headers, body: dict) -> list[dict]:
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+async def _export_ringbuffer_csv(client, auth_headers, body: dict):
+    return await client.post(
+        "/api/v1/ringbuffer/export/csv",
+        json=body,
+        headers=auth_headers,
+    )
+
+
+def _parse_csv_rows(csv_text: str) -> list[dict[str, str]]:
+    return list(csv.DictReader(io.StringIO(csv_text)))
 
 
 async def _insert_binding(dp_id: str, adapter_type: str, config: dict) -> None:
@@ -553,3 +567,131 @@ async def test_ringbuffer_v2_filters_by_metadata_tags_and_adapter_info(client, a
     )
     assert any(row["datapoint_id"] == dp_b["id"] for row in mqtt_rows)
     assert all(row["datapoint_id"] != dp_a["id"] for row in mqtt_rows)
+
+
+async def test_ringbuffer_csv_export_contains_full_filtered_result_independent_of_pagination(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, "RB CSV Full Result", data_type="FLOAT", unit="W")
+
+    await _write_value(client, auth_headers, dp["id"], 10.0)
+    await _write_value(client, auth_headers, dp["id"], 11.0)
+    await _write_value(client, auth_headers, dp["id"], 12.0)
+
+    # Simulate a paginated UI query (limit=1). CSV export must still include all filtered rows.
+    body = {
+        "filters": {"datapoints": {"ids": [dp["id"]]}},
+        "sort": {"field": "id", "order": "asc"},
+        "pagination": {"limit": 1, "offset": 0},
+    }
+    page_rows = await _query_ringbuffer_v2(client, auth_headers, body)
+    assert len(page_rows) == 1
+
+    export_resp = await _export_ringbuffer_csv(client, auth_headers, body)
+    assert export_resp.status_code == 200, export_resp.text
+    assert export_resp.headers["content-type"].startswith("text/csv")
+
+    csv_rows = _parse_csv_rows(export_resp.text)
+    assert len(csv_rows) == 3
+
+    query_all = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            **body,
+            "pagination": {"limit": 100, "offset": 0},
+        },
+    )
+    assert len(query_all) == 3
+
+    assert [row["id"] for row in csv_rows] == [str(row["id"]) for row in query_all]
+    assert [json.loads(row["new_value_json"]) for row in csv_rows] == [row["new_value"] for row in query_all]
+    assert all(row["datapoint_id"] == dp["id"] for row in csv_rows)
+
+
+async def test_ringbuffer_csv_export_supports_open_time_bounds_and_large_result_sets(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, "RB CSV Open Bounds", data_type="FLOAT", unit="W")
+
+    await _write_value(client, auth_headers, dp["id"], -1.0)
+    first_row = (
+        await _query_ringbuffer_v2(
+            client,
+            auth_headers,
+            {
+                "filters": {"datapoints": {"ids": [dp["id"]]}},
+                "sort": {"field": "id", "order": "asc"},
+                "pagination": {"limit": 1, "offset": 0},
+            },
+        )
+    )[0]
+
+    # Enough rows to force multi-batch export processing.
+    for i in range(220):
+        await _write_value(client, auth_headers, dp["id"], float(i))
+
+    export_resp = await _export_ringbuffer_csv(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp["id"]]},
+                "time": {"from": first_row["ts"]},
+            },
+            "sort": {"field": "id", "order": "asc"},
+            "pagination": {"limit": 5, "offset": 0},
+        },
+    )
+    assert export_resp.status_code == 200, export_resp.text
+
+    csv_rows = _parse_csv_rows(export_resp.text)
+    assert len(csv_rows) == 220
+    assert all(row["ts"] > first_row["ts"] for row in csv_rows)
+
+    exported_values = [json.loads(row["new_value_json"]) for row in csv_rows]
+    assert exported_values[:3] == [0.0, 1.0, 2.0]
+    assert exported_values[-1] == 219.0
+
+
+async def test_ringbuffer_csv_export_rejects_when_result_exceeds_limit(client, auth_headers, monkeypatch):
+    import obs.api.v1.ringbuffer as ringbuffer_api
+
+    monkeypatch.setattr(ringbuffer_api, "_CSV_EXPORT_MAX_ROWS", 2)
+    monkeypatch.setattr(ringbuffer_api, "_CSV_EXPORT_CHUNK_SIZE", 2)
+
+    dp = await _create_dp(client, auth_headers, "RB CSV Limit", data_type="FLOAT", unit="W")
+    await _write_value(client, auth_headers, dp["id"], 1.0)
+    await _write_value(client, auth_headers, dp["id"], 2.0)
+    await _write_value(client, auth_headers, dp["id"], 3.0)
+
+    resp = await _export_ringbuffer_csv(
+        client,
+        auth_headers,
+        {
+            "filters": {"datapoints": {"ids": [dp["id"]]}},
+            "sort": {"field": "id", "order": "asc"},
+            "pagination": {"limit": 10, "offset": 0},
+        },
+    )
+    assert resp.status_code == 422
+    assert "export row limit exceeded" in resp.text
+
+
+async def test_ringbuffer_csv_export_returns_504_when_query_times_out(client, auth_headers, monkeypatch):
+    import obs.api.v1.ringbuffer as ringbuffer_api
+
+    async def _slow_query(*_args, **_kwargs):
+        await asyncio.sleep(0.01)
+        return []
+
+    monkeypatch.setattr(ringbuffer_api, "_CSV_EXPORT_QUERY_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(ringbuffer_api, "_query_v2_entries", _slow_query)
+
+    resp = await _export_ringbuffer_csv(
+        client,
+        auth_headers,
+        {
+            "filters": {},
+            "sort": {"field": "id", "order": "asc"},
+            "pagination": {"limit": 10, "offset": 0},
+        },
+    )
+    assert resp.status_code == 504
+    assert "ringbuffer CSV export timed out" in resp.text
