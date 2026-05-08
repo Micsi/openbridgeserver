@@ -125,6 +125,12 @@ export const adapterApi = {
   anwesenheitHealth:      (id)          => api.get(`/adapters/instances/${id}/anwesenheit/health`),
 }
 
+// ── KNX Keyfile ───────────────────────────────────────────────────────────
+export const knxKeyfileApi = {
+  upload: (formData) => api.post('/knx/keyfile', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  delete: (fileId)   => api.delete(`/knx/keyfile/${fileId}`),
+}
+
 // ── KNX Project Import ────────────────────────────────────────────────────
 export const knxprojApi = {
   import:  (formData, params = {}) => api.post('/knxproj/import', formData, { headers: { 'Content-Type': 'multipart/form-data' }, params }),
