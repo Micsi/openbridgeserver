@@ -13,8 +13,12 @@ Binding-Konfiguration (pro AdapterBinding.config):
   state_group_address: str?  — Rückmelde-GA für DEST-Bindings (optional)
 
 Adapter-Konfiguration (adapter_configs.config in DB):
-  connection_type:   "tunneling" | "tunneling_secure" | "routing" | "routing_secure"
-  --- Tunneling ---
+  connection_type:   "automatic" | "tunneling" | "tunneling_tcp" |
+                     "tunneling_secure" | "routing" | "routing_secure"
+  --- Automatic (GatewayScanner) ---
+  local_ip:          str?  (Netzwerkinterface für Scan, optional)
+  individual_address: str? (Ziel-Tunnel-Endpoint, optional)
+  --- Tunneling UDP / TCP ---
   host:              str   (IP des KNX/IP-Interfaces)
   port:              int   (default: 3671)
   individual_address: str  (default: "1.1.255"; bei Keyfile: wählt Tunnel-Endpoint)
@@ -24,7 +28,7 @@ Adapter-Konfiguration (adapter_configs.config in DB):
   multicast_port:    int   (default: 3671)
   individual_address: str  (Quelladresse des Routers)
   local_ip:          str?  (Netzwerkinterface für Multicast, optional)
-  --- KNX IP Secure — Keyfile-Modus ---
+  --- KNX IP Secure — Keyfile-Modus (tunneling_secure / routing_secure) ---
   knxkeys_file_path: str?  (Pfad zur gespeicherten .knxkeys Datei)
   knxkeys_password:  str?  (Passwort-Feld)
 """
@@ -62,8 +66,15 @@ logger = logging.getLogger(__name__)
 
 
 class KnxAdapterConfig(BaseModel):
-    connection_type: Literal["tunneling", "tunneling_secure", "routing", "routing_secure"] = "tunneling"
-    # Tunneling: IP des KNX/IP-Interfaces
+    connection_type: Literal[
+        "automatic",
+        "tunneling",
+        "tunneling_tcp",
+        "tunneling_secure",
+        "routing",
+        "routing_secure",
+    ] = "automatic"
+    # Tunneling UDP/TCP: IP des KNX/IP-Interfaces
     host: str = "192.168.1.100"
     port: int = 3671
     individual_address: str = "1.1.255"
@@ -158,12 +169,14 @@ class KnxAdapter(AdapterBase):
         cfg = KnxAdapterConfig(**self._config)
 
         _conn_type_map = {
+            "automatic": ConnectionType.AUTOMATIC,
             "tunneling": ConnectionType.TUNNELING,
+            "tunneling_tcp": ConnectionType.TUNNELING_TCP,
             "tunneling_secure": ConnectionType.TUNNELING_TCP_SECURE,
             "routing": ConnectionType.ROUTING,
             "routing_secure": ConnectionType.ROUTING_SECURE,
         }
-        conn_type = _conn_type_map.get(cfg.connection_type, ConnectionType.TUNNELING)
+        conn_type = _conn_type_map.get(cfg.connection_type, ConnectionType.AUTOMATIC)
 
         # Build SecureConfig for KNX IP Secure modes
         secure_config = None
@@ -207,7 +220,15 @@ class KnxAdapter(AdapterBase):
                 return
 
         is_routing = cfg.connection_type in ("routing", "routing_secure")
-        if is_routing:
+        is_automatic = cfg.connection_type == "automatic"
+
+        if is_automatic:
+            conn_cfg = ConnectionConfig(
+                connection_type=conn_type,
+                local_ip=cfg.local_ip,
+                individual_address=IndividualAddress(cfg.individual_address) if cfg.individual_address != "1.1.255" else None,
+            )
+        elif is_routing:
             conn_cfg = ConnectionConfig(
                 connection_type=conn_type,
                 multicast_group=cfg.multicast_group,
@@ -230,7 +251,10 @@ class KnxAdapter(AdapterBase):
 
         try:
             await self._xknx.start()
-            if is_routing:
+            if is_automatic:
+                await self._publish_status(True, "Connected (automatic discovery)")
+                logger.info("KNX adapter connected: automatic")
+            elif is_routing:
                 await self._publish_status(True, f"Connected (routing {cfg.multicast_group}:{cfg.multicast_port})")
                 logger.info("KNX adapter connected: routing %s:%d", cfg.multicast_group, cfg.multicast_port)
             else:

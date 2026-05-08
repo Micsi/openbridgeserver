@@ -33,7 +33,7 @@ xknx = pytest.importorskip("xknx", reason="xknx not installed")
 class TestKnxAdapterConfig:
     def test_defaults(self):
         cfg = KnxAdapterConfig()
-        assert cfg.connection_type == "tunneling"
+        assert cfg.connection_type == "automatic"
         assert cfg.host == "192.168.1.100"
         assert cfg.port == 3671
         assert cfg.individual_address == "1.1.255"
@@ -120,6 +120,16 @@ class TestKnxAdapterConfig:
     def test_routing_custom_multicast(self):
         cfg = KnxAdapterConfig(connection_type="routing_secure", multicast_group="239.0.0.1")
         assert cfg.multicast_group == "239.0.0.1"
+
+    def test_tunneling_tcp(self):
+        cfg = KnxAdapterConfig(connection_type="tunneling_tcp", host="10.0.0.1", port=3671)
+        assert cfg.connection_type == "tunneling_tcp"
+        assert cfg.host == "10.0.0.1"
+
+    def test_automatic_defaults(self):
+        cfg = KnxAdapterConfig(connection_type="automatic")
+        assert cfg.connection_type == "automatic"
+        assert cfg.local_ip is None
 
 
 # ---------------------------------------------------------------------------
