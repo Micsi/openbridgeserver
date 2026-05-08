@@ -60,7 +60,6 @@
     <div class="form-group">
       <label class="label">Connection Type</label>
       <select v-model="cfg.connection_type" class="input" @change="onTypeChange">
-        <option value="automatic">Automatisch (GatewayScanner)</option>
         <option value="tunneling">Tunneling UDP</option>
         <option value="tunneling_tcp">Tunneling TCP</option>
         <option value="tunneling_secure">Tunneling Secure (TCP)</option>
@@ -68,20 +67,6 @@
         <option value="routing_secure">Routing Secure (Multicast)</option>
       </select>
     </div>
-
-    <!-- ── Automatic ─────────────────────────────────────────────────────── -->
-    <template v-if="isAutomatic">
-      <div class="form-group">
-        <label class="label">Local IP <span class="text-xs text-slate-400">(Interface einschränken, optional)</span></label>
-        <input
-          :value="cfg.local_ip ?? ''"
-          type="text"
-          class="input"
-          placeholder="(leer = alle Interfaces)"
-          @input="setLocalIp($event.target.value)"
-        />
-      </div>
-    </template>
 
     <!-- ── Tunneling ──────────────────────────────────────────────────────── -->
     <template v-if="isTunneling">
@@ -254,7 +239,6 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 // ── Computed ───────────────────────────────────────────────────────────────
-const isAutomatic    = computed(() => cfg.connection_type === 'automatic')
 const isSecure       = computed(() => ['tunneling_secure', 'routing_secure'].includes(cfg.connection_type))
 const isTunneling    = computed(() => ['tunneling', 'tunneling_tcp', 'tunneling_secure'].includes(cfg.connection_type))
 const isRouting      = computed(() => ['routing', 'routing_secure'].includes(cfg.connection_type))
@@ -268,7 +252,7 @@ const keyfileFilename     = computed(() => {
 
 // ── Local state ────────────────────────────────────────────────────────────
 const cfg = reactive({
-  connection_type: 'automatic',
+  connection_type: 'tunneling',
   host: '192.168.1.100',
   port: 3671,
   individual_address: '1.1.255',
