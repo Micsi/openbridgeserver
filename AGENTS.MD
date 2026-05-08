@@ -42,11 +42,11 @@ pytest tests/integration/
 # Run with coverage report
 pytest tests/ --cov=obs --cov-report=term-missing
 
-# Lint
-ruff check .
+# Lint (same checks as CI)
+./tools/lint.sh --check
 
-# Format
-ruff format .
+# Format + autofix
+./tools/lint.sh --fix
 
 # Docker Compose (full stack)
 docker compose up -d
@@ -231,7 +231,7 @@ One file per external library. Each test verifies the exact import paths and API
 
 ### Linting
 
-`ruff` is the sole linter/formatter. Config in `.ruff.toml`: line length 150, target Python 3.13. Tests have relaxed rules (no `assert` warnings, no type annotations required, no docstrings). Contract tests (`tests/contracts/`) additionally suppress E402 (module-level import not at top of file) because `pytest.importorskip()` must precede the library imports it guards — a standard pytest pattern.
+`ruff` is the sole linter/formatter. Config in `.ruff.toml`: line length 150, target Python 3.13. Run `./tools/lint.sh --check` for the exact same lint path as GitHub CI, or `./tools/lint.sh --fix` for local autofix. Tests have relaxed rules (no `assert` warnings, no type annotations required, no docstrings). Contract tests (`tests/contracts/`) additionally suppress E402 (module-level import not at top of file) because `pytest.importorskip()` must precede the library imports it guards — a standard pytest pattern.
 
 ## Release & CI
 
