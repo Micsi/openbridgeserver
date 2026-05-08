@@ -67,12 +67,9 @@ async def _create_non_admin_user_and_headers(client, auth_headers, username: str
     )
     assert create_resp.status_code == 201, create_resp.text
 
-    login_resp = await client.post(
-        "/api/v1/auth/login",
-        json={"username": username, "password": password},
-    )
-    assert login_resp.status_code == 200, login_resp.text
-    token = login_resp.json()["access_token"]
+    from obs.api.auth import create_access_token
+
+    token = create_access_token(username)
     return {"Authorization": f"Bearer {token}"}
 
 
