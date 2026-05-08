@@ -421,6 +421,45 @@ ALTER TABLE knx_trades ADD COLUMN parent_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_knx_trade_parent ON knx_trades(parent_id);
 """
 
+_MIGRATION_V29 = """
+CREATE TABLE IF NOT EXISTS ringbuffer_filtersets (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    dsl_version INTEGER NOT NULL DEFAULT 2,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    is_default  INTEGER NOT NULL DEFAULT 0,
+    query_json  TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rb_fs_default ON ringbuffer_filtersets(is_default);
+CREATE INDEX IF NOT EXISTS idx_rb_fs_active  ON ringbuffer_filtersets(is_active);
+
+CREATE TABLE IF NOT EXISTS ringbuffer_filterset_groups (
+    id          TEXT PRIMARY KEY,
+    filterset_id TEXT NOT NULL REFERENCES ringbuffer_filtersets(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    group_order INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rb_fsg_filterset ON ringbuffer_filterset_groups(filterset_id);
+
+CREATE TABLE IF NOT EXISTS ringbuffer_filterset_rules (
+    id          TEXT PRIMARY KEY,
+    group_id    TEXT NOT NULL REFERENCES ringbuffer_filterset_groups(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    rule_order  INTEGER NOT NULL DEFAULT 0,
+    query_json  TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rb_fsr_group ON ringbuffer_filterset_rules(group_id);
+"""
+
 # List of (version, sql_or_callable) tuples — append new migrations here
 MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
@@ -451,6 +490,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (26, _MIGRATION_V26),
     (27, _MIGRATION_V27),
     (28, _MIGRATION_V28),
+    (29, _MIGRATION_V29),
 ]
 
 
