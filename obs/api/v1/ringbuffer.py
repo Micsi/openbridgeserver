@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from obs.api.auth import get_current_user
 from obs.ringbuffer.ringbuffer import get_ringbuffer
@@ -41,11 +41,16 @@ class RingBufferStats(BaseModel):
     newest_ts: str | None
     storage: str
     max_entries: int
+    max_file_size_bytes: int | None
+    max_age: int | None
+    file_size_bytes: int
 
 
 class RingBufferConfig(BaseModel):
     storage: str = "memory"  # "memory" | "disk"
     max_entries: int = 10000
+    max_file_size_bytes: int | None = Field(default=None, ge=1)
+    max_age: int | None = Field(default=None, ge=0)
 
 
 # ---------------------------------------------------------------------------
@@ -109,12 +114,18 @@ async def configure_ringbuffer(
     body: RingBufferConfig,
     _user: str = Depends(get_current_user),
 ) -> RingBufferStats:
-    """Switch storage mode and/or max_entries at runtime."""
+    """Switch runtime ringbuffer configuration."""
     if body.storage not in ("memory", "disk"):
         from fastapi import HTTPException, status
 
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "storage must be 'memory' or 'disk'")
+
     rb = get_ringbuffer()
-    await rb.reconfigure(body.storage, body.max_entries)
+    reconfigure_kwargs: dict[str, Any] = {}
+    if "max_file_size_bytes" in body.model_fields_set:
+        reconfigure_kwargs["max_file_size_bytes"] = body.max_file_size_bytes
+    if "max_age" in body.model_fields_set:
+        reconfigure_kwargs["max_age"] = body.max_age
+    await rb.reconfigure(body.storage, body.max_entries, **reconfigure_kwargs)
     stats = await rb.stats()
     return RingBufferStats(**stats)

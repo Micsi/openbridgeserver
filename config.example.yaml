@@ -32,6 +32,8 @@ database:
 ringbuffer:
   storage: memory           # memory | disk
   max_entries: 10000
+  max_file_size_bytes: null # optional hard limit for ringbuffer file usage
+  max_age: null             # optional max age in seconds
 
 security:
   jwt_secret: changeme      # In Produktion: aus Env-Var OBS_SECURITY__JWT_SECRET

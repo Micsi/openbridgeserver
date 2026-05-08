@@ -86,6 +86,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         storage=settings.ringbuffer.storage,
         max_entries=settings.ringbuffer.max_entries,
         disk_path=rb_path,
+        max_file_size_bytes=settings.ringbuffer.max_file_size_bytes,
+        max_age=settings.ringbuffer.max_age,
     )
     bus.subscribe(DataValueEvent, rb.handle_value_event)
 

@@ -125,6 +125,8 @@ database:
 ringbuffer:
   storage: disk               # Änderungsprotokoll: memory (RAM) oder disk (Datei)
   max_entries: 10000          # Maximale Anzahl Einträge
+  max_file_size_bytes: null   # Optional: harte Dateigrenze für den Ringbuffer
+  max_age: null               # Optional: maximale Eintrags-Alterung in Sekunden
 
 security:
   jwt_secret: changeme        # Sitzungsschlüssel — unbedingt ändern!

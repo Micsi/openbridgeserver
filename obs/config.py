@@ -51,6 +51,8 @@ class DatabaseSettings(BaseModel):
 class RingBufferSettings(BaseModel):
     storage: str = "disk"  # memory | disk
     max_entries: int = 10000
+    max_file_size_bytes: int | None = None
+    max_age: int | None = None
 
 
 class SecuritySettings(BaseModel):
