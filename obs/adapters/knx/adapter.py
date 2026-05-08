@@ -13,19 +13,20 @@ Binding-Konfiguration (pro AdapterBinding.config):
   state_group_address: str?  — Rückmelde-GA für DEST-Bindings (optional)
 
 Adapter-Konfiguration (adapter_configs.config in DB):
-  connection_type:                 "tunneling" | "tunneling_secure" | "routing" | "routing_secure"
-  host:                            str          (KNX/IP Gateway IP)
-  port:                            int          (default: 3671)
-  individual_address:              str          (default: "1.1.255"; bei Keyfile: wählt Tunnel)
-  local_ip:                        str?         (für Routing/Multicast, optional)
-  --- KNX IP Secure — Keyfile-Modus (bevorzugt) ---
-  knxkeys_file_path:               str?         (Pfad zur gespeicherten .knxkeys Datei)
-  knxkeys_password:                str?         (Passwort-Feld)
-  --- KNX IP Secure — Manueller Modus (Fallback) ---
-  user_id:                         int          (default: 2, Bereich 1–127)
-  user_password:                   str?         (Passwort-Feld)
-  device_authentication_password:  str?         (Passwort-Feld)
-  backbone_key:                    str?         (Hex-String, 32 Zeichen; Passwort-Feld)
+  connection_type:   "tunneling" | "tunneling_secure" | "routing" | "routing_secure"
+  --- Tunneling ---
+  host:              str   (IP des KNX/IP-Interfaces)
+  port:              int   (default: 3671)
+  individual_address: str  (default: "1.1.255"; bei Keyfile: wählt Tunnel-Endpoint)
+  local_ip:          str?  (lokale IP zum Binden, optional)
+  --- Routing (multicast) ---
+  multicast_group:   str   (default: "224.0.23.12"; KNX-Standard-Multicastadresse)
+  multicast_port:    int   (default: 3671)
+  individual_address: str  (Quelladresse des Routers)
+  local_ip:          str?  (Netzwerkinterface für Multicast, optional)
+  --- KNX IP Secure — Keyfile-Modus ---
+  knxkeys_file_path: str?  (Pfad zur gespeicherten .knxkeys Datei)
+  knxkeys_password:  str?  (Passwort-Feld)
 """
 
 from __future__ import annotations
@@ -62,12 +63,22 @@ logger = logging.getLogger(__name__)
 
 class KnxAdapterConfig(BaseModel):
     connection_type: Literal["tunneling", "tunneling_secure", "routing", "routing_secure"] = "tunneling"
+    # Tunneling: IP des KNX/IP-Interfaces
     host: str = "192.168.1.100"
     port: int = 3671
     individual_address: str = "1.1.255"
     local_ip: str | None = None
-    # KNX IP Secure — Tunneling Secure
+    # Routing: Multicast-Gruppe (KNX-Standard: 224.0.23.12)
+    multicast_group: str = "224.0.23.12"
+    multicast_port: int = 3671
+    # KNX IP Secure — Keyfile-Modus
     user_id: int = Field(default=2, ge=1, le=127)
+    knxkeys_file_path: str | None = None
+    knxkeys_password: str | None = Field(
+        default=None,
+        json_schema_extra={"format": "password", "writeOnly": True},
+    )
+    # KNX IP Secure — Manueller Modus (Fallback, nicht in GUI exponiert)
     user_password: str | None = Field(
         default=None,
         json_schema_extra={"format": "password", "writeOnly": True},
@@ -76,14 +87,7 @@ class KnxAdapterConfig(BaseModel):
         default=None,
         json_schema_extra={"format": "password", "writeOnly": True},
     )
-    # KNX IP Secure — Routing Secure (Backbone-Schlüssel als 32-stelliger Hex-String)
     backbone_key: str | None = Field(
-        default=None,
-        json_schema_extra={"format": "password", "writeOnly": True},
-    )
-    # KNX IP Secure — Keyfile-Modus (bevorzugt gegenüber manuellen Feldern)
-    knxkeys_file_path: str | None = None
-    knxkeys_password: str | None = Field(
         default=None,
         json_schema_extra={"format": "password", "writeOnly": True},
     )
@@ -202,26 +206,41 @@ class KnxAdapter(AdapterBase):
                 logger.error("KNX IP Secure Konfigurationsfehler: %s", exc)
                 return
 
-        conn_cfg = ConnectionConfig(
-            connection_type=conn_type,
-            gateway_ip=cfg.host,
-            gateway_port=cfg.port,
-            local_ip=cfg.local_ip,
-            individual_address=IndividualAddress(cfg.individual_address),
-            secure_config=secure_config,
-        )
+        is_routing = cfg.connection_type in ("routing", "routing_secure")
+        if is_routing:
+            conn_cfg = ConnectionConfig(
+                connection_type=conn_type,
+                multicast_group=cfg.multicast_group,
+                multicast_port=cfg.multicast_port,
+                local_ip=cfg.local_ip,
+                individual_address=IndividualAddress(cfg.individual_address),
+                secure_config=secure_config,
+            )
+        else:
+            conn_cfg = ConnectionConfig(
+                connection_type=conn_type,
+                gateway_ip=cfg.host,
+                gateway_port=cfg.port,
+                local_ip=cfg.local_ip,
+                individual_address=IndividualAddress(cfg.individual_address),
+                secure_config=secure_config,
+            )
 
         self._xknx = XKNX(connection_config=conn_cfg)
 
         try:
             await self._xknx.start()
-            await self._publish_status(True, f"Connected to {cfg.host}:{cfg.port}")
-            logger.info(
-                "KNX adapter connected: %s:%d (%s)",
-                cfg.host,
-                cfg.port,
-                cfg.connection_type,
-            )
+            if is_routing:
+                await self._publish_status(True, f"Connected (routing {cfg.multicast_group}:{cfg.multicast_port})")
+                logger.info("KNX adapter connected: routing %s:%d", cfg.multicast_group, cfg.multicast_port)
+            else:
+                await self._publish_status(True, f"Connected to {cfg.host}:{cfg.port}")
+                logger.info(
+                    "KNX adapter connected: %s:%d (%s)",
+                    cfg.host,
+                    cfg.port,
+                    cfg.connection_type,
+                )
             # Rebuild sniffer on the new xknx instance
             await self._on_bindings_reloaded()
         except Exception as exc:

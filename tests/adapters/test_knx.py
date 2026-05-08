@@ -38,6 +38,8 @@ class TestKnxAdapterConfig:
         assert cfg.port == 3671
         assert cfg.individual_address == "1.1.255"
         assert cfg.local_ip is None
+        assert cfg.multicast_group == "224.0.23.12"
+        assert cfg.multicast_port == 3671
         assert cfg.user_id == 2
         assert cfg.user_password is None
         assert cfg.device_authentication_password is None
@@ -109,6 +111,15 @@ class TestKnxAdapterConfig:
     def test_local_ip_for_routing(self):
         cfg = KnxAdapterConfig(connection_type="routing", local_ip="192.168.1.5")
         assert cfg.local_ip == "192.168.1.5"
+
+    def test_routing_multicast_defaults(self):
+        cfg = KnxAdapterConfig(connection_type="routing")
+        assert cfg.multicast_group == "224.0.23.12"
+        assert cfg.multicast_port == 3671
+
+    def test_routing_custom_multicast(self):
+        cfg = KnxAdapterConfig(connection_type="routing_secure", multicast_group="239.0.0.1")
+        assert cfg.multicast_group == "239.0.0.1"
 
 
 # ---------------------------------------------------------------------------
