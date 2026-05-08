@@ -1447,6 +1447,16 @@ pytest tests/unit/ tests/adapters/
 pytest tests/
 ```
 
+#### Lint lokal (identisch zu GitHub CI)
+
+```bash
+# Nur prüfen (gleiches Verhalten wie CI-Job)
+./tools/lint.sh --check
+
+# Mit Auto-Fix
+./tools/lint.sh --fix
+```
+
 ---
 
 ### Starten ohne Docker
