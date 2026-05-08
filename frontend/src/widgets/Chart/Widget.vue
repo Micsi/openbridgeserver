@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Chart, LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend } from 'chart.js'
 import { history } from '@/api/client'
+import { useDatapointsStore } from '@/stores/datapoints'
 import type { DataPointValue } from '@/types'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend)
@@ -13,6 +14,8 @@ const props = defineProps<{
   editorMode: boolean
 }>()
 
+const dpStore = useDatapointsStore()
+
 const label = computed(() => (props.config.label as string | undefined) ?? '—')
 const hours = computed(() => (props.config.hours as number | undefined) ?? 24)
 
@@ -23,10 +26,7 @@ const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | null = null
-let refreshTimer: ReturnType<typeof setInterval> | null = null
 const seriesUnits = ref<string[]>([])
-
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 function fmtMs(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -124,6 +124,36 @@ async function loadData() {
   chart.update()
 }
 
+// Aktuellen dpStore-Wert für jede konfigurierte Serie beobachten.
+// Da die Extra-Series via getExtraDatapointIds bereits abonniert sind,
+// liefert dpStore sofort neue Werte wenn ein WS-Update eintrifft.
+const liveSeriesValues = computed(() =>
+  buildSeriesDefs().map(s => dpStore.getValue(s.id)),
+)
+
+watch(liveSeriesValues, (newVals, oldVals) => {
+  if (!chart || props.editorMode) return
+  const cutoff = Date.now() - hours.value * 3_600_000
+  const now    = Date.now()
+  let changed  = false
+
+  newVals.forEach((val, i) => {
+    if (!val) return
+    if (oldVals?.[i] && val.t === oldVals[i]?.t) return  // gleicher Timestamp
+    const ds = chart!.data.datasets[i]
+    if (!ds) return
+    const pts = ds.data as { x: number; y: number }[]
+    pts.push({ x: new Date(val.t).getTime(), y: Number(val.v) })
+    while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
+    changed = true
+  })
+
+  if (!changed) return
+  const xAxis = chart!.options.scales?.x as Record<string, unknown> | undefined
+  if (xAxis) { xAxis.min = cutoff; xAxis.max = now }
+  chart!.update('none')
+}, { deep: true })
+
 onMounted(() => {
   if (!canvas.value) return
   chart = new Chart(canvas.value, {
@@ -180,19 +210,12 @@ onMounted(() => {
     },
   })
   loadData()
-  refreshTimer = setInterval(loadData, REFRESH_INTERVAL_MS)
 })
 
-function reloadAndResetTimer() {
-  loadData()
-  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = setInterval(loadData, REFRESH_INTERVAL_MS) }
-}
-
-watch(() => props.datapointId, reloadAndResetTimer)
-watch(() => props.config, reloadAndResetTimer, { deep: true })
+watch(() => props.datapointId, loadData)
+watch(() => props.config, loadData, { deep: true })
 
 onUnmounted(() => {
-  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
   chart?.destroy()
   chart = null
 })

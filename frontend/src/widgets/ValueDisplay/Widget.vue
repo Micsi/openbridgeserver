@@ -172,13 +172,9 @@ const secondaryDisplay = computed(() => {
 const canvasEl      = ref<HTMLCanvasElement | null>(null)
 const modalOpen     = ref(false)
 const modalCanvasEl = ref<HTMLCanvasElement | null>(null)
-let miniChart:    Chart | null = null
-let modalChart:   Chart | null = null
+let miniChart:  Chart | null = null
+let modalChart: Chart | null = null
 let histUnit = ''
-let miniRefreshTimer:  ReturnType<typeof setInterval> | null = null
-let modalRefreshTimer: ReturnType<typeof setInterval> | null = null
-
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 function fmtMs(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -200,9 +196,9 @@ function makeDataset(color: string) {
 
 async function fetchPoints() {
   if (!props.datapointId || props.editorMode) return { pts: [], minMs: 0, maxMs: 0 }
-  const now     = new Date()
+  const now      = new Date()
   const fromDate = new Date(now.getTime() - historyHours.value * 3_600_000)
-  const data    = await history.query(props.datapointId, fromDate.toISOString(), now.toISOString())
+  const data     = await history.query(props.datapointId, fromDate.toISOString(), now.toISOString())
   histUnit = data[0]?.u ?? ''
   return {
     pts:   data.map(d => ({ x: new Date(d.ts).getTime(), y: Number(d.v) })),
@@ -220,6 +216,37 @@ async function updateMiniChart() {
   miniChart.update()
 }
 
+// Neuen WS-Wert in Mini- und Modal-Chart einhängen, ohne History neu zu laden
+function appendLivePoint(val: { t: string; v: unknown }) {
+  const pt     = { x: new Date(val.t).getTime(), y: Number(val.v) }
+  const cutoff = Date.now() - historyHours.value * 3_600_000
+  const now    = Date.now()
+
+  if (miniChart) {
+    const pts = miniChart.data.datasets[0].data as { x: number; y: number }[]
+    pts.push(pt)
+    while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
+    const xAxis = miniChart.options.scales?.x as any
+    if (xAxis) { xAxis.min = cutoff; xAxis.max = now }
+    miniChart.update('none')
+  }
+
+  if (modalChart && modalOpen.value) {
+    const pts = modalChart.data.datasets[0].data as { x: number; y: number }[]
+    pts.push(pt)
+    while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
+    const xAxis = modalChart.options.scales?.x as any
+    if (xAxis) { xAxis.min = cutoff; xAxis.max = now }
+    modalChart.update('none')
+  }
+}
+
+watch(() => props.value, (newVal, oldVal) => {
+  if (mode.value !== 'history' || !newVal || props.editorMode) return
+  if (oldVal && newVal.t === oldVal.t) return  // gleicher Timestamp → kein neuer Wert
+  appendLivePoint(newVal)
+})
+
 onMounted(() => {
   if (mode.value !== 'history' || !canvasEl.value) return
   miniChart = new Chart(canvasEl.value, {
@@ -235,28 +262,12 @@ onMounted(() => {
     },
   })
   updateMiniChart()
-  miniRefreshTimer = setInterval(updateMiniChart, REFRESH_INTERVAL_MS)
 })
 
-watch(() => [props.datapointId, historyHours.value], () => {
-  updateMiniChart()
-  if (miniRefreshTimer) { clearInterval(miniRefreshTimer); miniRefreshTimer = setInterval(updateMiniChart, REFRESH_INTERVAL_MS) }
-})
-
-async function updateModalChart() {
-  if (!modalChart) return
-  const { pts, minMs, maxMs } = await fetchPoints()
-  modalChart.data.datasets[0].data = pts
-  const xAxis = modalChart.options.scales?.x as any
-  if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
-  modalChart.update()
-}
+watch(() => [props.datapointId, historyHours.value], updateMiniChart)
 
 watch(modalOpen, async (open) => {
-  if (!open) {
-    if (modalRefreshTimer) { clearInterval(modalRefreshTimer); modalRefreshTimer = null }
-    modalChart?.destroy(); modalChart = null; return
-  }
+  if (!open) { modalChart?.destroy(); modalChart = null; return }
   await new Promise<void>(r => setTimeout(r, 50))
   if (!modalCanvasEl.value) return
   const { pts, minMs, maxMs } = await fetchPoints()
@@ -287,15 +298,9 @@ watch(modalOpen, async (open) => {
       },
     },
   })
-  modalRefreshTimer = setInterval(updateModalChart, REFRESH_INTERVAL_MS)
 })
 
-onUnmounted(() => {
-  if (miniRefreshTimer)  { clearInterval(miniRefreshTimer);  miniRefreshTimer  = null }
-  if (modalRefreshTimer) { clearInterval(modalRefreshTimer); modalRefreshTimer = null }
-  miniChart?.destroy()
-  modalChart?.destroy()
-})
+onUnmounted(() => { miniChart?.destroy(); modalChart?.destroy() })
 
 const quality = computed(() => props.value?.q ?? null)
 </script>
