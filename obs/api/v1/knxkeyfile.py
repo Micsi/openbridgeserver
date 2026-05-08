@@ -234,7 +234,13 @@ async def delete_keyfile(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ungültige file_id") from exc
 
-    keyfile_path = _keyfiles_dir() / f"{file_id}.knxkeys"
+    base_dir = _keyfiles_dir().resolve()
+    keyfile_path = (base_dir / f"{file_id}.knxkeys").resolve()
+    try:
+        keyfile_path.relative_to(base_dir)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ungültige file_id") from exc
+
     if not keyfile_path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Keyfile nicht gefunden")
 
