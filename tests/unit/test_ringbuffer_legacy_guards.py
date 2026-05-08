@@ -79,6 +79,7 @@ async def test_handle_value_event_falls_back_to_default_topic_when_registry_unav
     rb = RingBuffer(storage="memory", max_entries=5)
     await rb.start()
     try:
+
         def _raise_runtime_error():
             raise RuntimeError("registry unavailable")
 

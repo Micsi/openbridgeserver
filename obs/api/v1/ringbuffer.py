@@ -171,11 +171,7 @@ async def query_ringbuffer_v2(
         dp_ids_by_name = [str(dp.id) for dp in registry.all() if q_lower in dp.name.lower()]
 
     adapters = [value.strip() for value in (body.filters.adapters.any_of if body.filters.adapters else []) if value.strip()]
-    datapoints = [
-        value.strip()
-        for value in (body.filters.datapoints.ids if body.filters.datapoints else [])
-        if value.strip()
-    ]
+    datapoints = [value.strip() for value in (body.filters.datapoints.ids if body.filters.datapoints else []) if value.strip()]
     if body.filters.adapters and not adapters:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
