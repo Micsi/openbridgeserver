@@ -22,15 +22,17 @@
       <!-- Scan error -->
       <p v-if="scanError" class="text-xs text-red-400">{{ scanError }}</p>
 
-      <!-- Scan results -->
-      <div v-if="scanResults !== null" class="flex flex-col gap-2">
-        <p v-if="scanResults.length === 0" class="text-xs text-slate-400">
-          Keine KNX/IP-Geräte gefunden.
+      <!-- Scan results + manual entries -->
+      <div v-if="scanResults !== null || manualEntries.length > 0" class="flex flex-col gap-2">
+        <p v-if="scanResults !== null && scanResults.length === 0 && manualEntries.length === 0"
+           class="text-xs text-slate-400">
+          Keine Geräte per Multicast gefunden (typisch bei Docker-Netzwerk).
+          Gerät unten manuell hinzufügen.
         </p>
-        <template v-else>
-          <p class="text-xs text-slate-400">{{ scanResults.length }} Gerät(e) gefunden — auswählen zum Übernehmen:</p>
-          <label
-            v-for="gw in scanResults"
+        <template v-if="allGateways.length > 0">
+          <p class="text-xs text-slate-400">{{ allGateways.length }} Gerät(e) — auswählen zum Übernehmen:</p>
+          <div
+            v-for="gw in allGateways"
             :key="gw.ip_addr + ':' + gw.port"
             :class="[
               'flex flex-col gap-1 p-2 rounded-lg border cursor-pointer transition-colors select-none',
@@ -39,8 +41,16 @@
             @click="applyGateway(gw)"
           >
             <div class="flex items-center justify-between">
-              <span class="text-sm font-medium text-slate-200">{{ gw.name }}</span>
-              <span class="text-xs text-slate-400 font-mono">{{ gw.ip_addr }}:{{ gw.port }}</span>
+              <span class="text-sm font-medium text-slate-200">{{ gw.name || gw.ip_addr }}</span>
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-400 font-mono">{{ gw.ip_addr }}:{{ gw.port }}</span>
+                <button
+                  v-if="gw._manual"
+                  type="button"
+                  class="text-xs text-slate-500 hover:text-red-400"
+                  @click.stop="removeManual(gw)"
+                >✕</button>
+              </div>
             </div>
             <div class="flex flex-wrap gap-1">
               <span v-if="gw.supports_tunnelling && !gw.tunnelling_requires_secure" class="text-xs px-1.5 py-0.5 rounded bg-slate-600 text-slate-300">UDP</span>
@@ -48,11 +58,48 @@
               <span v-if="gw.supports_routing && !gw.routing_requires_secure" class="text-xs px-1.5 py-0.5 rounded bg-slate-600 text-slate-300">Routing</span>
               <span v-if="gw.supports_secure" class="text-xs px-1.5 py-0.5 rounded bg-blue-600/40 text-blue-300">Secure</span>
               <span v-if="gw.tunnelling_requires_secure" class="text-xs px-1.5 py-0.5 rounded bg-amber-600/40 text-amber-300">Secure required</span>
+              <span v-if="gw._manual" class="text-xs px-1.5 py-0.5 rounded bg-slate-700 text-slate-500">manuell</span>
             </div>
-            <span v-if="gw.individual_address" class="text-xs text-slate-400">PA: {{ gw.individual_address }} · Interface: {{ gw.local_interface }}</span>
-          </label>
+            <span v-if="gw.individual_address" class="text-xs text-slate-400">PA: {{ gw.individual_address }}</span>
+          </div>
         </template>
       </div>
+
+      <!-- Manual entry form -->
+      <details class="group">
+        <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-300 select-none list-none flex items-center gap-1">
+          <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+          </svg>
+          Gerät manuell hinzufügen
+        </summary>
+        <div class="mt-2 flex flex-col gap-2">
+          <div class="grid grid-cols-[1fr_auto] gap-2">
+            <input v-model="manualIp" type="text" class="input input-sm font-mono" placeholder="10.38.114.72" />
+            <input v-model.number="manualPort" type="number" class="input input-sm w-20" placeholder="3671" />
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+              <input type="checkbox" v-model="manualCaps.udp" class="w-3 h-3 rounded" /> UDP Tunneling
+            </label>
+            <label class="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+              <input type="checkbox" v-model="manualCaps.tcp" class="w-3 h-3 rounded" /> TCP Tunneling
+            </label>
+            <label class="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+              <input type="checkbox" v-model="manualCaps.routing" class="w-3 h-3 rounded" /> Routing
+            </label>
+            <label class="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+              <input type="checkbox" v-model="manualCaps.secure" class="w-3 h-3 rounded" /> Secure
+            </label>
+          </div>
+          <button
+            type="button"
+            class="btn-secondary btn-sm self-start"
+            :disabled="!manualIp"
+            @click="addManual"
+          >Hinzufügen</button>
+        </div>
+      </details>
     </div>
 
     <!-- ── Connection Type ───────────────────────────────────────────────── -->
@@ -283,10 +330,19 @@ const cfg = reactive({
 })
 
 // Scanner state
-const scanning     = ref(false)
-const scanResults  = ref(null)
-const scanError    = ref('')
-const selectedGw   = ref(null)
+const scanning      = ref(false)
+const scanResults   = ref(null)
+const scanError     = ref('')
+const selectedGw    = ref(null)
+const manualEntries = ref([])
+const manualIp      = ref('')
+const manualPort    = ref(3671)
+const manualCaps    = reactive({ udp: true, tcp: true, routing: false, secure: false })
+
+const allGateways = computed(() => [
+  ...(scanResults.value ?? []),
+  ...manualEntries.value,
+])
 
 // Keyfile state
 const selectedTunnel = ref(null)
@@ -324,6 +380,31 @@ async function doScan() {
   } finally {
     scanning.value = false
   }
+}
+
+function addManual() {
+  if (!manualIp.value) return
+  manualEntries.value.push({
+    name: manualIp.value,
+    ip_addr: manualIp.value,
+    port: manualPort.value || 3671,
+    local_ip: '',
+    local_interface: '',
+    individual_address: null,
+    supports_tunnelling: manualCaps.udp,
+    supports_tunnelling_tcp: manualCaps.tcp,
+    supports_routing: manualCaps.routing,
+    supports_secure: manualCaps.secure,
+    tunnelling_requires_secure: manualCaps.secure && !manualCaps.udp && !manualCaps.tcp ? true : null,
+    routing_requires_secure: null,
+    _manual: true,
+  })
+  manualIp.value = ''
+  manualPort.value = 3671
+}
+
+function removeManual(gw) {
+  manualEntries.value = manualEntries.value.filter(e => e !== gw)
 }
 
 function applyGateway(gw) {
