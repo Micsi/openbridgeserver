@@ -49,10 +49,17 @@ class DatabaseSettings(BaseModel):
 
 
 class RingBufferSettings(BaseModel):
-    storage: str = "disk"  # memory | disk
+    storage: str = "file"
     max_entries: int = 10000
     max_file_size_bytes: int | None = None
     max_age: int | None = None
+
+    @field_validator("storage")
+    @classmethod
+    def _validate_storage(cls, v: str) -> str:
+        if v != "file":
+            raise ValueError("storage must be 'file' (memory and disk are no longer supported)")
+        return v
 
 
 class SecuritySettings(BaseModel):

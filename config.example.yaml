@@ -30,7 +30,7 @@ database:
 #   (requires: pip install asyncpg)
 
 ringbuffer:
-  storage: memory           # memory | disk
+  storage: file             # file-only (Storage v2)
   max_entries: 10000
   max_file_size_bytes: null # optional hard limit for ringbuffer file usage
   max_age: null             # optional max age in seconds

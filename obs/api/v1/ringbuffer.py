@@ -47,7 +47,7 @@ class RingBufferStats(BaseModel):
 
 
 class RingBufferConfig(BaseModel):
-    storage: str = "memory"  # "memory" | "disk"
+    storage: str = "file"
     max_entries: int = 10000
     max_file_size_bytes: int | None = Field(default=None, ge=1)
     max_age: int | None = Field(default=None, ge=0)
@@ -115,10 +115,13 @@ async def configure_ringbuffer(
     _user: str = Depends(get_current_user),
 ) -> RingBufferStats:
     """Switch runtime ringbuffer configuration."""
-    if body.storage not in ("memory", "disk"):
+    if body.storage != "file":
         from fastapi import HTTPException, status
 
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "storage must be 'memory' or 'disk'")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "storage must be 'file' (memory and disk are no longer supported)",
+        )
 
     rb = get_ringbuffer()
     reconfigure_kwargs: dict[str, Any] = {}

@@ -1,8 +1,9 @@
-"""RingBuffer Debug Log — Phase 5
+"""RingBuffer Debug Log — Phase 6 (Storage v2)
 
-Zeichnet jede Werteänderung auf. Speicher umschaltbar zur Laufzeit:
-  memory  — SQLite :memory: (verschwindet bei Neustart)
-  disk    — SQLite WAL-Mode (überlebt Neustarts)
+Zeichnet jede Werteänderung auf. Storage-Modelle:
+  file    — SQLite WAL-Mode (überlebt Neustarts)
+  disk    — Legacy-Modellname (file-basiert)
+  memory  — Legacy-Modellname (:memory:, nur für Altpfade/Tests)
 
 Filterfunktionen:
   q       — Substring in datapoint_id oder source_adapter
@@ -10,7 +11,8 @@ Filterfunktionen:
   from_ts — ISO-8601 Timestamp (exkl.)
   limit   — max. Einträge (default: 100)
 
-Überschreibt älteste Einträge wenn max_entries erreicht.
+Bei Modellwechsel wird der RingBuffer leer neu gestartet (keine Migration).
+Älteste Einträge werden überschrieben, wenn max_entries erreicht.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 _UNSET = object()
+_ALLOWED_STORAGE_MODELS = {"memory", "disk", "file"}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ringbuffer (
@@ -61,7 +64,7 @@ class RingBuffer:
     """Async RingBuffer backed by SQLite.
 
     Lifecycle:
-        rb = RingBuffer("memory", max_entries=10000)
+        rb = RingBuffer("file", max_entries=10000)
         await rb.start()
         bus.subscribe(DataValueEvent, rb.handle_value_event)
         ...
@@ -70,12 +73,14 @@ class RingBuffer:
 
     def __init__(
         self,
-        storage: str = "memory",
+        storage: str = "file",
         max_entries: int = 10000,
         disk_path: str = "/data/obs_ringbuffer.db",
         max_file_size_bytes: int | None = None,
         max_age: int | None = None,
     ) -> None:
+        if storage not in _ALLOWED_STORAGE_MODELS:
+            raise ValueError("storage must be one of: file, disk, memory")
         self._storage = storage
         self._max_entries = max_entries
         self._disk_path = disk_path
@@ -93,7 +98,7 @@ class RingBuffer:
         path = ":memory:" if self._storage == "memory" else self._disk_path
         self._conn = await aiosqlite.connect(path)
         self._conn.row_factory = aiosqlite.Row
-        if self._storage == "disk":
+        if self._storage in {"disk", "file"}:
             await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.executescript(_SCHEMA)
         await self._conn.commit()
@@ -111,7 +116,7 @@ class RingBuffer:
             self._conn = None
 
     # ------------------------------------------------------------------
-    # Runtime config switch (memory ↔ disk)
+    # Runtime config switch
     # ------------------------------------------------------------------
 
     async def reconfigure(
@@ -121,7 +126,14 @@ class RingBuffer:
         max_file_size_bytes: int | None | object = _UNSET,
         max_age: int | None | object = _UNSET,
     ) -> None:
-        """Switch storage mode at runtime. Copies existing entries."""
+        """Switch storage model at runtime.
+
+        Same model: apply config in-place (keeps entries).
+        Model switch: restart empty (no migration).
+        """
+        if storage not in _ALLOWED_STORAGE_MODELS:
+            raise ValueError("storage must be one of: file, disk, memory")
+
         async with self._lock:
             resolved_max_file_size = self._max_file_size_bytes if max_file_size_bytes is _UNSET else max_file_size_bytes
             resolved_max_age = self._max_age if max_age is _UNSET else max_age
@@ -134,7 +146,7 @@ class RingBuffer:
             ):
                 return
 
-            # Same storage backend: apply config in-place and trim, no data migration.
+            # Same model: apply config in-place and trim.
             if storage == self._storage:
                 self._max_entries = max_entries
                 self._max_file_size_bytes = int(resolved_max_file_size) if resolved_max_file_size is not None else None
@@ -149,11 +161,8 @@ class RingBuffer:
                 )
                 return
 
-            # Export current entries
-            rows = await self._fetchall("SELECT * FROM ringbuffer ORDER BY id")
-            existing: list[dict] = [dict(r) for r in rows]
-
-            # Close old connection
+            # Model switch: close old connection and start empty without migration.
+            old_storage = self._storage
             if self._conn:
                 await self._conn.close()
 
@@ -166,38 +175,20 @@ class RingBuffer:
             path = ":memory:" if storage == "memory" else self._disk_path
             self._conn = await aiosqlite.connect(path)
             self._conn.row_factory = aiosqlite.Row
-            if storage == "disk":
+            if storage in {"disk", "file"}:
                 await self._conn.execute("PRAGMA journal_mode=WAL")
             await self._conn.executescript(_SCHEMA)
+            await self._conn.execute("DELETE FROM ringbuffer")
             await self._conn.commit()
-
-            # Re-import (keep only the newest max_entries)
-            to_import = existing[-max_entries:]
-            for row in to_import:
-                await self._conn.execute(
-                    """INSERT INTO ringbuffer
-                       (ts, datapoint_id, topic, old_value, new_value, source_adapter, quality)
-                       VALUES (?,?,?,?,?,?,?)""",
-                    (
-                        row["ts"],
-                        row["datapoint_id"],
-                        row["topic"],
-                        row["old_value"],
-                        row["new_value"],
-                        row["source_adapter"],
-                        row["quality"],
-                    ),
-                )
-            await self._conn.commit()
+            self._last_values.clear()
             logger.info(
-                "RingBuffer reconfigured → %s, max_entries=%d, max_file_size_bytes=%s, max_age=%s (%d entries kept)",
+                "RingBuffer model switch: %s -> %s, restarted empty (max_entries=%d, max_file_size_bytes=%s, max_age=%s)",
+                old_storage,
                 storage,
                 max_entries,
                 self._max_file_size_bytes,
                 self._max_age,
-                len(to_import),
             )
-            await self._trim()
 
     # ------------------------------------------------------------------
     # Record
@@ -340,12 +331,12 @@ class RingBuffer:
             ids,
         )
         await self._conn.commit()
-        if self._storage == "disk":
+        if self._storage in {"disk", "file"}:
             await self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         return len(ids)
 
     async def _current_storage_bytes(self) -> int:
-        if not self._conn or self._storage != "disk":
+        if not self._conn or self._storage == "memory":
             return 0
 
         async with self._conn.execute("PRAGMA page_size") as cur:

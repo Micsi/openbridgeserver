@@ -2,7 +2,7 @@
 
 Session-scoped setup:
   1. mosquitto  — Eclipse Mosquitto in Docker (anonymous, port 18830)
-  2. app        — FastAPI app with lifespan, SQLite :memory:, test MQTT port
+  2. app        — FastAPI app with lifespan, SQLite file DB, test MQTT port
   3. client     — httpx.AsyncClient via ASGITransport
   4. auth_headers — Bearer token from admin/admin login
 
@@ -78,7 +78,7 @@ def mosquitto_port():
 @pytest_asyncio.fixture(scope="session")
 async def app(mosquitto_port):
     """Create the FastAPI app with:
-      - SQLite :memory: (fresh for this test session)
+      - SQLite file DB (fresh temp file for this test session)
       - MQTT pointing at the test Mosquitto container
       - JWT secret long enough to pass validation
       - Mosquitto passwd file in /tmp (no reload needed in tests)
@@ -96,10 +96,14 @@ async def app(mosquitto_port):
         override_settings,
     )
 
+    db_file = tempfile.NamedTemporaryFile(mode="w", suffix=".db", delete=False, prefix="obs_test_db_")
+    db_file.close()
+    db_path = db_file.name
+
     override_settings(
         Settings(
             database=DatabaseSettings(
-                path=":memory:",
+                path=db_path,
                 history_plugin="sqlite",
             ),
             mqtt=MqttSettings(
@@ -120,7 +124,7 @@ async def app(mosquitto_port):
                 service_password="test",
             ),
             ringbuffer=RingBufferSettings(
-                storage="memory",
+                storage="file",
                 max_entries=1000,
             ),
         ),
@@ -155,6 +159,20 @@ async def app(mosquitto_port):
             getattr(mod, fn_name)()
         except Exception:
             pass  # best-effort — never fail teardown
+
+    cleanup_paths = [
+        db_path,
+        f"{db_path}-wal",
+        f"{db_path}-shm",
+        db_path.replace(".db", "_ringbuffer.db"),
+        db_path.replace(".db", "_ringbuffer.db-wal"),
+        db_path.replace(".db", "_ringbuffer.db-shm"),
+    ]
+    for cleanup_path in cleanup_paths:
+        try:
+            os.unlink(cleanup_path)
+        except OSError:
+            pass
 
 
 @pytest_asyncio.fixture(scope="session")

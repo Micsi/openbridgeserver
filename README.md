@@ -123,7 +123,7 @@ database:
   path: /data/obs.db      # Datenbankdatei
 
 ringbuffer:
-  storage: disk               # Änderungsprotokoll: memory (RAM) oder disk (Datei)
+  storage: file               # Änderungsprotokoll: file-only (Datei)
   max_entries: 10000          # Maximale Anzahl Einträge
   max_file_size_bytes: null   # Optional: harte Dateigrenze für den Ringbuffer
   max_age: null               # Optional: maximale Eintrags-Alterung in Sekunden
@@ -390,7 +390,7 @@ Der RingBuffer speichert die letzten N Wertänderungen als Protokoll. In der Web
 ```
 GET  /api/v1/ringbuffer?q=&adapter=&from=&limit=   # Einträge abfragen
 GET  /api/v1/ringbuffer/stats                       # Anzahl Einträge, Kapazität
-POST /api/v1/ringbuffer/config                      # Speicherart + Kapazität ändern
+POST /api/v1/ringbuffer/config                      # file-only + Kapazität ändern
 ```
 
 Der Parameter `q` durchsucht sowohl den Namen als auch die ID des Datenpunkts.

@@ -122,13 +122,24 @@ async def test_ringbuffer_config_rejects_invalid_storage_mode(client, auth_heade
         headers=auth_headers,
     )
     assert resp.status_code == 422
+    assert "storage must be 'file'" in resp.text
+
+
+async def test_ringbuffer_config_rejects_memory_storage_mode(client, auth_headers):
+    resp = await client.post(
+        "/api/v1/ringbuffer/config",
+        json={"storage": "memory", "max_entries": 100},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+    assert "storage must be 'file'" in resp.text
 
 
 async def test_ringbuffer_config_accepts_retention_fields(client, auth_headers):
     resp = await client.post(
         "/api/v1/ringbuffer/config",
         json={
-            "storage": "memory",
+            "storage": "file",
             "max_entries": 100,
             "max_file_size_bytes": 4096,
             "max_age": 60,
@@ -140,3 +151,16 @@ async def test_ringbuffer_config_accepts_retention_fields(client, auth_headers):
     assert body["max_entries"] == 100
     assert body["max_file_size_bytes"] == 4096
     assert body["max_age"] == 60
+
+    # Keep session-scoped integration app stable for subsequent tests.
+    reset_resp = await client.post(
+        "/api/v1/ringbuffer/config",
+        json={
+            "storage": "file",
+            "max_entries": 1000,
+            "max_file_size_bytes": None,
+            "max_age": None,
+        },
+        headers=auth_headers,
+    )
+    assert reset_resp.status_code == 200, reset_resp.text
