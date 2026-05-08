@@ -123,11 +123,7 @@ class RingBuffer:
     ) -> None:
         """Switch storage mode at runtime. Copies existing entries."""
         async with self._lock:
-            resolved_max_file_size = (
-                self._max_file_size_bytes
-                if max_file_size_bytes is _UNSET
-                else max_file_size_bytes
-            )
+            resolved_max_file_size = self._max_file_size_bytes if max_file_size_bytes is _UNSET else max_file_size_bytes
             resolved_max_age = self._max_age if max_age is _UNSET else max_age
 
             if (
@@ -141,9 +137,7 @@ class RingBuffer:
             # Same storage backend: apply config in-place and trim, no data migration.
             if storage == self._storage:
                 self._max_entries = max_entries
-                self._max_file_size_bytes = (
-                    int(resolved_max_file_size) if resolved_max_file_size is not None else None
-                )
+                self._max_file_size_bytes = int(resolved_max_file_size) if resolved_max_file_size is not None else None
                 self._max_age = int(resolved_max_age) if resolved_max_age is not None else None
                 await self._trim()
                 logger.info(
@@ -165,9 +159,7 @@ class RingBuffer:
 
             self._storage = storage
             self._max_entries = max_entries
-            self._max_file_size_bytes = (
-                int(resolved_max_file_size) if resolved_max_file_size is not None else None
-            )
+            self._max_file_size_bytes = int(resolved_max_file_size) if resolved_max_file_size is not None else None
             self._max_age = int(resolved_max_age) if resolved_max_age is not None else None
 
             # Open new connection
