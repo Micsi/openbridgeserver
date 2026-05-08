@@ -140,9 +140,13 @@ watch(liveSeriesValues, (newVals, oldVals) => {
     if (oldVals?.[i] && val.t === oldVals[i]?.t) return  // gleicher Timestamp
     const ds = chart!.data.datasets[i]
     if (!ds) return
-    const px     = new Date(val.t).getTime()
+    const px  = new Date(val.t).getTime()
+    const pts = ds.data as { x: number; y: number }[]
+    // Nur anhängen wenn der neue Wert strikt neuer als der letzte Dataset-Punkt ist.
+    // Verhindert dass ein veralteter fetchInitialValues-Wert ungeordnet im Array landet
+    // und Chart.js eine Linie vom letzten History-Punkt zurück zu diesem Fehlpunkt zieht.
+    if (pts.length > 0 && pts[pts.length - 1].x >= px) return
     const cutoff = px - hours.value * 3_600_000
-    const pts    = ds.data as { x: number; y: number }[]
     pts.push({ x: px, y: Number(val.v) })
     while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
     if (px > newestX) newestX = px

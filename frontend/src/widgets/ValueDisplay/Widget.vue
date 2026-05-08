@@ -217,14 +217,16 @@ async function updateMiniChart() {
 }
 
 // Neuen WS-Wert in Mini- und Modal-Chart einhängen, ohne History neu zu laden.
-// xAxis.max = pt.x (Zeitstempel des Werts), nicht Date.now() — sonst entsteht
-// ein Lückenbereich rechts, der bei fill:true als dunkles Dreieck erscheint.
+// Wichtig: nur anhängen wenn pt.x strikt neuer als der letzte vorhandene Punkt ist —
+// sonst landet ein veralteter fetchInitialValues-Wert ungeordnet im Array und
+// Chart.js zieht eine Linie vom letzten History-Punkt zurück zu diesem Fehlpunkt.
 function appendLivePoint(val: { t: string; v: unknown }) {
   const pt     = { x: new Date(val.t).getTime(), y: Number(val.v) }
   const cutoff = pt.x - historyHours.value * 3_600_000
 
   if (miniChart) {
     const pts = miniChart.data.datasets[0].data as { x: number; y: number }[]
+    if (pts.length > 0 && pts[pts.length - 1].x >= pt.x) return
     pts.push(pt)
     while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
     const xAxis = miniChart.options.scales?.x as any
@@ -234,6 +236,7 @@ function appendLivePoint(val: { t: string; v: unknown }) {
 
   if (modalChart && modalOpen.value) {
     const pts = modalChart.data.datasets[0].data as { x: number; y: number }[]
+    if (pts.length > 0 && pts[pts.length - 1].x >= pt.x) return
     pts.push(pt)
     while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
     const xAxis = modalChart.options.scales?.x as any
