@@ -1,7 +1,61 @@
 <template>
   <div class="flex flex-col gap-4">
 
-    <!-- Connection Type -->
+    <!-- ── Gateway-Scanner ───────────────────────────────────────────────── -->
+    <div class="flex flex-col gap-3 p-3 bg-slate-800/50 border border-slate-600 rounded-lg">
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-sm font-medium text-slate-300">KNX/IP-Geräte suchen</span>
+        <button
+          type="button"
+          class="btn-secondary btn-sm shrink-0"
+          :disabled="scanning"
+          @click="doScan"
+        >
+          <Spinner v-if="scanning" size="xs" color="slate" />
+          <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          Suchen
+        </button>
+      </div>
+
+      <!-- Scan error -->
+      <p v-if="scanError" class="text-xs text-red-400">{{ scanError }}</p>
+
+      <!-- Scan results -->
+      <div v-if="scanResults !== null" class="flex flex-col gap-2">
+        <p v-if="scanResults.length === 0" class="text-xs text-slate-400">
+          Keine KNX/IP-Geräte gefunden.
+        </p>
+        <template v-else>
+          <p class="text-xs text-slate-400">{{ scanResults.length }} Gerät(e) gefunden — auswählen zum Übernehmen:</p>
+          <label
+            v-for="gw in scanResults"
+            :key="gw.ip_addr + ':' + gw.port"
+            :class="[
+              'flex flex-col gap-1 p-2 rounded-lg border cursor-pointer transition-colors select-none',
+              selectedGw === gw ? 'border-blue-500 bg-blue-500/10' : 'border-slate-600 hover:border-slate-400'
+            ]"
+            @click="applyGateway(gw)"
+          >
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium text-slate-200">{{ gw.name }}</span>
+              <span class="text-xs text-slate-400 font-mono">{{ gw.ip_addr }}:{{ gw.port }}</span>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              <span v-if="gw.supports_tunnelling && !gw.tunnelling_requires_secure" class="badge-xs">UDP</span>
+              <span v-if="gw.supports_tunnelling_tcp && !gw.tunnelling_requires_secure" class="badge-xs">TCP</span>
+              <span v-if="gw.supports_routing && !gw.routing_requires_secure" class="badge-xs">Routing</span>
+              <span v-if="gw.supports_secure" class="badge-xs badge-blue">Secure</span>
+              <span v-if="gw.tunnelling_requires_secure" class="badge-xs badge-amber">Secure required</span>
+            </div>
+            <span v-if="gw.individual_address" class="text-xs text-slate-400">PA: {{ gw.individual_address }} · Interface: {{ gw.local_interface }}</span>
+          </label>
+        </template>
+      </div>
+    </div>
+
+    <!-- ── Connection Type ───────────────────────────────────────────────── -->
     <div class="form-group">
       <label class="label">Connection Type</label>
       <select v-model="cfg.connection_type" class="input" @change="onTypeChange">
@@ -16,14 +70,8 @@
 
     <!-- ── Automatic ─────────────────────────────────────────────────────── -->
     <template v-if="isAutomatic">
-      <div class="flex items-start gap-2 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-sm text-blue-300">
-        <svg class="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        xknx sucht automatisch nach KNX/IP-Interfaces im Netzwerk (GatewayScanner).
-      </div>
       <div class="form-group">
-        <label class="label">Local IP <span class="text-xs text-slate-400">(Netzwerkinterface einschränken, optional)</span></label>
+        <label class="label">Local IP <span class="text-xs text-slate-400">(Interface einschränken, optional)</span></label>
         <input
           :value="cfg.local_ip ?? ''"
           type="text"
@@ -55,7 +103,7 @@
         />
       </div>
 
-      <!-- Plain tunneling: individual address here -->
+      <!-- Plain tunneling: individual address -->
       <div v-if="!isSecure" class="form-group">
         <label class="label">Individual Address</label>
         <input v-model="cfg.individual_address" type="text" class="input" placeholder="1.1.255" @input="emitUpdate" />
@@ -69,7 +117,7 @@
         <input v-model="cfg.multicast_group" type="text" class="input" placeholder="224.0.23.12" @input="emitUpdate" />
       </div>
       <div class="form-group">
-        <label class="label">Local IP <span class="text-xs text-slate-400">(Netzwerkinterface für Multicast, optional)</span></label>
+        <label class="label">Local IP <span class="text-xs text-slate-400">(Netzwerkinterface, optional)</span></label>
         <input
           :value="cfg.local_ip ?? ''"
           type="text"
@@ -79,7 +127,7 @@
         />
       </div>
 
-      <!-- Plain routing: individual address here -->
+      <!-- Plain routing: individual address -->
       <div v-if="!isSecure" class="form-group">
         <label class="label">Individual Address <span class="text-xs text-slate-400">(Quelladresse)</span></label>
         <input v-model="cfg.individual_address" type="text" class="input" placeholder="1.1.255" @input="emitUpdate" />
@@ -99,7 +147,6 @@
           <button type="button" class="text-xs text-blue-400 hover:text-blue-300 shrink-0 ml-2" @click="startReupload">Neu hochladen</button>
         </div>
         <p class="text-xs text-slate-400">Keyfile gespeichert. Zum Ändern ein neues hochladen.</p>
-        <!-- tunneling_secure: individual address from saved config, still editable -->
         <div v-if="isTunnelSecure" class="form-group">
           <label class="label">Individual Address <span class="text-xs text-slate-400">(aus Keyfile)</span></label>
           <input v-model="cfg.individual_address" type="text" class="input" placeholder="1.1.255" @input="emitUpdate" />
@@ -116,7 +163,7 @@
           <button type="button" class="text-xs text-slate-400 hover:text-slate-200" @click="clearUpload">Ändern</button>
         </div>
 
-        <!-- tunneling_secure: select tunnel -->
+        <!-- tunneling_secure: tunnel selection -->
         <template v-if="isTunnelSecure">
           <div v-if="uploadResult.tunnels.length === 0" class="text-sm text-amber-400">
             Keine Tunneling-Interfaces im Keyfile gefunden.
@@ -155,7 +202,7 @@
             · Latenz: {{ uploadResult.backbone.latency_ms }} ms
           </div>
           <div class="form-group">
-            <label class="label">Individual Address <span class="text-xs text-slate-400">(Quelladresse des Routers)</span></label>
+            <label class="label">Individual Address <span class="text-xs text-slate-400">(Quelladresse)</span></label>
             <input v-model="cfg.individual_address" type="text" class="input" placeholder="1.1.255" @input="emitUpdate" />
           </div>
         </template>
@@ -220,7 +267,7 @@ const keyfileFilename     = computed(() => {
 
 // ── Local state ────────────────────────────────────────────────────────────
 const cfg = reactive({
-  connection_type: 'tunneling',
+  connection_type: 'automatic',
   host: '192.168.1.100',
   port: 3671,
   individual_address: '1.1.255',
@@ -235,6 +282,13 @@ const cfg = reactive({
   backbone_key: null,
 })
 
+// Scanner state
+const scanning     = ref(false)
+const scanResults  = ref(null)
+const scanError    = ref('')
+const selectedGw   = ref(null)
+
+// Keyfile state
 const selectedTunnel = ref(null)
 const uploadResult   = ref(null)
 const uploadFile     = ref(null)
@@ -255,6 +309,45 @@ applyModelValue(props.modelValue)
 watch(() => props.modelValue, (val) => {
   applyModelValue(val)
 }, { deep: true })
+
+// ── Scanner ────────────────────────────────────────────────────────────────
+async function doScan() {
+  scanning.value = true
+  scanError.value = ''
+  scanResults.value = null
+  selectedGw.value = null
+  try {
+    const res = await knxKeyfileApi.scan({ timeout: 4 })
+    scanResults.value = res.data
+  } catch (err) {
+    scanError.value = err.response?.data?.detail ?? 'Scan fehlgeschlagen'
+  } finally {
+    scanning.value = false
+  }
+}
+
+function applyGateway(gw) {
+  selectedGw.value = gw
+  cfg.host = gw.ip_addr
+  cfg.port = gw.port
+  // local_ip: use the interface IP from the scan response
+  cfg.local_ip = gw.local_ip || null
+
+  // Pick best connection type
+  if (gw.tunnelling_requires_secure || (gw.supports_secure && gw.supports_tunnelling_tcp)) {
+    cfg.connection_type = 'tunneling_secure'
+  } else if (gw.routing_requires_secure || (gw.supports_secure && gw.supports_routing)) {
+    cfg.connection_type = 'routing_secure'
+  } else if (gw.supports_tunnelling_tcp) {
+    cfg.connection_type = 'tunneling_tcp'
+  } else if (gw.supports_tunnelling) {
+    cfg.connection_type = 'tunneling'
+  } else if (gw.supports_routing) {
+    cfg.connection_type = 'routing'
+  }
+
+  emitUpdate()
+}
 
 // ── Handlers ───────────────────────────────────────────────────────────────
 function onTypeChange() {
@@ -338,3 +431,15 @@ function emitUpdate() {
   emit('update:modelValue', { ...cfg })
 }
 </script>
+
+<style scoped>
+.badge-xs {
+  @apply text-xs px-1.5 py-0.5 rounded bg-slate-600 text-slate-300;
+}
+.badge-xs.badge-blue {
+  @apply bg-blue-600/40 text-blue-300;
+}
+.badge-xs.badge-amber {
+  @apply bg-amber-600/40 text-amber-300;
+}
+</style>

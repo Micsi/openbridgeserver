@@ -1,6 +1,7 @@
-"""KNX Keyfile API
+"""KNX API
 
-POST /api/v1/knx/keyfile            — .knxkeys hochladen, Tunnel-Liste zurückgeben
+GET    /api/v1/knx/scan              — KNX/IP-Geräte im Netzwerk suchen
+POST   /api/v1/knx/keyfile           — .knxkeys hochladen, Tunnel-Liste zurückgeben
 DELETE /api/v1/knx/keyfile/{file_id} — gespeichertes Keyfile löschen
 """
 
@@ -46,6 +47,21 @@ class KeyfileParseResult(BaseModel):
     backbone: BackboneInfo | None
 
 
+class GatewayScanResult(BaseModel):
+    name: str
+    ip_addr: str
+    port: int
+    local_ip: str
+    local_interface: str
+    individual_address: str | None
+    supports_tunnelling: bool
+    supports_tunnelling_tcp: bool
+    supports_routing: bool
+    supports_secure: bool
+    tunnelling_requires_secure: bool | None
+    routing_requires_secure: bool | None
+
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -81,6 +97,51 @@ def _parse_keyring(path: Path, password: str) -> Any:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.get("/scan", response_model=list[GatewayScanResult])
+async def scan_knx_gateways(
+    timeout: float = 4.0,
+    local_ip: str | None = None,
+    _user: str = Depends(get_current_user),
+) -> list[GatewayScanResult]:
+    """KNX/IP-Geräte im lokalen Netzwerk suchen (GatewayScanner).
+
+    Sendet UDP-Multicast SearchRequest-Frames und gibt alle gefundenen
+    KNX/IP-Interfaces mit ihren Fähigkeiten zurück.
+    """
+    try:
+        from xknx import XKNX
+        from xknx.io.gateway_scanner import GatewayScanner
+    except ImportError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "xknx nicht installiert") from exc
+
+    xknx = XKNX()
+    scanner = GatewayScanner(xknx, local_ip=local_ip, timeout_in_seconds=timeout)
+    try:
+        gateways = await scanner.scan()
+    except Exception as exc:
+        logger.warning("KNX GatewayScanner Fehler: %s", exc)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Scan fehlgeschlagen: {exc}") from exc
+
+    logger.info("KNX Scan: %d Gerät(e) gefunden", len(gateways))
+    return [
+        GatewayScanResult(
+            name=gw.name,
+            ip_addr=gw.ip_addr,
+            port=gw.port,
+            local_ip=gw.local_ip,
+            local_interface=gw.local_interface,
+            individual_address=str(gw.individual_address) if gw.individual_address else None,
+            supports_tunnelling=gw.supports_tunnelling,
+            supports_tunnelling_tcp=gw.supports_tunnelling_tcp,
+            supports_routing=gw.supports_routing,
+            supports_secure=gw.supports_secure,
+            tunnelling_requires_secure=gw.tunnelling_requires_secure,
+            routing_requires_secure=gw.routing_requires_secure,
+        )
+        for gw in gateways
+    ]
 
 
 @router.post("/keyfile", response_model=KeyfileParseResult)
