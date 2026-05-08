@@ -172,9 +172,13 @@ const secondaryDisplay = computed(() => {
 const canvasEl      = ref<HTMLCanvasElement | null>(null)
 const modalOpen     = ref(false)
 const modalCanvasEl = ref<HTMLCanvasElement | null>(null)
-let miniChart:  Chart | null = null
-let modalChart: Chart | null = null
+let miniChart:    Chart | null = null
+let modalChart:   Chart | null = null
 let histUnit = ''
+let miniRefreshTimer:  ReturnType<typeof setInterval> | null = null
+let modalRefreshTimer: ReturnType<typeof setInterval> | null = null
+
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 function fmtMs(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -231,12 +235,28 @@ onMounted(() => {
     },
   })
   updateMiniChart()
+  miniRefreshTimer = setInterval(updateMiniChart, REFRESH_INTERVAL_MS)
 })
 
-watch(() => [props.datapointId, historyHours.value], updateMiniChart)
+watch(() => [props.datapointId, historyHours.value], () => {
+  updateMiniChart()
+  if (miniRefreshTimer) { clearInterval(miniRefreshTimer); miniRefreshTimer = setInterval(updateMiniChart, REFRESH_INTERVAL_MS) }
+})
+
+async function updateModalChart() {
+  if (!modalChart) return
+  const { pts, minMs, maxMs } = await fetchPoints()
+  modalChart.data.datasets[0].data = pts
+  const xAxis = modalChart.options.scales?.x as any
+  if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
+  modalChart.update()
+}
 
 watch(modalOpen, async (open) => {
-  if (!open) { modalChart?.destroy(); modalChart = null; return }
+  if (!open) {
+    if (modalRefreshTimer) { clearInterval(modalRefreshTimer); modalRefreshTimer = null }
+    modalChart?.destroy(); modalChart = null; return
+  }
   await new Promise<void>(r => setTimeout(r, 50))
   if (!modalCanvasEl.value) return
   const { pts, minMs, maxMs } = await fetchPoints()
@@ -267,9 +287,15 @@ watch(modalOpen, async (open) => {
       },
     },
   })
+  modalRefreshTimer = setInterval(updateModalChart, REFRESH_INTERVAL_MS)
 })
 
-onUnmounted(() => { miniChart?.destroy(); modalChart?.destroy() })
+onUnmounted(() => {
+  if (miniRefreshTimer)  { clearInterval(miniRefreshTimer);  miniRefreshTimer  = null }
+  if (modalRefreshTimer) { clearInterval(modalRefreshTimer); modalRefreshTimer = null }
+  miniChart?.destroy()
+  modalChart?.destroy()
+})
 
 const quality = computed(() => props.value?.q ?? null)
 </script>

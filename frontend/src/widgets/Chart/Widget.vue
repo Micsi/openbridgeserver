@@ -23,7 +23,10 @@ const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | null = null
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 const seriesUnits = ref<string[]>([])
+
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 function fmtMs(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -177,12 +180,19 @@ onMounted(() => {
     },
   })
   loadData()
+  refreshTimer = setInterval(loadData, REFRESH_INTERVAL_MS)
 })
 
-watch(() => props.datapointId, loadData)
-watch(() => props.config, loadData, { deep: true })
+function reloadAndResetTimer() {
+  loadData()
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = setInterval(loadData, REFRESH_INTERVAL_MS) }
+}
+
+watch(() => props.datapointId, reloadAndResetTimer)
+watch(() => props.config, reloadAndResetTimer, { deep: true })
 
 onUnmounted(() => {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
   chart?.destroy()
   chart = null
 })
