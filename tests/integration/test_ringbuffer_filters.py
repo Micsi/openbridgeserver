@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -41,6 +42,16 @@ async def _query_ringbuffer(client, auth_headers, params: dict) -> list[dict]:
     resp = await client.get(
         "/api/v1/ringbuffer/",
         params=params,
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _query_ringbuffer_v2(client, auth_headers, body: dict) -> list[dict]:
+    resp = await client.post(
+        "/api/v1/ringbuffer/query",
+        json=body,
         headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
@@ -164,3 +175,183 @@ async def test_ringbuffer_config_accepts_retention_fields(client, auth_headers):
         headers=auth_headers,
     )
     assert reset_resp.status_code == 200, reset_resp.text
+
+
+async def test_ringbuffer_v2_adapter_or_is_combined_with_group_and(client, auth_headers):
+    dp_a = await _create_dp(client, auth_headers, "RB DSL A")
+    dp_b = await _create_dp(client, auth_headers, "RB DSL B")
+
+    await _write_value(client, auth_headers, dp_a["id"], 1.0)
+    await _write_value(client, auth_headers, dp_b["id"], 2.0)
+
+    rows = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "adapters": {"any_of": ["api", "knx"]},
+                "datapoints": {"ids": [dp_a["id"]]},
+            },
+            "sort": {"field": "id", "order": "desc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+
+    assert rows
+    assert all(row["datapoint_id"] == dp_a["id"] for row in rows)
+    assert all(row["source_adapter"] in {"api", "knx"} for row in rows)
+
+
+async def test_ringbuffer_v2_time_filter_supports_open_boundaries(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, "RB DSL Open Bounds")
+
+    await _write_value(client, auth_headers, dp["id"], 10.0)
+    first = (await _query_ringbuffer(client, auth_headers, {"q": dp["id"], "limit": 1}))[0]
+    await asyncio.sleep(0.02)
+    await _write_value(client, auth_headers, dp["id"], 11.0)
+    second = (await _query_ringbuffer(client, auth_headers, {"q": dp["id"], "limit": 1}))[0]
+
+    only_from = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp["id"]]},
+                "time": {"from": first["ts"]},
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert only_from
+    assert all(row["ts"] > first["ts"] for row in only_from)
+
+    only_to = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp["id"]]},
+                "time": {"to": second["ts"]},
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert only_to
+    assert all(row["ts"] < second["ts"] for row in only_to)
+
+
+async def test_ringbuffer_v2_combines_absolute_and_relative_time_bounds(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, "RB DSL Abs+Rel")
+
+    now = datetime.now(UTC)
+    old_ts = (now - timedelta(seconds=120)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    future_ts = (now + timedelta(seconds=120)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+    await _write_value(client, auth_headers, dp["id"], 100.0)
+    await asyncio.sleep(0.02)
+    await _write_value(client, auth_headers, dp["id"], 101.0)
+
+    # from=max(absolute, relative): absolute old + relative recent => rows exist.
+    rows_with_old_abs = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp["id"]]},
+                "time": {
+                    "from": old_ts,
+                    "from_relative_seconds": -30,
+                },
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert rows_with_old_abs
+
+    # from=max(absolute, relative): absolute future + relative recent => effective lower bound is future.
+    rows_with_future_abs = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp["id"]]},
+                "time": {
+                    "from": future_ts,
+                    "from_relative_seconds": -30,
+                },
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert rows_with_future_abs == []
+
+
+async def test_ringbuffer_v2_rejects_empty_adapter_filter_list(client, auth_headers):
+    resp = await client.post(
+        "/api/v1/ringbuffer/query",
+        json={
+            "filters": {
+                "adapters": {"any_of": ["  ", ""]},
+            },
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+    assert "filters.adapters.any_of must contain at least one adapter" in resp.text
+
+
+async def test_ringbuffer_v2_rejects_empty_datapoint_filter_list(client, auth_headers):
+    resp = await client.post(
+        "/api/v1/ringbuffer/query",
+        json={
+            "filters": {
+                "datapoints": {"ids": ["", "  "]},
+            },
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+    assert "filters.datapoints.ids must contain at least one datapoint id" in resp.text
+
+
+async def test_ringbuffer_v2_q_matches_datapoint_name(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, "RB DSL Name Match")
+    await _write_value(client, auth_headers, dp["id"], 12.5)
+
+    rows = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {"q": "name match"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert rows
+    assert any(row["datapoint_id"] == dp["id"] for row in rows)
+
+
+async def test_ringbuffer_v2_invalid_timestamp_returns_422(client, auth_headers):
+    resp = await client.post(
+        "/api/v1/ringbuffer/query",
+        json={
+            "filters": {
+                "time": {"from": "not-a-ts"},
+            },
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+    assert "invalid timestamp: not-a-ts" in resp.text
+
+
+async def test_ringbuffer_stats_endpoint_returns_current_config(client, auth_headers):
+    resp = await client.get("/api/v1/ringbuffer/stats", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["storage"] == "file"
+    assert "total" in body
+    assert "max_entries" in body

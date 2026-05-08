@@ -423,31 +423,101 @@ class RingBuffer:
         limit: int = 100,
         dp_ids: list[str] | None = None,
     ) -> list[RingBufferEntry]:
+        return await self.query_v2(
+            q=q,
+            adapter_any_of=[adapter] if adapter else None,
+            datapoint_ids=None,
+            from_ts=from_ts or None,
+            limit=limit,
+            offset=0,
+            sort_field="id",
+            sort_order="desc",
+            dp_ids_by_name=dp_ids,
+        )
+
+    async def query_v2(
+        self,
+        *,
+        q: str = "",
+        adapter_any_of: list[str] | None = None,
+        datapoint_ids: list[str] | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        from_relative_seconds: int | None = None,
+        to_relative_seconds: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_field: str = "id",
+        sort_order: str = "desc",
+        dp_ids_by_name: list[str] | None = None,
+    ) -> list[RingBufferEntry]:
         if not self._conn:
             return []
 
         sql = "SELECT * FROM ringbuffer WHERE 1=1"
         params: list[Any] = []
 
-        if q or dp_ids:
+        if q or dp_ids_by_name:
             parts: list[str] = []
             if q:
                 parts += ["datapoint_id LIKE ?", "source_adapter LIKE ?"]
                 params += [f"%{q}%", f"%{q}%"]
-            if dp_ids:
-                placeholders = ",".join("?" * len(dp_ids))
+            if dp_ids_by_name:
+                placeholders = ",".join("?" * len(dp_ids_by_name))
                 parts.append(f"datapoint_id IN ({placeholders})")
-                params += dp_ids
+                params += dp_ids_by_name
             sql += f" AND ({' OR '.join(parts)})"
-        if adapter:
-            sql += " AND source_adapter=?"
-            params.append(adapter)
-        if from_ts:
-            sql += " AND ts > ?"
-            params.append(from_ts)
 
-        sql += " ORDER BY id DESC LIMIT ?"
+        normalized_adapters = [adapter.strip() for adapter in (adapter_any_of or []) if adapter.strip()]
+        if normalized_adapters:
+            placeholders = ",".join("?" * len(normalized_adapters))
+            sql += f" AND source_adapter IN ({placeholders})"
+            params.extend(normalized_adapters)
+
+        if datapoint_ids:
+            normalized_dp_ids = [dp_id.strip() for dp_id in datapoint_ids if dp_id.strip()]
+            if normalized_dp_ids:
+                placeholders = ",".join("?" * len(normalized_dp_ids))
+                sql += f" AND datapoint_id IN ({placeholders})"
+                params.extend(normalized_dp_ids)
+
+        effective_from = _resolve_time_bound(
+            absolute_ts=from_ts,
+            relative_seconds=from_relative_seconds,
+            pick_newer=True,
+        )
+        effective_to = _resolve_time_bound(
+            absolute_ts=to_ts,
+            relative_seconds=to_relative_seconds,
+            pick_newer=False,
+        )
+        if effective_from:
+            sql += " AND ts > ?"
+            params.append(effective_from)
+        if effective_to:
+            sql += " AND ts < ?"
+            params.append(effective_to)
+        if effective_from and effective_to and effective_from >= effective_to:
+            raise ValueError("invalid time filter: effective 'from' must be earlier than effective 'to'")
+
+        if sort_field not in {"id", "ts"}:
+            raise ValueError("invalid sort field: expected 'id' or 'ts'")
+        if sort_order not in {"asc", "desc"}:
+            raise ValueError("invalid sort order: expected 'asc' or 'desc'")
+        if limit < 1:
+            raise ValueError("invalid pagination: limit must be >= 1")
+        if offset < 0:
+            raise ValueError("invalid pagination: offset must be >= 0")
+
+        direction = "ASC" if sort_order == "asc" else "DESC"
+        if sort_field == "ts":
+            sql += f" ORDER BY ts {direction}, id {direction}"
+        else:
+            sql += f" ORDER BY id {direction}"
+
+        sql += " LIMIT ? OFFSET ?"
         params.append(limit)
+        params.append(offset)
 
         rows = await self._fetchall(sql, params)
         return [
@@ -505,14 +575,39 @@ def _safe_loads(s: str | None) -> Any:
 
 
 def _parse_iso_ts(value: str) -> datetime:
+    raw_value = value
     if value.endswith("Z"):
         value = value[:-1] + "+00:00"
-    return datetime.fromisoformat(value).astimezone(UTC)
+    try:
+        return datetime.fromisoformat(value).astimezone(UTC)
+    except ValueError as exc:
+        raise ValueError(f"invalid timestamp: {raw_value}") from exc
 
 
 def _isoformat_utc(value: datetime) -> str:
     value = value.astimezone(UTC)
     return value.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _resolve_time_bound(
+    *,
+    absolute_ts: str | None,
+    relative_seconds: int | None,
+    pick_newer: bool,
+) -> str | None:
+    absolute_value = _parse_iso_ts(absolute_ts) if absolute_ts else None
+    relative_value = None
+    if relative_seconds is not None:
+        relative_value = datetime.now(UTC) + timedelta(seconds=relative_seconds)
+
+    if absolute_value and relative_value:
+        selected = max(absolute_value, relative_value) if pick_newer else min(absolute_value, relative_value)
+        return _isoformat_utc(selected)
+    if absolute_value:
+        return _isoformat_utc(absolute_value)
+    if relative_value:
+        return _isoformat_utc(relative_value)
+    return None
 
 
 # ---------------------------------------------------------------------------
