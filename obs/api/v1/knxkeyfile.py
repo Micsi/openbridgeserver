@@ -230,12 +230,14 @@ async def delete_keyfile(
     """Gespeichertes .knxkeys File löschen."""
     # Nur UUID-artige file_ids erlauben (Pfad-Traversal verhindern)
     try:
-        uuid_mod.UUID(file_id)
+        file_uuid = uuid_mod.UUID(file_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ungültige file_id") from exc
 
+    safe_file_id = str(file_uuid)
+
     base_dir = _keyfiles_dir().resolve()
-    keyfile_path = (base_dir / f"{file_id}.knxkeys").resolve()
+    keyfile_path = (base_dir / f"{safe_file_id}.knxkeys").resolve()
     try:
         keyfile_path.relative_to(base_dir)
     except ValueError as exc:
