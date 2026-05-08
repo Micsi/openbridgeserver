@@ -4,6 +4,7 @@ import { Chart, LineController, LineElement, PointElement, LinearScale, Filler, 
 import { history } from '@/api/client'
 import { useIcons } from '@/composables/useIcons'
 import { useDatapointsStore } from '@/stores/datapoints'
+import { useWebSocket } from '@/composables/useWebSocket'
 import type { DataPointValue } from '@/types'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, Filler, Tooltip)
@@ -169,11 +170,14 @@ const secondaryDisplay = computed(() => {
 
 // ── History chart ──────────────────────────────────────────────────────────────
 
+const ws = useWebSocket()
+
 const canvasEl      = ref<HTMLCanvasElement | null>(null)
 const modalOpen     = ref(false)
 const modalCanvasEl = ref<HTMLCanvasElement | null>(null)
-let miniChart:  Chart | null = null
-let modalChart: Chart | null = null
+let miniChart:   Chart | null = null
+let modalChart:  Chart | null = null
+let wsOff:       (() => void) | null = null
 let histUnit = ''
 
 function fmtMs(ms: number): string {
@@ -245,13 +249,15 @@ function appendLivePoint(val: { t: string; v: unknown }) {
   }
 }
 
-watch(() => props.value, (newVal, oldVal) => {
-  if (mode.value !== 'history' || !newVal || props.editorMode) return
-  if (oldVal && newVal.t === oldVal.t) return  // gleicher Timestamp → kein neuer Wert
-  appendLivePoint(newVal)
-})
-
 onMounted(() => {
+  // Direkt auf WS-Nachrichten hören — fetchInitialValues() läuft über HTTP und
+  // landet hier NICHT, vermeidet so das veraltete-Timestamp-Problem.
+  wsOff = ws.onMessage((msg) => {
+    if (mode.value !== 'history' || props.editorMode) return
+    if (!msg.id || msg.v === undefined || msg.id !== props.datapointId) return
+    appendLivePoint({ t: msg.t as string, v: msg.v })
+  })
+
   if (mode.value !== 'history' || !canvasEl.value) return
   miniChart = new Chart(canvasEl.value, {
     type: 'line',
@@ -304,7 +310,7 @@ watch(modalOpen, async (open) => {
   })
 })
 
-onUnmounted(() => { miniChart?.destroy(); modalChart?.destroy() })
+onUnmounted(() => { wsOff?.(); miniChart?.destroy(); modalChart?.destroy() })
 
 const quality = computed(() => props.value?.q ?? null)
 </script>

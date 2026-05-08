@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Chart, LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend } from 'chart.js'
 import { history } from '@/api/client'
-import { useDatapointsStore } from '@/stores/datapoints'
+import { useWebSocket } from '@/composables/useWebSocket'
 import type { DataPointValue } from '@/types'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend)
@@ -14,7 +14,7 @@ const props = defineProps<{
   editorMode: boolean
 }>()
 
-const dpStore = useDatapointsStore()
+const ws = useWebSocket()
 
 const label = computed(() => (props.config.label as string | undefined) ?? '—')
 const hours = computed(() => (props.config.hours as number | undefined) ?? 24)
@@ -25,7 +25,8 @@ interface SeriesDef { id: string; label: string; color: string; axis: 'y' | 'y1'
 const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
 
 const canvas = ref<HTMLCanvasElement | null>(null)
-let chart: Chart | null = null
+let chart:   Chart | null = null
+let wsOff:   (() => void) | null = null
 const seriesUnits = ref<string[]>([])
 
 function fmtMs(ms: number): string {
@@ -124,41 +125,6 @@ async function loadData() {
   chart.update()
 }
 
-// Aktuellen dpStore-Wert für jede konfigurierte Serie beobachten.
-// Da die Extra-Series via getExtraDatapointIds bereits abonniert sind,
-// liefert dpStore sofort neue Werte wenn ein WS-Update eintrifft.
-const liveSeriesValues = computed(() =>
-  buildSeriesDefs().map(s => dpStore.getValue(s.id)),
-)
-
-watch(liveSeriesValues, (newVals, oldVals) => {
-  if (!chart || props.editorMode) return
-  let newestX = 0
-
-  newVals.forEach((val, i) => {
-    if (!val) return
-    if (oldVals?.[i] && val.t === oldVals[i]?.t) return  // gleicher Timestamp
-    const ds = chart!.data.datasets[i]
-    if (!ds) return
-    const px  = new Date(val.t).getTime()
-    const pts = ds.data as { x: number; y: number }[]
-    // Nur anhängen wenn der neue Wert strikt neuer als der letzte Dataset-Punkt ist.
-    // Verhindert dass ein veralteter fetchInitialValues-Wert ungeordnet im Array landet
-    // und Chart.js eine Linie vom letzten History-Punkt zurück zu diesem Fehlpunkt zieht.
-    if (pts.length > 0 && pts[pts.length - 1].x >= px) return
-    const cutoff = px - hours.value * 3_600_000
-    pts.push({ x: px, y: Number(val.v) })
-    while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
-    if (px > newestX) newestX = px
-  })
-
-  if (newestX === 0) return
-  const cutoff = newestX - hours.value * 3_600_000
-  const xAxis  = chart!.options.scales?.x as Record<string, unknown> | undefined
-  if (xAxis) { xAxis.min = cutoff; xAxis.max = newestX }
-  chart!.update('none')
-}, { deep: true })
-
 onMounted(() => {
   if (!canvas.value) return
   chart = new Chart(canvas.value, {
@@ -215,12 +181,35 @@ onMounted(() => {
     },
   })
   loadData()
+
+  // Direkt auf WS-Nachrichten hören — fetchInitialValues() geht über HTTP und
+  // landet hier NICHT, was das veralteter-Timestamp-Problem komplett ausschliesst.
+  wsOff = ws.onMessage((msg) => {
+    if (!chart || props.editorMode) return
+    if (!msg.id || msg.v === undefined) return
+    // buildSeriesDefs() hier aufrufen damit Config-Änderungen immer reflektiert werden
+    const idx = buildSeriesDefs().findIndex(d => d.id === (msg.id as string))
+    if (idx === -1) return
+    const ds = chart.data.datasets[idx]
+    if (!ds) return
+    const px  = new Date(msg.t as string).getTime()
+    const pts = ds.data as { x: number; y: number }[]
+    // Nur anhängen wenn wirklich neuer als letzter Dataset-Punkt
+    if (pts.length > 0 && pts[pts.length - 1].x >= px) return
+    const cutoff = px - hours.value * 3_600_000
+    pts.push({ x: px, y: Number(msg.v) })
+    while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
+    const xAxis = chart.options.scales?.x as Record<string, unknown> | undefined
+    if (xAxis) { xAxis.min = cutoff; xAxis.max = px }
+    chart.update('none')
+  })
 })
 
 watch(() => props.datapointId, loadData)
 watch(() => props.config, loadData, { deep: true })
 
 onUnmounted(() => {
+  wsOff?.()
   chart?.destroy()
   chart = null
 })
