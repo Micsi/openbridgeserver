@@ -133,24 +133,25 @@ const liveSeriesValues = computed(() =>
 
 watch(liveSeriesValues, (newVals, oldVals) => {
   if (!chart || props.editorMode) return
-  const cutoff = Date.now() - hours.value * 3_600_000
-  const now    = Date.now()
-  let changed  = false
+  let newestX = 0
 
   newVals.forEach((val, i) => {
     if (!val) return
     if (oldVals?.[i] && val.t === oldVals[i]?.t) return  // gleicher Timestamp
     const ds = chart!.data.datasets[i]
     if (!ds) return
-    const pts = ds.data as { x: number; y: number }[]
-    pts.push({ x: new Date(val.t).getTime(), y: Number(val.v) })
+    const px     = new Date(val.t).getTime()
+    const cutoff = px - hours.value * 3_600_000
+    const pts    = ds.data as { x: number; y: number }[]
+    pts.push({ x: px, y: Number(val.v) })
     while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
-    changed = true
+    if (px > newestX) newestX = px
   })
 
-  if (!changed) return
-  const xAxis = chart!.options.scales?.x as Record<string, unknown> | undefined
-  if (xAxis) { xAxis.min = cutoff; xAxis.max = now }
+  if (newestX === 0) return
+  const cutoff = newestX - hours.value * 3_600_000
+  const xAxis  = chart!.options.scales?.x as Record<string, unknown> | undefined
+  if (xAxis) { xAxis.min = cutoff; xAxis.max = newestX }
   chart!.update('none')
 }, { deep: true })
 
