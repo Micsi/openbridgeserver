@@ -122,3 +122,21 @@ async def test_ringbuffer_config_rejects_invalid_storage_mode(client, auth_heade
         headers=auth_headers,
     )
     assert resp.status_code == 422
+
+
+async def test_ringbuffer_config_accepts_retention_fields(client, auth_headers):
+    resp = await client.post(
+        "/api/v1/ringbuffer/config",
+        json={
+            "storage": "memory",
+            "max_entries": 100,
+            "max_file_size_bytes": 4096,
+            "max_age": 60,
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["max_entries"] == 100
+    assert body["max_file_size_bytes"] == 4096
+    assert body["max_age"] == 60
