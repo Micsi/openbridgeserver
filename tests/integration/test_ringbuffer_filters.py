@@ -19,17 +19,17 @@ _DP_BASE = {
 }
 
 
-async def _create_dp(client, auth_headers, name: str) -> dict:
+async def _create_dp(client, auth_headers, name: str, data_type: str = "FLOAT", unit: str | None = "W") -> dict:
     resp = await client.post(
         "/api/v1/datapoints/",
-        json={**_DP_BASE, "name": name},
+        json={**_DP_BASE, "name": name, "data_type": data_type, "unit": unit},
         headers=auth_headers,
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
 
 
-async def _write_value(client, auth_headers, dp_id: str, value: float) -> None:
+async def _write_value(client, auth_headers, dp_id: str, value: object) -> None:
     resp = await client.post(
         f"/api/v1/datapoints/{dp_id}/value",
         json={"value": value},
@@ -355,3 +355,108 @@ async def test_ringbuffer_stats_endpoint_returns_current_config(client, auth_hea
     assert body["storage"] == "file"
     assert "total" in body
     assert "max_entries" in body
+
+
+async def test_ringbuffer_v2_value_filters_numeric_string_boolean_and_regex(client, auth_headers):
+    dp_float = await _create_dp(client, auth_headers, "RB DSL Value Float", data_type="FLOAT", unit="W")
+    dp_string = await _create_dp(client, auth_headers, "RB DSL Value String", data_type="STRING", unit=None)
+    dp_bool = await _create_dp(client, auth_headers, "RB DSL Value Bool", data_type="BOOLEAN", unit=None)
+
+    await _write_value(client, auth_headers, dp_float["id"], 10.0)
+    await _write_value(client, auth_headers, dp_float["id"], 20.0)
+    await _write_value(client, auth_headers, dp_string["id"], "Wohnzimmer Temperatur")
+    await _write_value(client, auth_headers, dp_string["id"], "Garage Licht")
+    await _write_value(client, auth_headers, dp_bool["id"], True)
+    await _write_value(client, auth_headers, dp_bool["id"], False)
+
+    numeric_rows = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp_float["id"]]},
+                "values": [{"operator": "between", "lower": 15, "upper": 25}],
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert [row["new_value"] for row in numeric_rows] == [20.0]
+
+    contains_rows = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp_string["id"]]},
+                "values": [{"operator": "contains", "value": "Wohn"}],
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert [row["new_value"] for row in contains_rows] == ["Wohnzimmer Temperatur"]
+
+    regex_rows = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp_string["id"]]},
+                "values": [{"operator": "regex", "pattern": "^Garage"}],
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert [row["new_value"] for row in regex_rows] == ["Garage Licht"]
+
+    bool_rows = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "datapoints": {"ids": [dp_bool["id"]]},
+                "values": [{"operator": "eq", "value": True}],
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert [row["new_value"] for row in bool_rows] == [True]
+
+
+async def test_ringbuffer_v2_value_filter_type_conflict_returns_422(client, auth_headers):
+    dp_bool = await _create_dp(client, auth_headers, "RB DSL Value Conflict Bool", data_type="BOOLEAN", unit=None)
+    await _write_value(client, auth_headers, dp_bool["id"], True)
+
+    resp = await client.post(
+        "/api/v1/ringbuffer/query",
+        json={
+            "filters": {
+                "datapoints": {"ids": [dp_bool["id"]]},
+                "values": [{"operator": "gt", "value": 0}],
+            },
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+    assert "operator 'gt' is not supported for data_type 'BOOLEAN'" in resp.text
+
+
+async def test_ringbuffer_v2_value_filter_regex_guard_returns_422(client, auth_headers):
+    dp_string = await _create_dp(client, auth_headers, "RB DSL Value Regex Guard", data_type="STRING", unit=None)
+    await _write_value(client, auth_headers, dp_string["id"], "aaaaaaaaaaaaaaaa")
+
+    resp = await client.post(
+        "/api/v1/ringbuffer/query",
+        json={
+            "filters": {
+                "datapoints": {"ids": [dp_string["id"]]},
+                "values": [{"operator": "regex", "pattern": "(a+)+$"}],
+            },
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+    assert "unsafe regex pattern" in resp.text

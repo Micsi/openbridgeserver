@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -441,6 +442,8 @@ class RingBuffer:
         q: str = "",
         adapter_any_of: list[str] | None = None,
         datapoint_ids: list[str] | None = None,
+        value_filters: list[dict[str, Any]] | None = None,
+        datapoint_types: dict[str, str] | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
         from_relative_seconds: int | None = None,
@@ -515,12 +518,16 @@ class RingBuffer:
         else:
             sql += f" ORDER BY id {direction}"
 
-        sql += " LIMIT ? OFFSET ?"
-        params.append(limit)
-        params.append(offset)
+        rows: list[Any]
+        if value_filters:
+            rows = await self._fetchall(sql, params)
+        else:
+            sql += " LIMIT ? OFFSET ?"
+            params.append(limit)
+            params.append(offset)
+            rows = await self._fetchall(sql, params)
 
-        rows = await self._fetchall(sql, params)
-        return [
+        entries = [
             RingBufferEntry(
                 id=r["id"],
                 ts=r["ts"],
@@ -533,6 +540,15 @@ class RingBuffer:
             )
             for r in rows
         ]
+        if not value_filters:
+            return entries
+
+        filtered = await _apply_value_filters(
+            entries=entries,
+            value_filters=value_filters,
+            datapoint_types=datapoint_types or {},
+        )
+        return filtered[offset : offset + limit]
 
     async def stats(self) -> dict:
         if not self._conn:
@@ -640,3 +656,151 @@ async def init_ringbuffer(
     _rb = RingBuffer(storage, max_entries, disk_path, max_file_size_bytes, max_age)
     await _rb.start()
     return _rb
+
+
+_NUMERIC_TYPES = {"FLOAT", "INTEGER"}
+_BOOLEAN_TYPES = {"BOOLEAN"}
+_STRING_TYPES = {"STRING"}
+_REGEX_MAX_PATTERN_LEN = 256
+_REGEX_MAX_TARGET_LEN = 4096
+_REGEX_TIMEOUT_SECONDS = 0.05
+_RE_UNSAFE_NESTED_QUANTIFIERS = re.compile(r"\((?:[^()\\]|\\.)*[+*][^()]*\)[+*]")
+
+
+async def _apply_value_filters(
+    *,
+    entries: list[RingBufferEntry],
+    value_filters: list[dict[str, Any]],
+    datapoint_types: dict[str, str],
+) -> list[RingBufferEntry]:
+    normalized_filters = [_normalize_value_filter(spec) for spec in value_filters]
+    result: list[RingBufferEntry] = []
+    for entry in entries:
+        data_type = (datapoint_types.get(entry.datapoint_id) or "").strip().upper()
+        match = True
+        for vf in normalized_filters:
+            if not await _matches_value_filter(entry.new_value, data_type, vf):
+                match = False
+                break
+        if match:
+            result.append(entry)
+    return result
+
+
+def _normalize_value_filter(spec: dict[str, Any]) -> dict[str, Any]:
+    operator = str(spec.get("operator", "")).strip().lower()
+    if operator not in {"eq", "ne", "gt", "gte", "lt", "lte", "between", "contains", "regex"}:
+        raise ValueError(f"invalid value filter operator: {operator!r}")
+    return {
+        "operator": operator,
+        "value": spec.get("value"),
+        "lower": spec.get("lower"),
+        "upper": spec.get("upper"),
+        "pattern": spec.get("pattern"),
+        "ignore_case": bool(spec.get("ignore_case", False)),
+    }
+
+
+async def _matches_value_filter(value: Any, data_type: str, vf: dict[str, Any]) -> bool:
+    operator = vf["operator"]
+    if operator in {"eq", "ne"}:
+        expected = vf["value"]
+        is_equal = value == expected
+        return is_equal if operator == "eq" else not is_equal
+
+    if _is_numeric_type(data_type, value):
+        return _match_numeric_operator(value, vf)
+    if _is_string_type(data_type, value):
+        return await _match_string_operator(value, vf)
+    if _is_boolean_type(data_type, value):
+        raise ValueError(f"operator '{operator}' is not supported for data_type 'BOOLEAN'")
+
+    raise ValueError(f"operator '{operator}' is not supported for data_type '{data_type or 'UNKNOWN'}'")
+
+
+def _is_numeric_type(data_type: str, value: Any) -> bool:
+    if data_type in _NUMERIC_TYPES:
+        return True
+    return not data_type and isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_string_type(data_type: str, value: Any) -> bool:
+    if data_type in _STRING_TYPES:
+        return True
+    return not data_type and isinstance(value, str)
+
+
+def _is_boolean_type(data_type: str, value: Any) -> bool:
+    if data_type in _BOOLEAN_TYPES:
+        return True
+    return not data_type and isinstance(value, bool)
+
+
+def _to_number(value: Any, *, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be numeric")
+    return float(value)
+
+
+def _match_numeric_operator(value: Any, vf: dict[str, Any]) -> bool:
+    operator = vf["operator"]
+    if operator not in {"gt", "gte", "lt", "lte", "between"}:
+        raise ValueError(f"operator '{operator}' is not supported for data_type 'FLOAT'")
+
+    actual = _to_number(value, field="row value")
+    if operator == "gt":
+        return actual > _to_number(vf["value"], field="filters.values[].value")
+    if operator == "gte":
+        return actual >= _to_number(vf["value"], field="filters.values[].value")
+    if operator == "lt":
+        return actual < _to_number(vf["value"], field="filters.values[].value")
+    if operator == "lte":
+        return actual <= _to_number(vf["value"], field="filters.values[].value")
+
+    lower = _to_number(vf["lower"], field="filters.values[].lower")
+    upper = _to_number(vf["upper"], field="filters.values[].upper")
+    if lower > upper:
+        raise ValueError("filters.values[].lower must be <= filters.values[].upper")
+    return lower <= actual <= upper
+
+
+async def _match_string_operator(value: Any, vf: dict[str, Any]) -> bool:
+    operator = vf["operator"]
+    if not isinstance(value, str):
+        raise ValueError("row value must be string")
+
+    if operator == "contains":
+        needle = vf["value"]
+        if not isinstance(needle, str):
+            raise ValueError("filters.values[].value must be string")
+        haystack = value.lower() if vf["ignore_case"] else value
+        probe = needle.lower() if vf["ignore_case"] else needle
+        return probe in haystack
+
+    if operator == "regex":
+        return await _match_regex(value, vf)
+
+    raise ValueError(f"operator '{operator}' is not supported for data_type 'STRING'")
+
+
+async def _match_regex(value: str, vf: dict[str, Any]) -> bool:
+    pattern = vf["pattern"]
+    if not isinstance(pattern, str) or not pattern:
+        raise ValueError("filters.values[].pattern must be a non-empty string")
+    if len(pattern) > _REGEX_MAX_PATTERN_LEN:
+        raise ValueError("unsafe regex pattern: pattern too long")
+    if _RE_UNSAFE_NESTED_QUANTIFIERS.search(pattern):
+        raise ValueError("unsafe regex pattern: nested quantifiers are not allowed")
+    if len(value) > _REGEX_MAX_TARGET_LEN:
+        raise ValueError("unsafe regex pattern: target value too long")
+
+    flags = re.IGNORECASE if vf["ignore_case"] else 0
+    try:
+        compiled = re.compile(pattern, flags)
+    except re.error as exc:  # pragma: no cover - python versions differ in message details
+        raise ValueError(f"invalid regex pattern: {exc}") from exc
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(lambda: bool(compiled.search(value))), timeout=_REGEX_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise ValueError("unsafe regex pattern: timeout") from exc

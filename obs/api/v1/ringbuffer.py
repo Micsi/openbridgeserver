@@ -75,6 +75,17 @@ class RingBufferDatapointFilterV2(BaseModel):
     ids: list[str] = Field(default_factory=list)
 
 
+class RingBufferValueFilterV2(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator: Literal["eq", "ne", "gt", "gte", "lt", "lte", "between", "contains", "regex"]
+    value: Any | None = None
+    lower: Any | None = None
+    upper: Any | None = None
+    pattern: str | None = None
+    ignore_case: bool = False
+
+
 class RingBufferFiltersV2(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -82,6 +93,7 @@ class RingBufferFiltersV2(BaseModel):
     time: RingBufferTimeFilterV2 | None = None
     adapters: RingBufferAdapterFilterV2 | None = None
     datapoints: RingBufferDatapointFilterV2 | None = None
+    values: list[RingBufferValueFilterV2] | None = None
 
 
 class RingBufferSortV2(BaseModel):
@@ -172,6 +184,7 @@ async def query_ringbuffer_v2(
 
     adapters = [value.strip() for value in (body.filters.adapters.any_of if body.filters.adapters else []) if value.strip()]
     datapoints = [value.strip() for value in (body.filters.datapoints.ids if body.filters.datapoints else []) if value.strip()]
+    value_filters = [value_filter.model_dump() for value_filter in (body.filters.values or [])]
     if body.filters.adapters and not adapters:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -182,14 +195,22 @@ async def query_ringbuffer_v2(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "filters.datapoints.ids must contain at least one datapoint id",
         )
+    if body.filters.values is not None and not value_filters:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "filters.values must contain at least one value filter rule",
+        )
 
     time_filter = body.filters.time
+    datapoint_types = {str(dp.id): dp.data_type for dp in registry.all()}
     rb = get_ringbuffer()
     try:
         entries = await rb.query_v2(
             q=q,
             adapter_any_of=adapters or None,
             datapoint_ids=datapoints or None,
+            value_filters=value_filters or None,
+            datapoint_types=datapoint_types,
             from_ts=time_filter.from_ts if time_filter else None,
             to_ts=time_filter.to_ts if time_filter else None,
             from_relative_seconds=time_filter.from_relative_seconds if time_filter else None,

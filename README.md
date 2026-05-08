@@ -398,7 +398,8 @@ Der Parameter `q` durchsucht sowohl den Namen als auch die ID des Datenpunkts.
 
 `POST /api/v1/ringbuffer/query` verwendet eine Filter-DSL mit klarer Semantik:
 - `filters.adapters.any_of`: OR innerhalb der Adapterliste.
-- Filtergruppen (`time`, `adapters`, `datapoints`, `q`) werden per AND kombiniert.
+- `filters.values`: typbewusste Wertfilter (`eq/ne/gt/gte/lt/lte/between/contains/regex`) passend zu `data_type`.
+- Filtergruppen (`time`, `adapters`, `datapoints`, `values`, `q`) werden per AND kombiniert.
 - Zeitfilter unterstützen offene Ränder (`from` ohne `to`, `to` ohne `from`) und die Kombination aus absoluten Grenzen (`from`/`to`) plus relativen Offsets (`from_relative_seconds`/`to_relative_seconds`).
 - Pagination über `pagination.limit` + `pagination.offset`, Sortierung über `sort.field` (`id|ts`) und `sort.order` (`asc|desc`).
 
