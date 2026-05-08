@@ -43,11 +43,11 @@
               <span class="text-xs text-slate-400 font-mono">{{ gw.ip_addr }}:{{ gw.port }}</span>
             </div>
             <div class="flex flex-wrap gap-1">
-              <span v-if="gw.supports_tunnelling && !gw.tunnelling_requires_secure" class="badge-xs">UDP</span>
-              <span v-if="gw.supports_tunnelling_tcp && !gw.tunnelling_requires_secure" class="badge-xs">TCP</span>
-              <span v-if="gw.supports_routing && !gw.routing_requires_secure" class="badge-xs">Routing</span>
-              <span v-if="gw.supports_secure" class="badge-xs badge-blue">Secure</span>
-              <span v-if="gw.tunnelling_requires_secure" class="badge-xs badge-amber">Secure required</span>
+              <span v-if="gw.supports_tunnelling && !gw.tunnelling_requires_secure" class="text-xs px-1.5 py-0.5 rounded bg-slate-600 text-slate-300">UDP</span>
+              <span v-if="gw.supports_tunnelling_tcp && !gw.tunnelling_requires_secure" class="text-xs px-1.5 py-0.5 rounded bg-slate-600 text-slate-300">TCP</span>
+              <span v-if="gw.supports_routing && !gw.routing_requires_secure" class="text-xs px-1.5 py-0.5 rounded bg-slate-600 text-slate-300">Routing</span>
+              <span v-if="gw.supports_secure" class="text-xs px-1.5 py-0.5 rounded bg-blue-600/40 text-blue-300">Secure</span>
+              <span v-if="gw.tunnelling_requires_secure" class="text-xs px-1.5 py-0.5 rounded bg-amber-600/40 text-amber-300">Secure required</span>
             </div>
             <span v-if="gw.individual_address" class="text-xs text-slate-400">PA: {{ gw.individual_address }} · Interface: {{ gw.local_interface }}</span>
           </label>
@@ -431,15 +431,3 @@ function emitUpdate() {
   emit('update:modelValue', { ...cfg })
 }
 </script>
-
-<style scoped>
-.badge-xs {
-  @apply text-xs px-1.5 py-0.5 rounded bg-slate-600 text-slate-300;
-}
-.badge-xs.badge-blue {
-  @apply bg-blue-600/40 text-blue-300;
-}
-.badge-xs.badge-amber {
-  @apply bg-amber-600/40 text-amber-300;
-}
-</style>
