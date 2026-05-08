@@ -34,6 +34,8 @@ class RingBufferEntryOut(BaseModel):
     new_value: Any
     source_adapter: str
     quality: str
+    metadata_version: int
+    metadata: dict[str, Any]
 
 
 class RingBufferStats(BaseModel):
@@ -86,6 +88,19 @@ class RingBufferValueFilterV2(BaseModel):
     ignore_case: bool = False
 
 
+class RingBufferMetadataFilterV2(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tags_any_of: list[str] = Field(default_factory=list)
+    adapter_types_any_of: list[str] = Field(default_factory=list)
+    adapter_instance_ids_any_of: list[str] = Field(default_factory=list)
+    group_addresses_any_of: list[str] = Field(default_factory=list)
+    topics_any_of: list[str] = Field(default_factory=list)
+    entity_ids_any_of: list[str] = Field(default_factory=list)
+    register_types_any_of: list[str] = Field(default_factory=list)
+    register_addresses_any_of: list[str] = Field(default_factory=list)
+
+
 class RingBufferFiltersV2(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -94,6 +109,7 @@ class RingBufferFiltersV2(BaseModel):
     adapters: RingBufferAdapterFilterV2 | None = None
     datapoints: RingBufferDatapointFilterV2 | None = None
     values: list[RingBufferValueFilterV2] | None = None
+    metadata: RingBufferMetadataFilterV2 | None = None
 
 
 class RingBufferSortV2(BaseModel):
@@ -161,6 +177,8 @@ async def query_ringbuffer(
             new_value=e.new_value,
             source_adapter=e.source_adapter,
             quality=e.quality,
+            metadata_version=e.metadata_version,
+            metadata=e.metadata,
         )
         for e in entries
     ]
@@ -185,6 +203,17 @@ async def query_ringbuffer_v2(
     adapters = [value.strip() for value in (body.filters.adapters.any_of if body.filters.adapters else []) if value.strip()]
     datapoints = [value.strip() for value in (body.filters.datapoints.ids if body.filters.datapoints else []) if value.strip()]
     value_filters = [value_filter.model_dump() for value_filter in (body.filters.values or [])]
+    metadata_filter = body.filters.metadata
+    metadata_tags = [value.strip() for value in (metadata_filter.tags_any_of if metadata_filter else []) if value.strip()]
+    metadata_adapter_types = [value.strip() for value in (metadata_filter.adapter_types_any_of if metadata_filter else []) if value.strip()]
+    metadata_adapter_instances = [
+        value.strip() for value in (metadata_filter.adapter_instance_ids_any_of if metadata_filter else []) if value.strip()
+    ]
+    metadata_group_addresses = [value.strip() for value in (metadata_filter.group_addresses_any_of if metadata_filter else []) if value.strip()]
+    metadata_topics = [value.strip() for value in (metadata_filter.topics_any_of if metadata_filter else []) if value.strip()]
+    metadata_entity_ids = [value.strip() for value in (metadata_filter.entity_ids_any_of if metadata_filter else []) if value.strip()]
+    metadata_register_types = [value.strip() for value in (metadata_filter.register_types_any_of if metadata_filter else []) if value.strip()]
+    metadata_register_addresses = [value.strip() for value in (metadata_filter.register_addresses_any_of if metadata_filter else []) if value.strip()]
     if body.filters.adapters and not adapters:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -200,6 +229,22 @@ async def query_ringbuffer_v2(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "filters.values must contain at least one value filter rule",
         )
+    if metadata_filter and not any(
+        (
+            metadata_tags,
+            metadata_adapter_types,
+            metadata_adapter_instances,
+            metadata_group_addresses,
+            metadata_topics,
+            metadata_entity_ids,
+            metadata_register_types,
+            metadata_register_addresses,
+        )
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "filters.metadata must contain at least one metadata filter rule",
+        )
 
     time_filter = body.filters.time
     datapoint_types = {str(dp.id): dp.data_type for dp in registry.all()}
@@ -210,6 +255,14 @@ async def query_ringbuffer_v2(
             adapter_any_of=adapters or None,
             datapoint_ids=datapoints or None,
             value_filters=value_filters or None,
+            metadata_tags_any_of=metadata_tags or None,
+            metadata_adapter_types_any_of=metadata_adapter_types or None,
+            metadata_adapter_instance_ids_any_of=metadata_adapter_instances or None,
+            metadata_group_addresses_any_of=metadata_group_addresses or None,
+            metadata_topics_any_of=metadata_topics or None,
+            metadata_entity_ids_any_of=metadata_entity_ids or None,
+            metadata_register_types_any_of=metadata_register_types or None,
+            metadata_register_addresses_any_of=metadata_register_addresses or None,
             datapoint_types=datapoint_types,
             from_ts=time_filter.from_ts if time_filter else None,
             to_ts=time_filter.to_ts if time_filter else None,
@@ -235,6 +288,8 @@ async def query_ringbuffer_v2(
             new_value=e.new_value,
             source_adapter=e.source_adapter,
             quality=e.quality,
+            metadata_version=e.metadata_version,
+            metadata=e.metadata,
         )
         for e in entries
     ]

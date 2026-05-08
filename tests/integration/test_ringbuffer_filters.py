@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -56,6 +58,28 @@ async def _query_ringbuffer_v2(client, auth_headers, body: dict) -> list[dict]:
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+async def _insert_binding(dp_id: str, adapter_type: str, config: dict) -> None:
+    from obs.db.database import get_db
+
+    db = get_db()
+    now = datetime.now(UTC).isoformat()
+    await db.execute_and_commit(
+        """INSERT INTO adapter_bindings
+               (id, datapoint_id, adapter_type, direction, config, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            str(uuid.uuid4()),
+            dp_id,
+            adapter_type,
+            "SOURCE",
+            json.dumps(config),
+            1,
+            now,
+            now,
+        ),
+    )
 
 
 async def test_ringbuffer_filter_basics_q_adapter_from_and_limit(client, auth_headers):
@@ -460,3 +484,72 @@ async def test_ringbuffer_v2_value_filter_regex_guard_returns_422(client, auth_h
     )
     assert resp.status_code == 422
     assert "unsafe regex pattern" in resp.text
+
+
+async def test_ringbuffer_payload_snapshot_exposes_metadata_context(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, "RB DSL Snapshot", data_type="FLOAT", unit="W")
+    await _insert_binding(dp["id"], "KNX", {"group_address": "1/2/30", "state_group_address": "1/2/31"})
+    await _insert_binding(dp["id"], "MQTT", {"topic": "house/living/temperature"})
+
+    await _write_value(client, auth_headers, dp["id"], 23.5)
+
+    rows = await _query_ringbuffer(client, auth_headers, {"q": dp["id"], "limit": 1})
+    assert rows
+    entry = rows[0]
+
+    assert entry["metadata_version"] == 1
+    metadata = entry["metadata"]
+    assert metadata["source"]["adapter"] == "api"
+    assert metadata["datapoint"]["id"] == dp["id"]
+    assert "ringbuffer-filter-test" in metadata["datapoint"]["tags"]
+    assert any(binding["adapter_type"] == "KNX" for binding in metadata["bindings"])
+    assert any(binding["adapter_type"] == "MQTT" for binding in metadata["bindings"])
+
+    knx_binding = next(binding for binding in metadata["bindings"] if binding["adapter_type"] == "KNX")
+    assert knx_binding["normalized"]["group_address"] == "1/2/30"
+
+
+async def test_ringbuffer_v2_filters_by_metadata_tags_and_adapter_info(client, auth_headers):
+    dp_a = await _create_dp(client, auth_headers, "RB DSL Meta A", data_type="FLOAT", unit="W")
+    dp_b = await _create_dp(client, auth_headers, "RB DSL Meta B", data_type="FLOAT", unit="W")
+
+    await _insert_binding(dp_a["id"], "KNX", {"group_address": "1/3/10"})
+    await _insert_binding(dp_b["id"], "MQTT", {"topic": "home/garage/temp"})
+
+    await _write_value(client, auth_headers, dp_a["id"], 30.0)
+    await _write_value(client, auth_headers, dp_b["id"], 15.0)
+
+    knx_rows = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "metadata": {
+                    "tags_any_of": ["ringbuffer-filter-test"],
+                    "adapter_types_any_of": ["knx"],
+                    "group_addresses_any_of": ["1/3/10"],
+                },
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert any(row["datapoint_id"] == dp_a["id"] for row in knx_rows)
+    assert all(row["datapoint_id"] != dp_b["id"] for row in knx_rows)
+
+    mqtt_rows = await _query_ringbuffer_v2(
+        client,
+        auth_headers,
+        {
+            "filters": {
+                "metadata": {
+                    "adapter_types_any_of": ["mqtt"],
+                    "topics_any_of": ["home/garage/temp"],
+                },
+            },
+            "sort": {"field": "ts", "order": "asc"},
+            "pagination": {"limit": 50, "offset": 0},
+        },
+    )
+    assert any(row["datapoint_id"] == dp_b["id"] for row in mqtt_rows)
+    assert all(row["datapoint_id"] != dp_a["id"] for row in mqtt_rows)

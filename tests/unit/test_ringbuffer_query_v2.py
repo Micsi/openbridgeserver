@@ -7,7 +7,13 @@ import pytest
 from obs.ringbuffer.ringbuffer import RingBuffer
 
 
-async def _record_value(rb: RingBuffer, value: object, ts: str, datapoint_id: str = "dp-query-v2") -> None:
+async def _record_value(
+    rb: RingBuffer,
+    value: object,
+    ts: str,
+    datapoint_id: str = "dp-query-v2",
+    metadata: dict | None = None,
+) -> None:
     await rb.record(
         ts=ts,
         datapoint_id=datapoint_id,
@@ -16,6 +22,8 @@ async def _record_value(rb: RingBuffer, value: object, ts: str, datapoint_id: st
         new_value=value,
         source_adapter="api",
         quality="good",
+        metadata_version=1,
+        metadata=metadata or {},
     )
 
 
@@ -196,5 +204,73 @@ async def test_query_v2_value_filter_rejects_unsafe_regex_pattern():
                 limit=100,
                 offset=0,
             )
+    finally:
+        await rb.stop()
+
+
+@pytest.mark.asyncio
+async def test_query_v2_metadata_filters_tags_and_binding_adapter_info():
+    rb = RingBuffer(storage="memory", max_entries=100)
+    await rb.start()
+    try:
+        await _record_value(
+            rb,
+            21.5,
+            "2026-01-01T00:00:00.000Z",
+            datapoint_id="dp-meta-a",
+            metadata={
+                "datapoint": {"tags": ["klima", "wohnzimmer"]},
+                "bindings": [
+                    {
+                        "adapter_type": "KNX",
+                        "adapter_instance_id": "inst-knx-1",
+                        "normalized": {
+                            "group_address": "1/2/3",
+                            "topic": "",
+                            "entity_id": "",
+                            "register_type": "",
+                        },
+                    }
+                ],
+            },
+        )
+        await _record_value(
+            rb,
+            18.0,
+            "2026-01-01T00:00:01.000Z",
+            datapoint_id="dp-meta-b",
+            metadata={
+                "datapoint": {"tags": ["garage"]},
+                "bindings": [
+                    {
+                        "adapter_type": "MQTT",
+                        "adapter_instance_id": "inst-mqtt-1",
+                        "normalized": {
+                            "group_address": "",
+                            "topic": "home/garage/temp",
+                            "entity_id": "",
+                            "register_type": "",
+                        },
+                    }
+                ],
+            },
+        )
+
+        rows = await rb.query_v2(
+            metadata_tags_any_of=["klima"],
+            metadata_adapter_types_any_of=["knx"],
+            metadata_group_addresses_any_of=["1/2/3"],
+            limit=50,
+            offset=0,
+        )
+        assert [row.datapoint_id for row in rows] == ["dp-meta-a"]
+
+        mqtt_rows = await rb.query_v2(
+            metadata_adapter_types_any_of=["mqtt"],
+            metadata_topics_any_of=["home/garage/temp"],
+            limit=50,
+            offset=0,
+        )
+        assert [row.datapoint_id for row in mqtt_rows] == ["dp-meta-b"]
     finally:
         await rb.stop()

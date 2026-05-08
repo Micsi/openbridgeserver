@@ -399,9 +399,11 @@ Der Parameter `q` durchsucht sowohl den Namen als auch die ID des Datenpunkts.
 `POST /api/v1/ringbuffer/query` verwendet eine Filter-DSL mit klarer Semantik:
 - `filters.adapters.any_of`: OR innerhalb der Adapterliste.
 - `filters.values`: typbewusste Wertfilter (`eq/ne/gt/gte/lt/lte/between/contains/regex`) passend zu `data_type`.
-- Filtergruppen (`time`, `adapters`, `datapoints`, `values`, `q`) werden per AND kombiniert.
+- `filters.metadata`: filterbare Snapshot-Metadaten aus DataPoint/Binding-Kontext (`tags`, `adapter_types`, `group_addresses`, `topics`, `entity_ids`, `register_types`, `register_addresses`).
+- Filtergruppen (`time`, `adapters`, `datapoints`, `values`, `metadata`, `q`) werden per AND kombiniert.
 - Zeitfilter unterstützen offene Ränder (`from` ohne `to`, `to` ohne `from`) und die Kombination aus absoluten Grenzen (`from`/`to`) plus relativen Offsets (`from_relative_seconds`/`to_relative_seconds`).
 - Pagination über `pagination.limit` + `pagination.offset`, Sortierung über `sort.field` (`id|ts`) und `sort.order` (`asc|desc`).
+- Das versionierte Metadatenmodell ist dokumentiert in `docs/ringbuffer-metadata-model-v1.md` (`metadata_version: 1`).
 
 ---
 

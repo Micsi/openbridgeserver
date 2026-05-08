@@ -41,11 +41,38 @@ CREATE TABLE IF NOT EXISTS ringbuffer (
     old_value      TEXT,
     new_value      TEXT,
     source_adapter TEXT    NOT NULL,
-    quality        TEXT    NOT NULL
+    quality        TEXT    NOT NULL,
+    metadata_version INTEGER NOT NULL DEFAULT 1,
+    metadata       TEXT    NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_rb_ts  ON ringbuffer(ts);
 CREATE INDEX IF NOT EXISTS idx_rb_dp  ON ringbuffer(datapoint_id);
 CREATE INDEX IF NOT EXISTS idx_rb_adp ON ringbuffer(source_adapter);
+
+CREATE TABLE IF NOT EXISTS ringbuffer_metadata_tags (
+    entry_id INTEGER NOT NULL REFERENCES ringbuffer(id) ON DELETE CASCADE,
+    tag      TEXT    NOT NULL,
+    PRIMARY KEY (entry_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_rb_meta_tag ON ringbuffer_metadata_tags(tag);
+
+CREATE TABLE IF NOT EXISTS ringbuffer_metadata_bindings (
+    entry_id             INTEGER NOT NULL REFERENCES ringbuffer(id) ON DELETE CASCADE,
+    adapter_type         TEXT    NOT NULL DEFAULT '',
+    adapter_instance_id  TEXT    NOT NULL DEFAULT '',
+    group_address        TEXT    NOT NULL DEFAULT '',
+    topic                TEXT    NOT NULL DEFAULT '',
+    entity_id            TEXT    NOT NULL DEFAULT '',
+    register_type        TEXT    NOT NULL DEFAULT '',
+    register_address     TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_rb_meta_bind_adapter_type ON ringbuffer_metadata_bindings(adapter_type);
+CREATE INDEX IF NOT EXISTS idx_rb_meta_bind_adapter_instance ON ringbuffer_metadata_bindings(adapter_instance_id);
+CREATE INDEX IF NOT EXISTS idx_rb_meta_bind_group_address ON ringbuffer_metadata_bindings(group_address);
+CREATE INDEX IF NOT EXISTS idx_rb_meta_bind_topic ON ringbuffer_metadata_bindings(topic);
+CREATE INDEX IF NOT EXISTS idx_rb_meta_bind_entity_id ON ringbuffer_metadata_bindings(entity_id);
+CREATE INDEX IF NOT EXISTS idx_rb_meta_bind_register_type ON ringbuffer_metadata_bindings(register_type);
+CREATE INDEX IF NOT EXISTS idx_rb_meta_bind_register_address ON ringbuffer_metadata_bindings(register_address);
 """
 
 
@@ -59,6 +86,8 @@ class RingBufferEntry:
     new_value: Any
     source_adapter: str
     quality: str
+    metadata_version: int
+    metadata: dict[str, Any]
 
 
 class RingBuffer:
@@ -99,9 +128,11 @@ class RingBuffer:
         path = ":memory:" if self._storage == "memory" else self._disk_path
         self._conn = await aiosqlite.connect(path)
         self._conn.row_factory = aiosqlite.Row
+        await self._conn.execute("PRAGMA foreign_keys=ON")
         if self._storage in {"disk", "file"}:
             await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.executescript(_SCHEMA)
+        await self._ensure_compat_schema()
         await self._conn.commit()
         logger.info(
             "RingBuffer started (%s, max_entries=%d, max_file_size_bytes=%s, max_age=%s)",
@@ -176,9 +207,11 @@ class RingBuffer:
             path = ":memory:" if storage == "memory" else self._disk_path
             self._conn = await aiosqlite.connect(path)
             self._conn.row_factory = aiosqlite.Row
+            await self._conn.execute("PRAGMA foreign_keys=ON")
             if storage in {"disk", "file"}:
                 await self._conn.execute("PRAGMA journal_mode=WAL")
             await self._conn.executescript(_SCHEMA)
+            await self._ensure_compat_schema()
             await self._conn.execute("DELETE FROM ringbuffer")
             await self._conn.commit()
             self._last_values.clear()
@@ -204,14 +237,17 @@ class RingBuffer:
         new_value: Any,
         source_adapter: str,
         quality: str,
+        metadata_version: int = 1,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         if not self._conn:
             return
+        metadata_obj = metadata or {}
         async with self._lock:
-            await self._conn.execute(
+            cursor = await self._conn.execute(
                 """INSERT INTO ringbuffer
-                   (ts, datapoint_id, topic, old_value, new_value, source_adapter, quality)
-                   VALUES (?,?,?,?,?,?,?)""",
+                   (ts, datapoint_id, topic, old_value, new_value, source_adapter, quality, metadata_version, metadata)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
                 (
                     ts,
                     datapoint_id,
@@ -220,8 +256,11 @@ class RingBuffer:
                     json.dumps(new_value),
                     source_adapter,
                     quality,
+                    metadata_version,
+                    json.dumps(metadata_obj),
                 ),
             )
+            await self._persist_metadata_indexes(cursor.lastrowid, metadata_obj)
             await self._conn.commit()
             await self._trim(reference_ts=ts)
 
@@ -382,6 +421,18 @@ class RingBuffer:
             row = await cur.fetchone()
         return row[0] if row else 0
 
+    async def _ensure_compat_schema(self) -> None:
+        """Backfill columns for pre-#388 ringbuffer databases."""
+        if not self._conn:
+            return
+        async with self._conn.execute("PRAGMA table_info(ringbuffer)") as cur:
+            rows = await cur.fetchall()
+        columns = {row["name"] for row in rows}
+        if "metadata_version" not in columns:
+            await self._conn.execute("ALTER TABLE ringbuffer ADD COLUMN metadata_version INTEGER NOT NULL DEFAULT 1")
+        if "metadata" not in columns:
+            await self._conn.execute("ALTER TABLE ringbuffer ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'")
+
     # ------------------------------------------------------------------
     # EventBus handler
     # ------------------------------------------------------------------
@@ -389,6 +440,7 @@ class RingBuffer:
     async def handle_value_event(self, event: Any) -> None:
         """Record a DataValueEvent into the ring buffer."""
         dp_id = str(event.datapoint_id)
+        dp = None
 
         # Capture old value from our own tracking (reliable in asyncio)
         old_value = self._last_values.get(dp_id)
@@ -402,6 +454,11 @@ class RingBuffer:
         except RuntimeError:
             topic = f"dp/{dp_id}/value"
 
+        metadata = await self._build_metadata_snapshot(
+            dp_id=dp_id,
+            source_adapter=str(event.source_adapter),
+            datapoint=dp,
+        )
         await self.record(
             ts=event.ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             datapoint_id=dp_id,
@@ -410,7 +467,55 @@ class RingBuffer:
             new_value=event.value,
             source_adapter=event.source_adapter,
             quality=event.quality,
+            metadata_version=1,
+            metadata=metadata,
         )
+
+    async def _build_metadata_snapshot(
+        self,
+        *,
+        dp_id: str,
+        source_adapter: str,
+        datapoint: Any,
+    ) -> dict[str, Any]:
+        bindings: list[dict[str, Any]] = []
+        try:
+            from obs.db.database import get_db
+
+            rows = await get_db().fetchall(
+                """SELECT adapter_type, adapter_instance_id, direction, config
+                   FROM adapter_bindings
+                   WHERE datapoint_id=? AND enabled=1
+                   ORDER BY created_at, id""",
+                (dp_id,),
+            )
+            for row in rows:
+                raw_config = _safe_loads(row["config"])
+                config = raw_config if isinstance(raw_config, dict) else {}
+                bindings.append(
+                    {
+                        "adapter_type": str(row["adapter_type"] or ""),
+                        "adapter_instance_id": str(row["adapter_instance_id"] or ""),
+                        "direction": str(row["direction"] or ""),
+                        "normalized": _normalize_binding_metadata(config),
+                    }
+                )
+        except RuntimeError:
+            pass
+        except Exception:
+            logger.exception("RingBuffer metadata snapshot for dp=%s failed", dp_id)
+
+        tags = list(datapoint.tags) if datapoint and isinstance(getattr(datapoint, "tags", None), list) else []
+        return {
+            "source": {"adapter": source_adapter},
+            "datapoint": {
+                "id": dp_id,
+                "name": getattr(datapoint, "name", None),
+                "data_type": getattr(datapoint, "data_type", None),
+                "tags": tags,
+            },
+            "bindings": bindings,
+        }
 
     # ------------------------------------------------------------------
     # Query
@@ -443,6 +548,14 @@ class RingBuffer:
         adapter_any_of: list[str] | None = None,
         datapoint_ids: list[str] | None = None,
         value_filters: list[dict[str, Any]] | None = None,
+        metadata_tags_any_of: list[str] | None = None,
+        metadata_adapter_types_any_of: list[str] | None = None,
+        metadata_adapter_instance_ids_any_of: list[str] | None = None,
+        metadata_group_addresses_any_of: list[str] | None = None,
+        metadata_topics_any_of: list[str] | None = None,
+        metadata_entity_ids_any_of: list[str] | None = None,
+        metadata_register_types_any_of: list[str] | None = None,
+        metadata_register_addresses_any_of: list[str] | None = None,
         datapoint_types: dict[str, str] | None = None,
         from_ts: str | None = None,
         to_ts: str | None = None,
@@ -483,6 +596,35 @@ class RingBuffer:
                 placeholders = ",".join("?" * len(normalized_dp_ids))
                 sql += f" AND datapoint_id IN ({placeholders})"
                 params.extend(normalized_dp_ids)
+
+        normalized_meta_tags = _normalize_string_filters(metadata_tags_any_of)
+        if normalized_meta_tags:
+            placeholders = ",".join("?" * len(normalized_meta_tags))
+            sql += f" AND EXISTS (SELECT 1 FROM ringbuffer_metadata_tags rmt WHERE rmt.entry_id = ringbuffer.id AND rmt.tag IN ({placeholders}))"
+            params.extend(normalized_meta_tags)
+
+        binding_clauses: list[str] = []
+        binding_params: list[str] = []
+        normalized_binding_filters = {
+            "adapter_type": _normalize_string_filters(metadata_adapter_types_any_of),
+            "adapter_instance_id": _normalize_string_filters(metadata_adapter_instance_ids_any_of),
+            "group_address": _normalize_string_filters(metadata_group_addresses_any_of),
+            "topic": _normalize_string_filters(metadata_topics_any_of),
+            "entity_id": _normalize_string_filters(metadata_entity_ids_any_of),
+            "register_type": _normalize_string_filters(metadata_register_types_any_of),
+            "register_address": _normalize_string_filters(metadata_register_addresses_any_of),
+        }
+        for column, values in normalized_binding_filters.items():
+            if not values:
+                continue
+            placeholders = ",".join("?" * len(values))
+            binding_clauses.append(f"rmb.{column} IN ({placeholders})")
+            binding_params.extend(values)
+        if binding_clauses:
+            sql += (
+                f" AND EXISTS (SELECT 1 FROM ringbuffer_metadata_bindings rmb WHERE rmb.entry_id = ringbuffer.id AND {' AND '.join(binding_clauses)})"
+            )
+            params.extend(binding_params)
 
         effective_from = _resolve_time_bound(
             absolute_ts=from_ts,
@@ -537,6 +679,8 @@ class RingBuffer:
                 new_value=_safe_loads(r["new_value"]),
                 source_adapter=r["source_adapter"],
                 quality=r["quality"],
+                metadata_version=int(r["metadata_version"]) if "metadata_version" in r.keys() else 1,
+                metadata=_safe_loads_dict(r["metadata"]) if "metadata" in r.keys() else {},
             )
             for r in rows
         ]
@@ -572,6 +716,26 @@ class RingBuffer:
             "file_size_bytes": await self._current_storage_bytes(),
         }
 
+    async def _persist_metadata_indexes(self, entry_id: int, metadata: dict[str, Any]) -> None:
+        if not self._conn or entry_id <= 0:
+            return
+
+        tags = _extract_metadata_tags(metadata)
+        if tags:
+            await self._conn.executemany(
+                "INSERT OR IGNORE INTO ringbuffer_metadata_tags (entry_id, tag) VALUES (?, ?)",
+                [(entry_id, tag) for tag in tags],
+            )
+
+        binding_rows = _extract_metadata_binding_index_rows(metadata)
+        if binding_rows:
+            await self._conn.executemany(
+                """INSERT INTO ringbuffer_metadata_bindings
+                   (entry_id, adapter_type, adapter_instance_id, group_address, topic, entity_id, register_type, register_address)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [(entry_id, *row) for row in binding_rows],
+            )
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -588,6 +752,77 @@ def _safe_loads(s: str | None) -> Any:
         return json.loads(s)
     except Exception:
         return s
+
+
+def _safe_loads_dict(s: str | None) -> dict[str, Any]:
+    loaded = _safe_loads(s)
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _normalize_string_filters(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = str(value).strip().lower()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        normalized.append(token)
+    return normalized
+
+
+def _normalize_binding_metadata(config: dict[str, Any]) -> dict[str, Any]:
+    def _str_or_empty(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    return {
+        "group_address": _str_or_empty(config.get("group_address")),
+        "state_group_address": _str_or_empty(config.get("state_group_address")),
+        "topic": _str_or_empty(config.get("topic")),
+        "entity_id": _str_or_empty(config.get("entity_id")),
+        "register_type": _str_or_empty(config.get("register_type")),
+        "register_address": _str_or_empty(config.get("address")),
+        "unit_id": _str_or_empty(config.get("unit_id")),
+    }
+
+
+def _extract_metadata_tags(metadata: dict[str, Any]) -> list[str]:
+    datapoint = metadata.get("datapoint")
+    if not isinstance(datapoint, dict):
+        return []
+    tags = datapoint.get("tags")
+    if not isinstance(tags, list):
+        return []
+    return _normalize_string_filters([str(tag) for tag in tags])
+
+
+def _extract_metadata_binding_index_rows(metadata: dict[str, Any]) -> list[tuple[str, str, str, str, str, str, str]]:
+    raw_bindings = metadata.get("bindings")
+    if not isinstance(raw_bindings, list):
+        return []
+
+    rows: list[tuple[str, str, str, str, str, str, str]] = []
+    for binding in raw_bindings:
+        if not isinstance(binding, dict):
+            continue
+        normalized = binding.get("normalized")
+        normalized_dict = normalized if isinstance(normalized, dict) else {}
+        rows.append(
+            (
+                str(binding.get("adapter_type", "")).strip().lower(),
+                str(binding.get("adapter_instance_id", "")).strip().lower(),
+                str(normalized_dict.get("group_address", "")).strip().lower(),
+                str(normalized_dict.get("topic", "")).strip().lower(),
+                str(normalized_dict.get("entity_id", "")).strip().lower(),
+                str(normalized_dict.get("register_type", "")).strip().lower(),
+                str(normalized_dict.get("register_address", "")).strip().lower(),
+            )
+        )
+    return rows
 
 
 def _parse_iso_ts(value: str) -> datetime:
