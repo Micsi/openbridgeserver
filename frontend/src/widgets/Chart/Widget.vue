@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Chart, LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend } from 'chart.js'
 import { history } from '@/api/client'
+import { useWebSocket } from '@/composables/useWebSocket'
 import type { DataPointValue } from '@/types'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend)
@@ -13,6 +14,8 @@ const props = defineProps<{
   editorMode: boolean
 }>()
 
+const ws = useWebSocket()
+
 const label = computed(() => (props.config.label as string | undefined) ?? '—')
 const hours = computed(() => (props.config.hours as number | undefined) ?? 24)
 
@@ -22,7 +25,9 @@ interface SeriesDef { id: string; label: string; color: string; axis: 'y' | 'y1'
 const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
 
 const canvas = ref<HTMLCanvasElement | null>(null)
-let chart: Chart | null = null
+let chart:        Chart | null = null
+let wsOff:        (() => void) | null = null
+let reloadTimer:  ReturnType<typeof setTimeout> | null = null
 const seriesUnits = ref<string[]>([])
 
 function fmtMs(ms: number): string {
@@ -177,12 +182,26 @@ onMounted(() => {
     },
   })
   loadData()
+
+  // Auf WS-Nachrichten hören: wenn ein relevanter Datenpunkt eintrifft, wird
+  // loadData() nach einer kurzen Wartezeit (2 s, debounced) neu aufgerufen.
+  // Dadurch holt der Chart immer saubere, vollständige Daten vom Backend —
+  // ohne komplizierte In-Place-Mutation, die bei tension > 0 Artefakte erzeugt.
+  wsOff = ws.onMessage((msg) => {
+    if (!chart || props.editorMode) return
+    if (!msg.id || msg.v === undefined) return
+    if (!buildSeriesDefs().some(d => d.id === (msg.id as string))) return
+    if (reloadTimer) clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => { reloadTimer = null; loadData() }, 2_000)
+  })
 })
 
 watch(() => props.datapointId, loadData)
 watch(() => props.config, loadData, { deep: true })
 
 onUnmounted(() => {
+  wsOff?.()
+  if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null }
   chart?.destroy()
   chart = null
 })
