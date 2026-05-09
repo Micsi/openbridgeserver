@@ -12,7 +12,7 @@ open bridge verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitli
 
 | Funktion | Beschreibung |
 |---|---|
-| **Protokolle** | KNX/IP (Tunneling + Routing), Modbus TCP, Modbus RTU, 1-Wire, externes MQTT, Home Assistant, Zeitschaltuhr |
+| **Protokolle** | KNX/IP (Tunneling + Routing + KNX IP Secure), Modbus TCP, Modbus RTU, 1-Wire, externes MQTT, Home Assistant, Zeitschaltuhr |
 | **Mehrere Instanzen** | Beliebig viele Instanzen pro Protokoll (z. B. 2× KNX, 3× Modbus TCP) |
 | **Protokoll-Brücke** | Ein KNX-Wert wird automatisch in ein Modbus-Register geschrieben — und umgekehrt |
 | **Logik-Editor** | Visuelle Automatisierungslogik ohne Programmierung: 35+ Blocktypen, Zeitpläne, Formeln, Python-Skripte, Benachrichtigungen, HTTP-Anfragen, Sonnenstand |
@@ -738,15 +738,79 @@ Zeigt berechnete Zwischenwerte direkt auf den Blöcken an — live und automatis
 
 ### KNX-Adapter
 
-**Instanz-Konfiguration:**
+**Instanz-Konfiguration — Grundparameter:**
 
 | Feld | Werte | Beschreibung |
 |---|---|---|
-| `connection_type` | `tunneling` / `routing` | Tunneling = direkte Verbindung zur Zentrale; Routing = IP-Multicast |
+| `connection_type` | `tunneling` / `tunneling_secure` / `routing` / `routing_secure` | Verbindungstyp (siehe unten) |
 | `host` | IP-Adresse | IP der KNX/IP-Zentrale (Tunneling) oder Multicast-Adresse (Routing) |
-| `port` | Standard `3671` | Port der KNX/IP-Zentrale (manche Geräte: `3674`) |
-| `individual_address` | z. B. `1.1.210` | Eigene KNX-Adresse (Tunneling) |
-| `local_ip` | IP-Adresse | Lokale Netzwerkschnittstelle (nur Routing, optional) |
+| `port` | Standard `3671` | Port der KNX/IP-Zentrale |
+| `individual_address` | z. B. `1.1.210` | Eigene KNX-Adresse des open bridge Servers |
+| `local_ip` | IP-Adresse | Lokale Netzwerkschnittstelle (optional). Bei Routing/Routing Secure: wählt die Netzwerkkarte für Multicast — bei mehreren Netzwerkkarten **empfohlen**. Bei Tunneling/Tunneling Secure: bindet den Socket an eine bestimmte Schnittstelle — meist nur bei Mehrfach-Netzwerkkarten nötig. Leer lassen = automatische Auswahl. |
+
+**Verbindungstypen:**
+
+| `connection_type` | Beschreibung |
+|---|---|
+| `tunneling` | UDP-Tunneling zur KNX/IP-Zentrale (Standard) |
+| `tunneling_secure` | KNX IP Secure Tunneling (verschlüsselt, TCP) |
+| `routing` | IP-Multicast-Routing |
+| `routing_secure` | KNX IP Secure Routing (verschlüsselt, Multicast) |
+
+**KNX IP Secure — Keyfile-Modus (empfohlen)**
+
+Der einfachste Weg für KNX IP Secure ist der Import der `.knxkeys`-Datei aus ETS:
+
+1. In ETS: **Sicherheit → Schlüsselsicherung exportieren** → `.knxkeys`-Datei speichern
+2. In open bridge server: **Einstellungen → Adapter → KNX-Instanz bearbeiten → Keyfile hochladen**
+3. Keyfile-Passwort eingeben — open bridge server zeigt alle verfügbaren Tunnel mit PA, User-ID und Anzahl gesicherter Gruppenadressen
+4. Gewünschten Tunnel wählen → `individual_address` wird automatisch gesetzt
+5. `connection_type` auf `tunneling_secure` (oder `routing_secure`) setzen
+
+| Feld | Beschreibung |
+|---|---|
+| `knxkeys_file_path` | Wird automatisch gesetzt nach dem Hochladen der Keyfile |
+| `knxkeys_password` | Passwort-Feld — Passwort zur `.knxkeys`-Datei |
+| `individual_address` | PA des gewählten Tunnels (aus der Tunnel-Liste) |
+
+**KNX IP Secure — Manueller Modus** (nur wenn kein Keyfile vorhanden):
+
+Für `tunneling_secure`:
+
+| Feld | Werte | Beschreibung |
+|---|---|---|
+| `user_id` | `1`–`127`, Standard `2` | Benutzer-ID am KNX/IP-Gateway |
+| `user_password` | Passwort-Feld | Benutzerpasswort |
+| `device_authentication_password` | Passwort-Feld | Geräte-Authentifizierungspasswort |
+
+Für `routing_secure`:
+
+| Feld | Werte | Beschreibung |
+|---|---|---|
+| `backbone_key` | Passwort-Feld | 128-Bit Backbone-Schlüssel als Hex-String (32 Zeichen, z. B. `0102030405060708090a0b0c0d0e0f10`; Trennzeichen `:` und Leerzeichen werden ignoriert) |
+
+> **Hinweis:** Sind `knxkeys_file_path` und `knxkeys_password` gesetzt, haben sie Vorrang vor den manuellen Feldern. Alle Passwort-Felder werden in der Weboberfläche maskiert dargestellt.
+
+**Keyfile API** (für eigene Integrationen):
+
+```
+POST /api/v1/knx/keyfile   # .knxkeys hochladen, Tunnel-Liste zurückgeben
+DELETE /api/v1/knx/keyfile/{file_id}  # Keyfile löschen
+```
+
+Antwort des Upload-Endpunkts:
+```json
+{
+  "file_id": "uuid",
+  "file_path": "/data/knxkeys/uuid.knxkeys",
+  "project_name": "Mein KNX-Projekt",
+  "tunnels": [
+    { "individual_address": "1.1.100", "host": "1.1.50", "user_id": 2, "secure_ga_count": 15 },
+    { "individual_address": "1.1.101", "host": "1.1.50", "user_id": 3, "secure_ga_count": 15 }
+  ],
+  "backbone": null
+}
+```
 
 **Verknüpfungs-Konfiguration:**
 

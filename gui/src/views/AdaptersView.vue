@@ -54,6 +54,10 @@
               v-if="newForm.adapter_type === 'ANWESENHEITSSIMULATION'"
               v-model="newForm.config"
             />
+            <KnxConfigForm
+              v-else-if="newForm.adapter_type === 'KNX'"
+              v-model="newForm.config"
+            />
             <template v-else>
               <SchemaForm
                 :schema="newSchema"
@@ -142,6 +146,10 @@
               <label class="label mb-2">Konfiguration</label>
               <AnwesenheitConfigForm
                 v-if="a.adapter_type === 'ANWESENHEITSSIMULATION'"
+                v-model="drafts[a.id].config"
+              />
+              <KnxConfigForm
+                v-else-if="a.adapter_type === 'KNX'"
                 v-model="drafts[a.id].config"
               />
               <template v-else>
@@ -319,6 +327,7 @@ import SchemaForm    from '@/components/adapters/SchemaForm.vue'
 import ZeitschaltuhrCustomHolidaysEditor from '@/components/adapters/ZeitschaltuhrCustomHolidaysEditor.vue'
 import AnwesenheitDatapointSelector from '@/components/adapters/AnwesenheitDatapointSelector.vue'
 import AnwesenheitConfigForm from '@/components/adapters/AnwesenheitConfigForm.vue'
+import KnxConfigForm        from '@/components/adapters/KnxConfigForm.vue'
 import Modal         from '@/components/ui/Modal.vue'
 
 const store          = useAdapterStore()

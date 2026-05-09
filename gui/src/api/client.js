@@ -130,6 +130,13 @@ export const adapterApi = {
   },
 }
 
+// ── KNX Keyfile ───────────────────────────────────────────────────────────
+export const knxKeyfileApi = {
+  scan:   (params = {}) => api.get('/knx/scan', { params, timeout: ((params.timeout ?? 4) + 3) * 1000 }),
+  upload: (formData)    => api.post('/knx/keyfile', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  delete: (fileId)      => api.delete(`/knx/keyfile/${fileId}`),
+}
+
 // ── KNX Project Import ────────────────────────────────────────────────────
 export const knxprojApi = {
   import:  (formData, params = {}) => api.post('/knxproj/import', formData, { headers: { 'Content-Type': 'multipart/form-data' }, params }),
