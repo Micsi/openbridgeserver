@@ -175,9 +175,10 @@ const ws = useWebSocket()
 const canvasEl      = ref<HTMLCanvasElement | null>(null)
 const modalOpen     = ref(false)
 const modalCanvasEl = ref<HTMLCanvasElement | null>(null)
-let miniChart:   Chart | null = null
-let modalChart:  Chart | null = null
-let wsOff:       (() => void) | null = null
+let miniChart:    Chart | null = null
+let modalChart:   Chart | null = null
+let wsOff:        (() => void) | null = null
+let reloadTimer:  ReturnType<typeof setTimeout> | null = null
 let histUnit = ''
 
 function fmtMs(ms: number): string {
@@ -212,50 +213,32 @@ async function fetchPoints() {
 }
 
 async function updateMiniChart() {
-  if (mode.value !== 'history' || !miniChart) return
+  if (mode.value !== 'history') return
   const { pts, minMs, maxMs } = await fetchPoints()
-  miniChart.data.datasets[0].data = pts
-  const xAxis = miniChart.options.scales?.x as any
-  if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
-  miniChart.update()
-}
-
-// Neuen WS-Wert in Mini- und Modal-Chart einhängen, ohne History neu zu laden.
-// Wichtig: nur anhängen wenn pt.x strikt neuer als der letzte vorhandene Punkt ist —
-// sonst landet ein veralteter fetchInitialValues-Wert ungeordnet im Array und
-// Chart.js zieht eine Linie vom letzten History-Punkt zurück zu diesem Fehlpunkt.
-function appendLivePoint(val: { t: string; v: unknown }) {
-  const pt     = { x: new Date(val.t).getTime(), y: Number(val.v) }
-  const cutoff = pt.x - historyHours.value * 3_600_000
-
   if (miniChart) {
-    const pts = miniChart.data.datasets[0].data as { x: number; y: number }[]
-    if (pts.length > 0 && pts[pts.length - 1].x >= pt.x) return
-    pts.push(pt)
-    while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
+    miniChart.data.datasets[0].data = pts
     const xAxis = miniChart.options.scales?.x as any
-    if (xAxis) { xAxis.min = cutoff; xAxis.max = pt.x }
-    miniChart.update('none')
+    if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
+    miniChart.update()
   }
-
   if (modalChart && modalOpen.value) {
-    const pts = modalChart.data.datasets[0].data as { x: number; y: number }[]
-    if (pts.length > 0 && pts[pts.length - 1].x >= pt.x) return
-    pts.push(pt)
-    while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
+    modalChart.data.datasets[0].data = pts
     const xAxis = modalChart.options.scales?.x as any
-    if (xAxis) { xAxis.min = cutoff; xAxis.max = pt.x }
-    modalChart.update('none')
+    if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
+    modalChart.update()
   }
 }
 
 onMounted(() => {
-  // Direkt auf WS-Nachrichten hören — fetchInitialValues() läuft über HTTP und
-  // landet hier NICHT, vermeidet so das veraltete-Timestamp-Problem.
+  // Auf WS-Nachrichten hören: wenn der eigene Datenpunkt aktualisiert wird,
+  // wird updateMiniChart() nach 2 s (debounced) aufgerufen. Das Backend hat
+  // den Wert bis dahin sicher gespeichert, sodass der Chart saubere Daten
+  // ohne Artefakte lädt.
   wsOff = ws.onMessage((msg) => {
     if (mode.value !== 'history' || props.editorMode) return
     if (!msg.id || msg.v === undefined || msg.id !== props.datapointId) return
-    appendLivePoint({ t: msg.t as string, v: msg.v })
+    if (reloadTimer) clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => { reloadTimer = null; updateMiniChart() }, 2_000)
   })
 
   if (mode.value !== 'history' || !canvasEl.value) return
@@ -310,7 +293,12 @@ watch(modalOpen, async (open) => {
   })
 })
 
-onUnmounted(() => { wsOff?.(); miniChart?.destroy(); modalChart?.destroy() })
+onUnmounted(() => {
+  wsOff?.()
+  if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null }
+  miniChart?.destroy()
+  modalChart?.destroy()
+})
 
 const quality = computed(() => props.value?.q ?? null)
 </script>

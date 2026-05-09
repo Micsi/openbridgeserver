@@ -25,8 +25,9 @@ interface SeriesDef { id: string; label: string; color: string; axis: 'y' | 'y1'
 const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
 
 const canvas = ref<HTMLCanvasElement | null>(null)
-let chart:   Chart | null = null
-let wsOff:   (() => void) | null = null
+let chart:        Chart | null = null
+let wsOff:        (() => void) | null = null
+let reloadTimer:  ReturnType<typeof setTimeout> | null = null
 const seriesUnits = ref<string[]>([])
 
 function fmtMs(ms: number): string {
@@ -182,26 +183,16 @@ onMounted(() => {
   })
   loadData()
 
-  // Direkt auf WS-Nachrichten hören — fetchInitialValues() geht über HTTP und
-  // landet hier NICHT, was das veralteter-Timestamp-Problem komplett ausschliesst.
+  // Auf WS-Nachrichten hören: wenn ein relevanter Datenpunkt eintrifft, wird
+  // loadData() nach einer kurzen Wartezeit (2 s, debounced) neu aufgerufen.
+  // Dadurch holt der Chart immer saubere, vollständige Daten vom Backend —
+  // ohne komplizierte In-Place-Mutation, die bei tension > 0 Artefakte erzeugt.
   wsOff = ws.onMessage((msg) => {
     if (!chart || props.editorMode) return
     if (!msg.id || msg.v === undefined) return
-    // buildSeriesDefs() hier aufrufen damit Config-Änderungen immer reflektiert werden
-    const idx = buildSeriesDefs().findIndex(d => d.id === (msg.id as string))
-    if (idx === -1) return
-    const ds = chart.data.datasets[idx]
-    if (!ds) return
-    const px  = new Date(msg.t as string).getTime()
-    const pts = ds.data as { x: number; y: number }[]
-    // Nur anhängen wenn wirklich neuer als letzter Dataset-Punkt
-    if (pts.length > 0 && pts[pts.length - 1].x >= px) return
-    const cutoff = px - hours.value * 3_600_000
-    pts.push({ x: px, y: Number(msg.v) })
-    while (pts.length > 0 && pts[0].x < cutoff) pts.shift()
-    const xAxis = chart.options.scales?.x as Record<string, unknown> | undefined
-    if (xAxis) { xAxis.min = cutoff; xAxis.max = px }
-    chart.update('none')
+    if (!buildSeriesDefs().some(d => d.id === (msg.id as string))) return
+    if (reloadTimer) clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => { reloadTimer = null; loadData() }, 2_000)
   })
 })
 
@@ -210,6 +201,7 @@ watch(() => props.config, loadData, { deep: true })
 
 onUnmounted(() => {
   wsOff?.()
+  if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null }
   chart?.destroy()
   chart = null
 })
