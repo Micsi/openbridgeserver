@@ -5,12 +5,21 @@
 * none
 
 ### New features 💡
-* #228: Add floorplan widget
+* #14: Adapter: The KNX adapter now also supports TCP tunneling mode and Secure support via import of the .knxkeys file.
+* #344: Adapter: The adapter "Anwesenheitssimulation" allows automatic replay of switching states of defined objects during absence with an offset of n days.
+* #381: Adapter: New SNMP adapter with support for protocol versions v1, v2c, and v3.
+* #355: Backend: Object hierarchy with multiple roots for different purposes, including manual creation or ETS import for group address, building, and trade structures.
+* #366: Backend: For objects used in the logic module, the links section has been extended with a direct link to the corresponding logic sheet.
+* #373: Backend: Extended backup functionality. Everything is now backed up including the visualization, the SQLite DB can also be restored, and an automatic backup function has been added.
+* #406: Backend: Utilities for parallel operation of multiple OBS instances, such as displaying a banner for easier differentiation.
+* #350: Logicmodule: Functional Block: "iCalendar" filtering by summary, location, and description.
+* #228: Visu: Floor plan widget with the ability to place mini widgets on the floor plan.
   
 ### Fixes 🐞
-* #375: Confusing checksum field content within releasenotes
-
-
+* #375: General: Proxmox LXC, confusing checksum field content within release notes.
+* #394: Backend: The adapter page automatically reloaded every few seconds, making configuration difficult.
+* #345: Logicmodule: The object selector now uses the entire available window space.
+* #408: Visu: History widget now updates automatically when new values arrive via WebSocket.
 
 ## 2026.5.2
 ### Breaking changes 🚨
