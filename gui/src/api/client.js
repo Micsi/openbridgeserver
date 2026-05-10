@@ -201,6 +201,7 @@ export const historyApi = {
 // ── RingBuffer ────────────────────────────────────────────────────────────
 export const ringbufferApi = {
   query:  (params)                  => api.get('/ringbuffer/', { params }),
+  queryV2:(body)                    => api.post('/ringbuffer/query', body),
   stats:  ()                        => api.get('/ringbuffer/stats'),
   config: (storage, max_entries)    => api.post('/ringbuffer/config', { storage, max_entries }),
 }
