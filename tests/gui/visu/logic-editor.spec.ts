@@ -938,3 +938,62 @@ test('json_extractor Config-Panel zeigt Preview-Bereich und Pfad-Eingabe', async
     await apiDelete(`/api/v1/logic/graphs/${graphId}`)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Logikblatt aktivieren/deaktivieren (issue #422)
+// ---------------------------------------------------------------------------
+test('Logikblatt-Toggle: Button zeigt Aktiv-Status und deaktiviert das Blatt', async ({ page }) => {
+  const graph = await apiPost('/api/v1/logic/graphs', {
+    name: `E2E-Toggle-${Date.now()}`,
+    description: 'Playwright: toggle enabled',
+    enabled: true,
+    flow_data: { nodes: [], edges: [] },
+  }) as { id: string }
+  const graphId = graph.id
+
+  try {
+    await page.goto('/logic')
+    await page.waitForLoadState('networkidle')
+    await page.selectOption('[data-testid="select-graph"]', graphId)
+    await page.waitForTimeout(500)
+
+    // Initially the graph is active — button must show "Aktiv"
+    const toggleBtn = page.locator('[data-testid="btn-toggle-enabled"]')
+    await expect(toggleBtn).toBeVisible({ timeout: 5_000 })
+    await expect(toggleBtn).toContainText('Aktiv')
+
+    // Click to deactivate
+    await toggleBtn.click()
+    await page.waitForTimeout(500)
+
+    // Button must now show "Deaktiviert"
+    await expect(toggleBtn).toContainText('Deaktiviert')
+
+    // Dropdown entry must show "(deaktiviert)" suffix
+    const option = page.locator(`[data-testid="select-graph"] option[value="${graphId}"]`)
+    await expect(option).toContainText('(deaktiviert)')
+
+    // Click again to re-activate
+    await toggleBtn.click()
+    await page.waitForTimeout(500)
+    await expect(toggleBtn).toContainText('Aktiv')
+  } finally {
+    await apiDelete(`/api/v1/logic/graphs/${graphId}`)
+  }
+})
+
+test('Logikblatt-Bezeichnung: Toolbar und Modals verwenden "Logikblatt" statt "Graph"', async ({ page }) => {
+  await page.goto('/logic')
+  await page.waitForLoadState('networkidle')
+
+  // Dropdown placeholder
+  const select = page.locator('[data-testid="select-graph"]')
+  await expect(select).toContainText('Logikblatt wählen')
+
+  // Empty-canvas hint
+  await expect(page.getByText('Logikblatt wählen oder neu erstellen')).toBeVisible({ timeout: 5_000 })
+
+  // New-graph modal title
+  await page.click('button:has-text("+ Neu")')
+  await expect(page.getByText('Neues Logikblatt')).toBeVisible({ timeout: 3_000 })
+})
