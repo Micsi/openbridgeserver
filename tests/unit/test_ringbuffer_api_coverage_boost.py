@@ -1,4 +1,12 @@
-"""Targeted coverage boost tests for obs.api.v1.ringbuffer."""
+"""Targeted coverage boost tests for :mod:`obs.api.v1.ringbuffer`.
+
+Rewritten for the flat filterset schema (#431) — the original suite exercised
+the deprecated group/rule helpers (``_decode_query``, ``_encode_query``,
+``_cap_filterset_query``, ``RingBufferFiltersetCreate``, …) which no longer
+exist. The new helpers (``_decode_filter``, ``_encode_filter``,
+``_filter_to_query_v2``, ``RingBufferFiltersetIn``) are exercised here
+with the same pure-function approach.
+"""
 
 from __future__ import annotations
 
@@ -33,7 +41,7 @@ class _RingbufferStub:
 
 class _FetchDbStub:
     def __init__(self):
-        self.filtersets = {
+        self._rows = {
             "fs-1": {
                 "id": "fs-1",
                 "name": "FS",
@@ -41,60 +49,36 @@ class _FetchDbStub:
                 "dsl_version": 2,
                 "is_active": 1,
                 "is_default": 0,
-                "query_json": "{}",
+                "color": "#3b82f6",
+                "topbar_active": 0,
+                "topbar_order": 0,
+                "filter_json": '{"datapoints": ["dp-1"]}',
                 "created_at": "2026-01-01T00:00:00Z",
                 "updated_at": "2026-01-01T00:00:00Z",
             }
         }
-        self.groups = {
-            "fs-1": [
-                {
-                    "id": "g-1",
-                    "name": "Group",
-                    "is_active": 1,
-                    "group_order": 5,
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "updated_at": "2026-01-01T00:00:00Z",
-                }
-            ]
-        }
-        self.rules = {
-            "g-1": [
-                {
-                    "id": "r-1",
-                    "name": "Rule",
-                    "is_active": 1,
-                    "rule_order": 7,
-                    "query_json": "{}",
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "updated_at": "2026-01-01T00:00:00Z",
-                }
-            ]
-        }
 
-    async def fetchone(self, query, params):
+    async def fetchone(self, query, params=()):
         if "FROM ringbuffer_filtersets" in query:
-            return self.filtersets.get(params[0])
-        raise AssertionError(f"Unexpected query: {query}")
-
-    async def fetchall(self, query, params=()):
-        if "FROM ringbuffer_filterset_groups" in query:
-            return list(self.groups.get(params[0], []))
-        if "FROM ringbuffer_filterset_rules" in query:
-            return list(self.rules.get(params[0], []))
+            row = self._rows.get(params[0] if params else "")
+            if row is None:
+                return None
+            # Mimic aiosqlite Row by exposing both __getitem__ and .keys().
+            return _Row(row)
         raise AssertionError(f"Unexpected query: {query}")
 
 
-class _InsertDbStub:
-    def __init__(self):
-        self.executes = []
-        self.committed = False
+class _Row:
+    """Minimal stand-in for aiosqlite.Row with .keys() + __getitem__."""
 
-    async def execute(self, query, params=None):
-        self.executes.append((query, params))
+    def __init__(self, data: dict):
+        self._data = data
 
-    async def commit(self):
-        self.committed = True
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def keys(self):
+        return list(self._data.keys())
 
 
 def _mk_dp(dp_id="dp-1", name="Wohnzimmer", data_type="FLOAT"):
@@ -116,41 +100,27 @@ def _mk_row(row_id=1, dp_id="dp-1"):
     )
 
 
-def _mk_filterset_out(filterset_id="fs-1", is_active=True, groups=None):
-    return rb_api.RingBufferFiltersetOut(
-        id=filterset_id,
-        name="FS",
-        description="desc",
-        dsl_version=2,
-        is_active=is_active,
-        is_default=False,
-        query=rb_api.RingBufferQueryV2(),
-        created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z",
-        groups=groups or [],
-    )
+# ---------------------------------------------------------------------------
+# Pure helpers
+# ---------------------------------------------------------------------------
 
 
-def test_helpers_now_uuid_decode_encode_and_cap():
+def test_helpers_now_uuid_decode_encode():
     assert rb_api._now_iso().endswith("+00:00")
     assert len(rb_api._new_id()) == 36
 
-    default_q = rb_api._decode_query(None)
-    assert isinstance(default_q, rb_api.RingBufferQueryV2)
+    default_filter = rb_api._decode_filter(None)
+    assert isinstance(default_filter, rb_api.FilterCriteria)
 
-    # Invalid JSON and non-object payload should both fall back to default query
-    assert isinstance(rb_api._decode_query("{invalid"), rb_api.RingBufferQueryV2)
-    assert isinstance(rb_api._decode_query("[]"), rb_api.RingBufferQueryV2)
+    # Invalid JSON and non-object payload should both fall back to default filter
+    assert isinstance(rb_api._decode_filter("{invalid"), rb_api.FilterCriteria)
+    assert isinstance(rb_api._decode_filter("[]"), rb_api.FilterCriteria)
 
-    query = rb_api.RingBufferQueryV2(
-        pagination=rb_api.RingBufferPaginationV2(limit=9999, offset=9999),
-    )
-    encoded = rb_api._encode_query(query)
-    assert '"pagination"' in encoded
-
-    capped = rb_api._cap_filterset_query(query)
-    assert capped.pagination.limit == 2000
-    assert capped.pagination.offset == 5000
+    criteria = rb_api.FilterCriteria(datapoints=["dp-1"])
+    encoded = rb_api._encode_filter(criteria)
+    assert '"datapoints":["dp-1"]' in encoded
+    # Round-trip preserves data.
+    assert rb_api._decode_filter(encoded).datapoints == ["dp-1"]
 
 
 def test_csv_helpers_map_entry_fields():
@@ -174,6 +144,11 @@ def test_csv_helpers_map_entry_fields():
     assert row["name"] == ""
     assert row["metadata_version"] == "3"
     assert row["metadata_json"] == '{"tag":"küche"}'
+
+
+# ---------------------------------------------------------------------------
+# _query_v2_entries — used by both /query and the multi-filterset endpoint.
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -236,8 +211,13 @@ async def test_query_v2_entries_converts_value_error_to_http_422(monkeypatch):
     assert "invalid filter window" in str(exc_info.value.detail)
 
 
+# ---------------------------------------------------------------------------
+# Flat filterset persistence helpers
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_fetch_filterset_returns_none_or_full_structure():
+async def test_fetch_filterset_returns_none_or_flat_structure():
     db = _FetchDbStub()
 
     missing = await rb_api._fetch_filterset(db, "missing")
@@ -246,106 +226,103 @@ async def test_fetch_filterset_returns_none_or_full_structure():
     fetched = await rb_api._fetch_filterset(db, "fs-1")
     assert fetched is not None
     assert fetched.id == "fs-1"
-    assert fetched.groups[0].id == "g-1"
-    assert fetched.groups[0].rules[0].id == "r-1"
+    assert fetched.color == "#3b82f6"
+    assert fetched.topbar_active is False
+    assert fetched.filter.datapoints == ["dp-1"]
 
 
 @pytest.mark.asyncio
-async def test_insert_filterset_persists_groups_rules_and_returns_created(monkeypatch):
-    db = _InsertDbStub()
-    created = _mk_filterset_out("fs-new")
-
-    async def _fake_fetch(_db, _filterset_id):
-        return created
-
-    monkeypatch.setattr(rb_api, "_fetch_filterset", _fake_fetch)
-
-    payload = rb_api.RingBufferFiltersetCreate(
-        name="FS new",
-        is_default=True,
-        groups=[
-            rb_api.RingBufferFiltersetGroupCreate(
-                name="G",
-                rules=[rb_api.RingBufferFiltersetRuleCreate(name="R")],
-            )
-        ],
-    )
-
-    result = await rb_api._insert_filterset(db, payload=payload)
-    assert result == created
-    assert db.committed is True
-    assert any("INSERT INTO ringbuffer_filtersets" in query for query, _ in db.executes)
-    assert any("INSERT INTO ringbuffer_filterset_groups" in query for query, _ in db.executes)
-    assert any("INSERT INTO ringbuffer_filterset_rules" in query for query, _ in db.executes)
-    assert any("UPDATE ringbuffer_filtersets SET is_default=0" in query for query, _ in db.executes)
-
-
-@pytest.mark.asyncio
-async def test_insert_filterset_raises_when_refetch_fails(monkeypatch):
-    db = _InsertDbStub()
-
-    async def _fake_fetch(_db, _filterset_id):
-        return None
-
-    monkeypatch.setattr(rb_api, "_fetch_filterset", _fake_fetch)
-
-    with pytest.raises(RuntimeError, match="failed to create filterset"):
-        await rb_api._insert_filterset(db, payload=rb_api.RingBufferFiltersetCreate(name="FS"))
-
-
-@pytest.mark.asyncio
-async def test_filterset_route_guards_and_rule_limit(monkeypatch):
+async def test_filterset_default_endpoint_returns_404_when_missing(monkeypatch):
     class _DbDefaultMissing:
         async def fetchone(self, _query, _params=()):
             return None
 
     db = _DbDefaultMissing()
 
+    with pytest.raises(HTTPException) as exc:
+        await rb_api.get_default_ringbuffer_filterset(db=db)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_filterset_returns_404_when_missing(monkeypatch):
     async def _fetch_none(_db, _id):
         return None
 
     monkeypatch.setattr(rb_api, "_fetch_filterset", _fetch_none)
 
-    with pytest.raises(HTTPException) as exc_default:
-        await rb_api.get_default_ringbuffer_filterset(db=db)
-    assert exc_default.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        await rb_api.get_ringbuffer_filterset("missing", db=object())
+    assert exc.value.status_code == 404
 
-    with pytest.raises(HTTPException) as exc_get:
-        await rb_api.get_ringbuffer_filterset("missing", db=db)
-    assert exc_get.value.status_code == 404
 
-    with pytest.raises(HTTPException) as exc_query:
-        await rb_api.query_ringbuffer_filterset("missing", db=db)
-    assert exc_query.value.status_code == 404
+@pytest.mark.asyncio
+async def test_single_set_query_returns_404_when_missing(monkeypatch):
+    async def _fetch_none(_db, _id):
+        return None
 
-    groups = [
-        rb_api.RingBufferFiltersetGroupOut(
-            id="g",
-            name="g",
-            is_active=True,
-            group_order=0,
-            created_at="2026-01-01T00:00:00Z",
-            updated_at="2026-01-01T00:00:00Z",
-            rules=[
-                rb_api.RingBufferFiltersetRuleOut(
-                    id=f"r-{idx}",
-                    name=f"r-{idx}",
-                    is_active=True,
-                    rule_order=idx,
-                    query=rb_api.RingBufferQueryV2(),
-                    created_at="2026-01-01T00:00:00Z",
-                    updated_at="2026-01-01T00:00:00Z",
-                )
-                for idx in range(51)
-            ],
-        )
-    ]
+    monkeypatch.setattr(rb_api, "_fetch_filterset", _fetch_none)
 
-    async def _fetch_many(_db, _id):
-        return _mk_filterset_out("fs-many", is_active=True, groups=groups)
+    with pytest.raises(HTTPException) as exc:
+        await rb_api.query_ringbuffer_filterset("missing", db=object())
+    assert exc.value.status_code == 404
 
-    monkeypatch.setattr(rb_api, "_fetch_filterset", _fetch_many)
-    with pytest.raises(HTTPException) as exc_too_many:
-        await rb_api.query_ringbuffer_filterset("fs-many", db=db)
-    assert exc_too_many.value.status_code == 422
-    assert "too many active rules" in str(exc_too_many.value.detail)
+
+@pytest.mark.asyncio
+async def test_single_set_query_returns_empty_when_inactive(monkeypatch):
+    fs = rb_api.RingBufferFiltersetOut(
+        id="fs-x",
+        name="FS",
+        description="",
+        dsl_version=2,
+        is_active=False,
+        is_default=False,
+        color="#3b82f6",
+        topbar_active=False,
+        topbar_order=0,
+        filter=rb_api.FilterCriteria(),
+        created_at="2026-01-01T00:00:00Z",
+        updated_at="2026-01-01T00:00:00Z",
+    )
+
+    async def _fetch(_db, _id):
+        return fs
+
+    monkeypatch.setattr(rb_api, "_fetch_filterset", _fetch)
+
+    rows = await rb_api.query_ringbuffer_filterset("fs-x", db=object())
+    assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Multi-query — cap enforcement and the empty-set_ids passthrough.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_multi_query_rejects_too_many_set_ids():
+    body = rb_api.RingBufferMultiQueryRequest(
+        set_ids=[f"fs-{idx}" for idx in range(60)],
+    )
+    with pytest.raises(HTTPException) as exc:
+        await rb_api.query_ringbuffer_filtersets_multi(body, db=object())
+    assert exc.value.status_code == 422
+    assert "too many filtersets" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_multi_query_empty_set_ids_invokes_underlying_query(monkeypatch):
+    captured: list[rb_api.RingBufferQueryV2] = []
+
+    async def _fake_query(query, *, limit_override=None, offset_override=None):  # noqa: ARG001
+        captured.append(query)
+        return []
+
+    monkeypatch.setattr(rb_api, "_query_v2_entries", _fake_query)
+
+    body = rb_api.RingBufferMultiQueryRequest(set_ids=[], limit=25, offset=3)
+    rows = await rb_api.query_ringbuffer_filtersets_multi(body, db=object())
+    assert rows == []
+    assert captured, "underlying query must be invoked even for empty set_ids"
+    assert captured[0].pagination.limit == 25
+    assert captured[0].pagination.offset == 3
