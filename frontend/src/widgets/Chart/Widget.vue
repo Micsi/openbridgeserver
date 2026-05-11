@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Chart, LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend } from 'chart.js'
+import { Chart, LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend, BarController, BarElement } from 'chart.js'
 import { history } from '@/api/client'
 import { useWebSocket } from '@/composables/useWebSocket'
 import type { DataPointValue } from '@/types'
 
-Chart.register(LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend)
+Chart.register(LineController, LineElement, PointElement, LinearScale, Filler, Tooltip, Legend, BarController, BarElement)
 
 const props = defineProps<{
   config: Record<string, unknown>
@@ -18,6 +18,9 @@ const ws = useWebSocket()
 
 const label = computed(() => (props.config.label as string | undefined) ?? '—')
 const hours = computed(() => (props.config.hours as number | undefined) ?? 24)
+const chartType = computed<'line' | 'bar'>(() =>
+  (props.config.chart_type as string | undefined) === 'bar' ? 'bar' : 'line',
+)
 
 // 'y' = linke Achse, 'y1' = rechte Achse (Chart.js Achsen-IDs)
 interface SeriesDef { id: string; label: string; color: string; axis: 'y' | 'y1' }
@@ -64,72 +67,11 @@ function buildSeriesDefs(): SeriesDef[] {
   return result
 }
 
-async function loadData() {
-  if (props.editorMode) return
-
-  const defs = buildSeriesDefs()
-  if (defs.length === 0 || !chart) return
-
-  const now      = new Date()
-  const fromDate = new Date(now.getTime() - hours.value * 3_600_000)
-
-  const results = await Promise.all(
-    defs.map(s => history.query(s.id, fromDate.toISOString(), now.toISOString())),
-  )
-
-  seriesUnits.value = results.map(r => r[0]?.u ?? '')
-
-  const hasMultiple = defs.length > 1
-  const hasRight    = defs.some(s => s.axis === 'y1')
-
-  // Erste Einheit je Achse für den Achsentitel
-  const leftUnit  = defs.reduce<string>((u, s, i) => u || (s.axis === 'y'  ? (seriesUnits.value[i] ?? '') : ''), '')
-  const rightUnit = defs.reduce<string>((u, s, i) => u || (s.axis === 'y1' ? (seriesUnits.value[i] ?? '') : ''), '')
-
-  chart.data.datasets = defs.map((s, i) => ({
-    yAxisID:         s.axis,
-    label:           s.label || (hasMultiple ? `Serie ${i + 1}` : ''),
-    data:            results[i].map(d => ({ x: new Date(d.ts).getTime(), y: Number(d.v) })),
-    borderColor:     s.color,
-    backgroundColor: s.color + '1a',
-    borderWidth:     1.5,
-    pointRadius:     0,
-    fill:            !hasMultiple,
-    tension:         0.3,
-  }))
-
-  // X-Achse
-  const xAxis = chart.options.scales?.x as Record<string, unknown> | undefined
-  if (xAxis) { xAxis.min = fromDate.getTime(); xAxis.max = now.getTime() }
-
-  // Linke Y-Achse
-  const yLeft = chart.options.scales?.y as Record<string, unknown> | undefined
-  if (yLeft) {
-    yLeft.title = { display: !!leftUnit, text: leftUnit, color: '#6b7280', font: { size: 11 } }
-  }
-
-  // Rechte Y-Achse — nur anzeigen wenn mindestens eine Reihe zugewiesen
-  const yRight = chart.options.scales?.y1 as Record<string, unknown> | undefined
-  if (yRight) {
-    yRight.display = hasRight
-    yRight.title   = { display: !!rightUnit && hasRight, text: rightUnit, color: '#6b7280', font: { size: 11 } }
-  }
-
-  // Legende
-  if (chart.options.plugins) {
-    (chart.options.plugins as Record<string, unknown>).legend = {
-      display: hasMultiple,
-      labels:  { color: '#9ca3af', boxWidth: 12, font: { size: 11 } },
-    }
-  }
-
-  chart.update()
-}
-
-onMounted(() => {
+function initChart() {
   if (!canvas.value) return
+  chart?.destroy()
   chart = new Chart(canvas.value, {
-    type: 'line',
+    type: chartType.value,
     data: { datasets: [] },
     options: {
       responsive:          true,
@@ -181,6 +123,76 @@ onMounted(() => {
       },
     },
   })
+}
+
+async function loadData() {
+  if (props.editorMode) return
+
+  const defs = buildSeriesDefs()
+  if (defs.length === 0 || !chart) return
+
+  const now      = new Date()
+  const fromDate = new Date(now.getTime() - hours.value * 3_600_000)
+
+  const results = await Promise.all(
+    defs.map(s => history.query(s.id, fromDate.toISOString(), now.toISOString())),
+  )
+
+  seriesUnits.value = results.map(r => r[0]?.u ?? '')
+
+  const hasMultiple = defs.length > 1
+  const hasRight    = defs.some(s => s.axis === 'y1')
+  const isBar       = chartType.value === 'bar'
+
+  // Erste Einheit je Achse für den Achsentitel
+  const leftUnit  = defs.reduce<string>((u, s, i) => u || (s.axis === 'y'  ? (seriesUnits.value[i] ?? '') : ''), '')
+  const rightUnit = defs.reduce<string>((u, s, i) => u || (s.axis === 'y1' ? (seriesUnits.value[i] ?? '') : ''), '')
+
+  chart.data.datasets = defs.map((s, i) => ({
+    yAxisID:         s.axis,
+    label:           s.label || (hasMultiple ? `Serie ${i + 1}` : ''),
+    data:            results[i].map(d => ({ x: new Date(d.ts).getTime(), y: Number(d.v) })),
+    borderColor:     isBar ? 'transparent' : s.color,
+    backgroundColor: isBar ? s.color + 'cc' : s.color + '1a',
+    borderWidth:     isBar ? 0 : 1.5,
+    ...(isBar ? {} : {
+      pointRadius: 0,
+      fill:        !hasMultiple,
+      tension:     0.3,
+    }),
+  }))
+
+  // X-Achse
+  const xAxis = chart.options.scales?.x as Record<string, unknown> | undefined
+  if (xAxis) { xAxis.min = fromDate.getTime(); xAxis.max = now.getTime() }
+
+  // Linke Y-Achse
+  const yLeft = chart.options.scales?.y as Record<string, unknown> | undefined
+  if (yLeft) {
+    yLeft.title = { display: !!leftUnit, text: leftUnit, color: '#6b7280', font: { size: 11 } }
+  }
+
+  // Rechte Y-Achse — nur anzeigen wenn mindestens eine Reihe zugewiesen
+  const yRight = chart.options.scales?.y1 as Record<string, unknown> | undefined
+  if (yRight) {
+    yRight.display = hasRight
+    yRight.title   = { display: !!rightUnit && hasRight, text: rightUnit, color: '#6b7280', font: { size: 11 } }
+  }
+
+  // Legende
+  if (chart.options.plugins) {
+    (chart.options.plugins as Record<string, unknown>).legend = {
+      display: hasMultiple,
+      labels:  { color: '#9ca3af', boxWidth: 12, font: { size: 11 } },
+    }
+  }
+
+  chart.update()
+}
+
+onMounted(() => {
+  if (!canvas.value) return
+  initChart()
   loadData()
 
   // Auf WS-Nachrichten hören: wenn ein relevanter Datenpunkt eintrifft, wird
@@ -197,7 +209,14 @@ onMounted(() => {
 })
 
 watch(() => props.datapointId, loadData)
-watch(() => props.config, loadData, { deep: true })
+watch(() => props.config, async (newCfg, oldCfg) => {
+  const newType = (newCfg?.chart_type as string | undefined) === 'bar' ? 'bar' : 'line'
+  const oldType = (oldCfg?.chart_type as string | undefined) === 'bar' ? 'bar' : 'line'
+  if (newType !== oldType) {
+    initChart()
+  }
+  await loadData()
+}, { deep: true })
 
 onUnmounted(() => {
   wsOff?.()

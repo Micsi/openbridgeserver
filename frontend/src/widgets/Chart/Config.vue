@@ -2,7 +2,8 @@
 import { reactive, watch } from 'vue'
 import DataPointPicker from '@/components/DataPointPicker.vue'
 
-type Axis = 'left' | 'right'
+type Axis      = 'left' | 'right'
+type ChartType = 'line' | 'bar'
 
 interface Series {
   dp_id: string
@@ -14,6 +15,7 @@ interface Series {
 interface Cfg {
   label: string
   hours: number
+  chart_type: ChartType
   primary_color: string
   primary_axis: Axis
   series: Series[]
@@ -35,16 +37,18 @@ function normalizeSeries(raw: unknown): Series[] {
 }
 
 const cfg = reactive<Cfg>({
-  label:         (props.modelValue.label         as string) ?? '',
-  hours:         (props.modelValue.hours         as number) ?? 24,
-  primary_color: (props.modelValue.primary_color as string) ?? '#3b82f6',
-  primary_axis:  (props.modelValue.primary_axis  as Axis)   ?? 'left',
+  label:         (props.modelValue.label         as string)    ?? '',
+  hours:         (props.modelValue.hours         as number)    ?? 24,
+  chart_type:    (props.modelValue.chart_type    as ChartType) ?? 'line',
+  primary_color: (props.modelValue.primary_color as string)    ?? '#3b82f6',
+  primary_axis:  (props.modelValue.primary_axis  as Axis)      ?? 'left',
   series:        normalizeSeries(props.modelValue.series),
 })
 
 watch(cfg, () => emit('update:modelValue', {
   label:         cfg.label,
   hours:         cfg.hours,
+  chart_type:    cfg.chart_type,
   primary_color: cfg.primary_color,
   primary_axis:  cfg.primary_axis,
   series:        cfg.series.map(s => ({ ...s })),
@@ -72,6 +76,25 @@ function removeSeries(i: number) {
         placeholder="z.B. Temperaturverlauf"
         class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
       />
+    </div>
+
+    <!-- Diagramm-Typ -->
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Diagramm-Typ</label>
+      <div class="flex gap-1">
+        <button
+          v-for="opt in [{ v: 'line', l: '〰 Linie' }, { v: 'bar', l: '▐ Balken' }]"
+          :key="opt.v"
+          type="button"
+          :class="[
+            'flex-1 py-1 text-xs rounded border',
+            cfg.chart_type === opt.v
+              ? 'border-blue-500 bg-blue-500/20 text-blue-300'
+              : 'border-gray-700 text-gray-400 hover:border-gray-500',
+          ]"
+          @click="cfg.chart_type = opt.v as ChartType"
+        >{{ opt.l }}</button>
+      </div>
     </div>
 
     <!-- Zeitraum -->
