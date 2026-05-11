@@ -113,6 +113,7 @@ function initChart() {
             },
             label: (ctx) => {
               const v    = ctx.parsed.y
+              if (v == null) return ''
               const u    = seriesUnits.value[ctx.datasetIndex] ?? ''
               const name = ctx.dataset.label || ''
               const val  = u ? `${v.toFixed(2)} ${u}` : String(v)
