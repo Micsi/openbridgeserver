@@ -47,6 +47,7 @@ coverage.xml
 
 # Node
 node_modules/
+gui/coverage/
 
 # Docs build output
 docs/_build/
