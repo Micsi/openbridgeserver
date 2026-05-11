@@ -422,42 +422,31 @@ CREATE INDEX IF NOT EXISTS idx_knx_trade_parent ON knx_trades(parent_id);
 """
 
 _MIGRATION_V29 = """
+-- Flat filterset schema (#431): one rule per set, multi-active via topbar.
+-- V29 was overwritten in-place because it only lived in the epic branch and
+-- never reached upstream main, so a destructive DROP+CREATE is safe here.
+DROP TABLE IF EXISTS ringbuffer_filterset_rules;
+DROP TABLE IF EXISTS ringbuffer_filterset_groups;
+DROP TABLE IF EXISTS ringbuffer_filtersets;
+
 CREATE TABLE IF NOT EXISTS ringbuffer_filtersets (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    dsl_version INTEGER NOT NULL DEFAULT 2,
-    is_active   INTEGER NOT NULL DEFAULT 1,
-    is_default  INTEGER NOT NULL DEFAULT 0,
-    query_json  TEXT NOT NULL DEFAULT '{}',
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    dsl_version   INTEGER NOT NULL DEFAULT 2,
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    is_default    INTEGER NOT NULL DEFAULT 0,
+    color         TEXT NOT NULL DEFAULT '#3b82f6',
+    topbar_active INTEGER NOT NULL DEFAULT 0,
+    topbar_order  INTEGER NOT NULL DEFAULT 0,
+    filter_json   TEXT NOT NULL DEFAULT '{}',
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_rb_fs_default ON ringbuffer_filtersets(is_default);
-CREATE INDEX IF NOT EXISTS idx_rb_fs_active  ON ringbuffer_filtersets(is_active);
-
-CREATE TABLE IF NOT EXISTS ringbuffer_filterset_groups (
-    id          TEXT PRIMARY KEY,
-    filterset_id TEXT NOT NULL REFERENCES ringbuffer_filtersets(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    is_active   INTEGER NOT NULL DEFAULT 1,
-    group_order INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_rb_fsg_filterset ON ringbuffer_filterset_groups(filterset_id);
-
-CREATE TABLE IF NOT EXISTS ringbuffer_filterset_rules (
-    id          TEXT PRIMARY KEY,
-    group_id    TEXT NOT NULL REFERENCES ringbuffer_filterset_groups(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    is_active   INTEGER NOT NULL DEFAULT 1,
-    rule_order  INTEGER NOT NULL DEFAULT 0,
-    query_json  TEXT NOT NULL DEFAULT '{}',
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_rb_fsr_group ON ringbuffer_filterset_rules(group_id);
+CREATE INDEX IF NOT EXISTS idx_rb_fs_default       ON ringbuffer_filtersets(is_default);
+CREATE INDEX IF NOT EXISTS idx_rb_fs_active        ON ringbuffer_filtersets(is_active);
+CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_active ON ringbuffer_filtersets(topbar_active);
+CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_order  ON ringbuffer_filtersets(topbar_order);
 """
 
 # List of (version, sql_or_callable) tuples — append new migrations here
