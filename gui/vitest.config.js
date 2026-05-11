@@ -18,7 +18,15 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary', 'html'],
-      include: ['src/views/RingBufferView.vue'],
+      include: [
+        'src/views/RingBufferView.vue',
+        'src/components/ui/Combobox.vue',
+        'src/components/ui/DpCombobox.vue',
+        'src/components/ui/TagCombobox.vue',
+        'src/components/ui/AdapterCombobox.vue',
+        'src/components/ui/HierarchyCombobox.vue',
+        'src/components/ui/PathLabel.vue',
+      ],
     },
   },
 })
