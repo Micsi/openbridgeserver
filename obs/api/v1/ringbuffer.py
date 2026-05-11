@@ -1,20 +1,38 @@
-"""RingBuffer API."""
+"""RingBuffer API.
+
+Filterset schema (#431):
+    Filtersets are flat — one filter criteria per set. Multiple sets can be active
+    in the topbar simultaneously; the multi-query endpoint OR-unions their hits
+    and annotates each entry with the IDs of the sets it matched.
+
+The DB column is named ``filter_json`` (a serialized :class:`FilterCriteria`),
+explicitly distinct from the legacy ``query_json`` column which previously stored
+a complete :class:`RingBufferQueryV2` (filters + sort + pagination). Renaming
+makes the semantic shift unambiguous: a filterset now stores filter *criteria*,
+while sort and pagination remain owned by the caller of the query endpoint.
+
+Backwards-compat:
+    POST /filtersets and PUT /filtersets/{id} still accept payloads in the old
+    ``{ groups: [{ rules: [{ query: {...} }] }] }`` shape — they are flattened
+    on the fly with a ``DeprecationWarning``. This shim will be removed in #438.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import csv
 import json
+import re
 import tempfile
 import time
 import uuid
+import warnings
 from datetime import UTC, datetime
-from typing import Any
-from typing import Literal
+from typing import Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from obs.api.auth import get_admin_user
 from obs.api.auth import get_current_user
@@ -25,7 +43,8 @@ router = APIRouter(tags=["ringbuffer"])
 
 _FILTERSET_QUERY_LIMIT_CAP = 2000
 _FILTERSET_QUERY_OFFSET_CAP = 5000
-_FILTERSET_ACTIVE_RULES_CAP = 50
+_FILTERSET_MULTI_QUERY_SET_CAP = 50
+_FILTERSET_MULTI_QUERY_PER_SET_LIMIT = 2000
 
 _CSV_EXPORT_MAX_ROWS = 100000
 _CSV_EXPORT_CHUNK_SIZE = 1000
@@ -46,6 +65,9 @@ _CSV_EXPORT_HEADERS = (
     "metadata_json",
 )
 
+_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+_DEFAULT_COLOR = "#3b82f6"
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -56,7 +78,7 @@ def _new_id() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Query models
+# Query models (v2 — used by /query and /export/csv)
 # ---------------------------------------------------------------------------
 
 
@@ -72,6 +94,16 @@ class RingBufferEntryOut(BaseModel):
     quality: str
     metadata_version: int
     metadata: dict[str, Any]
+
+
+class RingBufferMultiEntryOut(RingBufferEntryOut):
+    """Entry plus the list of filterset IDs the entry matched in a multi-query.
+
+    Each entry appears at most once even if it matches multiple sets — the
+    ``matched_set_ids`` list captures the OR-union membership.
+    """
+
+    matched_set_ids: list[str]
 
 
 class RingBufferStats(BaseModel):
@@ -171,29 +203,56 @@ class RingBufferQueryV2(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Filterset models
+# Filterset models — flat schema (#431)
 # ---------------------------------------------------------------------------
 
 
-class RingBufferFiltersetRuleCreate(BaseModel):
+class NodeRef(BaseModel):
+    """Reference to a node in a hierarchy tree (e.g. KNX function/spaces tree).
+
+    ``include_descendants`` decides whether descendant nodes count as matches —
+    expansion to concrete datapoint IDs is performed by the consumer.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    is_active: bool = True
-    rule_order: int = 0
-    query: RingBufferQueryV2 = Field(default_factory=RingBufferQueryV2)
+    tree_id: str
+    node_id: str
+    include_descendants: bool = True
 
 
-class RingBufferFiltersetGroupCreate(BaseModel):
+class FilterCriteria(BaseModel):
+    """Flat filter criteria for a single filterset (#431).
+
+    Field-internal lists are OR-combined; the criteria as a whole are AND-combined.
+    The time filter is *not* part of the criteria — it is supplied at query time
+    so the same filterset works across different time windows.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    is_active: bool = True
-    group_order: int = 0
-    rules: list[RingBufferFiltersetRuleCreate] = Field(default_factory=list)
+    hierarchy_nodes: list[NodeRef] = Field(default_factory=list)
+    datapoints: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    adapters: list[str] = Field(default_factory=list)
+    q: str | None = None
+    value_filter: RingBufferValueFilterV2 | None = None
 
 
-class RingBufferFiltersetCreate(BaseModel):
+def _color_must_be_hex(value: str) -> str:
+    if not isinstance(value, str) or not _COLOR_RE.match(value):
+        raise ValueError("color must be a hex color like #3b82f6 or #abc")
+    return value
+
+
+class RingBufferFiltersetIn(BaseModel):
+    """Input model for POST /filtersets and PUT /filtersets/{id}.
+
+    Backwards-compat: the legacy ``groups`` field is accepted as a passthrough
+    and converted to a flat ``filter`` in the route handler — see
+    :func:`_flatten_legacy_filterset_payload`.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     name: str
@@ -201,28 +260,15 @@ class RingBufferFiltersetCreate(BaseModel):
     dsl_version: int = Field(default=2, ge=1)
     is_active: bool = True
     is_default: bool = False
-    query: RingBufferQueryV2 = Field(default_factory=RingBufferQueryV2)
-    groups: list[RingBufferFiltersetGroupCreate] = Field(default_factory=list)
+    color: str = _DEFAULT_COLOR
+    topbar_active: bool = False
+    topbar_order: int = 0
+    filter: FilterCriteria = Field(default_factory=FilterCriteria)
 
-
-class RingBufferFiltersetRuleUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str | None = None
-    name: str | None = None
-    is_active: bool | None = None
-    rule_order: int | None = None
-    query: RingBufferQueryV2 | None = None
-
-
-class RingBufferFiltersetGroupUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str | None = None
-    name: str | None = None
-    is_active: bool | None = None
-    group_order: int | None = None
-    rules: list[RingBufferFiltersetRuleUpdate] | None = None
+    @field_validator("color")
+    @classmethod
+    def _validate_color(cls, value: str) -> str:
+        return _color_must_be_hex(value)
 
 
 class RingBufferFiltersetUpdate(BaseModel):
@@ -233,34 +279,23 @@ class RingBufferFiltersetUpdate(BaseModel):
     dsl_version: int | None = Field(default=None, ge=1)
     is_active: bool | None = None
     is_default: bool | None = None
-    query: RingBufferQueryV2 | None = None
-    groups: list[RingBufferFiltersetGroupUpdate] | None = None
+    color: str | None = None
+    topbar_active: bool | None = None
+    topbar_order: int | None = None
+    filter: FilterCriteria | None = None
+
+    @field_validator("color")
+    @classmethod
+    def _validate_color(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _color_must_be_hex(value)
 
 
 class RingBufferFiltersetCloneRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
-
-
-class RingBufferFiltersetRuleOut(BaseModel):
-    id: str
-    name: str
-    is_active: bool
-    rule_order: int
-    query: RingBufferQueryV2
-    created_at: str
-    updated_at: str
-
-
-class RingBufferFiltersetGroupOut(BaseModel):
-    id: str
-    name: str
-    is_active: bool
-    group_order: int
-    created_at: str
-    updated_at: str
-    rules: list[RingBufferFiltersetRuleOut]
 
 
 class RingBufferFiltersetOut(BaseModel):
@@ -270,13 +305,64 @@ class RingBufferFiltersetOut(BaseModel):
     dsl_version: int
     is_active: bool
     is_default: bool
-    query: RingBufferQueryV2
+    color: str
+    topbar_active: bool
+    topbar_order: int
+    filter: FilterCriteria
     created_at: str
     updated_at: str
-    groups: list[RingBufferFiltersetGroupOut]
 
 
-def _decode_query(raw: str | None) -> RingBufferQueryV2:
+class RingBufferFiltersetTopbarPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topbar_active: bool | None = None
+    topbar_order: int | None = None
+
+
+class RingBufferFiltersetOrderItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    topbar_order: int
+
+
+class RingBufferFiltersetOrderPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[RingBufferFiltersetOrderItem] = Field(default_factory=list)
+
+
+class RingBufferMultiQueryRequest(BaseModel):
+    """Request body for ``POST /filtersets/query`` (multi-set OR-union).
+
+    Behaviour:
+        - ``set_ids=[]`` and no ``time`` → returns the most recent entries with
+          the default pagination (no filterset filter at all).
+        - ``set_ids=[]`` with a ``time`` filter → returns the most recent entries
+          inside that time window (still no filterset filter).
+        - ``set_ids=[a, b, ...]`` → OR-union of the matching entries across the
+          named sets, each entry carrying its ``matched_set_ids``.
+        - Unknown / missing set IDs are skipped with a logger warning, never an
+          error — the caller may have a stale list after another client deleted
+          a set; failing here would break the topbar for everyone.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    set_ids: list[str] = Field(default_factory=list)
+    time: RingBufferTimeFilterV2 | None = None
+    limit: int = Field(default=500, ge=1, le=_FILTERSET_MULTI_QUERY_PER_SET_LIMIT)
+    offset: int = Field(default=0, ge=0, le=_FILTERSET_QUERY_OFFSET_CAP)
+    sort: RingBufferSortV2 = Field(default_factory=RingBufferSortV2)
+
+
+# ---------------------------------------------------------------------------
+# Filter helpers
+# ---------------------------------------------------------------------------
+
+
+def _decode_filter(raw: str | None) -> FilterCriteria:
     payload: Any = {}
     if raw:
         try:
@@ -286,30 +372,146 @@ def _decode_query(raw: str | None) -> RingBufferQueryV2:
     if not isinstance(payload, dict):
         payload = {}
     try:
-        return RingBufferQueryV2.model_validate(payload)
-    except Exception:
-        return RingBufferQueryV2()
+        return FilterCriteria.model_validate(payload)
+    except ValidationError:
+        return FilterCriteria()
 
 
-def _encode_query(query: RingBufferQueryV2) -> str:
-    return json.dumps(query.model_dump(by_alias=True), separators=(",", ":"))
+def _encode_filter(filter_: FilterCriteria) -> str:
+    return json.dumps(filter_.model_dump(), separators=(",", ":"))
 
 
-def _cap_filterset_query(query: RingBufferQueryV2) -> RingBufferQueryV2:
-    capped_limit = min(query.pagination.limit, _FILTERSET_QUERY_LIMIT_CAP)
-    capped_offset = min(query.pagination.offset, _FILTERSET_QUERY_OFFSET_CAP)
-    if capped_limit == query.pagination.limit and capped_offset == query.pagination.offset:
-        return query
-    return query.model_copy(
-        update={
-            "pagination": query.pagination.model_copy(
-                update={
-                    "limit": capped_limit,
-                    "offset": capped_offset,
-                }
-            )
+def _normalize_color(value: str | None) -> str:
+    return value if isinstance(value, str) and _COLOR_RE.match(value) else _DEFAULT_COLOR
+
+
+def _filter_to_query_v2(filter_: FilterCriteria, time: RingBufferTimeFilterV2 | None) -> RingBufferQueryV2:
+    """Translate a flat :class:`FilterCriteria` plus a time filter into the legacy
+    :class:`RingBufferQueryV2` shape that :func:`_query_v2_entries` expects.
+
+    hierarchy_nodes is intentionally NOT expanded here — concrete datapoint IDs
+    are expected to already be supplied in ``filter.datapoints`` by the caller
+    (the frontend resolves hierarchy_nodes via the trees API). For #431 we
+    persist the hierarchy_nodes reference verbatim so the UI can re-display it,
+    but server-side matching today only uses ``datapoints``.
+    """
+    filters: dict[str, Any] = {}
+    if filter_.q:
+        filters["q"] = filter_.q
+    if filter_.adapters:
+        filters["adapters"] = {"any_of": list(filter_.adapters)}
+    if filter_.datapoints:
+        filters["datapoints"] = {"ids": list(filter_.datapoints)}
+    if filter_.tags:
+        filters["metadata"] = {"tags_any_of": list(filter_.tags)}
+    if filter_.value_filter is not None:
+        filters["values"] = [filter_.value_filter.model_dump()]
+    if time is not None:
+        filters["time"] = time.model_dump(by_alias=True, exclude_none=True)
+    return RingBufferQueryV2.model_validate(
+        {
+            "filters": filters,
+            "sort": {"field": "id", "order": "desc"},
+            "pagination": {"limit": _FILTERSET_QUERY_LIMIT_CAP, "offset": 0},
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Legacy payload shim (#431, removed in #438)
+# ---------------------------------------------------------------------------
+
+
+def _legacy_groups_to_filter(groups: list[dict[str, Any]]) -> FilterCriteria:
+    """Flatten a legacy ``groups[ rules[ query ] ]`` payload onto a single
+    :class:`FilterCriteria`.
+
+    The flattening is best-effort: we OR-merge all rule queries from all groups
+    into a single criteria object. This is intentionally lossy — the legacy AND
+    intersection between rules cannot be expressed in the new flat model and is
+    not required for the multi-active topbar workflow.
+    """
+    datapoints: list[str] = []
+    tags: list[str] = []
+    adapters: list[str] = []
+    q_parts: list[str] = []
+    value_filter: dict[str, Any] | None = None
+    for group in groups or []:
+        if not isinstance(group, dict):
+            continue
+        for rule in group.get("rules", []) or []:
+            if not isinstance(rule, dict):
+                continue
+            query = rule.get("query") or {}
+            filters = query.get("filters") or {}
+            adapters_filter = filters.get("adapters") or {}
+            for value in adapters_filter.get("any_of", []) or []:
+                if isinstance(value, str) and value not in adapters:
+                    adapters.append(value)
+            datapoints_filter = filters.get("datapoints") or {}
+            for value in datapoints_filter.get("ids", []) or []:
+                if isinstance(value, str) and value not in datapoints:
+                    datapoints.append(value)
+            metadata = filters.get("metadata") or {}
+            for value in metadata.get("tags_any_of", []) or []:
+                if isinstance(value, str) and value not in tags:
+                    tags.append(value)
+            q_value = filters.get("q")
+            if isinstance(q_value, str) and q_value and q_value not in q_parts:
+                q_parts.append(q_value)
+            values = filters.get("values")
+            if value_filter is None and isinstance(values, list) and values:
+                value_filter = values[0]
+    return FilterCriteria.model_validate(
+        {
+            "datapoints": datapoints,
+            "tags": tags,
+            "adapters": adapters,
+            "q": " ".join(q_parts) if q_parts else None,
+            "value_filter": value_filter,
+        }
+    )
+
+
+def _flatten_legacy_filterset_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    """Detect a legacy ``groups[]`` / ``query`` payload and flatten it onto the
+    new schema, emitting a :class:`DeprecationWarning`. Returns the payload
+    suitable for :class:`RingBufferFiltersetIn`.
+    """
+    if not isinstance(raw, dict):
+        return raw
+
+    has_groups = "groups" in raw
+    has_legacy_query = "query" in raw and "filter" not in raw
+    if not (has_groups or has_legacy_query):
+        return raw
+
+    warnings.warn(
+        "ringbuffer filterset payload uses the legacy groups[]/query schema — "
+        "this shim is scheduled for removal in #438",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    converted = dict(raw)
+    # Drop nested legacy fields and the original ``filter`` if any of them sneak
+    # in alongside groups (defensive against half-migrated payloads).
+    groups = converted.pop("groups", None)
+    legacy_query = converted.pop("query", None)
+
+    # Synthesize a FilterCriteria from groups[] / query.filters.
+    if groups:
+        converted["filter"] = _legacy_groups_to_filter(groups).model_dump()
+    elif legacy_query and "filter" not in converted:
+        # If only the legacy base query is present, harvest its filters.
+        flat = _legacy_groups_to_filter([{"rules": [{"query": legacy_query}]}])
+        converted["filter"] = flat.model_dump()
+    return converted
+
+
+# ---------------------------------------------------------------------------
+# CSV helpers
+# ---------------------------------------------------------------------------
 
 
 def _csv_json(value: Any) -> str:
@@ -330,6 +532,11 @@ def _entry_to_csv_row(entry: RingBufferEntryOut) -> dict[str, str]:
         "metadata_version": str(entry.metadata_version),
         "metadata_json": _csv_json(entry.metadata),
     }
+
+
+# ---------------------------------------------------------------------------
+# Core query helper (used by /query, /export/csv and the multi-filterset query)
+# ---------------------------------------------------------------------------
 
 
 async def _query_v2_entries(
@@ -446,45 +653,12 @@ async def _query_v2_entries(
     ]
 
 
-async def _fetch_filterset(db: Database, filterset_id: str) -> RingBufferFiltersetOut | None:
-    row = await db.fetchone("SELECT * FROM ringbuffer_filtersets WHERE id=?", (filterset_id,))
-    if not row:
-        return None
+# ---------------------------------------------------------------------------
+# Filterset DB helpers (flat schema)
+# ---------------------------------------------------------------------------
 
-    group_rows = await db.fetchall(
-        "SELECT * FROM ringbuffer_filterset_groups WHERE filterset_id=? ORDER BY group_order, created_at, id",
-        (filterset_id,),
-    )
-    groups: list[RingBufferFiltersetGroupOut] = []
-    for group_row in group_rows:
-        rule_rows = await db.fetchall(
-            "SELECT * FROM ringbuffer_filterset_rules WHERE group_id=? ORDER BY rule_order, created_at, id",
-            (group_row["id"],),
-        )
-        rules = [
-            RingBufferFiltersetRuleOut(
-                id=rule_row["id"],
-                name=rule_row["name"],
-                is_active=bool(rule_row["is_active"]),
-                rule_order=int(rule_row["rule_order"]),
-                query=_decode_query(rule_row["query_json"]),
-                created_at=rule_row["created_at"],
-                updated_at=rule_row["updated_at"],
-            )
-            for rule_row in rule_rows
-        ]
-        groups.append(
-            RingBufferFiltersetGroupOut(
-                id=group_row["id"],
-                name=group_row["name"],
-                is_active=bool(group_row["is_active"]),
-                group_order=int(group_row["group_order"]),
-                created_at=group_row["created_at"],
-                updated_at=group_row["updated_at"],
-                rules=rules,
-            )
-        )
 
+def _row_to_filterset(row: Any) -> RingBufferFiltersetOut:
     return RingBufferFiltersetOut(
         id=row["id"],
         name=row["name"],
@@ -492,17 +666,26 @@ async def _fetch_filterset(db: Database, filterset_id: str) -> RingBufferFilters
         dsl_version=int(row["dsl_version"]),
         is_active=bool(row["is_active"]),
         is_default=bool(row["is_default"]),
-        query=_decode_query(row["query_json"]),
+        color=_normalize_color(row["color"] if "color" in row.keys() else None),
+        topbar_active=bool(row["topbar_active"]) if "topbar_active" in row.keys() else False,
+        topbar_order=int(row["topbar_order"]) if "topbar_order" in row.keys() else 0,
+        filter=_decode_filter(row["filter_json"] if "filter_json" in row.keys() else None),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
-        groups=groups,
     )
+
+
+async def _fetch_filterset(db: Database, filterset_id: str) -> RingBufferFiltersetOut | None:
+    row = await db.fetchone("SELECT * FROM ringbuffer_filtersets WHERE id=?", (filterset_id,))
+    if not row:
+        return None
+    return _row_to_filterset(row)
 
 
 async def _insert_filterset(
     db: Database,
     *,
-    payload: RingBufferFiltersetCreate,
+    payload: RingBufferFiltersetIn,
 ) -> RingBufferFiltersetOut:
     now = _now_iso()
     filterset_id = _new_id()
@@ -511,8 +694,9 @@ async def _insert_filterset(
 
     await db.execute(
         """INSERT INTO ringbuffer_filtersets
-           (id, name, description, dsl_version, is_active, is_default, query_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           (id, name, description, dsl_version, is_active, is_default,
+            color, topbar_active, topbar_order, filter_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             filterset_id,
             payload.name,
@@ -520,50 +704,24 @@ async def _insert_filterset(
             payload.dsl_version,
             int(payload.is_active),
             int(payload.is_default),
-            _encode_query(payload.query),
+            payload.color,
+            int(payload.topbar_active),
+            int(payload.topbar_order),
+            _encode_filter(payload.filter),
             now,
             now,
         ),
     )
-
-    for group_payload in payload.groups:
-        group_id = _new_id()
-        await db.execute(
-            """INSERT INTO ringbuffer_filterset_groups
-               (id, filterset_id, name, is_active, group_order, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                group_id,
-                filterset_id,
-                group_payload.name,
-                int(group_payload.is_active),
-                int(group_payload.group_order),
-                now,
-                now,
-            ),
-        )
-        for rule_payload in group_payload.rules:
-            await db.execute(
-                """INSERT INTO ringbuffer_filterset_rules
-                   (id, group_id, name, is_active, rule_order, query_json, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    _new_id(),
-                    group_id,
-                    rule_payload.name,
-                    int(rule_payload.is_active),
-                    int(rule_payload.rule_order),
-                    _encode_query(rule_payload.query),
-                    now,
-                    now,
-                ),
-            )
-
     await db.commit()
     created = await _fetch_filterset(db, filterset_id)
     if not created:
         raise RuntimeError("failed to create filterset")
     return created
+
+
+# ---------------------------------------------------------------------------
+# RingBuffer query (existing endpoints — unchanged behaviour)
+# ---------------------------------------------------------------------------
 
 
 @router.get("/", response_model=list[RingBufferEntryOut])
@@ -710,29 +868,55 @@ async def export_ringbuffer_csv(
     )
 
 
+# ---------------------------------------------------------------------------
+# Filterset CRUD (flat schema, with legacy shim on POST/PUT)
+# ---------------------------------------------------------------------------
+
+
+def _parse_filterset_in(raw: dict[str, Any]) -> RingBufferFiltersetIn:
+    payload = _flatten_legacy_filterset_payload(raw)
+    try:
+        return RingBufferFiltersetIn.model_validate(payload)
+    except ValidationError as exc:
+        # ``include_context=False`` strips the raw Python exception object from
+        # the error list — FastAPI's default JSON encoder chokes on the bundled
+        # ``ValueError`` instance otherwise (see #431).
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            exc.errors(include_url=False, include_context=False),
+        ) from exc
+
+
+async def _read_json_body(request: Request) -> dict[str, Any]:
+    try:
+        raw = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid JSON body") from exc
+    if not isinstance(raw, dict):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "request body must be a JSON object")
+    return raw
+
+
 @router.get("/filtersets", response_model=list[RingBufferFiltersetOut])
 async def list_ringbuffer_filtersets(
     _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> list[RingBufferFiltersetOut]:
     rows = await db.fetchall(
-        "SELECT id FROM ringbuffer_filtersets ORDER BY is_default DESC, created_at, id",
+        "SELECT * FROM ringbuffer_filtersets ORDER BY topbar_order, is_default DESC, created_at, id",
     )
-    result: list[RingBufferFiltersetOut] = []
-    for row in rows:
-        current = await _fetch_filterset(db, row["id"])
-        if current:
-            result.append(current)
-    return result
+    return [_row_to_filterset(row) for row in rows]
 
 
 @router.post("/filtersets", response_model=RingBufferFiltersetOut, status_code=status.HTTP_201_CREATED)
 async def create_ringbuffer_filterset(
-    body: RingBufferFiltersetCreate,
+    request: Request,
     _admin: str = Depends(get_admin_user),
     db: Database = Depends(get_db),
 ) -> RingBufferFiltersetOut:
-    return await _insert_filterset(db, payload=body)
+    raw = await _read_json_body(request)
+    payload = _parse_filterset_in(raw)
+    return await _insert_filterset(db, payload=payload)
 
 
 @router.get("/filtersets/default", response_model=RingBufferFiltersetOut)
@@ -766,7 +950,7 @@ async def get_ringbuffer_filterset(
 @router.put("/filtersets/{filterset_id}", response_model=RingBufferFiltersetOut)
 async def update_ringbuffer_filterset(
     filterset_id: str,
-    body: RingBufferFiltersetUpdate,
+    request: Request,
     _admin: str = Depends(get_admin_user),
     db: Database = Depends(get_db),
 ) -> RingBufferFiltersetOut:
@@ -774,20 +958,34 @@ async def update_ringbuffer_filterset(
     if not current:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "ringbuffer filterset not found")
 
+    raw = await _read_json_body(request)
+    payload = _flatten_legacy_filterset_payload(raw)
+    try:
+        body = RingBufferFiltersetUpdate.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            exc.errors(include_url=False, include_context=False),
+        ) from exc
+
     now = _now_iso()
     name = body.name if body.name is not None else current.name
     description = body.description if body.description is not None else current.description
     dsl_version = body.dsl_version if body.dsl_version is not None else current.dsl_version
     is_active = body.is_active if body.is_active is not None else current.is_active
     is_default = body.is_default if body.is_default is not None else current.is_default
-    query = body.query if body.query is not None else current.query
+    color = body.color if body.color is not None else current.color
+    topbar_active = body.topbar_active if body.topbar_active is not None else current.topbar_active
+    topbar_order = body.topbar_order if body.topbar_order is not None else current.topbar_order
+    new_filter = body.filter if body.filter is not None else current.filter
 
     if is_default:
         await db.execute("UPDATE ringbuffer_filtersets SET is_default=0")
 
     await db.execute(
         """UPDATE ringbuffer_filtersets
-           SET name=?, description=?, dsl_version=?, is_active=?, is_default=?, query_json=?, updated_at=?
+           SET name=?, description=?, dsl_version=?, is_active=?, is_default=?,
+               color=?, topbar_active=?, topbar_order=?, filter_json=?, updated_at=?
            WHERE id=?""",
         (
             name,
@@ -795,54 +993,14 @@ async def update_ringbuffer_filterset(
             dsl_version,
             int(is_active),
             int(is_default),
-            _encode_query(query),
+            color,
+            int(topbar_active),
+            int(topbar_order),
+            _encode_filter(new_filter),
             now,
             filterset_id,
         ),
     )
-
-    if body.groups is not None:
-        await db.execute("DELETE FROM ringbuffer_filterset_groups WHERE filterset_id=?", (filterset_id,))
-        for group_payload in body.groups:
-            group_id = _new_id()
-            group_name = group_payload.name if group_payload.name is not None else "Group"
-            group_is_active = group_payload.is_active if group_payload.is_active is not None else True
-            group_order = group_payload.group_order if group_payload.group_order is not None else 0
-            await db.execute(
-                """INSERT INTO ringbuffer_filterset_groups
-                   (id, filterset_id, name, is_active, group_order, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    group_id,
-                    filterset_id,
-                    group_name,
-                    int(group_is_active),
-                    int(group_order),
-                    now,
-                    now,
-                ),
-            )
-            for rule_payload in group_payload.rules or []:
-                rule_name = rule_payload.name if rule_payload.name is not None else "Rule"
-                rule_is_active = rule_payload.is_active if rule_payload.is_active is not None else True
-                rule_order = rule_payload.rule_order if rule_payload.rule_order is not None else 0
-                rule_query = rule_payload.query if rule_payload.query is not None else RingBufferQueryV2()
-                await db.execute(
-                    """INSERT INTO ringbuffer_filterset_rules
-                       (id, group_id, name, is_active, rule_order, query_json, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        _new_id(),
-                        group_id,
-                        rule_name,
-                        int(rule_is_active),
-                        int(rule_order),
-                        _encode_query(rule_query),
-                        now,
-                        now,
-                    ),
-                )
-
     await db.commit()
     updated = await _fetch_filterset(db, filterset_id)
     if not updated:
@@ -874,30 +1032,18 @@ async def clone_ringbuffer_filterset(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "ringbuffer filterset not found")
 
     clone_name = body.name if body.name else f"{source.name} (Copy)"
-    clone_payload = RingBufferFiltersetCreate(
+    clone_payload = RingBufferFiltersetIn(
         name=clone_name,
         description=source.description,
         dsl_version=source.dsl_version,
         is_active=source.is_active,
         is_default=False,
-        query=source.query,
-        groups=[
-            RingBufferFiltersetGroupCreate(
-                name=group.name,
-                is_active=group.is_active,
-                group_order=group.group_order,
-                rules=[
-                    RingBufferFiltersetRuleCreate(
-                        name=rule.name,
-                        is_active=rule.is_active,
-                        rule_order=rule.rule_order,
-                        query=rule.query,
-                    )
-                    for rule in group.rules
-                ],
-            )
-            for group in source.groups
-        ],
+        color=source.color,
+        # Clones do not inherit topbar activation — the user explicitly opts in
+        # via the PATCH /topbar endpoint after deciding the clone is ready.
+        topbar_active=False,
+        topbar_order=source.topbar_order,
+        filter=source.filter,
     )
     return await _insert_filterset(db, payload=clone_payload)
 
@@ -923,35 +1069,180 @@ async def set_default_ringbuffer_filterset(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Topbar PATCH endpoints (#431)
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/filtersets/order", response_model=list[RingBufferFiltersetOut])
+async def patch_ringbuffer_filtersets_order(
+    body: RingBufferFiltersetOrderPatch,
+    _admin: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
+) -> list[RingBufferFiltersetOut]:
+    """Persist a new topbar order for several sets in one batch.
+
+    Sets not mentioned in ``items`` keep their existing ``topbar_order``.
+    Unknown IDs are ignored silently — same rationale as for the multi-query
+    endpoint (a racing delete must not break drag-and-drop reordering).
+    """
+    now = _now_iso()
+    known_ids = {row["id"] for row in await db.fetchall("SELECT id FROM ringbuffer_filtersets")}
+    for item in body.items:
+        if item.id not in known_ids:
+            continue
+        await db.execute(
+            "UPDATE ringbuffer_filtersets SET topbar_order=?, updated_at=? WHERE id=?",
+            (int(item.topbar_order), now, item.id),
+        )
+    await db.commit()
+
+    rows = await db.fetchall(
+        "SELECT * FROM ringbuffer_filtersets ORDER BY topbar_order, is_default DESC, created_at, id",
+    )
+    return [_row_to_filterset(row) for row in rows]
+
+
+@router.patch("/filtersets/{filterset_id}/topbar", response_model=RingBufferFiltersetOut)
+async def patch_ringbuffer_filterset_topbar(
+    filterset_id: str,
+    body: RingBufferFiltersetTopbarPatch,
+    _admin: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
+) -> RingBufferFiltersetOut:
+    """Toggle the topbar activation and/or order of a single set.
+
+    A no-op body (both fields ``None``) still touches ``updated_at`` so the
+    frontend can rely on a single sync source after the call.
+    """
+    current = await _fetch_filterset(db, filterset_id)
+    if not current:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "ringbuffer filterset not found")
+
+    topbar_active = body.topbar_active if body.topbar_active is not None else current.topbar_active
+    topbar_order = body.topbar_order if body.topbar_order is not None else current.topbar_order
+    now = _now_iso()
+    await db.execute_and_commit(
+        "UPDATE ringbuffer_filtersets SET topbar_active=?, topbar_order=?, updated_at=? WHERE id=?",
+        (int(topbar_active), int(topbar_order), now, filterset_id),
+    )
+
+    updated = await _fetch_filterset(db, filterset_id)
+    if not updated:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "ringbuffer filterset not found")
+    return updated
+
+
+# ---------------------------------------------------------------------------
+# Multi-set query (#431) — OR-union across all named sets, annotated entries
+# ---------------------------------------------------------------------------
+
+
+@router.post("/filtersets/query", response_model=list[RingBufferMultiEntryOut])
+async def query_ringbuffer_filtersets_multi(
+    body: RingBufferMultiQueryRequest,
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> list[RingBufferMultiEntryOut]:
+    if len(body.set_ids) > _FILTERSET_MULTI_QUERY_SET_CAP:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"too many filtersets requested (max {_FILTERSET_MULTI_QUERY_SET_CAP})",
+        )
+
+    # No filtersets requested → return entries filtered only by the time window
+    # (or no filter at all if ``time`` is also None). This mirrors how the topbar
+    # looks before the user toggles any set on.
+    if not body.set_ids:
+        empty_filter = FilterCriteria()
+        query = _filter_to_query_v2(empty_filter, body.time)
+        query = query.model_copy(
+            update={
+                "sort": body.sort,
+                "pagination": query.pagination.model_copy(
+                    update={"limit": body.limit, "offset": body.offset},
+                ),
+            }
+        )
+        entries = await _query_v2_entries(query)
+        return [RingBufferMultiEntryOut(**entry.model_dump(), matched_set_ids=[]) for entry in entries]
+
+    # Resolve sets — skip missing/inactive ones rather than fail.
+    resolved: list[RingBufferFiltersetOut] = []
+    for set_id in body.set_ids:
+        current = await _fetch_filterset(db, set_id)
+        if current is None:
+            continue
+        if not current.is_active:
+            continue
+        resolved.append(current)
+
+    # Per-set query, generously paginated; OR-union by entry id and remember
+    # which sets contributed to the union for each entry.
+    per_set_limit = min(body.limit + body.offset + _FILTERSET_QUERY_LIMIT_CAP, _FILTERSET_MULTI_QUERY_PER_SET_LIMIT)
+    matched: dict[int, list[str]] = {}
+    entries_by_id: dict[int, RingBufferEntryOut] = {}
+    for fs in resolved:
+        query = _filter_to_query_v2(fs.filter, body.time)
+        query = query.model_copy(
+            update={
+                "sort": body.sort,
+                "pagination": query.pagination.model_copy(
+                    update={"limit": per_set_limit, "offset": 0},
+                ),
+            }
+        )
+        try:
+            rows = await _query_v2_entries(query)
+        except HTTPException:
+            # An empty-but-present filter criterion (e.g. tags=[]) reduces to a
+            # no-op match — skip it instead of failing the whole multi-query.
+            continue
+        for entry in rows:
+            matched.setdefault(entry.id, []).append(fs.id)
+            entries_by_id.setdefault(entry.id, entry)
+
+    # Apply final sort + pagination on the union.
+    ordered_ids = sorted(
+        matched.keys(),
+        key=lambda eid: (entries_by_id[eid].ts, entries_by_id[eid].id) if body.sort.field == "ts" else entries_by_id[eid].id,
+        reverse=(body.sort.order == "desc"),
+    )
+    paginated = ordered_ids[body.offset : body.offset + body.limit]
+    return [
+        RingBufferMultiEntryOut(
+            **entries_by_id[eid].model_dump(),
+            matched_set_ids=matched[eid],
+        )
+        for eid in paginated
+    ]
+
+
 @router.post("/filtersets/{filterset_id}/query", response_model=list[RingBufferEntryOut])
 async def query_ringbuffer_filterset(
     filterset_id: str,
     _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> list[RingBufferEntryOut]:
+    """Single-set query (back-compat for callers that target one set at a time).
+
+    The body is intentionally ignored — the time filter and pagination are
+    fixed defaults here. Callers that need custom time/pagination should use
+    ``POST /filtersets/query`` with a single-element ``set_ids`` list.
+    """
     current = await _fetch_filterset(db, filterset_id)
     if not current:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "ringbuffer filterset not found")
     if not current.is_active:
         return []
 
-    active_rules = [rule for group in current.groups if group.is_active for rule in group.rules if rule.is_active]
-    if len(active_rules) > _FILTERSET_ACTIVE_RULES_CAP:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"too many active rules in filterset (max {_FILTERSET_ACTIVE_RULES_CAP})",
-        )
+    query = _filter_to_query_v2(current.filter, None)
+    return await _query_v2_entries(query)
 
-    base_rows = await _query_v2_entries(_cap_filterset_query(current.query))
-    allowed_ids = {row.id for row in base_rows}
 
-    for rule in active_rules:
-        rule_rows = await _query_v2_entries(_cap_filterset_query(rule.query))
-        allowed_ids &= {row.id for row in rule_rows}
-        if not allowed_ids:
-            return []
-
-    return [row for row in base_rows if row.id in allowed_ids]
+# ---------------------------------------------------------------------------
+# Stats / config
+# ---------------------------------------------------------------------------
 
 
 @router.get("/stats", response_model=RingBufferStats)

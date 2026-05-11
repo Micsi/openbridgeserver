@@ -214,6 +214,10 @@ export const ringbufferApi = {
   cloneFilterset: (id, name = null) => api.post(`/ringbuffer/filtersets/${id}/clone`, name ? { name } : {}),
   setDefaultFilterset: (id)         => api.post(`/ringbuffer/filtersets/${id}/default`, {}),
   queryFilterset: (id)              => api.post(`/ringbuffer/filtersets/${id}/query`, {}),
+  // #431 — flat filterset schema, multi-active topbar
+  patchFiltersetTopbar: (id, body)  => api.patch(`/ringbuffer/filtersets/${id}/topbar`, body),
+  patchFiltersetOrder: (items)      => api.patch('/ringbuffer/filtersets/order', { items }),
+  queryMultiFiltersets: (body)      => api.post('/ringbuffer/filtersets/query', body),
 }
 
 // ── Config Import/Export ──────────────────────────────────────────────────
