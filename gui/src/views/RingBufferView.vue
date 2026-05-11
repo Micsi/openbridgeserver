@@ -4,8 +4,11 @@
       <div class="flex-1">
         <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100">Monitor</h2>
         <p class="text-sm text-slate-500 mt-0.5">Live Log</p>
+        <p class="text-xs text-slate-500 mt-1" data-testid="ringbuffer-storage-mode-hint">
+          Speicherverhalten: file-only mit festen serverseitigen Limits.
+        </p>
       </div>
-      <button @click="showConfig = true" class="btn-secondary btn-sm">⚙ Konfigurieren</button>
+      <button @click="showConfig = true" class="btn-secondary btn-sm" data-testid="btn-open-monitor-config">⚙ Konfigurieren</button>
       <button @click="applyFilters" class="btn-secondary btn-sm" data-testid="btn-refresh-ringbuffer">↻ Aktualisieren</button>
       <button
         v-if="!paused"
@@ -262,24 +265,100 @@
 
     <div v-if="statsError" class="text-sm text-red-500">{{ statsError }}</div>
 
-    <Modal v-model="showConfig" title="Monitor konfigurieren" max-width="sm">
+    <Modal v-model="showConfig" title="Monitor konfigurieren" max-width="md">
       <form @submit.prevent="saveConfig" class="flex flex-col gap-4">
-        <div class="form-group">
-          <label class="label">Speicher</label>
-          <select v-model="configForm.storage" class="input">
-            <option value="file">file (SQLite, persistent)</option>
-          </select>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="flex flex-col gap-1">
+            <label class="text-xs text-slate-500">Speichermodell</label>
+            <input class="input" :value="configForm.storage" disabled />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-xs text-slate-500">Max. Einträge</label>
+            <input v-model.number="configForm.max_entries" type="number" min="100" max="1000000" step="100" class="input" data-testid="rb-config-max-entries" />
+          </div>
         </div>
-        <div class="form-group">
-          <label class="label">Max. Einträge</label>
-          <input v-model.number="configForm.max_entries" type="number" class="input" min="100" max="1000000" step="1000" />
+
+        <div class="rounded-lg border border-slate-200 dark:border-slate-700 p-3 flex flex-col gap-3">
+          <div class="flex items-center gap-2">
+            <input id="max-size-enabled" type="checkbox" v-model="configForm.maxSizeEnabled" />
+            <label for="max-size-enabled" class="text-sm font-medium">Max. Speicherplatz auf Platte</label>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <input
+              v-model.trim="configForm.maxSizeValue"
+              type="number"
+              min="1"
+              step="1"
+              class="input"
+              :disabled="!configForm.maxSizeEnabled"
+              data-testid="rb-config-max-size-value"
+              placeholder="z. B. 500"
+            />
+            <select
+              v-model="configForm.maxSizeUnit"
+              class="input"
+              :disabled="!configForm.maxSizeEnabled"
+              data-testid="rb-config-max-size-unit"
+            >
+              <option value="mb">MB</option>
+              <option value="gb">GB</option>
+            </select>
+          </div>
         </div>
-        <div v-if="configMsg" :class="['p-3 rounded-lg text-sm', configMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']">{{ configMsg.text }}</div>
+
+        <div class="rounded-lg border border-slate-200 dark:border-slate-700 p-3 flex flex-col gap-3">
+          <div class="flex items-center gap-2">
+            <input id="retention-enabled" type="checkbox" v-model="configForm.retentionEnabled" />
+            <label for="retention-enabled" class="text-sm font-medium">Max. Retention</label>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <input
+              v-model.trim="configForm.retentionValue"
+              type="number"
+              min="0"
+              step="1"
+              class="input"
+              :disabled="!configForm.retentionEnabled"
+              data-testid="rb-config-retention-value"
+              placeholder="z. B. 30"
+            />
+            <select
+              v-model="configForm.retentionUnit"
+              class="input"
+              :disabled="!configForm.retentionEnabled"
+              data-testid="rb-config-retention-unit"
+            >
+              <option value="days">Tage</option>
+              <option value="months">Monate</option>
+              <option value="years">Jahre</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 dark:border-slate-700 p-3 flex flex-col gap-2">
+          <h4 class="text-sm font-semibold">Ringbuffer Statistik</h4>
+          <div class="text-xs text-slate-500 flex items-center justify-between">
+            <span>Einträge</span>
+            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-total">{{ stats?.total ?? '-' }}</span>
+          </div>
+          <div class="text-xs text-slate-500 flex items-center justify-between">
+            <span>Belegter Speicherplatz</span>
+            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-file-size">{{ formatBytes(stats?.file_size_bytes ?? 0) }}</span>
+          </div>
+          <div class="text-xs text-slate-500 flex items-center justify-between">
+            <span>Effektive Retention</span>
+            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-retention">{{ formatRetention(stats?.max_age ?? null) }}</span>
+          </div>
+        </div>
+
+        <div v-if="configMsg" :class="['p-3 rounded-lg text-sm', configMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']">
+          {{ configMsg.text }}
+        </div>
         <div class="flex justify-end gap-3">
           <button type="button" @click="showConfig = false" class="btn-secondary">Schliessen</button>
-          <button type="submit" class="btn-primary" :disabled="configSaving">
+          <button type="submit" class="btn-primary" :disabled="configSaving" data-testid="rb-config-save">
             <Spinner v-if="configSaving" size="sm" color="white" />
-            Uebernehmen
+            Speichern
           </button>
         </div>
       </form>
@@ -337,6 +416,15 @@ const OPERATOR_OPTIONS = {
   string: ['eq', 'ne', 'contains', 'regex'],
   bool: ['eq', 'ne'],
 }
+const SIZE_UNIT_FACTORS = {
+  mb: 1024 * 1024,
+  gb: 1024 * 1024 * 1024,
+}
+const RETENTION_UNIT_SECONDS = {
+  days: 24 * 60 * 60,
+  months: 30 * 24 * 60 * 60,
+  years: 365 * 24 * 60 * 60,
+}
 
 const { fmtDateTime } = useTz()
 const wsStore = useWebSocketStore()
@@ -379,7 +467,16 @@ const filters = reactive({
   fromRelativeSeconds: '',
   toRelativeSeconds: '',
 })
-const configForm = reactive({ storage: 'file', max_entries: 10000 })
+const configForm = reactive({
+  storage: 'file',
+  max_entries: 10000,
+  maxSizeEnabled: false,
+  maxSizeValue: '500',
+  maxSizeUnit: 'mb',
+  retentionEnabled: false,
+  retentionValue: '30',
+  retentionUnit: 'days',
+})
 
 const filtersetDraft = ref(newFiltersetDraft())
 
@@ -401,6 +498,111 @@ function splitCsv(raw) {
 
 function joinCsv(values) {
   return (values || []).map((v) => String(v).trim()).filter(Boolean).join(',')
+}
+
+function formatBytes(rawBytes) {
+  const bytes = Number(rawBytes)
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  if (bytes >= SIZE_UNIT_FACTORS.gb) return `${(bytes / SIZE_UNIT_FACTORS.gb).toFixed(2)} GB`
+  if (bytes >= SIZE_UNIT_FACTORS.mb) return `${(bytes / SIZE_UNIT_FACTORS.mb).toFixed(2)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KB`
+  return `${Math.round(bytes)} B`
+}
+
+function formatRetention(rawSeconds) {
+  const seconds = Number(rawSeconds)
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'unbegrenzt'
+  if (seconds % RETENTION_UNIT_SECONDS.years === 0) return `${seconds / RETENTION_UNIT_SECONDS.years} Jahre`
+  if (seconds % RETENTION_UNIT_SECONDS.months === 0) return `${seconds / RETENTION_UNIT_SECONDS.months} Monate`
+  if (seconds % RETENTION_UNIT_SECONDS.days === 0) return `${seconds / RETENTION_UNIT_SECONDS.days} Tage`
+  return `${seconds} Sekunden`
+}
+
+function parseNonNegativeInteger(raw) {
+  const parsed = Number.parseInt(String(raw ?? '').trim(), 10)
+  if (!Number.isFinite(parsed) || parsed < 0) return null
+  return parsed
+}
+
+function pickSizeUnit(bytes) {
+  if (bytes % SIZE_UNIT_FACTORS.gb === 0) {
+    return { value: String(bytes / SIZE_UNIT_FACTORS.gb), unit: 'gb' }
+  }
+  return { value: String(Math.max(1, Math.round(bytes / SIZE_UNIT_FACTORS.mb))), unit: 'mb' }
+}
+
+function pickRetentionUnit(seconds) {
+  if (seconds % RETENTION_UNIT_SECONDS.years === 0) {
+    return { value: String(seconds / RETENTION_UNIT_SECONDS.years), unit: 'years' }
+  }
+  if (seconds % RETENTION_UNIT_SECONDS.months === 0) {
+    return { value: String(seconds / RETENTION_UNIT_SECONDS.months), unit: 'months' }
+  }
+  if (seconds % RETENTION_UNIT_SECONDS.days === 0) {
+    return { value: String(seconds / RETENTION_UNIT_SECONDS.days), unit: 'days' }
+  }
+  return { value: String(Math.ceil(seconds / RETENTION_UNIT_SECONDS.days)), unit: 'days' }
+}
+
+function hydrateConfigFormFromStats(currentStats) {
+  configForm.storage = 'file'
+  configForm.max_entries = Number(currentStats?.max_entries ?? 10000)
+
+  const maxFileSize = Number(currentStats?.max_file_size_bytes)
+  if (Number.isFinite(maxFileSize) && maxFileSize > 0) {
+    const picked = pickSizeUnit(maxFileSize)
+    configForm.maxSizeEnabled = true
+    configForm.maxSizeValue = picked.value
+    configForm.maxSizeUnit = picked.unit
+  } else {
+    configForm.maxSizeEnabled = false
+    configForm.maxSizeValue = '500'
+    configForm.maxSizeUnit = 'mb'
+  }
+
+  const maxAge = Number(currentStats?.max_age)
+  if (Number.isFinite(maxAge) && maxAge > 0) {
+    const picked = pickRetentionUnit(maxAge)
+    configForm.retentionEnabled = true
+    configForm.retentionValue = picked.value
+    configForm.retentionUnit = picked.unit
+  } else {
+    configForm.retentionEnabled = false
+    configForm.retentionValue = '30'
+    configForm.retentionUnit = 'days'
+  }
+}
+
+function buildConfigPayload() {
+  const maxEntries = Number(configForm.max_entries)
+  if (!Number.isFinite(maxEntries) || maxEntries < 100) {
+    throw new Error('Max. Einträge muss mindestens 100 sein')
+  }
+
+  const payload = {
+    storage: 'file',
+    max_entries: Math.round(maxEntries),
+    max_file_size_bytes: null,
+    max_age: null,
+  }
+
+  if (configForm.maxSizeEnabled) {
+    const sizeValue = parseNonNegativeInteger(configForm.maxSizeValue)
+    if (sizeValue === null || sizeValue <= 0) {
+      throw new Error('Max. Speicherplatz muss grösser als 0 sein')
+    }
+    payload.max_file_size_bytes = sizeValue * SIZE_UNIT_FACTORS[configForm.maxSizeUnit]
+  }
+
+  if (configForm.retentionEnabled) {
+    const retentionValue = parseNonNegativeInteger(configForm.retentionValue)
+    if (retentionValue === null) {
+      throw new Error('Retention muss eine gültige Zahl sein')
+    }
+    payload.max_age = retentionValue * RETENTION_UNIT_SECONDS[configForm.retentionUnit]
+  }
+
+  return payload
 }
 
 function parseLiteral(raw, dataType) {
@@ -997,8 +1199,7 @@ async function applyFilters() {
 onMounted(async () => {
   await Promise.all([load(), loadStats(), loadFiltersets()])
   if (stats.value) {
-    configForm.storage = stats.value.storage
-    configForm.max_entries = stats.value.max_entries
+    hydrateConfigFormFromStats(stats.value)
   }
   unregisterRb = wsStore.onRingbufferEntry(onLiveEntry)
 })
@@ -1030,26 +1231,29 @@ async function loadStats() {
   try {
     const { data } = await ringbufferApi.stats()
     stats.value = data
+    hydrateConfigFormFromStats(data)
   } catch (error) {
     statsError.value = extractErrorMessage(error, 'Statistiken konnten nicht geladen werden')
   }
-}
-
-function qualityLabel(q) {
-  return q === 'good' ? 'gut' : q === 'bad' ? 'schlecht' : q === 'uncertain' ? 'undefiniert' : q
 }
 
 async function saveConfig() {
   configSaving.value = true
   configMsg.value = null
   try {
-    await ringbufferApi.config(configForm.storage, configForm.max_entries)
-    configMsg.value = { ok: true, text: 'Konfiguration uebernommen' }
-    await loadStats()
-  } catch (e) {
-    configMsg.value = { ok: false, text: e.response?.data?.detail ?? 'Fehler' }
+    const payload = buildConfigPayload()
+    const { data } = await ringbufferApi.config(payload)
+    stats.value = data
+    hydrateConfigFormFromStats(data)
+    configMsg.value = { ok: true, text: 'Monitor-Konfiguration gespeichert' }
+  } catch (error) {
+    configMsg.value = { ok: false, text: extractErrorMessage(error, error?.message || 'Speichern fehlgeschlagen') }
   } finally {
     configSaving.value = false
   }
+}
+
+function qualityLabel(q) {
+  return q === 'good' ? 'gut' : q === 'bad' ? 'schlecht' : q === 'uncertain' ? 'undefiniert' : q
 }
 </script>

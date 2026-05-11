@@ -151,3 +151,177 @@ test('RingBuffer Zeitfilter unterstützt offene Ränder und absolute/relative Ko
     await apiDelete(`/api/v1/datapoints/${dpId}`)
   }
 })
+
+test('RingBuffer Monitor-Modal öffnet stabil ohne separates Speicher-PopUp', async ({ page }) => {
+  await page.route('**/api/v1/ringbuffer/query', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+  await page.route('**/api/v1/ringbuffer/filtersets', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+  await page.route('**/api/v1/ringbuffer/stats', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 0,
+        max_entries: 10000,
+        storage: 'file',
+        max_file_size_bytes: null,
+        max_age: null,
+        file_size_bytes: 0,
+      }),
+    })
+  })
+
+  await page.goto('/ringbuffer')
+  await page.waitForLoadState('networkidle')
+  await page.click('[data-testid="btn-open-monitor-config"]')
+
+  await expect(page.locator('[data-testid="rb-config-max-size-value"]')).toBeVisible()
+  await expect(page.locator('[data-testid="rb-config-retention-value"]')).toBeVisible()
+  await expect(page.locator('[data-testid="rb-config-stats-total"]')).toContainText('0')
+  await expect(page.getByRole('button', { name: /speicher.*popup/i })).toHaveCount(0)
+})
+
+test('RingBuffer Monitor-Modal hält Speicher-/Retention-State und sendet Limits korrekt', async ({ page }) => {
+  await page.route('**/api/v1/ringbuffer/query', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+  await page.route('**/api/v1/ringbuffer/filtersets', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+  await page.route('**/api/v1/ringbuffer/stats', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 12,
+        max_entries: 10000,
+        storage: 'file',
+        max_file_size_bytes: 10485760,
+        max_age: 86400,
+        file_size_bytes: 4096,
+      }),
+    })
+  })
+
+  let postedBody: Record<string, unknown> | null = null
+  await page.route('**/api/v1/ringbuffer/config', async (route) => {
+    postedBody = route.request().postDataJSON() as Record<string, unknown>
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 12,
+        max_entries: 50000,
+        storage: 'file',
+        max_file_size_bytes: 2147483648,
+        max_age: 63072000,
+        file_size_bytes: 8192,
+      }),
+    })
+  })
+
+  await page.goto('/ringbuffer')
+  await page.waitForLoadState('networkidle')
+  await page.click('[data-testid="btn-open-monitor-config"]')
+
+  await page.fill('[data-testid="rb-config-max-size-value"]', '2')
+  await page.selectOption('[data-testid="rb-config-max-size-unit"]', 'gb')
+  await page.fill('[data-testid="rb-config-retention-value"]', '2')
+  await page.selectOption('[data-testid="rb-config-retention-unit"]', 'years')
+  await page.fill('[data-testid="rb-config-max-entries"]', '50000')
+
+  await expect(page.locator('[data-testid="rb-config-max-size-value"]')).toHaveValue('2')
+  await expect(page.locator('[data-testid="rb-config-retention-value"]')).toHaveValue('2')
+  await expect(page.locator('[data-testid="rb-config-max-entries"]')).toHaveValue('50000')
+
+  await page.click('[data-testid="rb-config-save"]')
+
+  await expect.poll(() => postedBody).not.toBeNull()
+  expect(postedBody).toEqual({
+    storage: 'file',
+    max_entries: 50000,
+    max_file_size_bytes: 2147483648,
+    max_age: 63072000,
+  })
+})
+
+test('RingBuffer Monitor-Modal Statistik rendert stabil bei leerem und gefülltem Buffer', async ({ page }) => {
+  let statsCalls = 0
+  await page.route('**/api/v1/ringbuffer/query', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+  await page.route('**/api/v1/ringbuffer/filtersets', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+  await page.route('**/api/v1/ringbuffer/stats', async (route) => {
+    statsCalls += 1
+    if (statsCalls === 1) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          total: 0,
+          max_entries: 10000,
+          storage: 'file',
+          max_file_size_bytes: null,
+          max_age: null,
+          file_size_bytes: 0,
+        }),
+      })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 25,
+        max_entries: 10000,
+        storage: 'file',
+        max_file_size_bytes: 52428800,
+        max_age: 172800,
+        file_size_bytes: 1048576,
+      }),
+    })
+  })
+
+  await page.goto('/ringbuffer')
+  await page.waitForLoadState('networkidle')
+  await page.click('[data-testid="btn-open-monitor-config"]')
+  await expect(page.locator('[data-testid="rb-config-stats-total"]')).toContainText('0')
+  await expect(page.locator('[data-testid="rb-config-stats-file-size"]')).toContainText('0 B')
+  await expect(page.locator('[data-testid="rb-config-stats-retention"]')).toContainText('unbegrenzt')
+
+  await page.reload()
+  await page.waitForLoadState('networkidle')
+  await page.click('[data-testid="btn-open-monitor-config"]')
+  await expect(page.locator('[data-testid="rb-config-stats-total"]')).toContainText('25')
+  await expect(page.locator('[data-testid="rb-config-stats-file-size"]')).toContainText('1.00 MB')
+  await expect(page.locator('[data-testid="rb-config-stats-retention"]')).toContainText('2 Tage')
+})
