@@ -339,9 +339,7 @@ class IoBrokerAdapter(AdapterBase):
                 return True
             except Exception as exc:
                 if self._should_retry_with_websocket(exc):
-                    logger.warning(
-                        "ioBroker Socket.IO polling handshake failed; retrying with websocket transport"
-                    )
+                    logger.warning("ioBroker Socket.IO polling handshake failed; retrying with websocket transport")
                     fallback_kwargs = dict(self._connect_kwargs)
                     fallback_kwargs["transports"] = ["websocket"]
                     fallback_sio = self._build_socket()
