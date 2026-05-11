@@ -202,8 +202,18 @@ export const historyApi = {
 export const ringbufferApi = {
   query:  (params)                  => api.get('/ringbuffer/', { params }),
   queryV2:(body)                    => api.post('/ringbuffer/query', body),
+  exportCsv: (body)                 => api.post('/ringbuffer/export/csv', body, { responseType: 'blob' }),
   stats:  ()                        => api.get('/ringbuffer/stats'),
   config: (storage, max_entries)    => api.post('/ringbuffer/config', { storage, max_entries }),
+  listFiltersets: ()                => api.get('/ringbuffer/filtersets'),
+  getDefaultFilterset: ()           => api.get('/ringbuffer/filtersets/default'),
+  getFilterset: (id)                => api.get(`/ringbuffer/filtersets/${id}`),
+  createFilterset: (body)           => api.post('/ringbuffer/filtersets', body),
+  updateFilterset: (id, body)       => api.put(`/ringbuffer/filtersets/${id}`, body),
+  deleteFilterset: (id)             => api.delete(`/ringbuffer/filtersets/${id}`),
+  cloneFilterset: (id, name = null) => api.post(`/ringbuffer/filtersets/${id}/clone`, name ? { name } : {}),
+  setDefaultFilterset: (id)         => api.post(`/ringbuffer/filtersets/${id}/default`, {}),
+  queryFilterset: (id)              => api.post(`/ringbuffer/filtersets/${id}/query`, {}),
 }
 
 // ── Config Import/Export ──────────────────────────────────────────────────
