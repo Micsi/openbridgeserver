@@ -1,8 +1,16 @@
-"""Integration tests for RingBuffer filtersets API (issue #389)."""
+"""Integration tests for the flat RingBuffer filterset API (#431).
+
+Replaces the original test suite from #389 that exercised the deprecated
+group/rule hierarchy. The flat schema stores one ``FilterCriteria`` per set
+plus a ``color``, ``topbar_active`` and ``topbar_order`` column; the legacy
+``groups[]`` body is still accepted on POST/PUT through a backwards-compat
+shim that emits :class:`DeprecationWarning` (removed in #438).
+"""
 
 from __future__ import annotations
 
 import uuid
+import warnings
 
 import pytest
 
@@ -18,12 +26,11 @@ _DP_BASE = {
 }
 
 
-async def _create_dp(client, auth_headers, name: str) -> dict:
-    resp = await client.post(
-        "/api/v1/datapoints/",
-        json={**_DP_BASE, "name": name},
-        headers=auth_headers,
-    )
+async def _create_dp(client, auth_headers, name: str, *, tags: list[str] | None = None) -> dict:
+    payload = {**_DP_BASE, "name": name}
+    if tags is not None:
+        payload["tags"] = tags
+    resp = await client.post("/api/v1/datapoints/", json=payload, headers=auth_headers)
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -38,24 +45,17 @@ async def _write_value(client, auth_headers, dp_id: str, value: object) -> None:
 
 
 async def _create_filterset(client, auth_headers, payload: dict) -> dict:
-    resp = await client.post(
-        "/api/v1/ringbuffer/filtersets",
-        json=payload,
-        headers=auth_headers,
-    )
+    resp = await client.post("/api/v1/ringbuffer/filtersets", json=payload, headers=auth_headers)
     assert resp.status_code == 201, resp.text
     return resp.json()
 
 
 async def _delete_filterset(client, auth_headers, filterset_id: str) -> None:
-    await client.delete(
-        f"/api/v1/ringbuffer/filtersets/{filterset_id}",
-        headers=auth_headers,
-    )
+    await client.delete(f"/api/v1/ringbuffer/filtersets/{filterset_id}", headers=auth_headers)
 
 
 async def _create_non_admin_user_and_headers(client, auth_headers, username: str, password: str) -> dict:
-    create_resp = await client.post(
+    resp = await client.post(
         "/api/v1/auth/users",
         json={
             "username": username,
@@ -65,7 +65,7 @@ async def _create_non_admin_user_and_headers(client, auth_headers, username: str
         },
         headers=auth_headers,
     )
-    assert create_resp.status_code == 201, create_resp.text
+    assert resp.status_code == 201, resp.text
 
     from obs.api.auth import create_access_token
 
@@ -73,37 +73,466 @@ async def _create_non_admin_user_and_headers(client, auth_headers, username: str
     return {"Authorization": f"Bearer {token}"}
 
 
-def _query_for_dp(dp_id: str) -> dict:
-    return {
-        "filters": {"datapoints": {"ids": [dp_id]}},
-        "sort": {"field": "id", "order": "desc"},
-        "pagination": {"limit": 100, "offset": 0},
-    }
+# ---------------------------------------------------------------------------
+# Flat CRUD
+# ---------------------------------------------------------------------------
 
 
-async def test_ringbuffer_filtersets_crud_clone_and_default(client, auth_headers):
+async def test_filterset_crud_round_trip(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, f"RB Flat CRUD {uuid.uuid4()}")
+
     payload = {
-        "name": f"RB Filterset {uuid.uuid4()}",
-        "description": "Issue 389 integration test",
+        "name": f"RB Flat {uuid.uuid4()}",
+        "description": "flat schema round-trip",
+        "is_active": True,
+        "color": "#10b981",
+        "topbar_active": True,
+        "topbar_order": 7,
+        "filter": {
+            "datapoints": [dp["id"]],
+            "tags": ["ringbuffer-filterset-test"],
+            "adapters": ["api"],
+        },
+    }
+    created = await _create_filterset(client, auth_headers, payload)
+    try:
+        assert created["color"] == "#10b981"
+        assert created["topbar_active"] is True
+        assert created["topbar_order"] == 7
+        assert created["filter"]["datapoints"] == [dp["id"]]
+        assert created["filter"]["tags"] == ["ringbuffer-filterset-test"]
+        assert created["filter"]["adapters"] == ["api"]
+        assert "groups" not in created  # Flat schema must not expose the legacy field.
+
+        # GET single
+        resp = await client.get(f"/api/v1/ringbuffer/filtersets/{created['id']}", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["id"] == created["id"]
+
+        # LIST contains it
+        list_resp = await client.get("/api/v1/ringbuffer/filtersets", headers=auth_headers)
+        assert list_resp.status_code == 200, list_resp.text
+        listed_ids = {row["id"] for row in list_resp.json()}
+        assert created["id"] in listed_ids
+
+        # PUT — change a single field
+        put_resp = await client.put(
+            f"/api/v1/ringbuffer/filtersets/{created['id']}",
+            json={"name": f"{payload['name']} Updated", "color": "#ef4444"},
+            headers=auth_headers,
+        )
+        assert put_resp.status_code == 200, put_resp.text
+        updated = put_resp.json()
+        assert updated["name"].endswith("Updated")
+        assert updated["color"] == "#ef4444"
+        # Other fields preserved
+        assert updated["filter"]["datapoints"] == [dp["id"]]
+    finally:
+        await _delete_filterset(client, auth_headers, created["id"])
+
+
+async def test_filterset_default_endpoints(client, auth_headers):
+    created = await _create_filterset(
+        client,
+        auth_headers,
+        {
+            "name": f"RB Default {uuid.uuid4()}",
+            "filter": {"adapters": ["api"]},
+        },
+    )
+    try:
+        # Promote to default
+        resp = await client.post(
+            f"/api/v1/ringbuffer/filtersets/{created['id']}/default",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["is_default"] is True
+
+        get_default = await client.get("/api/v1/ringbuffer/filtersets/default", headers=auth_headers)
+        assert get_default.status_code == 200, get_default.text
+        assert get_default.json()["id"] == created["id"]
+    finally:
+        await _delete_filterset(client, auth_headers, created["id"])
+
+
+async def test_filterset_clone_resets_topbar_active(client, auth_headers):
+    created = await _create_filterset(
+        client,
+        auth_headers,
+        {
+            "name": f"RB Clone Source {uuid.uuid4()}",
+            "color": "#3b82f6",
+            "topbar_active": True,
+            "topbar_order": 4,
+            "filter": {"adapters": ["api"]},
+        },
+    )
+    clone_id = None
+    try:
+        clone_resp = await client.post(
+            f"/api/v1/ringbuffer/filtersets/{created['id']}/clone",
+            json={"name": f"{created['name']} Clone"},
+            headers=auth_headers,
+        )
+        assert clone_resp.status_code == 201, clone_resp.text
+        clone = clone_resp.json()
+        clone_id = clone["id"]
+        assert clone["id"] != created["id"]
+        assert clone["color"] == created["color"]
+        # Clones must NOT inherit topbar activation — fresh sets are off by default.
+        assert clone["topbar_active"] is False
+        # Filter is preserved verbatim.
+        assert clone["filter"] == created["filter"]
+    finally:
+        if clone_id:
+            await _delete_filterset(client, auth_headers, clone_id)
+        await _delete_filterset(client, auth_headers, created["id"])
+
+
+async def test_filterset_color_validation_rejects_garbage(client, auth_headers):
+    resp = await client.post(
+        "/api/v1/ringbuffer/filtersets",
+        json={
+            "name": "RB color bad",
+            "color": "not-a-color",
+            "filter": {},
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_filterset_color_validation_accepts_hex_variants(client, auth_headers):
+    for color in ("#abc", "#abcdef", "#3b82f6", "#3B82F6FF"):
+        created = await _create_filterset(
+            client,
+            auth_headers,
+            {
+                "name": f"RB color {color} {uuid.uuid4()}",
+                "color": color,
+                "filter": {},
+            },
+        )
+        try:
+            assert created["color"] == color
+        finally:
+            await _delete_filterset(client, auth_headers, created["id"])
+
+
+# ---------------------------------------------------------------------------
+# Topbar PATCH
+# ---------------------------------------------------------------------------
+
+
+async def test_patch_topbar_toggles_active_and_order(client, auth_headers):
+    created = await _create_filterset(
+        client,
+        auth_headers,
+        {
+            "name": f"RB Topbar {uuid.uuid4()}",
+            "filter": {"adapters": ["api"]},
+        },
+    )
+    try:
+        assert created["topbar_active"] is False
+        assert created["topbar_order"] == 0
+
+        resp = await client.patch(
+            f"/api/v1/ringbuffer/filtersets/{created['id']}/topbar",
+            json={"topbar_active": True, "topbar_order": 12},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        updated = resp.json()
+        assert updated["topbar_active"] is True
+        assert updated["topbar_order"] == 12
+
+        # Toggle off only; order preserved.
+        resp = await client.patch(
+            f"/api/v1/ringbuffer/filtersets/{created['id']}/topbar",
+            json={"topbar_active": False},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        updated = resp.json()
+        assert updated["topbar_active"] is False
+        assert updated["topbar_order"] == 12
+    finally:
+        await _delete_filterset(client, auth_headers, created["id"])
+
+
+async def test_patch_topbar_unknown_id_returns_404(client, auth_headers):
+    resp = await client.patch(
+        f"/api/v1/ringbuffer/filtersets/{uuid.uuid4()}/topbar",
+        json={"topbar_active": True},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404, resp.text
+
+
+async def test_patch_order_batch(client, auth_headers):
+    a = await _create_filterset(
+        client,
+        auth_headers,
+        {"name": f"RB Order A {uuid.uuid4()}", "topbar_order": 0, "filter": {}},
+    )
+    b = await _create_filterset(
+        client,
+        auth_headers,
+        {"name": f"RB Order B {uuid.uuid4()}", "topbar_order": 0, "filter": {}},
+    )
+    try:
+        resp = await client.patch(
+            "/api/v1/ringbuffer/filtersets/order",
+            json={
+                "items": [
+                    {"id": a["id"], "topbar_order": 5},
+                    {"id": b["id"], "topbar_order": 2},
+                    # Unknown IDs must be silently ignored to survive racing deletes.
+                    {"id": str(uuid.uuid4()), "topbar_order": 99},
+                ]
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        by_id = {row["id"]: row for row in resp.json()}
+        assert by_id[a["id"]]["topbar_order"] == 5
+        assert by_id[b["id"]]["topbar_order"] == 2
+    finally:
+        await _delete_filterset(client, auth_headers, a["id"])
+        await _delete_filterset(client, auth_headers, b["id"])
+
+
+# ---------------------------------------------------------------------------
+# Multi-set query — OR-union with matched_set_ids annotation
+# ---------------------------------------------------------------------------
+
+
+async def test_multi_query_or_union_with_matched_set_ids(client, auth_headers):
+    tag_a = f"rb431a-{uuid.uuid4().hex[:8]}"
+    tag_b = f"rb431b-{uuid.uuid4().hex[:8]}"
+    dp_a = await _create_dp(client, auth_headers, f"RB431 OR A {uuid.uuid4()}", tags=[tag_a])
+    dp_b = await _create_dp(client, auth_headers, f"RB431 OR B {uuid.uuid4()}", tags=[tag_b])
+    dp_both = await _create_dp(client, auth_headers, f"RB431 OR Both {uuid.uuid4()}", tags=[tag_a, tag_b])
+
+    await _write_value(client, auth_headers, dp_a["id"], 1.0)
+    await _write_value(client, auth_headers, dp_b["id"], 2.0)
+    await _write_value(client, auth_headers, dp_both["id"], 3.0)
+
+    set_a = await _create_filterset(
+        client,
+        auth_headers,
+        {"name": f"RB431 set_a {uuid.uuid4()}", "filter": {"tags": [tag_a]}},
+    )
+    set_b = await _create_filterset(
+        client,
+        auth_headers,
+        {"name": f"RB431 set_b {uuid.uuid4()}", "filter": {"tags": [tag_b]}},
+    )
+    try:
+        resp = await client.post(
+            "/api/v1/ringbuffer/filtersets/query",
+            json={"set_ids": [set_a["id"], set_b["id"]], "limit": 500},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()
+        matched = {row["datapoint_id"]: row["matched_set_ids"] for row in rows}
+
+        assert dp_a["id"] in matched
+        assert dp_b["id"] in matched
+        assert dp_both["id"] in matched
+        # dp_a only matched by set_a, dp_b only by set_b, dp_both by both.
+        assert matched[dp_a["id"]] == [set_a["id"]]
+        assert matched[dp_b["id"]] == [set_b["id"]]
+        assert sorted(matched[dp_both["id"]]) == sorted([set_a["id"], set_b["id"]])
+    finally:
+        await _delete_filterset(client, auth_headers, set_a["id"])
+        await _delete_filterset(client, auth_headers, set_b["id"])
+
+
+async def test_multi_query_empty_set_ids_returns_unfiltered_recent_entries(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, f"RB431 empty {uuid.uuid4()}")
+    await _write_value(client, auth_headers, dp["id"], 9.0)
+
+    resp = await client.post(
+        "/api/v1/ringbuffer/filtersets/query",
+        json={"set_ids": [], "limit": 10},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert rows  # The recent write must be visible.
+    assert all(row["matched_set_ids"] == [] for row in rows)
+
+
+async def test_multi_query_unknown_set_id_is_skipped(client, auth_headers):
+    """Unknown IDs are ignored rather than raising — see route docstring."""
+    set_a = await _create_filterset(
+        client,
+        auth_headers,
+        {"name": f"RB431 known {uuid.uuid4()}", "filter": {"adapters": ["api"]}},
+    )
+    try:
+        resp = await client.post(
+            "/api/v1/ringbuffer/filtersets/query",
+            json={"set_ids": [set_a["id"], str(uuid.uuid4())], "limit": 10},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+    finally:
+        await _delete_filterset(client, auth_headers, set_a["id"])
+
+
+async def test_multi_query_inactive_set_is_skipped(client, auth_headers):
+    """An ``is_active=False`` set silently disappears from the union."""
+    dp = await _create_dp(client, auth_headers, f"RB431 inactive {uuid.uuid4()}", tags=["rb431-inactive"])
+    await _write_value(client, auth_headers, dp["id"], 8.0)
+
+    created = await _create_filterset(
+        client,
+        auth_headers,
+        {
+            "name": f"RB431 inactive-set {uuid.uuid4()}",
+            "is_active": False,
+            "filter": {"tags": ["rb431-inactive"]},
+        },
+    )
+    try:
+        resp = await client.post(
+            "/api/v1/ringbuffer/filtersets/query",
+            json={"set_ids": [created["id"]], "limit": 10},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == []
+    finally:
+        await _delete_filterset(client, auth_headers, created["id"])
+
+
+async def test_multi_query_time_filter_excludes_old_entries(client, auth_headers):
+    """A time filter supplied alongside ``set_ids`` is AND-ed with the OR-union."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    def iso(dt):
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+    dp = await _create_dp(client, auth_headers, f"RB431 time {uuid.uuid4()}", tags=["rb431-time"])
+    await _write_value(client, auth_headers, dp["id"], 1.0)
+    await asyncio.sleep(0.05)
+    cutoff = datetime.now(UTC)
+    await asyncio.sleep(0.05)
+    await _write_value(client, auth_headers, dp["id"], 2.0)
+
+    set_id = (await _create_filterset(
+        client,
+        auth_headers,
+        {"name": f"RB431 time-set {uuid.uuid4()}", "filter": {"tags": ["rb431-time"]}},
+    ))["id"]
+    try:
+        resp = await client.post(
+            "/api/v1/ringbuffer/filtersets/query",
+            json={"set_ids": [set_id], "time": {"from": iso(cutoff)}, "limit": 100},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()
+        assert rows
+        assert all(row["new_value"] == 2.0 for row in rows)
+    finally:
+        await _delete_filterset(client, auth_headers, set_id)
+
+
+async def test_multi_query_time_filter_with_empty_set_ids(client, auth_headers):
+    """``set_ids=[]`` plus a ``time`` filter narrows the un-filtered feed."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    def iso(dt):
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+    dp = await _create_dp(client, auth_headers, f"RB431 time-empty {uuid.uuid4()}")
+    await _write_value(client, auth_headers, dp["id"], 100.0)
+    await asyncio.sleep(0.05)
+    cutoff = datetime.now(UTC)
+    await asyncio.sleep(0.05)
+    await _write_value(client, auth_headers, dp["id"], 200.0)
+
+    resp = await client.post(
+        "/api/v1/ringbuffer/filtersets/query",
+        json={"set_ids": [], "time": {"from": iso(cutoff)}, "limit": 100},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = [row for row in resp.json() if row["datapoint_id"] == dp["id"]]
+    assert rows
+    assert all(row["new_value"] == 200.0 for row in rows)
+
+
+# ---------------------------------------------------------------------------
+# Single-set query (back-compat for /filtersets/{id}/query)
+# ---------------------------------------------------------------------------
+
+
+async def test_single_set_query_returns_matching_entries(client, auth_headers):
+    tag = f"rb431single-{uuid.uuid4().hex[:8]}"
+    dp = await _create_dp(client, auth_headers, f"RB431 single {uuid.uuid4()}", tags=[tag])
+    await _write_value(client, auth_headers, dp["id"], 7.0)
+
+    created = await _create_filterset(
+        client,
+        auth_headers,
+        {"name": f"RB431 single-set {uuid.uuid4()}", "filter": {"tags": [tag]}},
+    )
+    try:
+        resp = await client.post(
+            f"/api/v1/ringbuffer/filtersets/{created['id']}/query",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()
+        assert rows
+        assert all(row["datapoint_id"] == dp["id"] for row in rows)
+    finally:
+        await _delete_filterset(client, auth_headers, created["id"])
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compat shim — accepts legacy groups[]/query payloads
+# ---------------------------------------------------------------------------
+
+
+async def test_legacy_groups_payload_flattened_with_deprecation_warning(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, f"RB431 legacy {uuid.uuid4()}", tags=["rb431-legacy"])
+    await _write_value(client, auth_headers, dp["id"], 1.0)
+
+    legacy_payload = {
+        "name": f"RB431 legacy {uuid.uuid4()}",
+        "description": "legacy groups shape",
         "dsl_version": 2,
         "is_active": True,
         "query": {
             "filters": {"adapters": {"any_of": ["api"]}},
             "sort": {"field": "id", "order": "desc"},
-            "pagination": {"limit": 50, "offset": 0},
+            "pagination": {"limit": 100, "offset": 0},
         },
         "groups": [
             {
-                "name": "Group A",
+                "name": "G",
                 "is_active": True,
-                "group_order": 10,
+                "group_order": 0,
                 "rules": [
                     {
-                        "name": "Rule A",
+                        "name": "R",
                         "is_active": True,
-                        "rule_order": 10,
+                        "rule_order": 0,
                         "query": {
-                            "filters": {"metadata": {"tags_any_of": ["ringbuffer-filterset-test"]}},
+                            "filters": {
+                                "datapoints": {"ids": [dp["id"]]},
+                                "metadata": {"tags_any_of": ["rb431-legacy"]},
+                            },
                             "sort": {"field": "id", "order": "desc"},
                             "pagination": {"limit": 100, "offset": 0},
                         },
@@ -112,203 +541,40 @@ async def test_ringbuffer_filtersets_crud_clone_and_default(client, auth_headers
             }
         ],
     }
-
-    created = await _create_filterset(client, auth_headers, payload)
-    clone_id = None
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        resp = await client.post(
+            "/api/v1/ringbuffer/filtersets",
+            json=legacy_payload,
+            headers=auth_headers,
+        )
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
     try:
-        assert created["id"]
-        assert created["name"] == payload["name"]
-        assert created["dsl_version"] == 2
-        assert created["is_default"] is False
-        assert created["groups"][0]["name"] == "Group A"
-        assert created["groups"][0]["rules"][0]["name"] == "Rule A"
+        # Legacy groups[] flattened to a single FilterCriteria.
+        assert "groups" not in created
+        assert created["filter"]["datapoints"] == [dp["id"]]
+        assert created["filter"]["tags"] == ["rb431-legacy"]
+        # DeprecationWarning was emitted in-process.
+        assert any(issubclass(item.category, DeprecationWarning) for item in caught), [str(c.message) for c in caught]
 
-        list_resp = await client.get("/api/v1/ringbuffer/filtersets", headers=auth_headers)
-        assert list_resp.status_code == 200, list_resp.text
-        ids = [row["id"] for row in list_resp.json()]
-        assert created["id"] in ids
-
-        get_resp = await client.get(f"/api/v1/ringbuffer/filtersets/{created['id']}", headers=auth_headers)
-        assert get_resp.status_code == 200, get_resp.text
-        fetched = get_resp.json()
-        assert fetched["id"] == created["id"]
-        assert fetched["groups"][0]["rules"][0]["is_active"] is True
-
-        update_resp = await client.put(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}",
-            json={
-                "name": f"{payload['name']} Updated",
-                "groups": [
-                    {
-                        "id": fetched["groups"][0]["id"],
-                        "name": "Group A Updated",
-                        "is_active": True,
-                        "group_order": 10,
-                        "rules": [
-                            {
-                                "id": fetched["groups"][0]["rules"][0]["id"],
-                                "name": "Rule A Updated",
-                                "is_active": False,
-                                "rule_order": 10,
-                                "query": fetched["groups"][0]["rules"][0]["query"],
-                            }
-                        ],
-                    }
-                ],
-            },
-            headers=auth_headers,
-        )
-        assert update_resp.status_code == 200, update_resp.text
-        updated = update_resp.json()
-        assert updated["name"].endswith("Updated")
-        assert updated["groups"][0]["name"] == "Group A Updated"
-        assert updated["groups"][0]["rules"][0]["is_active"] is False
-
-        clone_resp = await client.post(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}/clone",
-            json={"name": f"{payload['name']} Clone"},
-            headers=auth_headers,
-        )
-        assert clone_resp.status_code == 201, clone_resp.text
-        cloned = clone_resp.json()
-        clone_id = cloned["id"]
-        assert cloned["id"] != created["id"]
-        assert cloned["name"].endswith("Clone")
-        assert cloned["groups"][0]["rules"][0]["is_active"] is False
-
-        default_resp = await client.post(
-            f"/api/v1/ringbuffer/filtersets/{clone_id}/default",
-            headers=auth_headers,
-        )
-        assert default_resp.status_code == 200, default_resp.text
-        defaulted = default_resp.json()
-        assert defaulted["id"] == clone_id
-        assert defaulted["is_default"] is True
-
-        default_get_resp = await client.get(
-            "/api/v1/ringbuffer/filtersets/default",
-            headers=auth_headers,
-        )
-        assert default_get_resp.status_code == 200, default_get_resp.text
-        assert default_get_resp.json()["id"] == clone_id
-    finally:
-        if clone_id:
-            await _delete_filterset(client, auth_headers, clone_id)
-        await _delete_filterset(client, auth_headers, created["id"])
-
-
-async def test_ringbuffer_filterset_query_ignores_disabled_rules(client, auth_headers):
-    dp_a = await _create_dp(client, auth_headers, "RB Filterset Query A")
-    dp_b = await _create_dp(client, auth_headers, "RB Filterset Query B")
-    await _write_value(client, auth_headers, dp_a["id"], 10.0)
-    await _write_value(client, auth_headers, dp_b["id"], 20.0)
-
-    created = await _create_filterset(
-        client,
-        auth_headers,
-        {
-            "name": f"RB Query Filterset {uuid.uuid4()}",
-            "description": "activation logic check",
-            "dsl_version": 2,
-            "is_active": True,
-            "query": {
-                "filters": {"adapters": {"any_of": ["api"]}},
-                "sort": {"field": "id", "order": "desc"},
-                "pagination": {"limit": 200, "offset": 0},
-            },
-            "groups": [
-                {
-                    "name": "Datapoint rules",
-                    "is_active": True,
-                    "group_order": 0,
-                    "rules": [
-                        {
-                            "name": "Only A (active)",
-                            "is_active": True,
-                            "rule_order": 0,
-                            "query": _query_for_dp(dp_a["id"]),
-                        },
-                        {
-                            "name": "Only B (inactive)",
-                            "is_active": False,
-                            "rule_order": 1,
-                            "query": _query_for_dp(dp_b["id"]),
-                        },
-                    ],
-                }
-            ],
-        },
-    )
-    try:
+        # The flattened set is still queryable via the single-set endpoint.
         query_resp = await client.post(
             f"/api/v1/ringbuffer/filtersets/{created['id']}/query",
             headers=auth_headers,
         )
         assert query_resp.status_code == 200, query_resp.text
-        rows = query_resp.json()
-        assert rows
-        assert all(row["datapoint_id"] == dp_a["id"] for row in rows)
-
-        rule_1 = created["groups"][0]["rules"][0]
-        rule_2 = created["groups"][0]["rules"][1]
-        active_rule_2 = {
-            "id": rule_2["id"],
-            "name": rule_2["name"],
-            "is_active": True,
-            "rule_order": rule_2["rule_order"],
-            "query": rule_2["query"],
-        }
-        update_resp = await client.put(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}",
-            json={
-                "groups": [
-                    {
-                        "id": created["groups"][0]["id"],
-                        "name": created["groups"][0]["name"],
-                        "is_active": True,
-                        "group_order": created["groups"][0]["group_order"],
-                        "rules": [
-                            {
-                                "id": rule_1["id"],
-                                "name": rule_1["name"],
-                                "is_active": rule_1["is_active"],
-                                "rule_order": rule_1["rule_order"],
-                                "query": rule_1["query"],
-                            },
-                            active_rule_2,
-                        ],
-                    }
-                ]
-            },
-            headers=auth_headers,
-        )
-        assert update_resp.status_code == 200, update_resp.text
-
-        query_resp_all_active = await client.post(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}/query",
-            headers=auth_headers,
-        )
-        assert query_resp_all_active.status_code == 200, query_resp_all_active.text
-        assert query_resp_all_active.json() == []
-
-        set_inactive_resp = await client.put(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}",
-            json={"is_active": False},
-            headers=auth_headers,
-        )
-        assert set_inactive_resp.status_code == 200, set_inactive_resp.text
-
-        query_resp_set_inactive = await client.post(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}/query",
-            headers=auth_headers,
-        )
-        assert query_resp_set_inactive.status_code == 200, query_resp_set_inactive.text
-        assert query_resp_set_inactive.json() == []
+        assert query_resp.json()  # at least one matching entry
     finally:
         await _delete_filterset(client, auth_headers, created["id"])
 
 
-async def test_ringbuffer_filterset_mutations_require_admin(client, auth_headers):
+# ---------------------------------------------------------------------------
+# Access control
+# ---------------------------------------------------------------------------
+
+
+async def test_filterset_mutations_require_admin(client, auth_headers):
     username = f"rb-user-{uuid.uuid4().hex[:8]}"
     password = "test-password-123"
     user_headers = await _create_non_admin_user_and_headers(client, auth_headers, username=username, password=password)
@@ -316,13 +582,7 @@ async def test_ringbuffer_filterset_mutations_require_admin(client, auth_headers
     try:
         create_resp = await client.post(
             "/api/v1/ringbuffer/filtersets",
-            json={
-                "name": f"RB Restricted {uuid.uuid4()}",
-                "query": {
-                    "filters": {"adapters": {"any_of": ["api"]}},
-                    "pagination": {"limit": 100, "offset": 0},
-                },
-            },
+            json={"name": f"RB Restricted {uuid.uuid4()}", "filter": {"adapters": ["api"]}},
             headers=user_headers,
         )
         assert create_resp.status_code == 403, create_resp.text
@@ -330,72 +590,23 @@ async def test_ringbuffer_filterset_mutations_require_admin(client, auth_headers
         created = await _create_filterset(
             client,
             auth_headers,
-            {
-                "name": f"RB Admin Created {uuid.uuid4()}",
-                "query": {
-                    "filters": {"adapters": {"any_of": ["api"]}},
-                    "pagination": {"limit": 100, "offset": 0},
-                },
-            },
+            {"name": f"RB Admin Created {uuid.uuid4()}", "filter": {"adapters": ["api"]}},
         )
         created_id = created["id"]
 
-        for method, path in [
-            ("put", f"/api/v1/ringbuffer/filtersets/{created_id}"),
-            ("delete", f"/api/v1/ringbuffer/filtersets/{created_id}"),
-            ("post", f"/api/v1/ringbuffer/filtersets/{created_id}/clone"),
-            ("post", f"/api/v1/ringbuffer/filtersets/{created_id}/default"),
-        ]:
-            kwargs = {"headers": user_headers}
-            if method == "put":
-                kwargs["json"] = {"name": "forbidden update"}
-            if path.endswith("/clone"):
-                kwargs["json"] = {"name": "forbidden clone"}
+        forbidden_calls: list[tuple[str, str, dict]] = [
+            ("put", f"/api/v1/ringbuffer/filtersets/{created_id}", {"json": {"name": "nope"}}),
+            ("delete", f"/api/v1/ringbuffer/filtersets/{created_id}", {}),
+            ("post", f"/api/v1/ringbuffer/filtersets/{created_id}/clone", {"json": {"name": "nope"}}),
+            ("post", f"/api/v1/ringbuffer/filtersets/{created_id}/default", {}),
+            ("patch", f"/api/v1/ringbuffer/filtersets/{created_id}/topbar", {"json": {"topbar_active": True}}),
+            ("patch", "/api/v1/ringbuffer/filtersets/order", {"json": {"items": []}}),
+        ]
+        for method, path, extra in forbidden_calls:
+            kwargs = {"headers": user_headers, **extra}
             resp = await getattr(client, method)(path, **kwargs)
             assert resp.status_code == 403, f"{method.upper()} {path} -> {resp.status_code}, {resp.text}"
     finally:
         if created_id:
             await _delete_filterset(client, auth_headers, created_id)
         await client.delete(f"/api/v1/auth/users/{username}", headers=auth_headers)
-
-
-async def test_ringbuffer_filterset_query_rejects_too_many_active_rules(client, auth_headers):
-    created = await _create_filterset(
-        client,
-        auth_headers,
-        {
-            "name": f"RB Rule Cap {uuid.uuid4()}",
-            "query": {
-                "filters": {"adapters": {"any_of": ["api"]}},
-                "pagination": {"limit": 100, "offset": 0},
-            },
-            "groups": [
-                {
-                    "name": "Too many active rules",
-                    "is_active": True,
-                    "group_order": 0,
-                    "rules": [
-                        {
-                            "name": f"Rule {idx}",
-                            "is_active": True,
-                            "rule_order": idx,
-                            "query": {
-                                "filters": {"adapters": {"any_of": ["api"]}},
-                                "pagination": {"limit": 100, "offset": 0},
-                            },
-                        }
-                        for idx in range(51)
-                    ],
-                }
-            ],
-        },
-    )
-    try:
-        resp = await client.post(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}/query",
-            headers=auth_headers,
-        )
-        assert resp.status_code == 422, resp.text
-        assert "too many active rules in filterset" in resp.text
-    finally:
-        await _delete_filterset(client, auth_headers, created["id"])
