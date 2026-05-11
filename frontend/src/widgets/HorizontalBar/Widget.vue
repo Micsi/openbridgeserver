@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from 'vue'
 import { useDatapointsStore } from '@/stores/datapoints'
 import type { DataPointValue } from '@/types'
@@ -60,7 +60,7 @@ function getDisplayValue(bar: BarConfig): string {
   if (isNaN(v)) return String(dp.v ?? '—')
   const formatted = v.toFixed(bar.decimals ?? 1)
   const unit = bar.postfix || dp.u || ''
-  return [bar.prefix, formatted, unit].filter(Boolean).join(' ')
+  return [bar.prefix, formatted, unit].filter(Boolean).join(' ')
 }
 
 // Background-size trick: expand the gradient to span the full track width
@@ -82,48 +82,51 @@ function fillStyle(pct: number): Record<string, string> {
       class="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0"
     >{{ widgetLabel }}</span>
 
-    <div class="flex-1 flex flex-col justify-around min-h-0">
-      <template v-if="bars.length > 0">
+    <!--
+      CSS-Grid mit 3 Spalten:
+        1. max-content  → Label-Spalte wächst automatisch auf die Breite des längsten Labels;
+                          alle Balken starten dadurch bündig auf gleicher Höhe.
+        2. minmax(0,1fr)→ Balken füllt den verbleibenden Platz.
+        3. max-content  → Wert-Spalte passt sich dem breitesten Wert-String an.
+      align-content: space-around verteilt die Zeilen gleichmässig über die verfügbare Höhe.
+    -->
+    <div
+      v-if="bars.length > 0"
+      class="flex-1 min-h-0"
+      style="display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; column-gap: 0.5rem; row-gap: 0.25rem; align-content: space-around; align-items: center;"
+    >
+      <template v-for="(bar, i) in bars" :key="i">
+        <!-- Label (immer als Grid-Zelle, damit alle Balken bündig starten) -->
+        <span
+          class="text-xs text-gray-400 dark:text-gray-400 truncate text-right"
+          style="max-width: 8rem"
+        >{{ bar.label }}</span>
+
+        <!-- Balken -->
         <div
-          v-for="(bar, i) in bars"
-          :key="i"
-          class="flex items-center gap-2"
+          class="relative overflow-hidden rounded-sm bg-gray-700 dark:bg-gray-700"
+          style="height: 0.875rem"
         >
-          <!-- Label: nur rendern wenn Text vorhanden, Breite passt sich der Textlänge an -->
-          <span
-            v-if="bar.label"
-            class="text-xs text-gray-400 dark:text-gray-400 truncate shrink-0 text-right"
-            style="max-width: 35%"
-          >{{ bar.label }}</span>
-
-          <!-- Bar track -->
           <div
-            class="relative flex-1 overflow-hidden rounded-sm bg-gray-700 dark:bg-gray-700 min-w-0"
-            style="height: 0.875rem"
-          >
-            <div
-              class="absolute inset-y-0 left-0 rounded-sm transition-[width] duration-300"
-              :style="fillStyle(getPercent(bar, i))"
-              data-testid="bar-fill"
-            />
-          </div>
-
-          <!-- Value -->
-          <span
-            v-if="showValue"
-            class="text-xs tabular-nums text-gray-200 dark:text-gray-200 shrink-0 text-right"
-            style="width: 20%; min-width: 2.5rem"
-            data-testid="widget-value"
-          >{{ getDisplayValue(bar) }}</span>
+            class="absolute inset-y-0 left-0 rounded-sm transition-[width] duration-300"
+            :style="fillStyle(getPercent(bar, i))"
+            data-testid="bar-fill"
+          />
         </div>
-      </template>
 
-      <div
-        v-else
-        class="flex items-center justify-center h-full text-gray-600 dark:text-gray-600 text-xs"
-      >
-        Keine Balken konfiguriert
-      </div>
+        <!-- Wert -->
+        <span
+          class="text-xs tabular-nums text-gray-200 dark:text-gray-200 text-right whitespace-nowrap"
+          data-testid="widget-value"
+        >{{ showValue ? getDisplayValue(bar) : '' }}</span>
+      </template>
+    </div>
+
+    <div
+      v-else
+      class="flex-1 flex items-center justify-center text-gray-600 dark:text-gray-600 text-xs"
+    >
+      Keine Balken konfiguriert
     </div>
   </div>
 </template>
