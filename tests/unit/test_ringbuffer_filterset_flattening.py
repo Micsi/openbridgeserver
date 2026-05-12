@@ -3,19 +3,13 @@
 Covers the pure transformation helpers in :mod:`obs.api.v1.ringbuffer`
 without spinning up the full FastAPI stack:
 
-* The legacy-payload shim that flattens ``groups[]`` and a top-level
-  ``query`` onto the new ``filter`` field with a :class:`DeprecationWarning`.
 * The :class:`FilterCriteria` → :class:`RingBufferQueryV2` translator that
   the multi-set query and single-set query endpoints use to call the
   underlying ringbuffer.
 * Color validation on the public model.
-
-The shim block is scheduled for removal in #438.
 """
 
 from __future__ import annotations
-
-import warnings
 
 import pytest
 
@@ -25,130 +19,7 @@ from obs.api.v1.ringbuffer import (
     RingBufferTimeFilterV2,
     RingBufferValueFilterV2,
     _filter_to_query_v2,
-    _flatten_legacy_filterset_payload,
-    _legacy_groups_to_filter,
 )
-
-
-def test_legacy_groups_to_filter_collects_or_lists_across_groups_and_rules():
-    groups = [
-        {
-            "name": "G1",
-            "rules": [
-                {
-                    "name": "R1",
-                    "query": {
-                        "filters": {
-                            "adapters": {"any_of": ["api", "knx"]},
-                            "datapoints": {"ids": ["dp-1"]},
-                        }
-                    },
-                }
-            ],
-        },
-        {
-            "name": "G2",
-            "rules": [
-                {
-                    "name": "R2",
-                    "query": {
-                        "filters": {
-                            "datapoints": {"ids": ["dp-2"]},
-                            "metadata": {"tags_any_of": ["tag-a", "tag-b"]},
-                            "q": "kitchen",
-                        }
-                    },
-                }
-            ],
-        },
-    ]
-    result = _legacy_groups_to_filter(groups)
-    assert isinstance(result, FilterCriteria)
-    assert result.adapters == ["api", "knx"]
-    assert result.datapoints == ["dp-1", "dp-2"]
-    assert result.tags == ["tag-a", "tag-b"]
-    assert result.q == "kitchen"
-
-
-def test_legacy_groups_to_filter_picks_first_value_filter_only():
-    """The flat schema supports a single value_filter — extras are silently dropped."""
-    groups = [
-        {
-            "rules": [
-                {
-                    "query": {
-                        "filters": {
-                            "values": [
-                                {"operator": "gt", "value": 10},
-                                {"operator": "lt", "value": 20},
-                            ]
-                        }
-                    }
-                }
-            ]
-        }
-    ]
-    result = _legacy_groups_to_filter(groups)
-    assert result.value_filter is not None
-    assert result.value_filter.operator == "gt"
-    assert result.value_filter.value == 10
-
-
-def test_legacy_groups_to_filter_deduplicates_repeated_values():
-    groups = [
-        {
-            "rules": [
-                {"query": {"filters": {"adapters": {"any_of": ["api"]}}}},
-                {"query": {"filters": {"adapters": {"any_of": ["api", "knx"]}}}},
-            ]
-        }
-    ]
-    result = _legacy_groups_to_filter(groups)
-    assert result.adapters == ["api", "knx"]
-
-
-def test_flatten_legacy_payload_emits_deprecation_warning_for_groups():
-    raw = {
-        "name": "legacy",
-        "groups": [{"rules": [{"query": {"filters": {"datapoints": {"ids": ["dp-1"]}}}}]}],
-    }
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = _flatten_legacy_filterset_payload(raw)
-    assert "groups" not in result
-    assert result["filter"]["datapoints"] == ["dp-1"]
-    assert any(issubclass(c.category, DeprecationWarning) for c in caught)
-
-
-def test_flatten_legacy_payload_emits_deprecation_warning_for_top_level_query():
-    raw = {
-        "name": "legacy",
-        "query": {"filters": {"adapters": {"any_of": ["api"]}}},
-    }
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = _flatten_legacy_filterset_payload(raw)
-    assert "query" not in result
-    assert result["filter"]["adapters"] == ["api"]
-    assert any(issubclass(c.category, DeprecationWarning) for c in caught)
-
-
-def test_flatten_legacy_payload_does_not_warn_on_already_flat_payload():
-    raw = {
-        "name": "flat",
-        "filter": {"datapoints": ["dp-1"]},
-    }
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = _flatten_legacy_filterset_payload(raw)
-    assert result == raw
-    assert not [c for c in caught if issubclass(c.category, DeprecationWarning)]
-
-
-def test_flatten_legacy_payload_returns_non_dict_passthrough():
-    """Defensive: the shim should not blow up on non-dict input."""
-    assert _flatten_legacy_filterset_payload([]) == []  # type: ignore[arg-type]
-    assert _flatten_legacy_filterset_payload(None) is None  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

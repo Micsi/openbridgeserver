@@ -21,6 +21,7 @@ export default defineConfig({
       include: [
         'src/views/RingBufferView.vue',
         'src/views/ringbuffer/FilterEditor.vue',
+        'src/views/ringbuffer/MonitorConfigModal.vue',
         'src/components/ui/Combobox.vue',
         'src/components/ui/DpCombobox.vue',
         'src/components/ui/TagCombobox.vue',
@@ -28,6 +29,8 @@ export default defineConfig({
         'src/components/ui/HierarchyCombobox.vue',
         'src/components/ui/PathLabel.vue',
         'src/composables/useSetColors.js',
+        'src/composables/useLiveQueue.js',
+        'src/composables/useTimeFilterPayload.js',
       ],
     },
   },
