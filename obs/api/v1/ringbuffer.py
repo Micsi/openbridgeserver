@@ -10,11 +10,6 @@ explicitly distinct from the legacy ``query_json`` column which previously store
 a complete :class:`RingBufferQueryV2` (filters + sort + pagination). Renaming
 makes the semantic shift unambiguous: a filterset now stores filter *criteria*,
 while sort and pagination remain owned by the caller of the query endpoint.
-
-Backwards-compat:
-    POST /filtersets and PUT /filtersets/{id} still accept payloads in the old
-    ``{ groups: [{ rules: [{ query: {...} }] }] }`` shape — they are flattened
-    on the fly with a ``DeprecationWarning``. This shim will be removed in #438.
 """
 
 from __future__ import annotations
@@ -26,7 +21,6 @@ import re
 import tempfile
 import time
 import uuid
-import warnings
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -247,12 +241,7 @@ def _color_must_be_hex(value: str) -> str:
 
 
 class RingBufferFiltersetIn(BaseModel):
-    """Input model for POST /filtersets and PUT /filtersets/{id}.
-
-    Backwards-compat: the legacy ``groups`` field is accepted as a passthrough
-    and converted to a flat ``filter`` in the route handler — see
-    :func:`_flatten_legacy_filterset_payload`.
-    """
+    """Input model for POST /filtersets and PUT /filtersets/{id}."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -416,97 +405,6 @@ def _filter_to_query_v2(filter_: FilterCriteria, time: RingBufferTimeFilterV2 | 
             "pagination": {"limit": _FILTERSET_QUERY_LIMIT_CAP, "offset": 0},
         }
     )
-
-
-# ---------------------------------------------------------------------------
-# Legacy payload shim (#431, removed in #438)
-# ---------------------------------------------------------------------------
-
-
-def _legacy_groups_to_filter(groups: list[dict[str, Any]]) -> FilterCriteria:
-    """Flatten a legacy ``groups[ rules[ query ] ]`` payload onto a single
-    :class:`FilterCriteria`.
-
-    The flattening is best-effort: we OR-merge all rule queries from all groups
-    into a single criteria object. This is intentionally lossy — the legacy AND
-    intersection between rules cannot be expressed in the new flat model and is
-    not required for the multi-active topbar workflow.
-    """
-    datapoints: list[str] = []
-    tags: list[str] = []
-    adapters: list[str] = []
-    q_parts: list[str] = []
-    value_filter: dict[str, Any] | None = None
-    for group in groups or []:
-        if not isinstance(group, dict):
-            continue
-        for rule in group.get("rules", []) or []:
-            if not isinstance(rule, dict):
-                continue
-            query = rule.get("query") or {}
-            filters = query.get("filters") or {}
-            adapters_filter = filters.get("adapters") or {}
-            for value in adapters_filter.get("any_of", []) or []:
-                if isinstance(value, str) and value not in adapters:
-                    adapters.append(value)
-            datapoints_filter = filters.get("datapoints") or {}
-            for value in datapoints_filter.get("ids", []) or []:
-                if isinstance(value, str) and value not in datapoints:
-                    datapoints.append(value)
-            metadata = filters.get("metadata") or {}
-            for value in metadata.get("tags_any_of", []) or []:
-                if isinstance(value, str) and value not in tags:
-                    tags.append(value)
-            q_value = filters.get("q")
-            if isinstance(q_value, str) and q_value and q_value not in q_parts:
-                q_parts.append(q_value)
-            values = filters.get("values")
-            if value_filter is None and isinstance(values, list) and values:
-                value_filter = values[0]
-    return FilterCriteria.model_validate(
-        {
-            "datapoints": datapoints,
-            "tags": tags,
-            "adapters": adapters,
-            "q": " ".join(q_parts) if q_parts else None,
-            "value_filter": value_filter,
-        }
-    )
-
-
-def _flatten_legacy_filterset_payload(raw: dict[str, Any]) -> dict[str, Any]:
-    """Detect a legacy ``groups[]`` / ``query`` payload and flatten it onto the
-    new schema, emitting a :class:`DeprecationWarning`. Returns the payload
-    suitable for :class:`RingBufferFiltersetIn`.
-    """
-    if not isinstance(raw, dict):
-        return raw
-
-    has_groups = "groups" in raw
-    has_legacy_query = "query" in raw and "filter" not in raw
-    if not (has_groups or has_legacy_query):
-        return raw
-
-    warnings.warn(
-        "ringbuffer filterset payload uses the legacy groups[]/query schema — this shim is scheduled for removal in #438",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    converted = dict(raw)
-    # Drop nested legacy fields and the original ``filter`` if any of them sneak
-    # in alongside groups (defensive against half-migrated payloads).
-    groups = converted.pop("groups", None)
-    legacy_query = converted.pop("query", None)
-
-    # Synthesize a FilterCriteria from groups[] / query.filters.
-    if groups:
-        converted["filter"] = _legacy_groups_to_filter(groups).model_dump()
-    elif legacy_query and "filter" not in converted:
-        # If only the legacy base query is present, harvest its filters.
-        flat = _legacy_groups_to_filter([{"rules": [{"query": legacy_query}]}])
-        converted["filter"] = flat.model_dump()
-    return converted
 
 
 # ---------------------------------------------------------------------------
@@ -879,9 +777,8 @@ async def export_ringbuffer_csv(
 
 
 def _parse_filterset_in(raw: dict[str, Any]) -> RingBufferFiltersetIn:
-    payload = _flatten_legacy_filterset_payload(raw)
     try:
-        return RingBufferFiltersetIn.model_validate(payload)
+        return RingBufferFiltersetIn.model_validate(raw)
     except ValidationError as exc:
         # ``include_context=False`` strips the raw Python exception object from
         # the error list — FastAPI's default JSON encoder chokes on the bundled
@@ -964,9 +861,8 @@ async def update_ringbuffer_filterset(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "ringbuffer filterset not found")
 
     raw = await _read_json_body(request)
-    payload = _flatten_legacy_filterset_payload(raw)
     try:
-        body = RingBufferFiltersetUpdate.model_validate(payload)
+        body = RingBufferFiltersetUpdate.model_validate(raw)
     except ValidationError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
