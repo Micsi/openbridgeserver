@@ -69,7 +69,6 @@ function makeSampleSet(overrides = {}) {
     description: 'Heiz-Filter',
     dsl_version: 2,
     is_active: true,
-    is_default: false,
     color: '#10b981',
     topbar_active: false,
     topbar_order: 0,
@@ -582,17 +581,16 @@ describe('FilterEditor (#436)', () => {
     expect(wrapper.emitted('saved')).toBeTruthy()
   })
 
-  it('default-flag and active-flag checkboxes flow into the payload', async () => {
+  it('active-flag checkbox flows into the payload', async () => {
     const ringbufferApi = makeRingbufferApi()
     const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('Flags')
-    await wrapper.find('[data-testid="filter-editor-default"]').setValue(true)
     await wrapper.find('[data-testid="filter-editor-active"]').setValue(false)
     await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
-    expect(payload.is_default).toBe(true)
     expect(payload.is_active).toBe(false)
+    expect(payload).not.toHaveProperty('is_default')
   })
 
   it('preserves existing hierarchy nodes when the combobox emits the same composite id', async () => {

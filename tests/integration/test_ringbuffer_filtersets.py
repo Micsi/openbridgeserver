@@ -130,31 +130,6 @@ async def test_filterset_crud_round_trip(client, auth_headers):
         await _delete_filterset(client, auth_headers, created["id"])
 
 
-async def test_filterset_default_endpoints(client, auth_headers):
-    created = await _create_filterset(
-        client,
-        auth_headers,
-        {
-            "name": f"RB Default {uuid.uuid4()}",
-            "filter": {"adapters": ["api"]},
-        },
-    )
-    try:
-        # Promote to default
-        resp = await client.post(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}/default",
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["is_default"] is True
-
-        get_default = await client.get("/api/v1/ringbuffer/filtersets/default", headers=auth_headers)
-        assert get_default.status_code == 200, get_default.text
-        assert get_default.json()["id"] == created["id"]
-    finally:
-        await _delete_filterset(client, auth_headers, created["id"])
-
-
 async def test_filterset_clone_resets_topbar_active(client, auth_headers):
     created = await _create_filterset(
         client,
@@ -529,7 +504,6 @@ async def test_filterset_mutations_require_admin(client, auth_headers):
             ("put", f"/api/v1/ringbuffer/filtersets/{created_id}", {"json": {"name": "nope"}}),
             ("delete", f"/api/v1/ringbuffer/filtersets/{created_id}", {}),
             ("post", f"/api/v1/ringbuffer/filtersets/{created_id}/clone", {"json": {"name": "nope"}}),
-            ("post", f"/api/v1/ringbuffer/filtersets/{created_id}/default", {}),
             ("patch", f"/api/v1/ringbuffer/filtersets/{created_id}/topbar", {"json": {"topbar_active": True}}),
             ("patch", "/api/v1/ringbuffer/filtersets/order", {"json": {"items": []}}),
         ]

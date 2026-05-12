@@ -188,6 +188,45 @@ describe('TopbarFilterChips', () => {
     expect(api.patchFiltersetTopbar).toHaveBeenCalledWith('s-c', { topbar_active: true })
   })
 
+  it('renders + Neu as the first option in the dropdown (pinned), search input second', async () => {
+    const { wrapper } = await mountChips()
+    await wrapper.find('[data-testid="topbar-add-filter-btn"]').trigger('click')
+    const menu = wrapper.find('[data-testid="topbar-add-filter-menu"]')
+    expect(menu.exists()).toBe(true)
+    const newBtn = menu.find('[data-testid="topbar-add-filter-new"]')
+    const search = menu.find('[data-testid="topbar-add-filter-search"]')
+    // + Neu must appear before the search input in the DOM
+    const newPos = menu.html().indexOf(newBtn.html())
+    const searchPos = menu.html().indexOf(search.html())
+    expect(newPos).toBeLessThan(searchPos)
+  })
+
+  it('search input filters the available sets by name', async () => {
+    // Inject an extra non-topbar set so we have something to filter against
+    const filtersets = [
+      { id: 's-a', name: 'Wasserzähler', color: '#3b82f6', topbar_active: false, topbar_order: 0, is_active: true },
+      { id: 's-b', name: 'Heizung', color: '#10b981', topbar_active: false, topbar_order: 0, is_active: true },
+      { id: 's-c', name: 'Lüftung', color: '#ef4444', topbar_active: false, topbar_order: 0, is_active: true },
+    ]
+    const api = makeApi({ listFiltersets: vi.fn().mockResolvedValue({ data: filtersets }) })
+    const { wrapper } = await mountChips({ api })
+    await wrapper.find('[data-testid="topbar-add-filter-btn"]').trigger('click')
+    // All three visible initially
+    expect(wrapper.findAll('[data-testid^="topbar-add-filter-item-"]').length).toBe(3)
+    // Typing "hei" narrows to Heizung
+    await wrapper.find('[data-testid="topbar-add-filter-search"]').setValue('hei')
+    const items = wrapper.findAll('[data-testid^="topbar-add-filter-item-"]')
+    expect(items.length).toBe(1)
+    expect(items[0].text()).toContain('Heizung')
+  })
+
+  it('shows "Keine Treffer" when search yields no results', async () => {
+    const { wrapper } = await mountChips()
+    await wrapper.find('[data-testid="topbar-add-filter-btn"]').trigger('click')
+    await wrapper.find('[data-testid="topbar-add-filter-search"]').setValue('zzz-no-match')
+    expect(wrapper.find('[data-testid="topbar-add-filter-empty"]').text()).toContain('Keine Treffer')
+  })
+
   // ---------------------------------------------------------------------
   // QA-01 audit: drag-reorder edge cases (#439)
   // ---------------------------------------------------------------------

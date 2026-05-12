@@ -52,15 +52,6 @@
         <label class="inline-flex items-center gap-2 text-sm">
           <input
             type="checkbox"
-            v-model="form.is_default"
-            data-testid="filter-editor-default"
-            @change="markDirty"
-          />
-          Als Default-Set markieren
-        </label>
-        <label class="inline-flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
             v-model="form.is_active"
             data-testid="filter-editor-active"
             @change="markDirty"
@@ -314,7 +305,6 @@ function makeEmptyForm() {
     name: '',
     description: '',
     color: DEFAULT_COLOR,
-    is_default: false,
     is_active: true,
     hierarchy_nodes: [], // {tree_id, node_id, include_descendants}
     datapoints: [],
@@ -464,7 +454,6 @@ function buildPayload() {
     description: form.description || '',
     dsl_version: 2,
     is_active: Boolean(form.is_active),
-    is_default: Boolean(form.is_default),
     color: form.color || DEFAULT_COLOR,
     topbar_active: loadedSet.value?.topbar_active ?? false,
     topbar_order: loadedSet.value?.topbar_order ?? 0,
@@ -493,7 +482,6 @@ function hydrateForm(payload) {
   form.name = payload.name || ''
   form.description = payload.description || ''
   form.color = payload.color || DEFAULT_COLOR
-  form.is_default = Boolean(payload.is_default)
   form.is_active = Boolean(payload.is_active)
 
   const flt = payload.filter || {}

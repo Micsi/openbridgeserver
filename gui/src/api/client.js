@@ -206,13 +206,11 @@ export const ringbufferApi = {
   stats:  ()                        => api.get('/ringbuffer/stats'),
   config: (body)                    => api.post('/ringbuffer/config', body),
   listFiltersets: ()                => api.get('/ringbuffer/filtersets'),
-  getDefaultFilterset: ()           => api.get('/ringbuffer/filtersets/default'),
   getFilterset: (id)                => api.get(`/ringbuffer/filtersets/${id}`),
   createFilterset: (body)           => api.post('/ringbuffer/filtersets', body),
   updateFilterset: (id, body)       => api.put(`/ringbuffer/filtersets/${id}`, body),
   deleteFilterset: (id)             => api.delete(`/ringbuffer/filtersets/${id}`),
   cloneFilterset: (id, name = null) => api.post(`/ringbuffer/filtersets/${id}/clone`, name ? { name } : {}),
-  setDefaultFilterset: (id)         => api.post(`/ringbuffer/filtersets/${id}/default`, {}),
   queryFilterset: (id)              => api.post(`/ringbuffer/filtersets/${id}/query`, {}),
   // #431 — flat filterset schema, multi-active topbar
   patchFiltersetTopbar: (id, body)  => api.patch(`/ringbuffer/filtersets/${id}/topbar`, body),

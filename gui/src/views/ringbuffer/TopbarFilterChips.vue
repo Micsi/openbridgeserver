@@ -80,41 +80,60 @@
       <div
         v-if="addMenuOpen"
         data-testid="topbar-add-filter-menu"
-        class="absolute right-0 mt-1 min-w-48 z-40 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg overflow-hidden"
+        class="absolute right-0 mt-1 w-72 z-40 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg overflow-hidden"
         @click.stop
       >
-        <button
-          v-for="set in availableSets"
-          :key="set.id"
-          type="button"
-          :data-testid="`topbar-add-filter-item-${set.id}`"
-          class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
-          @click="onAddToTopbar(set)"
-        >
-          <span
-            class="inline-block w-2 h-2 rounded-full mr-2 align-middle"
-            :style="{ backgroundColor: set.color || '#94a3b8' }"
-          />
-          {{ set.name }}
-        </button>
-        <div v-if="!availableSets.length" class="px-3 py-2 text-xs text-slate-500">
-          Keine weiteren Sets verfügbar
-        </div>
+        <!-- pinned "+ Neu" as the first option (#36 UX) -->
         <button
           type="button"
           data-testid="topbar-add-filter-new"
-          class="block w-full text-left px-3 py-2 text-sm border-t border-slate-200 dark:border-slate-700 text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+          class="block w-full text-left px-3 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 border-b border-slate-200 dark:border-slate-700"
           @click="onCreateNew"
         >
-          + Neu
+          + Neu …
         </button>
+
+        <!-- Search input -->
+        <input
+          ref="searchInputRef"
+          v-model="addMenuQuery"
+          type="search"
+          data-testid="topbar-add-filter-search"
+          placeholder="Filter suchen …"
+          class="block w-full px-3 py-2 text-sm bg-transparent border-b border-slate-200 dark:border-slate-700 outline-none focus:border-blue-500"
+        />
+
+        <!-- Filtered list -->
+        <div class="max-h-64 overflow-y-auto">
+          <button
+            v-for="set in filteredAvailableSets"
+            :key="set.id"
+            type="button"
+            :data-testid="`topbar-add-filter-item-${set.id}`"
+            class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+            @click="onAddToTopbar(set)"
+          >
+            <span
+              class="inline-block w-2 h-2 rounded-full mr-2 align-middle"
+              :style="{ backgroundColor: set.color || '#94a3b8' }"
+            />
+            {{ set.name }}
+          </button>
+          <div
+            v-if="!filteredAvailableSets.length"
+            data-testid="topbar-add-filter-empty"
+            class="px-3 py-2 text-xs text-slate-500"
+          >
+            {{ addMenuQuery ? 'Keine Treffer' : 'Keine weiteren Sets verfügbar' }}
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import { ringbufferApi } from '@/api/client'
 
@@ -122,6 +141,8 @@ const emit = defineEmits(['edit-set', 'new-set', 'changed', 'export'])
 
 const filtersets = ref([])
 const addMenuOpen = ref(false)
+const addMenuQuery = ref('')
+const searchInputRef = ref(null)
 
 const activeSets = computed({
   get() {
@@ -142,6 +163,14 @@ const activeSets = computed({
 const availableSets = computed(() =>
   filtersets.value.filter((s) => !s.topbar_active),
 )
+
+const filteredAvailableSets = computed(() => {
+  const q = addMenuQuery.value.trim().toLowerCase()
+  if (!q) return availableSets.value
+  return availableSets.value.filter((s) =>
+    (s.name || '').toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q),
+  )
+})
 
 async function load() {
   try {
@@ -198,10 +227,15 @@ async function onDragEnd() {
 
 function toggleAddMenu() {
   addMenuOpen.value = !addMenuOpen.value
+  if (addMenuOpen.value) {
+    addMenuQuery.value = ''
+    nextTick(() => searchInputRef.value?.focus())
+  }
 }
 
 function onCreateNew() {
   addMenuOpen.value = false
+  addMenuQuery.value = ''
   emit('new-set')
 }
 
@@ -211,6 +245,7 @@ function onDocumentClick(event) {
   const btn = document.querySelector('[data-testid="topbar-add-filter-btn"]')
   if (menu?.contains(event.target) || btn?.contains(event.target)) return
   addMenuOpen.value = false
+  addMenuQuery.value = ''
 }
 
 onMounted(() => {
