@@ -20,6 +20,7 @@ export default defineConfig({
       reporter: ['text', 'text-summary', 'html'],
       include: [
         'src/views/RingBufferView.vue',
+        'src/views/ringbuffer/FilterEditor.vue',
         'src/components/ui/Combobox.vue',
         'src/components/ui/DpCombobox.vue',
         'src/components/ui/TagCombobox.vue',

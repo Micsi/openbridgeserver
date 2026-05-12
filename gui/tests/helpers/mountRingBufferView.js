@@ -143,8 +143,22 @@ export async function mountRingBufferView({
         }),
         // Stub the topbar components so RingBufferView characterization tests
         // don't see their independent API calls (stats, listFiltersets).
-        TopbarStats: { template: '<span data-testid="stub-topbar-stats" />' },
-        TopbarFilterChips: { template: '<div data-testid="stub-topbar-chips" />' },
+        TopbarStats: { name: 'TopbarStats', template: '<span data-testid="stub-topbar-stats" />' },
+        TopbarFilterChips: {
+          name: 'TopbarFilterChips',
+          props: ['data-testid'],
+          emits: ['edit-set', 'new-set', 'changed'],
+          template: '<div data-testid="stub-topbar-chips" />',
+        },
+        // Stub the filter editor — it lazy-loads comboboxes which pull the
+        // datapoints Pinia store. Tests that target RingBufferView itself
+        // do not exercise the editor.
+        FilterEditor: {
+          name: 'FilterEditor',
+          props: ['modelValue', 'setId'],
+          emits: ['update:modelValue', 'saved'],
+          template: '<div data-testid="stub-filter-editor" />',
+        },
       },
     },
   })
