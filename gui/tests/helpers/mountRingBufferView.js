@@ -45,6 +45,9 @@ export function makeRingbufferApiMock(overrides = {}) {
     cloneFilterset: vi.fn(),
     setDefaultFilterset: vi.fn(),
     queryFilterset: vi.fn().mockResolvedValue({ data: [] }),
+    patchFiltersetTopbar: vi.fn().mockResolvedValue({ data: {} }),
+    patchFiltersetOrder: vi.fn().mockResolvedValue({ data: {} }),
+    queryMultiFiltersets: vi.fn().mockResolvedValue({ data: [] }),
     ...overrides,
   }
 }
