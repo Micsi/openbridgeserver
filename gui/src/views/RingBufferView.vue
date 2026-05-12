@@ -201,38 +201,6 @@
       <p v-if="filtersetMsg" :class="filtersetMsg.ok ? 'text-emerald-500 text-sm' : 'text-red-500 text-sm'">{{ filtersetMsg.text }}</p>
     </div>
 
-    <div class="flex flex-col gap-3">
-      <div class="flex flex-wrap gap-3">
-        <input v-model="filters.q" type="text" class="input flex-1 min-w-40" placeholder="Suche nach Name/ID ..." @input="debouncedLoad" data-testid="input-filter" />
-        <input v-model="filters.adapter" type="text" class="input w-36" placeholder="Adapter" @input="debouncedLoad" />
-        <select v-model="filters.limit" class="input w-28" @change="applyFilters">
-          <option value="100">100</option>
-          <option value="500">500</option>
-          <option value="1000">1000</option>
-        </select>
-      </div>
-      <div class="flex flex-wrap gap-3 items-end">
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Von (absolut)</label>
-          <input v-model="filters.fromAbsolute" type="datetime-local" class="input w-56" data-testid="time-from-absolute" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Bis (absolut)</label>
-          <input v-model="filters.toAbsolute" type="datetime-local" class="input w-56" data-testid="time-to-absolute" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Von relativ (Sek.)</label>
-          <input v-model.trim="filters.fromRelativeSeconds" type="number" class="input w-44" placeholder="-60" data-testid="time-from-relative-seconds" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Bis relativ (Sek.)</label>
-          <input v-model.trim="filters.toRelativeSeconds" type="number" class="input w-44" placeholder="-5" data-testid="time-to-relative-seconds" />
-        </div>
-        <button @click="applyFilters" class="btn-secondary btn-sm" data-testid="btn-apply-ringbuffer-filters">Filter anwenden</button>
-        <button @click="clearTimeFilters" class="btn-secondary btn-sm">Zeitfilter leeren</button>
-      </div>
-    </div>
-
     <div class="card overflow-hidden">
       <div v-if="loading" class="flex justify-center py-12"><Spinner size="lg" /></div>
       <div v-else-if="listError" class="px-4 py-6 text-sm text-red-500" data-testid="ringbuffer-error">{{ listError }}</div>
@@ -426,6 +394,7 @@ import FilterEditor from '@/views/ringbuffer/FilterEditor.vue'
 const LIVE_BATCH_SIZE = 200
 const LIVE_FLUSH_INTERVAL_MS = 60
 const LIVE_QUEUE_MAX = 5000
+const DEFAULT_QUERY_LIMIT = 500
 
 const OPERATOR_OPTIONS = {
   number: ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between'],
@@ -513,15 +482,6 @@ const prefilter = reactive({
   nodeId: '',
 })
 
-const filters = reactive({
-  q: '',
-  adapter: '',
-  limit: '500',
-  fromAbsolute: '',
-  toAbsolute: '',
-  fromRelativeSeconds: '',
-  toRelativeSeconds: '',
-})
 const configForm = reactive({
   storage: 'file',
   max_entries: 10000,
@@ -537,9 +497,7 @@ const filtersetDraft = ref(newFiltersetDraft())
 
 const wsConnected = computed(() => wsStore.connected)
 const queuedCount = computed(() => liveQueue.value.length)
-const limitNumber = computed(() => parseInt(filters.limit, 10) || 500)
 
-let debounceTimer = null
 let unregisterRb = null
 let liveFlushTimer = null
 
@@ -820,7 +778,7 @@ function buildRuleQuery(rule) {
   return {
     filters: filtersPart,
     sort: { field: 'ts', order: 'desc' },
-    pagination: { limit: limitNumber.value, offset: 0 },
+    pagination: { limit: DEFAULT_QUERY_LIMIT, offset: 0 },
   }
 }
 
@@ -834,7 +792,7 @@ function buildBaseQuery(draft) {
   return {
     filters: filtersPart,
     sort: { field: 'ts', order: 'desc' },
-    pagination: { limit: limitNumber.value, offset: 0 },
+    pagination: { limit: DEFAULT_QUERY_LIMIT, offset: 0 },
   }
 }
 
@@ -1111,62 +1069,6 @@ async function applyPrefilterSuggestion() {
   }
 }
 
-function debouncedLoad() {
-  clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => {
-    void applyFilters()
-  }, 350)
-}
-
-function parseRelativeSeconds(raw) {
-  const value = String(raw ?? '').trim()
-  if (!value) return null
-  const parsed = Number.parseInt(value, 10)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function localToIso(raw) {
-  if (!raw) return null
-  const d = new Date(raw)
-  return Number.isNaN(d.getTime()) ? null : d.toISOString()
-}
-
-function computeEffectiveBoundary(absoluteIso, relativeSeconds, pickNewer) {
-  const absolute = absoluteIso ? new Date(absoluteIso) : null
-  const rel = Number.isInteger(relativeSeconds) ? new Date(Date.now() + relativeSeconds * 1000) : null
-  if (absolute && rel) return pickNewer ? (absolute > rel ? absolute : rel) : (absolute < rel ? absolute : rel)
-  return absolute || rel
-}
-
-function matchesActiveFilter(entry) {
-  const q = filters.q.trim().toLowerCase()
-  if (q) {
-    const inName = entry.name?.toLowerCase().includes(q)
-    const inId = entry.datapoint_id?.toLowerCase().includes(q)
-    const inAdapter = entry.source_adapter?.toLowerCase().includes(q)
-    if (!inName && !inId && !inAdapter) return false
-  }
-
-  const adapter = filters.adapter.trim()
-  if (adapter && entry.source_adapter !== adapter) return false
-
-  const fromAbsIso = localToIso(filters.fromAbsolute)
-  const toAbsIso = localToIso(filters.toAbsolute)
-  const fromRel = parseRelativeSeconds(filters.fromRelativeSeconds)
-  const toRel = parseRelativeSeconds(filters.toRelativeSeconds)
-  const fromBoundary = computeEffectiveBoundary(fromAbsIso, fromRel, true)
-  const toBoundary = computeEffectiveBoundary(toAbsIso, toRel, false)
-
-  if (fromBoundary || toBoundary) {
-    const ts = new Date(entry.ts)
-    if (Number.isNaN(ts.getTime())) return false
-    if (fromBoundary && !(ts > fromBoundary)) return false
-    if (toBoundary && !(ts < toBoundary)) return false
-  }
-
-  return true
-}
-
 function enqueueLive(entry) {
   liveQueue.value.push(entry)
   if (liveQueue.value.length > LIVE_QUEUE_MAX) {
@@ -1185,9 +1087,9 @@ function scheduleLiveFlush() {
 
 async function flushLiveQueue() {
   if (paused.value || !liveQueue.value.length) return
-  const batch = liveQueue.value.splice(0, LIVE_BATCH_SIZE).filter(matchesActiveFilter)
+  const batch = liveQueue.value.splice(0, LIVE_BATCH_SIZE)
   if (batch.length) {
-    entries.value = [...batch.reverse(), ...entries.value].slice(0, limitNumber.value)
+    entries.value = [...batch.reverse(), ...entries.value].slice(0, DEFAULT_QUERY_LIMIT)
     await nextTick()
     if (tableWrapRef.value) tableWrapRef.value.scrollTop = 0
   }
@@ -1195,39 +1097,19 @@ async function flushLiveQueue() {
 }
 
 function buildTimeFilter() {
-  const time = {}
-  const from = localToIso(filters.fromAbsolute)
-  const to = localToIso(filters.toAbsolute)
-  const fromRelativeSeconds = parseRelativeSeconds(filters.fromRelativeSeconds)
-  const toRelativeSeconds = parseRelativeSeconds(filters.toRelativeSeconds)
-  if (from) time.from = from
-  if (to) time.to = to
-  if (fromRelativeSeconds !== null) time.from_relative_seconds = fromRelativeSeconds
-  if (toRelativeSeconds !== null) time.to_relative_seconds = toRelativeSeconds
-  return Object.keys(time).length ? time : null
+  // Placeholder — will be replaced by TimeFilterPopover wiring (#438 / #432).
+  return null
 }
 
 function buildQueryV2() {
   const payload = {
     filters: {},
     sort: { field: 'ts', order: 'desc' },
-    pagination: { limit: limitNumber.value, offset: 0 },
+    pagination: { limit: DEFAULT_QUERY_LIMIT, offset: 0 },
   }
-  const q = filters.q.trim()
-  const adapter = filters.adapter.trim()
   const time = buildTimeFilter()
-  if (q) payload.filters.q = q
-  if (adapter) payload.filters.adapters = { any_of: [adapter] }
   if (time) payload.filters.time = time
   return payload
-}
-
-function clearTimeFilters() {
-  filters.fromAbsolute = ''
-  filters.toAbsolute = ''
-  filters.fromRelativeSeconds = ''
-  filters.toRelativeSeconds = ''
-  void applyFilters()
 }
 
 function pauseLive() {
@@ -1270,7 +1152,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unregisterRb?.()
-  clearTimeout(debounceTimer)
   clearTimeout(liveFlushTimer)
 })
 
