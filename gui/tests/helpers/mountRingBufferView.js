@@ -148,7 +148,10 @@ export async function mountRingBufferView({
           name: 'TopbarFilterChips',
           props: ['data-testid'],
           emits: ['edit-set', 'new-set', 'changed'],
-          template: '<div data-testid="stub-topbar-chips" />',
+          // Render the time-filter-slot so RingBufferView.vue's wiring
+          // (#438) can be exercised in characterization tests without
+          // mounting the real TopbarFilterChips.
+          template: '<div data-testid="stub-topbar-chips"><slot name="time-filter-slot" /></div>',
         },
         // Stub the filter editor — it lazy-loads comboboxes which pull the
         // datapoints Pinia store. Tests that target RingBufferView itself

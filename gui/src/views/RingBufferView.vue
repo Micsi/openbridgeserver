@@ -42,7 +42,7 @@
       <TopbarStats class="ml-auto" />
     </div>
 
-    <!-- Sticky filter topbar (#435) — drag/toggle/remove set chips, time-filter slot reserved for #432 wiring -->
+    <!-- Sticky filter topbar (#435) — drag/toggle/remove set chips, TimeFilterPopover (#432) in the left slot. -->
     <div class="sticky top-0 z-20 -mx-5 px-5 py-2 bg-surface-900/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700/60">
       <TopbarFilterChips
         ref="topbarChipsRef"
@@ -50,7 +50,11 @@
         @edit-set="onEditSet"
         @new-set="onNewSet"
         @changed="onTopbarChanged"
-      />
+      >
+        <template #time-filter-slot>
+          <TimeFilterPopover v-model="timeFilter" @update:modelValue="onTimeFilterChanged" />
+        </template>
+      </TopbarFilterChips>
     </div>
 
     <!-- Soft-modal filter editor (#436) — replaces the stub from #435 -->
@@ -215,6 +219,7 @@ import { useWebSocketStore } from '@/stores/websocket'
 import Badge from '@/components/ui/Badge.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import Modal from '@/components/ui/Modal.vue'
+import TimeFilterPopover from '@/components/ui/TimeFilterPopover.vue'
 import TopbarFilterChips from '@/views/ringbuffer/TopbarFilterChips.vue'
 import TopbarStats from '@/views/ringbuffer/TopbarStats.vue'
 import FilterEditor from '@/views/ringbuffer/FilterEditor.vue'
@@ -282,6 +287,17 @@ async function onTopbarChanged() {
   await loadFiltersets()
   await load()
 }
+
+// TimeFilterPopover state (#432 / #438). null = no time filter active.
+// Shape: { mode: 'range', from?: Date|{seconds,sign}, to?: Date|{seconds,sign} }
+//      | { mode: 'point', point: Date|{seconds,sign}, span: {seconds,sign} }
+const timeFilter = ref(null)
+
+async function onTimeFilterChanged() {
+  // Re-run the query when the user applies a new time filter.
+  await load()
+}
+
 const configSaving = ref(false)
 const configMsg = ref(null)
 const tableWrapRef = ref(null)
@@ -456,8 +472,45 @@ async function flushLiveQueue() {
 }
 
 function buildTimeFilter() {
-  // Placeholder — will be replaced by TimeFilterPopover wiring (#438 / #432).
-  return null
+  // Convert the TimeFilterPopover state (#432) into the backend time-filter
+  // shape:
+  //   { from?: iso, to?: iso,
+  //     from_relative_seconds?: int, to_relative_seconds?: int }
+  // Date bounds → ISO strings; relative durations → signed seconds.
+  // Point mode (point ± span) collapses into an absolute (from, to) pair.
+  const filter = timeFilter.value
+  if (!filter) return null
+  const time = {}
+
+  function applyBound(bound, key, relKey) {
+    if (!bound) return
+    if (bound instanceof Date) {
+      time[key] = bound.toISOString()
+    } else if (Number.isFinite(bound.seconds)) {
+      time[relKey] = (bound.sign === -1 ? -1 : 1) * bound.seconds
+    }
+  }
+
+  if (filter.mode === 'point') {
+    const point = filter.point instanceof Date
+      ? filter.point
+      : (Number.isFinite(filter.point?.seconds)
+          ? new Date(Date.now() + (filter.point.sign === -1 ? -1 : 1) * filter.point.seconds * 1000)
+          : null)
+    const spanSeconds = Number.isFinite(filter.span?.seconds) ? filter.span.seconds : 0
+    if (point && spanSeconds > 0) {
+      time.from = new Date(point.getTime() - spanSeconds * 1000).toISOString()
+      time.to = new Date(point.getTime() + spanSeconds * 1000).toISOString()
+    } else if (point) {
+      time.from = point.toISOString()
+      time.to = point.toISOString()
+    }
+  } else {
+    applyBound(filter.from, 'from', 'from_relative_seconds')
+    applyBound(filter.to, 'to', 'to_relative_seconds')
+  }
+
+  return Object.keys(time).length ? time : null
 }
 
 function buildQueryV2() {
