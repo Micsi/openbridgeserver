@@ -75,6 +75,30 @@ async def test_trim_by_age_without_reference_on_empty_buffer_returns_zero():
 
 
 @pytest.mark.asyncio
+async def test_reconfigure_allows_disabling_count_limit_with_null_max_entries():
+    rb = RingBuffer(storage="memory", max_entries=2)
+    await rb.start()
+    try:
+        await rb.reconfigure("memory", None)
+        for value in range(4):
+            await rb.record(
+                ts=f"2026-01-01T00:00:0{value}.000Z",
+                datapoint_id="dp-no-count-limit",
+                topic="dp/dp-no-count-limit/value",
+                old_value=None,
+                new_value=value,
+                source_adapter="api",
+                quality="good",
+            )
+        entries = await rb.query(q="dp-no-count-limit", limit=10)
+        stats = await rb.stats()
+        assert len(entries) == 4
+        assert stats["max_entries"] is None
+    finally:
+        await rb.stop()
+
+
+@pytest.mark.asyncio
 async def test_handle_value_event_falls_back_to_default_topic_when_registry_unavailable(monkeypatch):
     rb = RingBuffer(storage="memory", max_entries=5)
     await rb.start()

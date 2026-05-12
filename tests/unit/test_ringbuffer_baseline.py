@@ -6,6 +6,8 @@ Scope for issue #383:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from obs.ringbuffer.ringbuffer import RingBuffer
@@ -80,5 +82,29 @@ async def test_ringbuffer_limit_one_keeps_only_latest_entry():
         entries = await rb.query(q="dp-limit-one", limit=10)
         assert len(entries) == 1
         assert entries[0].new_value == 30
+    finally:
+        await rb.stop()
+
+
+@pytest.mark.asyncio
+async def test_ringbuffer_stats_include_effective_retention_seconds():
+    rb = RingBuffer(storage="memory", max_entries=10)
+    await rb.start()
+    try:
+        oldest = datetime.now(UTC) - timedelta(seconds=95)
+        await rb.record(
+            ts=oldest.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            datapoint_id="dp-effective-retention",
+            topic="dp/dp-effective-retention/value",
+            old_value=None,
+            new_value=1,
+            source_adapter="api",
+            quality="good",
+        )
+
+        stats = await rb.stats()
+        assert "effective_retention_seconds" in stats
+        assert isinstance(stats["effective_retention_seconds"], int)
+        assert stats["effective_retention_seconds"] >= 90
     finally:
         await rb.stop()

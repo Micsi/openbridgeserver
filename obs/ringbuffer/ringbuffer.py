@@ -104,7 +104,7 @@ class RingBuffer:
     def __init__(
         self,
         storage: str = "file",
-        max_entries: int = 10000,
+        max_entries: int | None = 10000,
         disk_path: str = "/data/obs_ringbuffer.db",
         max_file_size_bytes: int | None = None,
         max_age: int | None = None,
@@ -112,7 +112,9 @@ class RingBuffer:
         if storage not in _ALLOWED_STORAGE_MODELS:
             raise ValueError("storage must be one of: file, disk, memory")
         self._storage = storage
-        self._max_entries = max_entries
+        self._max_entries = int(max_entries) if max_entries is not None else None
+        if self._max_entries is not None and self._max_entries < 1:
+            raise ValueError("max_entries must be >= 1 or null")
         self._disk_path = disk_path
         self._max_file_size_bytes = max_file_size_bytes
         self._max_age = max_age
@@ -135,7 +137,7 @@ class RingBuffer:
         await self._ensure_compat_schema()
         await self._conn.commit()
         logger.info(
-            "RingBuffer started (%s, max_entries=%d, max_file_size_bytes=%s, max_age=%s)",
+            "RingBuffer started (%s, max_entries=%s, max_file_size_bytes=%s, max_age=%s)",
             self._storage,
             self._max_entries,
             self._max_file_size_bytes,
@@ -154,7 +156,7 @@ class RingBuffer:
     async def reconfigure(
         self,
         storage: str,
-        max_entries: int,
+        max_entries: int | None | object = _UNSET,
         max_file_size_bytes: int | None | object = _UNSET,
         max_age: int | None | object = _UNSET,
     ) -> None:
@@ -167,12 +169,17 @@ class RingBuffer:
             raise ValueError("storage must be one of: file, disk, memory")
 
         async with self._lock:
+            resolved_max_entries = self._max_entries if max_entries is _UNSET else max_entries
+            if resolved_max_entries is not None:
+                resolved_max_entries = int(resolved_max_entries)
+                if resolved_max_entries < 1:
+                    raise ValueError("max_entries must be >= 1 or null")
             resolved_max_file_size = self._max_file_size_bytes if max_file_size_bytes is _UNSET else max_file_size_bytes
             resolved_max_age = self._max_age if max_age is _UNSET else max_age
 
             if (
                 storage == self._storage
-                and max_entries == self._max_entries
+                and resolved_max_entries == self._max_entries
                 and resolved_max_file_size == self._max_file_size_bytes
                 and resolved_max_age == self._max_age
             ):
@@ -180,12 +187,12 @@ class RingBuffer:
 
             # Same model: apply config in-place and trim.
             if storage == self._storage:
-                self._max_entries = max_entries
+                self._max_entries = resolved_max_entries
                 self._max_file_size_bytes = int(resolved_max_file_size) if resolved_max_file_size is not None else None
                 self._max_age = int(resolved_max_age) if resolved_max_age is not None else None
                 await self._trim()
                 logger.info(
-                    "RingBuffer reconfigured in-place → %s, max_entries=%d, max_file_size_bytes=%s, max_age=%s",
+                    "RingBuffer reconfigured in-place → %s, max_entries=%s, max_file_size_bytes=%s, max_age=%s",
                     storage,
                     self._max_entries,
                     self._max_file_size_bytes,
@@ -199,7 +206,7 @@ class RingBuffer:
                 await self._conn.close()
 
             self._storage = storage
-            self._max_entries = max_entries
+            self._max_entries = resolved_max_entries
             self._max_file_size_bytes = int(resolved_max_file_size) if resolved_max_file_size is not None else None
             self._max_age = int(resolved_max_age) if resolved_max_age is not None else None
 
@@ -216,10 +223,10 @@ class RingBuffer:
             await self._conn.commit()
             self._last_values.clear()
             logger.info(
-                "RingBuffer model switch: %s -> %s, restarted empty (max_entries=%d, max_file_size_bytes=%s, max_age=%s)",
+                "RingBuffer model switch: %s -> %s, restarted empty (max_entries=%s, max_file_size_bytes=%s, max_age=%s)",
                 old_storage,
                 storage,
-                max_entries,
+                self._max_entries,
                 self._max_file_size_bytes,
                 self._max_age,
             )
@@ -303,7 +310,7 @@ class RingBuffer:
             break
 
     async def _trim_by_count(self) -> int:
-        if not self._conn:
+        if not self._conn or self._max_entries is None:
             return 0
         async with self._conn.execute("SELECT COUNT(*) FROM ringbuffer") as cur:
             row = await cur.fetchone()
@@ -695,6 +702,15 @@ class RingBuffer:
         return filtered[offset : offset + limit]
 
     async def stats(self) -> dict:
+        def _effective_retention_seconds(oldest_ts: str | None) -> int | None:
+            if not oldest_ts:
+                return None
+            try:
+                oldest_dt = _parse_iso_ts(oldest_ts)
+            except ValueError:
+                return None
+            return max(0, int((datetime.now(UTC) - oldest_dt).total_seconds()))
+
         if not self._conn:
             return {
                 "total": 0,
@@ -702,15 +718,21 @@ class RingBuffer:
                 "newest_ts": None,
                 "storage": self._storage,
                 "max_entries": self._max_entries,
+                "effective_retention_seconds": None,
+                "max_file_size_bytes": self._max_file_size_bytes,
+                "max_age": self._max_age,
+                "file_size_bytes": 0,
             }
         async with self._conn.execute("SELECT COUNT(*) AS c, MIN(ts) AS oldest, MAX(ts) AS newest FROM ringbuffer") as cur:
             row = await cur.fetchone()
+        oldest_ts = row[1] if row else None
         return {
             "total": row[0] if row else 0,
-            "oldest_ts": row[1] if row else None,
+            "oldest_ts": oldest_ts,
             "newest_ts": row[2] if row else None,
             "storage": self._storage,
             "max_entries": self._max_entries,
+            "effective_retention_seconds": _effective_retention_seconds(oldest_ts),
             "max_file_size_bytes": self._max_file_size_bytes,
             "max_age": self._max_age,
             "file_size_bytes": await self._current_storage_bytes(),
@@ -882,7 +904,7 @@ def reset_ringbuffer() -> None:
 
 async def init_ringbuffer(
     storage: str,
-    max_entries: int,
+    max_entries: int | None,
     disk_path: str,
     max_file_size_bytes: int | None = None,
     max_age: int | None = None,

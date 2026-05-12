@@ -106,7 +106,8 @@ class RingBufferStats(BaseModel):
     oldest_ts: str | None
     newest_ts: str | None
     storage: str
-    max_entries: int
+    max_entries: int | None
+    effective_retention_seconds: int | None = None
     max_file_size_bytes: int | None
     max_age: int | None
     file_size_bytes: int
@@ -114,7 +115,7 @@ class RingBufferStats(BaseModel):
 
 class RingBufferConfig(BaseModel):
     storage: str = "file"
-    max_entries: int = 10000
+    max_entries: int | None = Field(default=None, ge=1)
     max_file_size_bytes: int | None = Field(default=None, ge=1)
     max_age: int | None = Field(default=None, ge=0)
 
@@ -1355,10 +1356,12 @@ async def configure_ringbuffer(
 
     rb = get_ringbuffer()
     reconfigure_kwargs: dict[str, Any] = {}
+    if "max_entries" in body.model_fields_set:
+        reconfigure_kwargs["max_entries"] = body.max_entries
     if "max_file_size_bytes" in body.model_fields_set:
         reconfigure_kwargs["max_file_size_bytes"] = body.max_file_size_bytes
     if "max_age" in body.model_fields_set:
         reconfigure_kwargs["max_age"] = body.max_age
-    await rb.reconfigure(body.storage, body.max_entries, **reconfigure_kwargs)
+    await rb.reconfigure(body.storage, **reconfigure_kwargs)
     stats = await rb.stats()
     return RingBufferStats(**stats)

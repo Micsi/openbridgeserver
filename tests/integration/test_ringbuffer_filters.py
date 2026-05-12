@@ -215,6 +215,37 @@ async def test_ringbuffer_config_accepts_retention_fields(client, auth_headers):
     assert reset_resp.status_code == 200, reset_resp.text
 
 
+async def test_ringbuffer_config_accepts_null_max_entries(client, auth_headers):
+    resp = await client.post(
+        "/api/v1/ringbuffer/config",
+        json={
+            "storage": "file",
+            "max_entries": None,
+            "max_file_size_bytes": 4096,
+            "max_age": 60,
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["max_entries"] is None
+    assert body["max_file_size_bytes"] == 4096
+    assert body["max_age"] == 60
+
+    # Keep session-scoped integration app stable for subsequent tests.
+    reset_resp = await client.post(
+        "/api/v1/ringbuffer/config",
+        json={
+            "storage": "file",
+            "max_entries": 1000,
+            "max_file_size_bytes": None,
+            "max_age": None,
+        },
+        headers=auth_headers,
+    )
+    assert reset_resp.status_code == 200, reset_resp.text
+
+
 async def test_ringbuffer_v2_adapter_or_is_combined_with_group_and(client, auth_headers):
     dp_a = await _create_dp(client, auth_headers, "RB DSL A")
     dp_b = await _create_dp(client, auth_headers, "RB DSL B")
@@ -393,6 +424,10 @@ async def test_ringbuffer_stats_endpoint_returns_current_config(client, auth_hea
     assert body["storage"] == "file"
     assert "total" in body
     assert "max_entries" in body
+    assert "effective_retention_seconds" in body
+    assert body["effective_retention_seconds"] is None or (
+        isinstance(body["effective_retention_seconds"], int) and body["effective_retention_seconds"] >= 0
+    )
 
 
 async def test_ringbuffer_v2_value_filters_numeric_string_boolean_and_regex(client, auth_headers):

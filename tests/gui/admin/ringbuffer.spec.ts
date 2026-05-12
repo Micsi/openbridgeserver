@@ -17,11 +17,6 @@ test('RingBuffer Live-Eintrag ohne Reload', async ({ page }) => {
     // Status badge must say "Live"
     await expect(page.locator('[data-testid="status-badge"]')).toContainText('Live', { timeout: 8_000 })
 
-    // Filter by our DataPoint ID so the view only shows entries for this DP.
-    // This avoids the 500-entry cap making before == after when the buffer is full.
-    await page.fill('[data-testid="input-filter"]', dpId)
-    await page.waitForTimeout(500) // debounce ~350 ms + server round-trip
-
     // Before the push, no entries for this brand-new DP should exist
     const before = await page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`).count()
 
@@ -49,11 +44,8 @@ test('RingBuffer Pause/Resume stoppt Live-Append und holt Queue nach', async ({ 
     await page.waitForLoadState('networkidle')
     await expect(page.locator('[data-testid="status-badge"]')).toContainText('Live', { timeout: 8_000 })
 
-    await page.fill('[data-testid="input-filter"]', dpId)
-    await page.waitForTimeout(500)
-
     const rows = page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`)
-    await expect(rows).toHaveCount(0)
+    const before = await rows.count()
 
     await page.click('[data-testid="btn-live-pause"]')
     await expect(page.locator('[data-testid="live-mode-badge"]')).toContainText('Pausiert')
@@ -62,11 +54,11 @@ test('RingBuffer Pause/Resume stoppt Live-Append und holt Queue nach', async ({ 
     await apiPost(`/api/v1/datapoints/${dpId}/value`, { value: 2.0, quality: 'good' })
     await page.waitForTimeout(800)
 
-    await expect(rows).toHaveCount(0)
+    await expect(rows).toHaveCount(before)
 
     await page.click('[data-testid="btn-live-resume"]')
     await expect(page.locator('[data-testid="live-mode-badge"]')).toContainText('Live')
-    await expect(rows).toHaveCount(2, { timeout: 12_000 })
+    await expect(rows).toHaveCount(before + 2, { timeout: 12_000 })
   } finally {
     await apiDelete(`/api/v1/datapoints/${dpId}`)
   }
@@ -83,14 +75,13 @@ test('RingBuffer Auto-Scroll folgt Live, bleibt stabil bei Pause', async ({ page
   try {
     await page.goto('/ringbuffer')
     await page.waitForLoadState('networkidle')
-    await page.fill('[data-testid="input-filter"]', dpId)
-    await page.waitForTimeout(500)
+    const rows = page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`)
+    const before = await rows.count()
 
     for (let i = 0; i < 45; i += 1) {
       await apiPost(`/api/v1/datapoints/${dpId}/value`, { value: i, quality: 'good' })
     }
-    await page.click('[data-testid="btn-refresh-ringbuffer"]')
-    await expect(page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`)).toHaveCount(45, { timeout: 12_000 })
+    await expect(rows).toHaveCount(before + 45, { timeout: 15_000 })
 
     const wrap = page.locator('[data-testid="ringbuffer-table-wrap"]')
     await wrap.evaluate((el) => { (el as HTMLElement).scrollTop = 500 })
@@ -114,9 +105,9 @@ test('RingBuffer Auto-Scroll folgt Live, bleibt stabil bei Pause', async ({ page
   }
 })
 
-test('RingBuffer Zeitfilter unterstützt offene Ränder und absolute/relative Kombination', async ({ page }) => {
+test('RingBuffer zeigt Live-Einträge auch ohne manuellen Refresh', async ({ page }) => {
   const created = await apiPost('/api/v1/datapoints', {
-    name: `E2E-RB-Time-${Date.now()}`,
+    name: `E2E-RB-LiveOnly-${Date.now()}`,
     data_type: 'FLOAT',
     tags: [],
   }) as { id: string }
@@ -125,28 +116,14 @@ test('RingBuffer Zeitfilter unterstützt offene Ränder und absolute/relative Ko
   try {
     await page.goto('/ringbuffer')
     await page.waitForLoadState('networkidle')
-    await page.fill('[data-testid="input-filter"]', dpId)
-    await page.waitForTimeout(500)
+    const rows = page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`)
+    const before = await rows.count()
 
     await apiPost(`/api/v1/datapoints/${dpId}/value`, { value: 10.0, quality: 'good' })
-    await page.waitForTimeout(150)
     await apiPost(`/api/v1/datapoints/${dpId}/value`, { value: 11.0, quality: 'good' })
-    await page.click('[data-testid="btn-refresh-ringbuffer"]')
-    await expect(page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`)).toHaveCount(2, { timeout: 10_000 })
+    await apiPost(`/api/v1/datapoints/${dpId}/value`, { value: 12.0, quality: 'good' })
 
-    await page.fill('[data-testid="time-from-relative-seconds"]', '-30')
-    await page.click('[data-testid="btn-apply-ringbuffer-filters"]')
-    await expect(page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`)).toHaveCount(2, { timeout: 10_000 })
-
-    const future = new Date(Date.now() + 2 * 60 * 1000)
-    const localFuture = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}T${String(future.getHours()).padStart(2, '0')}:${String(future.getMinutes()).padStart(2, '0')}`
-    await page.fill('[data-testid="time-from-absolute"]', localFuture)
-    await page.click('[data-testid="btn-apply-ringbuffer-filters"]')
-    await expect(page.locator('[data-testid="ringbuffer-empty"]')).toBeVisible({ timeout: 10_000 })
-
-    await page.fill('[data-testid="time-from-absolute"]', '')
-    await page.click('[data-testid="btn-apply-ringbuffer-filters"]')
-    await expect(page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpId}"]`)).toHaveCount(2, { timeout: 10_000 })
+    await expect(rows).toHaveCount(before + 3, { timeout: 12_000 })
   } finally {
     await apiDelete(`/api/v1/datapoints/${dpId}`)
   }
@@ -175,6 +152,7 @@ test('RingBuffer Monitor-Modal öffnet stabil ohne separates Speicher-PopUp', as
         total: 0,
         max_entries: 10000,
         storage: 'file',
+        effective_retention_seconds: null,
         max_file_size_bytes: null,
         max_age: null,
         file_size_bytes: 0,
@@ -215,6 +193,7 @@ test('RingBuffer Monitor-Modal hält Speicher-/Retention-State und sendet Limits
         total: 12,
         max_entries: 10000,
         storage: 'file',
+        effective_retention_seconds: 86400,
         max_file_size_bytes: 10485760,
         max_age: 86400,
         file_size_bytes: 4096,
@@ -232,6 +211,7 @@ test('RingBuffer Monitor-Modal hält Speicher-/Retention-State und sendet Limits
         total: 12,
         max_entries: 50000,
         storage: 'file',
+        effective_retention_seconds: 172800,
         max_file_size_bytes: 2147483648,
         max_age: 63072000,
         file_size_bytes: 8192,
@@ -243,6 +223,9 @@ test('RingBuffer Monitor-Modal hält Speicher-/Retention-State und sendet Limits
   await page.waitForLoadState('networkidle')
   await page.click('[data-testid="btn-open-monitor-config"]')
 
+  await expect(page.locator('[data-testid="rb-config-max-entries-enabled"]')).toBeChecked()
+  await expect(page.locator('[data-testid="rb-config-max-size-enabled"]')).toBeChecked()
+  await expect(page.locator('[data-testid="rb-config-retention-enabled"]')).toBeChecked()
   await page.fill('[data-testid="rb-config-max-size-value"]', '2')
   await page.selectOption('[data-testid="rb-config-max-size-unit"]', 'gb')
   await page.fill('[data-testid="rb-config-retention-value"]', '2')
@@ -265,7 +248,7 @@ test('RingBuffer Monitor-Modal hält Speicher-/Retention-State und sendet Limits
 })
 
 test('RingBuffer Monitor-Modal Statistik rendert stabil bei leerem und gefülltem Buffer', async ({ page }) => {
-  let statsCalls = 0
+  let showFilledStats = false
   await page.route('**/api/v1/ringbuffer/query', async (route) => {
     await route.fulfill({
       status: 200,
@@ -281,8 +264,7 @@ test('RingBuffer Monitor-Modal Statistik rendert stabil bei leerem und gefüllte
     })
   })
   await page.route('**/api/v1/ringbuffer/stats', async (route) => {
-    statsCalls += 1
-    if (statsCalls === 1) {
+    if (!showFilledStats) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -290,6 +272,7 @@ test('RingBuffer Monitor-Modal Statistik rendert stabil bei leerem und gefüllte
           total: 0,
           max_entries: 10000,
           storage: 'file',
+          effective_retention_seconds: null,
           max_file_size_bytes: null,
           max_age: null,
           file_size_bytes: 0,
@@ -304,6 +287,7 @@ test('RingBuffer Monitor-Modal Statistik rendert stabil bei leerem und gefüllte
         total: 25,
         max_entries: 10000,
         storage: 'file',
+        effective_retention_seconds: 172800,
         max_file_size_bytes: 52428800,
         max_age: 172800,
         file_size_bytes: 1048576,
@@ -314,14 +298,97 @@ test('RingBuffer Monitor-Modal Statistik rendert stabil bei leerem und gefüllte
   await page.goto('/ringbuffer')
   await page.waitForLoadState('networkidle')
   await page.click('[data-testid="btn-open-monitor-config"]')
+  const statsBox = await page.locator('[data-testid="rb-config-stats"]').boundingBox()
+  const firstInputBox = await page.locator('[data-testid="rb-config-max-entries"]').boundingBox()
+  expect(statsBox).not.toBeNull()
+  expect(firstInputBox).not.toBeNull()
+  if (statsBox && firstInputBox) {
+    expect(statsBox.y).toBeLessThan(firstInputBox.y)
+  }
   await expect(page.locator('[data-testid="rb-config-stats-total"]')).toContainText('0')
   await expect(page.locator('[data-testid="rb-config-stats-file-size"]')).toContainText('0 B')
-  await expect(page.locator('[data-testid="rb-config-stats-retention"]')).toContainText('unbegrenzt')
+  await expect(page.locator('[data-testid="rb-config-stats-retention"]')).toContainText('—')
 
+  showFilledStats = true
   await page.reload()
   await page.waitForLoadState('networkidle')
   await page.click('[data-testid="btn-open-monitor-config"]')
   await expect(page.locator('[data-testid="rb-config-stats-total"]')).toContainText('25')
   await expect(page.locator('[data-testid="rb-config-stats-file-size"]')).toContainText('1.00 MB')
-  await expect(page.locator('[data-testid="rb-config-stats-retention"]')).toContainText('2 Tage')
+  await expect(page.locator('[data-testid="rb-config-stats-retention"]')).toContainText('2d')
+})
+
+test('RingBuffer Monitor-Modal unterstützt Max.-Einträge ohne Limit und schliesst nach Erfolg', async ({ page }) => {
+  await page.route('**/api/v1/ringbuffer/query', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+  await page.route('**/api/v1/ringbuffer/filtersets', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    })
+  })
+
+  let maxEntriesUnlimited = false
+  await page.route('**/api/v1/ringbuffer/stats', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 7,
+        max_entries: maxEntriesUnlimited ? null : 10000,
+        storage: 'file',
+        effective_retention_seconds: 3665,
+        max_file_size_bytes: 10485760,
+        max_age: 86400,
+        file_size_bytes: 2048,
+      }),
+    })
+  })
+
+  let postedBody: Record<string, unknown> | null = null
+  await page.route('**/api/v1/ringbuffer/config', async (route) => {
+    postedBody = route.request().postDataJSON() as Record<string, unknown>
+    maxEntriesUnlimited = true
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total: 7,
+        max_entries: null,
+        storage: 'file',
+        effective_retention_seconds: 3665,
+        max_file_size_bytes: 10485760,
+        max_age: 86400,
+        file_size_bytes: 2048,
+      }),
+    })
+  })
+
+  await page.goto('/ringbuffer')
+  await page.waitForLoadState('networkidle')
+  await page.click('[data-testid="btn-open-monitor-config"]')
+  await expect(page.locator('[data-testid="rb-config-max-entries-enabled"]')).toBeChecked()
+  await page.click('[data-testid="rb-config-max-entries-enabled"]')
+  await expect(page.locator('[data-testid="rb-config-max-entries-enabled"]')).not.toBeChecked()
+  await page.click('[data-testid="rb-config-save"]')
+
+  await expect.poll(() => postedBody).not.toBeNull()
+  expect(postedBody).toEqual({
+    storage: 'file',
+    max_entries: null,
+    max_file_size_bytes: 10485760,
+    max_age: 86400,
+  })
+
+  await expect(page.locator('text=Monitor-Konfiguration gespeichert')).toBeVisible()
+  await expect(page.locator('[data-testid="rb-config-save"]')).toBeHidden({ timeout: 3000 })
+
+  await page.click('[data-testid="btn-open-monitor-config"]')
+  await expect(page.locator('[data-testid="rb-config-max-entries-enabled"]')).not.toBeChecked()
 })

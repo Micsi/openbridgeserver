@@ -5,7 +5,7 @@
   >
     <span class="font-medium tabular-nums">{{ formattedTotal }}</span>
     <span class="text-slate-400">/</span>
-    <span class="tabular-nums">{{ formattedMax }}</span>
+    <span class="tabular-nums">{{ displayMax }}</span>
     <span class="text-slate-400">·</span>
     <span>{{ storage }}</span>
     <span
@@ -43,18 +43,28 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useFloating, autoUpdate, offset, flip, shift } from '@floating-ui/vue'
 import { ringbufferApi } from '@/api/client'
+import { useWebSocketStore } from '@/stores/websocket'
 
 const stats = ref(null)
 const helpIcon = ref(null)
 const tooltip = ref(null)
 const tipOpen = ref(false)
+const wsStore = useWebSocketStore()
 let stopAutoUpdate = null
+let pollTimer = null
+let wsUnsubscribe = null
+let wsRefreshDebounce = null
 
 const total = computed(() => Number(stats.value?.total ?? 0))
-const maxEntries = computed(() => Number(stats.value?.max_entries ?? 0))
+const maxEntries = computed(() => {
+  const raw = stats.value?.max_entries
+  if (raw == null) return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+})
 const storage = computed(() => stats.value?.storage ?? '—')
 
 function fmt(n) {
@@ -68,6 +78,7 @@ function fmt(n) {
 
 const formattedTotal = computed(() => fmt(total.value))
 const formattedMax = computed(() => fmt(maxEntries.value))
+const displayMax = computed(() => (maxEntries.value == null ? '∞' : formattedMax.value))
 
 const { floatingStyles, update } = useFloating(helpIcon, tooltip, {
   placement: 'bottom',
@@ -108,6 +119,25 @@ async function load() {
 
 onMounted(() => {
   void load()
+  pollTimer = setInterval(() => { void load() }, 10000)
+  wsUnsubscribe = wsStore.onRingbufferEntry(() => {
+    clearTimeout(wsRefreshDebounce)
+    wsRefreshDebounce = setTimeout(() => { void load() }, 250)
+  })
+})
+
+onUnmounted(() => {
+  stopAutoUpdateFn()
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  if (wsRefreshDebounce) {
+    clearTimeout(wsRefreshDebounce)
+    wsRefreshDebounce = null
+  }
+  wsUnsubscribe?.()
+  wsUnsubscribe = null
 })
 
 defineExpose({ reload: load })
