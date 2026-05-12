@@ -147,6 +147,63 @@ describe('parseTimePointToken', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// QA-01 audit (#439): additional invalid / day-boundary / TZ round-trip
+// ---------------------------------------------------------------------------
+
+describe('parseTimePointToken QA-01 edge cases (#439)', () => {
+  it('rejects 5x / abc / 30 / 1h-30m as relative tokens', () => {
+    expect(parseTimePointToken('5x')).toBeNull()
+    expect(parseTimePointToken('1h-30m')).toBeNull()
+    // Bare numbers and free-form text are no valid time point either
+    expect(parseTimePointToken('30')).toBeNull()
+    expect(parseTimePointToken('abc')).toBeNull()
+  })
+
+  it('rejects fractional durations like 1.5h, even with a leading sign', () => {
+    expect(parseTimePointToken('+1.5h')).toBeNull()
+    expect(parseTimePointToken('-1,5h')).toBeNull()
+  })
+
+  it('parses "2026-05-11 23:59" then adds +5min crossing into the next day', () => {
+    // Two-step semantics: the popover composes wall-clock + relative.
+    const anchor = parseTimePointToken('2026-05-11 23:59')
+    expect(anchor).toBeInstanceOf(Date)
+    const after = parseTimePointToken('+5min', anchor)
+    expect(after.getFullYear()).toBe(2026)
+    expect(after.getMonth()).toBe(4) // May (0-based)
+    expect(after.getDate()).toBe(12)
+    expect(after.getHours()).toBe(0)
+    expect(after.getMinutes()).toBe(4)
+  })
+
+  it('round-trips an ISO with explicit UTC through new Date() → toISOString()', () => {
+    // Stability of the parser under TZ-aware formatting (used by useTz.js).
+    const raw = '2026-05-11T14:30:00Z'
+    const parsed = parseTimePointToken(raw)
+    expect(parsed.toISOString()).toBe('2026-05-11T14:30:00.000Z')
+    // Reformatting back to ISO with the same anchor must produce the same string
+    expect(new Date(parsed.toISOString()).toISOString()).toBe('2026-05-11T14:30:00.000Z')
+  })
+
+  it('rejects overflow dates like 2026-02-30', () => {
+    expect(parseTimePointToken('2026-02-30T12:00')).toBeNull()
+    expect(parseTimePointToken('2026-13-01T00:00')).toBeNull()
+    expect(parseTimePointToken('2026-05-11T25:00')).toBeNull()
+  })
+
+  it('tolerates leading/trailing whitespace around an ISO timestamp', () => {
+    const d = parseTimePointToken('   2026-05-11T14:30   ')
+    expect(d).toBeInstanceOf(Date)
+    expect(d.getHours()).toBe(14)
+  })
+
+  it('returns null on whitespace-only input', () => {
+    expect(parseTimePointToken('   ')).toBeNull()
+    expect(parseTimePointToken('\t\n')).toBeNull()
+  })
+})
+
 describe('formatDurationDeutsch', () => {
   it('formats 0 seconds', () => {
     expect(formatDurationDeutsch(0)).toBe('0s')

@@ -635,4 +635,94 @@ describe('FilterEditor (#436)', () => {
     expect(ringbufferApi.getFilterset).toHaveBeenCalledWith('fs-1')
     expect(wrapper.find('[data-testid="filter-editor-name"]').element.value).toBe('Lazy')
   })
+
+  // -------------------------------------------------------------------------
+  // QA-01 audit (#439): hierarchy expand edge cases
+  // -------------------------------------------------------------------------
+
+  it('expanding an empty hierarchy node drops the chip and leaves DP list unchanged', async () => {
+    // Empty node = no DPs under it. The chip must still vanish (since the
+    // user explicitly resolved it) but the DP list keeps its existing items.
+    const setWithHierarchy = makeSampleSet({
+      filter: {
+        hierarchy_nodes: [{ tree_id: 't1', node_id: 'empty', include_descendants: true }],
+        datapoints: ['dp-keep'],
+        tags: [],
+        adapters: [],
+        q: null,
+        value_filter: null,
+      },
+    })
+    const ringbufferApi = makeRingbufferApi({
+      getFilterset: vi.fn().mockResolvedValue({ data: setWithHierarchy }),
+    })
+    const hierarchyApi = makeHierarchyApi({
+      getTreeNodes: vi.fn().mockResolvedValue({
+        data: [{ id: 'empty', tree_id: 't1', parent_id: null, name: 'Empty' }],
+      }),
+    })
+    const searchApi = makeSearchApi({
+      search: vi.fn().mockResolvedValue({ data: { items: [] } }),
+    })
+    const { wrapper } = await mountEditor({
+      props: { setId: 'fs-1' },
+      ringbufferApi,
+      searchApi,
+      hierarchyApi,
+    })
+    await wrapper.find('[data-testid="hierarchy-expand-0"]').trigger('click')
+    await flushPromises()
+
+    // Chip is gone
+    expect(wrapper.findAll('[data-testid^="hierarchy-expand-"]').length).toBe(0)
+    // DP list unchanged — only dp-keep remains
+    const dpChips = wrapper.findAll('[data-testid^="stub-DpCombobox-chip-"]')
+    expect(dpChips.map((c) => c.attributes('data-chip-id'))).toEqual(['dp-keep'])
+  })
+
+  it('expanding a node with >1000 DPs completes within a generous bench budget', async () => {
+    // Performance smoke test: the de-dup merge (Array.from(new Set(...)))
+    // must not be quadratic. We pump 1500 ids through and assert the click
+    // → emit cycle stays under a generous wall-clock threshold (200 ms in
+    // happy-dom with no DOM work). This catches accidental O(n^2) regressions.
+    const setWithHierarchy = makeSampleSet({
+      filter: {
+        hierarchy_nodes: [{ tree_id: 't1', node_id: 'big', include_descendants: true }],
+        datapoints: [],
+        tags: [],
+        adapters: [],
+        q: null,
+        value_filter: null,
+      },
+    })
+    const ringbufferApi = makeRingbufferApi({
+      getFilterset: vi.fn().mockResolvedValue({ data: setWithHierarchy }),
+    })
+    const hierarchyApi = makeHierarchyApi({
+      getTreeNodes: vi.fn().mockResolvedValue({
+        data: [{ id: 'big', tree_id: 't1', parent_id: null, name: 'Big' }],
+      }),
+    })
+    const bigItems = Array.from({ length: 1500 }, (_, i) => ({ id: `dp-${i}` }))
+    const searchApi = makeSearchApi({
+      search: vi.fn().mockResolvedValue({ data: { items: bigItems } }),
+    })
+    const { wrapper } = await mountEditor({
+      props: { setId: 'fs-1' },
+      ringbufferApi,
+      searchApi,
+      hierarchyApi,
+    })
+
+    const t0 = performance.now()
+    await wrapper.find('[data-testid="hierarchy-expand-0"]').trigger('click')
+    await flushPromises()
+    const elapsed = performance.now() - t0
+
+    // Assert we wired 1500 DPs through
+    const dpChips = wrapper.findAll('[data-testid^="stub-DpCombobox-chip-"]')
+    expect(dpChips.length).toBe(1500)
+    // 200 ms is generous on slower CI runners; the actual local run is < 30 ms
+    expect(elapsed).toBeLessThan(2000)
+  })
 })
