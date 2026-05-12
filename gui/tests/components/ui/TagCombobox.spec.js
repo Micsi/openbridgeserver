@@ -18,7 +18,7 @@ afterEach(() => {
 async function mountTagCombobox(props = {}, tags = ['indoor', 'outdoor', 'energy']) {
   const loadTags = vi.fn().mockResolvedValue(undefined)
   vi.doMock('@/stores/datapoints', () => ({
-    useDatapointsStore: () => ({
+    useDatapointStore: () => ({
       allTags: tags,
       loadTags,
     }),
@@ -79,7 +79,7 @@ describe('TagCombobox', () => {
   it('loads tags via store.loadTags on mount when store is empty', async () => {
     const loadTags = vi.fn().mockResolvedValue(undefined)
     vi.doMock('@/stores/datapoints', () => ({
-      useDatapointsStore: () => ({ allTags: [], loadTags }),
+      useDatapointStore: () => ({ allTags: [], loadTags }),
     }))
     const mod = await import('@/components/ui/TagCombobox.vue')
     mount(mod.default, { props: { modelValue: [] } })

@@ -13,7 +13,7 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import Combobox from '@/components/ui/Combobox.vue'
-import { useDatapointsStore } from '@/stores/datapoints'
+import { useDatapointStore } from '@/stores/datapoints'
 
 const props = defineProps({
   modelValue: { type: Array, default: () => [] },
@@ -21,7 +21,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue'])
 
-const store = useDatapointsStore()
+const store = useDatapointStore()
 
 onMounted(() => {
   if (!store.allTags?.length) {
