@@ -203,43 +203,12 @@
       </form>
     </Modal>
 
-    <Modal v-model="showPrefilterAssistant" title="Vorfilter-Assistent (#355)" max-width="md">
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Tags (CSV)</label>
-          <input v-model="prefilter.tagsText" class="input" data-testid="prefilter-tags-input" placeholder="heizung,licht" />
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div class="flex flex-col gap-1">
-            <label class="text-xs text-slate-500">Hierarchiebaum</label>
-            <select v-model="prefilter.treeId" class="input" @change="onPrefilterTreeChange">
-              <option value="">(optional)</option>
-              <option v-for="tree in prefilterTrees" :key="tree.id" :value="tree.id">{{ tree.name }}</option>
-            </select>
-          </div>
-          <div class="flex flex-col gap-1">
-            <label class="text-xs text-slate-500">Knoten</label>
-            <select v-model="prefilter.nodeId" class="input" data-testid="prefilter-node-select">
-              <option value="">(optional)</option>
-              <option v-for="node in prefilterNodes" :key="node.id" :value="node.id">{{ node.path }}</option>
-            </select>
-          </div>
-        </div>
-        <p v-if="prefilterMsg" :class="prefilterMsg.ok ? 'text-emerald-500 text-sm' : 'text-red-500 text-sm'">{{ prefilterMsg.text }}</p>
-        <div class="flex justify-end gap-2">
-          <button class="btn-secondary" @click="showPrefilterAssistant = false">Abbrechen</button>
-          <button class="btn-primary" :disabled="prefilterBusy" data-testid="btn-apply-prefilter-suggestion" @click="applyPrefilterSuggestion">
-            Vorschlag übernehmen
-          </button>
-        </div>
-      </div>
-    </Modal>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { ringbufferApi, searchApi, hierarchyApi } from '@/api/client'
+import { ringbufferApi } from '@/api/client'
 import { useTz } from '@/composables/useTz'
 import { useSetColors } from '@/composables/useSetColors'
 import { useWebSocketStore } from '@/stores/websocket'
@@ -321,18 +290,6 @@ const liveQueue = ref([])
 
 const filtersets = ref([])
 
-const showPrefilterAssistant = ref(false)
-const prefilterBusy = ref(false)
-const prefilterMsg = ref(null)
-const prefilterTrees = ref([])
-const prefilterNodes = ref([])
-const prefilterTarget = ref({ groupIndex: 0, ruleIndex: 0 })
-const prefilter = reactive({
-  tagsText: '',
-  treeId: '',
-  nodeId: '',
-})
-
 const configForm = reactive({
   storage: 'file',
   max_entries: 10000,
@@ -349,14 +306,6 @@ const queuedCount = computed(() => liveQueue.value.length)
 
 let unregisterRb = null
 let liveFlushTimer = null
-
-function splitCsv(raw) {
-  return String(raw ?? '').split(',').map((v) => v.trim()).filter(Boolean)
-}
-
-function joinCsv(values) {
-  return (values || []).map((v) => String(v).trim()).filter(Boolean).join(',')
-}
 
 function formatBytes(rawBytes) {
   const bytes = Number(rawBytes)
@@ -476,98 +425,6 @@ async function loadFiltersets() {
   } catch {
     filtersets.value = []
     setSets([])
-  }
-}
-
-function flattenNodes(nodes, prefix = '') {
-  const out = []
-  for (const node of nodes || []) {
-    const current = prefix ? `${prefix} / ${node.name}` : node.name
-    out.push({ id: node.id, path: current })
-    out.push(...flattenNodes(node.children || [], current))
-  }
-  return out
-}
-
-async function loadAllPrefilterNodes() {
-  const all = []
-  for (const tree of prefilterTrees.value) {
-    try {
-      const { data } = await hierarchyApi.getTreeNodes(tree.id)
-      const flattened = flattenNodes(data, tree.name)
-      all.push(...flattened)
-    } catch {
-      // ignore single-tree errors and continue with remaining trees
-    }
-  }
-  prefilterNodes.value = all
-}
-
-async function openPrefilterAssistant(groupIndex, ruleIndex) {
-  prefilterTarget.value = { groupIndex, ruleIndex }
-  prefilterMsg.value = null
-  prefilter.tagsText = filtersetDraft.value.groups[groupIndex].rules[ruleIndex].tagsText || ''
-  prefilter.treeId = ''
-  prefilter.nodeId = ''
-  prefilterNodes.value = []
-
-  if (!prefilterTrees.value.length) {
-    try {
-      const { data } = await hierarchyApi.listTrees()
-      prefilterTrees.value = Array.isArray(data) ? data : []
-    } catch {
-      prefilterTrees.value = []
-    }
-  }
-  await loadAllPrefilterNodes()
-
-  showPrefilterAssistant.value = true
-}
-
-async function onPrefilterTreeChange() {
-  prefilter.nodeId = ''
-  prefilterNodes.value = []
-  if (!prefilter.treeId) return
-  try {
-    const { data } = await hierarchyApi.getTreeNodes(prefilter.treeId)
-    prefilterNodes.value = flattenNodes(data)
-  } catch {
-    prefilterNodes.value = []
-  }
-}
-
-async function applyPrefilterSuggestion() {
-  prefilterMsg.value = null
-  prefilterBusy.value = true
-
-  try {
-    const params = { page: 0, size: 500, sort: 'name', order: 'asc' }
-    const tags = splitCsv(prefilter.tagsText)
-    if (tags.length) params.tag = tags.join(',')
-    if (prefilter.nodeId) params.node_id = prefilter.nodeId
-
-    const { data } = await searchApi.search(params)
-    const items = Array.isArray(data?.items) ? data.items : []
-    const ids = Array.from(new Set(items.map((item) => item.id)))
-
-    const group = filtersetDraft.value.groups[prefilterTarget.value.groupIndex]
-    const rule = group?.rules?.[prefilterTarget.value.ruleIndex]
-    if (!rule) {
-      throw new Error('Zielregel nicht gefunden')
-    }
-
-    const merged = Array.from(new Set([...splitCsv(rule.datapointsText), ...ids]))
-    rule.datapointsText = joinCsv(merged)
-
-    const mergedTags = Array.from(new Set([...splitCsv(rule.tagsText), ...tags]))
-    rule.tagsText = joinCsv(mergedTags)
-
-    showPrefilterAssistant.value = false
-    prefilterMsg.value = null
-  } catch (error) {
-    prefilterMsg.value = { ok: false, text: extractErrorMessage(error, 'Vorschlag konnte nicht erzeugt werden') }
-  } finally {
-    prefilterBusy.value = false
   }
 }
 
