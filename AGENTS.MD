@@ -58,6 +58,25 @@ docker compose up -d mosquitto
 cd gui && npm run dev
 ```
 
+## Pre-Push Gate (verbindlich)
+
+CI im PR-Workflow baut das Frontend **nicht** — `npm run build` läuft erst beim Release-Tag.
+Import-/Typo-Bugs (z. B. `useDatapointsStore` vs. `useDatapointStore`) bleiben deshalb unsichtbar,
+solange ein Vitest-Mock mit demselben falschen Namen sie verdeckt. Vor **jedem** Push, der
+Frontend-Code berührt, alle vier Stufen lokal grün laufen lassen:
+
+```bash
+./tools/lint.sh --check
+cd gui && npm run build     # fängt echte Import-Resolution, Vitest-Mocks nicht
+cd gui && npm run test
+# bei Backend-Änderungen zusätzlich:
+pytest tests/unit tests/adapters tests/contracts  # ohne Docker
+pytest tests/integration                          # mit Docker
+```
+
+Wenn rot: nicht pushen, sondern fixen. Gilt für Haupt-Sessions **und** für Subagents — bitte
+explizit in den Subagent-Prompt schreiben, weil deren Kontext leer startet.
+
 ## Local Development Setup
 
 ### Prerequisites
