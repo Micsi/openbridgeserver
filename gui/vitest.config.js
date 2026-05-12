@@ -26,6 +26,7 @@ export default defineConfig({
         'src/components/ui/AdapterCombobox.vue',
         'src/components/ui/HierarchyCombobox.vue',
         'src/components/ui/PathLabel.vue',
+        'src/composables/useSetColors.js',
       ],
     },
   },

@@ -180,4 +180,30 @@ describe('useSetColors', () => {
     expect(getAccentText('#0f172a')).toBe('#ffffff')
     expect(getAccentText('not-a-color')).toBe('#0f172a') // sensible fallback
   })
+
+  it('drops non-string entries from matchedIds and returns undefined if list is empty after filtering', async () => {
+    const mod = await import('@/composables/useSetColors.js')
+    const { setSets, getRowStyle } = mod.useSetColors()
+    setSets([makeSet({ id: 's', color: '#3b82f6' })])
+    // Mix of null, undefined, 0, '' — none can be a set id.
+    expect(getRowStyle([null, undefined, 0, ''])).toBeUndefined()
+  })
+
+  it('setSets ignores falsy inputs without throwing', async () => {
+    const mod = await import('@/composables/useSetColors.js')
+    const { setSets, getRowStyle } = mod.useSetColors()
+    setSets(null)
+    expect(getRowStyle(['anything'])).toBeUndefined()
+    setSets([null, undefined, { id: '', topbar_active: true }, { topbar_active: true }])
+    expect(getRowStyle(['anything'])).toBeUndefined()
+  })
+
+  it('__resetSetColorsCache empties the shared cache', async () => {
+    const mod = await import('@/composables/useSetColors.js')
+    const { setSets, getRowStyle } = mod.useSetColors()
+    setSets([makeSet({ id: 'cached', color: '#3b82f6' })])
+    expect(getRowStyle(['cached'])).toBeTruthy()
+    mod.__resetSetColorsCache()
+    expect(getRowStyle(['cached'])).toBeUndefined()
+  })
 })
