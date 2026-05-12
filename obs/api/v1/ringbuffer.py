@@ -94,6 +94,7 @@ class RingBufferEntryOut(BaseModel):
     quality: str
     metadata_version: int
     metadata: dict[str, Any]
+    unit: str | None = None
 
 
 class RingBufferMultiEntryOut(RingBufferEntryOut):
@@ -487,8 +488,7 @@ def _flatten_legacy_filterset_payload(raw: dict[str, Any]) -> dict[str, Any]:
         return raw
 
     warnings.warn(
-        "ringbuffer filterset payload uses the legacy groups[]/query schema — "
-        "this shim is scheduled for removal in #438",
+        "ringbuffer filterset payload uses the legacy groups[]/query schema — this shim is scheduled for removal in #438",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -550,6 +550,7 @@ async def _query_v2_entries(
     registry = get_registry()
     registry_entries = list(registry.all())
     name_map: dict[str, str] = {str(dp.id): dp.name for dp in registry_entries}
+    unit_map: dict[str, str | None] = {str(dp.id): getattr(dp, "unit", None) for dp in registry_entries}
 
     q = body.filters.q.strip()
     dp_ids_by_name: list[str] = []
@@ -648,6 +649,7 @@ async def _query_v2_entries(
             quality=e.quality,
             metadata_version=e.metadata_version,
             metadata=e.metadata,
+            unit=unit_map.get(e.datapoint_id),
         )
         for e in entries
     ]
@@ -735,7 +737,9 @@ async def query_ringbuffer(
     from obs.core.registry import get_registry
 
     registry = get_registry()
-    name_map: dict[str, str] = {str(dp.id): dp.name for dp in registry.all()}
+    registry_entries = list(registry.all())
+    name_map: dict[str, str] = {str(dp.id): dp.name for dp in registry_entries}
+    unit_map: dict[str, str | None] = {str(dp.id): getattr(dp, "unit", None) for dp in registry_entries}
     dp_ids_by_name: list[str] = []
     if q:
         q_lower = q.lower()
@@ -762,6 +766,7 @@ async def query_ringbuffer(
             quality=e.quality,
             metadata_version=e.metadata_version,
             metadata=e.metadata,
+            unit=unit_map.get(e.datapoint_id),
         )
         for e in entries
     ]
