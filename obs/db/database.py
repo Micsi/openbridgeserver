@@ -449,6 +449,42 @@ CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_active ON ringbuffer_filtersets(topb
 CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_order  ON ringbuffer_filtersets(topbar_order);
 """
 
+
+async def _migration_v30(conn: aiosqlite.Connection) -> None:
+    """Phase-2 in-place V29 follow-up for dev DBs that had already been seeded
+    against the original V29 schema (groups + rules + query_json).
+
+    For DBs created on or after the V29 in-place rewrite this is a no-op:
+    every ALTER is guarded against "duplicate column name" and the DROP TABLEs
+    use IF EXISTS. For DBs that ran the original V29: the four new columns are
+    added, the obsolete helper tables are dropped, and every existing filterset
+    is reset to an empty FilterCriteria ('{}') — names/colors/active flags are
+    preserved, but the legacy group/rule content cannot be flattened safely
+    here because the criteria lived in a separate table that we are dropping.
+    Users can rebuild filters via the new editor.
+    """
+
+    async def _add(column: str, definition: str) -> None:
+        try:
+            await conn.execute(f"ALTER TABLE ringbuffer_filtersets ADD COLUMN {column} {definition}")
+        except aiosqlite.OperationalError as exc:
+            if "duplicate column name" not in str(exc):
+                raise
+
+    await _add("color", "TEXT NOT NULL DEFAULT '#3b82f6'")
+    await _add("topbar_active", "INTEGER NOT NULL DEFAULT 0")
+    await _add("topbar_order", "INTEGER NOT NULL DEFAULT 0")
+    await _add("filter_json", "TEXT NOT NULL DEFAULT '{}'")
+
+    # Reset filter_json for sets that came from the old schema; the new
+    # FilterCriteria shape is incompatible with the old query_json blob.
+    await conn.execute("UPDATE ringbuffer_filtersets SET filter_json='{}' WHERE filter_json='' OR filter_json IS NULL")
+
+    await conn.execute("DROP TABLE IF EXISTS ringbuffer_filterset_rules")
+    await conn.execute("DROP TABLE IF EXISTS ringbuffer_filterset_groups")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar ON ringbuffer_filtersets(topbar_active)")
+
+
 # List of (version, sql_or_callable) tuples — append new migrations here
 MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
@@ -480,6 +516,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (27, _MIGRATION_V27),
     (28, _MIGRATION_V28),
     (29, _MIGRATION_V29),
+    (30, _migration_v30),
 ]
 
 
