@@ -110,17 +110,7 @@ def test_legacy_groups_to_filter_deduplicates_repeated_values():
 def test_flatten_legacy_payload_emits_deprecation_warning_for_groups():
     raw = {
         "name": "legacy",
-        "groups": [
-            {
-                "rules": [
-                    {
-                        "query": {
-                            "filters": {"datapoints": {"ids": ["dp-1"]}}
-                        }
-                    }
-                ]
-            }
-        ],
+        "groups": [{"rules": [{"query": {"filters": {"datapoints": {"ids": ["dp-1"]}}}}]}],
     }
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

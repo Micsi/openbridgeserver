@@ -129,10 +129,16 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h12M3 17h8"/>
             </svg>
             <span v-if="!filters.node_ids.length" class="text-slate-400 flex-1 text-left">Hierarchieknoten …</span>
+            <span v-else-if="filters.node_ids.length === 1"
+              class="text-blue-600 dark:text-blue-400 font-medium flex-1 text-left text-xs min-w-0"
+              data-testid="node-filter-summary"
+            >
+              <PathLabel
+                :segments="[filters.node_ids[0].tree_name, ...(filters.node_ids[0].path && filters.node_ids[0].path.length ? filters.node_ids[0].path : [filters.node_ids[0].node_name])]"
+              />
+            </span>
             <span v-else class="text-blue-600 dark:text-blue-400 font-medium flex-1 text-left text-xs truncate">
-              {{ filters.node_ids.length === 1
-                ? `${filters.node_ids[0].tree_name} › ${filters.node_ids[0].node_name}`
-                : `${filters.node_ids.length} Knoten` }}
+              {{ filters.node_ids.length }} Knoten
             </span>
             <svg class="w-3 h-3 text-slate-400 shrink-0 transition-transform" :class="nodeDropOpen ? 'rotate-180' : ''"
               fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -163,7 +169,8 @@
               <div class="px-3 py-1 text-xs text-slate-400 font-medium uppercase tracking-wide">Ausgewählt</div>
               <button v-for="n in filters.node_ids" :key="n.node_id"
                 @click="toggleNode(n)"
-                class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                data-testid="node-filter-selected-item">
                 <span class="flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center bg-blue-500 border-blue-500">
                   <svg class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
@@ -173,7 +180,9 @@
                 <svg class="w-3 h-3 text-slate-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                 </svg>
-                <span class="text-blue-600 dark:text-blue-400 font-medium truncate">{{ n.node_name }}</span>
+                <span class="text-blue-600 dark:text-blue-400 font-medium min-w-0 flex-1">
+                  <PathLabel :segments="n.path && n.path.length ? n.path : [n.node_name]" />
+                </span>
               </button>
             </div>
 
@@ -184,7 +193,8 @@
               <div v-else-if="nodeResults.length === 0 && !nodeSearchQ" class="text-xs text-slate-500 text-center py-3">Tippe zum Suchen …</div>
               <button v-else v-for="node in nodeResults" :key="node.node_id"
                 @click="toggleNode(node)"
-                class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                data-testid="node-filter-result-item">
                 <span :class="['flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors',
                   isNodeSelected(node.node_id) ? 'bg-blue-500 border-blue-500' : 'border-slate-300 dark:border-slate-600']">
                   <svg v-if="isNodeSelected(node.node_id)" class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -195,8 +205,9 @@
                 <svg class="w-3 h-3 text-slate-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                 </svg>
-                <span :class="isNodeSelected(node.node_id) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-700 dark:text-slate-200'"
-                  class="truncate">{{ node.node_name }}</span>
+                <span :class="[isNodeSelected(node.node_id) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-slate-700 dark:text-slate-200', 'min-w-0 flex-1']">
+                  <PathLabel :segments="node.path && node.path.length ? node.path : [node.node_name]" />
+                </span>
               </button>
             </div>
 
@@ -355,6 +366,7 @@ import { hierarchyApi } from '@/api/client'
 import Badge         from '@/components/ui/Badge.vue'
 import Spinner       from '@/components/ui/Spinner.vue'
 import Modal         from '@/components/ui/Modal.vue'
+import PathLabel     from '@/components/ui/PathLabel.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import DataPointForm from '@/components/datapoints/DataPointForm.vue'
 

@@ -20,13 +20,9 @@ async def test_db_migration_creates_flat_ringbuffer_filterset_table():
     db = Database(":memory:")
     await db.connect()
     try:
-        tables = await db.fetchall(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ringbuffer_filterset%' ORDER BY name"
-        )
+        tables = await db.fetchall("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ringbuffer_filterset%' ORDER BY name")
         names = [row["name"] for row in tables]
-        assert names == ["ringbuffer_filtersets"], (
-            "legacy ringbuffer_filterset_groups/_rules tables must be dropped by V29"
-        )
+        assert names == ["ringbuffer_filtersets"], "legacy ringbuffer_filterset_groups/_rules tables must be dropped by V29"
 
         columns = await db.fetchall("PRAGMA table_info(ringbuffer_filtersets)")
         column_names = {row["name"] for row in columns}

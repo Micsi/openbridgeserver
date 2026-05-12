@@ -35,7 +35,12 @@ class SearchPage(BaseModel):
 
 
 async def _add_hierarchy(items: list[DataPointOut], db: Database) -> None:
-    """Batch-query hierarchy node links and inject into items in-place."""
+    """Batch-query hierarchy node links and inject into items in-place.
+
+    Also computes each node's ancestor path (root → leaf, excluding tree name)
+    so the frontend can disambiguate same-named leaves under different parents
+    (e.g. "Gebäude › EG › Küche" vs "Gebäude › OG › Küche") — see #433.
+    """
     if not items:
         return
     dp_ids = [str(item.id) for item in items]
@@ -50,6 +55,24 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database) -> None:
             ORDER BY ht.name, hn.name""",
         dp_ids,
     )
+    # Load all hierarchy nodes once into an in-memory map so we can walk parent
+    # chains without a per-node round trip. Cheaper than per-node Recursive CTE
+    # for typical SearchPage sizes (50 DPs × few nodes each).
+    node_rows = await db.fetchall("SELECT id, parent_id, name FROM hierarchy_nodes")
+    node_map: dict[str, tuple[str | None, str]] = {r["id"]: (r["parent_id"], r["name"]) for r in node_rows}
+
+    def _path_for(node_id: str) -> list[str]:
+        path: list[str] = []
+        cursor: str | None = node_id
+        # Walk to root; cap depth to prevent pathological cycles
+        for _ in range(64):
+            if cursor is None or cursor not in node_map:
+                break
+            parent_id, name = node_map[cursor]
+            path.append(name)
+            cursor = parent_id
+        return list(reversed(path))
+
     by_dp: dict[str, list[HierarchyNodeRef]] = {}
     for r in rows:
         by_dp.setdefault(r["datapoint_id"], []).append(
@@ -58,6 +81,7 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database) -> None:
                 node_name=r["node_name"],
                 tree_id=r["tree_id"],
                 tree_name=r["tree_name"],
+                path=_path_for(r["node_id"]),
             )
         )
     for item in items:

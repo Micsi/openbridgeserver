@@ -426,11 +426,13 @@ async def test_multi_query_time_filter_excludes_old_entries(client, auth_headers
     await asyncio.sleep(0.05)
     await _write_value(client, auth_headers, dp["id"], 2.0)
 
-    set_id = (await _create_filterset(
-        client,
-        auth_headers,
-        {"name": f"RB431 time-set {uuid.uuid4()}", "filter": {"tags": ["rb431-time"]}},
-    ))["id"]
+    set_id = (
+        await _create_filterset(
+            client,
+            auth_headers,
+            {"name": f"RB431 time-set {uuid.uuid4()}", "filter": {"tags": ["rb431-time"]}},
+        )
+    )["id"]
     try:
         resp = await client.post(
             "/api/v1/ringbuffer/filtersets/query",

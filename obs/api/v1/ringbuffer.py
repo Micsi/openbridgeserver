@@ -487,8 +487,7 @@ def _flatten_legacy_filterset_payload(raw: dict[str, Any]) -> dict[str, Any]:
         return raw
 
     warnings.warn(
-        "ringbuffer filterset payload uses the legacy groups[]/query schema — "
-        "this shim is scheduled for removal in #438",
+        "ringbuffer filterset payload uses the legacy groups[]/query schema — this shim is scheduled for removal in #438",
         DeprecationWarning,
         stacklevel=2,
     )
