@@ -48,6 +48,7 @@
         data-testid="ringbuffer-topbar-chips"
         @edit-set="onEditSet"
         @new-set="onNewSet"
+        @changed="onTopbarChanged"
       />
     </div>
 
@@ -254,7 +255,15 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(e, i) in entries" :key="i" data-testid="ringbuffer-entry" :data-dp="e.datapoint_id">
+            <tr
+              v-for="(e, i) in entries"
+              :key="i"
+              data-testid="ringbuffer-entry"
+              :data-dp="e.datapoint_id"
+              :class="getRowStyle(e.matched_set_ids) ? 'ringbuffer-row-matched' : null"
+              :style="getRowStyle(e.matched_set_ids)"
+              :title="rowMatchTitle(e.matched_set_ids)"
+            >
               <td class="font-mono text-xs text-slate-400 whitespace-nowrap">{{ fmtDateTime(e.ts) }}</td>
               <td class="text-sm">
                 <RouterLink :to="`/datapoints/${e.datapoint_id}`" class="text-blue-400 hover:underline font-mono text-xs">
@@ -410,6 +419,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ringbufferApi, searchApi, hierarchyApi } from '@/api/client'
 import { useTz } from '@/composables/useTz'
+import { useSetColors } from '@/composables/useSetColors'
 import { useWebSocketStore } from '@/stores/websocket'
 import Badge from '@/components/ui/Badge.vue'
 import Spinner from '@/components/ui/Spinner.vue'
@@ -438,6 +448,17 @@ const RETENTION_UNIT_SECONDS = {
 
 const { fmtDateTime } = useTz()
 const wsStore = useWebSocketStore()
+const { getRowStyle, setSets, sets: topbarSetsRef } = useSetColors()
+
+function rowMatchTitle(matchedIds) {
+  if (!Array.isArray(matchedIds) || matchedIds.length === 0) return null
+  const names = []
+  for (const id of matchedIds) {
+    const set = topbarSetsRef.value.get(id)
+    if (set?.name) names.push(set.name)
+  }
+  return names.length ? `Match: ${names.join(', ')}` : null
+}
 
 const entries = ref([])
 const stats = ref(null)
@@ -456,6 +477,14 @@ function onEditSet(id) {
 function onNewSet() {
   editorTargetId.value = null
   showEditorPlaceholder.value = true
+}
+
+async function onTopbarChanged() {
+  // Topbar chip toggle / drag-reorder happened — refresh the local filterset
+  // cache (which also feeds the row-colour map) and re-run the query so the
+  // table reflects the new topbar set composition.
+  await loadFiltersets()
+  await load()
 }
 const configSaving = ref(false)
 const configMsg = ref(null)
@@ -835,8 +864,11 @@ async function loadFiltersets() {
   try {
     const { data } = await ringbufferApi.listFiltersets()
     filtersets.value = Array.isArray(data) ? data : []
+    // Keep the row-colour cache in sync with the topbar state (#437).
+    setSets(filtersets.value)
   } catch (error) {
     filtersets.value = []
+    setSets([])
     filtersetMsg.value = { ok: false, text: extractErrorMessage(error, 'Filtersets konnten nicht geladen werden') }
   }
 }
@@ -1209,7 +1241,10 @@ function onLiveEntry(entry) {
     // intentionally via "Set anwenden" or "Aktualisieren".
     return
   }
-  enqueueLive(entry)
+  // Live entries do not carry matched_set_ids yet — the backend WS push has
+  // no knowledge of which topbar sets are active. Frontend-side matching is
+  // out of scope here (planned in a follow-up). Show the row unmatched.
+  enqueueLive({ ...entry, matched_set_ids: Array.isArray(entry?.matched_set_ids) ? entry.matched_set_ids : [] })
 }
 
 async function applyFilters() {
@@ -1219,7 +1254,10 @@ async function applyFilters() {
 }
 
 onMounted(async () => {
-  await Promise.all([load(), loadStats(), loadFiltersets()])
+  // Load filtersets first so the topbar-colour cache is populated before
+  // load() decides between queryV2 and queryMultiFiltersets (#437).
+  await loadFiltersets()
+  await Promise.all([load(), loadStats()])
   if (stats.value) {
     hydrateConfigFormFromStats(stats.value)
   }
@@ -1232,11 +1270,34 @@ onUnmounted(() => {
   clearTimeout(liveFlushTimer)
 })
 
+function activeTopbarSetIds() {
+  // Walk the cached topbar-set map in ascending topbar_order. The order is
+  // also what the chip strip displays, so the first-match-wins tie-break in
+  // useSetColors() lines up with the visual order.
+  return Array.from(topbarSetsRef.value.values())
+    .sort((a, b) => (a.topbar_order ?? 0) - (b.topbar_order ?? 0))
+    .map((s) => s.id)
+}
+
 async function load() {
   loading.value = true
   listError.value = ''
   try {
-    const { data } = await ringbufferApi.queryV2(buildQueryV2())
+    const setIds = activeTopbarSetIds()
+    let data
+    if (setIds.length > 0) {
+      // Multi-filterset OR-union query (#431); each entry carries
+      // matched_set_ids so the table can colour-code rows by matched set.
+      const body = { set_ids: setIds }
+      const time = buildTimeFilter()
+      if (time) body.time = time
+      const resp = await ringbufferApi.queryMultiFiltersets(body)
+      data = resp.data
+    } else {
+      // Default path — no topbar sets active, keep the single-query flow.
+      const resp = await ringbufferApi.queryV2(buildQueryV2())
+      data = resp.data
+    }
     entries.value = data
     await nextTick()
     if (!paused.value && tableWrapRef.value) tableWrapRef.value.scrollTop = 0
