@@ -36,6 +36,7 @@ class HierarchyNodeRef(BaseModel):
     node_name: str
     tree_id: str
     tree_name: str
+    path: list[str] = []  # ancestor node names (root → leaf), excluding tree_name
 
 
 class DataPointOut(BaseModel):
