@@ -45,24 +45,19 @@
     <!-- Sticky filter topbar (#435) — drag/toggle/remove set chips, time-filter slot reserved for #432 wiring -->
     <div class="sticky top-0 z-20 -mx-5 px-5 py-2 bg-surface-900/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700/60">
       <TopbarFilterChips
+        ref="topbarChipsRef"
         data-testid="ringbuffer-topbar-chips"
         @edit-set="onEditSet"
         @new-set="onNewSet"
       />
     </div>
 
-    <!-- Soft-modal placeholder for filter editor (full UI lands in #436) -->
-    <Modal v-model="showEditorPlaceholder" :soft-backdrop="true" title="Filter-Editor (Stub)" max-width="lg">
-      <div class="flex flex-col gap-3 text-sm text-slate-600 dark:text-slate-300">
-        <p>
-          Editor öffnet sich für Set <code class="font-mono text-xs">{{ editorTargetId || '(neues Set)' }}</code>.
-        </p>
-        <p class="text-xs text-slate-500">
-          Implementierung folgt in <a href="https://github.com/abeggled/openbridgeserver/issues/436" class="text-blue-500 hover:underline">#436</a>.
-          Bis dahin bleibt die bestehende Filterset-Admin-Karte unterhalb sichtbar.
-        </p>
-      </div>
-    </Modal>
+    <!-- Soft-modal filter editor (#436) — replaces the stub from #435 -->
+    <FilterEditor
+      v-model="showFilterEditor"
+      :set-id="editorTargetId"
+      @saved="onFilterEditorSaved"
+    />
 
     <div class="card p-4 flex flex-col gap-3">
       <div class="flex flex-wrap gap-2 items-center">
@@ -416,6 +411,7 @@ import Spinner from '@/components/ui/Spinner.vue'
 import Modal from '@/components/ui/Modal.vue'
 import TopbarFilterChips from '@/views/ringbuffer/TopbarFilterChips.vue'
 import TopbarStats from '@/views/ringbuffer/TopbarStats.vue'
+import FilterEditor from '@/views/ringbuffer/FilterEditor.vue'
 
 const LIVE_BATCH_SIZE = 200
 const LIVE_FLUSH_INTERVAL_MS = 60
@@ -445,17 +441,25 @@ const loading = ref(false)
 const listError = ref('')
 const statsError = ref('')
 const showConfig = ref(false)
-const showEditorPlaceholder = ref(false)
+const showFilterEditor = ref(false)
 const editorTargetId = ref(null)
+const topbarChipsRef = ref(null)
 
 function onEditSet(id) {
   editorTargetId.value = id
-  showEditorPlaceholder.value = true
+  showFilterEditor.value = true
 }
 
 function onNewSet() {
   editorTargetId.value = null
-  showEditorPlaceholder.value = true
+  showFilterEditor.value = true
+}
+
+async function onFilterEditorSaved() {
+  // Re-fetch filtersets so the topbar chips reflect any changes (rename,
+  // color, topbar membership, etc.). Also refresh the local select-list.
+  await loadFiltersets()
+  topbarChipsRef.value?.reload?.()
 }
 const configSaving = ref(false)
 const configMsg = ref(null)
