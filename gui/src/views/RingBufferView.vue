@@ -8,7 +8,7 @@
           Speicherverhalten: file-only mit festen serverseitigen Limits.
         </p>
       </div>
-      <button @click="showConfig = true" class="btn-secondary btn-sm" data-testid="btn-open-monitor-config">⚙ Konfigurieren</button>
+      <button @click="openConfigModal" class="btn-secondary btn-sm" data-testid="btn-open-monitor-config">⚙ Konfigurieren</button>
       <button @click="applyFilters" class="btn-secondary btn-sm" data-testid="btn-refresh-ringbuffer">↻ Aktualisieren</button>
       <button
         v-if="!paused"
@@ -106,8 +106,6 @@
       </div>
     </div>
 
-    <div v-if="statsError" class="text-sm text-red-500">{{ statsError }}</div>
-
     <Modal v-model="showConfig" title="Monitor konfigurieren" max-width="md">
       <form @submit.prevent="saveConfig" class="flex flex-col gap-4">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -182,15 +180,15 @@
           <h4 class="text-sm font-semibold">Ringbuffer Statistik</h4>
           <div class="text-xs text-slate-500 flex items-center justify-between">
             <span>Einträge</span>
-            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-total">{{ stats?.total ?? '-' }}</span>
+            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-total">{{ configStats?.total ?? '-' }}</span>
           </div>
           <div class="text-xs text-slate-500 flex items-center justify-between">
             <span>Belegter Speicherplatz</span>
-            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-file-size">{{ formatBytes(stats?.file_size_bytes ?? 0) }}</span>
+            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-file-size">{{ formatBytes(configStats?.file_size_bytes ?? 0) }}</span>
           </div>
           <div class="text-xs text-slate-500 flex items-center justify-between">
             <span>Effektive Retention</span>
-            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-retention">{{ formatRetention(stats?.max_age ?? null) }}</span>
+            <span class="font-medium text-slate-700 dark:text-slate-200" data-testid="rb-config-stats-retention">{{ formatRetention(configStats?.max_age ?? null) }}</span>
           </div>
         </div>
 
@@ -254,10 +252,9 @@ function rowMatchTitle(matchedIds) {
 }
 
 const entries = ref([])
-const stats = ref(null)
+const configStats = ref(null)
 const loading = ref(false)
 const listError = ref('')
-const statsError = ref('')
 const showConfig = ref(false)
 const showFilterEditor = ref(false)
 const editorTargetId = ref(null)
@@ -548,11 +545,10 @@ async function applyFilters() {
 onMounted(async () => {
   // Load filtersets first so the topbar-colour cache is populated before
   // load() decides between queryV2 and queryMultiFiltersets (#437).
+  // /stats is no longer fetched eagerly — TopbarStats owns its own fetch
+  // and the config modal pulls fresh stats on demand via openConfigModal().
   await loadFiltersets()
-  await Promise.all([load(), loadStats()])
-  if (stats.value) {
-    hydrateConfigFormFromStats(stats.value)
-  }
+  await load()
   unregisterRb = wsStore.onRingbufferEntry(onLiveEntry)
 })
 
@@ -600,15 +596,23 @@ async function load() {
   }
 }
 
-async function loadStats() {
-  statsError.value = ''
+async function loadStatsForConfig() {
+  // On-demand /stats fetch invoked by openConfigModal — the config form
+  // needs current limits/retention plus the "Belegter Speicherplatz" /
+  // "Effektive Retention" read-outs in the modal.
   try {
     const { data } = await ringbufferApi.stats()
-    stats.value = data
+    configStats.value = data
     hydrateConfigFormFromStats(data)
-  } catch (error) {
-    statsError.value = extractErrorMessage(error, 'Statistiken konnten nicht geladen werden')
+  } catch {
+    // Silent on failure; the modal still renders with the configForm
+    // defaults and the user can save without read-back values.
   }
+}
+
+async function openConfigModal() {
+  showConfig.value = true
+  await loadStatsForConfig()
 }
 
 async function saveConfig() {
@@ -617,7 +621,7 @@ async function saveConfig() {
   try {
     const payload = buildConfigPayload()
     const { data } = await ringbufferApi.config(payload)
-    stats.value = data
+    configStats.value = data
     hydrateConfigFormFromStats(data)
     configMsg.value = { ok: true, text: 'Monitor-Konfiguration gespeichert' }
   } catch (error) {
