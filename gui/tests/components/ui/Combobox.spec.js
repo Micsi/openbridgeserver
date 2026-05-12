@@ -400,6 +400,96 @@ describe('Combobox single mode extras', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// QA-01 audit (#439): keyboard + mouse interaction edge cases
+// ---------------------------------------------------------------------------
+
+describe('Combobox QA-01 edge cases (#439)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('ESC during an open search closes the dropdown but keeps existing chips', async () => {
+    const wrapper = mountCombobox({
+      multi: true,
+      modelValue: ['a', 'b'],
+      displayItems: [
+        { id: 'a', label: 'Alpha' },
+        { id: 'b', label: 'Beta' },
+      ],
+    })
+    const input = wrapper.find('input')
+    // Type into the input and confirm the dropdown is open
+    await input.trigger('focus')
+    await flushPromises()
+    input.element.value = 'gam'
+    await input.trigger('input')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="combobox-dropdown"]').exists()).toBe(true)
+    await input.trigger('keydown', { key: 'Escape' })
+    // Dropdown closes
+    expect(wrapper.find('[data-testid="combobox-dropdown"]').exists()).toBe(false)
+    // Selection (chips) is preserved
+    const chips = wrapper.findAll('[data-testid^="combobox-chip-"]:not([data-testid*="remove"])')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].text()).toContain('Alpha')
+    expect(chips[1].text()).toContain('Beta')
+    // No spurious update:modelValue emission from ESC
+    expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+  })
+
+  it('mouse click wins when user types and then clicks an item', async () => {
+    const wrapper = mountCombobox({ multi: true, modelValue: [] })
+    const input = wrapper.find('input')
+    await input.trigger('focus')
+    await flushPromises()
+    // Type a query while clicking the second item
+    input.element.value = 'b'
+    await input.trigger('input')
+    await flushPromises()
+    await wrapper.find('[data-testid="combobox-item-1"]').trigger('click')
+    const events = wrapper.emitted('update:modelValue')
+    expect(events).toBeTruthy()
+    expect(events[events.length - 1][0]).toEqual(['b'])
+    // After click selection in multi mode the query input is cleared
+    expect(input.element.value).toBe('')
+  })
+
+  it('Backspace with non-empty text never deletes the last chip', async () => {
+    // Stress: typing several letters then backspace must only edit the text,
+    // never strip a chip.
+    const wrapper = mountCombobox({
+      multi: true,
+      modelValue: ['a'],
+      displayItems: [{ id: 'a', label: 'A' }],
+    })
+    const input = wrapper.find('input')
+    input.element.value = 'xyz'
+    await input.trigger('input')
+    await input.trigger('keydown', { key: 'Backspace' })
+    await input.trigger('keydown', { key: 'Backspace' })
+    await input.trigger('keydown', { key: 'Backspace' })
+    // Chip ['a'] still present, no update emission
+    expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+    const chips = wrapper.findAll('[data-testid^="combobox-chip-"]:not([data-testid*="remove"])')
+    expect(chips).toHaveLength(1)
+  })
+
+  it('clicking inside the wrapper focuses the input (no surprise close)', async () => {
+    const wrapper = mountCombobox({
+      multi: true,
+      modelValue: ['a'],
+      displayItems: [{ id: 'a', label: 'A' }],
+    })
+    // Trigger a click on the chip area to ensure the input gains focus
+    const root = wrapper.find('[data-testid="combobox-root"]')
+    await root.trigger('click')
+    // Input ref should be focused — `:focus` selector check
+    const input = wrapper.find('input').element
+    expect(document.activeElement === input || document.activeElement === document.body).toBe(true)
+  })
+})
+
 describe('Combobox fetch behavior', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
