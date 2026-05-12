@@ -218,6 +218,10 @@ export const ringbufferApi = {
   patchFiltersetTopbar: (id, body)  => api.patch(`/ringbuffer/filtersets/${id}/topbar`, body),
   patchFiltersetOrder: (items)      => api.patch('/ringbuffer/filtersets/order', { items }),
   queryMultiFiltersets: (body)      => api.post('/ringbuffer/filtersets/query', body),
+  // #427 — multi-set CSV/TSV export + persisted format defaults
+  exportMultiCsv: (body)            => api.post('/ringbuffer/filtersets/export/csv', body, { responseType: 'blob' }),
+  getExportSettings: ()             => api.get('/ringbuffer/export/settings'),
+  putExportSettings: (body)         => api.put('/ringbuffer/export/settings', body),
 }
 
 // ── Config Import/Export ──────────────────────────────────────────────────

@@ -10,7 +10,6 @@ shim that emits :class:`DeprecationWarning` (removed in #438).
 from __future__ import annotations
 
 import uuid
-import warnings
 
 import pytest
 
@@ -497,76 +496,6 @@ async def test_single_set_query_returns_matching_entries(client, auth_headers):
         rows = resp.json()
         assert rows
         assert all(row["datapoint_id"] == dp["id"] for row in rows)
-    finally:
-        await _delete_filterset(client, auth_headers, created["id"])
-
-
-# ---------------------------------------------------------------------------
-# Backwards-compat shim — accepts legacy groups[]/query payloads
-# ---------------------------------------------------------------------------
-
-
-async def test_legacy_groups_payload_flattened_with_deprecation_warning(client, auth_headers):
-    dp = await _create_dp(client, auth_headers, f"RB431 legacy {uuid.uuid4()}", tags=["rb431-legacy"])
-    await _write_value(client, auth_headers, dp["id"], 1.0)
-
-    legacy_payload = {
-        "name": f"RB431 legacy {uuid.uuid4()}",
-        "description": "legacy groups shape",
-        "dsl_version": 2,
-        "is_active": True,
-        "query": {
-            "filters": {"adapters": {"any_of": ["api"]}},
-            "sort": {"field": "id", "order": "desc"},
-            "pagination": {"limit": 100, "offset": 0},
-        },
-        "groups": [
-            {
-                "name": "G",
-                "is_active": True,
-                "group_order": 0,
-                "rules": [
-                    {
-                        "name": "R",
-                        "is_active": True,
-                        "rule_order": 0,
-                        "query": {
-                            "filters": {
-                                "datapoints": {"ids": [dp["id"]]},
-                                "metadata": {"tags_any_of": ["rb431-legacy"]},
-                            },
-                            "sort": {"field": "id", "order": "desc"},
-                            "pagination": {"limit": 100, "offset": 0},
-                        },
-                    }
-                ],
-            }
-        ],
-    }
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        resp = await client.post(
-            "/api/v1/ringbuffer/filtersets",
-            json=legacy_payload,
-            headers=auth_headers,
-        )
-    assert resp.status_code == 201, resp.text
-    created = resp.json()
-    try:
-        # Legacy groups[] flattened to a single FilterCriteria.
-        assert "groups" not in created
-        assert created["filter"]["datapoints"] == [dp["id"]]
-        assert created["filter"]["tags"] == ["rb431-legacy"]
-        # DeprecationWarning was emitted in-process.
-        assert any(issubclass(item.category, DeprecationWarning) for item in caught), [str(c.message) for c in caught]
-
-        # The flattened set is still queryable via the single-set endpoint.
-        query_resp = await client.post(
-            f"/api/v1/ringbuffer/filtersets/{created['id']}/query",
-            headers=auth_headers,
-        )
-        assert query_resp.status_code == 200, query_resp.text
-        assert query_resp.json()  # at least one matching entry
     finally:
         await _delete_filterset(client, auth_headers, created["id"])
 

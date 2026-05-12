@@ -48,6 +48,8 @@ coverage.xml
 # Node
 node_modules/
 gui/coverage/
+gui_dist/
+frontend_dist/
 
 # Docs build output
 docs/_build/

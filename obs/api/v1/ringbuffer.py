@@ -323,6 +323,35 @@ class RingBufferFiltersetOrderPatch(BaseModel):
     items: list[RingBufferFiltersetOrderItem] = Field(default_factory=list)
 
 
+class RingBufferMultiExportRequest(BaseModel):
+    """Request body for ``POST /filtersets/export/csv`` (multi-set CSV/TSV export).
+
+    Streams the full OR-union of entries matching any of the active filtersets,
+    plus an optional time filter, in CSV or TSV format. The export is
+    independent of UI pagination.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    set_ids: list[str] = Field(default_factory=list)
+    time: RingBufferTimeFilterV2 | None = None
+    format: Literal["csv", "tsv"] = "csv"
+    encoding: Literal["utf8", "utf8-bom"] = "utf8"
+    include_unit: bool = True
+    include_matched_set_ids: bool = False
+
+
+class RingBufferExportSettings(BaseModel):
+    """Persisted user defaults for the CSV/TSV export dialog (#427)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["csv", "tsv"] = "csv"
+    encoding: Literal["utf8", "utf8-bom"] = "utf8"
+    include_unit: bool = True
+    include_matched_set_ids: bool = False
+
+
 class RingBufferMultiQueryRequest(BaseModel):
     """Request body for ``POST /filtersets/query`` (multi-set OR-union).
 
@@ -1139,6 +1168,165 @@ async def query_ringbuffer_filterset(
 
     query = _filter_to_query_v2(current.filter, None)
     return await _query_v2_entries(query)
+
+
+# ---------------------------------------------------------------------------
+# Multi-set CSV/TSV export (#427)
+# ---------------------------------------------------------------------------
+
+
+_EXPORT_SETTINGS_KEY = "ringbuffer.export_settings"
+
+
+async def _collect_multi_entries(
+    body: RingBufferMultiExportRequest,
+    db: Database,
+) -> tuple[list[RingBufferEntryOut], dict[int, list[str]]]:
+    """Collect the OR-union of entries across the requested filtersets.
+
+    Mirrors the logic of ``POST /filtersets/query`` but with the export-specific
+    row cap and pagination semantics: we want **all** rows in the union, capped
+    only by the global ``_CSV_EXPORT_MAX_ROWS`` guard the streaming writer
+    enforces.
+    """
+    if len(body.set_ids) > _FILTERSET_MULTI_QUERY_SET_CAP:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"too many filtersets requested (max {_FILTERSET_MULTI_QUERY_SET_CAP})",
+        )
+
+    if not body.set_ids:
+        empty_filter = FilterCriteria()
+        query = _filter_to_query_v2(empty_filter, body.time)
+        query = query.model_copy(
+            update={
+                "pagination": query.pagination.model_copy(
+                    update={"limit": _CSV_EXPORT_MAX_ROWS, "offset": 0},
+                ),
+            }
+        )
+        entries = await _query_v2_entries(query)
+        return entries, {e.id: [] for e in entries}
+
+    resolved: list[RingBufferFiltersetOut] = []
+    for set_id in body.set_ids:
+        current = await _fetch_filterset(db, set_id)
+        if current is None or not current.is_active:
+            continue
+        resolved.append(current)
+
+    matched: dict[int, list[str]] = {}
+    entries_by_id: dict[int, RingBufferEntryOut] = {}
+    for fs in resolved:
+        query = _filter_to_query_v2(fs.filter, body.time)
+        query = query.model_copy(
+            update={
+                "pagination": query.pagination.model_copy(
+                    update={"limit": _CSV_EXPORT_MAX_ROWS, "offset": 0},
+                ),
+            }
+        )
+        try:
+            rows = await _query_v2_entries(query)
+        except HTTPException:
+            continue
+        for entry in rows:
+            matched.setdefault(entry.id, []).append(fs.id)
+            entries_by_id.setdefault(entry.id, entry)
+
+    ordered_ids = sorted(matched.keys(), key=lambda eid: entries_by_id[eid].ts, reverse=True)
+    ordered_entries = [entries_by_id[eid] for eid in ordered_ids]
+    return ordered_entries, matched
+
+
+@router.post("/filtersets/export/csv")
+async def export_ringbuffer_filtersets_csv(
+    body: RingBufferMultiExportRequest,
+    background_tasks: BackgroundTasks,
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> StreamingResponse:
+    """Multi-set CSV/TSV export — OR-union of all requested active sets.
+
+    Optional columns (``unit`` from #434, ``matched_set_ids`` from #431) and
+    encoding (UTF-8 with optional BOM) are toggleable via the request body. The
+    persisted user defaults live behind ``GET/PUT /ringbuffer/export/settings``.
+    """
+    entries, matched = await _collect_multi_entries(body, db)
+    if len(entries) > _CSV_EXPORT_MAX_ROWS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"export row limit exceeded (max {_CSV_EXPORT_MAX_ROWS})",
+        )
+
+    delimiter = "\t" if body.format == "tsv" else ","
+    extension = "tsv" if body.format == "tsv" else "csv"
+    fieldnames = list(_CSV_EXPORT_HEADERS)
+    if body.include_unit:
+        fieldnames.append("unit")
+    if body.include_matched_set_ids:
+        fieldnames.append("matched_set_ids")
+
+    spool = tempfile.SpooledTemporaryFile(
+        mode="w+",
+        encoding="utf-8",
+        newline="",
+        max_size=_CSV_EXPORT_SPOOL_MAX_BYTES,
+    )
+    if body.encoding == "utf8-bom":
+        spool.write("﻿")
+    writer = csv.DictWriter(spool, fieldnames=fieldnames, delimiter=delimiter)
+    writer.writeheader()
+    for entry in entries:
+        row = _entry_to_csv_row(entry)
+        if body.include_unit:
+            row["unit"] = entry.unit or ""
+        if body.include_matched_set_ids:
+            row["matched_set_ids"] = ",".join(matched.get(entry.id, []))
+        writer.writerow(row)
+
+    spool.seek(0)
+    filename = f"ringbuffer_export_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.{extension}"
+    media_type = "text/tab-separated-values" if body.format == "tsv" else "text/csv"
+    background_tasks.add_task(spool.close)
+    return StreamingResponse(
+        spool,
+        media_type=f"{media_type}; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-RingBuffer-Export-Rows": str(len(entries)),
+        },
+        background=background_tasks,
+    )
+
+
+@router.get("/export/settings", response_model=RingBufferExportSettings)
+async def get_ringbuffer_export_settings(
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> RingBufferExportSettings:
+    row = await db.fetchone("SELECT value FROM app_settings WHERE key=?", (_EXPORT_SETTINGS_KEY,))
+    if not row or not row["value"]:
+        return RingBufferExportSettings()
+    try:
+        return RingBufferExportSettings(**json.loads(row["value"]))
+    except (json.JSONDecodeError, ValidationError):
+        return RingBufferExportSettings()
+
+
+@router.put("/export/settings", response_model=RingBufferExportSettings)
+async def put_ringbuffer_export_settings(
+    body: RingBufferExportSettings,
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> RingBufferExportSettings:
+    payload = json.dumps(body.model_dump())
+    await db.execute(
+        "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (_EXPORT_SETTINGS_KEY, payload),
+    )
+    await db.commit()
+    return body
 
 
 # ---------------------------------------------------------------------------

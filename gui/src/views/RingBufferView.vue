@@ -50,6 +50,7 @@
         @edit-set="onEditSet"
         @new-set="onNewSet"
         @changed="onTopbarChanged"
+        @export="showExportDialog = true"
       >
         <template #time-filter-slot>
           <TimeFilterPopover v-model="timeFilter" @update:modelValue="onTimeFilterChanged" />
@@ -62,6 +63,13 @@
       v-model="showFilterEditor"
       :set-id="editorTargetId"
       @saved="onFilterEditorSaved"
+    />
+
+    <!-- Soft-modal CSV/TSV export dialog (#427) -->
+    <ExportDialog
+      v-model="showExportDialog"
+      :set-ids="activeTopbarSetIds()"
+      :time="timeFilterToPayload(timeFilter)"
     />
 
     <div class="card overflow-hidden">
@@ -124,6 +132,7 @@ import TimeFilterPopover from '@/components/ui/TimeFilterPopover.vue'
 import TopbarFilterChips from '@/views/ringbuffer/TopbarFilterChips.vue'
 import TopbarStats from '@/views/ringbuffer/TopbarStats.vue'
 import FilterEditor from '@/views/ringbuffer/FilterEditor.vue'
+import ExportDialog from '@/views/ringbuffer/ExportDialog.vue'
 import MonitorConfigModal from '@/views/ringbuffer/MonitorConfigModal.vue'
 
 const DEFAULT_QUERY_LIMIT = 500
@@ -147,6 +156,7 @@ const loading = ref(false)
 const listError = ref('')
 const showConfig = ref(false)
 const showFilterEditor = ref(false)
+const showExportDialog = ref(false)
 const editorTargetId = ref(null)
 const topbarChipsRef = ref(null)
 

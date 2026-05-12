@@ -57,6 +57,16 @@
       </div>
     </VueDraggable>
 
+    <!-- Export trigger -->
+    <button
+      type="button"
+      data-testid="topbar-export-btn"
+      class="btn-secondary btn-sm"
+      @click="$emit('export')"
+    >
+      ↓ Export
+    </button>
+
     <!-- + Filter dropdown -->
     <div class="relative">
       <button
@@ -108,7 +118,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import { ringbufferApi } from '@/api/client'
 
-const emit = defineEmits(['edit-set', 'new-set', 'changed'])
+const emit = defineEmits(['edit-set', 'new-set', 'changed', 'export'])
 
 const filtersets = ref([])
 const addMenuOpen = ref(false)
