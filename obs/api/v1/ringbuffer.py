@@ -250,7 +250,6 @@ class RingBufferFiltersetIn(BaseModel):
     description: str = ""
     dsl_version: int = Field(default=2, ge=1)
     is_active: bool = True
-    is_default: bool = False
     color: str = _DEFAULT_COLOR
     topbar_active: bool = False
     topbar_order: int = 0
@@ -269,7 +268,6 @@ class RingBufferFiltersetUpdate(BaseModel):
     description: str | None = None
     dsl_version: int | None = Field(default=None, ge=1)
     is_active: bool | None = None
-    is_default: bool | None = None
     color: str | None = None
     topbar_active: bool | None = None
     topbar_order: int | None = None
@@ -295,7 +293,6 @@ class RingBufferFiltersetOut(BaseModel):
     description: str
     dsl_version: int
     is_active: bool
-    is_default: bool
     color: str
     topbar_active: bool
     topbar_order: int
@@ -305,10 +302,18 @@ class RingBufferFiltersetOut(BaseModel):
 
 
 class RingBufferFiltersetTopbarPatch(BaseModel):
+    """Lightweight per-set toggles for the topbar.
+
+    Carries the optional ``is_active`` flag (filter on/off, the dot-button in
+    each chip) alongside the topbar-membership and topbar-order. Any of the
+    three may be ``None`` to leave the current value untouched.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     topbar_active: bool | None = None
     topbar_order: int | None = None
+    is_active: bool | None = None
 
 
 class RingBufferFiltersetOrderItem(BaseModel):
@@ -595,7 +600,6 @@ def _row_to_filterset(row: Any) -> RingBufferFiltersetOut:
         description=row["description"],
         dsl_version=int(row["dsl_version"]),
         is_active=bool(row["is_active"]),
-        is_default=bool(row["is_default"]),
         color=_normalize_color(row["color"] if "color" in row.keys() else None),
         topbar_active=bool(row["topbar_active"]) if "topbar_active" in row.keys() else False,
         topbar_order=int(row["topbar_order"]) if "topbar_order" in row.keys() else 0,
@@ -619,21 +623,18 @@ async def _insert_filterset(
 ) -> RingBufferFiltersetOut:
     now = _now_iso()
     filterset_id = _new_id()
-    if payload.is_default:
-        await db.execute("UPDATE ringbuffer_filtersets SET is_default=0")
 
     await db.execute(
         """INSERT INTO ringbuffer_filtersets
-           (id, name, description, dsl_version, is_active, is_default,
+           (id, name, description, dsl_version, is_active,
             color, topbar_active, topbar_order, filter_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             filterset_id,
             payload.name,
             payload.description,
             payload.dsl_version,
             int(payload.is_active),
-            int(payload.is_default),
             payload.color,
             int(payload.topbar_active),
             int(payload.topbar_order),
@@ -835,7 +836,7 @@ async def list_ringbuffer_filtersets(
     db: Database = Depends(get_db),
 ) -> list[RingBufferFiltersetOut]:
     rows = await db.fetchall(
-        "SELECT * FROM ringbuffer_filtersets ORDER BY topbar_order, is_default DESC, created_at, id",
+        "SELECT * FROM ringbuffer_filtersets ORDER BY topbar_order, created_at, id",
     )
     return [_row_to_filterset(row) for row in rows]
 
@@ -849,22 +850,6 @@ async def create_ringbuffer_filterset(
     raw = await _read_json_body(request)
     payload = _parse_filterset_in(raw)
     return await _insert_filterset(db, payload=payload)
-
-
-@router.get("/filtersets/default", response_model=RingBufferFiltersetOut)
-async def get_default_ringbuffer_filterset(
-    _user: str = Depends(get_current_user),
-    db: Database = Depends(get_db),
-) -> RingBufferFiltersetOut:
-    row = await db.fetchone(
-        "SELECT id FROM ringbuffer_filtersets WHERE is_default=1 ORDER BY updated_at DESC, id LIMIT 1",
-    )
-    if not row:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "default ringbuffer filterset not found")
-    result = await _fetch_filterset(db, row["id"])
-    if not result:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "default ringbuffer filterset not found")
-    return result
 
 
 @router.get("/filtersets/{filterset_id}", response_model=RingBufferFiltersetOut)
@@ -904,18 +889,14 @@ async def update_ringbuffer_filterset(
     description = body.description if body.description is not None else current.description
     dsl_version = body.dsl_version if body.dsl_version is not None else current.dsl_version
     is_active = body.is_active if body.is_active is not None else current.is_active
-    is_default = body.is_default if body.is_default is not None else current.is_default
     color = body.color if body.color is not None else current.color
     topbar_active = body.topbar_active if body.topbar_active is not None else current.topbar_active
     topbar_order = body.topbar_order if body.topbar_order is not None else current.topbar_order
     new_filter = body.filter if body.filter is not None else current.filter
 
-    if is_default:
-        await db.execute("UPDATE ringbuffer_filtersets SET is_default=0")
-
     await db.execute(
         """UPDATE ringbuffer_filtersets
-           SET name=?, description=?, dsl_version=?, is_active=?, is_default=?,
+           SET name=?, description=?, dsl_version=?, is_active=?,
                color=?, topbar_active=?, topbar_order=?, filter_json=?, updated_at=?
            WHERE id=?""",
         (
@@ -923,7 +904,6 @@ async def update_ringbuffer_filterset(
             description,
             dsl_version,
             int(is_active),
-            int(is_default),
             color,
             int(topbar_active),
             int(topbar_order),
@@ -968,7 +948,6 @@ async def clone_ringbuffer_filterset(
         description=source.description,
         dsl_version=source.dsl_version,
         is_active=source.is_active,
-        is_default=False,
         color=source.color,
         # Clones do not inherit topbar activation — the user explicitly opts in
         # via the PATCH /topbar endpoint after deciding the clone is ready.
@@ -977,27 +956,6 @@ async def clone_ringbuffer_filterset(
         filter=source.filter,
     )
     return await _insert_filterset(db, payload=clone_payload)
-
-
-@router.post("/filtersets/{filterset_id}/default", response_model=RingBufferFiltersetOut)
-async def set_default_ringbuffer_filterset(
-    filterset_id: str,
-    _admin: str = Depends(get_admin_user),
-    db: Database = Depends(get_db),
-) -> RingBufferFiltersetOut:
-    row = await db.fetchone("SELECT id FROM ringbuffer_filtersets WHERE id=?", (filterset_id,))
-    if not row:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "ringbuffer filterset not found")
-    now = _now_iso()
-    await db.execute("UPDATE ringbuffer_filtersets SET is_default=0")
-    await db.execute_and_commit(
-        "UPDATE ringbuffer_filtersets SET is_default=1, updated_at=? WHERE id=?",
-        (now, filterset_id),
-    )
-    result = await _fetch_filterset(db, filterset_id)
-    if not result:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "ringbuffer filterset not found")
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1029,7 +987,7 @@ async def patch_ringbuffer_filtersets_order(
     await db.commit()
 
     rows = await db.fetchall(
-        "SELECT * FROM ringbuffer_filtersets ORDER BY topbar_order, is_default DESC, created_at, id",
+        "SELECT * FROM ringbuffer_filtersets ORDER BY topbar_order, created_at, id",
     )
     return [_row_to_filterset(row) for row in rows]
 
@@ -1052,10 +1010,11 @@ async def patch_ringbuffer_filterset_topbar(
 
     topbar_active = body.topbar_active if body.topbar_active is not None else current.topbar_active
     topbar_order = body.topbar_order if body.topbar_order is not None else current.topbar_order
+    is_active = body.is_active if body.is_active is not None else current.is_active
     now = _now_iso()
     await db.execute_and_commit(
-        "UPDATE ringbuffer_filtersets SET topbar_active=?, topbar_order=?, updated_at=? WHERE id=?",
-        (int(topbar_active), int(topbar_order), now, filterset_id),
+        "UPDATE ringbuffer_filtersets SET topbar_active=?, topbar_order=?, is_active=?, updated_at=? WHERE id=?",
+        (int(topbar_active), int(topbar_order), int(is_active), now, filterset_id),
     )
 
     updated = await _fetch_filterset(db, filterset_id)

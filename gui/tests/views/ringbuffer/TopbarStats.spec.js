@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 function makeApi(stats = {}) {
   return {
@@ -28,6 +29,12 @@ function makeApi(stats = {}) {
 
 async function mountStats(api = makeApi()) {
   vi.doMock('@/api/client', () => ({ ringbufferApi: api }))
+  vi.doMock('@/stores/websocket', () => ({
+    useWebSocketStore: () => ({
+      connected: false,
+      onRingbufferEntry: () => () => {},
+    }),
+  }))
   const mod = await import('@/views/ringbuffer/TopbarStats.vue')
   const wrapper = mount(mod.default, { attachTo: document.body })
   await flushPromises()
@@ -39,6 +46,7 @@ async function mountStats(api = makeApi()) {
 describe('TopbarStats', () => {
   beforeEach(() => {
     vi.resetModules()
+    setActivePinia(createPinia())
     document.body.innerHTML = ''
   })
 

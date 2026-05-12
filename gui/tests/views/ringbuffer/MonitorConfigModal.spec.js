@@ -29,6 +29,7 @@ function makeApi(overrides = {}) {
         max_entries: 50000,
         max_file_size_bytes: 2 * 1024 * 1024 * 1024, // 2 GB
         max_age: 30 * 24 * 60 * 60, // 30 days
+        effective_retention_seconds: 30 * 24 * 60 * 60,
         file_size_bytes: 1024 * 1024 * 500, // 500 MB
       },
     }),
@@ -38,6 +39,7 @@ function makeApi(overrides = {}) {
         max_entries: 50000,
         max_file_size_bytes: 2 * 1024 * 1024 * 1024,
         max_age: 30 * 24 * 60 * 60,
+        effective_retention_seconds: 30 * 24 * 60 * 60,
         file_size_bytes: 1024 * 1024 * 500,
       },
     }),
@@ -102,7 +104,7 @@ describe('MonitorConfigModal QA-01 coverage (#439)', () => {
     expect(wrapper.find('[data-testid="rb-config-stats-total"]').text()).toContain('1234')
     expect(wrapper.find('[data-testid="rb-config-stats-file-size"]').text()).toContain('500')
     // 30 days is exactly 1 month per the modal's formatRetention helper.
-    expect(wrapper.find('[data-testid="rb-config-stats-retention"]').text()).toMatch(/(30 Tage|1 Monate)/)
+    expect(wrapper.find('[data-testid="rb-config-stats-retention"]').text()).toMatch(/30d/)
 
     // Form hydration: 2 GB → unit=gb, value=2; 30 days → unit=days, value=30.
     expect(wrapper.find('[data-testid="rb-config-max-entries"]').element.value).toBe('50000')

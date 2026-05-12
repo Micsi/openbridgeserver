@@ -435,7 +435,6 @@ CREATE TABLE IF NOT EXISTS ringbuffer_filtersets (
     description   TEXT NOT NULL DEFAULT '',
     dsl_version   INTEGER NOT NULL DEFAULT 2,
     is_active     INTEGER NOT NULL DEFAULT 1,
-    is_default    INTEGER NOT NULL DEFAULT 0,
     color         TEXT NOT NULL DEFAULT '#3b82f6',
     topbar_active INTEGER NOT NULL DEFAULT 0,
     topbar_order  INTEGER NOT NULL DEFAULT 0,
@@ -443,7 +442,6 @@ CREATE TABLE IF NOT EXISTS ringbuffer_filtersets (
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_rb_fs_default       ON ringbuffer_filtersets(is_default);
 CREATE INDEX IF NOT EXISTS idx_rb_fs_active        ON ringbuffer_filtersets(is_active);
 CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_active ON ringbuffer_filtersets(topbar_active);
 CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_order  ON ringbuffer_filtersets(topbar_order);
@@ -485,6 +483,27 @@ async def _migration_v30(conn: aiosqlite.Connection) -> None:
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar ON ringbuffer_filtersets(topbar_active)")
 
 
+async def _migration_v31(conn: aiosqlite.Connection) -> None:
+    """Drop the obsolete is_default column on ringbuffer_filtersets.
+
+    The default-set concept was superseded by the topbar in Phase 2 (see Epic
+    #36). Fresh DBs already come without the column (V29 was edited in-place
+    in the same commit). For dev DBs that ran V29/V30 with the column present
+    we drop it (SQLite 3.35+ supports DROP COLUMN) and remove the index.
+    Wrapped in try/except so the migration is idempotent across both states.
+    """
+    try:
+        await conn.execute("DROP INDEX IF EXISTS idx_rb_fs_default")
+    except aiosqlite.OperationalError:
+        pass
+    try:
+        await conn.execute("ALTER TABLE ringbuffer_filtersets DROP COLUMN is_default")
+    except aiosqlite.OperationalError as exc:
+        # Column already gone (fresh DB, V29 created the table without it).
+        if "no such column" not in str(exc).lower():
+            raise
+
+
 # List of (version, sql_or_callable) tuples — append new migrations here
 MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
@@ -517,6 +536,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (28, _MIGRATION_V28),
     (29, _MIGRATION_V29),
     (30, _migration_v30),
+    (31, _migration_v31),
 ]
 
 

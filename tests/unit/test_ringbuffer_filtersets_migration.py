@@ -29,7 +29,10 @@ async def test_db_migration_creates_flat_ringbuffer_filterset_table():
         # New columns introduced by #431.
         assert {"color", "topbar_active", "topbar_order", "filter_json"} <= column_names
         # Existing columns preserved.
-        assert {"id", "name", "description", "dsl_version", "is_active", "is_default"} <= column_names
+        assert {"id", "name", "description", "dsl_version", "is_active"} <= column_names
+        # The legacy is_default column was dropped by V31 (Epic #36 — default
+        # sets were superseded by the topbar).
+        assert "is_default" not in column_names
     finally:
         await db.disconnect()
 

@@ -48,7 +48,6 @@ class _FetchDbStub:
                 "description": "desc",
                 "dsl_version": 2,
                 "is_active": 1,
-                "is_default": 0,
                 "color": "#3b82f6",
                 "topbar_active": 0,
                 "topbar_order": 0,
@@ -232,19 +231,6 @@ async def test_fetch_filterset_returns_none_or_flat_structure():
 
 
 @pytest.mark.asyncio
-async def test_filterset_default_endpoint_returns_404_when_missing(monkeypatch):
-    class _DbDefaultMissing:
-        async def fetchone(self, _query, _params=()):
-            return None
-
-    db = _DbDefaultMissing()
-
-    with pytest.raises(HTTPException) as exc:
-        await rb_api.get_default_ringbuffer_filterset(db=db)
-    assert exc.value.status_code == 404
-
-
-@pytest.mark.asyncio
 async def test_get_filterset_returns_404_when_missing(monkeypatch):
     async def _fetch_none(_db, _id):
         return None
@@ -276,7 +262,6 @@ async def test_single_set_query_returns_empty_when_inactive(monkeypatch):
         description="",
         dsl_version=2,
         is_active=False,
-        is_default=False,
         color="#3b82f6",
         topbar_active=False,
         topbar_order=0,
