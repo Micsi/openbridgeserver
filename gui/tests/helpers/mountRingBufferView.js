@@ -138,6 +138,10 @@ export async function mountRingBufferView({
             return () => h('a', {}, slots.default ? slots.default() : [])
           },
         }),
+        // Stub the topbar components so RingBufferView characterization tests
+        // don't see their independent API calls (stats, listFiltersets).
+        TopbarStats: { template: '<span data-testid="stub-topbar-stats" />' },
+        TopbarFilterChips: { template: '<div data-testid="stub-topbar-chips" />' },
       },
     },
   })
