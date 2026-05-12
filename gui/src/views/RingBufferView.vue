@@ -60,147 +60,6 @@
       @saved="onFilterEditorSaved"
     />
 
-    <div class="card p-4 flex flex-col gap-3">
-      <div class="flex flex-wrap gap-2 items-center">
-        <select v-model="selectedFiltersetId" class="input min-w-56" @change="onFiltersetSelect" data-testid="select-filterset">
-          <option value="">Ad-hoc / kein gespeichertes Set</option>
-          <option v-for="fs in filtersets" :key="fs.id" :value="fs.id">
-            {{ fs.is_default ? '★ ' : '' }}{{ fs.name }}
-          </option>
-        </select>
-        <button class="btn-secondary btn-sm" data-testid="btn-filterset-new" @click="startNewFilterset">Neu</button>
-        <button class="btn-secondary btn-sm" @click="loadDefaultFilterset">Default laden</button>
-        <button class="btn-secondary btn-sm" data-testid="btn-filterset-save" @click="saveFilterset">Speichern</button>
-        <button class="btn-secondary btn-sm" data-testid="btn-filterset-apply" @click="applySelectedFilterset" :disabled="!filtersetDraft.id">Set anwenden</button>
-        <button class="btn-secondary btn-sm" @click="cloneFilterset" :disabled="!filtersetDraft.id">Duplizieren</button>
-        <button class="btn-secondary btn-sm" @click="setDefaultFilterset" :disabled="!filtersetDraft.id">Als Default</button>
-        <button class="btn-secondary btn-sm" @click="deleteFilterset" :disabled="!filtersetDraft.id">Löschen</button>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Set-Name</label>
-          <input v-model="filtersetDraft.name" class="input" data-testid="input-filterset-name" placeholder="Mein Debug-Set" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Beschreibung</label>
-          <input v-model="filtersetDraft.description" class="input" placeholder="Optionale Beschreibung" />
-        </div>
-      </div>
-
-      <div class="flex items-center gap-4 text-sm">
-        <label class="inline-flex items-center gap-2">
-          <input type="checkbox" v-model="filtersetDraft.is_active" data-testid="filterset-active-checkbox" />
-          Set aktiv
-        </label>
-        <label class="inline-flex items-center gap-2">
-          <input type="checkbox" v-model="filtersetDraft.is_default" />
-          Als Default markieren
-        </label>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Basis-Query: Suche</label>
-          <input v-model="filtersetDraft.baseQ" class="input" placeholder="Name/ID/Adapter" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Basis-Query: DataPoint IDs (CSV)</label>
-          <input v-model="filtersetDraft.baseDatapointsText" class="input" data-testid="base-datapoints-input" placeholder="uuid1,uuid2" />
-        </div>
-      </div>
-
-      <div class="flex items-center justify-between">
-        <p class="text-xs text-slate-500">Gruppen werden per AND kombiniert; Listenfilter (z. B. Adapter) innerhalb einer Regel per OR.</p>
-        <button class="btn-secondary btn-sm" data-testid="btn-filterset-add-group" @click="addGroup">+ Gruppe</button>
-      </div>
-
-      <div v-for="(group, gi) in filtersetDraft.groups" :key="group.localId" class="rounded-lg border border-slate-200 dark:border-slate-700 p-3 flex flex-col gap-3" data-testid="filterset-group-card">
-        <div class="flex flex-wrap gap-2 items-center">
-          <input v-model="group.name" class="input flex-1 min-w-40" placeholder="Gruppenname" />
-          <label class="inline-flex items-center gap-1 text-sm">
-            <input type="checkbox" v-model="group.is_active" /> aktiv
-          </label>
-          <button class="btn-secondary btn-sm" @click="removeGroup(gi)" :disabled="filtersetDraft.groups.length <= 1">Entfernen</button>
-          <button class="btn-secondary btn-sm" @click="addRule(gi)">+ Regel</button>
-        </div>
-
-        <div v-for="(rule, ri) in group.rules" :key="rule.localId" class="rounded-lg border border-slate-100 dark:border-slate-800 p-3 flex flex-col gap-2">
-          <div class="flex flex-wrap gap-2 items-center">
-            <input v-model="rule.name" class="input flex-1 min-w-40" placeholder="Regelname" />
-            <label class="inline-flex items-center gap-1 text-sm">
-              <input type="checkbox" v-model="rule.is_active" :data-testid="`rule-active-checkbox-${gi}-${ri}`" /> aktiv
-            </label>
-            <button class="btn-secondary btn-sm" :data-testid="`btn-open-prefilter-assistant-${gi}-${ri}`" @click="openPrefilterAssistant(gi, ri)">Vorfilter…</button>
-            <button class="btn-secondary btn-sm" @click="removeRule(gi, ri)" :disabled="group.rules.length <= 1">Entfernen</button>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-            <div class="flex flex-col gap-1">
-              <label class="text-xs text-slate-500">Adapter (CSV, OR)</label>
-              <input v-model="rule.adaptersText" class="input" :data-testid="`rule-adapters-input-${gi}-${ri}`" placeholder="api,knx" />
-            </div>
-            <div class="flex flex-col gap-1">
-              <label class="text-xs text-slate-500">DataPoint IDs (CSV)</label>
-              <input v-model="rule.datapointsText" class="input" :data-testid="`rule-datapoints-input-${gi}-${ri}`" placeholder="uuid1,uuid2" />
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-            <div class="flex flex-col gap-1">
-              <label class="text-xs text-slate-500">Tags (CSV)</label>
-              <input v-model="rule.tagsText" class="input" :data-testid="`rule-tags-input-${gi}-${ri}`" placeholder="heizung,licht" />
-            </div>
-            <div class="flex flex-col gap-1">
-              <label class="text-xs text-slate-500">Regel-Suche (q)</label>
-              <input v-model="rule.q" class="input" placeholder="optionale Volltextsuche" />
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 md:grid-cols-5 gap-2">
-            <div class="flex flex-col gap-1 md:col-span-1">
-              <label class="text-xs text-slate-500">Datentyp</label>
-              <select v-model="rule.valueDataType" class="input">
-                <option value="number">Nummer</option>
-                <option value="string">String</option>
-                <option value="bool">Bool</option>
-              </select>
-            </div>
-            <div class="flex flex-col gap-1 md:col-span-1">
-              <label class="text-xs text-slate-500">Operator</label>
-              <select v-model="rule.valueOperator" class="input" :data-testid="`rule-operator-select-${gi}-${ri}`">
-                <option value="">(kein Wertfilter)</option>
-                <option v-for="op in operatorsFor(rule.valueDataType)" :key="op" :value="op">{{ op }}</option>
-              </select>
-            </div>
-            <div class="flex flex-col gap-1 md:col-span-1" v-if="rule.valueOperator === 'between'">
-              <label class="text-xs text-slate-500">Untergrenze</label>
-              <input v-model="rule.valueLower" class="input" placeholder="0" />
-            </div>
-            <div class="flex flex-col gap-1 md:col-span-1" v-if="rule.valueOperator === 'between'">
-              <label class="text-xs text-slate-500">Obergrenze</label>
-              <input v-model="rule.valueUpper" class="input" placeholder="100" />
-            </div>
-            <div class="flex flex-col gap-1" :class="rule.valueOperator === 'between' ? 'md:col-span-2' : 'md:col-span-3'" v-else-if="rule.valueOperator === 'regex'">
-              <label class="text-xs text-slate-500">Regex</label>
-              <input v-model="rule.valuePattern" class="input" placeholder="^temp" />
-            </div>
-            <div class="flex flex-col gap-1" :class="rule.valueOperator === 'between' ? 'md:col-span-2' : 'md:col-span-3'" v-else>
-              <label class="text-xs text-slate-500">Wert</label>
-              <input v-model="rule.valueInput" class="input" :data-testid="`rule-value-input-${gi}-${ri}`" placeholder="42" :disabled="!rule.valueOperator" />
-            </div>
-          </div>
-
-          <label v-if="rule.valueOperator === 'regex'" class="inline-flex items-center gap-2 text-xs text-slate-500">
-            <input type="checkbox" v-model="rule.valueIgnoreCase" />
-            Regex ignore case
-          </label>
-        </div>
-      </div>
-
-      <p v-if="filtersetMsg" :class="filtersetMsg.ok ? 'text-emerald-500 text-sm' : 'text-red-500 text-sm'">{{ filtersetMsg.text }}</p>
-    </div>
-
     <div class="card overflow-hidden">
       <div v-if="loading" class="flex justify-center py-12"><Spinner size="lg" /></div>
       <div v-else-if="listError" class="px-4 py-6 text-sm text-red-500" data-testid="ringbuffer-error">{{ listError }}</div>
@@ -396,11 +255,6 @@ const LIVE_FLUSH_INTERVAL_MS = 60
 const LIVE_QUEUE_MAX = 5000
 const DEFAULT_QUERY_LIMIT = 500
 
-const OPERATOR_OPTIONS = {
-  number: ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between'],
-  string: ['eq', 'ne', 'contains', 'regex'],
-  bool: ['eq', 'ne'],
-}
 const SIZE_UNIT_FACTORS = {
   mb: 1024 * 1024,
   gb: 1024 * 1024 * 1024,
@@ -466,9 +320,6 @@ const paused = ref(false)
 const liveQueue = ref([])
 
 const filtersets = ref([])
-const selectedFiltersetId = ref('')
-const filtersetMsg = ref(null)
-const activeFiltersetId = ref('')
 
 const showPrefilterAssistant = ref(false)
 const prefilterBusy = ref(false)
@@ -493,17 +344,11 @@ const configForm = reactive({
   retentionUnit: 'days',
 })
 
-const filtersetDraft = ref(newFiltersetDraft())
-
 const wsConnected = computed(() => wsStore.connected)
 const queuedCount = computed(() => liveQueue.value.length)
 
 let unregisterRb = null
 let liveFlushTimer = null
-
-function makeLocalId() {
-  return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
-}
 
 function splitCsv(raw) {
   return String(raw ?? '').split(',').map((v) => v.trim()).filter(Boolean)
@@ -618,206 +463,6 @@ function buildConfigPayload() {
   return payload
 }
 
-function parseLiteral(raw, dataType) {
-  const text = String(raw ?? '').trim()
-  if (!text) return null
-  if (dataType === 'number') {
-    const n = Number(text)
-    return Number.isFinite(n) ? n : null
-  }
-  if (dataType === 'bool') {
-    const lower = text.toLowerCase()
-    if (lower === 'true' || lower === '1') return true
-    if (lower === 'false' || lower === '0') return false
-    return null
-  }
-  return text
-}
-
-function makeRuleDraft(name = 'Regel') {
-  return {
-    localId: makeLocalId(),
-    id: null,
-    name,
-    is_active: true,
-    q: '',
-    adaptersText: '',
-    datapointsText: '',
-    tagsText: '',
-    valueDataType: 'number',
-    valueOperator: '',
-    valueInput: '',
-    valueLower: '',
-    valueUpper: '',
-    valuePattern: '',
-    valueIgnoreCase: false,
-  }
-}
-
-function makeGroupDraft(name = 'Gruppe') {
-  return {
-    localId: makeLocalId(),
-    id: null,
-    name,
-    is_active: true,
-    rules: [makeRuleDraft('Regel 1')],
-  }
-}
-
-function newFiltersetDraft() {
-  return {
-    id: null,
-    name: '',
-    description: '',
-    is_active: true,
-    is_default: false,
-    baseQ: '',
-    baseDatapointsText: '',
-    groups: [makeGroupDraft('Gruppe 1')],
-  }
-}
-
-function operatorsFor(dataType) {
-  return OPERATOR_OPTIONS[dataType] || OPERATOR_OPTIONS.number
-}
-
-function queryToDraftRule(query, idx) {
-  const rule = makeRuleDraft(`Regel ${idx + 1}`)
-  const filtersPart = query?.filters || {}
-  rule.q = filtersPart.q || ''
-  rule.adaptersText = joinCsv(filtersPart.adapters?.any_of || [])
-  rule.datapointsText = joinCsv(filtersPart.datapoints?.ids || [])
-  rule.tagsText = joinCsv(filtersPart.metadata?.tags_any_of || [])
-
-  const valueFilter = (filtersPart.values || [])[0]
-  if (valueFilter?.operator) {
-    rule.valueOperator = valueFilter.operator
-    if (['gt', 'gte', 'lt', 'lte', 'eq', 'ne'].includes(valueFilter.operator)) {
-      rule.valueInput = String(valueFilter.value ?? '')
-    } else if (valueFilter.operator === 'between') {
-      rule.valueLower = String(valueFilter.lower ?? '')
-      rule.valueUpper = String(valueFilter.upper ?? '')
-    } else if (valueFilter.operator === 'regex') {
-      rule.valuePattern = String(valueFilter.pattern ?? '')
-      rule.valueIgnoreCase = Boolean(valueFilter.ignore_case)
-    } else if (valueFilter.operator === 'contains') {
-      rule.valueInput = String(valueFilter.value ?? '')
-    }
-
-    const rawValue = valueFilter.value
-    if (typeof rawValue === 'boolean') rule.valueDataType = 'bool'
-    else if (typeof rawValue === 'number' || valueFilter.operator === 'between') rule.valueDataType = 'number'
-    else rule.valueDataType = 'string'
-  }
-
-  return rule
-}
-
-function hydrateFiltersetDraft(filterset) {
-  const groups = (filterset.groups || []).map((group, gi) => ({
-    localId: makeLocalId(),
-    id: group.id,
-    name: group.name,
-    is_active: Boolean(group.is_active),
-    rules: (group.rules || []).map((rule, ri) => {
-      const draftRule = queryToDraftRule(rule.query, ri)
-      draftRule.id = rule.id
-      draftRule.name = rule.name
-      draftRule.is_active = Boolean(rule.is_active)
-      return draftRule
-    }),
-  }))
-
-  filtersetDraft.value = {
-    id: filterset.id,
-    name: filterset.name,
-    description: filterset.description || '',
-    is_active: Boolean(filterset.is_active),
-    is_default: Boolean(filterset.is_default),
-    baseQ: filterset.query?.filters?.q || '',
-    baseDatapointsText: joinCsv(filterset.query?.filters?.datapoints?.ids || []),
-    groups: groups.length ? groups : [makeGroupDraft('Gruppe 1')],
-  }
-}
-
-function buildRuleQuery(rule) {
-  const filtersPart = {}
-
-  const q = String(rule.q || '').trim()
-  if (q) filtersPart.q = q
-
-  const adapters = splitCsv(rule.adaptersText)
-  if (adapters.length) filtersPart.adapters = { any_of: adapters }
-
-  const datapoints = splitCsv(rule.datapointsText)
-  if (datapoints.length) filtersPart.datapoints = { ids: datapoints }
-
-  const tags = splitCsv(rule.tagsText)
-  if (tags.length) filtersPart.metadata = { tags_any_of: tags }
-
-  if (rule.valueOperator) {
-    if (rule.valueOperator === 'between') {
-      const lower = parseLiteral(rule.valueLower, rule.valueDataType)
-      const upper = parseLiteral(rule.valueUpper, rule.valueDataType)
-      if (lower !== null || upper !== null) {
-        filtersPart.values = [{ operator: 'between', lower, upper }]
-      }
-    } else if (rule.valueOperator === 'regex') {
-      const pattern = String(rule.valuePattern || '').trim()
-      if (pattern) {
-        filtersPart.values = [{ operator: 'regex', pattern, ignore_case: Boolean(rule.valueIgnoreCase) }]
-      }
-    } else {
-      const value = parseLiteral(rule.valueInput, rule.valueDataType)
-      if (value !== null) {
-        filtersPart.values = [{ operator: rule.valueOperator, value }]
-      }
-    }
-  }
-
-  return {
-    filters: filtersPart,
-    sort: { field: 'ts', order: 'desc' },
-    pagination: { limit: DEFAULT_QUERY_LIMIT, offset: 0 },
-  }
-}
-
-function buildBaseQuery(draft) {
-  const filtersPart = {}
-  const q = String(draft.baseQ || '').trim()
-  if (q) filtersPart.q = q
-  const datapoints = splitCsv(draft.baseDatapointsText)
-  if (datapoints.length) filtersPart.datapoints = { ids: datapoints }
-
-  return {
-    filters: filtersPart,
-    sort: { field: 'ts', order: 'desc' },
-    pagination: { limit: DEFAULT_QUERY_LIMIT, offset: 0 },
-  }
-}
-
-function buildFiltersetPayload(draft) {
-  return {
-    name: draft.name.trim(),
-    description: draft.description || '',
-    dsl_version: 2,
-    is_active: Boolean(draft.is_active),
-    is_default: Boolean(draft.is_default),
-    query: buildBaseQuery(draft),
-    groups: draft.groups.map((group, gi) => ({
-      name: group.name?.trim() || `Gruppe ${gi + 1}`,
-      is_active: Boolean(group.is_active),
-      group_order: gi,
-      rules: group.rules.map((rule, ri) => ({
-        name: rule.name?.trim() || `Regel ${ri + 1}`,
-        is_active: Boolean(rule.is_active),
-        rule_order: ri,
-        query: buildRuleQuery(rule),
-      })),
-    })),
-  }
-}
-
 function extractErrorMessage(error, fallback) {
   return error?.response?.data?.detail || error?.message || fallback
 }
@@ -828,153 +473,10 @@ async function loadFiltersets() {
     filtersets.value = Array.isArray(data) ? data : []
     // Keep the row-colour cache in sync with the topbar state (#437).
     setSets(filtersets.value)
-  } catch (error) {
+  } catch {
     filtersets.value = []
     setSets([])
-    filtersetMsg.value = { ok: false, text: extractErrorMessage(error, 'Filtersets konnten nicht geladen werden') }
   }
-}
-
-function startNewFilterset() {
-  selectedFiltersetId.value = ''
-  filtersetDraft.value = newFiltersetDraft()
-  filtersetMsg.value = null
-}
-
-function onFiltersetSelect() {
-  const current = filtersets.value.find((fs) => fs.id === selectedFiltersetId.value)
-  if (!current) {
-    startNewFilterset()
-    return
-  }
-  hydrateFiltersetDraft(current)
-  filtersetMsg.value = null
-}
-
-async function loadDefaultFilterset() {
-  filtersetMsg.value = null
-  try {
-    const { data } = await ringbufferApi.getDefaultFilterset()
-    selectedFiltersetId.value = data.id
-    hydrateFiltersetDraft(data)
-  } catch (error) {
-    filtersetMsg.value = { ok: false, text: extractErrorMessage(error, 'Kein Default-Set gefunden') }
-  }
-}
-
-async function saveFilterset() {
-  filtersetMsg.value = null
-
-  if (!filtersetDraft.value.name.trim()) {
-    filtersetMsg.value = { ok: false, text: 'Set-Name ist erforderlich' }
-    return
-  }
-
-  const payload = buildFiltersetPayload(filtersetDraft.value)
-
-  try {
-    let saved
-    if (filtersetDraft.value.id) {
-      const { data } = await ringbufferApi.updateFilterset(filtersetDraft.value.id, payload)
-      saved = data
-    } else {
-      const { data } = await ringbufferApi.createFilterset(payload)
-      saved = data
-    }
-
-    await loadFiltersets()
-    selectedFiltersetId.value = saved.id
-    hydrateFiltersetDraft(saved)
-    filtersetMsg.value = { ok: true, text: 'Filterset gespeichert' }
-  } catch (error) {
-    filtersetMsg.value = { ok: false, text: extractErrorMessage(error, 'Speichern fehlgeschlagen') }
-  }
-}
-
-async function cloneFilterset() {
-  filtersetMsg.value = null
-  if (!filtersetDraft.value.id) return
-  try {
-    const cloneName = `${filtersetDraft.value.name || 'Filterset'} (Copy)`
-    const { data } = await ringbufferApi.cloneFilterset(filtersetDraft.value.id, cloneName)
-    await loadFiltersets()
-    selectedFiltersetId.value = data.id
-    hydrateFiltersetDraft(data)
-    filtersetMsg.value = { ok: true, text: 'Filterset dupliziert' }
-  } catch (error) {
-    filtersetMsg.value = { ok: false, text: extractErrorMessage(error, 'Duplizieren fehlgeschlagen') }
-  }
-}
-
-async function setDefaultFilterset() {
-  filtersetMsg.value = null
-  if (!filtersetDraft.value.id) return
-  try {
-    const { data } = await ringbufferApi.setDefaultFilterset(filtersetDraft.value.id)
-    await loadFiltersets()
-    selectedFiltersetId.value = data.id
-    hydrateFiltersetDraft(data)
-    filtersetMsg.value = { ok: true, text: 'Default gesetzt' }
-  } catch (error) {
-    filtersetMsg.value = { ok: false, text: extractErrorMessage(error, 'Default setzen fehlgeschlagen') }
-  }
-}
-
-async function deleteFilterset() {
-  filtersetMsg.value = null
-  if (!filtersetDraft.value.id) return
-  try {
-    await ringbufferApi.deleteFilterset(filtersetDraft.value.id)
-    await loadFiltersets()
-    startNewFilterset()
-    filtersetMsg.value = { ok: true, text: 'Filterset gelöscht' }
-  } catch (error) {
-    filtersetMsg.value = { ok: false, text: extractErrorMessage(error, 'Löschen fehlgeschlagen') }
-  }
-}
-
-async function applySelectedFilterset() {
-  filtersetMsg.value = null
-  if (!filtersetDraft.value.id) {
-    activeFiltersetId.value = ''
-    await applyFilters()
-    return
-  }
-  activeFiltersetId.value = filtersetDraft.value.id
-  loading.value = true
-  listError.value = ''
-  liveQueue.value = []
-  try {
-    const { data } = await ringbufferApi.queryFilterset(filtersetDraft.value.id)
-    entries.value = data
-    await nextTick()
-    if (!paused.value && tableWrapRef.value) tableWrapRef.value.scrollTop = 0
-  } catch (error) {
-    entries.value = []
-    listError.value = extractErrorMessage(error, 'Filterset-Abfrage fehlgeschlagen')
-  } finally {
-    loading.value = false
-  }
-}
-
-function addGroup() {
-  filtersetDraft.value.groups.push(makeGroupDraft(`Gruppe ${filtersetDraft.value.groups.length + 1}`))
-}
-
-function removeGroup(groupIndex) {
-  if (filtersetDraft.value.groups.length <= 1) return
-  filtersetDraft.value.groups.splice(groupIndex, 1)
-}
-
-function addRule(groupIndex) {
-  const group = filtersetDraft.value.groups[groupIndex]
-  group.rules.push(makeRuleDraft(`Regel ${group.rules.length + 1}`))
-}
-
-function removeRule(groupIndex, ruleIndex) {
-  const group = filtersetDraft.value.groups[groupIndex]
-  if (group.rules.length <= 1) return
-  group.rules.splice(ruleIndex, 1)
 }
 
 function flattenNodes(nodes, prefix = '') {
@@ -1122,11 +624,6 @@ function resumeLive() {
 }
 
 function onLiveEntry(entry) {
-  if (activeFiltersetId.value) {
-    // Keep an applied filterset result stable. Live pushes can be fetched
-    // intentionally via "Set anwenden" or "Aktualisieren".
-    return
-  }
   // Live entries do not carry matched_set_ids yet — the backend WS push has
   // no knowledge of which topbar sets are active. Frontend-side matching is
   // out of scope here (planned in a follow-up). Show the row unmatched.
@@ -1134,7 +631,6 @@ function onLiveEntry(entry) {
 }
 
 async function applyFilters() {
-  activeFiltersetId.value = ''
   liveQueue.value = []
   await load()
 }
