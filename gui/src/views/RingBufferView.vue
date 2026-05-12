@@ -253,8 +253,8 @@
                   {{ e.name ?? e.datapoint_id?.slice(0, 8) }}
                 </RouterLink>
               </td>
-              <td class="font-mono text-sm text-blue-500 dark:text-blue-300">{{ e.new_value }}</td>
-              <td class="font-mono text-sm text-slate-500">{{ e.old_value ?? '-' }}</td>
+              <td class="font-mono text-sm text-blue-500 dark:text-blue-300">{{ e.new_value }}<span v-if="e.unit" class="text-slate-500 ml-1 text-xs">{{ e.unit }}</span></td>
+              <td class="font-mono text-sm text-slate-500">{{ e.old_value ?? '-' }}<span v-if="e.unit && e.old_value !== null && e.old_value !== undefined" class="text-slate-500 ml-1 text-xs">{{ e.unit }}</span></td>
               <td><Badge :variant="e.quality === 'good' ? 'success' : 'warning'" size="xs" dot>{{ qualityLabel(e.quality) }}</Badge></td>
               <td class="text-xs text-slate-500">{{ e.source_adapter ?? '-' }}</td>
             </tr>
