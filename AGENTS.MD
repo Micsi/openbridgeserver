@@ -61,13 +61,13 @@ cd gui && npm run dev
 ## Pre-Push Gate (verbindlich)
 
 CI im PR-Workflow baut das Frontend **nicht** — `npm run build` läuft erst beim Release-Tag.
-Import-/Typo-Bugs (z. B. `useDatapointsStore` vs. `useDatapointStore`) bleiben deshalb unsichtbar,
-solange ein Vitest-Mock mit demselben falschen Namen sie verdeckt. Vor **jedem** Push, der
-Frontend-Code berührt, alle vier Stufen lokal grün laufen lassen:
+Ein Production-Build validiert die Frontend-Abhängigkeiten (Module-Resolution, Import-Pfade,
+Typen) Ende-zu-Ende — Schwächen, die Vitest-Mocks verdecken können, fallen erst hier auf. Vor
+**jedem** Push, der Frontend-Code berührt, alle Stufen lokal grün laufen lassen:
 
 ```bash
 ./tools/lint.sh --check
-cd gui && npm run build     # fängt echte Import-Resolution, Vitest-Mocks nicht
+cd gui && npm run build     # validiert reale Abhängigkeiten/Imports, was Vitest nicht tut
 cd gui && npm run test
 # bei Backend-Änderungen zusätzlich:
 pytest tests/unit tests/adapters tests/contracts  # ohne Docker
