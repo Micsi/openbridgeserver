@@ -48,20 +48,6 @@ class DatabaseSettings(BaseModel):
     history_plugin: str = "sqlite"  # sqlite | influxdb | timescaledb | questdb
 
 
-class RingBufferSettings(BaseModel):
-    storage: str = "file"
-    max_entries: int = 10000
-    max_file_size_bytes: int | None = None
-    max_age: int | None = None
-
-    @field_validator("storage")
-    @classmethod
-    def _validate_storage(cls, v: str) -> str:
-        if v != "file":
-            raise ValueError("storage must be 'file' (memory and disk are no longer supported)")
-        return v
-
-
 class SecuritySettings(BaseModel):
     jwt_secret: str = "changeme"
     jwt_expire_minutes: int = 1440
@@ -142,7 +128,6 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     mqtt: MqttSettings = Field(default_factory=MqttSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
-    ringbuffer: RingBufferSettings = Field(default_factory=RingBufferSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     mosquitto: MosquittoSettings = Field(default_factory=MosquittoSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)

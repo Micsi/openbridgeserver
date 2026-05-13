@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from obs.api.auth import get_admin_user
 from obs.api.auth import get_current_user
 from obs.db.database import Database, get_db
+from obs.ringbuffer.persisted_config import persist_ringbuffer_config
 from obs.ringbuffer.ringbuffer import get_ringbuffer
 
 router = APIRouter(tags=["ringbuffer"])
@@ -1423,6 +1424,7 @@ async def ringbuffer_stats(
 async def configure_ringbuffer(
     body: RingBufferConfig,
     _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
 ) -> RingBufferStats:
     if body.storage != "file":
         raise HTTPException(
@@ -1440,4 +1442,10 @@ async def configure_ringbuffer(
         reconfigure_kwargs["max_age"] = body.max_age
     await rb.reconfigure(body.storage, **reconfigure_kwargs)
     stats = await rb.stats()
+    await persist_ringbuffer_config(
+        db,
+        max_entries=stats["max_entries"],
+        max_file_size_bytes=stats["max_file_size_bytes"],
+        max_age=stats["max_age"],
+    )
     return RingBufferStats(**stats)

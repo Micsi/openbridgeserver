@@ -90,7 +90,6 @@ async def app(mosquitto_port):
         DatabaseSettings,
         MosquittoSettings,
         MqttSettings,
-        RingBufferSettings,
         SecuritySettings,
         Settings,
         override_settings,
@@ -122,10 +121,6 @@ async def app(mosquitto_port):
                 reload_command=None,
                 service_username="obs",
                 service_password="test",
-            ),
-            ringbuffer=RingBufferSettings(
-                storage="file",
-                max_entries=1000,
             ),
         ),
     )
