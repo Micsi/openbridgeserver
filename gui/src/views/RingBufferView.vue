@@ -26,18 +26,12 @@
       >
         ▶ Resume
       </button>
-      <span :class="['inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium',
-        wsConnected ? 'bg-teal-500/15 text-teal-600 dark:text-teal-400' : 'bg-slate-200/50 dark:bg-slate-700/50 text-slate-500']"
-        data-testid="status-badge">
-        <span :class="['w-1.5 h-1.5 rounded-full', wsConnected ? 'bg-teal-400 animate-pulse' : 'bg-slate-600']" />
-        {{ wsConnected ? 'Live' : 'Offline' }}
-      </span>
-      <span
-        :class="['inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium',
-          paused ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400']"
-        data-testid="live-mode-badge"
-      >
-        {{ paused ? `Pausiert (${queuedCount} wartend)` : 'Live' }}
+      <!-- Single, consolidated status indicator: WS-connection + pause-state -->
+      <span :class="['inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium', statusBadgeClass]"
+        data-testid="status-badge"
+        :title="statusBadgeTitle">
+        <span :class="['w-1.5 h-1.5 rounded-full', statusDotClass]" />
+        {{ statusBadgeText }}
       </span>
       <TopbarStats class="ml-auto" />
     </div>
@@ -125,6 +119,7 @@ import { useTz } from '@/composables/useTz'
 import { useSetColors } from '@/composables/useSetColors'
 import { useLiveQueue } from '@/composables/useLiveQueue'
 import { timeFilterToPayload } from '@/composables/useTimeFilterPayload'
+import { matchedSetIds } from '@/composables/useClientSideMatch'
 import { useWebSocketStore } from '@/stores/websocket'
 import Badge from '@/components/ui/Badge.vue'
 import Spinner from '@/components/ui/Spinner.vue'
@@ -207,6 +202,30 @@ const { paused, queuedCount, enqueue: enqueueLive, pause: pauseLive, resume: res
 
 const wsConnected = computed(() => wsStore.connected)
 
+const statusBadgeText = computed(() => {
+  if (!wsConnected.value) return 'Offline'
+  if (paused.value) return `Pausiert (${queuedCount.value} wartend)`
+  return 'Live'
+})
+
+const statusBadgeClass = computed(() => {
+  if (!wsConnected.value) return 'bg-slate-200/50 dark:bg-slate-700/50 text-slate-500'
+  if (paused.value) return 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+  return 'bg-teal-500/15 text-teal-600 dark:text-teal-400'
+})
+
+const statusDotClass = computed(() => {
+  if (!wsConnected.value) return 'bg-slate-600'
+  if (paused.value) return 'bg-amber-500'
+  return 'bg-teal-400 animate-pulse'
+})
+
+const statusBadgeTitle = computed(() => {
+  if (!wsConnected.value) return 'WebSocket offline'
+  if (paused.value) return 'Live-Updates pausiert — Resume klicken'
+  return 'Live — WebSocket verbunden, Updates aktiv'
+})
+
 let unregisterRb = null
 
 function extractErrorMessage(error, fallback) {
@@ -237,10 +256,25 @@ function buildQueryV2() {
 }
 
 function onLiveEntry(entry) {
-  // Live entries do not carry matched_set_ids yet — the backend WS push has
-  // no knowledge of which topbar sets are active. Frontend-side matching is
-  // out of scope here (planned in a follow-up). Show the row unmatched.
-  enqueueLive({ ...entry, matched_set_ids: Array.isArray(entry?.matched_set_ids) ? entry.matched_set_ids : [] })
+  // Match live entries client-side against the active topbar sets so the
+  // table behaves like the REST OR-union response: rows that no active set
+  // matches are dropped, rows that match are coloured (#36 follow-up).
+  //
+  // Hierarchy filters are pass-through on the client (the frontend has no
+  // hierarchy resolver); a set with only hierarchy filters therefore counts
+  // as a match for every live entry.
+  const activeSets = filtersets.value.filter((s) => s.topbar_active && s.is_active !== false)
+  if (activeSets.length === 0) {
+    // No filtering active → unfiltered live feed as before, unmatched colour.
+    enqueueLive({ ...entry, matched_set_ids: Array.isArray(entry?.matched_set_ids) ? entry.matched_set_ids : [] })
+    return
+  }
+  const ids = matchedSetIds(entry, activeSets)
+  if (ids.length === 0) {
+    // Active filters present but the entry matches none — drop it.
+    return
+  }
+  enqueueLive({ ...entry, matched_set_ids: ids })
 }
 
 async function applyFilters() {

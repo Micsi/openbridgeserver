@@ -45,13 +45,13 @@ describe('RingBufferView live WebSocket queue', () => {
 
   it('registers a ringbuffer handler on mount', async () => {
     const { mountRingBufferView } = await import('../helpers/mountRingBufferView.js')
-    const { hasLiveHandler } = await mountRingBufferView()
+    const { hasLiveHandler } = await mountRingBufferView({ wsConnected: true })
     expect(hasLiveHandler()).toBe(true)
   })
 
   it('Pause keeps live entries in liveQueue and bumps queuedCount', async () => {
     const { mountRingBufferView, flushPromises } = await import('../helpers/mountRingBufferView.js')
-    const { wrapper, emitLive } = await mountRingBufferView()
+    const { wrapper, emitLive } = await mountRingBufferView({ wsConnected: true })
 
     await wrapper.find('[data-testid="btn-live-pause"]').trigger('click')
     await flushPromises()
@@ -65,7 +65,7 @@ describe('RingBufferView live WebSocket queue', () => {
     await flushPromises()
 
     // Queue is reflected in the live-mode badge.
-    const badge = wrapper.find('[data-testid="live-mode-badge"]')
+    const badge = wrapper.find('[data-testid="status-badge"]')
     expect(badge.text()).toBe('Pausiert (3 wartend)')
 
     // While paused, the table stays empty — no flush happens.
@@ -74,7 +74,7 @@ describe('RingBufferView live WebSocket queue', () => {
 
   it('Resume drains the queue and prepends entries to the table', async () => {
     const { mountRingBufferView, flushPromises } = await import('../helpers/mountRingBufferView.js')
-    const { wrapper, emitLive } = await mountRingBufferView()
+    const { wrapper, emitLive } = await mountRingBufferView({ wsConnected: true })
 
     await wrapper.find('[data-testid="btn-live-pause"]').trigger('click')
     await flushPromises()
@@ -92,19 +92,19 @@ describe('RingBufferView live WebSocket queue', () => {
     const rows = wrapper.findAll('[data-testid="ringbuffer-entry"]')
     expect(rows.length).toBe(3)
     // Live badge resets.
-    expect(wrapper.find('[data-testid="live-mode-badge"]').text()).toBe('Live')
+    expect(wrapper.find('[data-testid="status-badge"]').text()).toBe('Live')
   })
 
   it('LIVE_BATCH_SIZE = 200 — a 250-entry burst flushes in two batches', async () => {
     const { mountRingBufferView, flushPromises } = await import('../helpers/mountRingBufferView.js')
-    const { wrapper, emitLive } = await mountRingBufferView()
+    const { wrapper, emitLive } = await mountRingBufferView({ wsConnected: true })
 
     await wrapper.find('[data-testid="btn-live-pause"]').trigger('click')
     await flushPromises()
 
     for (let i = 1; i <= 250; i++) emitLive(makeEntry(i))
     await flushPromises()
-    expect(wrapper.find('[data-testid="live-mode-badge"]').text()).toBe('Pausiert (250 wartend)')
+    expect(wrapper.find('[data-testid="status-badge"]').text()).toBe('Pausiert (250 wartend)')
 
     await wrapper.find('[data-testid="btn-live-resume"]').trigger('click')
 
