@@ -115,26 +115,35 @@ describe('MonitorConfigModal QA-01 coverage (#439)', () => {
     expect(wrapper.find('[data-testid="rb-config-retention-unit"]').element.value).toBe('months')
   })
 
-  it('hydrates retention defaults when stats has no max_age / max_file_size_bytes', async () => {
+  it('hydrates with sane defaults when stats reflects an empty system', async () => {
+    // After ringbuffer-config persistence: an unconfigured system reports
+    // max_entries=null, max_file_size_bytes=10 MiB (sane default), max_age=null.
+    // The form mirrors that state: entries+age toggles off, size toggle on
+    // showing the 10 MB cap; the disabled inputs hold suggestion values.
     const api = makeApi({
       stats: vi.fn().mockResolvedValue({
         data: {
           total: 0,
-          max_entries: 10000,
-          max_file_size_bytes: null,
+          max_entries: null,
+          max_file_size_bytes: 10 * 1024 * 1024,
           max_age: null,
           file_size_bytes: 0,
         },
       }),
     })
     const { wrapper } = await mountModal({ api })
-    expect(wrapper.find('[data-testid="rb-config-max-size-value"]').element.value).toBe('500')
-    expect(wrapper.find('[data-testid="rb-config-retention-value"]').element.value).toBe('30')
-    // Both checkboxes should be unchecked
+
+    const entriesCheck = wrapper.find('#max-entries-enabled').element
     const sizeCheck = wrapper.find('#max-size-enabled').element
     const retCheck = wrapper.find('#retention-enabled').element
-    expect(sizeCheck.checked).toBe(false)
+    expect(entriesCheck.checked).toBe(false)
+    expect(sizeCheck.checked).toBe(true)
     expect(retCheck.checked).toBe(false)
+
+    expect(wrapper.find('[data-testid="rb-config-max-entries"]').element.value).toBe('50000')
+    expect(wrapper.find('[data-testid="rb-config-max-size-value"]').element.value).toBe('10')
+    expect(wrapper.find('[data-testid="rb-config-max-size-unit"]').element.value).toBe('mb')
+    expect(wrapper.find('[data-testid="rb-config-retention-value"]').element.value).toBe('30')
   })
 
   it('formats retention values that match months / years cleanly', async () => {
@@ -154,15 +163,20 @@ describe('MonitorConfigModal QA-01 coverage (#439)', () => {
     expect(wrapper.find('[data-testid="rb-config-retention-unit"]').element.value).toBe('months')
   })
 
-  it('falls back silently when /stats rejects — the form still renders', async () => {
+  it('falls back silently when /stats rejects — the form still renders with initial defaults', async () => {
     const failApi = makeApi({
       stats: vi.fn().mockRejectedValue(new Error('boom')),
     })
     const { wrapper, api } = await mountModal({ api: failApi })
     expect(api.stats).toHaveBeenCalled()
-    // The form is still mounted with defaults
+    // Form is mounted with initial form defaults (matches the server-side
+    // defaults: entries unlimited, 10 MiB size cap, no age cap).
     expect(wrapper.find('[data-testid="rb-config-max-entries"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="rb-config-max-entries"]').element.value).toBe('10000')
+    expect(wrapper.find('[data-testid="rb-config-max-entries"]').element.value).toBe('50000')
+    expect(wrapper.find('#max-entries-enabled').element.checked).toBe(false)
+    expect(wrapper.find('#max-size-enabled').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="rb-config-max-size-value"]').element.value).toBe('10')
+    expect(wrapper.find('[data-testid="rb-config-max-size-unit"]').element.value).toBe('mb')
   })
 
   it('submitting the form posts a flat payload and shows a success banner', async () => {

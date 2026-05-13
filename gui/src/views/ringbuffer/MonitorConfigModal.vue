@@ -150,10 +150,10 @@ const saving = ref(false)
 const configMsg = ref(null)
 let closeTimer = null
 const configForm = reactive({
-  maxEntriesEnabled: true,
-  maxEntriesValue: '10000',
-  maxSizeEnabled: false,
-  maxSizeValue: '500',
+  maxEntriesEnabled: false,
+  maxEntriesValue: '50000',
+  maxSizeEnabled: true,
+  maxSizeValue: '10',
   maxSizeUnit: 'mb',
   retentionEnabled: false,
   retentionValue: '30',
@@ -200,7 +200,7 @@ function hydrateForm(currentStats) {
     configForm.maxEntriesValue = String(Math.round(maxEntries))
   } else {
     configForm.maxEntriesEnabled = false
-    configForm.maxEntriesValue = '10000'
+    configForm.maxEntriesValue = '50000'
   }
   const maxFileSize = Number(currentStats?.max_file_size_bytes)
   if (Number.isFinite(maxFileSize) && maxFileSize > 0) {
@@ -210,7 +210,7 @@ function hydrateForm(currentStats) {
     configForm.maxSizeUnit = picked.unit
   } else {
     configForm.maxSizeEnabled = false
-    configForm.maxSizeValue = '500'
+    configForm.maxSizeValue = '10'
     configForm.maxSizeUnit = 'mb'
   }
   const maxAge = Number(currentStats?.max_age)
