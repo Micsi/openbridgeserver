@@ -666,15 +666,15 @@ describe('FilterEditor (#436)', () => {
     expect(wrapper.emitted('saved')).toBeTruthy()
   })
 
-  it('active-flag checkbox flows into the payload', async () => {
+  it('saved sets are always active — payload is_active is true and the checkbox is gone', async () => {
     const ringbufferApi = makeRingbufferApi()
     const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
+    expect(wrapper.find('[data-testid="filter-editor-active"]').exists()).toBe(false)
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('Flags')
-    await wrapper.find('[data-testid="filter-editor-active"]').setValue(false)
     await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
-    expect(payload.is_active).toBe(false)
+    expect(payload.is_active).toBe(true)
     expect(payload).not.toHaveProperty('is_default')
   })
 

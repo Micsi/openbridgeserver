@@ -31,33 +31,22 @@
         </div>
       </section>
 
-      <section class="flex flex-wrap items-center gap-4">
-        <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">Farbe</label>
-          <div class="flex items-center gap-1.5" data-testid="filter-editor-color-palette">
-            <button
-              v-for="color in COLOR_PALETTE"
-              :key="color"
-              type="button"
-              :data-testid="`filter-editor-color-${color}`"
-              :data-color="color"
-              class="w-6 h-6 rounded-full border-2 transition"
-              :class="form.color === color ? 'border-slate-900 dark:border-white' : 'border-transparent hover:border-slate-400'"
-              :style="{ backgroundColor: color }"
-              :title="color"
-              @click="onPickColor(color)"
-            />
-          </div>
-        </div>
-        <label class="inline-flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            v-model="form.is_active"
-            data-testid="filter-editor-active"
-            @change="markDirty"
+      <section class="flex flex-col gap-1">
+        <label class="text-xs text-slate-500">Farbe</label>
+        <div class="flex flex-wrap items-center gap-1.5" data-testid="filter-editor-color-palette">
+          <button
+            v-for="color in COLOR_PALETTE"
+            :key="color"
+            type="button"
+            :data-testid="`filter-editor-color-${color}`"
+            :data-color="color"
+            class="w-6 h-6 rounded-full border-2 transition"
+            :class="form.color === color ? 'border-slate-900 dark:border-white' : 'border-transparent hover:border-slate-400'"
+            :style="{ backgroundColor: color }"
+            :title="color"
+            @click="onPickColor(color)"
           />
-          Set aktiv
-        </label>
+        </div>
       </section>
 
       <!-- Hierarchy combobox with per-chip ⊞ expand -->
@@ -280,15 +269,22 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'saved'])
 
 const COLOR_PALETTE = [
+  // Vibrant tier
   '#3b82f6', // blue
   '#10b981', // emerald
+  '#84cc16', // lime
   '#f59e0b', // amber
   '#ef4444', // red
-  '#8b5cf6', // violet
   '#ec4899', // pink
+  '#8b5cf6', // violet
   '#14b8a6', // teal
-  '#6366f1', // indigo
-  '#84cc16', // lime
+  // Dark / muted tier
+  '#1e3a8a', // navy
+  '#064e3b', // forest
+  '#7c2d12', // rust
+  '#7f1d1d', // burgundy
+  '#581c87', // deep purple
+  '#0f172a', // near-black
   '#94a3b8', // slate
 ]
 const DEFAULT_COLOR = COLOR_PALETTE[0]
@@ -305,7 +301,6 @@ function makeEmptyForm() {
     name: '',
     description: '',
     color: DEFAULT_COLOR,
-    is_active: true,
     hierarchy_nodes: [], // {tree_id, node_id, include_descendants}
     datapoints: [],
     tags: [],
@@ -466,7 +461,8 @@ function buildPayload() {
     name: form.name.trim(),
     description: form.description || '',
     dsl_version: 2,
-    is_active: Boolean(form.is_active),
+    // Saved sets are always active — there is no inactive-save path in the editor.
+    is_active: true,
     color: form.color || DEFAULT_COLOR,
     topbar_active: loadedSet.value?.topbar_active ?? false,
     topbar_order: loadedSet.value?.topbar_order ?? 0,
@@ -495,7 +491,6 @@ function hydrateForm(payload) {
   form.name = payload.name || ''
   form.description = payload.description || ''
   form.color = payload.color || DEFAULT_COLOR
-  form.is_active = Boolean(payload.is_active)
 
   const flt = payload.filter || {}
   form.hierarchy_nodes = Array.isArray(flt.hierarchy_nodes)
