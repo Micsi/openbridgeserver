@@ -22,6 +22,7 @@ from obs.api.v1.sessions import validate_session
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
 from obs.models.datapoint import DataPointCreate, DataPointUpdate
+from obs.models.visu import PageConfig
 
 router = APIRouter(tags=["datapoints"])
 
@@ -229,6 +230,28 @@ async def _resolve_page_access(db: Database, node_id: str) -> str:
     return "public"
 
 
+async def _page_has_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> bool:
+    """Return True if the page contains a widget bound to this datapoint."""
+    row = await db.fetchone("SELECT page_config FROM visu_nodes WHERE id = ? AND type = 'PAGE'", (page_id,))
+    if not row:
+        return False
+
+    raw = row["page_config"]
+    if not raw:
+        return False
+
+    try:
+        page = PageConfig.model_validate_json(raw)
+    except Exception:
+        return False
+
+    dp_id_str = str(dp_id)
+    return any(
+        widget.datapoint_id == dp_id_str or widget.status_datapoint_id == dp_id_str
+        for widget in page.widgets
+    )
+
+
 @router.post("/{dp_id}/value", status_code=status.HTTP_204_NO_CONTENT)
 async def write_value(
     dp_id: uuid.UUID,
@@ -257,6 +280,8 @@ async def write_value(
         page_id = request.headers.get("X-Page-Id")
         if not page_id:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        if not await _page_has_datapoint(db, page_id, dp_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint is not part of the page")
 
         access = await _resolve_page_access(db, page_id)
 
