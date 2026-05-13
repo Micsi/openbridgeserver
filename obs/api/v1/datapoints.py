@@ -246,10 +246,7 @@ async def _page_has_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> b
         return False
 
     dp_id_str = str(dp_id)
-    return any(
-        widget.datapoint_id == dp_id_str or widget.status_datapoint_id == dp_id_str
-        for widget in page.widgets
-    )
+    return any(widget.datapoint_id == dp_id_str or widget.status_datapoint_id == dp_id_str for widget in page.widgets)
 
 
 @router.post("/{dp_id}/value", status_code=status.HTTP_204_NO_CONTENT)
