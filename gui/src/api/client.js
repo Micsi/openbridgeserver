@@ -201,6 +201,7 @@ export const historyApi = {
 // ── Log Buffer ────────────────────────────────────────────────────────────
 export const logsApi = {
   list:     (params) => api.get('/system/logs', { params }),
+  getLevel: ()       => api.get('/system/log-level'),
   setLevel: (level)  => api.put('/system/log-level', { level }),
 }
 

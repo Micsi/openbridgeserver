@@ -6,7 +6,6 @@
         <p class="text-sm text-slate-500 mt-0.5">Applikations-Logs — Live</p>
       </div>
       <select v-model="logLevel" @change="setLevel" class="input w-36" title="Log-Level zur Laufzeit ändern">
-        <option value="">Level: Standard</option>
         <option value="DEBUG">DEBUG</option>
         <option value="INFO">INFO</option>
         <option value="WARNING">WARNING</option>
@@ -81,7 +80,7 @@ const wsStore = useWebSocketStore()
 
 const entries = ref([])
 const loading = ref(false)
-const logLevel = ref('')
+const logLevel = ref('INFO')
 
 const filters = reactive({ q: '', level: '', limit: '200' })
 
@@ -108,6 +107,12 @@ function onLiveEntry(entry) {
 }
 
 onMounted(async () => {
+  try {
+    const { data } = await logsApi.getLevel()
+    logLevel.value = data.level
+  } catch {
+    // non-admin — leave default
+  }
   await load()
   unregisterLog = wsStore.onLogEntry(onLiveEntry)
 })
@@ -135,12 +140,10 @@ async function load() {
 }
 
 async function setLevel() {
-  if (!logLevel.value) return
   try {
     await logsApi.setLevel(logLevel.value)
   } catch {
-    // non-admin users get a 403 — silently ignore, the select resets visually
-    logLevel.value = ''
+    // non-admin users get a 403 — silently ignore
   }
 }
 </script>

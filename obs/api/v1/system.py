@@ -13,6 +13,7 @@ POST   /api/v1/system/nav-links        create a custom nav link (admin only)
 PATCH  /api/v1/system/nav-links/{id}   update a custom nav link (admin only)
 DELETE /api/v1/system/nav-links/{id}   delete a custom nav link (admin only)
 GET    /api/v1/system/logs             recent log entries from in-memory buffer
+GET    /api/v1/system/log-level        read current root log level (admin only)
 PUT    /api/v1/system/log-level        change log level at runtime (admin only)
 """
 
@@ -131,6 +132,10 @@ class LogEntryOut(BaseModel):
     level: str
     logger: str
     message: str
+
+
+class LogLevelOut(BaseModel):
+    level: str
 
 
 class LogLevelIn(BaseModel):
@@ -547,6 +552,17 @@ async def get_logs(
     entries = entries[-limit:]
     entries.reverse()
     return [LogEntryOut(**e) for e in entries]
+
+
+@router.get("/log-level", response_model=LogLevelOut)
+async def get_log_level(
+    _admin: str = Depends(get_admin_user),
+) -> LogLevelOut:
+    """Return the current root log level. Admin only."""
+    import logging as _logging
+
+    lvl = _logging.getLevelName(_logging.getLogger().level)
+    return LogLevelOut(level=lvl)
 
 
 @router.put("/log-level", status_code=204)
