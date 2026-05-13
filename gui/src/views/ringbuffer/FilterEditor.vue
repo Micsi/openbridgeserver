@@ -242,20 +242,12 @@
       </p>
       <button class="btn-secondary btn-sm" data-testid="filter-editor-cancel" @click="onCancel">Verwerfen</button>
       <button
-        class="btn-secondary btn-sm"
+        class="btn-primary btn-sm"
         :disabled="saving || filterIsEmpty"
         data-testid="filter-editor-save-topbar"
         @click="onSave(true)"
       >
         Speichern &amp; in Topleiste
-      </button>
-      <button
-        class="btn-primary btn-sm"
-        :disabled="saving || filterIsEmpty"
-        data-testid="filter-editor-save"
-        @click="onSave(false)"
-      >
-        Speichern
       </button>
     </template>
   </Modal>
@@ -270,7 +262,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ringbufferApi, searchApi, hierarchyApi } from '@/api/client'
 import Modal from '@/components/ui/Modal.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -671,6 +663,51 @@ function onModalToggle(open) {
   if (open) return
   onCancel()
 }
+
+// Keyboard semantics inside the editor:
+//   - Enter outside a text-field → "Speichern & in Topleiste"
+//   - ESC inside a text-field → blur the field (so combobox dropdowns
+//     close, then focus leaves the input). The modal stays open; the
+//     next ESC closes it.
+//   - ESC outside any text-field → handled by Modal itself, which routes
+//     through onModalToggle → onCancel and respects the dirty-confirm flow.
+function onKeyDown(event) {
+  if (!props.modelValue) return
+  // Don't interfere while the discard-confirm dialog is open — that
+  // dialog owns the keyboard.
+  if (confirmOpen.value) return
+  const target = event.target
+  const tag = target?.tagName?.toUpperCase?.() || ''
+  const inEditable =
+    tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target?.isContentEditable)
+
+  if (event.key === 'Escape') {
+    if (inEditable && typeof target.blur === 'function') {
+      // Field-internal ESC handlers (e.g. combobox closing its dropdown)
+      // already ran during the bubble phase; we just remove focus so the
+      // next ESC closes the modal. Modal.vue skips ESC when target is
+      // editable, so the modal stays open here.
+      target.blur()
+    }
+    return
+  }
+
+  if (event.key === 'Enter') {
+    // Native fields keep their own Enter behaviour (combobox option-select,
+    // <select> value cycling, button activation, form submit on <input>).
+    if (inEditable || tag === 'BUTTON') return
+    if (filterIsEmpty.value || saving.value) return
+    event.preventDefault()
+    void onSave(true)
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeyDown)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeyDown)
+})
 
 watch(
   () => [props.modelValue, props.setId],

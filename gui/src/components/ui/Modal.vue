@@ -79,9 +79,16 @@ function onBackdropClick() {
 }
 
 function onKeyDown(event) {
-  if (event.key === 'Escape' && props.modelValue) {
-    emit('update:modelValue', false)
-  }
+  if (event.key !== 'Escape' || !props.modelValue) return
+  // Don't close the modal while the user is actively editing a field —
+  // the field's own ESC handler (e.g. a combobox closing its dropdown)
+  // should run, but the modal itself stays open. The user dismisses the
+  // modal with another ESC after the field is blurred.
+  const target = event.target
+  const tag = target?.tagName?.toUpperCase?.() || ''
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+  if (target?.isContentEditable) return
+  emit('update:modelValue', false)
 }
 
 onMounted(() => {

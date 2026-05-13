@@ -87,6 +87,32 @@ describe('Modal — default backdrop behaviour', () => {
     expect(events).toBeTruthy()
     expect(events[events.length - 1][0]).toBe(false)
   })
+
+  it('does NOT close on ESC while focus is in a text field', async () => {
+    // ESC inside an input/textarea/select belongs to the field itself
+    // (closing a dropdown, aborting IME composition, etc.) — the modal
+    // must stay open. After the field is blurred the next ESC closes it.
+    const wrapper = mountModal()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    const events = wrapper.emitted('update:modelValue') ?? []
+    expect(events).toEqual([])
+  })
+
+  it('does NOT close on ESC while focus is in a textarea or select', async () => {
+    const wrapper = mountModal()
+    const textarea = document.createElement('textarea')
+    const select = document.createElement('select')
+    document.body.appendChild(textarea)
+    document.body.appendChild(select)
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    select.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    const events = wrapper.emitted('update:modelValue') ?? []
+    expect(events).toEqual([])
+  })
 })
 
 describe('Modal — softBackdrop=true', () => {

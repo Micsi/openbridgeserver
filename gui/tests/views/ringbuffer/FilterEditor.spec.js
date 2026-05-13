@@ -237,15 +237,68 @@ describe('FilterEditor (#436)', () => {
     expect(wrapper.text()).toMatch(/AND/i)
   })
 
-  it('disables both Save buttons when the FilterCriteria is empty', async () => {
+  it('disables the Save button when the FilterCriteria is empty', async () => {
+    // The plain "Speichern" button has been removed — "Speichern & in
+    // Topleiste" is now the sole save action and is disabled while the
+    // criterion set is empty.
     const { wrapper } = await mountEditor({ props: { setId: null }, leaveEmpty: true })
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('NoFilter')
-    expect(wrapper.find('[data-testid="filter-editor-save"]').element.disabled).toBe(true)
+    expect(wrapper.find('[data-testid="filter-editor-save"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="filter-editor-save-topbar"]').element.disabled).toBe(true)
-    // Adding any criterion enables both buttons.
+    // Adding any criterion enables the button.
     await populateMinimalFilter(wrapper)
-    expect(wrapper.find('[data-testid="filter-editor-save"]').element.disabled).toBe(false)
     expect(wrapper.find('[data-testid="filter-editor-save-topbar"]').element.disabled).toBe(false)
+  })
+
+  it('Enter outside a text field triggers Save & in Topleiste', async () => {
+    const ringbufferApi = makeRingbufferApi()
+    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
+    await wrapper.find('[data-testid="filter-editor-name"]').setValue('EnterSave')
+    // Dispatch Enter on the document, target = body (not an input).
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    document.body.dispatchEvent(event)
+    await flushPromises()
+    expect(ringbufferApi.createFilterset).toHaveBeenCalledTimes(1)
+    expect(ringbufferApi.patchFiltersetTopbar).toHaveBeenCalledWith('fs-new', { topbar_active: true })
+  })
+
+  it('Enter inside a text field does NOT trigger Save (native field behaviour wins)', async () => {
+    const ringbufferApi = makeRingbufferApi()
+    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
+    const nameInput = wrapper.find('[data-testid="filter-editor-name"]')
+    await nameInput.setValue('Typing')
+    // Dispatch Enter with the name input as target.
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    nameInput.element.dispatchEvent(event)
+    await flushPromises()
+    expect(ringbufferApi.createFilterset).not.toHaveBeenCalled()
+  })
+
+  it('Enter while the filter is empty does not save', async () => {
+    const ringbufferApi = makeRingbufferApi()
+    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi, leaveEmpty: true })
+    await wrapper.find('[data-testid="filter-editor-name"]').setValue('NoCriteria')
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    document.body.dispatchEvent(event)
+    await flushPromises()
+    expect(ringbufferApi.createFilterset).not.toHaveBeenCalled()
+  })
+
+  it('ESC inside a text field blurs the field without closing the editor', async () => {
+    const ringbufferApi = makeRingbufferApi()
+    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
+    const nameInput = wrapper.find('[data-testid="filter-editor-name"]')
+    nameInput.element.focus()
+    expect(document.activeElement).toBe(nameInput.element)
+    const before = (wrapper.emitted('update:modelValue') ?? []).length
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    nameInput.element.dispatchEvent(event)
+    await flushPromises()
+    // Field has lost focus
+    expect(document.activeElement).not.toBe(nameInput.element)
+    // No additional close emit was triggered by this ESC
+    const after = wrapper.emitted('update:modelValue') ?? []
+    expect(after.length).toBe(before)
   })
 
   it('renders an expand button next to each Hierarchy chip', async () => {
@@ -328,7 +381,7 @@ describe('FilterEditor (#436)', () => {
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('Neu')
     await wrapper.find('[data-testid="filter-editor-description"]').setValue('Desc')
     await wrapper.find('[data-testid="filter-editor-q"]').setValue('xyz')
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     expect(ringbufferApi.createFilterset).toHaveBeenCalledTimes(1)
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
@@ -352,7 +405,7 @@ describe('FilterEditor (#436)', () => {
     })
     const { wrapper } = await mountEditor({ props: { setId: 'fs-1' }, ringbufferApi })
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('Heizung 2')
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     expect(ringbufferApi.updateFilterset).toHaveBeenCalledTimes(1)
     expect(ringbufferApi.updateFilterset.mock.calls[0][0]).toBe('fs-1')
@@ -416,7 +469,7 @@ describe('FilterEditor (#436)', () => {
     expect(swatches.length).toBeGreaterThanOrEqual(2)
     const target = swatches.find((s) => s.attributes('data-color') === '#f59e0b') || swatches[1]
     await target.trigger('click')
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     expect(ringbufferApi.createFilterset).toHaveBeenCalledTimes(1)
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
@@ -430,7 +483,7 @@ describe('FilterEditor (#436)', () => {
     await wrapper.find('[data-testid="filter-editor-value-type"]').setValue('number')
     await wrapper.find('[data-testid="filter-editor-value-operator"]').setValue('gt')
     await wrapper.find('[data-testid="filter-editor-value-input"]').setValue('42')
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
     expect(payload.filter.value_filter).toMatchObject({ operator: 'gt', value: 42 })
@@ -440,7 +493,7 @@ describe('FilterEditor (#436)', () => {
     const ringbufferApi = makeRingbufferApi()
     const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('Save Me')
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     expect(wrapper.emitted('saved')).toBeTruthy()
   })
@@ -448,7 +501,7 @@ describe('FilterEditor (#436)', () => {
   it('shows a validation error when saving without a name', async () => {
     const ringbufferApi = makeRingbufferApi()
     const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     expect(ringbufferApi.createFilterset).not.toHaveBeenCalled()
     expect(wrapper.find('[data-testid="filter-editor-error"]').text()).toMatch(/Name/i)
@@ -468,7 +521,7 @@ describe('FilterEditor (#436)', () => {
     })
     const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('X')
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-testid="filter-editor-error"]').text()).toContain('nope')
     // Modal must remain open on failure
@@ -483,7 +536,7 @@ describe('FilterEditor (#436)', () => {
     await wrapper.find('[data-testid="filter-editor-value-operator"]').setValue('between')
     await wrapper.find('[data-testid="filter-editor-value-lower"]').setValue('10')
     await wrapper.find('[data-testid="filter-editor-value-upper"]').setValue('20')
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
     expect(payload.filter.value_filter).toMatchObject({ operator: 'between', lower: 10, upper: 20 })
@@ -497,7 +550,7 @@ describe('FilterEditor (#436)', () => {
     await wrapper.find('[data-testid="filter-editor-value-operator"]').setValue('regex')
     await wrapper.find('[data-testid="filter-editor-value-pattern"]').setValue('^temp')
     await wrapper.find('[data-testid="filter-editor-value-ignore-case"]').setValue(true)
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
     expect(payload.filter.value_filter).toMatchObject({ operator: 'regex', pattern: '^temp', ignore_case: true })
@@ -521,7 +574,7 @@ describe('FilterEditor (#436)', () => {
     const { wrapper } = await mountEditor({ props: { setId: 'fs-1' }, ringbufferApi })
     expect(wrapper.find('[data-testid="filter-editor-value-operator"]').element.value).toBe('gt')
     expect(wrapper.find('[data-testid="filter-editor-value-input"]').element.value).toBe('5')
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.updateFilterset.mock.calls[0][1]
     expect(payload.filter.value_filter).toMatchObject({ operator: 'gt', value: 5 })
@@ -555,7 +608,7 @@ describe('FilterEditor (#436)', () => {
     await hierStub.vm.$emit('update:modelValue', ['t1:n1', 't1:n2'])
     await flushPromises()
 
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
     expect(payload.filter.tags).toEqual(['heating', 'lighting'])
@@ -618,7 +671,7 @@ describe('FilterEditor (#436)', () => {
     const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('Flags')
     await wrapper.find('[data-testid="filter-editor-active"]').setValue(false)
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.createFilterset.mock.calls[0][0]
     expect(payload.is_active).toBe(false)
@@ -644,7 +697,7 @@ describe('FilterEditor (#436)', () => {
     const hierStub = wrapper.findComponent({ name: 'HierarchyCombobox' })
     await hierStub.vm.$emit('update:modelValue', ['t1:n1'])
     await flushPromises()
-    await wrapper.find('[data-testid="filter-editor-save"]').trigger('click')
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
     await flushPromises()
     const payload = ringbufferApi.updateFilterset.mock.calls[0][1]
     expect(payload.filter.hierarchy_nodes[0]).toMatchObject({
