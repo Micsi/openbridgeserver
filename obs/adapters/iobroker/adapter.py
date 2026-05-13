@@ -335,18 +335,41 @@ class IoBrokerAdapter(AdapterBase):
             sio = self._build_socket()
             self._socket = sio
             try:
-                try:
-                    await sio.connect(self._connect_url, wait_timeout=10, **self._connect_kwargs)
-                except TypeError:
-                    v4_kwargs = dict(self._connect_kwargs)
-                    v4_kwargs.pop("auth", None)
-                    await sio.connect(self._connect_url, **v4_kwargs)
+                await self._connect_with_kwargs(sio, self._connect_kwargs)
                 return True
-            except Exception:
+            except Exception as exc:
+                if self._should_retry_with_websocket(exc):
+                    logger.warning("ioBroker Socket.IO polling handshake failed; retrying with websocket transport")
+                    fallback_kwargs = dict(self._connect_kwargs)
+                    fallback_kwargs["transports"] = ["websocket"]
+                    fallback_sio = self._build_socket()
+                    self._socket = fallback_sio
+                    try:
+                        await self._connect_with_kwargs(fallback_sio, fallback_kwargs)
+                        self._connect_kwargs = fallback_kwargs
+                        return True
+                    except Exception:
+                        if self._socket is fallback_sio:
+                            self._socket = None
+                        logger.exception("ioBroker Socket.IO websocket fallback failed")
+                        return False
                 if self._socket is sio:
                     self._socket = None
                 logger.exception("ioBroker Socket.IO connection failed")
                 return False
+
+    async def _connect_with_kwargs(self, sio: Any, connect_kwargs: dict[str, Any]) -> None:
+        assert self._connect_url is not None
+        try:
+            await sio.connect(self._connect_url, wait_timeout=10, **connect_kwargs)
+        except TypeError:
+            v4_kwargs = dict(connect_kwargs)
+            v4_kwargs.pop("auth", None)
+            await sio.connect(self._connect_url, **v4_kwargs)
+
+    @staticmethod
+    def _should_retry_with_websocket(exc: Exception) -> bool:
+        return "OPEN packet not returned by server" in str(exc)
 
     async def _reconnect_loop(self) -> None:
         assert self._cfg is not None
