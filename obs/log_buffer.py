@@ -57,6 +57,8 @@ class LogBufferHandler(logging.Handler):
 
 def _broadcast_nowait(entry: dict[str, Any]) -> None:
     """Schedule a WS broadcast without awaiting it (called from call_soon_threadsafe)."""
+    if _loop is None or not _loop.is_running():
+        return
     try:
         from obs.api.v1.websocket import get_ws_manager
 
@@ -64,4 +66,4 @@ def _broadcast_nowait(entry: dict[str, Any]) -> None:
     except RuntimeError:
         # WS manager not yet initialised (early startup log records) — drop silently.
         return
-    asyncio.ensure_future(manager.broadcast({"action": "log_entry", "entry": entry}))
+    _loop.create_task(manager.broadcast({"action": "log_entry", "entry": entry}))

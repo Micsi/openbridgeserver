@@ -18,11 +18,23 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def clear_buffer():
-    """Reset the module-level deque before each test."""
-    from obs.log_buffer import _buffer
+    """Reset the module-level deque and remove stray root-logger handlers before each test.
 
+    Integration tests may leave a LogBufferHandler on the root logger. Without cleanup,
+    log messages propagate to it and produce duplicate buffer entries in unit tests.
+    """
+    from obs.log_buffer import LogBufferHandler, _buffer
+
+    def _remove_handlers():
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            if isinstance(h, LogBufferHandler):
+                root.removeHandler(h)
+
+    _remove_handlers()
     _buffer.clear()
     yield
+    _remove_handlers()
     _buffer.clear()
 
 
