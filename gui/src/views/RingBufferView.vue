@@ -118,7 +118,7 @@ import { ringbufferApi } from '@/api/client'
 import { useTz } from '@/composables/useTz'
 import { useSetColors } from '@/composables/useSetColors'
 import { useLiveQueue } from '@/composables/useLiveQueue'
-import { timeFilterToPayload } from '@/composables/useTimeFilterPayload'
+import { timeFilterToPayload, entryInTimeWindow } from '@/composables/useTimeFilterPayload'
 import { matchedSetIds } from '@/composables/useClientSideMatch'
 import { useWebSocketStore } from '@/stores/websocket'
 import Badge from '@/components/ui/Badge.vue'
@@ -259,6 +259,13 @@ function buildQueryV2() {
 }
 
 function onLiveEntry(entry) {
+  // First gate: honor the active TimeFilterPopover. Entries outside the
+  // resolved window are dropped — a fixed past window or a point ± span
+  // window in the past therefore produces a static table, matching user
+  // expectation. Open-ended/sliding windows (e.g. `from=-1h` with no
+  // `to`) still keep current entries flowing.
+  if (!entryInTimeWindow(entry, timeFilter.value)) return
+
   // Three branches:
   //   1. No active topbar sets → unfiltered live feed (legacy behaviour).
   //   2. Entry already carries matched_set_ids from the server → trust them

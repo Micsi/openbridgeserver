@@ -136,6 +136,100 @@ describe('RingBufferView — live-entry matching (#36 follow-up)', () => {
   })
 })
 
+describe('RingBufferView — live entries honor the active time filter', () => {
+  // Bug (post-#432): with TimeFilterPopover set to a fixed past window or
+  // a point ± span window, the table still kept growing because live WS
+  // entries (timestamp ≈ now) were enqueued unconditionally. The fix
+  // gates onLiveEntry through entryInTimeWindow so a closed past window
+  // produces a static list — matching user expectation.
+
+  function liveAtNow(overrides = {}) {
+    // ts close to "now" so it falls outside any small past window the test sets.
+    return {
+      id: 42,
+      ts: new Date().toISOString(),
+      datapoint_id: 'dp-live',
+      name: 'Live DP',
+      new_value: 1,
+      old_value: 0,
+      source_adapter: 'knx',
+      unit: '°C',
+      quality: 'good',
+      metadata: { tags: [] },
+      ...overrides,
+    }
+  }
+
+  it('drops a live "now" entry when the time filter is a fixed past window', async () => {
+    const ringbufferApi = makeRingbufferApiMock()
+    const { wrapper, emitLive } = await mountRingBufferView({ ringbufferApi })
+    await flushPromises()
+
+    // Apply a closed window in the past (well before "now").
+    const popover = wrapper.findComponent({ name: 'TimeFilterPopover' })
+    const from = new Date('2020-01-01T10:00:00Z')
+    const to = new Date('2020-01-01T11:00:00Z')
+    await popover.vm.$emit('update:modelValue', { mode: 'range', from, to })
+    await flushPromises()
+
+    emitLive(liveAtNow())
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 120))
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="ringbuffer-entry"]')
+    expect(rows.length).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('drops a live "now" entry when the time filter is point ± span in the past', async () => {
+    const ringbufferApi = makeRingbufferApiMock()
+    const { wrapper, emitLive } = await mountRingBufferView({ ringbufferApi })
+    await flushPromises()
+
+    const popover = wrapper.findComponent({ name: 'TimeFilterPopover' })
+    await popover.vm.$emit('update:modelValue', {
+      mode: 'point',
+      point: new Date('2020-01-01T12:00:00Z'),
+      span: { seconds: 600, sign: 1 },
+    })
+    await flushPromises()
+
+    emitLive(liveAtNow())
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 120))
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="ringbuffer-entry"]')
+    expect(rows.length).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('keeps live entries flowing for an open-ended past window (relative `from` only)', async () => {
+    // -1h with no `to` is a sliding window whose upper bound is "now" —
+    // current live entries belong inside it and must keep appearing.
+    const ringbufferApi = makeRingbufferApiMock()
+    const { wrapper, emitLive } = await mountRingBufferView({ ringbufferApi })
+    await flushPromises()
+
+    const popover = wrapper.findComponent({ name: 'TimeFilterPopover' })
+    await popover.vm.$emit('update:modelValue', {
+      mode: 'range',
+      from: { seconds: 3600, sign: -1 },
+    })
+    await flushPromises()
+
+    emitLive(liveAtNow())
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 120))
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="ringbuffer-entry"]')
+    expect(rows.length).toBe(1)
+    wrapper.unmount()
+  })
+})
+
 describe('RingBufferView — single status indicator (#36 follow-up)', () => {
   it('renders exactly one "Live"/"Pausiert"/"Offline" status badge in the topbar', async () => {
     const ringbufferApi = makeRingbufferApiMock()

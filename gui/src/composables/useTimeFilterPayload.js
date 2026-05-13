@@ -49,3 +49,58 @@ export function timeFilterToPayload(filter) {
 
   return Object.keys(time).length ? time : null
 }
+
+/**
+ * Decide whether a live WebSocket entry should be shown given the active
+ * TimeFilterPopover state. Returns true to keep, false to drop.
+ *
+ * Background — RingBufferView.onLiveEntry used to enqueue every WS entry
+ * unconditionally. With a fixed past time window or a point ± span
+ * window, that meant live pushes (timestamp ≈ now) kept appearing on top
+ * even though they were clearly outside the user's configured window.
+ * This helper closes that gap.
+ *
+ * Semantics:
+ *   - No filter → pass.
+ *   - Range mode: entry.ts in [from, to]; empty bound = unconstrained on
+ *     that side; relative duration bounds ({seconds, sign}) resolve
+ *     against `nowMs` at call time (so sliding windows keep working).
+ *   - Point mode: entry.ts in [point - span, point + span]; missing span
+ *     collapses to a single instant.
+ *   - Entry without a parseable ts → pass (we can't decide, so don't drop).
+ *
+ * @param {{ ts?: string }} entry
+ * @param {Record<string, any> | null | undefined} filter
+ * @param {number} [nowMs=Date.now()]
+ * @returns {boolean}
+ */
+export function entryInTimeWindow(entry, filter, nowMs = Date.now()) {
+  if (!filter) return true
+  const ts = entry?.ts ? Date.parse(entry.ts) : NaN
+  if (!Number.isFinite(ts)) return true
+
+  function resolveBound(bound) {
+    if (!bound) return null
+    if (bound instanceof Date) return bound.getTime()
+    if (Number.isFinite(bound.seconds)) {
+      const sign = bound.sign === -1 ? -1 : 1
+      return nowMs + sign * bound.seconds * 1000
+    }
+    return null
+  }
+
+  if (filter.mode === 'point') {
+    const pointMs = resolveBound(filter.point)
+    if (pointMs === null) return true
+    const spanSeconds = Number.isFinite(filter.span?.seconds) ? filter.span.seconds : 0
+    const lower = pointMs - spanSeconds * 1000
+    const upper = pointMs + spanSeconds * 1000
+    return ts >= lower && ts <= upper
+  }
+
+  const fromMs = resolveBound(filter.from)
+  const toMs = resolveBound(filter.to)
+  if (fromMs !== null && ts < fromMs) return false
+  if (toMs !== null && ts > toMs) return false
+  return true
+}
