@@ -156,7 +156,10 @@ describe('TopbarFilterChips', () => {
     await stub.vm.$emit('end')
     await flushPromises()
     expect(api.patchFiltersetOrder).toHaveBeenCalledTimes(1)
-    expect(api.patchFiltersetOrder).toHaveBeenCalledWith(['s-b', 's-a'])
+    expect(api.patchFiltersetOrder).toHaveBeenCalledWith([
+      { id: 's-b', topbar_order: 0 },
+      { id: 's-a', topbar_order: 1 },
+    ])
   })
 
   it('+ Filter dropdown only lists sets that are not topbar-active', async () => {
@@ -266,7 +269,7 @@ describe('TopbarFilterChips', () => {
     ])
     await stub.vm.$emit('end')
     await flushPromises()
-    expect(api.patchFiltersetOrder).toHaveBeenCalledWith(['single'])
+    expect(api.patchFiltersetOrder).toHaveBeenCalledWith([{ id: 'single', topbar_order: 0 }])
     // The single chip remains rendered.
     expect(wrapper.find('[data-testid="topbar-chip-body-single"]').exists()).toBe(true)
   })
@@ -284,7 +287,10 @@ describe('TopbarFilterChips', () => {
     await stub.vm.$emit('update:modelValue', unchanged)
     await stub.vm.$emit('end')
     await flushPromises()
-    expect(api.patchFiltersetOrder).toHaveBeenCalledWith(['s-a', 's-b'])
+    expect(api.patchFiltersetOrder).toHaveBeenCalledWith([
+      { id: 's-a', topbar_order: 0 },
+      { id: 's-b', topbar_order: 1 },
+    ])
     expect(wrapper.emitted('changed')).toBeTruthy()
   })
 

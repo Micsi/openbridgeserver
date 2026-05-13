@@ -185,7 +185,9 @@ async def test_filterset_color_validation_accepts_hex_variants(client, auth_head
             {
                 "name": f"RB color {color} {uuid.uuid4()}",
                 "color": color,
-                "filter": {},
+                # Backend rejects empty FilterCriteria — add a marker tag so
+                # the colour-validation path is exercised in isolation.
+                "filter": {"tags": ["rb-color-test"]},
             },
         )
         try:
@@ -249,12 +251,12 @@ async def test_patch_order_batch(client, auth_headers):
     a = await _create_filterset(
         client,
         auth_headers,
-        {"name": f"RB Order A {uuid.uuid4()}", "topbar_order": 0, "filter": {}},
+        {"name": f"RB Order A {uuid.uuid4()}", "topbar_order": 0, "filter": {"tags": ["rb-order-test"]}},
     )
     b = await _create_filterset(
         client,
         auth_headers,
-        {"name": f"RB Order B {uuid.uuid4()}", "topbar_order": 0, "filter": {}},
+        {"name": f"RB Order B {uuid.uuid4()}", "topbar_order": 0, "filter": {"tags": ["rb-order-test"]}},
     )
     try:
         resp = await client.patch(

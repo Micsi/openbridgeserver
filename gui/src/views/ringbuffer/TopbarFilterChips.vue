@@ -42,6 +42,12 @@
           class="px-2 py-1 text-sm text-slate-800 dark:text-slate-100 hover:underline focus:outline-none"
           @click.stop="$emit('edit-set', set.id)"
         >
+          <span
+            v-if="isEmptyFilter(set.filter)"
+            :data-testid="`topbar-chip-empty-${set.id}`"
+            class="mr-1 text-amber-500"
+            title="Dieses Set hat keinen Filter konfiguriert — die Tabelle bleibt leer, solange das Set aktiv ist."
+          >⚠</span>
           {{ set.name }}
         </button>
         <!-- Remove from topbar -->
@@ -136,6 +142,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import { ringbufferApi } from '@/api/client'
+import { isEmptyFilter } from '@/composables/useClientSideMatch'
 
 const emit = defineEmits(['edit-set', 'new-set', 'changed', 'export'])
 
@@ -215,9 +222,13 @@ async function onAddToTopbar(set) {
 }
 
 async function onDragEnd() {
-  const ids = activeSets.value.map((s) => s.id)
+  // The PATCH /filtersets/order endpoint expects [{id, topbar_order}, ...]
+  // — passing a plain string array yielded a 422 that the catch swallowed,
+  // and the snap-back to the original order was the inevitable consequence
+  // of the subsequent server reload.
+  const items = activeSets.value.map((s, idx) => ({ id: s.id, topbar_order: idx }))
   try {
-    await ringbufferApi.patchFiltersetOrder(ids)
+    await ringbufferApi.patchFiltersetOrder(items)
     emit('changed')
   } catch {
     // Best-effort: reload the truth from the server on failure

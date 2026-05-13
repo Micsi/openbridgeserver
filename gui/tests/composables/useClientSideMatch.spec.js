@@ -23,7 +23,7 @@
  * REST OR-union will still be correct on the next refresh).
  */
 import { describe, it, expect } from 'vitest'
-import { matchEntry } from '@/composables/useClientSideMatch'
+import { matchEntry, isEmptyFilter } from '@/composables/useClientSideMatch'
 
 function makeEntry(overrides = {}) {
   return {
@@ -41,14 +41,44 @@ function makeEntry(overrides = {}) {
   }
 }
 
-describe('matchEntry — empty criteria', () => {
-  it('returns true for an empty FilterCriteria (every entry matches)', () => {
-    expect(matchEntry(makeEntry(), {})).toBe(true)
+describe('matchEntry — empty criteria (matches nothing — #36 semantics)', () => {
+  // The user's expectation: an active topbar set with no filter criteria
+  // should NOT colour every row — it should colour nothing, so the user
+  // notices they still need to configure a filter. Empty/null criteria
+  // therefore match no entry.
+
+  it('returns false for an empty FilterCriteria object', () => {
+    expect(matchEntry(makeEntry(), {})).toBe(false)
   })
 
-  it('returns true when FilterCriteria is null/undefined', () => {
-    expect(matchEntry(makeEntry(), null)).toBe(true)
-    expect(matchEntry(makeEntry(), undefined)).toBe(true)
+  it('returns false when FilterCriteria is null/undefined', () => {
+    expect(matchEntry(makeEntry(), null)).toBe(false)
+    expect(matchEntry(makeEntry(), undefined)).toBe(false)
+  })
+
+  it('returns false when every field is empty/null (the V30-migrated shape)', () => {
+    const empty = { hierarchy_nodes: [], datapoints: [], tags: [], adapters: [], q: null, value_filter: null }
+    expect(matchEntry(makeEntry(), empty)).toBe(false)
+  })
+})
+
+describe('isEmptyFilter helper', () => {
+  it('treats null/undefined/{}/all-empty as empty', () => {
+    expect(isEmptyFilter(null)).toBe(true)
+    expect(isEmptyFilter(undefined)).toBe(true)
+    expect(isEmptyFilter({})).toBe(true)
+    expect(isEmptyFilter({ hierarchy_nodes: [], datapoints: [], tags: [], adapters: [], q: null, value_filter: null })).toBe(true)
+    expect(isEmptyFilter({ q: '' })).toBe(true)
+    expect(isEmptyFilter({ q: '   ' })).toBe(true)
+  })
+
+  it('returns false when any criterion is populated', () => {
+    expect(isEmptyFilter({ datapoints: ['dp-1'] })).toBe(false)
+    expect(isEmptyFilter({ adapters: ['knx'] })).toBe(false)
+    expect(isEmptyFilter({ tags: ['heizung'] })).toBe(false)
+    expect(isEmptyFilter({ q: 'temp' })).toBe(false)
+    expect(isEmptyFilter({ value_filter: { operator: 'eq', value: 1 } })).toBe(false)
+    expect(isEmptyFilter({ hierarchy_nodes: [{ tree_id: 't', node_id: 'n', include_descendants: true }] })).toBe(false)
   })
 })
 
@@ -61,8 +91,12 @@ describe('matchEntry — datapoints (OR)', () => {
     expect(matchEntry(makeEntry({ datapoint_id: 'dp-99' }), { datapoints: ['dp-1', 'dp-7'] })).toBe(false)
   })
 
-  it('matches when the datapoints list is empty (no constraint)', () => {
-    expect(matchEntry(makeEntry(), { datapoints: [] })).toBe(true)
+  it('does NOT match when datapoints list is empty AND no other criterion is set (empty filter semantics)', () => {
+    expect(matchEntry(makeEntry(), { datapoints: [] })).toBe(false)
+  })
+
+  it('matches when datapoints list is empty BUT another criterion is set and passes', () => {
+    expect(matchEntry(makeEntry({ source_adapter: 'knx' }), { datapoints: [], adapters: ['knx'] })).toBe(true)
   })
 })
 
@@ -147,8 +181,18 @@ describe('matchEntry — AND across criteria', () => {
   })
 })
 
-describe('matchEntry — hierarchy pass-through', () => {
-  it('matches even when hierarchy_nodes is set, since the frontend has no resolver', () => {
-    expect(matchEntry(makeEntry(), { hierarchy_nodes: [{ tree_id: 't', node_id: 'n', include_descendants: true }] })).toBe(true)
+describe('matchEntry — hierarchy-only filters', () => {
+  it('returns false when only hierarchy_nodes is populated (no client-evaluable constraint)', () => {
+    // Hierarchy is server-resolved; the frontend cannot tell whether an
+    // entry belongs to a node, so a hierarchy-only filter does not match
+    // on the client (live pushes stay uncoloured until next REST refresh).
+    expect(matchEntry(makeEntry(), { hierarchy_nodes: [{ tree_id: 't', node_id: 'n', include_descendants: true }] })).toBe(false)
+  })
+
+  it('matches when hierarchy_nodes is set alongside a client-evaluable criterion that accepts the entry', () => {
+    expect(matchEntry(makeEntry({ source_adapter: 'knx' }), {
+      hierarchy_nodes: [{ tree_id: 't', node_id: 'n', include_descendants: true }],
+      adapters: ['knx'],
+    })).toBe(true)
   })
 })

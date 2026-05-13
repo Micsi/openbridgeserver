@@ -235,6 +235,22 @@ class FilterCriteria(BaseModel):
     value_filter: RingBufferValueFilterV2 | None = None
 
 
+def _is_empty_criteria(c: FilterCriteria | None) -> bool:
+    """A FilterCriteria with no populated field. Used to skip ad-hoc sets
+    that have no filter configured yet — UX feedback (#36): such a set must
+    show *nothing* in the table, not *everything*.
+    """
+    if c is None:
+        return True
+    if c.hierarchy_nodes or c.datapoints or c.tags or c.adapters:
+        return False
+    if c.q and c.q.strip():
+        return False
+    if c.value_filter and c.value_filter.operator:
+        return False
+    return True
+
+
 def _color_must_be_hex(value: str) -> str:
     if not isinstance(value, str) or not _COLOR_RE.match(value):
         raise ValueError("color must be a hex color like #3b82f6 or #abc")
@@ -408,6 +424,53 @@ def _encode_filter(filter_: FilterCriteria) -> str:
 
 def _normalize_color(value: str | None) -> str:
     return value if isinstance(value, str) and _COLOR_RE.match(value) else _DEFAULT_COLOR
+
+
+async def _resolve_hierarchy_to_datapoints(
+    hierarchy_nodes: list[NodeRef],
+    db: Database,
+) -> list[str]:
+    """Resolve a list of hierarchy node references to the concrete DataPoint IDs
+    linked under them.
+
+    - When ``include_descendants`` is True (default), the entire sub-tree rooted
+      at the node is walked via a SQLite recursive CTE and every DP linked to
+      *any* node within the sub-tree is returned.
+    - When ``include_descendants`` is False, only DPs directly linked to the
+      node itself are returned.
+
+    The result is de-duplicated. Unknown / deleted nodes are silently skipped.
+    Returns an empty list when ``hierarchy_nodes`` is empty.
+    """
+    if not hierarchy_nodes:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for node in hierarchy_nodes:
+        if node.include_descendants:
+            rows = await db.fetchall(
+                """WITH RECURSIVE subtree(id) AS (
+                       SELECT id FROM hierarchy_nodes WHERE id = ?
+                       UNION ALL
+                       SELECT hn.id FROM hierarchy_nodes hn
+                       JOIN subtree st ON hn.parent_id = st.id
+                   )
+                   SELECT DISTINCT hdl.datapoint_id AS dp_id
+                   FROM hierarchy_datapoint_links hdl
+                   WHERE hdl.node_id IN (SELECT id FROM subtree)""",
+                (node.node_id,),
+            )
+        else:
+            rows = await db.fetchall(
+                "SELECT DISTINCT datapoint_id AS dp_id FROM hierarchy_datapoint_links WHERE node_id = ?",
+                (node.node_id,),
+            )
+        for row in rows:
+            dp_id = row["dp_id"]
+            if dp_id not in seen:
+                seen.add(dp_id)
+                out.append(dp_id)
+    return out
 
 
 def _filter_to_query_v2(filter_: FilterCriteria, time: RingBufferTimeFilterV2 | None) -> RingBufferQueryV2:
@@ -849,6 +912,11 @@ async def create_ringbuffer_filterset(
 ) -> RingBufferFiltersetOut:
     raw = await _read_json_body(request)
     payload = _parse_filterset_in(raw)
+    if _is_empty_criteria(payload.filter):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "filterset.filter must declare at least one criterion (hierarchy_nodes, datapoints, tags, adapters, q, or value_filter)",
+        )
     return await _insert_filterset(db, payload=payload)
 
 
@@ -893,6 +961,12 @@ async def update_ringbuffer_filterset(
     topbar_active = body.topbar_active if body.topbar_active is not None else current.topbar_active
     topbar_order = body.topbar_order if body.topbar_order is not None else current.topbar_order
     new_filter = body.filter if body.filter is not None else current.filter
+
+    if _is_empty_criteria(new_filter):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "filterset.filter must declare at least one criterion (hierarchy_nodes, datapoints, tags, adapters, q, or value_filter)",
+        )
 
     await db.execute(
         """UPDATE ringbuffer_filtersets
@@ -1011,6 +1085,20 @@ async def patch_ringbuffer_filterset_topbar(
     topbar_active = body.topbar_active if body.topbar_active is not None else current.topbar_active
     topbar_order = body.topbar_order if body.topbar_order is not None else current.topbar_order
     is_active = body.is_active if body.is_active is not None else current.is_active
+
+    # When the set transitions from "not in topbar" to "in topbar" *and* the
+    # caller did not pin an explicit order, assign one that ranks the new
+    # set after every currently topbar-active set. This avoids many sets
+    # piling up at topbar_order=0, which breaks the deterministic first-
+    # color-wins tie-break in the UI and confuses drag-and-drop reordering.
+    if topbar_active and not current.topbar_active and body.topbar_order is None:
+        max_row = await db.fetchone(
+            "SELECT COALESCE(MAX(topbar_order), -1) AS max_order FROM ringbuffer_filtersets WHERE topbar_active=1 AND id != ?",
+            (filterset_id,),
+        )
+        max_order = int(max_row["max_order"]) if max_row else -1
+        topbar_order = max_order + 1
+
     now = _now_iso()
     await db.execute_and_commit(
         "UPDATE ringbuffer_filtersets SET topbar_active=?, topbar_order=?, is_active=?, updated_at=? WHERE id=?",
@@ -1065,6 +1153,11 @@ async def query_ringbuffer_filtersets_multi(
             continue
         if not current.is_active:
             continue
+        # Empty FilterCriteria → no real filter configured yet. Skip so the
+        # user sees the empty result (#36 UX): topbar chip will show the
+        # warn marker so the misconfiguration is obvious.
+        if _is_empty_criteria(current.filter):
+            continue
         resolved.append(current)
 
     # Per-set query, generously paginated; OR-union by entry id and remember
@@ -1073,7 +1166,18 @@ async def query_ringbuffer_filtersets_multi(
     matched: dict[int, list[str]] = {}
     entries_by_id: dict[int, RingBufferEntryOut] = {}
     for fs in resolved:
-        query = _filter_to_query_v2(fs.filter, body.time)
+        # Resolve hierarchy_nodes to their concrete DataPoints (rec. via the
+        # subtree CTE) and OR-union them with the explicit datapoints list.
+        # This makes a hierarchy-only filter actually match rows in the
+        # ringbuffer; previously hierarchy_nodes was persisted but ignored
+        # on the server side.
+        effective_filter = fs.filter
+        if fs.filter.hierarchy_nodes:
+            resolved_dps = await _resolve_hierarchy_to_datapoints(fs.filter.hierarchy_nodes, db)
+            if resolved_dps:
+                merged = list({*fs.filter.datapoints, *resolved_dps})
+                effective_filter = fs.filter.model_copy(update={"datapoints": merged})
+        query = _filter_to_query_v2(effective_filter, body.time)
         query = query.model_copy(
             update={
                 "sort": body.sort,
@@ -1173,12 +1277,25 @@ async def _collect_multi_entries(
         current = await _fetch_filterset(db, set_id)
         if current is None or not current.is_active:
             continue
+        # Empty FilterCriteria → the set has no real filter configured yet.
+        # Treat it as a no-op so the user sees an empty table (and the chip
+        # warn-icon in the UI) rather than every row being painted (#36).
+        if _is_empty_criteria(current.filter):
+            continue
         resolved.append(current)
 
     matched: dict[int, list[str]] = {}
     entries_by_id: dict[int, RingBufferEntryOut] = {}
     for fs in resolved:
-        query = _filter_to_query_v2(fs.filter, body.time)
+        # Resolve hierarchy_nodes to concrete DPs (see the multi-query helper
+        # for rationale). Same recursive-subtree pattern.
+        effective_filter = fs.filter
+        if fs.filter.hierarchy_nodes:
+            resolved_dps = await _resolve_hierarchy_to_datapoints(fs.filter.hierarchy_nodes, db)
+            if resolved_dps:
+                merged = list({*fs.filter.datapoints, *resolved_dps})
+                effective_filter = fs.filter.model_copy(update={"datapoints": merged})
+        query = _filter_to_query_v2(effective_filter, body.time)
         query = query.model_copy(
             update={
                 "pagination": query.pagination.model_copy(

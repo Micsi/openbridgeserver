@@ -98,6 +98,7 @@
       <section class="flex flex-col gap-1">
         <label class="text-xs text-slate-500">Datenpunkte</label>
         <DpCombobox
+          :multi="true"
           :model-value="form.datapoints"
           data-testid="filter-editor-dps"
           @update:model-value="onDpsChange"
@@ -230,13 +231,19 @@
     </div>
 
     <template #footer>
-      <p class="text-xs text-slate-500 mr-auto self-center" data-testid="filter-editor-semantics-hint">
-        Innerhalb des Sets: Hierarchy OR DP, alle anderen Kriterien AND-verknüpft.
+      <p class="text-xs mr-auto self-center" data-testid="filter-editor-semantics-hint"
+         :class="filterIsEmpty ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'">
+        <span v-if="filterIsEmpty" data-testid="filter-editor-empty-hint">
+          ⚠ Mindestens ein Filterkriterium konfigurieren — sonst kann das Set nicht gespeichert werden.
+        </span>
+        <span v-else>
+          Innerhalb des Sets: Hierarchy OR DP, alle anderen Kriterien AND-verknüpft.
+        </span>
       </p>
       <button class="btn-secondary btn-sm" data-testid="filter-editor-cancel" @click="onCancel">Verwerfen</button>
       <button
         class="btn-secondary btn-sm"
-        :disabled="saving"
+        :disabled="saving || filterIsEmpty"
         data-testid="filter-editor-save-topbar"
         @click="onSave(true)"
       >
@@ -244,7 +251,7 @@
       </button>
       <button
         class="btn-primary btn-sm"
-        :disabled="saving"
+        :disabled="saving || filterIsEmpty"
         data-testid="filter-editor-save"
         @click="onSave(false)"
       >
@@ -271,6 +278,7 @@ import HierarchyCombobox from '@/components/ui/HierarchyCombobox.vue'
 import DpCombobox from '@/components/ui/DpCombobox.vue'
 import TagCombobox from '@/components/ui/TagCombobox.vue'
 import AdapterCombobox from '@/components/ui/AdapterCombobox.vue'
+import { isEmptyFilter } from '@/composables/useClientSideMatch'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -322,6 +330,19 @@ function makeEmptyForm() {
 }
 
 const form = reactive(makeEmptyForm())
+
+// Disable Save when the filter has no populated criteria — matches backend
+// validation (POST/PUT /filtersets reject empty FilterCriteria with 422).
+const filterIsEmpty = computed(() =>
+  isEmptyFilter({
+    hierarchy_nodes: form.hierarchy_nodes,
+    datapoints: form.datapoints,
+    tags: form.tags,
+    adapters: form.adapters,
+    q: form.q,
+    value_filter: form.valueOperator ? { operator: form.valueOperator } : null,
+  }),
+)
 const errorMsg = ref('')
 const saving = ref(false)
 const dirty = ref(false)

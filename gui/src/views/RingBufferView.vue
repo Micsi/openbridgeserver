@@ -167,9 +167,12 @@ function onNewSet() {
 
 async function onFilterEditorSaved() {
   // Re-fetch filtersets so the topbar chips reflect any changes (rename,
-  // color, topbar membership, etc.). Also refresh the local select-list.
+  // color, topbar membership, etc.). Also refresh the local select-list and
+  // re-run the table query so the filter change becomes visible without a
+  // page reload (#36 follow-up bug fix).
   await loadFiltersets()
   topbarChipsRef.value?.reload?.()
+  await load()
 }
 
 async function onTopbarChanged() {
@@ -256,24 +259,27 @@ function buildQueryV2() {
 }
 
 function onLiveEntry(entry) {
-  // Match live entries client-side against the active topbar sets so the
-  // table behaves like the REST OR-union response: rows that no active set
-  // matches are dropped, rows that match are coloured (#36 follow-up).
-  //
-  // Hierarchy filters are pass-through on the client (the frontend has no
-  // hierarchy resolver); a set with only hierarchy filters therefore counts
-  // as a match for every live entry.
+  // Three branches:
+  //   1. No active topbar sets → unfiltered live feed (legacy behaviour).
+  //   2. Entry already carries matched_set_ids from the server → trust them
+  //      (future-compatible path for when the WS push starts including the
+  //      match annotation; the row-color spec exercises this case).
+  //   3. Active sets present and entry has no preset → client-side match.
+  //      Empty FilterCriteria match nothing (#36 semantics, see useClientSideMatch);
+  //      an entry that matches none of the active sets is dropped.
   const activeSets = filtersets.value.filter((s) => s.topbar_active && s.is_active !== false)
+  const presetMatched = Array.isArray(entry?.matched_set_ids) ? entry.matched_set_ids : null
+
   if (activeSets.length === 0) {
-    // No filtering active → unfiltered live feed as before, unmatched colour.
-    enqueueLive({ ...entry, matched_set_ids: Array.isArray(entry?.matched_set_ids) ? entry.matched_set_ids : [] })
+    enqueueLive({ ...entry, matched_set_ids: presetMatched ?? [] })
+    return
+  }
+  if (presetMatched && presetMatched.length > 0) {
+    enqueueLive({ ...entry, matched_set_ids: presetMatched })
     return
   }
   const ids = matchedSetIds(entry, activeSets)
-  if (ids.length === 0) {
-    // Active filters present but the entry matches none — drop it.
-    return
-  }
+  if (ids.length === 0) return
   enqueueLive({ ...entry, matched_set_ids: ids })
 }
 

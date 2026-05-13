@@ -21,6 +21,22 @@ function _arrayIncludes(list, value) {
   return Array.isArray(list) && list.length > 0 && list.includes(value)
 }
 
+/**
+ * Returns true if the given FilterCriteria has no populated field — all lists
+ * empty (or absent), `q` null/whitespace, `value_filter` null/missing.
+ */
+export function isEmptyFilter(criteria) {
+  if (!criteria || typeof criteria !== 'object') return true
+  const hasList = (key) => Array.isArray(criteria[key]) && criteria[key].length > 0
+  if (hasList('hierarchy_nodes')) return false
+  if (hasList('datapoints')) return false
+  if (hasList('tags')) return false
+  if (hasList('adapters')) return false
+  if (typeof criteria.q === 'string' && criteria.q.trim().length > 0) return false
+  if (criteria.value_filter && criteria.value_filter.operator) return false
+  return true
+}
+
 function _matchValueFilter(entryValue, vf) {
   if (!vf || !vf.operator) return true
   const op = vf.operator
@@ -54,12 +70,30 @@ function _matchValueFilter(entryValue, vf) {
 }
 
 /**
- * Returns true iff the entry matches every populated criterion.
- * An empty/null/undefined criteria object matches every entry.
+ * Returns true iff at least one *client-evaluable* criterion is populated AND
+ * every populated criterion accepts the entry.
+ *
+ * Empty / null / undefined criteria match NOTHING (Phase-2 UX feedback).
+ *
+ * Hierarchy-only filters also match NOTHING on the client: the frontend has
+ * no hierarchy resolver, and silently accepting every entry would colour
+ * unrelated rows (e.g. a Wetterstation push would inherit a hierarchy set's
+ * colour). The REST OR-union already does the right thing using the server's
+ * recursive node-DP resolution, so the next refresh shows real matches; live
+ * pushes for hierarchy-only sets stay uncoloured until then.
  */
 export function matchEntry(entry, criteria) {
-  if (!criteria || typeof criteria !== 'object') return true
+  if (!criteria || typeof criteria !== 'object') return false
+  if (isEmptyFilter(criteria)) return false
   if (!entry) return false
+
+  const hasNonHierarchyConstraint =
+    (Array.isArray(criteria.datapoints) && criteria.datapoints.length > 0) ||
+    (Array.isArray(criteria.adapters) && criteria.adapters.length > 0) ||
+    (Array.isArray(criteria.tags) && criteria.tags.length > 0) ||
+    (typeof criteria.q === 'string' && criteria.q.trim().length > 0) ||
+    (criteria.value_filter && criteria.value_filter.operator)
+  if (!hasNonHierarchyConstraint) return false
 
   // datapoints
   if (Array.isArray(criteria.datapoints) && criteria.datapoints.length > 0) {

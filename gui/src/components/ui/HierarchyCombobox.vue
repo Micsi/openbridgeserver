@@ -79,6 +79,23 @@ function buildPathsForTree(tree, rawNodes) {
   }))
 }
 
+/**
+ * Backend /trees/{id}/nodes returns a *nested* tree (each node has a
+ * `children` array). The path builder downstream wants a *flat* list with
+ * `parent_id`, so we walk the nested response and produce that shape.
+ */
+function flattenNested(nested) {
+  const out = []
+  function walk(node) {
+    out.push(node)
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) walk(child)
+    }
+  }
+  for (const root of nested || []) walk(root)
+  return out
+}
+
 async function load() {
   try {
     const { data: trees } = await hierarchyApi.listTrees()
@@ -89,7 +106,10 @@ async function load() {
       trees.map(async (tree) => {
         try {
           const { data: tn } = await hierarchyApi.getTreeNodes(tree.id)
-          if (Array.isArray(tn)) allNodes.push(...buildPathsForTree(tree, tn))
+          if (Array.isArray(tn)) {
+            const flat = flattenNested(tn)
+            allNodes.push(...buildPathsForTree(tree, flat))
+          }
         } catch {
           /* swallow per-tree errors */
         }

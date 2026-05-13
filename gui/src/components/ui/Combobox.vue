@@ -233,8 +233,12 @@ function select(item) {
     emit('update:modelValue', next)
     emit('select', item)
     query.value = ''
-    // keep dropdown open so the user can add more
-    activeIndex.value = -1
+    // Close the dropdown after each pick — leaving it open caused it to
+    // visually overlap the next field below (e.g. DataPoints under
+    // Hierarchy-Knoten) and stray clicks landed on the wrong combobox.
+    // User re-opens by focusing the input again, which feels natural in a
+    // form with multiple comboboxes stacked vertically.
+    close()
     return
   }
   emit('update:modelValue', item.id)

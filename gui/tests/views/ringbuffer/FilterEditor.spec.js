@@ -125,7 +125,16 @@ function stubCombobox(name, multi) {
   })
 }
 
-async function mountEditor({ props = {}, ringbufferApi, searchApi, hierarchyApi } = {}) {
+/** Emit a single tag through the TagCombobox stub so the form has at least
+ *  one populated criterion (the editor refuses to save an empty filter). */
+async function populateMinimalFilter(wrapper, tags = ['heizung']) {
+  const emitBtn = wrapper.find('[data-testid="stub-TagCombobox-emit"]')
+  emitBtn.element.setAttribute('data-emit-value', JSON.stringify(tags))
+  await emitBtn.trigger('click')
+  await wrapper.vm.$nextTick()
+}
+
+async function mountEditor({ props = {}, ringbufferApi, searchApi, hierarchyApi, leaveEmpty = false } = {}) {
   ringbufferApi = ringbufferApi ?? makeRingbufferApi()
   searchApi = searchApi ?? makeSearchApi()
   hierarchyApi = hierarchyApi ?? makeHierarchyApi()
@@ -188,6 +197,14 @@ async function mountEditor({ props = {}, ringbufferApi, searchApi, hierarchyApi 
   await wrapper.vm.$nextTick()
   await flushPromises()
 
+  // When the editor opens with setId=null the form is empty, which now
+  // disables Save (empty FilterCriteria cannot be persisted). Seed a single
+  // tag so save-related tests can exercise the submit path. Specs that want
+  // to assert the empty-state explicitly pass `leaveEmpty: true`.
+  if (!leaveEmpty && (props.setId === null || props.setId === undefined)) {
+    await populateMinimalFilter(wrapper)
+  }
+
   return { wrapper, ringbufferApi, searchApi, hierarchyApi }
 }
 
@@ -211,10 +228,24 @@ describe('FilterEditor (#436)', () => {
     expect(wrapper.find('[data-testid="filter-editor-q"]').element.value).toBe('temp')
   })
 
-  it('renders a hint about hierarchy OR DP and AND semantics', async () => {
-    const { wrapper } = await mountEditor({ props: { setId: null } })
+  it('renders a hint about hierarchy OR DP and AND semantics once a criterion is configured', async () => {
+    const { wrapper } = await mountEditor({ props: { setId: null }, leaveEmpty: true })
+    // With no criteria set, an "empty-filter" warning is shown instead.
+    expect(wrapper.find('[data-testid="filter-editor-empty-hint"]').exists()).toBe(true)
+    await populateMinimalFilter(wrapper)
     expect(wrapper.text()).toMatch(/Hierarchy OR DP/i)
     expect(wrapper.text()).toMatch(/AND/i)
+  })
+
+  it('disables both Save buttons when the FilterCriteria is empty', async () => {
+    const { wrapper } = await mountEditor({ props: { setId: null }, leaveEmpty: true })
+    await wrapper.find('[data-testid="filter-editor-name"]').setValue('NoFilter')
+    expect(wrapper.find('[data-testid="filter-editor-save"]').element.disabled).toBe(true)
+    expect(wrapper.find('[data-testid="filter-editor-save-topbar"]').element.disabled).toBe(true)
+    // Adding any criterion enables both buttons.
+    await populateMinimalFilter(wrapper)
+    expect(wrapper.find('[data-testid="filter-editor-save"]').element.disabled).toBe(false)
+    expect(wrapper.find('[data-testid="filter-editor-save-topbar"]').element.disabled).toBe(false)
   })
 
   it('renders an expand button next to each Hierarchy chip', async () => {
@@ -292,7 +323,8 @@ describe('FilterEditor (#436)', () => {
 
   it('submits a flat FilterCriteria payload via createFilterset for a new set', async () => {
     const ringbufferApi = makeRingbufferApi()
-    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
+    // leaveEmpty so the auto-seeded tag doesn't drift the assertion below.
+    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi, leaveEmpty: true })
     await wrapper.find('[data-testid="filter-editor-name"]').setValue('Neu')
     await wrapper.find('[data-testid="filter-editor-description"]').setValue('Desc')
     await wrapper.find('[data-testid="filter-editor-q"]').setValue('xyz')
@@ -366,7 +398,7 @@ describe('FilterEditor (#436)', () => {
   })
 
   it('discarding a clean form closes the modal without confirmation', async () => {
-    const { wrapper } = await mountEditor({ props: { setId: null } })
+    const { wrapper } = await mountEditor({ props: { setId: null }, leaveEmpty: true })
     await wrapper.find('[data-testid="filter-editor-cancel"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-testid="confirm-discard"]').exists()).toBe(false)
