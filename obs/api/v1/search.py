@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from obs.api.auth import get_current_user
-from obs.api.v1.datapoints import _SORT_KEYS, DataPointOut, HierarchyNodeRef, _enrich
+from obs.api.v1.datapoints import _SORT_KEYS, DataPointOut, HierarchyNodeRef, NodePathSegment, _enrich
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
 
@@ -42,7 +42,7 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database) -> None:
     placeholders = ",".join("?" * len(dp_ids))
     rows = await db.fetchall(
         f"""SELECT hdl.datapoint_id, hn.id AS node_id, hn.name AS node_name,
-                   ht.id AS tree_id, ht.name AS tree_name
+                   ht.id AS tree_id, ht.name AS tree_name, ht.display_depth
             FROM hierarchy_datapoint_links hdl
             JOIN hierarchy_nodes hn ON hn.id = hdl.node_id
             JOIN hierarchy_trees ht ON ht.id = hn.tree_id
@@ -50,6 +50,29 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database) -> None:
             ORDER BY ht.name, hn.name""",
         dp_ids,
     )
+
+    # Build ancestor paths for all linked nodes via recursive CTE
+    node_ids = list({r["node_id"] for r in rows})
+    node_paths: dict[str, list[NodePathSegment]] = {}
+    if node_ids:
+        ph2 = ",".join("?" * len(node_ids))
+        path_rows = await db.fetchall(
+            f"""WITH RECURSIVE anc(leaf_id, cur_id, cur_name, cur_parent, depth) AS (
+                SELECT id, id, name, parent_id, 0 FROM hierarchy_nodes WHERE id IN ({ph2})
+                UNION ALL
+                SELECT a.leaf_id, hn2.id, hn2.name, hn2.parent_id, a.depth + 1
+                FROM anc a JOIN hierarchy_nodes hn2 ON hn2.id = a.cur_parent
+                WHERE a.cur_parent IS NOT NULL
+            )
+            SELECT leaf_id, cur_id, cur_name FROM anc WHERE depth > 0
+            ORDER BY leaf_id, depth DESC""",
+            node_ids,
+        )
+        for r in path_rows:
+            node_paths.setdefault(r["leaf_id"], []).append(
+                NodePathSegment(node_id=r["cur_id"], node_name=r["cur_name"])
+            )
+
     by_dp: dict[str, list[HierarchyNodeRef]] = {}
     for r in rows:
         by_dp.setdefault(r["datapoint_id"], []).append(
@@ -58,6 +81,8 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database) -> None:
                 node_name=r["node_name"],
                 tree_id=r["tree_id"],
                 tree_name=r["tree_name"],
+                node_path=node_paths.get(r["node_id"], []),
+                display_depth=r["display_depth"] if r["display_depth"] is not None else 0,
             )
         )
     for item in items:

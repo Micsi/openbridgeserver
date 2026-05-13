@@ -254,21 +254,38 @@
                   {{ dp.name }}
                 </RouterLink>
                 <div v-if="dp.hierarchy_nodes?.length" class="flex flex-wrap gap-1 mt-1">
-                  <button
+                  <span
                     v-for="ref in dp.hierarchy_nodes"
                     :key="ref.node_id"
-                    @click.prevent="toggleNode({ node_id: ref.node_id, node_name: ref.node_name, tree_name: ref.tree_name })"
-                    :class="['inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs transition-colors',
-                      isNodeSelected(ref.node_id)
+                    :class="['inline-flex items-center gap-0.5 rounded text-xs transition-colors',
+                      isNodeSelected(ref.node_id) || isAncestorSelected(ref)
                         ? 'bg-blue-500/20 text-blue-600 dark:text-blue-300'
-                        : 'bg-slate-100 dark:bg-slate-700/60 text-slate-500 hover:bg-blue-500/10 hover:text-blue-500']"
-                    :title="`${isNodeSelected(ref.node_id) ? 'Filter entfernen' : 'Nach'} ${ref.tree_name} › ${ref.node_name} filtern`">
-                    <span class="opacity-70">{{ ref.tree_name }}</span>
-                    <svg class="w-2.5 h-2.5 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        : 'bg-slate-100 dark:bg-slate-700/60 text-slate-500']"
+                    :title="hierarchyFullPath(ref)">
+                    <!-- Anzeige-Start: Tree-Name oder konfigurierbarer Ancestor -->
+                    <span
+                      v-if="hierarchyDisplayAncestor(ref)"
+                      @click.prevent="toggleNode({ node_id: hierarchyDisplayAncestor(ref).node_id, node_name: hierarchyDisplayAncestor(ref).node_name, tree_name: ref.tree_name })"
+                      :class="['opacity-70 px-1.5 py-0.5 rounded-l cursor-pointer hover:bg-blue-500/20 hover:opacity-100 transition-colors',
+                        isNodeSelected(hierarchyDisplayAncestor(ref).node_id) ? 'opacity-100' : '']">
+                      {{ hierarchyDisplayAncestor(ref).node_name }}
+                    </span>
+                    <span
+                      v-else
+                      class="opacity-70 px-1.5 py-0.5 rounded-l">
+                      {{ ref.tree_name }}
+                    </span>
+                    <svg class="w-2.5 h-2.5 opacity-50 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                     </svg>
-                    <span>{{ ref.node_name }}</span>
-                  </button>
+                    <!-- Blatt-Knoten -->
+                    <span
+                      @click.prevent="toggleNode({ node_id: ref.node_id, node_name: ref.node_name, tree_name: ref.tree_name })"
+                      :class="['px-1.5 py-0.5 rounded-r cursor-pointer hover:bg-blue-500/20 transition-colors',
+                        isNodeSelected(ref.node_id) ? 'font-medium' : '']">
+                      {{ ref.node_name }}
+                    </span>
+                  </span>
                 </div>
               </td>
 
@@ -582,6 +599,26 @@ async function onSave(payload) {
 
 function confirmDelete(dp) { deleteTarget.value = dp; showConfirm.value = true }
 async function doDelete()  { await store.remove(deleteTarget.value.id) }
+
+// --------------------------------------------------------------------------
+// Hierarchy path helpers
+// --------------------------------------------------------------------------
+
+function hierarchyFullPath(ref) {
+  const parts = [ref.tree_name, ...(ref.node_path || []).map(n => n.node_name), ref.node_name]
+  return parts.join(' › ')
+}
+
+function hierarchyDisplayAncestor(ref) {
+  if (!ref.display_depth || ref.display_depth === 0) return null
+  const idx = ref.display_depth - 1
+  return ref.node_path?.[idx] ?? null
+}
+
+function isAncestorSelected(ref) {
+  const ancestor = hierarchyDisplayAncestor(ref)
+  return ancestor ? isNodeSelected(ancestor.node_id) : false
+}
 
 // --------------------------------------------------------------------------
 // Live value helpers

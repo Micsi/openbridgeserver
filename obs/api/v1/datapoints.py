@@ -31,11 +31,18 @@ router = APIRouter(tags=["datapoints"])
 # ---------------------------------------------------------------------------
 
 
+class NodePathSegment(BaseModel):
+    node_id: str
+    node_name: str
+
+
 class HierarchyNodeRef(BaseModel):
     node_id: str
     node_name: str
     tree_id: str
     tree_name: str
+    node_path: list[NodePathSegment] = []
+    display_depth: int = 0
 
 
 class DataPointOut(BaseModel):

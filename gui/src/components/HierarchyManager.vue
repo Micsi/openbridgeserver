@@ -100,6 +100,17 @@
           <label class="label">Beschreibung</label>
           <input v-model="treeModal.description" type="text" class="input" placeholder="Optional" @keydown.enter="saveTree" />
         </div>
+        <div class="form-group">
+          <label class="label">Anzeigestart-Ebene</label>
+          <select v-model="treeModal.display_depth" class="input text-sm">
+            <option :value="0">0 — Ast-Name (Standard, z.B. "Gebäude")</option>
+            <option :value="1">1 — Erste Ebene (z.B. "EG" statt "Gebäude")</option>
+            <option :value="2">2 — Zweite Ebene (z.B. "Wohnzimmer")</option>
+            <option :value="3">3 — Dritte Ebene</option>
+            <option :value="4">4 — Vierte Ebene</option>
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Bestimmt, welche Ebene im verkürzten Pfad-Tag angezeigt wird. Der vollständige Pfad ist stets als Tooltip sichtbar.</p>
+        </div>
         <div v-if="treeModal.msg" :class="['p-2 rounded text-sm', treeModal.msg.ok ? 'text-green-400' : 'text-red-400']">{{ treeModal.msg.text }}</div>
         <div class="flex gap-2 justify-end">
           <button @click="treeModal.open = false" class="btn-secondary">Abbrechen</button>
@@ -238,7 +249,7 @@ const msg         = ref(null)
 const treeNameInput = ref(null)
 const nodeNameInput = ref(null)
 
-const treeModal = reactive({ open: false, isEdit: false, id: null, name: '', description: '', saving: false, msg: null })
+const treeModal = reactive({ open: false, isEdit: false, id: null, name: '', description: '', display_depth: 0, saving: false, msg: null })
 const nodeModal = reactive({ open: false, isEdit: false, id: null, treeId: null, parentId: null, name: '', description: '', saving: false, msg: null })
 const etsModal  = reactive({ open: false, treeName: '', mode: 'groups', autoLink: true, saving: false, msg: null })
 
@@ -287,12 +298,12 @@ function toggleTree(treeId) {
 // ── Tree CRUD ──────────────────────────────────────────────────────────────
 
 function openCreateTree() {
-  Object.assign(treeModal, { open: true, isEdit: false, id: null, name: '', description: '', saving: false, msg: null })
+  Object.assign(treeModal, { open: true, isEdit: false, id: null, name: '', description: '', display_depth: 0, saving: false, msg: null })
   nextTick(() => treeNameInput.value?.focus())
 }
 
 function openEditTree(tree) {
-  Object.assign(treeModal, { open: true, isEdit: true, id: tree.id, name: tree.name, description: tree.description, saving: false, msg: null })
+  Object.assign(treeModal, { open: true, isEdit: true, id: tree.id, name: tree.name, description: tree.description, display_depth: tree.display_depth ?? 0, saving: false, msg: null })
   nextTick(() => treeNameInput.value?.focus())
 }
 
@@ -302,9 +313,9 @@ async function saveTree() {
   treeModal.msg = null
   try {
     if (treeModal.isEdit) {
-      await hierarchyApi.updateTree(treeModal.id, { name: treeModal.name, description: treeModal.description })
+      await hierarchyApi.updateTree(treeModal.id, { name: treeModal.name, description: treeModal.description, display_depth: treeModal.display_depth })
     } else {
-      await hierarchyApi.createTree({ name: treeModal.name, description: treeModal.description })
+      await hierarchyApi.createTree({ name: treeModal.name, description: treeModal.description, display_depth: treeModal.display_depth })
     }
     treeModal.open = false
     await loadTrees()
