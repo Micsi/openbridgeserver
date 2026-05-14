@@ -19,11 +19,19 @@ from typing import Any
 
 _buffer: deque[dict[str, Any]] = deque(maxlen=500)
 _loop: asyncio.AbstractEventLoop | None = None
+_NON_PROPAGATING_LOGGER_NAMES = ("uvicorn.access", "uvicorn.error")
 
 
 def get_log_buffer() -> list[dict[str, Any]]:
     """Return a snapshot of the current buffer (newest entry last)."""
     return list(_buffer)
+
+
+def set_log_buffer_level(level: int | str) -> None:
+    """Update all installed LogBufferHandler instances to the given level."""
+    logging.getLogger().setLevel(level)
+    for handler in _iter_log_buffer_handlers():
+        handler.setLevel(level)
 
 
 class LogBufferHandler(logging.Handler):
@@ -53,6 +61,23 @@ class LogBufferHandler(logging.Handler):
         handler = cls(level=level)
         handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         logging.getLogger().addHandler(handler)
+        for logger_name in _NON_PROPAGATING_LOGGER_NAMES:
+            logger = logging.getLogger(logger_name)
+            if not logger.propagate:
+                logger.addHandler(handler)
+
+
+def _iter_log_buffer_handlers() -> list[LogBufferHandler]:
+    """Return installed buffer handlers across root and non-propagating loggers."""
+    handlers: list[LogBufferHandler] = []
+    seen: set[int] = set()
+    loggers = [logging.getLogger(), *(logging.getLogger(name) for name in _NON_PROPAGATING_LOGGER_NAMES)]
+    for logger in loggers:
+        for handler in logger.handlers:
+            if isinstance(handler, LogBufferHandler) and id(handler) not in seen:
+                seen.add(id(handler))
+                handlers.append(handler)
+    return handlers
 
 
 def _broadcast_nowait(entry: dict[str, Any]) -> None:

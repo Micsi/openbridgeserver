@@ -571,7 +571,7 @@ async def set_log_level(
     _admin: str = Depends(get_admin_user),
 ) -> None:
     """Change the root log level at runtime without restarting. Admin only."""
-    import logging as _logging
+    from obs.log_buffer import set_log_buffer_level
 
     lvl = body.level.upper()
     if lvl not in _VALID_LOG_LEVELS:
@@ -579,4 +579,4 @@ async def set_log_level(
             status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"level must be one of: {', '.join(sorted(_VALID_LOG_LEVELS))}",
         )
-    _logging.getLogger().setLevel(lvl)
+    set_log_buffer_level(lvl)

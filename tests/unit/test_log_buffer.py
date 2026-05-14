@@ -23,13 +23,14 @@ def clear_buffer():
     Integration tests may leave a LogBufferHandler on the root logger. Without cleanup,
     log messages propagate to it and produce duplicate buffer entries in unit tests.
     """
-    from obs.log_buffer import LogBufferHandler, _buffer
+    from obs.log_buffer import LogBufferHandler, _NON_PROPAGATING_LOGGER_NAMES, _buffer
 
     def _remove_handlers():
-        root = logging.getLogger()
-        for h in list(root.handlers):
-            if isinstance(h, LogBufferHandler):
-                root.removeHandler(h)
+        loggers = [logging.getLogger(), *(logging.getLogger(name) for name in _NON_PROPAGATING_LOGGER_NAMES)]
+        for logger in loggers:
+            for h in list(logger.handlers):
+                if isinstance(h, LogBufferHandler):
+                    logger.removeHandler(h)
 
     _remove_handlers()
     _buffer.clear()
@@ -168,6 +169,62 @@ def test_install_attaches_to_root_logger():
     for h in list(root.handlers):
         if isinstance(h, LogBufferHandler):
             root.removeHandler(h)
+    loop.close()
+
+
+def test_set_log_buffer_level_updates_installed_handler():
+    import asyncio
+
+    from obs.log_buffer import LogBufferHandler, get_log_buffer, set_log_buffer_level
+
+    root = logging.getLogger()
+    old_level = root.level
+    loop = asyncio.new_event_loop()
+    LogBufferHandler.install(loop, level=logging.INFO)
+    root.setLevel(logging.INFO)
+
+    logger = logging.getLogger("test.runtime_level")
+    logger.setLevel(logging.DEBUG)
+
+    logger.debug("ignored before runtime level change")
+    assert get_log_buffer() == []
+
+    set_log_buffer_level("DEBUG")
+    logger.debug("captured after runtime level change")
+
+    entries = get_log_buffer()
+    assert len(entries) == 1
+    assert entries[0]["level"] == "DEBUG"
+    assert "captured after runtime level change" in entries[0]["message"]
+
+    root.setLevel(old_level)
+    loop.close()
+
+
+def test_install_attaches_to_non_propagating_uvicorn_loggers():
+    import asyncio
+
+    from obs.log_buffer import LogBufferHandler, get_log_buffer
+
+    access_logger = logging.getLogger("uvicorn.access")
+    old_propagate = access_logger.propagate
+    old_level = access_logger.level
+    access_logger.propagate = False
+    access_logger.setLevel(logging.INFO)
+
+    loop = asyncio.new_event_loop()
+    LogBufferHandler.install(loop, level=logging.INFO)
+
+    assert any(isinstance(h, LogBufferHandler) for h in access_logger.handlers)
+
+    access_logger.info('127.0.0.1:1234 - "GET /api/v1/system/logs HTTP/1.1" 200 OK')
+    entries = get_log_buffer()
+    assert len(entries) == 1
+    assert entries[0]["logger"] == "uvicorn.access"
+    assert "GET /api/v1/system/logs" in entries[0]["message"]
+
+    access_logger.propagate = old_propagate
+    access_logger.setLevel(old_level)
     loop.close()
 
 
