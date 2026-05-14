@@ -47,6 +47,20 @@ from obs.core.transformation import apply_source_type, apply_value_map
 logger = logging.getLogger(__name__)
 
 
+class _EngineIOQueueFilter(logging.Filter):
+    """Suppresses the spurious 'packet queue is empty' ERROR from python-engineio.
+
+    When the server stops sending, the read loop times out and puts None into the
+    packet queue as a disconnect signal.  The write loop receives None, clears the
+    queue, but then loops back and waits again instead of exiting — after another
+    timeout it logs an ERROR 'packet queue is empty'.  This is an internal
+    clean-up artifact, not a real application error.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "packet queue is empty" not in record.getMessage()
+
+
 class IoBrokerAdapterConfig(BaseModel):
     host: str = "iobroker.local"
     port: int = 8084
@@ -166,6 +180,7 @@ class IoBrokerAdapter(AdapterBase):
             "engineio.client",
         ):
             logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+        logging.getLogger("engineio.client").addFilter(_EngineIOQueueFilter())
 
         self._socketio = socketio
         self._cfg = IoBrokerAdapterConfig(**self._config)
@@ -298,7 +313,10 @@ class IoBrokerAdapter(AdapterBase):
 
     def _build_socket(self) -> Any:
         assert self._socketio is not None
-        sio = self._socketio.AsyncClient(reconnection=True, logger=False, engineio_logger=False)
+        # reconnection=False: OBS owns the full reconnect cycle via _reconnect_loop.
+        # Leaving reconnection=True would create a second parallel reconnect mechanism
+        # that races with _reconnect_loop and can produce double-connect attempts.
+        sio = self._socketio.AsyncClient(reconnection=False, logger=False, engineio_logger=False)
         self._register_socket_handlers(sio)
         return sio
 
@@ -335,18 +353,41 @@ class IoBrokerAdapter(AdapterBase):
             sio = self._build_socket()
             self._socket = sio
             try:
-                try:
-                    await sio.connect(self._connect_url, wait_timeout=10, **self._connect_kwargs)
-                except TypeError:
-                    v4_kwargs = dict(self._connect_kwargs)
-                    v4_kwargs.pop("auth", None)
-                    await sio.connect(self._connect_url, **v4_kwargs)
+                await self._connect_with_kwargs(sio, self._connect_kwargs)
                 return True
-            except Exception:
+            except Exception as exc:
+                if self._should_retry_with_websocket(exc):
+                    logger.warning("ioBroker Socket.IO polling handshake failed; retrying with websocket transport")
+                    fallback_kwargs = dict(self._connect_kwargs)
+                    fallback_kwargs["transports"] = ["websocket"]
+                    fallback_sio = self._build_socket()
+                    self._socket = fallback_sio
+                    try:
+                        await self._connect_with_kwargs(fallback_sio, fallback_kwargs)
+                        self._connect_kwargs = fallback_kwargs
+                        return True
+                    except Exception:
+                        if self._socket is fallback_sio:
+                            self._socket = None
+                        logger.exception("ioBroker Socket.IO websocket fallback failed")
+                        return False
                 if self._socket is sio:
                     self._socket = None
                 logger.exception("ioBroker Socket.IO connection failed")
                 return False
+
+    async def _connect_with_kwargs(self, sio: Any, connect_kwargs: dict[str, Any]) -> None:
+        assert self._connect_url is not None
+        try:
+            await sio.connect(self._connect_url, wait_timeout=10, **connect_kwargs)
+        except TypeError:
+            v4_kwargs = dict(connect_kwargs)
+            v4_kwargs.pop("auth", None)
+            await sio.connect(self._connect_url, **v4_kwargs)
+
+    @staticmethod
+    def _should_retry_with_websocket(exc: Exception) -> bool:
+        return "OPEN packet not returned by server" in str(exc)
 
     async def _reconnect_loop(self) -> None:
         assert self._cfg is not None

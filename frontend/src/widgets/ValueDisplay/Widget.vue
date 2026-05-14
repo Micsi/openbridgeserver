@@ -4,6 +4,7 @@ import { Chart, LineController, LineElement, PointElement, LinearScale, Filler, 
 import { history } from '@/api/client'
 import { useIcons } from '@/composables/useIcons'
 import { useDatapointsStore } from '@/stores/datapoints'
+import { useWebSocket } from '@/composables/useWebSocket'
 import type { DataPointValue } from '@/types'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, Filler, Tooltip)
@@ -169,11 +170,15 @@ const secondaryDisplay = computed(() => {
 
 // ── History chart ──────────────────────────────────────────────────────────────
 
+const ws = useWebSocket()
+
 const canvasEl      = ref<HTMLCanvasElement | null>(null)
 const modalOpen     = ref(false)
 const modalCanvasEl = ref<HTMLCanvasElement | null>(null)
-let miniChart:  Chart | null = null
-let modalChart: Chart | null = null
+let miniChart:    Chart | null = null
+let modalChart:   Chart | null = null
+let wsOff:        (() => void) | null = null
+let reloadTimer:  ReturnType<typeof setTimeout> | null = null
 let histUnit = ''
 
 function fmtMs(ms: number): string {
@@ -196,9 +201,9 @@ function makeDataset(color: string) {
 
 async function fetchPoints() {
   if (!props.datapointId || props.editorMode) return { pts: [], minMs: 0, maxMs: 0 }
-  const now     = new Date()
+  const now      = new Date()
   const fromDate = new Date(now.getTime() - historyHours.value * 3_600_000)
-  const data    = await history.query(props.datapointId, fromDate.toISOString(), now.toISOString())
+  const data     = await history.query(props.datapointId, fromDate.toISOString(), now.toISOString())
   histUnit = data[0]?.u ?? ''
   return {
     pts:   data.map(d => ({ x: new Date(d.ts).getTime(), y: Number(d.v) })),
@@ -208,15 +213,34 @@ async function fetchPoints() {
 }
 
 async function updateMiniChart() {
-  if (mode.value !== 'history' || !miniChart) return
+  if (mode.value !== 'history') return
   const { pts, minMs, maxMs } = await fetchPoints()
-  miniChart.data.datasets[0].data = pts
-  const xAxis = miniChart.options.scales?.x as any
-  if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
-  miniChart.update()
+  if (miniChart) {
+    miniChart.data.datasets[0].data = pts
+    const xAxis = miniChart.options.scales?.x as any
+    if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
+    miniChart.update()
+  }
+  if (modalChart && modalOpen.value) {
+    modalChart.data.datasets[0].data = pts
+    const xAxis = modalChart.options.scales?.x as any
+    if (xAxis) { xAxis.min = minMs; xAxis.max = maxMs }
+    modalChart.update()
+  }
 }
 
 onMounted(() => {
+  // Auf WS-Nachrichten hören: wenn der eigene Datenpunkt aktualisiert wird,
+  // wird updateMiniChart() nach 2 s (debounced) aufgerufen. Das Backend hat
+  // den Wert bis dahin sicher gespeichert, sodass der Chart saubere Daten
+  // ohne Artefakte lädt.
+  wsOff = ws.onMessage((msg) => {
+    if (mode.value !== 'history' || props.editorMode) return
+    if (!msg.id || msg.v === undefined || msg.id !== props.datapointId) return
+    if (reloadTimer) clearTimeout(reloadTimer)
+    reloadTimer = setTimeout(() => { reloadTimer = null; updateMiniChart() }, 2_000)
+  })
+
   if (mode.value !== 'history' || !canvasEl.value) return
   miniChart = new Chart(canvasEl.value, {
     type: 'line',
@@ -269,7 +293,12 @@ watch(modalOpen, async (open) => {
   })
 })
 
-onUnmounted(() => { miniChart?.destroy(); modalChart?.destroy() })
+onUnmounted(() => {
+  wsOff?.()
+  if (reloadTimer) { clearTimeout(reloadTimer); reloadTimer = null }
+  miniChart?.destroy()
+  modalChart?.destroy()
+})
 
 const quality = computed(() => props.value?.q ?? null)
 </script>

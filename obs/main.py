@@ -119,6 +119,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     import obs.adapters.modbus_tcp.adapter
     import obs.adapters.mqtt.adapter
     import obs.adapters.onewire.adapter
+    import obs.adapters.snmp.adapter  # noqa: F401
+    import obs.adapters.anwesenheit.adapter  # noqa: F401
     import obs.adapters.zeitschaltuhr.adapter  # noqa: F401
 
     await adapter_registry.start_all(bus, db, value_getter=registry.get_value)
@@ -129,6 +131,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     logic_mgr = init_logic_manager(db=db, event_bus=bus, registry=registry)
     await logic_mgr.start()
 
+    # 10. Autobackup-Scheduler
+    from obs.api.v1.autobackup import init_autobackup_scheduler
+
+    autobackup_scheduler = init_autobackup_scheduler(db=db)
+
     logger.info(
         "open bridge server ready — %d datapoints, %d adapters registered",
         registry.count(),
@@ -138,6 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     yield  # ← application running
 
     # Shutdown (reverse order)
+    await autobackup_scheduler.stop()
     await logic_mgr.stop()
     await adapter_registry.stop_all()
     await mqtt.stop()

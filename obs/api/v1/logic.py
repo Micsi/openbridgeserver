@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 
-from obs.api.auth import get_current_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.db.database import Database, get_db
 from obs.logic.models import (
     FlowData,
@@ -32,6 +32,7 @@ from obs.logic.models import (
     LogicGraphOut,
     LogicGraphUpdate,
     LogicNode,
+    LogicUsageOut,
     NodeTypeDef,
 )
 from obs.logic.node_types import list_node_types
@@ -69,7 +70,7 @@ async def list_graphs(
 @router.post("/graphs", response_model=LogicGraphOut, status_code=status.HTTP_201_CREATED)
 async def create_graph(
     body: LogicGraphCreate,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     now = datetime.now(UTC).isoformat()
@@ -114,7 +115,7 @@ async def get_graph(
 async def update_graph_full(
     graph_id: str,
     body: LogicGraphCreate,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     now = datetime.now(UTC).isoformat()
@@ -150,7 +151,7 @@ async def update_graph_full(
 async def update_graph_partial(
     graph_id: str,
     body: LogicGraphUpdate,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     now = datetime.now(UTC).isoformat()
@@ -184,7 +185,7 @@ async def update_graph_partial(
 @router.delete("/graphs/{graph_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_graph(
     graph_id: str,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> None:
     row = await db.fetchone("SELECT id FROM logic_graphs WHERE id=?", (graph_id,))
@@ -202,7 +203,7 @@ async def delete_graph(
 @router.post("/graphs/import", response_model=LogicGraphOut, status_code=status.HTTP_201_CREATED)
 async def import_graph(
     body: LogicGraphImport,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     if body.obs_export != "logic_graph":
@@ -276,7 +277,7 @@ async def import_graph(
 @router.post("/graphs/{graph_id}/run", status_code=status.HTTP_200_OK)
 async def run_graph(
     graph_id: str,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> dict:
     row = await db.fetchone("SELECT id FROM logic_graphs WHERE id=?", (graph_id,))
@@ -298,7 +299,7 @@ async def run_graph(
 )
 async def duplicate_graph(
     graph_id: str,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
@@ -347,6 +348,44 @@ async def duplicate_graph(
         pass
     result = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (new_id,))
     return _row_to_out(result)
+
+
+@router.get("/datapoint/{dp_id}/usages", response_model=list[LogicUsageOut])
+async def get_datapoint_logic_usages(
+    dp_id: str,
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(lambda: get_db()),
+) -> list[LogicUsageOut]:
+    """Return all logic graphs that reference a given DataPoint, with direction from the DP's perspective.
+
+    - datapoint_read node  → logic reads the DP   → direction SOURCE
+    - datapoint_write node → logic writes to the DP → direction DEST
+    """
+    rows = await db.fetchall("SELECT id, name, enabled, flow_data FROM logic_graphs")
+    usages: list[LogicUsageOut] = []
+    for row in rows:
+        raw = json.loads(row["flow_data"]) if row["flow_data"] else {}
+        flow = FlowData.model_validate(raw)
+        for node in flow.nodes:
+            if node.data.get("datapoint_id") != dp_id:
+                continue
+            if node.type == "datapoint_read":
+                direction = "SOURCE"
+            elif node.type == "datapoint_write":
+                direction = "DEST"
+            else:
+                continue
+            usages.append(
+                LogicUsageOut(
+                    graph_id=row["id"],
+                    graph_name=row["name"],
+                    graph_enabled=bool(row["enabled"]),
+                    node_id=node.id,
+                    node_type=node.type,
+                    direction=direction,
+                )
+            )
+    return usages
 
 
 @router.get("/graphs/{graph_id}/export")

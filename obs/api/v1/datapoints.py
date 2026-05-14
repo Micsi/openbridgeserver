@@ -11,13 +11,14 @@ POST   /api/v1/datapoints/{id}/value write value (fires DataValueEvent)
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, field_serializer
 
-from obs.api.auth import get_current_user, optional_current_user
+from obs.api.auth import get_admin_user, get_current_user, optional_current_user
 from obs.api.v1.sessions import validate_session
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
@@ -30,6 +31,20 @@ router = APIRouter(tags=["datapoints"])
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+
+
+class NodePathSegment(BaseModel):
+    node_id: str
+    node_name: str
+
+
+class HierarchyNodeRef(BaseModel):
+    node_id: str
+    node_name: str
+    tree_id: str
+    tree_name: str
+    node_path: list[NodePathSegment] = []
+    display_depth: int = 0
 
 
 class DataPointOut(BaseModel):
@@ -47,6 +62,8 @@ class DataPointOut(BaseModel):
     # Runtime
     value: Any = None
     quality: str | None = None
+    # Hierarchy (populated by search endpoint, empty elsewhere)
+    hierarchy_nodes: list[HierarchyNodeRef] = []
 
     model_config = {"from_attributes": True}
 
@@ -115,6 +132,12 @@ _SORT_KEYS = {
 }
 
 
+@router.get("/tags", response_model=list[str])
+async def list_tags(_user: str = Depends(get_current_user)) -> list[str]:
+    reg = get_registry()
+    return sorted({t for dp in reg.all() for t in dp.tags})
+
+
 @router.get("/", response_model=DataPointPage)
 async def list_datapoints(
     page: int = Query(0, ge=0),
@@ -140,7 +163,7 @@ async def list_datapoints(
 @router.post("/", response_model=DataPointOut, status_code=status.HTTP_201_CREATED)
 async def create_datapoint(
     body: DataPointCreate,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> DataPointOut:
     from obs.models.types import DataTypeRegistry
 
@@ -169,7 +192,7 @@ async def get_datapoint(
 async def update_datapoint(
     dp_id: uuid.UUID,
     body: DataPointUpdate,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> DataPointOut:
     reg = get_registry()
     if reg.get(dp_id) is None:
@@ -189,7 +212,7 @@ async def update_datapoint(
 @router.delete("/{dp_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_datapoint(
     dp_id: uuid.UUID,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> None:
     reg = get_registry()
     if reg.get(dp_id) is None:
@@ -292,6 +315,9 @@ async def write_value(
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Valid session token required")
         else:  # user, unbekannt oder sonstige → 401
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+        if not await _page_allows_datapoint(db, page_id, dp_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint not available on page")
     else:
         # Benutzer ist eingeloggt — prüfe ob er Zugang zur Seite hat
         page_id = request.headers.get("X-Page-Id")
