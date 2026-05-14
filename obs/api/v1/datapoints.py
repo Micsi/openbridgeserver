@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, field_serializer
 
-from obs.api.auth import get_admin_user, get_current_user, optional_current_user
+from obs.api.auth import get_current_user, optional_current_user
 from obs.api.v1.sessions import validate_session
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
@@ -162,7 +162,7 @@ async def list_datapoints(
 @router.post("/", response_model=DataPointOut, status_code=status.HTTP_201_CREATED)
 async def create_datapoint(
     body: DataPointCreate,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
 ) -> DataPointOut:
     from obs.models.types import DataTypeRegistry
 
@@ -191,7 +191,7 @@ async def get_datapoint(
 async def update_datapoint(
     dp_id: uuid.UUID,
     body: DataPointUpdate,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
 ) -> DataPointOut:
     reg = get_registry()
     if reg.get(dp_id) is None:
@@ -211,7 +211,7 @@ async def update_datapoint(
 @router.delete("/{dp_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_datapoint(
     dp_id: uuid.UUID,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
 ) -> None:
     reg = get_registry()
     if reg.get(dp_id) is None:
@@ -238,22 +238,13 @@ async def get_value(
     )
 
 
-async def _resolve_page_access(db: Database, node_id: str) -> str:
-    """Traversiert die parent_id-Kette und gibt das effektive Access-Level zurück."""
-    current_id: str | None = node_id
-    while current_id:
-        async with db.conn.execute("SELECT access, parent_id FROM visu_nodes WHERE id = ?", (current_id,)) as cur:
-            row = await cur.fetchone()
-        if not row:
-            return "private"  # Unbekannter Knoten → sicher ablehnen
-        if row["access"] is not None:
-            return row["access"]
-        current_id = row["parent_id"]
-    return "public"
-
-
 async def _page_has_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> bool:
-    """Return True if the page contains a widget bound to this datapoint."""
+    """Return True if the page contains a widget bound to this datapoint.
+
+    Checks both the formal datapoint_id / status_datapoint_id fields and any
+    additional datapoint IDs stored inside widget.config (used by Rolladen,
+    Licht, RTR and other multi-channel widgets).
+    """
     row = await db.fetchone("SELECT page_config FROM visu_nodes WHERE id = ? AND type = 'PAGE'", (page_id,))
     if not row:
         return False
@@ -268,7 +259,12 @@ async def _page_has_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> b
         return False
 
     dp_id_str = str(dp_id)
-    return any(widget.datapoint_id == dp_id_str or widget.status_datapoint_id == dp_id_str for widget in page.widgets)
+    for widget in page.widgets:
+        if widget.datapoint_id == dp_id_str or widget.status_datapoint_id == dp_id_str:
+            return True
+        if any(v == dp_id_str for v in widget.config.values() if isinstance(v, str)):
+            return True
+    return False
 
 
 @router.post("/{dp_id}/value", status_code=status.HTTP_204_NO_CONTENT)
@@ -282,7 +278,7 @@ async def write_value(
     """Write a value to a DataPoint via the internal EventBus.
 
     Zugriffslogik:
-    - JWT vorhanden → immer erlaubt (Admin)
+    - JWT vorhanden (eingeloggter Benutzer) → immer erlaubt
     - X-Page-Id Header + Seite ist 'public' → erlaubt
     - X-Page-Id Header + Seite ist 'protected' + gültiger X-Session-Token → erlaubt
     - Seite ist 'readonly' → 403 (auch mit Page-Header)
@@ -302,29 +298,21 @@ async def write_value(
         if not await _page_has_datapoint(db, page_id, dp_id):
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint is not part of the page")
 
-        access = await _resolve_page_access(db, page_id)
+        from obs.api.v1.visu import _check_user_access, _resolve_access_with_node
+
+        access, defining_node_id = await _resolve_access_with_node(db, page_id)
         if access == "readonly":
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Page is read-only")
         if access == "protected":
             session_token = request.headers.get("X-Session-Token")
-            if not session_token or not validate_session(session_token, page_id):
+            validate_id = defining_node_id or page_id
+            if not session_token or not validate_session(session_token, validate_id):
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Valid session token required")
         elif access == "user":
-            if user is None:
-                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-            from obs.api.v1.visu import _check_user_access
-
             if not await _check_user_access(db, page_id, user):
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
         elif access not in ("public",):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-
-    else:
-        if user is None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-        row = await db.fetchone("SELECT is_admin FROM users WHERE username=?", (user,))
-        if not row or not row["is_admin"]:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     event = DataValueEvent(
         datapoint_id=dp_id,
