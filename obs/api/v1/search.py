@@ -69,9 +69,7 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database) -> None:
             node_ids,
         )
         for r in path_rows:
-            node_paths.setdefault(r["leaf_id"], []).append(
-                NodePathSegment(node_id=r["cur_id"], node_name=r["cur_name"])
-            )
+            node_paths.setdefault(r["leaf_id"], []).append(NodePathSegment(node_id=r["cur_id"], node_name=r["cur_name"]))
 
     by_dp: dict[str, list[HierarchyNodeRef]] = {}
     for r in rows:
@@ -97,6 +95,7 @@ async def search(
     adapter: str = Query("", description="Has binding with this adapter_type"),
     quality: str = Query("", description="Runtime quality filter: good | bad | uncertain"),
     node_id: str = Query("", description="Comma-separated node IDs — OR logic"),
+    tree_id: str = Query("", description="Comma-separated tree IDs — matches any node in these trees"),
     sort: str = Query("name", pattern="^(name|data_type|created_at|updated_at)$"),
     order: str = Query("asc", pattern="^(asc|desc)$"),
     page: int = Query(0, ge=0),
@@ -151,7 +150,7 @@ async def search(
 
         results = [dp for dp in results if _matches(dp)]
 
-    # 5. node_id filter (hierarchy — one query per node, OR logic)
+    # 5a. node_id filter (specific nodes — OR logic)
     if node_id:
         node_id_list = [n.strip() for n in node_id.split(",") if n.strip()]
         if node_id_list:
@@ -159,6 +158,21 @@ async def search(
             rows = await db.fetchall(
                 f"SELECT DISTINCT datapoint_id FROM hierarchy_datapoint_links WHERE node_id IN ({placeholders})",
                 node_id_list,
+            )
+            matched_ids = {r["datapoint_id"] for r in rows}
+            results = [dp for dp in results if str(dp.id) in matched_ids]
+
+    # 5b. tree_id filter (all nodes in these trees — OR logic)
+    if tree_id:
+        tree_id_list = [t.strip() for t in tree_id.split(",") if t.strip()]
+        if tree_id_list:
+            placeholders = ",".join("?" * len(tree_id_list))
+            rows = await db.fetchall(
+                f"""SELECT DISTINCT hdl.datapoint_id
+                    FROM hierarchy_datapoint_links hdl
+                    JOIN hierarchy_nodes hn ON hn.id = hdl.node_id
+                    WHERE hn.tree_id IN ({placeholders})""",
+                tree_id_list,
             )
             matched_ids = {r["datapoint_id"] for r in rows}
             results = [dp for dp in results if str(dp.id) in matched_ids]
@@ -198,6 +212,7 @@ async def search(
             "adapter": adapter,
             "quality": quality,
             "node_id": node_id,
+            "tree_id": tree_id,
             "sort": sort,
             "order": order,
         },

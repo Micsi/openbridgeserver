@@ -209,6 +209,23 @@
           </div>
         </div>
 
+        <!-- Aktive Baum-Filter als Chips -->
+        <template v-if="filters.tree_ids.length">
+          <span
+            v-for="t in filters.tree_ids" :key="t.tree_id"
+            class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400">
+            <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h12M3 17h8"/>
+            </svg>
+            {{ t.tree_name }}
+            <button @click="toggleTreeFilter(t)" class="ml-0.5 hover:text-red-500 transition-colors" title="Baum-Filter entfernen">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </span>
+        </template>
+
         <!-- Aktive Filter: Alle zurücksetzen -->
         <button v-if="hasActiveFilters" @click="clearAllFilters"
           class="text-xs text-slate-500 hover:text-red-500 dark:hover:text-red-400 transition-colors ml-auto flex items-center gap-1"
@@ -272,7 +289,9 @@
                     </span>
                     <span
                       v-else
-                      class="opacity-70 px-1.5 py-0.5 rounded-l">
+                      @click.prevent="toggleTreeFilter({ tree_id: ref.tree_id, tree_name: ref.tree_name })"
+                      :class="['opacity-70 px-1.5 py-0.5 rounded-l cursor-pointer hover:bg-blue-500/20 hover:opacity-100 transition-colors',
+                        isTreeSelected(ref.tree_id) ? 'opacity-100' : '']">
                       {{ ref.tree_name }}
                     </span>
                     <svg class="w-2.5 h-2.5 opacity-50 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -394,7 +413,7 @@ const qualityOptions = [
 const store = useDatapointStore()
 const ws    = useWebSocketStore()
 
-const filters      = ref({ q: '', tags: [], quality: '', type: '', node_ids: [] })
+const filters      = ref({ q: '', tags: [], quality: '', type: '', node_ids: [], tree_ids: [] })
 const showForm     = ref(false)
 const showConfirm  = ref(false)
 const editTarget   = ref(null)
@@ -416,7 +435,7 @@ let observer      = null
 let unsubWs       = null
 
 const hasActiveFilters = computed(() =>
-  !!(filters.value.q || filters.value.tags.length || filters.value.quality || filters.value.type || filters.value.node_ids.length)
+  !!(filters.value.q || filters.value.tags.length || filters.value.quality || filters.value.type || filters.value.node_ids.length || filters.value.tree_ids.length)
 )
 
 // --------------------------------------------------------------------------
@@ -432,6 +451,7 @@ onMounted(async () => {
       ...saved.filters,
       tags:     saved.filters?.tags     ?? [],
       node_ids: saved.filters?.node_ids ?? [],
+      tree_ids: saved.filters?.tree_ids ?? [],
     })
     store.clearScrollState()
     await store.search(apiFilters(), false)
@@ -500,6 +520,7 @@ function apiFilters() {
     quality: filters.value.quality,
     type:    filters.value.type,
     node_id: filters.value.node_ids.map(n => n.node_id).join(','),
+    tree_id: filters.value.tree_ids.map(t => t.tree_id).join(','),
   }
 }
 
@@ -532,6 +553,8 @@ function clearFilter(key) {
     filters.value.node_ids = []
     nodeSearchQ.value = ''
     nodeResults.value = []
+  } else if (key === 'tree_ids') {
+    filters.value.tree_ids = []
   } else if (key === 'tags') {
     filters.value.tags = []
   } else {
@@ -541,9 +564,24 @@ function clearFilter(key) {
 }
 
 function clearAllFilters() {
-  filters.value = { q: '', tags: [], quality: '', type: '', node_ids: [] }
+  filters.value = { q: '', tags: [], quality: '', type: '', node_ids: [], tree_ids: [] }
   nodeSearchQ.value = ''
   nodeResults.value = []
+  onSearch()
+}
+
+// --------------------------------------------------------------------------
+// Tree filter
+// --------------------------------------------------------------------------
+
+function isTreeSelected(tree_id) {
+  return filters.value.tree_ids.some(t => t.tree_id === tree_id)
+}
+
+function toggleTreeFilter(tree) {
+  const idx = filters.value.tree_ids.findIndex(t => t.tree_id === tree.tree_id)
+  if (idx === -1) filters.value.tree_ids.push({ tree_id: tree.tree_id, tree_name: tree.tree_name })
+  else filters.value.tree_ids.splice(idx, 1)
   onSearch()
 }
 
