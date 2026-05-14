@@ -375,6 +375,26 @@ class RingBufferExportSettings(BaseModel):
     include_matched_set_ids: bool = False
 
 
+class RingBufferMultiExportCountRequest(BaseModel):
+    """Request body for ``POST /filtersets/export/count`` — preflight row count.
+
+    Mirrors the set/time selection of :class:`RingBufferMultiExportRequest` so
+    the UI can warn the user before triggering a large download. Format/encoding
+    options are intentionally omitted: they do not influence the row count.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    set_ids: list[str] = Field(default_factory=list)
+    time: RingBufferTimeFilterV2 | None = None
+
+
+class RingBufferMultiExportCountResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row_count: int = Field(ge=0)
+
+
 class RingBufferMultiQueryRequest(BaseModel):
     """Request body for ``POST /filtersets/query`` (multi-set OR-union).
 
@@ -1315,6 +1335,23 @@ async def _collect_multi_entries(
     ordered_ids = sorted(matched.keys(), key=lambda eid: entries_by_id[eid].ts, reverse=True)
     ordered_entries = [entries_by_id[eid] for eid in ordered_ids]
     return ordered_entries, matched
+
+
+@router.post("/filtersets/export/count", response_model=RingBufferMultiExportCountResponse)
+async def count_ringbuffer_filtersets_export(
+    body: RingBufferMultiExportCountRequest,
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> RingBufferMultiExportCountResponse:
+    """Preflight: how many rows would the corresponding CSV export produce?
+
+    Used by the UI to warn the user before triggering a large download. The
+    set/time semantics match ``POST /filtersets/export/csv`` exactly, so the
+    returned count is the row count of the union the export would write.
+    """
+    export_body = RingBufferMultiExportRequest(set_ids=body.set_ids, time=body.time)
+    entries, _ = await _collect_multi_entries(export_body, db)
+    return RingBufferMultiExportCountResponse(row_count=len(entries))
 
 
 @router.post("/filtersets/export/csv")

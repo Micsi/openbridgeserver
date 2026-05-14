@@ -218,6 +218,7 @@ export const ringbufferApi = {
   queryMultiFiltersets: (body)      => api.post('/ringbuffer/filtersets/query', body),
   // #427 — multi-set CSV/TSV export + persisted format defaults
   exportMultiCsv: (body)            => api.post('/ringbuffer/filtersets/export/csv', body, { responseType: 'blob' }),
+  countExportRows: (body)           => api.post('/ringbuffer/filtersets/export/count', body),
   getExportSettings: ()             => api.get('/ringbuffer/export/settings'),
   putExportSettings: (body)         => api.put('/ringbuffer/export/settings', body),
 }

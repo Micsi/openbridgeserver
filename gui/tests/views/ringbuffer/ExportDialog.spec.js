@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 let exportMultiCsv
+let countExportRows
 let getExportSettings
 let putExportSettings
 
@@ -15,13 +16,14 @@ beforeEach(() => {
     data: new Blob(['ts,value\n2026-05-12T10:00:00Z,1\n']),
     headers: { 'content-disposition': 'attachment; filename="ringbuffer_export_20260512.csv"' },
   })
+  countExportRows = vi.fn().mockResolvedValue({ data: { row_count: 42 } })
   getExportSettings = vi.fn().mockResolvedValue({
     data: { format: 'csv', encoding: 'utf8', include_unit: true, include_matched_set_ids: false },
   })
   putExportSettings = vi.fn().mockResolvedValue({ data: {} })
 
   vi.doMock('@/api/client', () => ({
-    ringbufferApi: { exportMultiCsv, getExportSettings, putExportSettings },
+    ringbufferApi: { exportMultiCsv, countExportRows, getExportSettings, putExportSettings },
   }))
 
   // Stub Modal so v-model works and the slot renders even when soft-backdrop logic isn't loaded
@@ -137,6 +139,88 @@ describe('ExportDialog', () => {
     expect(exportMultiCsv).not.toHaveBeenCalled()
     const events = wrapper.emitted('update:modelValue') || []
     expect(events.flat()).toContain(false)
+    wrapper.unmount()
+  })
+
+  // -------------------------------------------------------------------------
+  // Preflight count warning (>1000 rows)
+  // -------------------------------------------------------------------------
+
+  it('exports directly when the preflight count is at or below the threshold', async () => {
+    countExportRows.mockResolvedValueOnce({ data: { row_count: 1000 } })
+    const wrapper = await mountDialog({ setIds: ['set-a'] })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="btn-export-go"]').trigger('click')
+    await flushPromises()
+
+    expect(countExportRows).toHaveBeenCalledTimes(1)
+    expect(countExportRows).toHaveBeenCalledWith({ set_ids: ['set-a'], time: null })
+    expect(exportMultiCsv).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="export-warning"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows a warning with the row count and does NOT export on the first click when above threshold', async () => {
+    countExportRows.mockResolvedValueOnce({ data: { row_count: 5234 } })
+    const wrapper = await mountDialog({ setIds: ['set-a'] })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="btn-export-go"]').trigger('click')
+    await flushPromises()
+
+    expect(exportMultiCsv).not.toHaveBeenCalled()
+    const warning = wrapper.find('[data-testid="export-warning"]')
+    expect(warning.exists()).toBe(true)
+    expect(warning.text()).toContain('5.234')
+    // Button label flips to the confirm wording
+    expect(wrapper.find('[data-testid="btn-export-go"]').text()).toContain('Trotzdem exportieren')
+    wrapper.unmount()
+  })
+
+  it('exports without re-counting when the user confirms the warning', async () => {
+    countExportRows.mockResolvedValueOnce({ data: { row_count: 5000 } })
+    const wrapper = await mountDialog({ setIds: ['set-a'] })
+    await flushPromises()
+
+    // First click → warning
+    await wrapper.find('[data-testid="btn-export-go"]').trigger('click')
+    await flushPromises()
+    expect(exportMultiCsv).not.toHaveBeenCalled()
+
+    // Second click → actual export, no extra count call
+    await wrapper.find('[data-testid="btn-export-go"]').trigger('click')
+    await flushPromises()
+    expect(countExportRows).toHaveBeenCalledTimes(1)
+    expect(exportMultiCsv).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('cancel button aborts the export even while the warning is shown', async () => {
+    countExportRows.mockResolvedValueOnce({ data: { row_count: 9999 } })
+    const wrapper = await mountDialog({ setIds: ['set-a'] })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="btn-export-go"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="btn-export-cancel"]').trigger('click')
+
+    expect(exportMultiCsv).not.toHaveBeenCalled()
+    const events = wrapper.emitted('update:modelValue') || []
+    expect(events.flat()).toContain(false)
+    wrapper.unmount()
+  })
+
+  it('surfaces preflight-count failures via the error slot and skips the export', async () => {
+    countExportRows.mockRejectedValueOnce({ response: { data: { detail: 'count failed' } } })
+    const wrapper = await mountDialog({ setIds: ['set-a'] })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="btn-export-go"]').trigger('click')
+    await flushPromises()
+
+    expect(exportMultiCsv).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="export-error"]').text()).toContain('count failed')
     wrapper.unmount()
   })
 })

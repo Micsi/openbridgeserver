@@ -41,6 +41,15 @@
         </div>
       </div>
 
+      <div
+        v-if="pendingRowCount !== null"
+        class="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900"
+        data-testid="export-warning"
+      >
+        Dieser Export würde <strong>{{ pendingRowCount.toLocaleString('de-DE') }}</strong> Zeilen erzeugen.
+        Trotzdem fortfahren?
+      </div>
+
       <p v-if="errorMsg" class="text-sm text-red-500" data-testid="export-error">{{ errorMsg }}</p>
     </div>
 
@@ -48,7 +57,7 @@
       <button class="btn-secondary" data-testid="btn-export-cancel" @click="openModel = false">Abbrechen</button>
       <button class="btn-primary" :disabled="busy" data-testid="btn-export-go" @click="onExport">
         <Spinner v-if="busy" size="sm" color="white" />
-        Exportieren
+        {{ pendingRowCount !== null ? 'Trotzdem exportieren' : 'Exportieren' }}
       </button>
     </template>
   </Modal>
@@ -72,6 +81,8 @@ const openModel = computed({
   set: (v) => emit('update:modelValue', v),
 })
 
+const EXPORT_WARN_THRESHOLD = 1000
+
 const form = reactive({
   format: 'csv',
   encoding: 'utf8',
@@ -80,12 +91,17 @@ const form = reactive({
 })
 const busy = ref(false)
 const errorMsg = ref('')
+const pendingRowCount = ref(null)
 
 watch(
   () => props.modelValue,
   async (open) => {
-    if (!open) return
+    if (!open) {
+      pendingRowCount.value = null
+      return
+    }
     errorMsg.value = ''
+    pendingRowCount.value = null
     try {
       const { data } = await ringbufferApi.getExportSettings()
       if (data) Object.assign(form, data)
@@ -96,11 +112,33 @@ watch(
   { immediate: true },
 )
 
+// Any change to the selection invalidates a pending confirmation — the row
+// count we asked the user about no longer matches what we'd export.
+watch(
+  () => [props.setIds, props.time],
+  () => {
+    pendingRowCount.value = null
+  },
+  { deep: true },
+)
+
 async function onExport() {
   if (busy.value) return
   busy.value = true
   errorMsg.value = ''
   try {
+    if (pendingRowCount.value === null) {
+      const countResp = await ringbufferApi.countExportRows({
+        set_ids: props.setIds || [],
+        time: props.time || null,
+      })
+      const rowCount = countResp?.data?.row_count ?? 0
+      if (rowCount > EXPORT_WARN_THRESHOLD) {
+        pendingRowCount.value = rowCount
+        return
+      }
+    }
+
     // Persist settings in the background; failure doesn't block the export
     ringbufferApi.putExportSettings({ ...form }).catch(() => {})
 
@@ -127,6 +165,7 @@ async function onExport() {
     a.click()
     a.remove()
     URL.revokeObjectURL(url)
+    pendingRowCount.value = null
     openModel.value = false
   } catch (err) {
     errorMsg.value = err?.response?.data?.detail || err?.message || 'Export fehlgeschlagen'
