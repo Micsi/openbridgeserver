@@ -11,7 +11,6 @@ POST   /api/v1/datapoints/{id}/value write value (fires DataValueEvent)
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 
@@ -320,8 +319,6 @@ async def write_value(
         elif access not in ("public",):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
-        if not await _page_allows_datapoint(db, page_id, dp_id):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint not available on page")
     else:
         if user is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
