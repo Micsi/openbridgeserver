@@ -83,6 +83,21 @@ def test_entry_contains_all_fields():
     assert entry["level"] == "WARNING"
 
 
+def test_message_contains_raw_log_message_without_prefix():
+    from obs.log_buffer import get_log_buffer
+
+    logger = logging.getLogger("test.message")
+    logger.addHandler(_make_handler())
+    logger.setLevel(logging.DEBUG)
+
+    logger.info("plain message %s", "only")
+
+    entry = get_log_buffer()[0]
+    assert entry["message"] == "plain message only"
+    assert "[INFO]" not in entry["message"]
+    assert "test.message:" not in entry["message"]
+
+
 def test_multiple_records_are_ordered_oldest_first():
     from obs.log_buffer import get_log_buffer
 

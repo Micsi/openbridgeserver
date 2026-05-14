@@ -42,7 +42,7 @@ class LogBufferHandler(logging.Handler):
             "ts": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
             "level": record.levelname,
             "logger": record.name,
-            "message": self.format(record),
+            "message": record.getMessage(),
         }
         _buffer.append(entry)
 
