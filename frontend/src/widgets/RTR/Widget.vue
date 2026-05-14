@@ -114,10 +114,12 @@ const HEATING_MODES = [
 ]
 
 const AC_MODES = [
-  { value: 0, label: 'Auto'   },
-  { value: 1, label: 'Heizen' },
-  { value: 3, label: 'Kühlen' },
-  { value: 6, label: 'Aus'    },
+  { value:  0, label: 'Automatik'   },
+  { value:  1, label: 'Heizen'      },
+  { value:  3, label: 'Kühlen'      },
+  { value:  6, label: 'Aus'         },
+  { value:  9, label: 'Nur Lüfter'  },
+  { value: 14, label: 'Entfeuchten' },
 ]
 
 const allModes         = computed(() => variant.value === 'ac' ? AC_MODES : HEATING_MODES)

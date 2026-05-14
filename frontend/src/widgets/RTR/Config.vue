@@ -27,10 +27,12 @@ const HEATING_MODES = [
 ]
 
 const AC_MODES = [
-  { value: 0, label: 'Auto'   },
-  { value: 1, label: 'Heizen' },
-  { value: 3, label: 'Kühlen' },
-  { value: 6, label: 'Aus'    },
+  { value:  0, label: 'Automatik'   },
+  { value:  1, label: 'Heizen'      },
+  { value:  3, label: 'Kühlen'      },
+  { value:  6, label: 'Aus'         },
+  { value:  9, label: 'Nur Lüfter'  },
+  { value: 14, label: 'Entfeuchten' },
 ]
 
 const VARIANT_DEFAULT_MODES: Record<'heating' | 'ac', number[]> = {
@@ -67,7 +69,7 @@ const currentAllModes = computed(() => cfg.variant === 'ac' ? AC_MODES : HEATING
 
 const dptNote = computed(() =>
   cfg.variant === 'ac'
-    ? 'KNX DPT 20.105 · Auto=0, Heizen=1, Kühlen=3, Aus=6'
+    ? 'KNX DPT 20.105 · Automatik=0, Heizen=1, Kühlen=3, Aus=6, Nur Lüfter=9, Entfeuchten=14'
     : 'KNX DPT 20.102 · Auto=0, Komfort=1, Standby=2, Sparsam=3, Frostschutz=4',
 )
 
