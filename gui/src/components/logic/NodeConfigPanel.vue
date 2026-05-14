@@ -450,7 +450,11 @@
             <div class="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
               <p class="font-semibold mb-1">Legacy-Konfiguration</p>
               <p class="text-amber-400/80 mb-2">Pfad: <code class="font-mono">{{ localData.json_path }}</code></p>
+<<<<<<< HEAD
               <button @click="migrateToMultiPath" class="btn btn-sm bg-amber-600 hover:bg-amber-500 text-white text-xs px-2 py-1 rounded">
+=======
+              <button @click="migrateJsonToMultiPath" class="btn btn-sm bg-amber-600 hover:bg-amber-500 text-white text-xs px-2 py-1 rounded">
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
                 Zu mehreren Ausgängen upgraden
               </button>
             </div>
@@ -483,7 +487,11 @@
               class="mt-2 p-2 rounded-lg border border-slate-700/50 bg-slate-800/60 flex flex-col gap-1"
             >
               <div class="flex items-center gap-1">
+<<<<<<< HEAD
                 <span class="text-xs font-semibold text-teal-600 dark:text-teal-400 w-5 shrink-0 text-center">{{ i + 1 }}</span>
+=======
+                <span class="text-xs font-mono text-slate-500 w-5 shrink-0 text-center">{{ i + 1 }}</span>
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
                 <input
                   :value="entry.label"
                   @input="updateJsonPath(i, 'label', $event.target.value)"
@@ -492,7 +500,11 @@
                 />
                 <button
                   @click="removeJsonPath(i)"
+<<<<<<< HEAD
                   class="w-5 h-5 flex items-center justify-center rounded text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 hover:bg-red-400/10 text-base leading-none shrink-0"
+=======
+                  class="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-red-400 hover:bg-red-400/10 text-base leading-none shrink-0"
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
                   title="Ausgang entfernen"
                 >−</button>
               </div>
@@ -517,15 +529,38 @@
           </div>
         </template>
 
+<<<<<<< HEAD
         <!-- ── XML Extractor: legacy single-path UI ──────────────────────── -->
         <template v-else>
           <div v-if="extractorPaths.length" class="form-group">
             <label class="label">Pfad aus Daten wählen</label>
+=======
+        <!-- ── XML Extractor: multi-output UI ───────────────────────────── -->
+        <template v-else>
+
+          <!-- Legacy single-path: show upgrade banner -->
+          <template v-if="localData.xml_path && !xmlPaths.length">
+            <div class="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+              <p class="font-semibold mb-1">Legacy-Konfiguration</p>
+              <p class="text-amber-400/80 mb-2">Pfad: <code class="font-mono">{{ localData.xml_path }}</code></p>
+              <button @click="migrateXmlToMultiPath" class="btn btn-sm bg-amber-600 hover:bg-amber-500 text-white text-xs px-2 py-1 rounded">
+                Zu mehreren Ausgängen upgraden
+              </button>
+            </div>
+          </template>
+
+          <!-- Multi-path path picker dropdown (one shared, fills active row) -->
+          <div v-if="extractorPaths.length" class="form-group">
+            <label class="label">
+              Pfad wählen<span v-if="activeExtractorRow !== null" class="text-teal-400"> → Ausgang {{ activeExtractorRow + 1 }}</span>
+            </label>
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
             <select @change="onExtractorPathSelect" class="input text-sm" data-testid="extractor-path-select">
               <option value="">— Pfad wählen —</option>
               <option v-for="p in extractorPaths" :key="p" :value="p">{{ p }}</option>
             </select>
           </div>
+<<<<<<< HEAD
           <div class="form-group">
             <label class="label">XPath</label>
             <input
@@ -537,6 +572,55 @@
             />
             <p v-if="extractorPreviewValue !== null" class="text-xs text-teal-400 mt-1">
               ↳ {{ String(extractorPreviewValue) }}
+=======
+
+          <!-- Output rows -->
+          <div class="form-group">
+            <div class="flex items-center justify-between mb-1">
+              <span class="section-label">Ausgänge ({{ xmlPaths.length }})</span>
+              <button
+                @click="addXmlPath"
+                class="w-6 h-6 flex items-center justify-center rounded text-teal-400 hover:bg-teal-400/10 font-bold text-lg leading-none"
+                title="Ausgang hinzufügen"
+              >+</button>
+            </div>
+
+            <div
+              v-for="(entry, i) in xmlPaths" :key="i"
+              class="mt-2 p-2 rounded-lg border border-slate-700/50 bg-slate-800/60 flex flex-col gap-1"
+            >
+              <div class="flex items-center gap-1">
+                <span class="text-xs font-mono text-slate-500 w-5 shrink-0 text-center">{{ i + 1 }}</span>
+                <input
+                  :value="entry.label"
+                  @input="updateXmlPath(i, 'label', $event.target.value)"
+                  class="input text-xs flex-1"
+                  placeholder="Bezeichnung"
+                />
+                <button
+                  @click="removeXmlPath(i)"
+                  class="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-red-400 hover:bg-red-400/10 text-base leading-none shrink-0"
+                  title="Ausgang entfernen"
+                >−</button>
+              </div>
+              <input
+                :value="entry.path"
+                @input="updateXmlPath(i, 'path', $event.target.value)"
+                @focus="activeExtractorRow = i"
+                @blur="activeExtractorRow = null"
+                class="input text-xs font-mono w-full"
+                :class="activeExtractorRow === i ? 'ring-1 ring-teal-500/60' : ''"
+                placeholder="z.B. .//temperature"
+                data-testid="extractor-path-input"
+              />
+              <p v-if="xmlPathPreview(i) !== null" class="text-xs text-teal-400">
+                ↳ {{ String(xmlPathPreview(i)) }}
+              </p>
+            </div>
+
+            <p v-if="!xmlPaths.length && !localData.xml_path" class="text-xs text-slate-500 mt-2 text-center py-2">
+              Klicke <strong>+</strong> um Ausgänge hinzuzufügen.
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
             </p>
           </div>
         </template>
@@ -1155,7 +1239,11 @@ function jsonPathPreview(i) {
   } catch { return null }
 }
 
+<<<<<<< HEAD
 function migrateToMultiPath() {
+=======
+function migrateJsonToMultiPath() {
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
   const legacyPath = (localData.value.json_path || '').trim()
   if (!legacyPath) return
   localData.value.json_paths = JSON.stringify([{ label: 'Wert 1', path: legacyPath }])
@@ -1163,6 +1251,64 @@ function migrateToMultiPath() {
   emitUpdate()
 }
 
+<<<<<<< HEAD
+=======
+// ── XML Extractor: multi-path management ──────────────────────────────────
+const xmlPaths = computed(() => {
+  if (props.node?.type !== 'xml_extractor') return []
+  try {
+    const parsed = JSON.parse(localData.value.xml_paths || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch { return [] }
+})
+
+function _saveXmlPaths(paths) {
+  localData.value.xml_paths = JSON.stringify(paths)
+  emitUpdate()
+}
+
+function addXmlPath() {
+  const paths = xmlPaths.value.slice()
+  paths.push({ label: `Wert ${paths.length + 1}`, path: '' })
+  _saveXmlPaths(paths)
+  activeExtractorRow.value = paths.length - 1
+}
+
+function removeXmlPath(i) {
+  const paths = xmlPaths.value.slice()
+  paths.splice(i, 1)
+  _saveXmlPaths(paths)
+  activeExtractorRow.value = paths.length > 0 ? Math.min(i, paths.length - 1) : null
+}
+
+function updateXmlPath(i, key, value) {
+  const paths = xmlPaths.value.map(p => ({ ...p }))
+  paths[i][key] = value
+  _saveXmlPaths(paths)
+}
+
+function xmlPathPreview(i) {
+  const preview = extractorPreview.value
+  if (!preview) return null
+  const entry = xmlPaths.value[i]
+  if (!entry?.path) return null
+  try {
+    const doc = new DOMParser().parseFromString(preview, 'text/xml')
+    if (doc.querySelector('parsererror')) return null
+    const el = doc.evaluate(entry.path, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue
+    return el ? el.textContent?.trim() ?? null : null
+  } catch { return null }
+}
+
+function migrateXmlToMultiPath() {
+  const legacyPath = (localData.value.xml_path || '').trim()
+  if (!legacyPath) return
+  localData.value.xml_paths = JSON.stringify([{ label: 'Wert 1', path: legacyPath }])
+  localData.value.xml_path = ''
+  emitUpdate()
+}
+
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
 // ── Substring / RegEx extractor ───────────────────────────────────────────
 const substrTestInput = ref('')
 
@@ -1331,6 +1477,7 @@ function onValueMapPresetChange() {
 function onExtractorPathSelect(e) {
   const path = e.target.value
   if (!path || !props.node) return
+<<<<<<< HEAD
   if (props.node.type === 'json_extractor') {
     // Fill the active row, or last row, or add a new row
     let target = activeExtractorRow.value
@@ -1351,6 +1498,28 @@ function onExtractorPathSelect(e) {
     localData.value.xml_path = path
     emitUpdate()
   }
+=======
+  const isJson = props.node.type === 'json_extractor'
+  const pathList = isJson ? jsonPaths.value : xmlPaths.value
+  const updateFn = isJson ? updateJsonPath : updateXmlPath
+  const saveFn   = isJson ? _saveJsonPaths : _saveXmlPaths
+  const labelKey = isJson ? 'json_path' : 'xml_path'
+
+  // Fill the active row, or last row, or add a new row
+  let target = activeExtractorRow.value
+  if (target === null || target >= pathList.length) {
+    target = pathList.length - 1
+  }
+  if (target >= 0) {
+    updateFn(target, 'path', path)
+    activeExtractorRow.value = target
+  } else {
+    // No rows yet — add one
+    saveFn([{ label: 'Wert 1', path }])
+    activeExtractorRow.value = 0
+  }
+  e.target.value = ''
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
 }
 
 function onValueMapCustomInput(e) {

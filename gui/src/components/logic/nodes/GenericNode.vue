@@ -193,6 +193,21 @@ const def = computed(() => {
     }
     return base
   }
+<<<<<<< HEAD
+=======
+  if (props.type === 'xml_extractor') {
+    let pathList = []
+    try { pathList = JSON.parse(props.data?.xml_paths || '[]') } catch (_) { pathList = [] }
+    if (Array.isArray(pathList) && pathList.length > 0) {
+      const outputs = pathList.map((entry, i) => ({
+        id:    `out_${i + 1}`,
+        label: (entry?.label || `Wert ${i + 1}`),
+      }))
+      return { ...base, outputs }
+    }
+    return base
+  }
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
   return base
 })
 
@@ -242,7 +257,16 @@ const summary = computed(() => {
     if (Array.isArray(pathList) && pathList.length > 0) return `${pathList.length} Ausgänge`
     return d.json_path || '—'
   }
+<<<<<<< HEAD
   if (props.type === 'xml_extractor')       return d.xml_path  || '—'
+=======
+  if (props.type === 'xml_extractor') {
+    let pathList = []
+    try { pathList = JSON.parse(d.xml_paths || '[]') } catch (_) { pathList = [] }
+    if (Array.isArray(pathList) && pathList.length > 0) return `${pathList.length} Ausgänge`
+    return d.xml_path || '—'
+  }
+>>>>>>> 0360ebb (feat(xml-extractor): multiple outputs via configurable XPath list)
   if (props.type === 'substring_extractor') {
     const modeLabel = { links_von:'links von', rechts_von:'rechts von', zwischen:'zwischen', ausschneiden:'ausschneiden', regex:'regex' }
     const m = modeLabel[d.mode] ?? d.mode ?? '—'
