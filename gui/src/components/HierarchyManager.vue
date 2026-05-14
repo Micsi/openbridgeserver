@@ -42,7 +42,11 @@
           <svg class="w-4 h-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h12M3 17h8"/>
           </svg>
-          <span class="font-semibold text-sm text-slate-800 dark:text-slate-100 flex-1">{{ tree.name }}</span>
+          <span
+            @click="toggleTree(tree.id)"
+            class="font-semibold text-sm text-slate-800 dark:text-slate-100 flex-1 cursor-pointer hover:text-blue-500 dark:hover:text-blue-400 transition-colors select-none">
+            {{ tree.name }}
+          </span>
           <span v-if="tree.description" class="text-xs text-slate-400 hidden sm:block">{{ tree.description }}</span>
           <button @click="toggleTree(tree.id)" class="btn-secondary btn-xs" :data-testid="`btn-expand-${tree.id}`">
             <svg class="w-3 h-3 transition-transform" :class="expandedTrees.has(tree.id) ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
