@@ -119,20 +119,18 @@
           </button>
         </div>
 
-        <!-- Hierarchieknoten-Filter (Multi-Select mit Suche) -->
+        <!-- Hierarchieknoten-Filter (Multi-Select mit Suche, inkl. Baum-Filter) -->
         <div class="relative" ref="nodeFilterRef" data-testid="node-filter">
           <button
             @click="nodeDropOpen = !nodeDropOpen"
             :class="['input text-sm flex items-center gap-1.5 cursor-pointer select-none min-w-44',
-              filters.node_ids.length ? 'border-blue-500 bg-blue-500/5' : '']">
+              (filters.node_ids.length || filters.tree_ids.length) ? 'border-blue-500 bg-blue-500/5' : '']">
             <svg class="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h12M3 17h8"/>
             </svg>
-            <span v-if="!filters.node_ids.length" class="text-slate-400 flex-1 text-left">Hierarchieknoten …</span>
+            <span v-if="!filters.node_ids.length && !filters.tree_ids.length" class="text-slate-400 flex-1 text-left">Hierarchieknoten …</span>
             <span v-else class="text-blue-600 dark:text-blue-400 font-medium flex-1 text-left text-xs truncate">
-              {{ filters.node_ids.length === 1
-                ? `${filters.node_ids[0].tree_name} › ${filters.node_ids[0].node_name}`
-                : `${filters.node_ids.length} Knoten` }}
+              {{ hierarchyFilterLabel }}
             </span>
             <svg class="w-3 h-3 text-slate-400 shrink-0 transition-transform" :class="nodeDropOpen ? 'rotate-180' : ''"
               fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -157,10 +155,26 @@
               />
             </div>
 
-            <!-- Currently selected nodes (shown when no search text) -->
-            <div v-if="filters.node_ids.length && !nodeSearchQ"
+            <!-- Currently selected trees + nodes (shown when no search text) -->
+            <div v-if="(filters.tree_ids.length || filters.node_ids.length) && !nodeSearchQ"
               class="border-b border-slate-100 dark:border-slate-700">
               <div class="px-3 py-1 text-xs text-slate-400 font-medium uppercase tracking-wide">Ausgewählt</div>
+              <!-- Selected trees -->
+              <button v-for="t in filters.tree_ids" :key="t.tree_id"
+                @click="toggleTreeFilter(t)"
+                class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                <span class="flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center bg-blue-500 border-blue-500">
+                  <svg class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                  </svg>
+                </span>
+                <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h12M3 17h8"/>
+                </svg>
+                <span class="text-blue-600 dark:text-blue-400 font-medium truncate">{{ t.tree_name }}</span>
+                <span class="text-xs text-slate-400 ml-auto shrink-0">Ganzer Ast</span>
+              </button>
+              <!-- Selected nodes -->
               <button v-for="n in filters.node_ids" :key="n.node_id"
                 @click="toggleNode(n)"
                 class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
@@ -200,31 +214,14 @@
               </button>
             </div>
 
-            <div v-if="filters.node_ids.length" class="border-t border-slate-100 dark:border-slate-700 p-1.5">
-              <button @click="clearFilter('node_ids')"
+            <div v-if="filters.node_ids.length || filters.tree_ids.length" class="border-t border-slate-100 dark:border-slate-700 p-1.5">
+              <button @click="clearHierarchyFilters"
                 class="w-full text-xs text-center text-slate-500 hover:text-red-500 transition-colors py-1">
                 Auswahl aufheben
               </button>
             </div>
           </div>
         </div>
-
-        <!-- Aktive Baum-Filter als Chips -->
-        <template v-if="filters.tree_ids.length">
-          <span
-            v-for="t in filters.tree_ids" :key="t.tree_id"
-            class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400">
-            <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7h18M3 12h12M3 17h8"/>
-            </svg>
-            {{ t.tree_name }}
-            <button @click="toggleTreeFilter(t)" class="ml-0.5 hover:text-red-500 transition-colors" title="Baum-Filter entfernen">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-              </svg>
-            </button>
-          </span>
-        </template>
 
         <!-- Aktive Filter: Alle zurücksetzen -->
         <button v-if="hasActiveFilters" @click="clearAllFilters"
@@ -438,6 +435,18 @@ const hasActiveFilters = computed(() =>
   !!(filters.value.q || filters.value.tags.length || filters.value.quality || filters.value.type || filters.value.node_ids.length || filters.value.tree_ids.length)
 )
 
+const hierarchyFilterLabel = computed(() => {
+  const trees = filters.value.tree_ids
+  const nodes = filters.value.node_ids
+  const total = trees.length + nodes.length
+  if (total === 0) return ''
+  if (total === 1) {
+    if (trees.length === 1) return trees[0].tree_name
+    return `${nodes[0].tree_name} › ${nodes[0].node_name}`
+  }
+  return `${total} Filter`
+})
+
 // --------------------------------------------------------------------------
 // Lifecycle
 // --------------------------------------------------------------------------
@@ -565,6 +574,18 @@ function clearFilter(key) {
 
 function clearAllFilters() {
   filters.value = { q: '', tags: [], quality: '', type: '', node_ids: [], tree_ids: [] }
+  nodeSearchQ.value = ''
+  nodeResults.value = []
+  onSearch()
+}
+
+// --------------------------------------------------------------------------
+// Hierarchy (tree + node) filter helpers
+// --------------------------------------------------------------------------
+
+function clearHierarchyFilters() {
+  filters.value.node_ids = []
+  filters.value.tree_ids = []
   nodeSearchQ.value = ''
   nodeResults.value = []
   onSearch()
