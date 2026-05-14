@@ -75,14 +75,32 @@ describe('useSetColors', () => {
     expect(style.color).toBe('#ffffff')
   })
 
-  it('returns light text on a mid-tone blue (#3b82f6 → luminance < 0.5)', async () => {
+  it('returns dark text on a mid-tone blue (#3b82f6) because dark beats white on WCAG contrast', async () => {
+    // White on blue-500 yields ~3.4:1 contrast — fails WCAG AA for body text.
+    // Dark (slate-900) on the same blue yields ~5.0:1. The picker prefers
+    // whichever candidate gives the higher contrast ratio via chroma.contrast.
     const mod = await import('@/composables/useSetColors.js')
     const { setSets, getRowStyle } = mod.useSetColors()
     setSets([makeSet({ id: 's', color: '#3b82f6' })])
 
     const style = getRowStyle(['s'])
     expect(style).toBeTruthy()
-    expect(style.color).toBe('#ffffff')
+    expect(style.color).toBe('#0f172a')
+  })
+
+  it('picks the candidate with the higher WCAG contrast for every palette colour', async () => {
+    // Regression guard: the previous luminance>0.5 heuristic picked white on
+    // mid-luminance colours where dark text would have been more legible.
+    const { default: chroma } = await import('chroma-js')
+    const mod = await import('@/composables/useSetColors.js')
+    const { setSets, getRowStyle } = mod.useSetColors()
+    const palette = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#6366f1', '#84cc16', '#94a3b8']
+    for (const color of palette) {
+      setSets([makeSet({ id: color, color })])
+      const style = getRowStyle([color])
+      const better = chroma.contrast(color, '#ffffff') > chroma.contrast(color, '#0f172a') ? '#ffffff' : '#0f172a'
+      expect(style.color).toBe(better)
+    }
   })
 
   it('picks the first topbar-order match when an entry matches multiple sets', async () => {

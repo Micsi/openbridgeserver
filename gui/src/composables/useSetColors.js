@@ -5,8 +5,14 @@
  * `matched_set_ids: list[str]` field. This composable resolves the first
  * matching topbar set (in ascending `topbar_order`) and returns an inline
  * style object with the set colour as background plus an automatically
- * contrasted text colour (chroma-js luminance > 0.5 → dark text, otherwise
- * white).
+ * contrasted text colour.
+ *
+ * Text colour is picked by **WCAG contrast ratio** (chroma.contrast) — for
+ * every candidate the one with the higher contrast wins. This replaces the
+ * earlier luminance>0.5 threshold which picked white text on mid-tone
+ * palette colours (blue-500, emerald, amber, …) where dark text actually
+ * scores 5–7:1 and white only 2.5–3.5:1 — i.e. the row text looked washed
+ * out on the very colours users most often pick.
  *
  * Module-level cache (`topbarSets`) is intentionally shared between calls so
  * any component can read the same colour map. Use `refreshSets()` after a
@@ -27,7 +33,6 @@ import { ringbufferApi } from '@/api/client'
 
 const DARK_TEXT = '#0f172a'
 const LIGHT_TEXT = '#ffffff'
-const LUMINANCE_THRESHOLD = 0.5
 
 // Module-level cache — shared across all callers of useSetColors().
 // Keys are set ids, values are the full set objects (only sets that are
@@ -48,7 +53,9 @@ function isValidColor(value) {
 function getAccentText(color) {
   if (!isValidColor(color)) return DARK_TEXT
   try {
-    return chroma(color).luminance() > LUMINANCE_THRESHOLD ? DARK_TEXT : LIGHT_TEXT
+    const cWhite = chroma.contrast(color, LIGHT_TEXT)
+    const cDark = chroma.contrast(color, DARK_TEXT)
+    return cWhite > cDark ? LIGHT_TEXT : DARK_TEXT
   } catch {
     return DARK_TEXT
   }
