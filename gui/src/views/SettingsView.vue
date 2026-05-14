@@ -18,7 +18,7 @@
     </div>
 
     <!-- Demo-Modus Banner -->
-    <div v-if="isDemo && activeTab !== 'general'" class="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-600 dark:text-amber-400">
+    <div v-if="isDemo" class="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-600 dark:text-amber-400">
       <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M12 3a9 9 0 110 18A9 9 0 0112 3z"/></svg>
       Demo-Modus — dieser Bereich ist schreibgeschützt/gesperrt.
     </div>
@@ -545,7 +545,7 @@
     <!-- ── Hierarchie ── -->
     <div v-if="activeTab === 'hierarchy'" class="flex flex-col gap-4" data-testid="hierarchy-tab">
       <div class="card">
-        <div class="card-body">
+        <div class="card-body" :class="{ 'pointer-events-none select-none opacity-60': isDemo }">
           <HierarchyManager />
         </div>
       </div>
@@ -713,7 +713,7 @@
     </div>
 
     <!-- ── Links ── -->
-    <div v-if="activeTab === 'links' && auth.isAdmin && !isDemo" class="flex flex-col gap-4 max-w-lg" data-testid="links-tab">
+    <div v-if="activeTab === 'links' && !isDemo" class="flex flex-col gap-4 max-w-lg" data-testid="links-tab">
       <div class="card">
         <div class="card-header flex items-center justify-between">
           <div>
@@ -798,7 +798,7 @@
     </div>
 
     <!-- ── Danger Zone ── -->
-    <div v-if="activeTab === 'dangerzone' && auth.isAdmin && !isDemo" class="flex flex-col gap-4 max-w-lg">
+    <div v-if="activeTab === 'dangerzone' && !isDemo" class="flex flex-col gap-4 max-w-lg">
       <div class="rounded-lg border border-red-500/40 bg-red-500/5 overflow-hidden">
         <div class="px-5 py-3 border-b border-red-500/30 flex items-center gap-2">
           <svg class="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1067,12 +1067,12 @@ const tabs = computed(() => [
   { id: 'password',     label: 'Passwort' },
   ...(auth.isAdmin ? [{ id: 'users', label: 'Benutzer' }] : []),
   { id: 'apikeys',      label: 'API Keys' },
-  ...(auth.isAdmin && !isDemo.value ? [{ id: 'links', label: 'Links' }] : []),
+  ...(!isDemo.value ? [{ id: 'links', label: 'Links' }] : []),
   { id: 'hierarchy',    label: 'Hierarchie' },
   { id: 'importexport', label: 'Datenmanagement' },
   { id: 'icons',        label: 'Icons' },
-  ...(auth.isAdmin ? [{ id: 'history', label: 'Historie DB' }] : []),
-  ...(auth.isAdmin ? [{ id: 'dangerzone', label: 'Danger Zone' }] : []),
+  ...(!isDemo.value ? [{ id: 'history', label: 'Historie DB' }] : []),
+  ...(!isDemo.value ? [{ id: 'dangerzone', label: 'Danger Zone' }] : []),
 ])
 
 // ── History Backend ────────────────────────────────────────────────────────

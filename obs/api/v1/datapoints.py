@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, field_serializer
 
-from obs.api.auth import get_admin_user, get_current_user, optional_current_user
+from obs.api.auth import get_current_user, optional_current_user
 from obs.api.v1.sessions import validate_session
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
@@ -162,7 +162,7 @@ async def list_datapoints(
 @router.post("/", response_model=DataPointOut, status_code=status.HTTP_201_CREATED)
 async def create_datapoint(
     body: DataPointCreate,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
 ) -> DataPointOut:
     from obs.models.types import DataTypeRegistry
 
@@ -191,7 +191,7 @@ async def get_datapoint(
 async def update_datapoint(
     dp_id: uuid.UUID,
     body: DataPointUpdate,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
 ) -> DataPointOut:
     reg = get_registry()
     if reg.get(dp_id) is None:
@@ -211,7 +211,7 @@ async def update_datapoint(
 @router.delete("/{dp_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_datapoint(
     dp_id: uuid.UUID,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
 ) -> None:
     reg = get_registry()
     if reg.get(dp_id) is None:
@@ -282,7 +282,7 @@ async def write_value(
     """Write a value to a DataPoint via the internal EventBus.
 
     Zugriffslogik:
-    - JWT vorhanden → immer erlaubt (Admin)
+    - JWT vorhanden (eingeloggter Benutzer) → immer erlaubt
     - X-Page-Id Header + Seite ist 'public' → erlaubt
     - X-Page-Id Header + Seite ist 'protected' + gültiger X-Session-Token → erlaubt
     - Seite ist 'readonly' → 403 (auch mit Page-Header)
@@ -318,13 +318,6 @@ async def write_value(
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
         elif access not in ("public",):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-
-    else:
-        if user is None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-        row = await db.fetchone("SELECT is_admin FROM users WHERE username=?", (user,))
-        if not row or not row["is_admin"]:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     event = DataValueEvent(
         datapoint_id=dp_id,
