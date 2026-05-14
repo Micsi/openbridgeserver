@@ -150,13 +150,20 @@ async def search(
 
         results = [dp for dp in results if _matches(dp)]
 
-    # 5a. node_id filter (specific nodes — OR logic)
+    # 5a. node_id filter — includes selected nodes AND all their descendants
     if node_id:
         node_id_list = [n.strip() for n in node_id.split(",") if n.strip()]
         if node_id_list:
             placeholders = ",".join("?" * len(node_id_list))
             rows = await db.fetchall(
-                f"SELECT DISTINCT datapoint_id FROM hierarchy_datapoint_links WHERE node_id IN ({placeholders})",
+                f"""WITH RECURSIVE desc(id) AS (
+                    SELECT id FROM hierarchy_nodes WHERE id IN ({placeholders})
+                    UNION ALL
+                    SELECT hn.id FROM hierarchy_nodes hn JOIN desc d ON hn.parent_id = d.id
+                )
+                SELECT DISTINCT hdl.datapoint_id
+                FROM hierarchy_datapoint_links hdl
+                JOIN desc d ON hdl.node_id = d.id""",
                 node_id_list,
             )
             matched_ids = {r["datapoint_id"] for r in rows}
