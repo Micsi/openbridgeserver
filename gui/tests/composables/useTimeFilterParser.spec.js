@@ -24,6 +24,13 @@ describe('parseDurationToken', () => {
     expect(parseDurationToken('2d')).toEqual({ seconds: 172800, sign: 1 })
   })
 
+  it('accepts the German "std" alias for hours', () => {
+    expect(parseDurationToken('1std')).toEqual({ seconds: 3600, sign: 1 })
+    expect(parseDurationToken('2std')).toEqual({ seconds: 7200, sign: 1 })
+    expect(parseDurationToken('1std 30min')).toEqual({ seconds: 3600 + 1800, sign: 1 })
+    expect(parseDurationToken('-2std')).toEqual({ seconds: 7200, sign: -1 })
+  })
+
   it('parses combined tokens', () => {
     expect(parseDurationToken('1h10m')).toEqual({ seconds: 3600 + 600, sign: 1 })
     expect(parseDurationToken('1h10min')).toEqual({ seconds: 3600 + 600, sign: 1 })

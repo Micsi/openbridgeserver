@@ -196,6 +196,34 @@ describe('ExportDialog', () => {
     wrapper.unmount()
   })
 
+  it('preserves the warning when the parent passes a new setIds reference with identical content', async () => {
+    // Regression: RingBufferView re-renders on every live WS entry, and its
+    // bindings `:set-ids="activeTopbarSetIds()"` / `:time="timeFilterToPayload(timeFilter)"`
+    // return new array/object references each time. A naive deep-watch on
+    // [setIds, time] fires on every parent re-render (Vue's hasChanged uses
+    // Object.is on the top-level snapshot) and wipes pendingRowCount before
+    // the user can confirm the warning.
+    countExportRows.mockResolvedValueOnce({ data: { row_count: 5234 } })
+    const wrapper = await mountDialog({ setIds: ['set-a'], time: { from: '2026-05-01T00:00:00Z' } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="btn-export-go"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="export-warning"]').exists()).toBe(true)
+
+    // Simulate a parent re-render: identical content, new references.
+    await wrapper.setProps({ setIds: ['set-a'], time: { from: '2026-05-01T00:00:00Z' } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="export-warning"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="btn-export-go"]').text()).toContain('Trotzdem exportieren')
+
+    // Real content change → warning is invalidated.
+    await wrapper.setProps({ setIds: ['set-b'], time: { from: '2026-05-01T00:00:00Z' } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="export-warning"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('cancel button aborts the export even while the warning is shown', async () => {
     countExportRows.mockResolvedValueOnce({ data: { row_count: 9999 } })
     const wrapper = await mountDialog({ setIds: ['set-a'] })

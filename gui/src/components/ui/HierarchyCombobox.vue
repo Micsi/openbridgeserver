@@ -17,20 +17,14 @@
       <span v-if="item.is_leaf === false" class="text-xs text-slate-500 shrink-0">Knoten</span>
     </template>
 
-    <!-- Chip: full path -->
-    <template #chip="{ item, remove }">
-      <PathLabel :segments="item.path" />
-      <button
-        type="button"
-        class="ml-0.5 text-blue-700/70 hover:text-red-500 dark:text-blue-300/70 dark:hover:text-red-400 shrink-0"
-        @click.stop="remove"
-        tabindex="-1"
-        aria-label="Entfernen"
-      >
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-        </svg>
-      </button>
+    <!-- Chip: forward the consumer's slot first (FilterEditor injects an
+         extra ⊞ expand affordance there), fall back to a plain PathLabel
+         when no consumer slot is provided. Remove (×) is rendered by the
+         surrounding Combobox wrapper. -->
+    <template #chip="slotProps">
+      <slot name="chip" v-bind="slotProps">
+        <PathLabel :segments="slotProps.item.path" />
+      </slot>
     </template>
   </Combobox>
 </template>
@@ -68,10 +62,15 @@ function buildPathsForTree(tree, rawNodes) {
     return segs
   }
   const childIds = new Set(rawNodes.filter((n) => n.parent_id).map((n) => n.parent_id))
+  // display_depth (PR #462, issue #443) governs which path segment kicks off
+  // the abbreviated tag in consumers like FilterEditor — kept on the item so
+  // callers don't have to look the tree up again.
+  const displayDepth = Number(tree?.display_depth) || 0
   return rawNodes.map((n) => ({
     id: `${tree.id}:${n.id}`,
     tree_id: tree.id,
     tree_name: tree.name,
+    display_depth: displayDepth,
     node_id: n.id,
     path: pathOf(n),
     is_leaf: !childIds.has(n.id),

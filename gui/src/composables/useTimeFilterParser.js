@@ -40,13 +40,14 @@ const UNIT_SECONDS = {
   m: 60,
   min: 60,
   h: 3600,
+  std: 3600, // Deutsch: "Stunden" — alternate writing for hours.
   d: 86400,
 }
 
-// Order matters: longer units must come first so 'min' wins over 'm'.
-// One segment = (number)(unit). Multiple segments may be concatenated with or
-// without whitespace, e.g. '1h10min30s' or '1h 10min 30s'.
-const SEGMENT_RE = /(\d+)\s*(min|s|m|h|d)/y
+// Order matters: longer units must come first so 'min' wins over 'm' and
+// 'std' wins over 's'. One segment = (number)(unit). Multiple segments may be
+// concatenated with or without whitespace, e.g. '1h10min30s' or '1h 10min 30s'.
+const SEGMENT_RE = /(\d+)\s*(min|std|s|m|h|d)/y
 
 /**
  * @param {string|null|undefined} text

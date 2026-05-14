@@ -8,6 +8,11 @@
     <span class="tabular-nums">{{ displayMax }}</span>
     <span class="text-slate-400">·</span>
     <span>{{ storage }}</span>
+    <span v-if="formattedDiskSize" class="text-slate-400">·</span>
+    <span v-if="formattedDiskSize" class="tabular-nums" data-testid="topbar-stats-disk-size">{{ formattedDiskSize }}</span>
+    <span v-if="formattedRetention" class="text-slate-400">·</span>
+    <span v-if="formattedRetention" class="tabular-nums" data-testid="topbar-stats-retention"
+          title="Aktuelle effektive Retention im Ringbuffer">⏱ {{ formattedRetention }}</span>
     <span
       ref="helpIcon"
       data-testid="topbar-stats-help"
@@ -47,6 +52,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useFloating, autoUpdate, offset, flip, shift } from '@floating-ui/vue'
 import { ringbufferApi } from '@/api/client'
 import { useWebSocketStore } from '@/stores/websocket'
+import { formatDurationDeutsch } from '@/composables/useTimeFilterParser'
 
 const stats = ref(null)
 const helpIcon = ref(null)
@@ -79,6 +85,39 @@ function fmt(n) {
 const formattedTotal = computed(() => fmt(total.value))
 const formattedMax = computed(() => fmt(maxEntries.value))
 const displayMax = computed(() => (maxEntries.value == null ? '∞' : formattedMax.value))
+
+const fileSizeBytes = computed(() => {
+  const raw = stats.value?.file_size_bytes
+  if (raw == null) return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+})
+
+function fmtBytes(n) {
+  if (!Number.isFinite(n) || n < 0) return null
+  if (n === 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i += 1
+  }
+  const formatter = new Intl.NumberFormat('de-DE', {
+    minimumFractionDigits: v >= 100 || i === 0 ? 0 : 1,
+    maximumFractionDigits: v >= 100 || i === 0 ? 0 : 1,
+  })
+  return `${formatter.format(v)} ${units[i]}`
+}
+
+const formattedDiskSize = computed(() => fmtBytes(fileSizeBytes.value))
+
+const formattedRetention = computed(() => {
+  const raw = stats.value?.effective_retention_seconds
+  const seconds = Number(raw)
+  if (!Number.isFinite(seconds) || seconds <= 0) return null
+  return formatDurationDeutsch(seconds)
+})
 
 const { floatingStyles, update } = useFloating(helpIcon, tooltip, {
   placement: 'bottom',

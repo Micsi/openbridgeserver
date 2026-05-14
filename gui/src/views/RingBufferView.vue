@@ -1,39 +1,45 @@
 <template>
-  <div class="flex flex-col gap-5">
-    <div class="flex flex-wrap items-start gap-3">
+  <!-- h-full + flex column so the table-wrap below can flex-1 into the
+       remaining viewport space (AppLayout's <main> already provides the
+       scrolling fallback if total content overflows). -->
+  <div class="flex flex-col gap-5 h-full min-h-0">
+    <div class="flex flex-wrap items-start gap-3 shrink-0">
       <div class="flex-1">
         <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100">Monitor</h2>
         <p class="text-sm text-slate-500 mt-0.5">Live Log</p>
-        <p class="text-xs text-slate-500 mt-1" data-testid="ringbuffer-storage-mode-hint">
-          Speicherverhalten: file-only mit festen serverseitigen Limits.
-        </p>
       </div>
-      <button @click="showConfig = true" class="btn-secondary btn-sm" data-testid="btn-open-monitor-config">⚙ Konfigurieren</button>
-      <button @click="applyFilters" class="btn-secondary btn-sm" data-testid="btn-refresh-ringbuffer">↻ Aktualisieren</button>
-      <button
-        v-if="!paused"
-        @click="pauseLive"
-        class="btn-secondary btn-sm"
-        data-testid="btn-live-pause"
-      >
-        ⏸ Pause
-      </button>
-      <button
-        v-else
-        @click="resumeLive"
-        class="btn-secondary btn-sm"
-        data-testid="btn-live-resume"
-      >
-        ▶ Resume
-      </button>
-      <!-- Single, consolidated status indicator: WS-connection + pause-state -->
-      <span :class="['inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium', statusBadgeClass]"
-        data-testid="status-badge"
-        :title="statusBadgeTitle">
-        <span :class="['w-1.5 h-1.5 rounded-full', statusDotClass]" />
-        {{ statusBadgeText }}
-      </span>
-      <TopbarStats class="ml-auto" />
+      <!-- Right cluster: aligns buttons + status chip + ringbuffer stats on a
+           single baseline; status badge matches the button height. -->
+      <div class="flex items-center gap-2">
+        <button @click="showConfig = true" class="btn-secondary btn-sm" data-testid="btn-open-monitor-config">⚙ Konfigurieren</button>
+        <button @click="applyFilters" class="btn-secondary btn-sm" data-testid="btn-refresh-ringbuffer">↻ Aktualisieren</button>
+        <button
+          v-if="!paused"
+          @click="pauseLive"
+          class="btn-secondary btn-sm"
+          data-testid="btn-live-pause"
+        >
+          ⏸ Pause
+        </button>
+        <button
+          v-else
+          @click="resumeLive"
+          class="btn-secondary btn-sm"
+          data-testid="btn-live-resume"
+        >
+          ▶ Resume
+        </button>
+        <!-- Single, consolidated status indicator: WS-connection + pause-state.
+             Same padding/height as btn-sm so the chip sits on the button
+             baseline (gap-2 aligns horizontally, py-1.5 vertically matches). -->
+        <span :class="['inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium', statusBadgeClass]"
+          data-testid="status-badge"
+          :title="statusBadgeTitle">
+          <span :class="['w-1.5 h-1.5 rounded-full', statusDotClass]" />
+          {{ statusBadgeText }}
+        </span>
+        <TopbarStats />
+      </div>
     </div>
 
     <!-- Sticky filter topbar (#435) — drag/toggle/remove set chips, TimeFilterPopover (#432) in the left slot. -->
@@ -57,6 +63,7 @@
       v-model="showFilterEditor"
       :set-id="editorTargetId"
       @saved="onFilterEditorSaved"
+      @deleted="onFilterEditorDeleted"
     />
 
     <!-- Soft-modal CSV/TSV export dialog (#427) -->
@@ -66,11 +73,11 @@
       :time="timeFilterToPayload(timeFilter)"
     />
 
-    <div class="card overflow-hidden">
+    <div class="card overflow-hidden flex-1 min-h-0 flex flex-col">
       <div v-if="loading" class="flex justify-center py-12"><Spinner size="lg" /></div>
       <div v-else-if="listError" class="px-4 py-6 text-sm text-red-500" data-testid="ringbuffer-error">{{ listError }}</div>
       <div v-else-if="!entries.length" class="text-center text-slate-500 text-sm py-12" data-testid="ringbuffer-empty">Keine Einträge im Monitor</div>
-      <div v-else class="table-wrap max-h-[60vh] overflow-y-auto" ref="tableWrapRef" data-testid="ringbuffer-table-wrap">
+      <div v-else class="table-wrap flex-1 min-h-0 overflow-y-auto" ref="tableWrapRef" data-testid="ringbuffer-table-wrap">
         <table class="table">
           <thead class="sticky top-0">
             <tr>
@@ -163,6 +170,16 @@ function onEditSet(id) {
 function onNewSet() {
   editorTargetId.value = null
   showFilterEditor.value = true
+}
+
+async function onFilterEditorDeleted() {
+  // After a set has been deleted: drop it from the local cache, the topbar
+  // chip strip (where it may have been pinned), the color cache, and re-run
+  // the table query so the matched-set colour painting falls back to the
+  // remaining sets only.
+  await loadFiltersets()
+  topbarChipsRef.value?.reload?.()
+  await load()
 }
 
 async function onFilterEditorSaved() {

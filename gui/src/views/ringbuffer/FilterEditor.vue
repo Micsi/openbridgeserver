@@ -57,7 +57,9 @@
           data-testid="filter-editor-hierarchy"
           @update:model-value="onHierarchyChange"
         >
-          <template #chip="{ item, index, remove }">
+          <!-- The remove (×) action is rendered by the surrounding Combobox
+               wrapper — we only inject content + the ⊞ expand affordance. -->
+          <template #chip="{ item, index }">
             <span class="truncate">{{ chipLabel(item) }}</span>
             <button
               type="button"
@@ -68,16 +70,6 @@
               @click.stop="expandHierarchyChip(item, index)"
             >
               ⊞
-            </button>
-            <button
-              type="button"
-              :data-testid="`hierarchy-remove-${index}`"
-              class="ml-0.5 text-blue-700/70 hover:text-red-500 dark:text-blue-300/70 dark:hover:text-red-400"
-              @click.stop="remove"
-              tabindex="-1"
-              aria-label="Entfernen"
-            >
-              ×
             </button>
           </template>
         </HierarchyCombobox>
@@ -229,10 +221,20 @@
           Innerhalb des Sets: Hierarchy OR DP, alle anderen Kriterien AND-verknüpft.
         </span>
       </p>
+      <button
+        v-if="setId"
+        class="btn-danger btn-sm"
+        :disabled="deleting || saving"
+        data-testid="filter-editor-delete"
+        title="Filter-Set unwiderruflich löschen"
+        @click="onDelete"
+      >
+        🗑 Löschen
+      </button>
       <button class="btn-secondary btn-sm" data-testid="filter-editor-cancel" @click="onCancel">Verwerfen</button>
       <button
         class="btn-primary btn-sm"
-        :disabled="saving || filterIsEmpty"
+        :disabled="saving || filterIsEmpty || deleting"
         data-testid="filter-editor-save-topbar"
         @click="onSave(true)"
       >
@@ -247,6 +249,14 @@
     message="Editor wirklich schliessen und alle Änderungen verwerfen?"
     confirm-label="Verwerfen"
     @confirm="confirmDiscard"
+  />
+  <ConfirmDialog
+    v-model="confirmDeleteOpen"
+    title="Filter-Set löschen"
+    :message="`Das Filter-Set „${loadedSet?.name ?? ''}“ wirklich unwiderruflich löschen?`"
+    confirm-label="Löschen"
+    :danger="true"
+    @confirm="confirmDelete"
   />
 </template>
 
@@ -266,7 +276,7 @@ const props = defineProps({
   setId: { type: String, default: null },
   softModal: { type: Boolean, default: true },
 })
-const emit = defineEmits(['update:modelValue', 'saved'])
+const emit = defineEmits(['update:modelValue', 'saved', 'deleted'])
 
 const COLOR_PALETTE = [
   // Vibrant tier
@@ -332,8 +342,10 @@ const filterIsEmpty = computed(() =>
 )
 const errorMsg = ref('')
 const saving = ref(false)
+const deleting = ref(false)
 const dirty = ref(false)
 const confirmOpen = ref(false)
+const confirmDeleteOpen = ref(false)
 const expanding = ref(false)
 const loadedSet = ref(null)
 // Cache hierarchy node descendants by `${tree_id}:${node_id}` so we can
@@ -353,8 +365,27 @@ const hierarchyIds = computed(() =>
 )
 
 function chipLabel(item) {
-  if (item?.path && Array.isArray(item.path)) return item.path.join(' › ')
-  return item?.label ?? item?.name ?? String(item?.id ?? '')
+  // Hierarchy chip respects `tree.display_depth` (PR #462 / issue #443):
+  // depth 0 → tree_name as the abbreviated start; depth ≥ 1 → ancestor at
+  // index depth-1 in the within-tree path. The leaf node is always the
+  // second segment. Falls back to tree_name when the configured depth runs
+  // past the leaf (degenerate but tolerated). Full path is available via the
+  // tooltip on the surrounding chip wrapper.
+  if (!item) return ''
+  const path = Array.isArray(item.path) ? item.path : []
+  if (path.length === 0) return item.label ?? item.name ?? String(item.id ?? '')
+  const leaf = path[path.length - 1]
+  if (path.length === 1) return item.tree_name ? `${item.tree_name} › ${leaf}` : leaf
+  const depth = Number(item.display_depth) || 0
+  // Ancestor indices that make sense: 0 .. path.length-2. depth=0 maps to
+  // tree_name (no ancestor index used).
+  let start
+  if (depth <= 0 || depth - 1 >= path.length - 1) {
+    start = item.tree_name || path[0]
+  } else {
+    start = path[depth - 1]
+  }
+  return `${start} › ${leaf}`
 }
 
 function parseCompositeId(compositeId) {
@@ -647,6 +678,28 @@ function onCancel() {
     return
   }
   emit('update:modelValue', false)
+}
+
+function onDelete() {
+  if (!props.setId || deleting.value || saving.value) return
+  confirmDeleteOpen.value = true
+}
+
+async function confirmDelete() {
+  if (!props.setId || deleting.value) return
+  deleting.value = true
+  errorMsg.value = ''
+  try {
+    await ringbufferApi.deleteFilterset(props.setId)
+    emit('deleted', { id: props.setId })
+    // Close the modal without the dirty-guard — the set is gone.
+    dirty.value = false
+    emit('update:modelValue', false)
+  } catch (err) {
+    errorMsg.value = err?.response?.data?.detail || err?.message || 'Löschen fehlgeschlagen'
+  } finally {
+    deleting.value = false
+  }
 }
 
 function confirmDiscard() {

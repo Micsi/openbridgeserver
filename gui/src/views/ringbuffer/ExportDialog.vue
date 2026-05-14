@@ -114,13 +114,25 @@ watch(
 
 // Any change to the selection invalidates a pending confirmation — the row
 // count we asked the user about no longer matches what we'd export.
-watch(
-  () => [props.setIds, props.time],
-  () => {
-    pendingRowCount.value = null
-  },
-  { deep: true },
-)
+//
+// We have to be careful here: the parent (RingBufferView) re-renders on every
+// live WS entry, and the bindings `:set-ids="activeTopbarSetIds()"` and
+// `:time="timeFilterToPayload(timeFilter)"` return *new* array/object refs
+// each render even when their content is unchanged. Vue 3's `deep: true`
+// affects dep-tracking traversal but `hasChanged` still falls back to
+// Object.is on the top-level snapshot — so a naive `watch(() => [setIds,
+// time], …)` fires on every parent re-render and wipes pendingRowCount
+// before the user can confirm. We fold both inputs into a content
+// fingerprint string and watch that instead — string identity is stable
+// across re-renders when the content is.
+const filterFingerprint = computed(() => {
+  const ids = Array.isArray(props.setIds) ? props.setIds.slice().sort().join('|') : ''
+  const time = props.time ? JSON.stringify(props.time) : ''
+  return `${ids}#${time}`
+})
+watch(filterFingerprint, () => {
+  pendingRowCount.value = null
+})
 
 async function onExport() {
   if (busy.value) return
