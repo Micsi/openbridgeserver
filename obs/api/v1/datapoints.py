@@ -23,6 +23,7 @@ from obs.api.v1.sessions import validate_session
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
 from obs.models.datapoint import DataPointCreate, DataPointUpdate
+from obs.models.visu import PageConfig
 
 router = APIRouter(tags=["datapoints"])
 
@@ -252,24 +253,23 @@ async def _resolve_page_access(db: Database, node_id: str) -> str:
     return "public"
 
 
-async def _page_allows_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> bool:
-    """Return True iff page_id is a PAGE node and references dp_id in its widgets."""
-    row = await db.fetchone("SELECT type, page_config FROM visu_nodes WHERE id = ?", (page_id,))
-    if not row or row["type"] != "PAGE":
+async def _page_has_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> bool:
+    """Return True if the page contains a widget bound to this datapoint."""
+    row = await db.fetchone("SELECT page_config FROM visu_nodes WHERE id = ? AND type = 'PAGE'", (page_id,))
+    if not row:
         return False
-    page_config_raw = row["page_config"]
-    if not page_config_raw:
+
+    raw = row["page_config"]
+    if not raw:
         return False
+
     try:
-        page_config = json.loads(page_config_raw)
-    except json.JSONDecodeError:
+        page = PageConfig.model_validate_json(raw)
+    except Exception:
         return False
 
     dp_id_str = str(dp_id)
-    for widget in page_config.get("widgets", []):
-        if widget.get("datapoint_id") == dp_id_str or widget.get("status_datapoint_id") == dp_id_str:
-            return True
-    return False
+    return any(widget.datapoint_id == dp_id_str or widget.status_datapoint_id == dp_id_str for widget in page.widgets)
 
 
 @router.post("/{dp_id}/value", status_code=status.HTTP_204_NO_CONTENT)
@@ -296,8 +296,13 @@ async def write_value(
     if reg.get(dp_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
 
-    page_id = request.headers.get("X-Page-Id")
-    if page_id:
+    if user is None:
+        page_id = request.headers.get("X-Page-Id")
+        if not page_id:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        if not await _page_has_datapoint(db, page_id, dp_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint is not part of the page")
+
         access = await _resolve_page_access(db, page_id)
         if access == "readonly":
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Page is read-only")
