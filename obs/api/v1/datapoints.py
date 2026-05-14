@@ -296,36 +296,33 @@ async def write_value(
     if reg.get(dp_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
 
-    if user is None:
-        page_id = request.headers.get("X-Page-Id")
-        if not page_id:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-
+    page_id = request.headers.get("X-Page-Id")
+    if page_id:
         access = await _resolve_page_access(db, page_id)
-
         if access == "readonly":
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Page is read-only")
-        if access == "public":
-            pass  # Erlaubt — keine weitere Prüfung nötig
-        elif access == "protected":
+        if access == "protected":
             session_token = request.headers.get("X-Session-Token")
             if not session_token or not validate_session(session_token, page_id):
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Valid session token required")
-        else:  # user, unbekannt oder sonstige → 401
+        elif access == "user":
+            if user is None:
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+            from obs.api.v1.visu import _check_user_access
+
+            if not await _check_user_access(db, page_id, user):
+                raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
+        elif access not in ("public",):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
         if not await _page_allows_datapoint(db, page_id, dp_id):
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint not available on page")
     else:
-        # Benutzer ist eingeloggt — prüfe ob er Zugang zur Seite hat
-        page_id = request.headers.get("X-Page-Id")
-        if page_id:
-            access = await _resolve_page_access(db, page_id)
-            if access == "user":
-                from obs.api.v1.visu import _check_user_access
-
-                if not await _check_user_access(db, page_id, user):
-                    raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        row = await db.fetchone("SELECT is_admin FROM users WHERE username=?", (user,))
+        if not row or not row["is_admin"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     event = DataValueEvent(
         datapoint_id=dp_id,
