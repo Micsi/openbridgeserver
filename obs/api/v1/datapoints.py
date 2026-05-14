@@ -11,6 +11,7 @@ POST   /api/v1/datapoints/{id}/value write value (fires DataValueEvent)
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -251,6 +252,26 @@ async def _resolve_page_access(db: Database, node_id: str) -> str:
     return "public"
 
 
+async def _page_allows_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> bool:
+    """Return True iff page_id is a PAGE node and references dp_id in its widgets."""
+    row = await db.fetchone("SELECT type, page_config FROM visu_nodes WHERE id = ?", (page_id,))
+    if not row or row["type"] != "PAGE":
+        return False
+    page_config_raw = row["page_config"]
+    if not page_config_raw:
+        return False
+    try:
+        page_config = json.loads(page_config_raw)
+    except json.JSONDecodeError:
+        return False
+
+    dp_id_str = str(dp_id)
+    for widget in page_config.get("widgets", []):
+        if widget.get("datapoint_id") == dp_id_str or widget.get("status_datapoint_id") == dp_id_str:
+            return True
+    return False
+
+
 @router.post("/{dp_id}/value", status_code=status.HTTP_204_NO_CONTENT)
 async def write_value(
     dp_id: uuid.UUID,
@@ -292,6 +313,9 @@ async def write_value(
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Valid session token required")
         else:  # user, unbekannt oder sonstige → 401
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+        if not await _page_allows_datapoint(db, page_id, dp_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint not available on page")
     else:
         # Benutzer ist eingeloggt — prüfe ob er Zugang zur Seite hat
         page_id = request.headers.get("X-Page-Id")
