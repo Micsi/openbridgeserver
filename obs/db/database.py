@@ -422,51 +422,58 @@ CREATE INDEX IF NOT EXISTS idx_knx_trade_parent ON knx_trades(parent_id);
 """
 
 _MIGRATION_V29 = """
--- Flat filterset schema (#431): one rule per set, multi-active via topbar.
--- V29 was overwritten in-place because it only lived in the epic branch and
--- never reached upstream main, so a destructive DROP+CREATE is safe here.
-DROP TABLE IF EXISTS ringbuffer_filterset_rules;
-DROP TABLE IF EXISTS ringbuffer_filterset_groups;
-DROP TABLE IF EXISTS ringbuffer_filtersets;
-
-CREATE TABLE IF NOT EXISTS ringbuffer_filtersets (
-    id            TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    description   TEXT NOT NULL DEFAULT '',
-    dsl_version   INTEGER NOT NULL DEFAULT 2,
-    is_active     INTEGER NOT NULL DEFAULT 1,
-    color         TEXT NOT NULL DEFAULT '#3b82f6',
-    topbar_active INTEGER NOT NULL DEFAULT 0,
-    topbar_order  INTEGER NOT NULL DEFAULT 0,
-    filter_json   TEXT NOT NULL DEFAULT '{}',
-    created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_rb_fs_active        ON ringbuffer_filtersets(is_active);
-CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_active ON ringbuffer_filtersets(topbar_active);
-CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_order  ON ringbuffer_filtersets(topbar_order);
+ALTER TABLE hierarchy_trees ADD COLUMN display_depth INTEGER NOT NULL DEFAULT 0;
 """
 
 
-async def _migration_v30(conn: aiosqlite.Connection) -> None:
-    """Phase-2 in-place V29 follow-up for dev DBs that had already been seeded
-    against the original V29 schema (groups + rules + query_json).
+async def _migration_v32(conn: aiosqlite.Connection) -> None:
+    """Consolidated flat-filterset schema (was epic V29+V30+V31) plus a
+    display_depth fixup for epic dev DBs.
 
-    For DBs created on or after the V29 in-place rewrite this is a no-op:
-    every ALTER is guarded against "duplicate column name" and the DROP TABLEs
-    use IF EXISTS. For DBs that ran the original V29: the four new columns are
-    added, the obsolete helper tables are dropped, and every existing filterset
-    is reset to an empty FilterCriteria ('{}') — names/colors/active flags are
-    preserved, but the legacy group/rule content cannot be flattened safely
-    here because the criteria lived in a separate table that we are dropping.
-    Users can rebuild filters via the new editor.
+    Background — three schema histories converge here:
+      - Fresh DBs (post #462 merge): run V29 (display_depth on hierarchy_trees)
+        then V32 (build filtersets fresh).
+      - Upstream pre-#462 dev DBs at schema_version=28: run V29 then V32 — V32
+        creates the filterset table from scratch since it never existed.
+      - Epic dev DBs at schema_version=31: V29 is already marked applied (with
+        the OLD in-place content that built filtersets), so the new V29
+        (display_depth) does NOT re-run for them. V32 adds display_depth via
+        the idempotent ALTER at the end, and its other steps are no-ops
+        because filtersets already has the final schema.
+
+    Every step here is idempotent (CREATE IF NOT EXISTS, duplicate-column /
+    no-such-column guards, DROP IF EXISTS).
+
+    Epic V30 and V31 were intentionally dropped from the MIGRATIONS list —
+    they only ever shipped to a handful of dev DBs, and their effect is folded
+    into this migration. The version numbers 30 and 31 are skipped on fresh
+    installs, which the monotonic-MAX migration runner handles fine.
     """
+    # 1. Filtersets table — create if missing (fresh DBs + upstream pre-#462).
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ringbuffer_filtersets (
+            id            TEXT PRIMARY KEY,
+            name          TEXT NOT NULL,
+            description   TEXT NOT NULL DEFAULT '',
+            dsl_version   INTEGER NOT NULL DEFAULT 2,
+            is_active     INTEGER NOT NULL DEFAULT 1,
+            color         TEXT NOT NULL DEFAULT '#3b82f6',
+            topbar_active INTEGER NOT NULL DEFAULT 0,
+            topbar_order  INTEGER NOT NULL DEFAULT 0,
+            filter_json   TEXT NOT NULL DEFAULT '{}',
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        )
+        """
+    )
 
+    # 2. Ensure all columns are present (idempotent for older epic dev DBs).
     async def _add(column: str, definition: str) -> None:
         try:
             await conn.execute(f"ALTER TABLE ringbuffer_filtersets ADD COLUMN {column} {definition}")
         except aiosqlite.OperationalError as exc:
-            if "duplicate column name" not in str(exc):
+            if "duplicate column name" not in str(exc).lower():
                 raise
 
     await _add("color", "TEXT NOT NULL DEFAULT '#3b82f6'")
@@ -474,33 +481,32 @@ async def _migration_v30(conn: aiosqlite.Connection) -> None:
     await _add("topbar_order", "INTEGER NOT NULL DEFAULT 0")
     await _add("filter_json", "TEXT NOT NULL DEFAULT '{}'")
 
-    # Reset filter_json for sets that came from the old schema; the new
-    # FilterCriteria shape is incompatible with the old query_json blob.
-    await conn.execute("UPDATE ringbuffer_filtersets SET filter_json='{}' WHERE filter_json='' OR filter_json IS NULL")
-
-    await conn.execute("DROP TABLE IF EXISTS ringbuffer_filterset_rules")
-    await conn.execute("DROP TABLE IF EXISTS ringbuffer_filterset_groups")
-    await conn.execute("CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar ON ringbuffer_filtersets(topbar_active)")
-
-
-async def _migration_v31(conn: aiosqlite.Connection) -> None:
-    """Drop the obsolete is_default column on ringbuffer_filtersets.
-
-    The default-set concept was superseded by the topbar in Phase 2 (see Epic
-    #36). Fresh DBs already come without the column (V29 was edited in-place
-    in the same commit). For dev DBs that ran V29/V30 with the column present
-    we drop it (SQLite 3.35+ supports DROP COLUMN) and remove the index.
-    Wrapped in try/except so the migration is idempotent across both states.
-    """
-    try:
-        await conn.execute("DROP INDEX IF EXISTS idx_rb_fs_default")
-    except aiosqlite.OperationalError:
-        pass
+    # 3. Drop the obsolete is_default column if present (epic dev DBs that ran
+    # an early V29 variant, before the in-place rewrite removed is_default).
     try:
         await conn.execute("ALTER TABLE ringbuffer_filtersets DROP COLUMN is_default")
     except aiosqlite.OperationalError as exc:
-        # Column already gone (fresh DB, V29 created the table without it).
         if "no such column" not in str(exc).lower():
+            raise
+
+    # 4. Drop legacy groups/rules helper tables (#431 flattening).
+    await conn.execute("DROP TABLE IF EXISTS ringbuffer_filterset_rules")
+    await conn.execute("DROP TABLE IF EXISTS ringbuffer_filterset_groups")
+
+    # 5. Indexes.
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_rb_fs_active ON ringbuffer_filtersets(is_active)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_active ON ringbuffer_filtersets(topbar_active)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_rb_fs_topbar_order ON ringbuffer_filtersets(topbar_order)")
+    await conn.execute("DROP INDEX IF EXISTS idx_rb_fs_default")
+
+    # 6. Epic dev DB display_depth fixup. Those DBs ran the OLD epic V29
+    # (filtersets CREATE) instead of the new upstream V29 (display_depth) and
+    # therefore never received the new column. duplicate-column for everyone
+    # else.
+    try:
+        await conn.execute("ALTER TABLE hierarchy_trees ADD COLUMN display_depth INTEGER NOT NULL DEFAULT 0")
+    except aiosqlite.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
             raise
 
 
@@ -535,8 +541,11 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (27, _MIGRATION_V27),
     (28, _MIGRATION_V28),
     (29, _MIGRATION_V29),
-    (30, _migration_v30),
-    (31, _migration_v31),
+    # V30 and V31 were epic-only follow-ups to the original V29; their effect
+    # is consolidated into V32 below. Version numbers 30 and 31 are deliberately
+    # skipped so fresh DBs jump 29→32, while epic dev DBs at schema_version=31
+    # see V32 as the next applicable migration.
+    (32, _migration_v32),
 ]
 
 

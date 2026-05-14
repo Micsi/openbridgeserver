@@ -31,12 +31,23 @@ router = APIRouter(tags=["datapoints"])
 # ---------------------------------------------------------------------------
 
 
+class NodePathSegment(BaseModel):
+    node_id: str
+    node_name: str
+
+
 class HierarchyNodeRef(BaseModel):
     node_id: str
     node_name: str
     tree_id: str
     tree_name: str
-    path: list[str] = []  # ancestor node names (root → leaf), excluding tree_name
+    # Upstream PR #462 introduced the object form (node_id + node_name per
+    # segment) and a display_depth hint per tree; the epic's earlier flat
+    # `path: list[str]` is dropped in favour of this richer schema — IDs in
+    # each segment make path-elements addressable (clickable drill-down,
+    # stable identity across renames).
+    node_path: list[NodePathSegment] = []
+    display_depth: int = 0
 
 
 class DataPointOut(BaseModel):
