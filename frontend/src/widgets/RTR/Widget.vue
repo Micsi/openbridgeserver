@@ -109,7 +109,7 @@ const HEATING_MODES = [
   { value: 0, label: 'Auto'        },
   { value: 1, label: 'Komfort'     },
   { value: 2, label: 'Standby'     },
-  { value: 3, label: 'Sparsam'     },
+  { value: 3, label: 'Economy'     },
   { value: 4, label: 'Frostschutz' },
 ]
 

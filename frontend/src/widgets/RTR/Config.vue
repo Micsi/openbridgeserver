@@ -22,7 +22,7 @@ const HEATING_MODES = [
   { value: 0, label: 'Auto'        },
   { value: 1, label: 'Komfort'     },
   { value: 2, label: 'Standby'     },
-  { value: 3, label: 'Sparsam'     },
+  { value: 3, label: 'Economy'     },
   { value: 4, label: 'Frostschutz' },
 ]
 
@@ -70,7 +70,7 @@ const currentAllModes = computed(() => cfg.variant === 'ac' ? AC_MODES : HEATING
 const dptNote = computed(() =>
   cfg.variant === 'ac'
     ? 'KNX DPT 20.105 · Automatik=0, Heizen=1, Kühlen=3, Aus=6, Nur Lüfter=9, Entfeuchten=14'
-    : 'KNX DPT 20.102 · Auto=0, Komfort=1, Standby=2, Sparsam=3, Frostschutz=4',
+    : 'KNX DPT 20.102 · Auto=0, Komfort=1, Standby=2, Economy=3, Frostschutz=4',
 )
 
 function toggleMode(value: number) {
