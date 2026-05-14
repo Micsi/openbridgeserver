@@ -449,9 +449,7 @@ async def get_datapoint_nodes(
             node_ids,
         )
         for r in path_rows:
-            node_paths.setdefault(r["leaf_id"], []).append(
-                NodePathSegment(node_id=r["cur_id"], node_name=r["cur_name"])
-            )
+            node_paths.setdefault(r["leaf_id"], []).append(NodePathSegment(node_id=r["cur_id"], node_name=r["cur_name"]))
     return [
         NodeRef(
             link_id=r["link_id"],
