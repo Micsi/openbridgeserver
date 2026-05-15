@@ -28,7 +28,6 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from obs.api.auth import get_admin_user
 from obs.api.auth import get_current_user
 from obs.db.database import Database, get_db
 from obs.ringbuffer.persisted_config import persist_ringbuffer_config
@@ -928,7 +927,7 @@ async def list_ringbuffer_filtersets(
 @router.post("/filtersets", response_model=RingBufferFiltersetOut, status_code=status.HTTP_201_CREATED)
 async def create_ringbuffer_filterset(
     request: Request,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> RingBufferFiltersetOut:
     raw = await _read_json_body(request)
@@ -957,7 +956,7 @@ async def get_ringbuffer_filterset(
 async def update_ringbuffer_filterset(
     filterset_id: str,
     request: Request,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> RingBufferFiltersetOut:
     current = await _fetch_filterset(db, filterset_id)
@@ -1017,7 +1016,7 @@ async def update_ringbuffer_filterset(
 @router.delete("/filtersets/{filterset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_ringbuffer_filterset(
     filterset_id: str,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> None:
     row = await db.fetchone("SELECT id FROM ringbuffer_filtersets WHERE id=?", (filterset_id,))
@@ -1030,7 +1029,7 @@ async def delete_ringbuffer_filterset(
 async def clone_ringbuffer_filterset(
     filterset_id: str,
     body: RingBufferFiltersetCloneRequest,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> RingBufferFiltersetOut:
     source = await _fetch_filterset(db, filterset_id)
@@ -1061,7 +1060,7 @@ async def clone_ringbuffer_filterset(
 @router.patch("/filtersets/order", response_model=list[RingBufferFiltersetOut])
 async def patch_ringbuffer_filtersets_order(
     body: RingBufferFiltersetOrderPatch,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> list[RingBufferFiltersetOut]:
     """Persist a new topbar order for several sets in one batch.
@@ -1091,7 +1090,7 @@ async def patch_ringbuffer_filtersets_order(
 async def patch_ringbuffer_filterset_topbar(
     filterset_id: str,
     body: RingBufferFiltersetTopbarPatch,
-    _admin: str = Depends(get_admin_user),
+    _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> RingBufferFiltersetOut:
     """Toggle the topbar activation and/or order of a single set.

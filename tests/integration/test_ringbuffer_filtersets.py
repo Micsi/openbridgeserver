@@ -482,7 +482,8 @@ async def test_single_set_query_returns_matching_entries(client, auth_headers):
 # ---------------------------------------------------------------------------
 
 
-async def test_filterset_mutations_require_admin(client, auth_headers):
+async def test_filterset_mutations_allowed_for_any_authenticated_user(client, auth_headers):
+    """Non-admin users can fully manage filtersets (until fine-grained ownership lands)."""
     username = f"rb-user-{uuid.uuid4().hex[:8]}"
     password = "test-password-123"
     user_headers = await _create_non_admin_user_and_headers(client, auth_headers, username=username, password=password)
@@ -490,29 +491,55 @@ async def test_filterset_mutations_require_admin(client, auth_headers):
     try:
         create_resp = await client.post(
             "/api/v1/ringbuffer/filtersets",
-            json={"name": f"RB Restricted {uuid.uuid4()}", "filter": {"adapters": ["api"]}},
+            json={"name": f"RB User Created {uuid.uuid4()}", "filter": {"adapters": ["api"]}},
             headers=user_headers,
         )
-        assert create_resp.status_code == 403, create_resp.text
+        assert create_resp.status_code == 201, create_resp.text
+        created_id = create_resp.json()["id"]
 
-        created = await _create_filterset(
-            client,
-            auth_headers,
-            {"name": f"RB Admin Created {uuid.uuid4()}", "filter": {"adapters": ["api"]}},
+        clone_id: str | None = None
+        # PUT — rename and keep the (required) non-empty filter criteria
+        put_resp = await client.put(
+            f"/api/v1/ringbuffer/filtersets/{created_id}",
+            json={"name": "renamed by user", "filter": {"adapters": ["api"]}},
+            headers=user_headers,
         )
-        created_id = created["id"]
-
-        forbidden_calls: list[tuple[str, str, dict]] = [
-            ("put", f"/api/v1/ringbuffer/filtersets/{created_id}", {"json": {"name": "nope"}}),
-            ("delete", f"/api/v1/ringbuffer/filtersets/{created_id}", {}),
-            ("post", f"/api/v1/ringbuffer/filtersets/{created_id}/clone", {"json": {"name": "nope"}}),
-            ("patch", f"/api/v1/ringbuffer/filtersets/{created_id}/topbar", {"json": {"topbar_active": True}}),
-            ("patch", "/api/v1/ringbuffer/filtersets/order", {"json": {"items": []}}),
-        ]
-        for method, path, extra in forbidden_calls:
-            kwargs = {"headers": user_headers, **extra}
-            resp = await getattr(client, method)(path, **kwargs)
-            assert resp.status_code == 403, f"{method.upper()} {path} -> {resp.status_code}, {resp.text}"
+        assert put_resp.status_code == 200, put_resp.text
+        # POST clone
+        clone_resp = await client.post(
+            f"/api/v1/ringbuffer/filtersets/{created_id}/clone",
+            json={"name": "user clone"},
+            headers=user_headers,
+        )
+        assert clone_resp.status_code == 201, clone_resp.text
+        clone_id = clone_resp.json()["id"]
+        # PATCH topbar
+        topbar_resp = await client.patch(
+            f"/api/v1/ringbuffer/filtersets/{created_id}/topbar",
+            json={"topbar_active": True},
+            headers=user_headers,
+        )
+        assert topbar_resp.status_code == 200, topbar_resp.text
+        # PATCH order
+        order_resp = await client.patch(
+            "/api/v1/ringbuffer/filtersets/order",
+            json={"items": [{"id": created_id, "topbar_order": 1}]},
+            headers=user_headers,
+        )
+        assert order_resp.status_code == 200, order_resp.text
+        # DELETE the original
+        del_resp = await client.delete(
+            f"/api/v1/ringbuffer/filtersets/{created_id}",
+            headers=user_headers,
+        )
+        assert del_resp.status_code == 204, del_resp.text
+        created_id = None
+        # DELETE the clone — also as the user.
+        del_clone = await client.delete(
+            f"/api/v1/ringbuffer/filtersets/{clone_id}",
+            headers=user_headers,
+        )
+        assert del_clone.status_code == 204, del_clone.text
     finally:
         if created_id:
             await _delete_filterset(client, auth_headers, created_id)
