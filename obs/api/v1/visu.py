@@ -498,22 +498,25 @@ async def get_page(
         raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
 
     access, defining_node_id = await _resolve_access_with_node(db, node_id)
-    if access == "user":
-        if user is None:
+    if user is None:
+        # Unauthentisierter Zugriff: Seitentyp prüfen
+        if access == "user":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Anmeldung erforderlich",
             )
-        if not await _check_user_access(db, node_id, user):
+        elif access == "protected":
+            session_token = request.headers.get("X-Session-Token")
+            validate_id = defining_node_id or node_id
+            if not session_token or not validate_session(session_token, validate_id):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="PIN-Authentifizierung erforderlich",
+                )
+    else:
+        # Authentifizierter Benutzer: bei user-Pages explizite Zuweisung prüfen
+        if access == "user" and not await _check_user_access(db, node_id, user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
-    elif access == "protected":
-        session_token = request.headers.get("X-Session-Token")
-        validate_id = defining_node_id or node_id
-        if not session_token or not validate_session(session_token, validate_id):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="PIN-Authentifizierung erforderlich",
-            )
 
     return node.page_config or PageConfig()
 
