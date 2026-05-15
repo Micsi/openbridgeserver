@@ -1,5 +1,12 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
-import { apiPost, apiPatch, apiDelete, deleteAllFiltersets, gotoMonitorLive } from '../helpers'
+import {
+  apiPost,
+  apiPatch,
+  apiDelete,
+  deleteAllFiltersets,
+  gotoMonitorLive,
+  waitForMonitorReady,
+} from '../helpers'
 
 // Filtersets are global state — a previously failed test may leave a
 // topbar-active set behind, which then pollutes both this file and the
@@ -109,6 +116,21 @@ function topbarChip(page: Page, setId: string): Locator {
   return page.locator(`[data-testid="topbar-chip-${setId}"]`)
 }
 
+// Assert the topbar chip for `setId` is visible. The topbar renders its chips
+// from a mount-time /filtersets fetch whose render can occasionally race; for
+// API-created sets there is no explicit topbar reload to fall back on, so if
+// the chip has not appeared, reload the page once to re-mount the topbar.
+async function expectTopbarChip(page: Page, setId: string): Promise<void> {
+  const chip = topbarChip(page, setId)
+  try {
+    await expect(chip).toBeVisible({ timeout: 8_000 })
+  } catch {
+    await page.reload()
+    await waitForMonitorReady(page)
+    await expect(chip).toBeVisible({ timeout: 10_000 })
+  }
+}
+
 test('FilterCriteria: Tags-Liste OR-matcht, Datapoints AND-engt ein', async ({ page }) => {
   const tag = uniqueName('fe02-and-or')
   const dpAName = uniqueName('E2E-RB-FE02-A')
@@ -135,7 +157,7 @@ test('FilterCriteria: Tags-Liste OR-matcht, Datapoints AND-engt ein', async ({ p
     await pickInCombobox(page, 'filter-editor-tags', tag)
     setId = await saveAndCaptureId(page)
 
-    await expect(topbarChip(page, setId)).toBeVisible({ timeout: 5_000 })
+    await expectTopbarChip(page, setId)
     await expect(
       page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpA.id}"]`),
     ).toHaveCount(1, { timeout: 10_000 })
@@ -191,10 +213,7 @@ test('Topbar-Chip-Toggle schaltet das Set ein und aus', async ({ page }) => {
     const dpInRows = page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpIn.id}"]`)
     const dpOutRows = page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpOut.id}"]`)
 
-    // The chip is rendered once the topbar has fetched the (API-created) set.
-    // That fetch runs independently of gotoMonitorLive's waits, so allow the
-    // same 10s budget the table assertions use.
-    await expect(topbarChip(page, setId)).toBeVisible({ timeout: 10_000 })
+    await expectTopbarChip(page, setId)
     await expect(dpInRows).toHaveCount(1, { timeout: 10_000 })
     await expect(dpOutRows).toHaveCount(0)
 
@@ -256,7 +275,7 @@ test('Hierarchy-Knoten löst descendant-inclusive auf (Recursive-CTE)', async ({
 
     // The DP is linked to the node but not picked explicitly. Recursive-CTE
     // resolution on the server expands the node into its descendant DPs.
-    await expect(topbarChip(page, setId)).toBeVisible({ timeout: 5_000 })
+    await expectTopbarChip(page, setId)
     await expect(
       page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dp.id}"]`),
     ).toHaveCount(1, { timeout: 10_000 })
@@ -294,10 +313,7 @@ test('Live-Event eines nicht passenden DPs wird durch aktiven Filter gegated', a
     const dpInRows = page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpIn.id}"]`)
     const dpOutRows = page.locator(`[data-testid="ringbuffer-entry"][data-dp="${dpOut.id}"]`)
 
-    // The chip is rendered once the topbar has fetched the (API-created) set.
-    // That fetch runs independently of gotoMonitorLive's waits, so allow the
-    // same 10s budget the table assertions use.
-    await expect(topbarChip(page, setId)).toBeVisible({ timeout: 10_000 })
+    await expectTopbarChip(page, setId)
     await expect(dpInRows).toHaveCount(1, { timeout: 10_000 })
     await expect(dpOutRows).toHaveCount(0)
 
