@@ -1,11 +1,21 @@
 import { test, expect } from '@playwright/test'
 import { apiPost, apiDelete } from '../helpers'
 
+// SKIPPED — Phase-1 FilterBuilder UI from #392 has been replaced by the
+// flat-filterset model in #431 + Soft-Modal FilterEditor in #436. None of the
+// selectors below exist in the current Vue components anymore (btn-filterset-new,
+// input-filterset-name, rule-adapters-input-0-0, filterset-group-card, …).
+// Phase-2 E2E coverage for TopbarFilterChips, the new FilterEditor and
+// multi-set color painting is tracked separately. Re-enable only after a
+// rewrite against the new test-ids in
+//   gui/src/views/ringbuffer/TopbarFilterChips.vue  (topbar-add-filter-*, topbar-chip-*)
+//   gui/src/views/ringbuffer/FilterEditor.vue       (Soft-Modal selectors)
+
 function uniqueName(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`
 }
 
-test('FE-02: Gruppenlogik (AND zwischen Gruppen, OR innerhalb Listenfilter)', async ({ page }) => {
+test.skip('FE-02: Gruppenlogik (AND zwischen Gruppen, OR innerhalb Listenfilter)', async ({ page }) => {
   const dpA = await apiPost('/api/v1/datapoints', {
     name: uniqueName('E2E-RB-FE02-A'),
     data_type: 'FLOAT',
@@ -42,7 +52,7 @@ test('FE-02: Gruppenlogik (AND zwischen Gruppen, OR innerhalb Listenfilter)', as
   }
 })
 
-test('FE-02: Set aktiv/inaktiv und Regel aktiv/inaktiv', async ({ page }) => {
+test.skip('FE-02: Set aktiv/inaktiv und Regel aktiv/inaktiv', async ({ page }) => {
   const dp = await apiPost('/api/v1/datapoints', {
     name: uniqueName('E2E-RB-FE02-ACTIVE'),
     data_type: 'FLOAT',
@@ -82,7 +92,7 @@ test('FE-02: Set aktiv/inaktiv und Regel aktiv/inaktiv', async ({ page }) => {
   }
 })
 
-test('FE-02: Vorfilter-Vorschlag aus #355 ohne Autogruppenzwang', async ({ page }) => {
+test.skip('FE-02: Vorfilter-Vorschlag aus #355 ohne Autogruppenzwang', async ({ page }) => {
   const dp = await apiPost('/api/v1/datapoints', {
     name: uniqueName('E2E-RB-FE02-PREFILTER'),
     data_type: 'FLOAT',
@@ -136,7 +146,7 @@ test('FE-02: Vorfilter-Vorschlag aus #355 ohne Autogruppenzwang', async ({ page 
   }
 })
 
-test('FE-02: Basis-Query bleibt bei Live-Events wirksam', async ({ page }) => {
+test.skip('FE-02: Basis-Query bleibt bei Live-Events wirksam', async ({ page }) => {
   const dpIn = await apiPost('/api/v1/datapoints', {
     name: uniqueName('Waschküche E2E'),
     data_type: 'FLOAT',

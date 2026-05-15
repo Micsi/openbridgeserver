@@ -48,7 +48,7 @@ test('RingBuffer Pause/Resume stoppt Live-Append und holt Queue nach', async ({ 
     const before = await rows.count()
 
     await page.click('[data-testid="btn-live-pause"]')
-    await expect(page.locator('[data-testid="live-mode-badge"]')).toContainText('Pausiert')
+    await expect(page.locator('[data-testid="status-badge"]')).toContainText('Pausiert')
 
     await apiPost(`/api/v1/datapoints/${dpId}/value`, { value: 1.0, quality: 'good' })
     await apiPost(`/api/v1/datapoints/${dpId}/value`, { value: 2.0, quality: 'good' })
@@ -57,7 +57,7 @@ test('RingBuffer Pause/Resume stoppt Live-Append und holt Queue nach', async ({ 
     await expect(rows).toHaveCount(before)
 
     await page.click('[data-testid="btn-live-resume"]')
-    await expect(page.locator('[data-testid="live-mode-badge"]')).toContainText('Live')
+    await expect(page.locator('[data-testid="status-badge"]')).toContainText('Live')
     await expect(rows).toHaveCount(before + 2, { timeout: 12_000 })
   } finally {
     await apiDelete(`/api/v1/datapoints/${dpId}`)
