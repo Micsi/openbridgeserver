@@ -10,7 +10,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Project Overview
 
-**open bridge server** is an open-source multiprotocol building automation server (MIT-licensed replacement for the proprietary Timberwolf Server). It bridges KNX, Modbus RTU/TCP, 1-Wire, MQTT, Home Assistant, ioBroker, and Zeitschaltuhr into a unified system with a FastAPI REST/WebSocket API and a Vue-based admin GUI.
+**open bridge server** is an open-source multiprotocol building automation server (MIT-licensed replacement for the proprietary Timberwolf Server). It bridges KNX, Modbus RTU/TCP, 1-Wire, MQTT, SNMP, Home Assistant, ioBroker, and Zeitschaltuhr into a unified system with a FastAPI REST/WebSocket API and a Vue-based admin GUI.
 
 ## Common Commands
 
@@ -146,6 +146,7 @@ Services initialize in this fixed order (reverse-order shutdown):
 8. WriteRouter (MQTT `dp/{uuid}/set` → adapters; cross-protocol propagation)
 9. Protocol adapters (`@register` decorator triggers self-registration on import)
 10. Logic Engine
+11. Autobackup Scheduler (`init_autobackup_scheduler` from `obs/api/v1/autobackup.py`)
 
 ### Core Data Flow
 
@@ -220,6 +221,8 @@ One file per external library. Each test verifies the exact import paths and API
 | `test_slowapi_contract.py` | `slowapi` | `Limiter`, `_rate_limit_exceeded_handler`, `RateLimitExceeded` |
 | `test_socketio_contract.py` | `python-socketio` | `AsyncClient`, `@sio.event`, `connect/emit/disconnect` as coroutines |
 | `test_xknx_contract.py` | `xknx` | `Telegram`, `GroupAddress`, `DPTArray/DPTBinary`, APCI types |
+| `test_icalendar_contract.py` | `icalendar` + `recurring_ical_events` | `Calendar.from_ical()`, `component.name`, `component.get()`, `of(cal).between(start, end)` |
+| `test_pysnmp_contract.py` | `pysnmp` | `getCmd/setCmd/nextCmd`, `CommunityData`, `UsmUserData`, `UdpTransportTarget`, `ObjectType/ObjectIdentity`; tries v6 path (`hlapi.v3arch.asyncio`) first, falls back to v5 (`hlapi.asyncio`) |
 
 #### Response shape helpers (`tests/integration/conftest.py`)
 
