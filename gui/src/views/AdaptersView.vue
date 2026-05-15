@@ -347,34 +347,13 @@ import AnwesenheitDatapointSelector from '@/components/adapters/AnwesenheitDatap
 import AnwesenheitConfigForm from '@/components/adapters/AnwesenheitConfigForm.vue'
 import KnxConfigForm        from '@/components/adapters/KnxConfigForm.vue'
 import Modal         from '@/components/ui/Modal.vue'
+import { adapterDotClass as dotClass, adapterBadgeVariant as statusBadgeVariant, adapterStatusLabel as statusLabel } from '@/utils/adapterStatus'
 
 const store          = useAdapterStore()
 const auth           = useAuthStore()
 const isDemo         = computed(() => auth.username === 'demo')
 const expanded       = reactive({})
 
-// Status-Ampel / Badge — berücksichtigt severity zusätzlich zu connected/running.
-function dotClass(a) {
-  if (!a.running) return 'bg-slate-600'
-  if (a.severity === 'error') return 'bg-red-500'
-  if (a.severity === 'warning') return 'bg-amber-400'
-  if (a.connected) return 'bg-green-400'
-  return 'bg-amber-400 animate-pulse'
-}
-function statusBadgeVariant(a) {
-  if (!a.running) return 'muted'
-  if (a.severity === 'error') return 'danger'
-  if (a.severity === 'warning') return 'warning'
-  if (a.connected) return 'success'
-  return 'warning'
-}
-function statusLabel(a) {
-  if (!a.running) return 'Inaktiv'
-  if (a.severity === 'error') return 'Fehler'
-  if (a.severity === 'warning') return 'Eingeschränkt'
-  if (a.connected) return 'Verbunden'
-  return 'Läuft'
-}
 const drafts         = reactive({})   // id → { name, config, enabled }
 const feedback       = reactive({})   // id → { success, detail }
 const busy           = reactive({})   // id → 'test' | 'save' | 'restart' | null

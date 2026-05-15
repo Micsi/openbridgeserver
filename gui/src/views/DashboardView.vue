@@ -121,6 +121,7 @@ import { useAdapterStore } from '@/stores/adapters'
 import Badge   from '@/components/ui/Badge.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import StatCard from '@/components/ui/StatCard.vue'
+import { adapterDotClass as adapterDot, adapterBadgeVariant, adapterStatusLabel } from '@/utils/adapterStatus'
 
 const dpStore  = useDatapointStore()
 const ws       = useWebSocketStore()
@@ -136,27 +137,6 @@ const adapterIssues = computed(
   () => adStore.instances.filter(a => a.severity && a.severity !== 'ok'),
 )
 
-function adapterDot(a) {
-  if (!a.running) return 'bg-slate-600'
-  if (a.severity === 'error') return 'bg-red-500'
-  if (a.severity === 'warning') return 'bg-amber-400'
-  if (a.connected) return 'bg-green-400'
-  return 'bg-amber-400'
-}
-function adapterBadgeVariant(a) {
-  if (!a.running) return 'muted'
-  if (a.severity === 'error') return 'danger'
-  if (a.severity === 'warning') return 'warning'
-  if (a.connected) return 'success'
-  return 'warning'
-}
-function adapterStatusLabel(a) {
-  if (!a.running) return 'Inaktiv'
-  if (a.severity === 'error') return 'Fehler'
-  if (a.severity === 'warning') return 'Eingeschränkt'
-  if (a.connected) return 'Verbunden'
-  return 'Läuft'
-}
 
 let unsubWs = null
 
