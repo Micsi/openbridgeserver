@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { apiPost, apiPut, apiGet, apiDelete, getToken } from '../helpers'
+import { BASE_URL, apiPost, apiPut, apiGet, apiDelete, getToken } from '../helpers'
 
 
 /**
@@ -565,7 +565,6 @@ test('Logic-Editor Palette zeigt API Client Node an', async ({ page }) => {
 // ---------------------------------------------------------------------------
 test('api_client GET-Request gegen eigenen Server liefert success=true', async ({ page }) => {
   // Use the public health endpoint — no auth required, always returns 200
-  const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
   const targetUrl = `${BASE_URL}/api/v1/system/health`
 
   const graph = await apiPost('/api/v1/logic/graphs', {
@@ -619,7 +618,6 @@ test('api_client GET-Request gegen eigenen Server liefert success=true', async (
 test('api_client Bearer Auth sendet Authorization-Header', async ({ page }) => {
   // Use the real JWT token so the auth-protected endpoint returns 200.
   // This verifies the api_client node correctly forwards the Bearer header.
-  const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
   const targetUrl = `${BASE_URL}/api/v1/logic/node-types`
   const token = await getToken()
 
@@ -740,7 +738,6 @@ test('api_client Erfolg-Ausgang löst nachgelagerten Node aus bei HTTP 200', asy
   //        api_client.success + const_value(true) → and_gate
   // After the second-pass fix, and_gate.out must be true when HTTP returns 200.
   // Use the public health endpoint — no auth required.
-  const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
   const targetUrl = `${BASE_URL}/api/v1/system/health`
 
   const graph = await apiPost('/api/v1/logic/graphs', {

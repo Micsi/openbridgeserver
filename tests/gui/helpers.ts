@@ -12,8 +12,14 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
+import * as dotenv from 'dotenv'
 
-const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
+// Load the repository-root .env so `OBS_HTTP_HOST_PORT` resolves the same way
+// it does in playwright.config.ts when the runner hasn't pre-populated it.
+dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') })
+
+const OBS_HTTP_HOST_PORT = process.env.OBS_HTTP_HOST_PORT ?? '8080'
+export const BASE_URL = process.env.BASE_URL ?? `http://localhost:${OBS_HTTP_HOST_PORT}`
 const E2E_USER = process.env.E2E_USER ?? 'admin'
 const E2E_PASS = process.env.E2E_PASS ?? 'admin'
 
