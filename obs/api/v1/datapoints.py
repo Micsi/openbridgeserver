@@ -222,12 +222,35 @@ async def delete_datapoint(
 @router.get("/{dp_id}/value", response_model=ValueOut)
 async def get_value(
     dp_id: uuid.UUID,
-    _user: str | None = Depends(optional_current_user),
+    request: Request,
+    user: str | None = Depends(optional_current_user),
+    db: Database = Depends(get_db),
 ) -> ValueOut:
     reg = get_registry()
     dp = reg.get(dp_id)
     if dp is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+
+    if user is None:
+        # Unauthentisiert: Seitenkontext prüfen (analog zum POST-Handler)
+        page_id = request.headers.get("X-Page-Id")
+        if not page_id:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        if not await _page_has_datapoint(db, page_id, dp_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint is not part of the page")
+
+        from obs.api.v1.visu import _resolve_access_with_node
+        access, defining_node_id = await _resolve_access_with_node(db, page_id)
+        if access == "protected":
+            session_token = request.headers.get("X-Session-Token")
+            validate_id = defining_node_id or page_id
+            if not session_token or not validate_session(session_token, validate_id):
+                raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Valid session token required")
+        elif access == "user":
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        elif access not in ("public", "readonly"):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
     state = reg.get_value(dp_id)
     return ValueOut(
         id=dp_id,

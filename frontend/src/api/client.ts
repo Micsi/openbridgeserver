@@ -259,10 +259,14 @@ export const datapoints = {
 
   get: (id: string) => request<DataPoint>(`/datapoints/${id}`),
 
-  getValue: (id: string, silent401 = false) =>
-    request<{ value: unknown; unit: string | null; ts: string | null; quality: string }>(
-      `/datapoints/${id}/value`, { silent401 }
-    ),
+  getValue: (id: string, silent401 = false) => {
+    const headers: Record<string, string> = {}
+    if (_writeContext.pageId)       headers['X-Page-Id']       = _writeContext.pageId
+    if (_writeContext.sessionToken) headers['X-Session-Token'] = _writeContext.sessionToken
+    return request<{ value: unknown; unit: string | null; ts: string | null; quality: string }>(
+      `/datapoints/${id}/value`, { silent401, headers }
+    )
+  },
 
   listBindings: (dpId: string) =>
     request<BindingOut[]>(`/datapoints/${dpId}/bindings`),
