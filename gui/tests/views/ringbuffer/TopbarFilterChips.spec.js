@@ -16,6 +16,17 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+  // Default to an admin caller so the pre-#478 expectations (every action
+  // enabled) continue to hold. The ownership-specific assertions live in
+  // TopbarFilterChips.permission.spec.js.
+  const auth = useAuthStore()
+  auth.user = { id: 'u-admin', username: 'admin', is_admin: true, created_at: '2025-01-01' }
+})
 
 function makeApi(overrides = {}) {
   return {

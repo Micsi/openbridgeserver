@@ -15,6 +15,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 
 beforeEach(() => {
   vi.resetModules()
@@ -24,6 +26,11 @@ beforeEach(() => {
     unobserve() {}
     disconnect() {}
   }
+  setActivePinia(createPinia())
+  // Default to an admin caller so existing tests stay green; the ownership
+  // matrix has its own spec (FilterEditor.permission.spec.js).
+  const auth = useAuthStore()
+  auth.user = { id: 'u-admin', username: 'admin', is_admin: true, created_at: '2025-01-01' }
 })
 
 afterEach(() => {
