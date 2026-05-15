@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from obs.api.auth import get_admin_user, get_current_user, limiter, optional_current_user
-from obs.api.v1.sessions import create_session, validate_session
+from obs.api.v1.sessions import create_session
 from obs.db.database import Database, get_db
 from obs.models.visu import (
     CopyNodeRequest,
@@ -489,6 +489,7 @@ async def pin_auth(
 @router.get("/pages/{node_id}", response_model=PageConfig)
 async def get_page(
     node_id: str,
+    request: Request,
     db: Database = Depends(get_db),
     user: str | None = Depends(optional_current_user),
 ):
@@ -496,7 +497,7 @@ async def get_page(
     if node.type != "PAGE":
         raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
 
-    access = await _resolve_access(db, node_id)
+    access, defining_node_id = await _resolve_access_with_node(db, node_id)
     if access == "user":
         if user is None:
             raise HTTPException(
@@ -505,6 +506,14 @@ async def get_page(
             )
         if not await _check_user_access(db, node_id, user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
+    elif access == "protected":
+        session_token = request.headers.get("X-Session-Token")
+        validate_id = defining_node_id or node_id
+        if not session_token or not validate_session(session_token, validate_id):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="PIN-Authentifizierung erforderlich",
+            )
 
     return node.page_config or PageConfig()
 
