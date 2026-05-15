@@ -1,10 +1,10 @@
 """Hierarchy Manager API — /api/v1/hierarchy/...
 
 Endpoints:
-  GET    /hierarchy/trees                         → alle Äste (Trees)
-  POST   /hierarchy/trees                         → Ast anlegen
-  PUT    /hierarchy/trees/{tree_id}               → Ast umbenennen
-  DELETE /hierarchy/trees/{tree_id}               → Ast löschen
+  GET    /hierarchy/trees                         → alle Hierarchien (Trees)
+  POST   /hierarchy/trees                         → Hierarchie anlegen
+  PUT    /hierarchy/trees/{tree_id}               → Hierarchie umbenennen
+  DELETE /hierarchy/trees/{tree_id}               → Hierarchie löschen
 
   GET    /hierarchy/trees/{tree_id}/nodes         → Baumstruktur (nested)
   POST   /hierarchy/nodes                         → Knoten anlegen
@@ -512,12 +512,12 @@ async def delete_link(
 
 @router.get("/nodes/search", response_model=list[NodeSearchResult])
 async def search_nodes(
-    q: str = Query("", description="Volltext-Suche in Knoten- und Ast-Namen"),
+    q: str = Query("", description="Volltext-Suche in Knoten- und Hierarchienamen"),
     limit: int = Query(30, ge=1, le=200),
     _user: str = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> list[NodeSearchResult]:
-    """Knoten über alle Äste hinweg suchen. Gibt Knoten mit Ast-Kontext zurück."""
+    """Knoten über alle Hierarchien hinweg suchen. Gibt Knoten mit Hierarchie-Kontext zurück."""
     if q:
         like = f"%{q}%"
         rows = await db.fetchall(
