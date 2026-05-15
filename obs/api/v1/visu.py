@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from obs.api.auth import get_admin_user, get_current_user, limiter, optional_current_user
-from obs.api.v1.sessions import create_session
+from obs.api.v1.sessions import create_session, validate_session
 from obs.db.database import Database, get_db
 from obs.models.visu import (
     CopyNodeRequest,
