@@ -45,6 +45,18 @@ htmlcov/
 .coverage
 coverage.xml
 
+# Node.js dependencies
+node_modules/
+
+# Frontend build artefacts (built by vite / docker)
+gui_dist/
+frontend_dist/
+
+# Playwright local artefacts (auth tokens, test runs, HTML reports)
+tests/gui/.auth/
+tests/gui/test-results/
+tests/gui/playwright-report/
+
 # Docs build output
 docs/_build/
 
