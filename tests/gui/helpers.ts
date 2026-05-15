@@ -108,6 +108,24 @@ export async function apiPut(path: string, body: unknown): Promise<unknown> {
   return res.json()
 }
 
+export async function apiPatch(path: string, body: unknown): Promise<unknown> {
+  const token = await getToken()
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`PATCH ${path} failed: ${res.status} — ${text}`)
+  }
+  if (res.status === 204) return null
+  return res.json()
+}
+
 export async function apiDelete(path: string): Promise<void> {
   const token = await getToken()
   const res = await fetch(`${BASE_URL}${path}`, {
