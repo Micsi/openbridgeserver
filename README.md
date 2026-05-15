@@ -1572,6 +1572,9 @@ Die Datenbank wird automatisch aktualisiert — jede neue Version fügt fehlende
 
 ---
 
+## Translations
+We use [Weblate](https://hosted.weblate.org/projects/open-bridge-server)  to support language translations. Contributions are always welcome.
+
 ## Lizenz
 
 MIT — kostenlos und quelloffen.
