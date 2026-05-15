@@ -240,6 +240,7 @@ async def get_value(
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Datapoint is not part of the page")
 
         from obs.api.v1.visu import _resolve_access_with_node
+
         access, defining_node_id = await _resolve_access_with_node(db, page_id)
         if access == "protected":
             session_token = request.headers.get("X-Session-Token")
