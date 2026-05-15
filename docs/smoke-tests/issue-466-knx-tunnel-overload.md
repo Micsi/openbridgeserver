@@ -256,6 +256,27 @@ gezielt zu überfüllen.
 
 ---
 
+## Erwartetes Verhalten beim echten Pingpong (nicht-offensichtlich)
+
+Wenn die Pool-Überlastung *aktiv* ist (jeder Reconnect-Versuch scheitert),
+flackert die Severity der betroffenen Instanz im Polling zwischen
+`warning` und `error`:
+
+- `_record_disconnect()` setzt nach 3 Disconnects severity → `warning`.
+- Der nächste fehlgeschlagene Reconnect-Versuch läuft durch
+  `_publish_status(False, "Tunnel could not be established", severity="error")`
+  und überschreibt `_last_severity` → wieder `error`.
+- Bei einer weiteren Disconnect-Welle (selten, weil `_warning_active`
+  re-publish im selben Fenster blockiert) kommt warning evtl. zurück.
+
+Das ist gewollt: `error` ist die härtere Aussage ("Adapter ist nicht
+verbunden") und dominiert die diagnostische `warning` ("Pool wahrscheinlich
+überlastet"). Bei einem Code-Review **kein Bug**.
+
+In der UI sieht das als Wechsel zwischen rotem und gelbem Status aus.
+Sobald das Gateway einen Slot freigibt, wechselt der Status stabil auf
+`ok` / grün.
+
 ## Bei Fehlverhalten
 
 - **UI bleibt grün trotz Warn-Detail im REST-Response:**
