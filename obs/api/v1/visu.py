@@ -25,11 +25,11 @@ import uuid
 from datetime import UTC, datetime
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from obs.api.auth import get_admin_user, get_current_user, optional_current_user
-from obs.api.v1.sessions import create_session
+from obs.api.auth import get_admin_user, get_current_user, limiter, optional_current_user
+from obs.api.v1.sessions import create_session, validate_session
 from obs.db.database import Database, get_db
 from obs.models.visu import (
     CopyNodeRequest,
@@ -457,9 +457,11 @@ async def move_node(
 
 
 @router.post("/nodes/{node_id}/auth", response_model=PinAuthResponse)
+@limiter.limit("10/minute")
 async def pin_auth(
     node_id: str,
     body: PinAuthRequest,
+    request: Request,
     db: Database = Depends(get_db),
 ):
     async with db.conn.execute("SELECT access_pin, access FROM visu_nodes WHERE id = ?", (node_id,)) as cur:
