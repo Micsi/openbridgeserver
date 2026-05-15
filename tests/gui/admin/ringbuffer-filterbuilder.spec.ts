@@ -132,6 +132,10 @@ test('FilterCriteria: Tags-Liste OR-matcht, Datapoints AND-engt ein', async ({ p
     // Re-open the editor, add a datapoint filter — AND between tags-section and
     // datapoints-section now excludes dpB even though dpB still carries the tag.
     await page.click(`[data-testid="topbar-chip-body-${setId}"]`)
+    // Wait until the editor has hydrated from the set (loadSet → hydrateForm
+    // runs Object.assign(form, makeEmptyForm()), which would otherwise wipe a
+    // datapoint picked before the async load resolves).
+    await expect(page.locator('[data-testid="filter-editor-name"]')).not.toHaveValue('')
     await pickInCombobox(page, 'filter-editor-dps', dpA.id)
     await saveAndCaptureId(page)
 
