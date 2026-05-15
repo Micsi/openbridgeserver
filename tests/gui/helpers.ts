@@ -12,8 +12,14 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
+import * as dotenv from 'dotenv'
 
-const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8080'
+// Load the repository-root .env so `OBS_HTTP_HOST_PORT` resolves the same way
+// it does in playwright.config.ts when the runner hasn't pre-populated it.
+dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') })
+
+const OBS_HTTP_HOST_PORT = process.env.OBS_HTTP_HOST_PORT ?? '8080'
+export const BASE_URL = process.env.BASE_URL ?? `http://localhost:${OBS_HTTP_HOST_PORT}`
 const E2E_USER = process.env.E2E_USER ?? 'admin'
 const E2E_PASS = process.env.E2E_PASS ?? 'admin'
 
@@ -98,6 +104,24 @@ export async function apiPut(path: string, body: unknown): Promise<unknown> {
     throw new Error(`PUT ${path} failed: ${res.status} — ${text}`)
   }
   // PUT /api/v1/visu/pages returns 204 No Content
+  if (res.status === 204) return null
+  return res.json()
+}
+
+export async function apiPatch(path: string, body: unknown): Promise<unknown> {
+  const token = await getToken()
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`PATCH ${path} failed: ${res.status} — ${text}`)
+  }
   if (res.status === 204) return null
   return res.json()
 }

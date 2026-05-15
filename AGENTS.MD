@@ -58,6 +58,25 @@ docker compose up -d mosquitto
 cd gui && npm run dev
 ```
 
+## Pre-Push Gate (verbindlich)
+
+CI im PR-Workflow baut das Frontend **nicht** — `npm run build` läuft erst beim Release-Tag.
+Ein Production-Build validiert die Frontend-Abhängigkeiten (Module-Resolution, Import-Pfade,
+Typen) Ende-zu-Ende — Schwächen, die Vitest-Mocks verdecken können, fallen erst hier auf. Vor
+**jedem** Push, der Frontend-Code berührt, alle Stufen lokal grün laufen lassen:
+
+```bash
+./tools/lint.sh --check
+cd gui && npm run build     # validiert reale Abhängigkeiten/Imports, was Vitest nicht tut
+cd gui && npm run test
+# bei Backend-Änderungen zusätzlich:
+pytest tests/unit tests/adapters tests/contracts  # ohne Docker
+pytest tests/integration                          # mit Docker
+```
+
+Wenn rot: nicht pushen, sondern fixen. Gilt für Haupt-Sessions **und** für Subagents — bitte
+explizit in den Subagent-Prompt schreiben, weil deren Kontext leer startet.
+
 ## Local Development Setup
 
 ### Prerequisites

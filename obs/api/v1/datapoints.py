@@ -42,6 +42,11 @@ class HierarchyNodeRef(BaseModel):
     node_name: str
     tree_id: str
     tree_name: str
+    # Upstream PR #462 introduced the object form (node_id + node_name per
+    # segment) and a display_depth hint per tree; the epic's earlier flat
+    # `path: list[str]` is dropped in favour of this richer schema — IDs in
+    # each segment make path-elements addressable (clickable drill-down,
+    # stable identity across renames).
     node_path: list[NodePathSegment] = []
     display_depth: int = 0
 

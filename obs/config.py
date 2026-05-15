@@ -48,11 +48,6 @@ class DatabaseSettings(BaseModel):
     history_plugin: str = "sqlite"  # sqlite | influxdb | timescaledb | questdb
 
 
-class RingBufferSettings(BaseModel):
-    storage: str = "disk"  # memory | disk
-    max_entries: int = 10000
-
-
 class SecuritySettings(BaseModel):
     jwt_secret: str = "changeme"
     jwt_expire_minutes: int = 1440
@@ -136,7 +131,6 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     mqtt: MqttSettings = Field(default_factory=MqttSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
-    ringbuffer: RingBufferSettings = Field(default_factory=RingBufferSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     mosquitto: MosquittoSettings = Field(default_factory=MosquittoSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)

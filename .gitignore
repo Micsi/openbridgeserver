@@ -45,6 +45,10 @@ htmlcov/
 .coverage
 coverage.xml
 
+# Node
+node_modules/
+gui/coverage/
+
 # Node.js dependencies
 node_modules/
 
