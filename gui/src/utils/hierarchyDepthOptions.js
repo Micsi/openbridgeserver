@@ -1,7 +1,7 @@
-const LEVEL_NAMES = ['Ast-Name', 'Erste Ebene', 'Zweite Ebene', 'Dritte Ebene', 'Vierte Ebene']
+const LEVEL_NAMES = ['Hierarchiename', 'Erste Ebene', 'Zweite Ebene', 'Dritte Ebene', 'Vierte Ebene']
 
 const GENERIC_LABELS = [
-  '0 — Ast-Name (Standard, z.B. "Gebäude")',
+  '0 — Hierarchiename (Standard, z.B. "Gebäude")',
   '1 — Erste Ebene (z.B. "EG" statt "Gebäude")',
   '2 — Zweite Ebene (z.B. "Wohnzimmer")',
   '3 — Dritte Ebene',
@@ -25,7 +25,7 @@ export function buildDepthOptions({ isEdit, tree, rootNodes, maxDepth = 4 }) {
 
     if (level === 0) {
       const name = tree?.name ?? LEVEL_NAMES[0]
-      options.push({ value: 0, label: `0 — ${name} (Ast-Name)`, disabled: false })
+      options.push({ value: 0, label: `0 — ${name} (Hierarchiename)`, disabled: false })
       continue
     }
 

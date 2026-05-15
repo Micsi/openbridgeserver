@@ -38,12 +38,12 @@ test('Edit-Modal zeigt konkrete Beispiele aus dem aktuellen Baum', async ({ page
     await expect(select).toBeVisible()
     const optionTexts = await select.locator('option').allTextContents()
 
-    expect(optionTexts[0]).toContain(treeName)            // "0 — <treeName> (Ast-Name)"
-    expect(optionTexts[0]).toContain('Ast-Name')
+    expect(optionTexts[0]).toContain(treeName)            // "0 — <treeName> (Hierarchiename)"
+    expect(optionTexts[0]).toContain('Hierarchiename')
     expect(optionTexts[1]).toContain(rootName)             // "1 — Erste Ebene (nur \"EG Test\")"
     expect(optionTexts[1]).toContain('nur')                // genau ein Wurzelknoten → distinct=1
     expect(optionTexts[2]).toContain(childName)            // "2 — Zweite Ebene (nur \"Wohnzimmer Test\")"
-    // Ebene 3 + 4 sind disabled (Baum hat nur 2 Ebenen)
+    // Ebene 3 + 4 sind disabled (Hierarchie hat nur 2 Ebenen)
     const disabled3 = await select.locator('option').nth(3).getAttribute('disabled')
     expect(disabled3).not.toBeNull()
 
