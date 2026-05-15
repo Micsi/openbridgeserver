@@ -20,6 +20,17 @@ dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') })
 
 const OBS_HTTP_HOST_PORT = process.env.OBS_HTTP_HOST_PORT ?? '8080'
 export const BASE_URL = process.env.BASE_URL ?? `http://localhost:${OBS_HTTP_HOST_PORT}`
+
+// URL that the **server itself** (inside its container or process) uses to
+// reach its own API — needed by specs that wire URLs into logic nodes which
+// the backend then dereferences (`api_client`, webhooks, …). It is *not*
+// generally the same as BASE_URL: in a Docker-Compose deployment the host
+// port mapping (e.g. 8082 → 8080) is invisible inside the container, so the
+// server still has to talk to `localhost:8080`. Default matches the in-
+// container listen port; override via `INTERNAL_BASE_URL` for bare-metal
+// or non-standard setups.
+export const INTERNAL_BASE_URL = process.env.INTERNAL_BASE_URL ?? 'http://localhost:8080'
+
 const E2E_USER = process.env.E2E_USER ?? 'admin'
 const E2E_PASS = process.env.E2E_PASS ?? 'admin'
 
