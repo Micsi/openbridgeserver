@@ -65,7 +65,7 @@ function removeSeries(i: number) {
 
     <!-- Beschriftung -->
     <div>
-      <label class="block text-xs text-gray-400 mb-1">Beschriftung</label>
+      <label class="block text-xs text-gray-400 mb-1">{{ $t('widgets.common.label') }}</label>
       <input
         v-model="cfg.label"
         type="text"
@@ -76,7 +76,7 @@ function removeSeries(i: number) {
 
     <!-- Zeitraum -->
     <div>
-      <label class="block text-xs text-gray-400 mb-1">Zeitraum (Stunden)</label>
+      <label class="block text-xs text-gray-400 mb-1">{{ $t('widgets.chart.period') }}</label>
       <input
         v-model.number="cfg.hours"
         type="number"
@@ -88,7 +88,7 @@ function removeSeries(i: number) {
 
     <!-- Primäre Reihe -->
     <div class="border-t border-gray-700 pt-3">
-      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Primäre Reihe</p>
+      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{{ $t('widgets.chart.primarySeries') }}</p>
       <div class="flex gap-2 items-center">
         <input
           v-model="cfg.primary_color"
@@ -99,7 +99,7 @@ function removeSeries(i: number) {
         <!-- Achsen-Toggle -->
         <div class="flex gap-1 flex-1">
           <button
-            v-for="opt in [{ v: 'left', l: '◀ Links' }, { v: 'right', l: 'Rechts ▶' }]"
+            v-for="opt in [{ v: 'left', l: $t('widgets.chart.axisLeft') }, { v: 'right', l: $t('widgets.chart.axisRight') }]"
             :key="opt.v"
             type="button"
             :class="[
@@ -116,7 +116,7 @@ function removeSeries(i: number) {
 
     <!-- Weitere Reihen -->
     <div class="border-t border-gray-700 pt-3">
-      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Weitere Reihen</p>
+      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{{ $t('widgets.chart.additionalSeries') }}</p>
 
       <div class="space-y-3">
         <div
@@ -136,7 +136,7 @@ function removeSeries(i: number) {
             <input
               v-model="s.label"
               type="text"
-              placeholder="Bezeichnung (optional)"
+              :placeholder="$t('widgets.chart.seriesLabel')"
               class="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
             />
             <input
@@ -148,7 +148,7 @@ function removeSeries(i: number) {
             <button
               type="button"
               class="text-gray-500 hover:text-red-400 shrink-0 text-sm px-1"
-              title="Reihe entfernen"
+              :title="$t('widgets.chart.removeSeriesTitle')"
               @click="removeSeries(i)"
             >🗑</button>
           </div>
@@ -156,7 +156,7 @@ function removeSeries(i: number) {
           <!-- Achsen-Toggle -->
           <div class="flex gap-1">
             <button
-              v-for="opt in [{ v: 'left', l: '◀ Links' }, { v: 'right', l: 'Rechts ▶' }]"
+              v-for="opt in [{ v: 'left', l: $t('widgets.chart.axisLeft') }, { v: 'right', l: $t('widgets.chart.axisRight') }]"
               :key="opt.v"
               type="button"
               :class="[
@@ -175,7 +175,7 @@ function removeSeries(i: number) {
         type="button"
         class="mt-2 text-xs text-blue-400 hover:text-blue-300"
         @click="addSeries"
-      >+ Weitere Reihe hinzufügen</button>
+      >{{ $t('widgets.chart.addSeries') }}</button>
     </div>
 
   </div>
