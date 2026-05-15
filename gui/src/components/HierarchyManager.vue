@@ -98,7 +98,7 @@
         </h3>
         <div class="form-group">
           <label class="label">Name</label>
-          <input v-model="treeModal.name" ref="treeNameInput" type="text" class="input" placeholder="z.B. Gebäude, Gewerke, Funktion" @keydown.enter="saveTree" />
+          <input v-model="treeModal.name" ref="treeNameInput" type="text" class="input" :placeholder="treeModal.isEdit ? '' : 'z.B. Gebäude, Gewerke, Funktion'" @keydown.enter="saveTree" />
         </div>
         <div class="form-group">
           <label class="label">Beschreibung</label>
@@ -106,12 +106,8 @@
         </div>
         <div class="form-group">
           <label class="label">Anzeigestart-Ebene</label>
-          <select v-model="treeModal.display_depth" class="input text-sm">
-            <option :value="0">0 — Ast-Name (Standard, z.B. "Gebäude")</option>
-            <option :value="1">1 — Erste Ebene (z.B. "EG" statt "Gebäude")</option>
-            <option :value="2">2 — Zweite Ebene (z.B. "Wohnzimmer")</option>
-            <option :value="3">3 — Dritte Ebene</option>
-            <option :value="4">4 — Vierte Ebene</option>
+          <select v-model="treeModal.display_depth" class="input text-sm" data-testid="select-display-depth">
+            <option v-for="opt in depthOptions" :key="opt.value" :value="opt.value" :disabled="opt.disabled">{{ opt.label }}</option>
           </select>
           <p class="text-xs text-slate-500 mt-1">Bestimmt, welche Ebene im verkürzten Pfad-Tag angezeigt wird. Der vollständige Pfad ist stets als Tooltip sichtbar.</p>
         </div>
@@ -234,10 +230,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, nextTick, onMounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted } from 'vue'
 import { hierarchyApi } from '@/api/client.js'
 import HierarchyNodeTree from '@/components/HierarchyNodeTree.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import { buildDepthOptions } from '@/utils/hierarchyDepthOptions.js'
 
 // ── State ─────────────────────────────────────────────────────────────────
 
@@ -254,6 +251,14 @@ const treeNameInput = ref(null)
 const nodeNameInput = ref(null)
 
 const treeModal = reactive({ open: false, isEdit: false, id: null, name: '', description: '', display_depth: 0, saving: false, msg: null })
+
+const depthOptions = computed(() =>
+  buildDepthOptions({
+    isEdit: treeModal.isEdit,
+    tree: treeModal.isEdit ? { id: treeModal.id, name: treeModal.name } : null,
+    rootNodes: treeModal.isEdit ? treeNodes[treeModal.id] : null,
+  })
+)
 const nodeModal = reactive({ open: false, isEdit: false, id: null, treeId: null, parentId: null, name: '', description: '', saving: false, msg: null })
 const etsModal  = reactive({ open: false, treeName: '', mode: 'groups', autoLink: true, saving: false, msg: null })
 
@@ -308,6 +313,7 @@ function openCreateTree() {
 
 function openEditTree(tree) {
   Object.assign(treeModal, { open: true, isEdit: true, id: tree.id, name: tree.name, description: tree.description, display_depth: tree.display_depth ?? 0, saving: false, msg: null })
+  if (!treeNodes[tree.id]) loadTreeNodes(tree.id)
   nextTick(() => treeNameInput.value?.focus())
 }
 
