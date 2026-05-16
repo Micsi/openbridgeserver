@@ -98,7 +98,7 @@
       <form @submit.prevent="doCreateGraph" class="flex flex-col gap-4">
         <div class="form-group">
           <label class="label">{{ $t('logic.name') }}</label>
-          <input v-model="newGraphName" type="text" class="input" required placeholder="z.B. Licht Erdgeschoss" />
+          <input v-model="newGraphName" type="text" class="input" required :placeholder="$t('logic.newGraphPlaceholder')" />
         </div>
         <div class="form-group">
           <label class="label">{{ $t('logic.description') }} <span class="text-slate-600 font-normal">{{ $t('logic.optional') }}</span></label>

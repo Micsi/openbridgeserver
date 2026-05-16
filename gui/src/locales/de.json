@@ -375,7 +375,42 @@
     "deleteNode": "Ast löschen",
     "init": "Init",
     "nodeTypes": {
-      "divide": "Dividieren"
+      "divide": "Dividieren",
+      "const_value": "Festwert",
+      "and": "AND",
+      "or": "OR",
+      "not": "NOT",
+      "xor": "XOR",
+      "gate": "TOR",
+      "compare": "Vergleich",
+      "hysteresis": "Hysterese",
+      "datapoint_read": "Objekt lesen",
+      "datapoint_write": "Objekt schreiben",
+      "math_formula": "Formel",
+      "math_map": "Skalieren",
+      "clamp": "Begrenzer",
+      "random_value": "Zufallswert",
+      "statistics": "Statistik",
+      "avg_multi": "Mittelwert",
+      "string_concat": "String Verketten",
+      "heating_circuit": "Sommer/Winter",
+      "min_max_tracker": "Min/Max",
+      "consumption_counter": "Verbrauch",
+      "timer_delay": "Verzögerung",
+      "timer_pulse": "Impuls",
+      "timer_cron": "Trigger",
+      "operating_hours": "Betriebsstd.",
+      "python_script": "Python Script",
+      "ai_logic": "AI Logic",
+      "astro_sun": "Astro Sonne",
+      "notify_pushover": "Pushover",
+      "notify_sms": "SMS (seven.io)",
+      "json_extractor": "JSON Extraktor",
+      "xml_extractor": "XML Extraktor",
+      "substring_extractor": "Substring / RegEx",
+      "ical": "iCalendar",
+      "api_client": "API Client",
+      "mcp_tool": "MCP Tool"
     },
     "selectGraph": "— Graph wählen —",
     "newGraphBtn": "+ Neu",
@@ -401,7 +436,54 @@
     "errorRename": "Fehler beim Umbenennen",
     "importedRename": "Graph importiert – bitte umbenennen (Name bereits vorhanden)",
     "imported": "Graph „{name}“ importiert",
-    "errorImport": "Ungültige oder fehlerhafte Export-Datei"
+    "errorImport": "Ungültige oder fehlerhafte Export-Datei",
+    "newGraphPlaceholder": "z.B. Licht Erdgeschoss",
+    "notSelected": "— nicht gewählt —",
+    "filterBadge": "Filter / Transformation aktiv",
+    "negatePort": "{id} negieren",
+    "palette": {
+      "title": "Blöcke",
+      "categories": {
+        "logic": "Logik",
+        "datapoint": "Objekte",
+        "math": "Mathematik",
+        "string": "Text",
+        "timer": "Timer",
+        "astro": "Astronomie",
+        "notification": "Benachrichtigung",
+        "integration": "Integration",
+        "script": "Skripte",
+        "ai": "AI"
+      }
+    },
+    "ports": {
+      "value": "Wert",
+      "trigger": "Trigger",
+      "changed": "Geändert",
+      "object": "Objekt",
+      "result": "Ergebnis",
+      "enable": "Freigabe",
+      "input": "Eingang",
+      "output": "Ausgang"
+    },
+    "summary": {
+      "inputs": "{n} Eingänge",
+      "parts": "{n} Teile",
+      "hold": "→ halten",
+      "filters": "{n} Filter",
+      "negateEnable": "¬Freigabe",
+      "modes": {
+        "links_von": "links von",
+        "rechts_von": "rechts von",
+        "zwischen": "zwischen",
+        "ausschneiden": "ausschneiden",
+        "regex": "regex"
+      }
+    },
+    "missingNode": {
+      "title": "Unbekannter Block",
+      "ariaLabel": "Unbekannter Block-Typ"
+    }
   },
   "settings": {
     "title": "Einstellungen",
