@@ -4,24 +4,34 @@
     <div class="flex items-center gap-3 px-4 py-2 bg-surface-800 border-b border-slate-200 dark:border-slate-700/60 flex-shrink-0">
       <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">{{ $t('logic.title') }}</h2>
       <div class="flex-1" />
-      <!-- Graph selector -->
+      <!-- Logikblatt selector -->
       <select v-model="activeGraphId" @change="loadGraph"
         class="input text-xs py-1 px-2 max-w-[200px]" data-testid="select-graph">
         <option value="">{{ $t('logic.selectGraph') }}</option>
-        <option v-for="g in store.graphs" :key="g.id" :value="g.id">{{ g.name }}</option>
+        <option v-for="g in store.graphs" :key="g.id" :value="g.id">{{ g.name }}{{ g.enabled ? '' : $t('logic.graphDisabledSuffix') }}</option>
       </select>
       <button @click="newGraph" class="btn-primary btn-sm">{{ $t('logic.newGraphBtn') }}</button>
       <button v-if="activeGraphId" @click="saveGraph" class="btn-secondary btn-sm" :disabled="saving">
         <Spinner v-if="saving" size="sm" color="white" />
         {{ $t('common.save') }}
       </button>
-      <button v-if="activeGraphId" @click="runGraph" class="btn-secondary btn-sm text-green-400" data-testid="btn-run">
+      <button v-if="activeGraphId" @click="runGraph"
+        :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-slate-500 opacity-50 cursor-not-allowed']"
+        :disabled="!activeGraph?.enabled"
+        :title="activeGraph?.enabled ? $t('logic.runTitle') : $t('logic.runDisabledTitle')"
+        data-testid="btn-run">
         &#9654; {{ $t('logic.run') }}
       </button>
       <button v-if="activeGraphId" @click="toggleDebug"
         :class="['btn-secondary btn-sm', debugMode ? 'text-amber-400 ring-1 ring-amber-400/50' : 'text-slate-400']"
         :title="$t('logic.debugMode')" data-testid="btn-debug">
         &#128270; {{ $t('logic.debugBtn') }}
+      </button>
+      <button v-if="activeGraphId" @click="doToggleEnabled"
+        :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-orange-400 ring-1 ring-orange-400/50']"
+        :title="activeGraph?.enabled ? $t('logic.toggleActiveTitle') : $t('logic.toggleDisabledTitle')"
+        data-testid="btn-toggle-enabled">
+        {{ activeGraph?.enabled ? $t('logic.toggleActive') : $t('logic.toggleDisabled') }}
       </button>
       <button v-if="activeGraphId" @click="openRenameGraph" class="btn-secondary btn-sm" :title="$t('logic.renameGraph')" data-testid="btn-rename">
         ✏ {{ $t('logic.rename') }}
@@ -62,7 +72,7 @@
           v-model:nodes="nodes"
           v-model:edges="edges"
           :node-types="nodeTypeComponents"
-          :default-edge-options="{ type: 'smoothstep', animated: true, interactionWidth: 20, style: { stroke: '#475569', strokeWidth: 2 } }"
+          :default-edge-options="defaultEdgeOptions"
           :delete-key-code="['Backspace', 'Delete']"
           fit-view-on-init
           class="logic-canvas"
@@ -221,6 +231,36 @@ const nodeTypeComponents = {
 
 // ── Active graph ───────────────────────────────────────────────────────────
 const activeGraphId = ref('')
+const activeGraph   = computed(() => store.graphs.find(g => g.id === activeGraphId.value))
+
+// ── Edge options — animated only when graph is enabled ─────────────────────
+const defaultEdgeOptions = computed(() => {
+  const enabled = activeGraph.value?.enabled !== false
+  return {
+    type: 'smoothstep',
+    animated: enabled,
+    interactionWidth: 20,
+    style: {
+      stroke: enabled ? '#475569' : '#64748b',
+      strokeDasharray: enabled ? undefined : '8 5',
+      strokeWidth: 2,
+    },
+  }
+})
+
+// Update existing edges reactively when enabled state changes
+watch(() => activeGraph.value?.enabled, (enabled) => {
+  const isEnabled = enabled !== false
+  edges.value = edges.value.map(e => ({
+    ...e,
+    animated: isEnabled,
+    style: {
+      stroke: isEnabled ? '#475569' : '#64748b',
+      strokeDasharray: isEnabled ? undefined : '8 5',
+      strokeWidth: 2,
+    },
+  }))
+})
 const saving        = ref(false)
 const statusMsg     = ref(null)
 const canvasWrapper = ref(null)
@@ -359,6 +399,17 @@ async function doCreateGraph() {
   nodes.value = []; edges.value = []
 }
 
+// ── Toggle enabled ─────────────────────────────────────────────────────────
+async function doToggleEnabled() {
+  if (!activeGraphId.value) return
+  try {
+    const updated = await store.toggleEnabled(activeGraphId.value)
+    showStatus(true, updated.enabled ? t('logic.activated') : t('logic.deactivated'))
+  } catch (err) {
+    showStatus(false, err.response?.data?.detail ?? t('logic.errorToggle'))
+  }
+}
+
 // ── Delete graph ───────────────────────────────────────────────────────────
 const showDeleteConfirm = ref(false)
 function confirmDeleteGraph() { showDeleteConfirm.value = true }
@@ -451,11 +502,12 @@ async function onImportFile(event) {
 
 // ── Connect handler — REQUIRED to actually create edges ────────────────────
 function onConnect(params) {
+  const opts = defaultEdgeOptions.value
   edges.value = addEdge({
     ...params,
-    type: 'smoothstep',
-    animated: true,
-    style: { stroke: '#475569', strokeWidth: 2 },
+    type: opts.type,
+    animated: opts.animated,
+    style: opts.style,
   }, edges.value)
 }
 
