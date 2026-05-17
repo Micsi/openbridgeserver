@@ -284,10 +284,20 @@ async def _page_has_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> b
 
     dp_id_str = str(dp_id)
     for widget in page.widgets:
-        if widget.datapoint_id == dp_id_str or widget.status_datapoint_id == dp_id_str:
+        if widget.datapoint_id == dp_id_str:
             return True
-        if any(v == dp_id_str for v in widget.config.values() if isinstance(v, str)):
-            return True
+
+        # Only allow explicit writable datapoint config keys. Status/readback
+        # keys (e.g. "*_status") must not grant write access.
+        for key, value in widget.config.items():
+            if not isinstance(value, str):
+                continue
+            if value != dp_id_str:
+                continue
+            if key.startswith("dp_") and "status" not in key.lower():
+                return True
+            if key.endswith("_dp_id") and "status" not in key.lower():
+                return True
     return False
 
 
