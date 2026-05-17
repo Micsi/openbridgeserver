@@ -25,11 +25,11 @@ import uuid
 from datetime import UTC, datetime
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from obs.api.auth import get_admin_user, get_current_user, optional_current_user
-from obs.api.v1.sessions import create_session
+from obs.api.v1.sessions import create_session, validate_session
 from obs.db.database import Database, get_db
 from obs.models.visu import (
     CopyNodeRequest,
@@ -71,6 +71,33 @@ def _row_to_node(row) -> VisuNode:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _strip_page_config(node: VisuNode) -> VisuNode:
+    return node.model_copy(update={"page_config": None})
+
+
+async def _enforce_page_read_access(
+    request: Request,
+    db: Database,
+    node_id: str,
+    user: str | None,
+) -> None:
+    access = await _resolve_access(db, node_id)
+    if access in ("public", "readonly"):
+        return
+    if access == "user":
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Anmeldung erforderlich")
+        if not await _check_user_access(db, node_id, user):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
+        return
+    if access == "protected":
+        session_token = request.headers.get("X-Session-Token")
+        if session_token and validate_session(session_token, node_id):
+            return
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Valid session token required")
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
 
 async def _get_node_or_404(db: Database, node_id: str) -> VisuNode:
@@ -138,7 +165,7 @@ async def get_tree(db: Database = Depends(get_db)):
     """Gesamtbaum als flache Liste (Frontend baut Baum via parent_id)."""
     async with db.conn.execute("SELECT * FROM visu_nodes ORDER BY node_order ASC") as cur:
         rows = await cur.fetchall()
-    return [_row_to_node(r) for r in rows]
+    return [_strip_page_config(_row_to_node(r)) for r in rows]
 
 
 # ── Einzelner Knoten ──────────────────────────────────────────────────────────
@@ -487,6 +514,7 @@ async def pin_auth(
 @router.get("/pages/{node_id}", response_model=PageConfig)
 async def get_page(
     node_id: str,
+    request: Request,
     db: Database = Depends(get_db),
     user: str | None = Depends(optional_current_user),
 ):
@@ -494,29 +522,26 @@ async def get_page(
     if node.type != "PAGE":
         raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
 
-    access = await _resolve_access(db, node_id)
-    if access == "user":
-        if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Anmeldung erforderlich",
-            )
-        if not await _check_user_access(db, node_id, user):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
+    await _enforce_page_read_access(request, db, node_id, user)
 
     return node.page_config or PageConfig()
 
 
 @router.get("/widget-ref/{page_id}", response_model=list[WidgetInstance])
-async def get_widget_ref(page_id: str, db: Database = Depends(get_db)):
-    """Gibt alle Widget-Instanzen einer Seite zurück — ohne Zugriffsprüfung.
+async def get_widget_ref(
+    page_id: str,
+    request: Request,
+    db: Database = Depends(get_db),
+    user: str | None = Depends(optional_current_user),
+):
+    """Gibt alle Widget-Instanzen einer Seite zurück.
     Wird ausschließlich von WidgetRef-Widgets verwendet, die einzelne Widgets
-    aus einer anderen Seite einbetten. Die Zugriffskontrolle erfolgt auf Ebene
-    der einbettenden Seite.
+    aus einer anderen Seite einbetten.
     """
     node = await _get_node_or_404(db, page_id)
     if node.type != "PAGE":
         raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
+    await _enforce_page_read_access(request, db, page_id, user)
     pc = node.page_config or PageConfig()
     return pc.widgets
 
