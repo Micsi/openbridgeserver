@@ -366,6 +366,7 @@ jobs:
           OBS_DATABASE__PATH=/data/obs.db
           OBS_CONFIG=/data/config.yaml
           EOF
+          chmod 600 /etc/obs.env
 
           cat > /etc/systemd/system/obs.service << 'EOF'
           [Unit]
@@ -435,6 +436,7 @@ jobs:
           OBS_MOSQUITTO__SERVICE_PASSWORD=$MQTT_PASSWORD
           OBS_SECURITY__JWT_SECRET=$JWT_SECRET
           EOF
+          chmod 600 /etc/obs.env
           FIRSTBOOT
           chmod +x /opt/obs/obs-first-boot.sh
 
