@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from obs.api.auth import get_admin_user, get_current_user
+from obs.core.formula import validate_formula
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
 from obs.models.datapoint import DataPoint
@@ -402,6 +403,11 @@ async def import_config(
     for b_data in body.bindings:
         try:
             b_id = b_data.id
+            formula = (b_data.value_formula or "").strip() or None
+            if formula:
+                err = validate_formula(formula)
+                if err:
+                    raise ValueError(f"Ungültige Formel: {err}")
             row = await db.fetchone("SELECT id FROM adapter_bindings WHERE id=?", (b_id,))
             if row:
                 await db.execute_and_commit(
@@ -415,7 +421,7 @@ async def import_config(
                         b_data.direction,
                         json.dumps(b_data.config),
                         int(b_data.enabled),
-                        b_data.value_formula,
+                        formula,
                         b_data.send_throttle_ms,
                         int(b_data.send_on_change),
                         b_data.send_min_delta,
@@ -442,7 +448,7 @@ async def import_config(
                         b_data.direction,
                         json.dumps(b_data.config),
                         int(b_data.enabled),
-                        b_data.value_formula,
+                        formula,
                         b_data.send_throttle_ms,
                         int(b_data.send_on_change),
                         b_data.send_min_delta,
