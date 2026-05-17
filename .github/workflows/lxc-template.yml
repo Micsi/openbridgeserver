@@ -529,17 +529,19 @@ jobs:
       - name: Upload LXC assets to existing release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           find artifacts/ -type f \( -name "*.tar.zst" -o -name "*.tar.gz" -o -name "*.sha512" \) \
-            | xargs gh release upload "${{ github.ref_name }}" \
+            | xargs gh release upload "$TAG_NAME" \
               --repo "${{ github.repository }}" \
               --clobber
 
       - name: Insert LXC checksums into release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
-          gh release view "${{ github.ref_name }}" \
+          gh release view "$TAG_NAME" \
             --repo "${{ github.repository }}" --json body -q .body \
             > /tmp/release_body.txt
 
@@ -585,6 +587,6 @@ jobs:
           print(body.replace(marker, section), end='')
           PYEOF
 
-          gh release edit "${{ github.ref_name }}" \
+          gh release edit "$TAG_NAME" \
             --repo "${{ github.repository }}" \
             --notes-file /tmp/new_body.txt
