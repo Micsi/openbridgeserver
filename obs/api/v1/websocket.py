@@ -24,6 +24,8 @@ from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
+from obs.db.database import get_db
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
@@ -41,12 +43,12 @@ class WebSocketManager:
         # conn_id → (websocket, subscribed_dp_ids, send_lock)
         # send_lock serialises concurrent sends on the same WebSocket;
         # concurrent asyncio.gather calls in EventBus would otherwise race.
-        self._connections: dict[str, tuple[WebSocket, set[str], asyncio.Lock]] = {}
+        self._connections: dict[str, tuple[WebSocket, set[str], asyncio.Lock, bool]] = {}
 
-    async def connect(self, ws: WebSocket) -> str:
+    async def connect(self, ws: WebSocket, *, is_admin: bool = False) -> str:
         await ws.accept()
         conn_id = str(uuid.uuid4())
-        self._connections[conn_id] = (ws, set(), asyncio.Lock())
+        self._connections[conn_id] = (ws, set(), asyncio.Lock(), is_admin)
         logger.debug("WS client connected: %s  (total: %d)", conn_id[:8], len(self._connections))
         return conn_id
 
@@ -83,7 +85,7 @@ class WebSocketManager:
         entry = self._connections.get(conn_id)
         if entry is None:
             return False
-        ws, _, lock = entry
+        ws, _, lock, _ = entry
         async with lock:
             try:
                 await ws.send_json(msg)
@@ -101,6 +103,19 @@ class WebSocketManager:
         """Send a message to ALL connected clients (no subscription filter)."""
         dead: list[str] = []
         for conn_id in list(self._connections):
+            if not await self._send(conn_id, msg):
+                dead.append(conn_id)
+        for conn_id in dead:
+            await self.disconnect(conn_id)
+
+
+
+    async def broadcast_admin_only(self, msg: dict) -> None:
+        """Send a message only to admin-authenticated clients."""
+        dead: list[str] = []
+        for conn_id, (_ws, _subs, _lock, is_admin) in list(self._connections.items()):
+            if not is_admin:
+                continue
             if not await self._send(conn_id, msg):
                 dead.append(conn_id)
         for conn_id in dead:
@@ -209,15 +224,22 @@ async def websocket_endpoint(
     else:
         resolved_token = None
 
+    username: str | None = None
+    is_admin = False
     if resolved_token is not None:
         try:
-            decode_token(resolved_token)
+            username = decode_token(resolved_token)
         except Exception:
             await ws.close(code=4001, reason="Invalid token")
             return
 
+    if username is not None:
+        db = get_db()
+        row = await db.fetchone("SELECT is_admin FROM users WHERE username=?", (username,))
+        is_admin = bool(row and row["is_admin"])
+
     manager = get_ws_manager()
-    conn_id = await manager.connect(ws)
+    conn_id = await manager.connect(ws, is_admin=is_admin)
 
     try:
         while True:

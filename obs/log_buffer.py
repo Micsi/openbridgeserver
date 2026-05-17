@@ -91,4 +91,4 @@ def _broadcast_nowait(entry: dict[str, Any]) -> None:
     except RuntimeError:
         # WS manager not yet initialised (early startup log records) — drop silently.
         return
-    _loop.create_task(manager.broadcast({"action": "log_entry", "entry": entry}))
+    _loop.create_task(manager.broadcast_admin_only({"action": "log_entry", "entry": entry}))

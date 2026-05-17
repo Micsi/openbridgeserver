@@ -170,7 +170,7 @@ async def health() -> HealthOut:
 
 @router.get("/adapters", response_model=list[AdapterDetailOut])
 async def adapters_detail(
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> list[AdapterDetailOut]:
     """Alle laufenden Adapter-Instanzen mit Status."""
     all_instances = adapter_registry.get_all_instances()
@@ -192,7 +192,7 @@ async def adapters_detail(
 
 @router.get("/datatypes", response_model=list[DataTypeOut])
 async def datatypes(
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> list[DataTypeOut]:
     return [
         DataTypeOut(
@@ -534,7 +534,7 @@ _VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 async def get_logs(
     level: str | None = None,
     limit: int = 200,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> list[LogEntryOut]:
     """Recent log entries from the in-memory buffer, newest first.
 
