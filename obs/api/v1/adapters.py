@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
 from obs.api.auth import get_current_user
+from obs.api.redaction import redact_write_only_fields
 from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["adapters"])
@@ -153,11 +154,13 @@ class ConfigPatch(BaseModel):
 
 def _instance_out(row: Any, instance: Any | None) -> AdapterInstanceOut:
     cls = adapter_registry.get_class(row["adapter_type"])
+    raw_config = json.loads(row["config"]) if row["config"] else {}
+    config = redact_write_only_fields(raw_config, cls.config_schema) if cls else raw_config
     return AdapterInstanceOut(
         id=uuid.UUID(row["id"]),
         adapter_type=row["adapter_type"],
         name=row["name"],
-        config=json.loads(row["config"]) if row["config"] else {},
+        config=config,
         enabled=bool(row["enabled"]),
         registered=cls is not None,
         running=instance is not None,

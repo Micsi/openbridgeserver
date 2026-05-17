@@ -21,7 +21,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from obs.adapters import registry as adapter_registry
 from obs.api.auth import get_admin_user, get_current_user
+from obs.api.redaction import redact_write_only_fields
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
 from obs.models.datapoint import DataPoint
@@ -253,10 +255,15 @@ async def export_config(
             id=r["id"],
             adapter_type=r["adapter_type"],
             name=r["name"],
-            config=json.loads(r["config"]) if r["config"] else {},
+            config=(
+                redact_write_only_fields(raw_config, adapter_cls.config_schema)
+                if (adapter_cls := adapter_registry.get_class(r["adapter_type"]))
+                else raw_config
+            ),
             enabled=bool(r["enabled"]),
         )
         for r in instance_rows
+        for raw_config in [json.loads(r["config"]) if r["config"] else {}]
     ]
 
     ga_rows = await db.fetchall("SELECT address, name, description, dpt FROM knx_group_addresses ORDER BY address")
