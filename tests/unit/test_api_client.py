@@ -475,6 +475,7 @@ class TestApiClientWsBroadcast:
 
         mock_ws_manager = MagicMock()
         mock_ws_manager.broadcast = AsyncMock(side_effect=lambda p: ws_payloads.append(p))
+        mock_ws_manager.broadcast_authenticated = AsyncMock(side_effect=lambda p: ws_payloads.append(p))
 
         manager = _make_manager()
         n = node("ac", "api_client", {"url": "http://x.com", "method": "GET"})

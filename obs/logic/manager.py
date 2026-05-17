@@ -727,7 +727,9 @@ class LogicManager:
                 return str(v)
 
             safe_outputs = {nid: {k: _safe(val) for k, val in node_out.items()} for nid, node_out in outputs.items() if isinstance(node_out, dict)}
-            await get_ws_manager().broadcast(
+            ws_manager = get_ws_manager()
+            broadcaster = getattr(ws_manager, "broadcast_authenticated", ws_manager.broadcast)
+            await broadcaster(
                 {
                     "action": "logic_run",
                     "graph_id": graph_id,

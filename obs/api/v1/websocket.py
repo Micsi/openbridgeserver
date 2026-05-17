@@ -41,12 +41,12 @@ class WebSocketManager:
         # conn_id → (websocket, subscribed_dp_ids, send_lock)
         # send_lock serialises concurrent sends on the same WebSocket;
         # concurrent asyncio.gather calls in EventBus would otherwise race.
-        self._connections: dict[str, tuple[WebSocket, set[str], asyncio.Lock]] = {}
+        self._connections: dict[str, tuple[WebSocket, set[str], asyncio.Lock, bool]] = {}
 
-    async def connect(self, ws: WebSocket) -> str:
+    async def connect(self, ws: WebSocket, *, authenticated: bool = False) -> str:
         await ws.accept()
         conn_id = str(uuid.uuid4())
-        self._connections[conn_id] = (ws, set(), asyncio.Lock())
+        self._connections[conn_id] = (ws, set(), asyncio.Lock(), authenticated)
         logger.debug("WS client connected: %s  (total: %d)", conn_id[:8], len(self._connections))
         return conn_id
 
@@ -83,7 +83,7 @@ class WebSocketManager:
         entry = self._connections.get(conn_id)
         if entry is None:
             return False
-        ws, _, lock = entry
+        ws, _, lock, _ = entry
         async with lock:
             try:
                 await ws.send_json(msg)
@@ -101,6 +101,18 @@ class WebSocketManager:
         """Send a message to ALL connected clients (no subscription filter)."""
         dead: list[str] = []
         for conn_id in list(self._connections):
+            if not await self._send(conn_id, msg):
+                dead.append(conn_id)
+        for conn_id in dead:
+            await self.disconnect(conn_id)
+
+
+    async def broadcast_authenticated(self, msg: dict) -> None:
+        """Send a message only to authenticated clients."""
+        dead: list[str] = []
+        for conn_id, (_, _, _, authenticated) in list(self._connections.items()):
+            if not authenticated:
+                continue
             if not await self._send(conn_id, msg):
                 dead.append(conn_id)
         for conn_id in dead:
@@ -217,7 +229,7 @@ async def websocket_endpoint(
             return
 
     manager = get_ws_manager()
-    conn_id = await manager.connect(ws)
+    conn_id = await manager.connect(ws, authenticated=resolved_token is not None)
 
     try:
         while True:
