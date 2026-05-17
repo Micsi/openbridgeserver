@@ -292,7 +292,7 @@ async def _read_history_cfg(db: Database) -> dict[str, str]:
 @router.get("/history/settings", response_model=HistorySettingsOut)
 async def get_history_settings(
     db: Database = Depends(get_db),
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> HistorySettingsOut:
     """Read current history backend configuration."""
     cfg = await _read_history_cfg(db)

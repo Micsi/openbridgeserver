@@ -1038,7 +1038,7 @@ onMounted(async () => {
 })
 
 watch(activeTab, (tab) => {
-  if (tab === 'history') {
+  if (tab === 'history' && auth.isAdmin) {
     loadHistorySettings()
     loadHistoryFilterDps()
   }

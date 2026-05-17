@@ -210,7 +210,7 @@ class ClearResult(BaseModel):
 
 @router.get("/export", response_model=ConfigExport)
 async def export_config(
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> ConfigExport:
     reg = get_registry()
