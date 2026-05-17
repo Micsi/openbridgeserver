@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from obs.api.auth import decode_token
+from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["camera"])
 
@@ -99,20 +100,29 @@ async def _check_ssrf(url: str) -> None:
 async def _camera_auth(
     request: Request,
     _token: str = Query("", alias="_token", description="JWT als Query-Parameter"),
+    db: Database = Depends(lambda: get_db()),
 ) -> str:
     """Akzeptiert JWT entweder als 'Authorization: Bearer …'-Header
     oder als URL-Query-Parameter '?_token=…' (nötig für <img>/<video>-Tags).
     """
     auth_header = request.headers.get("Authorization", "")
+    username: str
     if auth_header.startswith("Bearer "):
-        return decode_token(auth_header[7:])
-    if _token:
-        return decode_token(_token)
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Provide Authorization: Bearer {token} or ?_token=",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+        username = decode_token(auth_header[7:])
+    elif _token:
+        username = decode_token(_token)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Provide Authorization: Bearer {token} or ?_token=",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    row = await db.fetchone("SELECT is_admin FROM users WHERE username=?", (username,))
+    if not row or not row["is_admin"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
+    return username
 
 
 # ── Proxy-Endpunkt ─────────────────────────────────────────────────────────────
@@ -189,7 +199,7 @@ async def proxy_camera(
     # 5. Streaming-Generator (kein follow_redirects)
     async def _stream() -> AsyncGenerator[bytes]:
         async with httpx.AsyncClient(
-            timeout=None,
+            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=30.0),
             follow_redirects=False,
         ) as hc:
             try:
