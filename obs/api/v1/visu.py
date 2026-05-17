@@ -47,6 +47,24 @@ from obs.models.visu import (
 
 router = APIRouter(tags=["visu"])
 
+_CAMERA_SECRET_KEYS = frozenset({"password", "apiKeyValue"})
+
+
+def _sanitize_widget_config(widget: WidgetInstance) -> WidgetInstance:
+    cfg = dict(widget.config or {})
+    for key in _CAMERA_SECRET_KEYS:
+        if key in cfg:
+            cfg[key] = ""
+    return widget.model_copy(update={"config": cfg})
+
+
+def _sanitize_page_config(page_config: PageConfig | None) -> PageConfig | None:
+    if page_config is None:
+        return None
+    widgets = [_sanitize_widget_config(w) for w in page_config.widgets]
+    return page_config.model_copy(update={"widgets": widgets})
+
+
 # ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
 
@@ -67,7 +85,7 @@ def _row_to_node(row) -> VisuNode:
         icon=row["icon"],
         access=row["access"],
         access_pin=None,  # PIN-Hash niemals in der API zurückgeben
-        page_config=PageConfig(**pc) if pc else None,
+        page_config=_sanitize_page_config(PageConfig(**pc) if pc else None),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -504,7 +522,7 @@ async def get_page(
         if not await _check_user_access(db, node_id, user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
 
-    return node.page_config or PageConfig()
+    return _sanitize_page_config(node.page_config) or PageConfig()
 
 
 @router.get("/widget-ref/{page_id}", response_model=list[WidgetInstance])
@@ -517,7 +535,7 @@ async def get_widget_ref(page_id: str, db: Database = Depends(get_db)):
     node = await _get_node_or_404(db, page_id)
     if node.type != "PAGE":
         raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
-    pc = node.page_config or PageConfig()
+    pc = _sanitize_page_config(node.page_config) or PageConfig()
     return pc.widgets
 
 
