@@ -30,6 +30,14 @@ from obs.models.binding import (
 router = APIRouter(tags=["bindings"])
 
 
+async def _require_admin_for_snmp(username: str, adapter_type: str, db: Database) -> None:
+    if adapter_type != "snmp":
+        return
+    row = await db.fetchone("SELECT is_admin FROM users WHERE username=?", (username,))
+    if not row or not row["is_admin"]:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required for SNMP bindings")
+
+
 # ---------------------------------------------------------------------------
 # Response model
 # ---------------------------------------------------------------------------
@@ -152,6 +160,7 @@ async def create_binding(
             f"Adapter-Instanz '{body.adapter_instance_id}' nicht gefunden",
         )
     adapter_type = instance_row["adapter_type"]
+    await _require_admin_for_snmp(_user, adapter_type, db)
 
     # Binding-Config gegen Schema validieren
     from obs.adapters.registry import get_class
@@ -222,6 +231,7 @@ async def update_binding(
     )
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding nicht gefunden")
+    await _require_admin_for_snmp(_user, row["adapter_type"], db)
 
     updates = body.model_dump(exclude_unset=True)
     now = datetime.now(UTC).isoformat()

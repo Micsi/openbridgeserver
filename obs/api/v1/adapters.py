@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
-from obs.api.auth import get_current_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["adapters"])
@@ -175,7 +175,7 @@ def _instance_out(row: Any, instance: Any | None) -> AdapterInstanceOut:
 
 @router.get("/instances", response_model=list[AdapterInstanceOut])
 async def list_instances(
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> list[AdapterInstanceOut]:
     rows = await db.fetchall("SELECT * FROM adapter_instances ORDER BY adapter_type, name")
@@ -193,7 +193,7 @@ async def list_instances(
 )
 async def create_instance(
     body: AdapterInstanceCreate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
     cls = adapter_registry.get_class(body.adapter_type)
@@ -1040,7 +1040,7 @@ async def snmp_walk(
     timeout: float = Query(default=5.0, ge=0.5, le=30.0, description="Timeout pro Request (s)"),
     max_results: int = Query(default=50, ge=1, le=500, description="Einträge pro Seite"),
     start_oid: str | None = Query(default=None, description="Cursor für Paginierung (letzter OID der Vorseite)"),
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> list[SnmpWalkEntry]:
     """SNMP-Walk über einen OID-Teilbaum — nützlich für OID-Discovery beim Binding-Anlegen.
