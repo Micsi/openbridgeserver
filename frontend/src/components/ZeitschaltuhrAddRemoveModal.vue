@@ -6,7 +6,7 @@
  * mode="restricted"  — Bearbeiten + Aktivieren/Deaktivieren (kein Hinzufügen/Löschen)
  * mode="minimal"     — nur Aktivieren/Deaktivieren
  */
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { datapoints as dpApi } from '@/api/client'
 import type { BindingOut } from '@/api/client'
 import ZeitschaltuhrBindingModal from '@/components/ZeitschaltuhrBindingModal.vue'
@@ -31,6 +31,15 @@ const bindings  = ref<BindingOut[]>([])
 const editingBinding   = ref<BindingOut | null>(null)
 const pendingDeleteId  = ref<string | null>(null)
 
+
+const bindingsForInstance = computed(() =>
+  bindings.value.filter((b) => b.adapter_instance_id === props.instanceId)
+)
+
+function isAllowedBinding(bindingId: string): boolean {
+  return bindingsForInstance.value.some((b) => String(b.id) === bindingId)
+}
+
 // ── Load ──────────────────────────────────────────────────────────────────────
 
 onMounted(load)
@@ -50,6 +59,7 @@ async function load() {
 // ── Toggle enabled ────────────────────────────────────────────────────────────
 
 async function toggleEnabled(b: BindingOut) {
+  if (!isAllowedBinding(String(b.id))) return
   saving.value = true
   errorMsg.value = ''
   try {
@@ -74,6 +84,7 @@ function cancelDelete() {
 }
 
 async function confirmDelete(b: BindingOut) {
+  if (!isAllowedBinding(String(b.id))) return
   pendingDeleteId.value = null
   saving.value = true
   errorMsg.value = ''
@@ -112,6 +123,7 @@ async function addBinding() {
 // ── Edit ──────────────────────────────────────────────────────────────────────
 
 function openEdit(b: BindingOut) {
+  if (!isAllowedBinding(String(b.id))) return
   editingBinding.value = b
 }
 
@@ -181,7 +193,7 @@ const btnBase = 'px-2 py-1 rounded text-xs font-medium transition-colors disable
         <template v-else>
 
           <div
-            v-if="bindings.length === 0"
+            v-if="bindingsForInstance.length === 0"
             class="text-sm text-gray-400 dark:text-gray-500 text-center py-4"
           >
             Keine Schaltpunkte vorhanden.
@@ -189,7 +201,7 @@ const btnBase = 'px-2 py-1 rounded text-xs font-medium transition-colors disable
 
           <!-- Binding-Liste -->
           <div
-            v-for="b in bindings"
+            v-for="b in bindingsForInstance"
             :key="String(b.id)"
             class="rounded-lg border transition-colors"
             :class="pendingDeleteId === String(b.id)
