@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
-from obs.api.auth import get_current_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["adapters"])
@@ -175,7 +175,7 @@ def _instance_out(row: Any, instance: Any | None) -> AdapterInstanceOut:
 
 @router.get("/instances", response_model=list[AdapterInstanceOut])
 async def list_instances(
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> list[AdapterInstanceOut]:
     rows = await db.fetchall("SELECT * FROM adapter_instances ORDER BY adapter_type, name")
@@ -193,7 +193,7 @@ async def list_instances(
 )
 async def create_instance(
     body: AdapterInstanceCreate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
     cls = adapter_registry.get_class(body.adapter_type)
@@ -246,7 +246,7 @@ async def create_instance(
 @router.get("/instances/{instance_id}", response_model=AdapterInstanceOut)
 async def get_instance(
     instance_id: uuid.UUID,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -260,7 +260,7 @@ async def get_instance(
 async def update_instance(
     instance_id: uuid.UUID,
     body: AdapterInstanceUpdate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -307,7 +307,7 @@ async def update_instance(
 @router.delete("/instances/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_instance(
     instance_id: uuid.UUID,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> None:
     row = await db.fetchone("SELECT id FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -324,7 +324,7 @@ async def delete_instance(
 async def test_instance(
     instance_id: uuid.UUID,
     body: TestRequest | None = None,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> TestResult:
     """Verbindungstest mit aktuellem oder gegebenem Config (ephemer, kein Persist)."""
@@ -368,7 +368,7 @@ async def test_instance(
 @router.post("/instances/{instance_id}/restart", response_model=AdapterInstanceOut)
 async def restart_instance_route(
     instance_id: uuid.UUID,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -387,7 +387,7 @@ async def restart_instance_route(
 @router.get("/instances/{instance_id}/bindings", response_model=list[InstanceBindingEntry])
 async def list_instance_bindings(
     instance_id: uuid.UUID,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> list[InstanceBindingEntry]:
     """Alle Bindings einer Adapter-Instanz, angereichert mit Datenpunkt-Namen."""
@@ -420,7 +420,7 @@ class HolidayEntry(BaseModel):
 async def list_instance_holidays(
     instance_id: uuid.UUID,
     year: int = Query(default=0, description="Jahr (0 = aktuelles Jahr)"),
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> list[HolidayEntry]:
     """Alle Feiertage einer Zeitschaltuhr-Instanz für das angegebene Jahr (Library + benutzerdefiniert)."""
@@ -455,7 +455,7 @@ async def list_instance_holidays(
 async def mqtt_browse_topics(
     instance_id: uuid.UUID,
     timeout: int = 5,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> list[str]:
     """Subscribe to # for up to `timeout` seconds (max 10) and return observed topics."""
@@ -510,7 +510,7 @@ async def mqtt_sample_payload(
     instance_id: uuid.UUID,
     topic: str,
     timeout: int = 5,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> dict:
     """Subscribe to a specific topic and return the first received payload (useful for retained messages)."""
@@ -570,7 +570,7 @@ async def iobroker_browse_states(
     instance_id: uuid.UUID,
     q: str = Query("", max_length=200),
     limit: int = Query(50, ge=1, le=100),
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> list[IoBrokerStateOut]:
     """Durchsuchbare ioBroker-State-Liste für Binding-Auswahl."""
@@ -693,7 +693,7 @@ async def _iobroker_candidates(
 async def iobroker_import_preview(
     instance_id: uuid.UUID,
     body: IoBrokerImportRequest,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> IoBrokerImportResult:
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -708,7 +708,7 @@ async def iobroker_import_preview(
 async def iobroker_import_states(
     instance_id: uuid.UUID,
     body: IoBrokerImportRequest,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> IoBrokerImportResult:
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -770,7 +770,7 @@ async def iobroker_import_states(
 
 @router.get("/", response_model=list[AdapterStatusOut])
 async def list_adapters(
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
 ) -> list[AdapterStatusOut]:
     status_map = adapter_registry.get_status()
     return [AdapterStatusOut(adapter_type=k, **v) for k, v in status_map.items()]
@@ -778,7 +778,7 @@ async def list_adapters(
 
 @router.get("/knx/dpts")
 async def list_knx_dpts(
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
 ) -> list[dict]:
     """Alle registrierten KNX DPTs — gruppiert nach Familie (DPT1, DPT9, …)."""
     return [
@@ -795,7 +795,7 @@ async def list_knx_dpts(
 @router.get("/{adapter_type}/schema")
 async def get_adapter_schema(
     adapter_type: str,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
 ) -> dict:
     cls = adapter_registry.get_class(adapter_type)
     if cls is None:
@@ -808,7 +808,7 @@ async def get_adapter_schema(
 @router.get("/{adapter_type}/binding-schema")
 async def get_binding_schema(
     adapter_type: str,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
 ) -> dict:
     cls = adapter_registry.get_class(adapter_type)
     if cls is None:
@@ -824,7 +824,7 @@ async def get_binding_schema(
 async def test_adapter(
     adapter_type: str,
     body: TestRequest,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
 ) -> TestResult:
     cls = adapter_registry.get_class(adapter_type)
     if cls is None:
@@ -853,7 +853,7 @@ async def test_adapter(
 async def update_adapter_config(
     adapter_type: str,
     body: ConfigPatch,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterConfigOut:
     cls = adapter_registry.get_class(adapter_type)
@@ -886,7 +886,7 @@ async def update_adapter_config(
 @router.get("/{adapter_type}/config", response_model=AdapterConfigOut)
 async def get_adapter_config(
     adapter_type: str,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterConfigOut:
     row = await db.fetchone("SELECT * FROM adapter_configs WHERE adapter_type=?", (adapter_type,))
