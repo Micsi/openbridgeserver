@@ -257,3 +257,47 @@ async def test_write_value_reflects_in_datapoint_detail(client, auth_headers):
     resp = await client.get(f"/api/v1/datapoints/{dp_id}", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["value"] == pytest.approx(19.0)
+
+
+async def test_public_page_cannot_write_status_datapoint(client, auth_headers):
+    command_dp = await _create_dp(client, auth_headers, {**_DP_PAYLOAD, "name": "Command-DP"})
+    status_dp = await _create_dp(client, auth_headers, {**_DP_PAYLOAD, "name": "Status-DP"})
+
+    page_resp = await client.post(
+        "/api/v1/visu/nodes",
+        json={"name": "Public-Test-Page", "type": "PAGE", "order": 1, "access": "public"},
+        headers=auth_headers,
+    )
+    assert page_resp.status_code == 201, page_resp.text
+    page_id = page_resp.json()["id"]
+
+    page_cfg = {
+        "grid_cols": 12,
+        "grid_row_height": 80,
+        "grid_cell_width": 80,
+        "background": None,
+        "widgets": [
+            {
+                "id": "w1",
+                "name": "Toggle",
+                "type": "TOGGLE",
+                "datapoint_id": command_dp["id"],
+                "status_datapoint_id": status_dp["id"],
+                "x": 0,
+                "y": 0,
+                "w": 2,
+                "h": 2,
+                "config": {},
+            }
+        ],
+    }
+    put_resp = await client.put(f"/api/v1/visu/pages/{page_id}", json=page_cfg, headers=auth_headers)
+    assert put_resp.status_code in (200, 204), put_resp.text
+
+    write_resp = await client.post(
+        f"/api/v1/datapoints/{status_dp['id']}/value",
+        json={"value": True},
+        headers={"X-Page-Id": page_id},
+    )
+    assert write_resp.status_code == 403
+    assert write_resp.json()["detail"] == "Datapoint is not part of the page"
