@@ -146,7 +146,7 @@ class ClearResult(BaseModel):
 
 @router.get("/export", response_model=ConfigExport)
 async def export_config(
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> ConfigExport:
     reg = get_registry()
@@ -289,7 +289,7 @@ async def export_db(
 @router.post("/import", response_model=ImportResult, status_code=status.HTTP_200_OK)
 async def import_config(
     body: ConfigExport,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> ImportResult:
     result = ImportResult(
