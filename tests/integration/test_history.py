@@ -261,3 +261,23 @@ async def test_history_resumes_after_enabling(client, auth_headers):
     await asyncio.sleep(0.1)
     entries = await _query_history(client, auth_headers, dp_id)
     assert any(abs(e["v"] - 42.0) < 0.01 for e in entries), "Value 42.0 not found after re-enabling"
+
+
+async def test_history_rejects_unknown_page_id_without_auth(client, auth_headers):
+    """Unauthenticated requests with unknown X-Page-Id must be rejected."""
+    dp = await _create_dp(
+        client,
+        auth_headers,
+        f"HistTest-UnknownPage-{uuid.uuid4().hex[:6]}",
+        record_history=True,
+    )
+
+    past = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)).isoformat()
+    resp = await client.get(
+        f"/api/v1/history/{dp['id']}",
+        params={"from": past, "limit": 100},
+        headers={"X-Page-Id": f"missing-{uuid.uuid4().hex}"},
+    )
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Authentication required"

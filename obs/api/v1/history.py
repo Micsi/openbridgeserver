@@ -73,7 +73,10 @@ async def _check_history_access(
     async with db.conn.execute("SELECT access, parent_id FROM visu_nodes WHERE id = ?", (page_id,)) as cur:
         row = await cur.fetchone()
 
-    access = row["access"] if row and row["access"] else "public"
+    if row is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    access = row["access"] if row["access"] else "public"
 
     if access in ("public", "readonly"):
         return  # Öffentliche Seite → History-Lesen erlaubt
