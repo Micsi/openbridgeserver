@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
+import socket
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -35,6 +37,33 @@ def _msg_to_str(v: object) -> str:
     if isinstance(v, (dict, list)):
         return _j.dumps(v, ensure_ascii=False)
     return str(v)
+
+
+def _is_safe_image_url(url: str) -> bool:
+    """Allow only HTTPS URLs resolving to public IPs."""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        if any((addr.is_private, addr.is_loopback, addr.is_link_local, addr.is_multicast, addr.is_reserved, addr.is_unspecified)):
+            return False
+    return True
+
 
 
 _THROTTLE_UNITS: dict[str, float] = {
@@ -520,17 +549,24 @@ class LogicManager:
                     if url_title:
                         payload["url_title"] = url_title
 
-                    if image_url:
+                    if image_url and _is_safe_image_url(image_url):
                         # Download image and attach as multipart
                         img_r = await client.get(image_url, timeout=10.0)
                         img_r.raise_for_status()
-                        content_type = img_r.headers.get("content-type", "image/jpeg")
+                        content_type = img_r.headers.get("content-type", "").split(";")[0].strip().lower()
+                        content_len = int(img_r.headers.get("content-length", "0") or "0")
+                        if not content_type.startswith("image/"):
+                            raise ValueError("Pushover image_url must return an image/* content type")
+                        if content_len > 5_000_000 or len(img_r.content) > 5_000_000:
+                            raise ValueError("Pushover attachment too large (max 5 MB)")
                         fname = image_url.split("?")[0].split("/")[-1] or "image.jpg"
                         r = await client.post(
                             "https://api.pushover.net/1/messages.json",
                             data=payload,
-                            files={"attachment": (fname, img_r.content, content_type)},
+                            files={"attachment": (fname, img_r.content, content_type or "image/jpeg")},
                         )
+                    elif image_url:
+                        raise ValueError("Unsafe image_url: only public HTTPS hosts are allowed")
                     else:
                         r = await client.post(
                             "https://api.pushover.net/1/messages.json",
