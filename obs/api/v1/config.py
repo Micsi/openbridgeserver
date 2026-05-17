@@ -515,7 +515,7 @@ async def import_db(
 @router.post("/import", response_model=ImportResult, status_code=status.HTTP_200_OK)
 async def import_config(
     body: ConfigExport,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> ImportResult:
     result = ImportResult(
