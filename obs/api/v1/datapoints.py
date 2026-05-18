@@ -271,9 +271,16 @@ async def write_value(
         else:  # user, unbekannt oder sonstige → 401
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     else:
-        # Benutzer ist eingeloggt — prüfe ob er Zugang zur Seite hat
+        # Benutzer ist eingeloggt — Admins dürfen immer schreiben.
+        user_row = await db.fetchone("SELECT is_admin FROM users WHERE username = ?", (user,))
+        is_admin = bool(user_row and user_row["is_admin"])
+
         page_id = request.headers.get("X-Page-Id")
-        if page_id:
+        if not page_id and not is_admin:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+        # Für nicht-Admins: ACL der referenzierten Seite erzwingen.
+        if page_id and not is_admin:
             access = await _resolve_page_access(db, page_id)
             if access == "user":
                 from obs.api.v1.visu import _check_user_access
