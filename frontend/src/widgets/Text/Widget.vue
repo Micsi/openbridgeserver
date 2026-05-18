@@ -3,6 +3,24 @@ import { computed } from 'vue'
 import { marked } from 'marked'
 import type { DataPointValue } from '@/types'
 
+function escapeHtml(raw: string): string {
+  return raw.replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch] ?? ch))
+}
+
+marked.use({
+  renderer: {
+    html({ text }) {
+      return escapeHtml(text)
+    },
+  },
+})
+
 const props = defineProps<{
   config: Record<string, unknown>
   datapointId: string | null
