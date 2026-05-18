@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
-from obs.api.auth import get_current_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["adapters"])
@@ -853,7 +853,7 @@ async def test_adapter(
 async def update_adapter_config(
     adapter_type: str,
     body: ConfigPatch,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterConfigOut:
     cls = adapter_registry.get_class(adapter_type)
@@ -886,7 +886,7 @@ async def update_adapter_config(
 @router.get("/{adapter_type}/config", response_model=AdapterConfigOut)
 async def get_adapter_config(
     adapter_type: str,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterConfigOut:
     row = await db.fetchone("SELECT * FROM adapter_configs WHERE adapter_type=?", (adapter_type,))
