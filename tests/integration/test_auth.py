@@ -126,3 +126,32 @@ async def test_me_returns_admin_info(client, auth_headers):
     body = resp.json()
     assert body["username"] == "admin"
     assert body["is_admin"] is True
+
+async def test_api_key_cannot_impersonate_admin_for_admin_only_route(client, auth_headers):
+    create_user_resp = await client.post(
+        "/api/v1/auth/users",
+        headers=auth_headers,
+        json={"username": "bob", "password": "bobpass", "is_admin": False},
+    )
+    assert create_user_resp.status_code == 201
+
+    bob_login = await client.post(
+        "/api/v1/auth/login",
+        json={"username": "bob", "password": "bobpass"},
+    )
+    assert bob_login.status_code == 200
+    bob_headers = {"Authorization": f"Bearer {bob_login.json()['access_token']}"}
+
+    create_key_resp = await client.post(
+        "/api/v1/auth/apikeys",
+        headers=bob_headers,
+        json={"name": "admin"},
+    )
+    assert create_key_resp.status_code == 201
+    bob_api_key = create_key_resp.json()["key"]
+
+    reset_resp = await client.delete(
+        "/api/v1/config/reset/datapoints",
+        headers={"X-API-Key": bob_api_key},
+    )
+    assert reset_resp.status_code == 403
