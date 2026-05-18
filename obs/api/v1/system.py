@@ -152,7 +152,7 @@ async def health() -> HealthOut:
 
 @router.get("/adapters", response_model=list[AdapterDetailOut])
 async def adapters_detail(
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> list[AdapterDetailOut]:
     """Alle laufenden Adapter-Instanzen mit Status."""
     all_instances = adapter_registry.get_all_instances()
@@ -274,9 +274,9 @@ async def _read_history_cfg(db: Database) -> dict[str, str]:
 @router.get("/history/settings", response_model=HistorySettingsOut)
 async def get_history_settings(
     db: Database = Depends(get_db),
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
 ) -> HistorySettingsOut:
-    """Read current history backend configuration."""
+    """Read current history backend configuration. Admin only."""
     cfg = await _read_history_cfg(db)
     return HistorySettingsOut(
         plugin=cfg["plugin"],
