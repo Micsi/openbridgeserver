@@ -117,10 +117,39 @@ class YamlConfigSource(PydanticBaseSettingsSource):
 
 
 # ---------------------------------------------------------------------------
+# Backward-compatibility helpers
+# ---------------------------------------------------------------------------
+
+
+def _import_legacy_env_vars() -> None:
+    """Import OPENTWS_* variables as OBS_* when OBS_* is not set."""
+    legacy_prefix = "OPENTWS_"
+    new_prefix = "OBS_"
+    for key, value in list(os.environ.items()):
+        if not key.startswith(legacy_prefix):
+            continue
+        mapped_key = f"{new_prefix}{key[len(legacy_prefix):]}"
+        os.environ.setdefault(mapped_key, value)
+
+
+def _resolve_default_db_path(default_path: str = "/data/obs.db") -> str:
+    """Prefer legacy DB path if new default file does not exist yet."""
+    new_path = Path(default_path)
+    legacy_path = new_path.with_name("opentws.db")
+    if not new_path.exists() and legacy_path.exists():
+        return str(legacy_path)
+    return default_path
+
+
+_import_legacy_env_vars()
+DatabaseSettings.model_fields["path"].default = _resolve_default_db_path()
+
+
+# ---------------------------------------------------------------------------
 # Main settings class
 # ---------------------------------------------------------------------------
 
-_CONFIG_PATH = Path(os.environ.get("OBS_CONFIG", "config.yaml"))
+_CONFIG_PATH = Path(os.environ.get("OBS_CONFIG") or os.environ.get("OPENTWS_CONFIG", "config.yaml"))
 
 
 class Settings(BaseSettings):
