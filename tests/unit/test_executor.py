@@ -115,11 +115,14 @@ class TestSafeEval:
         with pytest.raises(ExecutionError):
             GraphExecutor._safe_eval("open('secret')", {})
 
-    def test_attribute_access_allowed(self):
-        # NOTE: current sandbox does not block __class__ access
-        # This documents the actual behaviour (not a security guarantee)
-        result = GraphExecutor._safe_eval("().__class__.__bases__", {})
-        assert result is not None  # returns (<class 'object'>,)
+    def test_attribute_access_blocked(self):
+        with pytest.raises(ExecutionError):
+            GraphExecutor._safe_eval("().__class__.__bases__", {})
+
+    def test_subclasses_escape_blocked(self):
+        payload = "[c for c in ().__class__.__base__.__subclasses__() if c.__name__=='BuiltinImporter'][0]"
+        with pytest.raises(ExecutionError):
+            GraphExecutor._safe_eval(payload, {})
 
 
 # ===========================================================================
