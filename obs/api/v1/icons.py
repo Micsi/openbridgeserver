@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from obs.api.auth import get_current_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.config import get_settings
 from obs.db.database import Database, get_db
 
@@ -343,7 +343,7 @@ _FA_KEY_SETTING = "icons.fontawesome_api_key"
 
 
 class IconsSettingsOut(BaseModel):
-    fa_api_key: str | None = None  # None = kein Key gespeichert
+    has_fa_api_key: bool = False
 
 
 class IconsSettingsIn(BaseModel):
@@ -352,18 +352,18 @@ class IconsSettingsIn(BaseModel):
 
 @router.get("/settings", response_model=IconsSettingsOut)
 async def get_icons_settings(
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(get_db),
 ) -> IconsSettingsOut:
     """Gibt die gespeicherten Icons-Einstellungen zurück (FA API Key)."""
     row = await db.fetchone("SELECT value FROM app_settings WHERE key = ?", (_FA_KEY_SETTING,))
-    return IconsSettingsOut(fa_api_key=row["value"] if row else None)
+    return IconsSettingsOut(has_fa_api_key=bool(row and row["value"]))
 
 
 @router.put("/settings", response_model=IconsSettingsOut)
 async def update_icons_settings(
     body: IconsSettingsIn,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(get_db),
 ) -> IconsSettingsOut:
     """Speichert oder löscht den FontAwesome API Key."""
@@ -373,9 +373,9 @@ async def update_icons_settings(
             "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
             (_FA_KEY_SETTING, key),
         )
-        return IconsSettingsOut(fa_api_key=key)
+        return IconsSettingsOut(has_fa_api_key=True)
     await db.execute_and_commit("DELETE FROM app_settings WHERE key = ?", (_FA_KEY_SETTING,))
-    return IconsSettingsOut(fa_api_key=None)
+    return IconsSettingsOut(has_fa_api_key=False)
 
 
 @router.get("/{name}")
