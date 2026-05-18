@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
-from obs.api.auth import get_current_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["adapters"])
@@ -510,7 +510,7 @@ async def mqtt_sample_payload(
     instance_id: uuid.UUID,
     topic: str,
     timeout: int = 5,
-    _user: str = Depends(get_current_user),
+    _admin: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> dict:
     """Subscribe to a specific topic and return the first received payload (useful for retained messages)."""
@@ -534,6 +534,12 @@ async def mqtt_sample_payload(
         import aiomqtt
     except ImportError:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "aiomqtt nicht installiert")
+
+    topic = topic.strip()
+    if not topic:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Topic darf nicht leer sein")
+    if "#" in topic or "+" in topic:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Wildcard-Topics sind nicht erlaubt")
 
     scan_secs = min(max(timeout, 1), 10)
     try:
