@@ -162,6 +162,14 @@ async def optional_current_user(
         return None
 
 
+
+
+async def get_non_demo_user(current_user: str = Depends(get_current_user)) -> str:
+    """FastAPI dependency — blocks write/sensitive routes for demo account."""
+    if current_user == "demo":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Demo account is read-only")
+    return current_user
+
 async def get_admin_user(
     current_user: str = Depends(get_current_user),
     db: Database = Depends(lambda: get_db()),
@@ -351,7 +359,7 @@ async def list_api_keys(
 async def create_api_key(
     request: Request,
     body: ApiKeyCreate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_non_demo_user),
     db: Database = Depends(lambda: get_db()),
 ) -> ApiKeyResponse:
     key = generate_api_key()

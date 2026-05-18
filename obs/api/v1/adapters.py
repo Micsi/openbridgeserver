@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
-from obs.api.auth import get_current_user
+from obs.api.auth import get_current_user, get_non_demo_user
 from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["adapters"])
@@ -193,7 +193,7 @@ async def list_instances(
 )
 async def create_instance(
     body: AdapterInstanceCreate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_non_demo_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
     cls = adapter_registry.get_class(body.adapter_type)
@@ -260,7 +260,7 @@ async def get_instance(
 async def update_instance(
     instance_id: uuid.UUID,
     body: AdapterInstanceUpdate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_non_demo_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -307,7 +307,7 @@ async def update_instance(
 @router.delete("/instances/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_instance(
     instance_id: uuid.UUID,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_non_demo_user),
     db: Database = Depends(lambda: get_db()),
 ) -> None:
     row = await db.fetchone("SELECT id FROM adapter_instances WHERE id=?", (str(instance_id),))
@@ -368,7 +368,7 @@ async def test_instance(
 @router.post("/instances/{instance_id}/restart", response_model=AdapterInstanceOut)
 async def restart_instance_route(
     instance_id: uuid.UUID,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_non_demo_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))

@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from obs import __version__
 from obs.adapters import registry as adapter_registry
-from obs.api.auth import get_admin_user, get_current_user
+from obs.api.auth import get_admin_user, get_current_user, get_non_demo_user
 from obs.db.database import Database, get_db
 from obs.models.types import DataTypeRegistry
 
@@ -200,7 +200,7 @@ async def get_app_settings(
 async def update_app_settings(
     body: AppSettingsIn,
     db: Database = Depends(get_db),
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_non_demo_user),
 ) -> AppSettingsOut:
     """Update application settings. Changes are applied immediately."""
     # Validate timezone using zoneinfo
@@ -274,7 +274,7 @@ async def _read_history_cfg(db: Database) -> dict[str, str]:
 @router.get("/history/settings", response_model=HistorySettingsOut)
 async def get_history_settings(
     db: Database = Depends(get_db),
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_non_demo_user),
 ) -> HistorySettingsOut:
     """Read current history backend configuration."""
     cfg = await _read_history_cfg(db)
