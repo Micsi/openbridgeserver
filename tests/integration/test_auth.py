@@ -9,8 +9,11 @@ Covers:
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
+from obs.api.auth import create_access_token
 from tests.integration.conftest import assert_auth_token_shape
 
 pytestmark = pytest.mark.integration
@@ -126,3 +129,46 @@ async def test_me_returns_admin_info(client, auth_headers):
     body = resp.json()
     assert body["username"] == "admin"
     assert body["is_admin"] is True
+
+
+async def test_admin_key_name_does_not_grant_admin_privileges(client, auth_headers):
+    suffix = uuid.uuid4().hex[:8]
+    username = f"user_{suffix}"
+
+    create_user = await client.post(
+        "/api/v1/auth/users",
+        headers=auth_headers,
+        json={"username": username, "password": "pw", "is_admin": False},
+    )
+    assert create_user.status_code == 201
+
+    user_token = create_access_token(username)
+    key_resp = await client.post(
+        "/api/v1/auth/apikeys",
+        headers={"Authorization": f"Bearer {user_token}"},
+        json={"name": "admin"},
+    )
+    assert key_resp.status_code == 201
+    key = key_resp.json()["key"]
+
+    resp = await client.get(
+        "/api/v1/adapters/mqtt/config",
+        headers={"X-API-Key": key},
+    )
+    assert resp.status_code == 403
+
+
+async def test_admin_api_key_with_custom_name_keeps_admin_access(client, auth_headers):
+    key_resp = await client.post(
+        "/api/v1/auth/apikeys",
+        headers=auth_headers,
+        json={"name": f"automation-{uuid.uuid4().hex[:8]}"},
+    )
+    assert key_resp.status_code == 201
+    key = key_resp.json()["key"]
+
+    resp = await client.get(
+        "/api/v1/adapters/mqtt/config",
+        headers={"X-API-Key": key},
+    )
+    assert resp.status_code == 200
