@@ -124,6 +124,10 @@ class TestSafeEval:
         with pytest.raises(ExecutionError):
             GraphExecutor._safe_eval(payload, {})
 
+    def test_indirect_function_call_blocked(self):
+        with pytest.raises(ExecutionError):
+            GraphExecutor._safe_eval("([abs][0])(1)", {})
+
 
 # ===========================================================================
 # Single-node execution helpers
