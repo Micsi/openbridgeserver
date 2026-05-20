@@ -1306,6 +1306,7 @@ function migrateXmlToMultiPath() {
   localData.value.xml_path = ''
   emitUpdate()
 }
+
 // ── Substring / RegEx extractor ───────────────────────────────────────────
 const substrTestInput = ref('')
 
