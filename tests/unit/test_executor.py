@@ -87,6 +87,17 @@ class TestSafeEval:
     def test_math_sqrt(self):
         assert GraphExecutor._safe_eval("sqrt(x)", {"x": 9}) == pytest.approx(3.0)
 
+    def test_math_namespace_sqrt(self):
+        assert GraphExecutor._safe_eval("math.sqrt(x)", {"x": 9}) == pytest.approx(3.0)
+
+    def test_math_dunder_attribute_blocked(self):
+        with pytest.raises(ExecutionError):
+            GraphExecutor._safe_eval("math.__dict__", {})
+
+    def test_lambda_syntax_blocked(self):
+        with pytest.raises(ExecutionError):
+            GraphExecutor._safe_eval("(lambda x: x)(1)", {})
+
     def test_math_pi(self):
         result = GraphExecutor._safe_eval("x * pi / 180", {"x": 180})
         assert result == pytest.approx(3.14159, abs=1e-4)
@@ -115,11 +126,9 @@ class TestSafeEval:
         with pytest.raises(ExecutionError):
             GraphExecutor._safe_eval("open('secret')", {})
 
-    def test_attribute_access_allowed(self):
-        # NOTE: current sandbox does not block __class__ access
-        # This documents the actual behaviour (not a security guarantee)
-        result = GraphExecutor._safe_eval("().__class__.__bases__", {})
-        assert result is not None  # returns (<class 'object'>,)
+    def test_attribute_access_blocked(self):
+        with pytest.raises(ExecutionError):
+            GraphExecutor._safe_eval("().__class__.__bases__", {})
 
 
 # ===========================================================================
@@ -676,6 +685,12 @@ class TestPythonScriptNode:
     def test_round_uses_mathematical_rounding(self):
         out = run_single("python_script", {"script": "result = round(inputs['a'], 1)"}, {"a": 21.15})
         assert out["result"] == pytest.approx(21.2)
+
+    def test_math_dunder_attribute_blocked_returns_empty_output(self):
+        n1 = node("p", "python_script", {"script": "result = math.__dict__"})
+        exc = make_executor([n1])
+        out = exc.execute({"p": {}})
+        assert out.get("p") == {}
 
 
 # ===========================================================================

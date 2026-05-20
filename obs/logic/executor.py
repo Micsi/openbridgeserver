@@ -1077,6 +1077,82 @@ class GraphExecutor:
             return round(x, ndigits)  # fallback
 
     @staticmethod
+    def _validate_formula_ast(tree: ast.AST) -> None:
+        """Allow only a constrained subset of expression AST nodes."""
+        allowed_nodes = (
+            ast.Expression,
+            ast.BinOp,
+            ast.UnaryOp,
+            ast.BoolOp,
+            ast.Compare,
+            ast.Call,
+            ast.Name,
+            ast.Attribute,
+            ast.Load,
+            ast.Constant,
+            ast.IfExp,
+            ast.List,
+            ast.Tuple,
+            ast.Dict,
+            ast.Subscript,
+            ast.Slice,
+            ast.Add,
+            ast.Sub,
+            ast.Mult,
+            ast.Div,
+            ast.FloorDiv,
+            ast.Mod,
+            ast.Pow,
+            ast.UAdd,
+            ast.USub,
+            ast.And,
+            ast.Or,
+            ast.Not,
+            ast.Eq,
+            ast.NotEq,
+            ast.Lt,
+            ast.LtE,
+            ast.Gt,
+            ast.GtE,
+            ast.In,
+            ast.NotIn,
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, allowed_nodes):
+                raise ExecutionError(f"Formula contains disallowed syntax: {type(node).__name__}")
+            if isinstance(node, ast.Attribute):
+                if not (isinstance(node.value, ast.Name) and node.value.id == "math" and not node.attr.startswith("_")):
+                    raise ExecutionError("Formula attribute access is not allowed")
+
+    @staticmethod
+    def _validate_script_ast(tree: ast.AST) -> None:
+        """Disallow dangerous script syntax while preserving basic script support."""
+        blocked = (
+            ast.Import,
+            ast.ImportFrom,
+            ast.ClassDef,
+            ast.FunctionDef,
+            ast.AsyncFunctionDef,
+            ast.Lambda,
+            ast.Try,
+            ast.With,
+            ast.AsyncWith,
+            ast.Global,
+            ast.Nonlocal,
+            ast.Raise,
+            ast.Delete,
+            ast.Yield,
+            ast.YieldFrom,
+            ast.Await,
+        )
+        for node in ast.walk(tree):
+            if isinstance(node, blocked):
+                raise ExecutionError(f"Script contains disallowed syntax: {type(node).__name__}")
+            if isinstance(node, ast.Attribute):
+                if not (isinstance(node.value, ast.Name) and node.value.id == "math" and not node.attr.startswith("_")):
+                    raise ExecutionError("Script attribute access is not allowed")
+
+    @staticmethod
     def _safe_eval(expr: str, ctx: dict[str, Any]) -> Any:
         """Evaluate a math expression safely.
 
@@ -1084,10 +1160,11 @@ class GraphExecutor:
         """
         allowed = {k: v for k, v in math.__dict__.items() if not k.startswith("_")}
         # Add Python builtins that are safe and useful in formulas.
-        allowed.update({"abs": abs, "round": _SANDBOX_ROUND_HALF_UP, "min": min, "max": max})
+        allowed.update({"abs": abs, "round": _SANDBOX_ROUND_HALF_UP, "min": min, "max": max, "math": math})
         allowed.update(ctx)
         try:
             tree = ast.parse(expr, mode="eval")
+            GraphExecutor._validate_formula_ast(tree)
             return eval(compile(tree, "<formula>", "eval"), {"__builtins__": {}}, allowed)  # noqa: S307
         except Exception as exc:
             raise ExecutionError(f"Formula error: {exc}") from exc
@@ -1097,8 +1174,10 @@ class GraphExecutor:
         """Run a restricted Python script."""
         local_ns: dict[str, Any] = {"inputs": inputs, "result": None, "math": math}
         try:
+            tree = ast.parse(script, mode="exec")
+            GraphExecutor._validate_script_ast(tree)
             exec(
-                script,
+                compile(tree, "<script>", "exec"),
                 {
                     "__builtins__": {
                         "range": range,
