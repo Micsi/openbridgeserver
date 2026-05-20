@@ -10,6 +10,7 @@ import {
 import { history } from '@/api/client'
 import { useWebSocket } from '@/composables/useWebSocket'
 import type { DataPointValue } from '@/types'
+import { TIME_RANGE_PRESETS, DEFAULT_TIME_RANGE, resolveTimeRange } from './timeRangePresets'
 
 Chart.register(
   LineController, LineElement, PointElement,
@@ -27,11 +28,22 @@ const props = defineProps<{
 
 const ws = useWebSocket()
 
-const label     = computed(() => (props.config.label     as string | undefined) ?? '—')
-const hours     = computed(() => (props.config.hours     as number | undefined) ?? 24)
+const label = computed(() => (props.config.label as string | undefined) ?? '—')
 const chartType = computed<'line' | 'bar'>(() =>
   (props.config.chart_type as string | undefined) === 'bar' ? 'bar' : 'line',
 )
+
+function configTimeRange(config: Record<string, unknown>): string {
+  if (config.time_range && typeof config.time_range === 'string') return config.time_range as string
+  return DEFAULT_TIME_RANGE
+}
+
+const selectedTimeRange = ref(configTimeRange(props.config))
+
+// Reset to config default when the configured default changes
+watch(() => props.config.time_range, () => {
+  selectedTimeRange.value = configTimeRange(props.config)
+})
 
 // 'y' = linke Achse, 'y1' = rechte Achse (Chart.js Achsen-IDs)
 interface SeriesDef { id: string; label: string; color: string; axis: 'y' | 'y1' }
@@ -165,11 +177,10 @@ async function loadData() {
   const defs = buildSeriesDefs()
   if (defs.length === 0 || !chart) return
 
-  const now      = new Date()
-  const fromDate = new Date(now.getTime() - hours.value * 3_600_000)
+  const { from: fromDate, to: toDate } = resolveTimeRange(selectedTimeRange.value)
 
   const results = await Promise.all(
-    defs.map(s => history.query(s.id, fromDate.toISOString(), now.toISOString())),
+    defs.map(s => history.query(s.id, fromDate.toISOString(), toDate.toISOString())),
   )
 
   seriesUnits.value = results.map(r => r[0]?.u ?? '')
@@ -184,8 +195,9 @@ async function loadData() {
   if (isBar) {
     // Daten in gleich breite Zeitbuckets aggregieren (Durchschnitt je Bucket).
     // Alle Serien teilen dieselben Bucket-Mittelpunkte → korrekte Gruppierung.
-    const numBuckets = Math.min(Math.max(Math.round(hours.value * 2), 24), 96)
-    const buckets    = buildBuckets(fromDate.getTime(), now.getTime(), numBuckets)
+    const durationHours = (toDate.getTime() - fromDate.getTime()) / 3_600_000
+    const numBuckets    = Math.min(Math.max(Math.round(durationHours * 2), 24), 96)
+    const buckets       = buildBuckets(fromDate.getTime(), toDate.getTime(), numBuckets)
 
     chart.data.labels   = buckets.map(b => fmtMs(b.mid))
     chart.data.datasets = defs.map((s, i) => {
@@ -223,7 +235,7 @@ async function loadData() {
 
     // X-Achse Bereich setzen (nur bei linearer Skala)
     const xAxis = chart.options.scales?.x as Record<string, unknown> | undefined
-    if (xAxis) { xAxis.min = fromDate.getTime(); xAxis.max = now.getTime() }
+    if (xAxis) { xAxis.min = fromDate.getTime(); xAxis.max = toDate.getTime() }
   }
 
   // Linke Y-Achse
@@ -277,6 +289,7 @@ watch(() => props.config, async (newCfg, oldCfg) => {
   }
   await loadData()
 }, { deep: true })
+watch(selectedTimeRange, loadData)
 
 onUnmounted(() => {
   wsOff?.()
@@ -288,7 +301,17 @@ onUnmounted(() => {
 
 <template>
   <div class="flex flex-col h-full p-3">
-    <span class="text-xs text-gray-400 mb-1 truncate">{{ label }}</span>
+    <div class="flex items-center justify-between gap-2 mb-1 min-w-0">
+      <span class="text-xs text-gray-400 truncate">{{ label }}</span>
+      <select
+        v-if="!editorMode"
+        v-model="selectedTimeRange"
+        class="shrink-0 text-xs bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer"
+        title="Zeitbereich wählen"
+      >
+        <option v-for="p in TIME_RANGE_PRESETS" :key="p.value" :value="p.value">{{ p.label }}</option>
+      </select>
+    </div>
     <div class="flex-1 min-h-0">
       <canvas v-if="!editorMode" ref="canvas" />
       <div v-else class="flex items-center justify-center h-full text-gray-600 text-sm">
