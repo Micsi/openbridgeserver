@@ -480,10 +480,11 @@
 
             <div
               v-for="(entry, i) in jsonPaths" :key="i"
-              class="mt-2 p-2 rounded-lg border border-slate-700/50 bg-slate-800/60 flex flex-col gap-1"
+              class="extractor-output-row mt-2 p-2 rounded-lg border border-slate-700/50 flex flex-col gap-1"
+              :style="extractorOutputRowStyle"
             >
               <div class="flex items-center gap-1">
-                <span class="text-xs font-mono text-slate-500 w-5 shrink-0 text-center">{{ i + 1 }}</span>
+                <span class="extractor-output-index text-xs font-mono w-5 shrink-0 text-center">{{ i + 1 }}</span>
                 <input
                   :value="entry.label"
                   @input="updateJsonPath(i, 'label', $event.target.value)"
@@ -492,7 +493,7 @@
                 />
                 <button
                   @click="removeJsonPath(i)"
-                  class="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-red-400 hover:bg-red-400/10 text-base leading-none shrink-0"
+                  class="extractor-output-remove w-5 h-5 flex items-center justify-center rounded hover:bg-red-400/10 text-base leading-none shrink-0"
                   title="Ausgang entfernen"
                 >−</button>
               </div>
@@ -555,10 +556,11 @@
 
             <div
               v-for="(entry, i) in xmlPaths" :key="i"
-              class="mt-2 p-2 rounded-lg border border-slate-700/50 bg-slate-800/60 flex flex-col gap-1"
+              class="extractor-output-row mt-2 p-2 rounded-lg border border-slate-700/50 flex flex-col gap-1"
+              :style="extractorOutputRowStyle"
             >
               <div class="flex items-center gap-1">
-                <span class="text-xs font-mono text-slate-500 w-5 shrink-0 text-center">{{ i + 1 }}</span>
+                <span class="extractor-output-index text-xs font-mono w-5 shrink-0 text-center">{{ i + 1 }}</span>
                 <input
                   :value="entry.label"
                   @input="updateXmlPath(i, 'label', $event.target.value)"
@@ -567,7 +569,7 @@
                 />
                 <button
                   @click="removeXmlPath(i)"
-                  class="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-red-400 hover:bg-red-400/10 text-base leading-none shrink-0"
+                  class="extractor-output-remove w-5 h-5 flex items-center justify-center rounded hover:bg-red-400/10 text-base leading-none shrink-0"
                   title="Ausgang entfernen"
                 >−</button>
               </div>
@@ -843,6 +845,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { dpApi, searchApi } from '@/api/client'
+import { getAutoContrastText } from '@/utils/colorContrast'
 
 const props = defineProps({
   node:        { type: Object, default: null },
@@ -850,6 +853,13 @@ const props = defineProps({
   nodeOutputs: { type: Object, default: () => ({}) },
 })
 const emit = defineEmits(['update', 'close'])
+
+const EXTRACTOR_OUTPUT_BG = 'rgba(30, 41, 59, 0.6)'
+const EXTRACTOR_OUTPUT_FG = getAutoContrastText(EXTRACTOR_OUTPUT_BG)
+const extractorOutputRowStyle = {
+  '--extractor-output-bg': EXTRACTOR_OUTPUT_BG,
+  '--extractor-output-fg': EXTRACTOR_OUTPUT_FG,
+}
 
 // ── State ──────────────────────────────────────────────────────────────────
 const localData          = ref({})
@@ -1635,4 +1645,24 @@ function emitUpdate() {
   font-size: 9px;
 }
 :global(.dark) .cron-legend code { color: #94a3b8; }
+
+.extractor-output-row {
+  background: var(--extractor-output-bg);
+}
+
+.extractor-output-index {
+  color: var(--extractor-output-fg);
+  opacity: .95;
+}
+
+.extractor-output-remove {
+  color: var(--extractor-output-fg);
+  opacity: .85;
+  transition: color .15s, opacity .15s;
+}
+
+.extractor-output-remove:hover {
+  color: #f87171;
+  opacity: 1;
+}
 </style>
