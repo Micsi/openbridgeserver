@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useVisuStore } from '@/stores/visu'
 import { WidgetRegistry } from '@/widgets/registry'
 import DataPointPicker from '@/components/DataPointPicker.vue'
@@ -42,6 +43,8 @@ const emit  = defineEmits<{ (e: 'update:modelValue', val: Record<string, unknown
 
 const store = useVisuStore()
 onMounted(async () => { if (!store.treeLoaded) await store.loadTree() })
+
+const { t } = useI18n()
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -145,7 +148,7 @@ function finishArea() {
   const cy  = pts.reduce((s, [, y]) => s + y, 0) / pts.length
   const area: GrundrissArea = {
     id:          newId(),
-    name:        `Bereich ${cfg.areas.length + 1}`,
+    name:        t('widgets.grundriss.defaultAreaName', { n: cfg.areas.length + 1 }),
     points:      pts,
     showLabel:   true,
     labelX:      cx,
@@ -255,11 +258,13 @@ const nearFirst = computed(() => drawingMode.value && isNearFirst(mousePos.value
 
 const drawingHint = computed(() => {
   const n = currentPoints.value.length
-  if (n === 0) return 'Klicken um ersten Eckpunkt zu setzen'
-  if (n < 3)   return `${n} Punkt${n > 1 ? 'e' : ''} — noch ${3 - n} bis Mindestpolygon`
+  if (n === 0) return t('widgets.grundriss.hintFirstPoint')
+  if (n < 3) return n === 1
+    ? t('widgets.grundriss.hintOnePoint', { remaining: 3 - n })
+    : t('widgets.grundriss.hintPoints', { n, remaining: 3 - n })
   return nearFirst.value
-    ? 'Auf den ersten Punkt klicken zum Schliessen ↩'
-    : `${n} Punkte — Enter oder ersten Punkt zum Schliessen`
+    ? t('widgets.grundriss.hintClose')
+    : t('widgets.grundriss.hintEnter', { n })
 })
 
 // Keyboard shortcuts (active while modal is open)
@@ -408,7 +413,7 @@ function openPlacement(mwId: string) {
 
     <!-- ══ Hintergrundbild ═══════════════════════════════════════════════════ -->
     <div>
-      <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Hintergrundbild</p>
+      <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{{ $t('widgets.grundriss.background') }}</p>
 
       <input ref="fileInput" type="file" accept="image/*,.svg" class="hidden" @change="onFileChange" />
 
@@ -417,7 +422,7 @@ function openPlacement(mwId: string) {
         class="w-full py-1.5 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
         @click="triggerFileInput"
       >
-        {{ cfg.image ? '↺ Bild ersetzen' : '+ Bild hochladen (SVG, PNG, JPG)' }}
+        {{ cfg.image ? $t('widgets.grundriss.replaceImage') : $t('widgets.grundriss.uploadImage') }}
       </button>
 
       <button
@@ -425,19 +430,19 @@ function openPlacement(mwId: string) {
         type="button"
         class="w-full mt-1 py-0.5 text-xs text-red-600 dark:text-red-400 hover:text-red-500 dark:hover:text-red-300"
         @click="cfg.image = null"
-      >Bild entfernen</button>
+      >{{ $t('widgets.grundriss.removeImage') }}</button>
 
       <p v-if="cfg.image" class="text-xs text-gray-500 mt-0.5">
         {{ cfg.imageNaturalW }} × {{ cfg.imageNaturalH }} px
       </p>
       <p v-if="imageSizeWarn" class="text-xs text-amber-600 dark:text-amber-500 mt-0.5">
-        Grosse Bilddatei — SVG empfohlen für optimale Performance.
+        {{ $t('widgets.grundriss.imageSizeWarn') }}
       </p>
     </div>
 
     <!-- ══ Rotation ══════════════════════════════════════════════════════════ -->
     <div>
-      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">Rotation (in der Visu)</label>
+      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ $t('widgets.grundriss.rotation') }}</label>
       <div class="flex gap-1">
         <button
           v-for="deg in [0, 90, 180, 270]"
@@ -453,7 +458,7 @@ function openPlacement(mwId: string) {
         >{{ deg }}°</button>
       </div>
       <p class="text-xs text-gray-500 dark:text-gray-600 mt-0.5">
-        Bereiche und Mini-Widgets werden auf dem unrotierten Originalbild gezeichnet bzw. platziert.
+        {{ $t('widgets.grundriss.rotationHint') }}
       </p>
     </div>
 
@@ -466,13 +471,13 @@ function openPlacement(mwId: string) {
         class="rounded border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 accent-blue-500"
       />
       <label for="grnd-show-names" class="text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
-        Bereichsnamen anzeigen
+        {{ $t('widgets.grundriss.showAreaNames') }}
       </label>
     </div>
 
     <!-- ══ Bereiche ══════════════════════════════════════════════════════════ -->
     <div>
-      <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Bereiche</p>
+      <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{{ $t('widgets.grundriss.areas') }}</p>
 
       <!-- Open fullscreen drawing button -->
       <button
@@ -481,13 +486,13 @@ function openPlacement(mwId: string) {
         class="w-full mt-1 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-500 hover:text-blue-500 dark:hover:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         @click="openFullscreen"
       >
-        ✏ Bereiche zeichnen (Vollbild)
+        {{ $t('widgets.grundriss.drawAreas') }}
       </button>
     </div>
 
     <!-- ══ Bereichsliste ═════════════════════════════════════════════════════ -->
     <div v-if="cfg.areas.length > 0" class="space-y-1">
-      <p class="text-xs text-gray-500">{{ cfg.areas.length }} Bereich(e) — Klicken zum Bearbeiten</p>
+      <p class="text-xs text-gray-500">{{ $t('widgets.grundriss.areasCount', { n: cfg.areas.length }) }}</p>
 
       <div
         v-for="area in cfg.areas"
@@ -502,18 +507,18 @@ function openPlacement(mwId: string) {
           @click="selectArea(area.id)"
         >
           <span class="text-xs font-medium text-gray-800 dark:text-gray-200 flex-1 truncate min-w-0">
-            {{ area.name || '(kein Name)' }}
+            {{ area.name || $t('widgets.grundriss.noName') }}
           </span>
           <span class="text-xs text-gray-400 shrink-0">{{ area.points.length }}P</span>
           <span
             v-if="area.actionType !== 'none'"
             class="text-xs text-blue-500 dark:text-blue-400 shrink-0"
-            title="Navigation konfiguriert"
+            :title="$t('widgets.grundriss.navConfigured')"
           >↗</span>
           <button
             type="button"
             class="text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400 px-0.5 shrink-0"
-            title="Bereich löschen"
+            :title="$t('widgets.grundriss.deleteArea')"
             @click.stop="deleteArea(area.id)"
           >✕</button>
         </div>
@@ -529,7 +534,7 @@ function openPlacement(mwId: string) {
             <input
               v-model="area.name"
               type="text"
-              placeholder="z.B. Wohnzimmer"
+              :placeholder="$t('widgets.grundriss.areaNamePlaceholder')"
               class="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
             />
           </div>
@@ -544,19 +549,19 @@ function openPlacement(mwId: string) {
                 class="rounded border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 accent-blue-500"
               />
               <label :for="`grnd-lbl-${area.id}`" class="text-xs text-gray-700 dark:text-gray-300 cursor-pointer flex-1">
-                Name einblenden
+                {{ $t('widgets.grundriss.showLabel') }}
               </label>
               <input
                 v-if="area.showLabel"
                 v-model="area.labelColor"
                 type="color"
                 class="w-6 h-6 rounded cursor-pointer border border-gray-300 dark:border-gray-700 bg-transparent p-0.5 shrink-0"
-                title="Textfarbe"
+                :title="$t('widgets.grundriss.textColor')"
               />
             </div>
             <div v-if="area.showLabel" class="grid grid-cols-2 gap-1 mt-1.5">
               <div>
-                <label class="block text-xs text-gray-500 mb-0.5">Name X (px)</label>
+                <label class="block text-xs text-gray-500 mb-0.5">{{ $t('widgets.grundriss.labelX') }}</label>
                 <input
                   v-model.number="area.labelX"
                   type="number" :min="0" :max="cfg.imageNaturalW" step="1"
@@ -564,7 +569,7 @@ function openPlacement(mwId: string) {
                 />
               </div>
               <div>
-                <label class="block text-xs text-gray-500 mb-0.5">Name Y (px)</label>
+                <label class="block text-xs text-gray-500 mb-0.5">{{ $t('widgets.grundriss.labelY') }}</label>
                 <input
                   v-model.number="area.labelY"
                   type="number" :min="0" :max="cfg.imageNaturalH" step="1"
@@ -576,10 +581,10 @@ function openPlacement(mwId: string) {
 
           <!-- Aktion -->
           <div>
-            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">Aktion bei Klick</label>
+            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('widgets.grundriss.clickAction') }}</label>
             <div class="flex gap-1">
               <button
-                v-for="at in [{ v: 'none', l: 'Keine' }, { v: 'navigate', l: 'Navigation' }]"
+                v-for="at in [{ v: 'none', l: $t('widgets.grundriss.actionNone') }, { v: 'navigate', l: $t('widgets.grundriss.actionNavigate') }]"
                 :key="at.v"
                 type="button"
                 :class="[
@@ -595,7 +600,7 @@ function openPlacement(mwId: string) {
 
           <!-- Page picker -->
           <div v-if="area.actionType === 'navigate'">
-            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">Ziel-Seite</label>
+            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('widgets.grundriss.targetPage') }}</label>
             <div v-if="!pagePickerOpen" class="flex items-center gap-1">
               <div
                 class="flex-1 flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 transition-colors overflow-hidden"
@@ -609,7 +614,7 @@ function openPlacement(mwId: string) {
                       ? (store.getNode(area.actionValue)
                           ? nodePath(store.getNode(area.actionValue)!)
                           : area.actionValue)
-                      : 'Seite wählen …'
+                      : $t('widgets.common.selectPage')
                   }}
                 </span>
                 <span class="ml-auto text-gray-400 text-xs shrink-0">▾</span>
@@ -630,13 +635,13 @@ function openPlacement(mwId: string) {
                 ref="pagePickerInput"
                 v-model="pagePickerQuery"
                 type="text"
-                placeholder="Seitenname suchen …"
+                :placeholder="$t('widgets.common.searchPage')"
                 class="w-full bg-transparent px-2 py-1 text-xs text-gray-900 dark:text-gray-100 focus:outline-none"
                 @keydown.escape="pagePickerOpen = false"
               />
               <div class="max-h-40 overflow-y-auto border-t border-gray-200 dark:border-gray-700">
                 <div v-if="filteredNodes.length === 0" class="text-xs text-gray-400 px-2 py-1.5">
-                  Keine Treffer
+                  {{ $t('widgets.common.noResults') }}
                 </div>
                 <button
                   v-for="{ node, path } in filteredNodes"
@@ -648,7 +653,7 @@ function openPlacement(mwId: string) {
                 >
                   <span class="flex-1 text-xs text-gray-800 dark:text-gray-200 truncate">{{ path }}</span>
                   <span class="text-xs text-gray-400 shrink-0">
-                    {{ node.type === 'PAGE' ? 'Seite' : 'Bereich' }}
+                    {{ node.type === 'PAGE' ? $t('widgets.common.nodeTypePage') : $t('widgets.common.nodeTypeArea') }}
                   </span>
                 </button>
               </div>
@@ -659,12 +664,12 @@ function openPlacement(mwId: string) {
     </div>
 
     <p v-else-if="cfg.image" class="text-xs text-gray-500 dark:text-gray-600 italic">
-      Noch keine Bereiche — „Bereiche zeichnen" klicken.
+      {{ $t('widgets.grundriss.noAreas') }}
     </p>
 
     <!-- ══ Mini-Widgets ══════════════════════════════════════════════════════ -->
     <div>
-      <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Mini-Widgets</p>
+      <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{{ $t('widgets.grundriss.miniWidgets') }}</p>
 
       <!-- List -->
       <div v-if="cfg.miniWidgets.length > 0" class="space-y-1 mb-2">
@@ -688,14 +693,14 @@ function openPlacement(mwId: string) {
             <button
               type="button"
               :class="['text-xs shrink-0', mw.visible ? 'text-green-500' : 'text-gray-400 dark:text-gray-600']"
-              :title="mw.visible ? 'Sichtbar — klicken zum Ausblenden' : 'Ausgeblendet — klicken zum Einblenden'"
+              :title="mw.visible ? $t('widgets.grundriss.visibleTitle') : $t('widgets.grundriss.hiddenTitle')"
               @click.stop="mw.visible = !mw.visible"
             >{{ mw.visible ? '◉' : '○' }}</button>
             <!-- Delete -->
             <button
               type="button"
               class="text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400 px-0.5 shrink-0"
-              title="Mini-Widget löschen"
+              :title="$t('widgets.grundriss.deleteMiniWidget')"
               @click.stop="deleteMw(mw.id)"
             >✕</button>
           </div>
@@ -707,11 +712,11 @@ function openPlacement(mwId: string) {
           >
             <!-- Label -->
             <div>
-              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">Bezeichnung</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('widgets.grundriss.miniWidgetLabel') }}</label>
               <input
                 v-model="mw.label"
                 type="text"
-                placeholder="z.B. Lampe Flur"
+                :placeholder="$t('widgets.grundriss.miniWidgetLabelPlaceholder')"
                 class="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-xs text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -725,7 +730,7 @@ function openPlacement(mwId: string) {
             <!-- Datenpunkt -->
             <DataPointPicker
               :model-value="mw.datapointId"
-              label="Datenpunkt"
+              :label="$t('widgets.grundriss.datapoint')"
               :compatible-types="['*']"
               @update:model-value="(v) => mw.datapointId = v"
             />
@@ -734,7 +739,7 @@ function openPlacement(mwId: string) {
             <DataPointPicker
               v-if="WidgetRegistry.get(mw.widgetType)?.supportsStatusDatapoint"
               :model-value="mw.statusDatapointId"
-              label="Status-Datenpunkt (optional)"
+              :label="$t('widgets.grundriss.statusDatapoint')"
               :compatible-types="['*']"
               @update:model-value="(v) => mw.statusDatapointId = v"
             />
@@ -742,7 +747,7 @@ function openPlacement(mwId: string) {
             <!-- Size -->
             <div class="grid grid-cols-2 gap-1">
               <div>
-                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">Breite (px)</label>
+                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('widgets.grundriss.widthPx') }}</label>
                 <input
                   v-model.number="mw.wPx"
                   type="number" min="40" max="400" step="10"
@@ -750,7 +755,7 @@ function openPlacement(mwId: string) {
                 />
               </div>
               <div>
-                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">Höhe (px)</label>
+                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('widgets.grundriss.heightPx') }}</label>
                 <input
                   v-model.number="mw.hPx"
                   type="number" min="40" max="400" step="10"
@@ -768,7 +773,7 @@ function openPlacement(mwId: string) {
                 class="rounded border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 accent-blue-500"
               />
               <label :for="`mw-vis-${mw.id}`" class="text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
-                In Visu anzeigen
+                {{ $t('widgets.grundriss.showInVisu') }}
               </label>
             </div>
 
@@ -779,12 +784,12 @@ function openPlacement(mwId: string) {
               class="w-full py-1.5 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-500 hover:text-blue-500 dark:hover:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               @click="openPlacement(mw.id)"
             >
-              📍 Position setzen (Vollbild)
+              {{ $t('widgets.grundriss.setPosition') }}
             </button>
 
             <!-- Embedded widget config -->
             <div v-if="WidgetRegistry.get(mw.widgetType)?.configComponent">
-              <p class="text-xs text-gray-500 dark:text-gray-400 mb-1.5">Widget-Konfiguration</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-1.5">{{ $t('widgets.grundriss.widgetConfig') }}</p>
               <div class="rounded border border-gray-200 dark:border-gray-700 p-2">
                 <component
                   :is="WidgetRegistry.get(mw.widgetType)!.configComponent"
@@ -798,12 +803,12 @@ function openPlacement(mwId: string) {
       </div>
 
       <p v-else class="text-xs text-gray-500 dark:text-gray-600 italic mb-2">
-        Noch keine Mini-Widgets.
+        {{ $t('widgets.grundriss.noMiniWidgets') }}
       </p>
 
       <!-- Add button / type picker -->
       <div v-if="typePicker" class="border border-blue-500 rounded-xl p-2.5 bg-white dark:bg-gray-900 space-y-2">
-        <p class="text-xs font-semibold text-gray-700 dark:text-gray-300">Widget-Typ wählen</p>
+        <p class="text-xs font-semibold text-gray-700 dark:text-gray-300">{{ $t('widgets.grundriss.selectWidgetType') }}</p>
         <div class="grid grid-cols-3 gap-1.5 max-h-52 overflow-y-auto">
           <button
             v-for="def in availableWidgetTypes"
@@ -820,7 +825,7 @@ function openPlacement(mwId: string) {
           type="button"
           class="w-full text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 py-0.5"
           @click="typePicker = false"
-        >Abbrechen</button>
+        >{{ $t('common.cancel') }}</button>
       </div>
 
       <button
@@ -830,7 +835,7 @@ function openPlacement(mwId: string) {
         class="w-full py-1.5 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-500 hover:text-blue-500 dark:hover:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         @click="typePicker = true"
       >
-        + Mini-Widget hinzufügen
+        {{ $t('widgets.grundriss.addMiniWidget') }}
       </button>
     </div>
 
@@ -937,11 +942,11 @@ function openPlacement(mwId: string) {
       <div class="absolute top-0 left-0 right-0 flex items-center gap-3 px-4 py-2.5 bg-gray-900 border-b border-gray-700 pointer-events-auto">
 
         <span class="text-sm font-semibold text-gray-100">
-          {{ placingMwId ? 'Mini-Widget positionieren' : 'Bereiche zeichnen' }}
+          {{ placingMwId ? $t('widgets.grundriss.positionMode') : $t('widgets.grundriss.areas') }}
         </span>
         <span class="text-xs text-gray-400 flex-1 min-w-0 truncate">
           {{ placingMwId
-            ? `„${placingMw?.label || placingMw?.widgetType}" auf die gewünschte Position ziehen`
+            ? $t('widgets.grundriss.dragHint', { label: placingMw?.label || placingMw?.widgetType })
             : drawingHint
           }}
         </span>
@@ -952,14 +957,14 @@ function openPlacement(mwId: string) {
             :disabled="currentPoints.length < 3"
             class="py-1 px-3 text-xs rounded border border-amber-600 text-amber-300 hover:border-amber-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
             @click="finishArea"
-          >Polygon abschliessen ↩</button>
+          >{{ $t('widgets.grundriss.closePolygon') }}</button>
 
           <button
             type="button"
             :disabled="currentPoints.length === 0"
             class="py-1 px-3 text-xs rounded border border-gray-600 text-gray-300 hover:border-gray-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
             @click="cancelCurrentPolygon"
-          >Aktuelles verwerfen Esc</button>
+          >{{ $t('widgets.grundriss.discardCurrent') }}</button>
         </template>
 
         <button
@@ -971,9 +976,9 @@ function openPlacement(mwId: string) {
 
       <!-- Status bar — above the dimming shadow -->
       <div class="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-2 bg-gray-900/80 border-t border-gray-800 text-xs text-gray-400 pointer-events-auto">
-        <span>{{ cfg.areas.length }} Bereich(e) · {{ cfg.miniWidgets.length }} Mini-Widget(s)</span>
-        <span v-if="placingMwId">Marker ziehen · Fertig zum Schliessen</span>
-        <span v-else>Enter = Polygon schliessen · Esc = verwerfen · Klick auf ersten Punkt = schliessen</span>
+        <span>{{ $t('widgets.grundriss.statusBar', { areas: cfg.areas.length, miniWidgets: cfg.miniWidgets.length }) }}</span>
+        <span v-if="placingMwId">{{ $t('widgets.grundriss.markerHint') }}</span>
+        <span v-else>{{ $t('widgets.grundriss.keyboardHint') }}</span>
       </div>
     </div>
   </Teleport>
