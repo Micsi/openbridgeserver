@@ -14,7 +14,7 @@ open bridge connects different building technology protocols into a unified syst
 
 | Feature | Description |
 |---|---|
-| **Protocols** | KNX/IP (Tunneling + Routing + KNX IP Secure), Modbus TCP, Modbus RTU, 1-Wire, external MQTT, Home Assistant, scheduler |
+| **Protocols** | KNX/IP (Tunneling + Routing + KNX IP Secure), Modbus TCP, Modbus RTU, 1-Wire, external MQTT, Home Assistant, ioBroker, SNMP, presence simulation, scheduler |
 | **Multiple instances** | Any number of instances per protocol (e.g. 2× KNX, 3× Modbus TCP) |
 | **Protocol bridge** | A KNX value is automatically written to a Modbus register — and vice versa |
 | **Logic editor** | Visual automation logic without programming: 35+ block types, schedules, formulas, Python scripts, notifications, HTTP requests, sun position |
@@ -42,16 +42,17 @@ open bridge connects different building technology protocols into a unified syst
 9. [Change log (RingBuffer)](#change-log-ringbuffer)
 10. [Backup & Restore](#backup--restore)
 11. [System status](#system-status)
-12. [Live connection (WebSocket)](#live-connection-websocket)
-13. [Logic editor](#logic-editor)
-14. [Adapter configuration](#adapter-configuration)
-15. [MQTT topics](#mqtt-topics)
-16. [Data types](#data-types)
-17. [Settings](#settings)
-18. [Helper scripts](#helper-scripts)
-19. [Visualization (Visu)](#visualization-visu)
+12. [Log viewer](#log-viewer)
+13. [Live connection (WebSocket)](#live-connection-websocket)
+14. [Logic editor](#logic-editor)
+15. [Adapter configuration](#adapter-configuration)
+16. [MQTT topics](#mqtt-topics)
+17. [Data types](#data-types)
+18. [Settings](#settings)
+19. [Helper scripts](#helper-scripts)
+20. [Visualization (Visu)](#visualization-visu)
    - [Floor plan and system diagram widget](#floor-plan-and-system-diagram-widget)
-20. [Development](#development)
+21. [Development](#development)
    - [Local development with PyCharm](#local-development-with-pycharm)
    - [Local Git Hooks (Pre-Push Gate)](#local-git-hooks-pre-push-gate)
 
@@ -450,6 +451,29 @@ PUT /api/v1/system/settings    # Update system settings
 
 GET /api/v1/adapters/knx/dpts  # List all registered KNX DPT types
 ```
+
+---
+
+## Log viewer
+
+The log viewer shows recent application log messages in real time. The admin GUI displays the last 500 entries and streams new entries live via WebSocket.
+
+```
+GET /api/v1/system/logs?limit=N   # Recent log entries (newest first, max 500)
+GET /api/v1/system/log-level      # Read current log level (admin only)
+PUT /api/v1/system/log-level      # Change log level at runtime (admin only)
+```
+
+Log entries have the following fields:
+
+| Field | Description |
+|---|---|
+| `ts` | Timestamp (ISO 8601, UTC) |
+| `level` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `logger` | Logger name (module path) |
+| `message` | Log message |
+
+The log level can be changed at runtime without a restart (admin only). The buffer holds the last 500 entries and is not persisted across restarts.
 
 ---
 
@@ -1194,6 +1218,65 @@ Development and review notes on the current implementation are in [`docs/iobroke
 
 ---
 
+### SNMP adapter
+
+Polls OID values from SNMP-capable devices (SNMPv1, v2c, v3) and writes values via SNMP SET. Each binding configures its own host and OID — no persistent TCP connection, stateless UDP per request.
+
+**Instance configuration:**
+
+| Field | Default | Description |
+|---|---|---|
+| `version` | `2c` | SNMP version: `1`, `2c`, or `3` |
+| `community` | `public` | Community string (v1/v2c only) |
+| `security_name` | — | Security name / username (v3 only) |
+| `security_level` | `noAuthNoPriv` | Security level (v3): `noAuthNoPriv`, `authNoPriv`, `authPriv` |
+| `auth_protocol` | `MD5` | Authentication protocol (v3): `MD5`, `SHA`, `SHA256`, `SHA512` |
+| `auth_key` | — | Authentication key (v3, password field) |
+| `priv_protocol` | `DES` | Privacy protocol (v3): `DES`, `3DES`, `AES128`, `AES192`, `AES256` |
+| `priv_key` | — | Privacy key (v3, password field) |
+
+**Binding configuration:**
+
+| Field | Default | Description |
+|---|---|---|
+| `host` | `192.168.1.1` | IP address or DNS name of the SNMP device |
+| `port` | `161` | UDP port |
+| `oid` | `1.3.6.1.2.1.1.1.0` | Object identifier, e.g. `1.3.6.1.2.1.1.3.0` |
+| `data_type` | `auto` | Value type: `auto`, `int`, `float`, `string`, `hex`, `counter`, `gauge`, `timeticks` |
+| `poll_interval` | `30.0` | Poll interval in seconds (SOURCE/BOTH) |
+| `timeout` | `5.0` | Timeout per request in seconds |
+| `retries` | `1` | Retries on error |
+
+> **Note:** `pysnmp` must be installed (`pip install pysnmp`). If the library is not present, the adapter starts without error but cannot poll.
+
+---
+
+### Presence simulation adapter
+
+Replays historical switch states during absence so the building appears occupied. When the simulation is active, the adapter queries the history database for the past N days and fires each historical event at the corresponding time today.
+
+**Instance configuration:**
+
+| Field | Default | Description |
+|---|---|---|
+| `offset_days` | `7` | Number of days in the past whose switch states are replayed (1–30) |
+| `control_dp_id` | — | Optional boolean data point: value `1` = home (simulation off), value `0` = away (simulation on) |
+| `control_invert` | `false` | Invert the control data point logic |
+| `on_presence` | `behalten` | Action when presence is detected: `behalten` (keep current state), `zuruecksetzen` (set all to false/0), `setzen` (set to a specific value) |
+| `on_presence_value` | — | Value to write when `on_presence = setzen` |
+
+**Binding configuration:**
+
+| Field | Default | Description |
+|---|---|---|
+| `offset_override` | — | Override the adapter-level `offset_days` for this data point (1–30) |
+| `on_presence_override` | — | Override the adapter-level `on_presence` for this data point |
+| `on_presence_value` | — | Override value when `on_presence_override = setzen` |
+
+> **Note:** Only SOURCE bindings are valid — the adapter replays historical values but does not accept writes. DEST/BOTH bindings are skipped with a warning.
+
+---
+
 ### Scheduler adapter
 
 Generates time-controlled events without external hardware — for time-of-day or sun-position based automations, holiday and vacation logic.
@@ -1535,8 +1618,6 @@ pytest tests/
 ./tools/lint.sh --fix
 ```
 
-#### Translations (Weblate / wlc)
-
 ### Local Git Hooks (Pre-Push Gate)
 
 Versioned hooks live in `.githooks/`. To activate them in a clone, set `core.hooksPath` once:
@@ -1628,7 +1709,7 @@ The database is updated automatically — each new version adds missing tables a
 ---
 
 ## Translations
-We use [Weblate](https://hosted.weblate.org/projects/open-bridge-server) to support language translations. Contributions are always welcome.
+We'd like to use [Weblate](https://hosted.weblate.org/projects/open-bridge-server) to support language translations. As soon as this is set up, ontributions would be very much welcome.
 
 ## License
 
