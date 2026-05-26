@@ -5,6 +5,7 @@ import { icons as iconsApi } from '@/api/client'
 const iconNames = ref<string[]>([])
 const svgCache: Record<string, string> = {}  // name → normalised SVG string
 let listPromise: Promise<void> | null = null
+const BLOCKED_URL_SCHEMES = ['javascript:', 'data:', 'http:', 'https:']
 
 function normalizeSvg(raw: string): string {
   // Parse and sanitize untrusted SVG to prevent script execution via v-html.
@@ -14,25 +15,21 @@ function normalizeSvg(raw: string): string {
 
   if (!root || root.tagName.toLowerCase() !== 'svg') return ''
 
-  // Drop executable or externally embeddable content.
-  root.querySelectorAll('script,foreignObject,iframe,object,embed,audio,video').forEach((el) => el.remove())
+  // Drop executable, externally embeddable, or dynamic mutation content.
+  root.querySelectorAll('script,foreignObject,iframe,object,embed,audio,video,animate,set,animateMotion,animateTransform').forEach((el) => el.remove())
 
-  for (const el of root.querySelectorAll('*')) {
+  for (const el of [root, ...root.querySelectorAll('*')]) {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase()
-      const value = attr.value.trim().toLowerCase()
+      const localName = (attr.localName || attr.name).toLowerCase()
+      const normalizedValue = attr.value.toLowerCase().replace(/[\u0000-\u0020]+/g, '')
 
       // Remove event handlers and dangerous URL-bearing attributes.
       if (name.startsWith('on')) {
         el.removeAttribute(attr.name)
         continue
       }
-      if ((name === 'href' || name === 'xlink:href' || name === 'src') && (
-        value.startsWith('javascript:') ||
-        value.startsWith('data:') ||
-        value.startsWith('http:') ||
-        value.startsWith('https:')
-      )) {
+      if ((localName === 'href' || localName === 'src') && BLOCKED_URL_SCHEMES.some((scheme) => normalizedValue.startsWith(scheme))) {
         el.removeAttribute(attr.name)
       }
     }
