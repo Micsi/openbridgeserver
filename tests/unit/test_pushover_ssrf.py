@@ -55,15 +55,22 @@ class TestNotifyPushoverPinnedFetch:
         img_resp.status_code = 200
         img_resp.raise_for_status = MagicMock()
         img_resp.headers = {"content-type": "image/png", "content-length": "128"}
-        img_resp.content = b"\x89PNG\r\n"
         img_resp.extensions = {}
+
+        async def _ok_chunks():
+            yield b"\x89PNG\r\n"
+
+        img_resp.aiter_bytes = MagicMock(return_value=_ok_chunks())
 
         post_resp = MagicMock()
         post_resp.status_code = 200
         post_resp.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=img_resp)
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=img_resp)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_client.stream = MagicMock(return_value=stream_ctx)
         mock_client.post = AsyncMock(return_value=post_resp)
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -92,7 +99,8 @@ class TestNotifyPushoverPinnedFetch:
                 ),
             )
 
-        mock_client.get.assert_awaited_once_with(
+        mock_client.stream.assert_called_once_with(
+            "GET",
             "https://93.184.216.34/path.png",
             timeout=10.0,
             follow_redirects=False,
@@ -100,3 +108,62 @@ class TestNotifyPushoverPinnedFetch:
             extensions={"sni_hostname": "example.com"},
         )
         assert outputs["push"]["sent"] is True
+
+    @patch("obs.logic.manager._PUSHOVER_ATTACHMENT_MAX_BYTES", 8)
+    @patch("obs.logic.manager._resolve_safe_image_url", new_callable=AsyncMock)
+    @patch("obs.logic.manager.httpx.AsyncClient")
+    def test_streaming_aborts_when_attachment_exceeds_limit(self, mock_client_cls, mock_resolve):
+        mock_resolve.return_value = (
+            "https://93.184.216.34/path.png",
+            "example.com",
+            "93.184.216.34",
+        )
+
+        img_resp = MagicMock()
+        img_resp.status_code = 200
+        img_resp.raise_for_status = MagicMock()
+        img_resp.headers = {"content-type": "image/png"}
+        img_resp.extensions = {}
+
+        async def _oversize_chunks():
+            yield b"1234"
+            yield b"5678"
+            yield b"X"  # exceeds patched max size (8 bytes)
+
+        img_resp.aiter_bytes = MagicMock(return_value=_oversize_chunks())
+
+        mock_client = AsyncMock()
+        stream_ctx = MagicMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=img_resp)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_client.stream = MagicMock(return_value=stream_ctx)
+        mock_client.post = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        manager = _make_manager()
+        flow = _flow(
+            [
+                node(
+                    "push",
+                    "notify_pushover",
+                    {"app_token": "token", "user_key": "user", "title": "t"},
+                ),
+            ],
+        )
+        graph_id = "g"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(
+                manager._execute_graph(
+                    graph_id,
+                    "test",
+                    flow,
+                    {"push": {"trigger": True, "message": "msg", "image_url": "https://example.com/path.png"}},
+                ),
+            )
+
+        mock_client.post.assert_not_awaited()
+        assert outputs["push"]["sent"] is False

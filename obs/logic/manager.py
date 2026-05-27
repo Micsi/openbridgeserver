@@ -93,6 +93,7 @@ _THROTTLE_UNITS: dict[str, float] = {
     "min": 60_000.0,
     "h": 3_600_000.0,
 }
+_PUSHOVER_ATTACHMENT_MAX_BYTES = 5_000_000
 
 _manager: LogicManager | None = None
 
@@ -575,31 +576,44 @@ class LogicManager:
                         if resolved is None:
                             raise ValueError("Unsafe image_url: only public HTTPS hosts are allowed")
                         pinned_url, host_header, pinned_ip = resolved
-                        # Download image and attach as multipart
-                        img_r = await client.get(
+                        # Stream attachment bytes and enforce max size while downloading.
+                        async with client.stream(
+                            "GET",
                             pinned_url,
                             timeout=10.0,
                             follow_redirects=False,
                             headers={"Host": host_header},
                             extensions={"sni_hostname": host_header.split(":", 1)[0]},
-                        )
-                        net_stream = img_r.extensions.get("network_stream")
-                        if net_stream is not None:
-                            server_addr = net_stream.get_extra_info("server_addr")
-                            if server_addr and server_addr[0] != pinned_ip:
-                                raise ValueError("Pushover image_url resolved to an unexpected target IP")
-                        img_r.raise_for_status()
-                        content_type = img_r.headers.get("content-type", "").split(";")[0].strip().lower()
-                        content_len = int(img_r.headers.get("content-length", "0") or "0")
-                        if not content_type.startswith("image/"):
-                            raise ValueError("Pushover image_url must return an image/* content type")
-                        if content_len > 5_000_000 or len(img_r.content) > 5_000_000:
-                            raise ValueError("Pushover attachment too large (max 5 MB)")
+                        ) as img_r:
+                            net_stream = img_r.extensions.get("network_stream")
+                            if net_stream is not None:
+                                server_addr = net_stream.get_extra_info("server_addr")
+                                if server_addr and server_addr[0] != pinned_ip:
+                                    raise ValueError("Pushover image_url resolved to an unexpected target IP")
+                            img_r.raise_for_status()
+                            content_type = img_r.headers.get("content-type", "").split(";")[0].strip().lower()
+                            if not content_type.startswith("image/"):
+                                raise ValueError("Pushover image_url must return an image/* content type")
+
+                            content_len_raw = img_r.headers.get("content-length", "0") or "0"
+                            try:
+                                content_len = int(content_len_raw)
+                            except ValueError:
+                                content_len = 0
+                            if content_len > _PUSHOVER_ATTACHMENT_MAX_BYTES:
+                                raise ValueError("Pushover attachment too large (max 5 MB)")
+
+                            img_content = bytearray()
+                            async for chunk in img_r.aiter_bytes():
+                                img_content.extend(chunk)
+                                if len(img_content) > _PUSHOVER_ATTACHMENT_MAX_BYTES:
+                                    raise ValueError("Pushover attachment too large (max 5 MB)")
+
                         fname = image_url.split("?")[0].split("/")[-1] or "image.jpg"
                         r = await client.post(
                             "https://api.pushover.net/1/messages.json",
                             data=payload,
-                            files={"attachment": (fname, img_r.content, content_type or "image/jpeg")},
+                            files={"attachment": (fname, bytes(img_content), content_type or "image/jpeg")},
                         )
                     else:
                         r = await client.post(
