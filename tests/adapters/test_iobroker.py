@@ -215,7 +215,6 @@ class TestSubscribe:
         event = self._data_events(mock_bus)[-1]
         assert event.value == pytest.approx(23.0)
 
-
     @pytest.mark.asyncio
     async def test_watchdog_resync_skips_failed_reads(self, adapter, mock_bus):
         binding = make_binding({"state_id": "0_userdata.0.light", "source_data_type": "bool"})
