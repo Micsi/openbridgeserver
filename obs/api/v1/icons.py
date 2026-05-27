@@ -469,7 +469,14 @@ async def get_icon(
             status.HTTP_404_NOT_FOUND,
             f"Icon '{name}' nicht gefunden",
         )
-    return Response(content=svg_file.read_bytes(), media_type="image/svg+xml")
+    raw = svg_file.read_bytes()
+    sanitized = _sanitize_svg_content(raw)
+    if not sanitized:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Icon '{name}' enthält kein parsebares SVG",
+        )
+    return Response(content=sanitized, media_type="image/svg+xml")
 
 
 _FA_GRAPHQL_URL = "https://api.fontawesome.com"

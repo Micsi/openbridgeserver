@@ -185,6 +185,19 @@ async def test_get_icon(client, auth_headers, icons_tmp):
 
 
 @pytest.mark.asyncio
+async def test_get_icon_sanitizes_legacy_svg_from_disk(client, auth_headers, icons_tmp):
+    (icons_tmp / "legacy.svg").write_bytes(
+        b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><a href="javascript:alert(2)">x</a></svg>'
+    )
+
+    resp = await client.get("/api/v1/icons/legacy", headers=auth_headers)
+    assert resp.status_code == 200
+    text = resp.text.lower()
+    assert "<script" not in text
+    assert "javascript:" not in text
+
+
+@pytest.mark.asyncio
 async def test_get_icon_not_found(client, auth_headers, icons_tmp):
     resp = await client.get("/api/v1/icons/nonexistent", headers=auth_headers)
     assert resp.status_code == 404
