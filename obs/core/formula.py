@@ -46,6 +46,7 @@ _ALLOWED_NODES = (
 
 
 _ALLOWED_FUNC_NAMES = {"abs", "round", "min", "max"}
+_ALLOWED_MATH_NAMES = {k for k in math.__dict__ if not k.startswith("_")}
 _ALLOWED_MATH_ATTRS = {k for k, v in math.__dict__.items() if not k.startswith("_") and callable(v)}
 
 
@@ -56,12 +57,7 @@ def _is_allowed_call(node: ast.Call) -> bool:
     if isinstance(func, ast.Name):
         return func.id in _ALLOWED_FUNC_NAMES or func.id in _ALLOWED_MATH_ATTRS
     if isinstance(func, ast.Attribute):
-        return (
-            isinstance(func.value, ast.Name)
-            and func.value.id == "math"
-            and func.attr in _ALLOWED_MATH_ATTRS
-            and not func.attr.startswith("_")
-        )
+        return isinstance(func.value, ast.Name) and func.value.id == "math" and func.attr in _ALLOWED_MATH_ATTRS and not func.attr.startswith("_")
     return False
 
 
@@ -70,15 +66,12 @@ def _validate_tree(tree: ast.AST) -> str | None:
         if not isinstance(node, _ALLOWED_NODES):
             return f"Nicht erlaubter Ausdruck: '{type(node).__name__}'"
 
-        if isinstance(node, ast.Name) and node.id not in {"x", "math", *_ALLOWED_FUNC_NAMES, *_ALLOWED_MATH_ATTRS}:
+        if isinstance(node, ast.Name) and node.id not in {"x", "math", *_ALLOWED_FUNC_NAMES, *_ALLOWED_MATH_NAMES}:
             return f"Nicht erlaubter Name: '{node.id}'"
 
         if isinstance(node, ast.Attribute):
             if not (
-                isinstance(node.value, ast.Name)
-                and node.value.id == "math"
-                and node.attr in _ALLOWED_MATH_ATTRS
-                and not node.attr.startswith("_")
+                isinstance(node.value, ast.Name) and node.value.id == "math" and node.attr in _ALLOWED_MATH_NAMES and not node.attr.startswith("_")
             ):
                 return "Nicht erlaubter Attributzugriff"
 
@@ -86,6 +79,7 @@ def _validate_tree(tree: ast.AST) -> str | None:
             return "Nicht erlaubter Funktionsaufruf"
 
     return None
+
 
 _SAFE_GLOBALS: dict[str, Any] = {
     "__builtins__": {},  # kein Zugriff auf builtins
