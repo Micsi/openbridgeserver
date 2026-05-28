@@ -638,7 +638,7 @@ class LogicManager:
                             # Keep one shared logical_cookie_store across all hops (including
                             # cross-origin redirects), but rotate the HTTP client per origin.
                             active_client = httpx.AsyncClient(timeout=30.0)
-                            active_origin = current_origin
+                            active_origin = None if current_origin is None else tuple(current_origin)
                         if active_client is None:
                             raise ValueError("Could not initialize iCal HTTP client")
                         redirected_to: str | None = None
