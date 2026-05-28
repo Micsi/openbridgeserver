@@ -2,6 +2,7 @@
 
 ![**open bridge server** Logo](logo/obs_logo_dark.svg)
 
+![Version](https://img.shields.io/github/v/release/abeggled/openbridgeserver?style=for-the-badge)
 [![Tests][tests-badge]][tests]
 [![Coverage][coverage-badge]][coverage]
 
