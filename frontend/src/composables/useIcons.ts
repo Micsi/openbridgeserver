@@ -26,8 +26,8 @@ function sanitizeSvg(raw: string): string {
   const svg = doc.documentElement
   if (!svg || svg.tagName.toLowerCase() !== 'svg') return ''
 
-  // Remove executable or HTML-capable elements
-  doc.querySelectorAll('script, foreignObject').forEach((el) => el.remove())
+  // Remove executable, HTML-capable, or mutating animation elements
+  doc.querySelectorAll('script, foreignObject, animate, animateMotion, animateTransform, set').forEach((el) => el.remove())
 
   // Remove dangerous attributes and fixed dimensions
   for (const el of Array.from(doc.querySelectorAll('*'))) {

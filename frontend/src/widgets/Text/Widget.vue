@@ -77,10 +77,10 @@ function sanitizeRenderedHtml(html: string): string {
   return root.innerHTML
 }
 
-const markdownRenderer = {
-  html({ text }: { text: string }) {
-    return escapeHtml(text)
-  },
+const markdownRenderer = new marked.Renderer()
+markdownRenderer.html = (token: { text?: string } | string) => {
+  const text = typeof token === 'string' ? token : (token.text ?? '')
+  return escapeHtml(text)
 }
 
 const { t } = useI18n()
