@@ -74,11 +74,11 @@ def _resolve_public_http_host(hostname: str, port: int | None) -> list[str]:
     addresses: list[str] = []
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if isinstance(ip, ipaddress.IPv6Address) and ip in _NAT64_WELL_KNOWN_PREFIX:
-            embedded_v4 = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
-            if not embedded_v4.is_global:
-                return []
-        if not ip.is_global:
+        if not ip.is_global or (
+            isinstance(ip, ipaddress.IPv6Address)
+            and ip in _NAT64_WELL_KNOWN_PREFIX
+            and not ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF).is_global
+        ):
             return []
         addresses.append(info[4][0])
     return addresses
@@ -151,12 +151,8 @@ def _build_ical_fetch_targets(url: str) -> tuple[list[str], dict[str, str], dict
     if not addresses:
         raise ValueError(f"Blocked non-public iCal URL: {url}")
     host_header = hostname_ascii
-    try:
-        ip = ipaddress.ip_address(hostname_ascii)
-        if isinstance(ip, ipaddress.IPv6Address):
-            host_header = f"[{hostname_ascii}]"
-    except ValueError:
-        pass
+    if ":" in host_header and not host_header.startswith("["):
+        host_header = f"[{host_header}]"
     if port is not None:
         default_port = 443 if parsed.scheme == "https" else 80
         if port != default_port:
@@ -581,7 +577,7 @@ class LogicManager:
                                         location = _resp.headers.get("location")
                                         if not location:
                                             raise ValueError("iCal redirect without Location header")
-                                        redirected_to = _preserve_same_origin_credentials(current_url, urljoin(current_url, location))
+                                        redirected_to = urljoin(current_url, location)
                                         break
                                     _resp.raise_for_status()
                                     _ct = _resp.headers.get("content-type", "").lower()
@@ -593,7 +589,7 @@ class LogicManager:
                         if redirected_to:
                             if redirect_count >= _ICAL_MAX_REDIRECTS:
                                 raise ValueError("Too many iCal redirects")
-                            current_url = redirected_to
+                            current_url = _preserve_same_origin_credentials(current_url, redirected_to)
                             continue
                         if last_transport_error is not None and not _resp_bytes:
                             raise last_transport_error
