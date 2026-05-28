@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
-from obs.api.auth import get_current_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.db.database import Database, get_db
 
 router = APIRouter(tags=["adapters"])
@@ -409,7 +409,7 @@ async def restart_instance_route(
 async def migrate_instance_bindings(
     source_instance_id: uuid.UUID,
     body: BindingMigrationRequest,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> BindingMigrationResult:
     source_id = str(source_instance_id)

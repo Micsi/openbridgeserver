@@ -58,6 +58,25 @@ async def _list_instance_bindings(client, auth_headers, instance_id: str) -> lis
     return resp.json()
 
 
+async def _create_non_admin_user_and_headers(client, auth_headers, username: str, password: str) -> dict:
+    resp = await client.post(
+        "/api/v1/auth/users",
+        json={
+            "username": username,
+            "password": password,
+            "is_admin": False,
+            "mqtt_enabled": False,
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    from obs.api.auth import create_access_token
+
+    token = create_access_token(username)
+    return {"Authorization": f"Bearer {token}"}
+
+
 async def test_migrate_bindings_moves_all_bindings_to_target_instance(client, auth_headers):
     source = await _create_instance(client, auth_headers, "ANWESENHEITSSIMULATION", f"src-{uuid.uuid4().hex[:6]}")
     target = await _create_instance(client, auth_headers, "ANWESENHEITSSIMULATION", f"dst-{uuid.uuid4().hex[:6]}")
@@ -160,3 +179,21 @@ async def test_migrate_bindings_rejects_different_adapter_types(client, auth_hea
     )
 
     assert resp.status_code == 422
+
+
+async def test_migrate_bindings_requires_admin(client, auth_headers):
+    source = await _create_instance(client, auth_headers, "ANWESENHEITSSIMULATION", f"src-{uuid.uuid4().hex[:6]}")
+    target = await _create_instance(client, auth_headers, "ANWESENHEITSSIMULATION", f"dst-{uuid.uuid4().hex[:6]}")
+
+    username = f"migrate-user-{uuid.uuid4().hex[:8]}"
+    user_headers = await _create_non_admin_user_and_headers(client, auth_headers, username=username, password="pw-12345678")
+
+    try:
+        resp = await client.post(
+            f"/api/v1/adapters/instances/{source['id']}/bindings/migrate",
+            json={"target_instance_id": target["id"]},
+            headers=user_headers,
+        )
+        assert resp.status_code == 403, resp.text
+    finally:
+        await client.delete(f"/api/v1/auth/users/{username}", headers=auth_headers)
