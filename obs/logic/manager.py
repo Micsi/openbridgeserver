@@ -633,9 +633,12 @@ class LogicManager:
                             headers = {**headers, "Cookie": cookie_header}
                         current_origin = _origin_tuple(_parse_http_url(current_url))
                         if current_origin != active_origin:
+                            carried_cookies = active_client.cookies if active_client is not None else None
                             if active_client is not None:
                                 await active_client.aclose()
-                            active_client = httpx.AsyncClient(timeout=30.0)
+                            # Keep cookie jar across host changes (e.g. Domain=.example.com),
+                            # while still forcing a fresh connection pool per origin.
+                            active_client = httpx.AsyncClient(timeout=30.0, cookies=carried_cookies)
                             active_origin = current_origin
                         if active_client is None:
                             raise ValueError("Could not initialize iCal HTTP client")
@@ -645,6 +648,8 @@ class LogicManager:
                         last_transport_error: Exception | None = None
                         for fetch_url in fetch_urls:
                             try:
+                                # Requests go to a pinned IP, but cookie send/store logic uses
+                                # current_url (logical host) via _build/_store_response_cookies.
                                 async with active_client.stream("GET", fetch_url, headers=headers, extensions=extensions) as _resp:
                                     if _resp.status_code in {301, 302, 303, 307, 308}:
                                         location = _resp.headers.get("location")
