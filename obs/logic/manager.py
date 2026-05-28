@@ -479,7 +479,9 @@ class LogicManager:
             needs_fetch = url_changed or last_fetch is None or (execute_now.timestamp() - last_fetch) >= refresh_min * 60
             if needs_fetch:
                 try:
-                    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as _hclient:
+                    # Redirects are handled manually below so each Location target
+                    # can be re-validated against public-network constraints.
+                    async with httpx.AsyncClient(timeout=30.0) as _hclient:
                         current_url = url
                         for redirect_count in range(_ICAL_MAX_REDIRECTS + 1):
                             fetch_url, headers, extensions = await asyncio.to_thread(_build_ical_fetch_target, current_url)
