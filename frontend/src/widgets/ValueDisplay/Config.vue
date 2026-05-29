@@ -99,7 +99,7 @@ const cfg = reactive<Cfg>({
   label:              (props.modelValue.label              as string)      ?? '',
   mode:               (props.modelValue.mode               as DisplayMode) ?? 'value',
   rules:              normalizeRules(props.modelValue.rules as Partial<Rule>[] | undefined),
-  history_hours:      (props.modelValue.history_hours      as number)      ?? 24,
+  history_hours:      (props.modelValue.history_hours      as number)      ?? 168,
   secondary_dp_id:    (props.modelValue.secondary_dp_id    as string)      ?? '',
   secondary_label:    (props.modelValue.secondary_label    as string)      ?? '',
   secondary_decimals: (props.modelValue.secondary_decimals as number)      ?? 1,

@@ -14,7 +14,7 @@ const props = defineProps<{
 }>()
 
 const label = computed(() => (props.config.label as string | undefined) ?? '—')
-const hours = computed(() => (props.config.hours as number | undefined) ?? 24)
+const hours = computed(() => (props.config.hours as number | undefined) ?? 168)
 
 // 'y' = linke Achse, 'y1' = rechte Achse (Chart.js Achsen-IDs)
 interface SeriesDef { id: string; label: string; color: string; axis: 'y' | 'y1' }

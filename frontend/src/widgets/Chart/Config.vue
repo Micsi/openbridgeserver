@@ -36,7 +36,7 @@ function normalizeSeries(raw: unknown): Series[] {
 
 const cfg = reactive<Cfg>({
   label:         (props.modelValue.label         as string) ?? '',
-  hours:         (props.modelValue.hours         as number) ?? 24,
+  hours:         (props.modelValue.hours         as number) ?? 168,
   primary_color: (props.modelValue.primary_color as string) ?? '#3b82f6',
   primary_axis:  (props.modelValue.primary_axis  as Axis)   ?? 'left',
   series:        normalizeSeries(props.modelValue.series),

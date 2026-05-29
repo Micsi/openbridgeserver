@@ -20,6 +20,7 @@ from obs.db.database import Database, get_db
 from obs.history.factory import get_history_plugin
 
 router = APIRouter(tags=["history"])
+DEFAULT_HISTORY_WINDOW_HOURS = 24 * 7
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +107,7 @@ async def query_history(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
 
     now = datetime.now(UTC)
-    from_dt = _parse_ts(from_ts, now - timedelta(hours=24))
+    from_dt = _parse_ts(from_ts, now - timedelta(hours=DEFAULT_HISTORY_WINDOW_HOURS))
     to_dt = _parse_ts(to_ts, now)
 
     plugin = get_history_plugin()
@@ -135,7 +136,7 @@ async def aggregate_history(
         )
 
     now = datetime.now(UTC)
-    from_dt = _parse_ts(from_ts, now - timedelta(hours=24))
+    from_dt = _parse_ts(from_ts, now - timedelta(hours=DEFAULT_HISTORY_WINDOW_HOURS))
     to_dt = _parse_ts(to_ts, now)
 
     plugin = get_history_plugin()
