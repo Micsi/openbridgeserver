@@ -110,6 +110,7 @@
 * General: Fix used tags at docker images
 * General Security (Upstream PR #567): prevent tag-name code injection in release workflow
 * General: Implement contract tests for dependencies
+* General Security (Upstream PR #574): harden LXC updater by verifying app bundle checksums against the original release artifact filename
 * Backend: History give only last 1000 entries now default 10'000 with amximum of 100'000
 * Adapter ioBroker browse/import preview are blocked when the instance status lags behind the live socket connection
 * Adapter ioBroker Security (Upstream PR #566): skip watchdog resync publishes when state reads fail
