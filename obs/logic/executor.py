@@ -418,6 +418,7 @@ class GraphExecutor:
 
                 raw = inputs.get("data")
                 json_path = (d.get("json_path") or "").strip()
+                json_paths_raw = (d.get("json_paths") or "").strip()
 
                 # Parse raw input to Python object
                 if isinstance(raw, str):
@@ -430,17 +431,6 @@ class GraphExecutor:
                 else:
                     data_obj = None
 
-                # Extract value at dotted path
-                value: Any = None
-                if data_obj is not None:
-                    if json_path:
-                        try:
-                            value = self._json_extract(data_obj, json_path)
-                        except (KeyError, IndexError, TypeError, ValueError):
-                            value = None
-                    else:
-                        value = None  # No path configured — user must select one
-
                 # _preview: compact JSON snapshot for config-panel path picker (max 20 KB)
                 try:
                     preview = _json_mod.dumps(data_obj, default=str, ensure_ascii=False)
@@ -449,28 +439,79 @@ class GraphExecutor:
                 except Exception:
                     preview = str(data_obj) if data_obj is not None else None
 
+                # Multi-path mode: json_paths is a JSON array of {label, path} entries
+                if json_paths_raw:
+                    try:
+                        path_list = _json_mod.loads(json_paths_raw)
+                    except Exception:
+                        path_list = []
+
+                    if isinstance(path_list, list) and path_list:
+                        result: dict[str, Any] = {"_preview": preview}
+                        for i, entry in enumerate(path_list):
+                            p = (entry.get("path") or "").strip() if isinstance(entry, dict) else ""
+                            val: Any = None
+                            if data_obj is not None and p:
+                                try:
+                                    val = self._json_extract(data_obj, p)
+                                except (KeyError, IndexError, TypeError, ValueError):
+                                    val = None
+                            result[f"out_{i + 1}"] = val
+                        return result
+
+                # Legacy single-path mode
+                value: Any = None
+                if data_obj is not None and json_path:
+                    try:
+                        value = self._json_extract(data_obj, json_path)
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        value = None
+
                 return {"value": value, "_preview": preview}
 
             case "xml_extractor":
+                import json as _json_xml  # noqa: PLC0415
                 import xml.etree.ElementTree as _ET  # noqa: PLC0415
 
                 raw_xml = inputs.get("data")
                 xml_path = (d.get("xml_path") or "").strip()
+                xml_paths_raw = (d.get("xml_paths") or "").strip()
 
-                value = None
+                _xml_root = None
                 preview_str: str | None = None
 
                 if isinstance(raw_xml, str) and raw_xml.strip():
                     preview_str = raw_xml[:20_000] if len(raw_xml) > 20_000 else raw_xml
                     try:
-                        root = _ET.fromstring(raw_xml.strip())
-                        if xml_path:
-                            el = root.find(xml_path)
-                            if el is not None:
-                                value = (el.text or "").strip()
-                        # no path → value stays None; user must select one
+                        _xml_root = _ET.fromstring(raw_xml.strip())
                     except _ET.ParseError:
                         pass
+
+                # Multi-path mode: xml_paths is a JSON array of {label, path} entries
+                if xml_paths_raw:
+                    try:
+                        path_list = _json_xml.loads(xml_paths_raw)
+                    except Exception:
+                        path_list = []
+
+                    if isinstance(path_list, list) and path_list:
+                        result: dict[str, Any] = {"_preview": preview_str}
+                        for i, entry in enumerate(path_list):
+                            p = (entry.get("path") or "").strip() if isinstance(entry, dict) else ""
+                            val: Any = None
+                            if _xml_root is not None and p:
+                                el = _xml_root.find(p)
+                                if el is not None:
+                                    val = (el.text or "").strip()
+                            result[f"out_{i + 1}"] = val
+                        return result
+
+                # Legacy single-path mode
+                value = None
+                if _xml_root is not None and xml_path:
+                    el = _xml_root.find(xml_path)
+                    if el is not None:
+                        value = (el.text or "").strip()
 
                 return {"value": value, "_preview": preview_str}
 
@@ -1082,9 +1123,67 @@ class GraphExecutor:
         allowed.update(ctx)
         try:
             tree = ast.parse(expr, mode="eval")
+            GraphExecutor._validate_formula_ast(tree, set(allowed.keys()))
             return eval(compile(tree, "<formula>", "eval"), {"__builtins__": {}}, allowed)  # noqa: S307
         except Exception as exc:
             raise ExecutionError(f"Formula error: {exc}") from exc
+
+    @staticmethod
+    def _validate_formula_ast(tree: ast.AST, allowed_names: set[str]) -> None:
+        """Validate formula AST and reject unsafe Python constructs."""
+        allowed_nodes = (
+            ast.Expression,
+            ast.BinOp,
+            ast.UnaryOp,
+            ast.BoolOp,
+            ast.Compare,
+            ast.IfExp,
+            ast.Call,
+            ast.keyword,
+            ast.Name,
+            ast.Load,
+            ast.Constant,
+            ast.List,
+            ast.Tuple,
+            ast.Dict,
+            ast.Set,
+            ast.Subscript,
+            ast.Slice,
+            ast.Index,
+            ast.Add,
+            ast.Sub,
+            ast.Mult,
+            ast.Div,
+            ast.FloorDiv,
+            ast.Mod,
+            ast.Pow,
+            ast.UAdd,
+            ast.USub,
+            ast.And,
+            ast.Or,
+            ast.Not,
+            ast.Eq,
+            ast.NotEq,
+            ast.Lt,
+            ast.LtE,
+            ast.Gt,
+            ast.GtE,
+            ast.Is,
+            ast.IsNot,
+            ast.In,
+            ast.NotIn,
+        )
+
+        for node in ast.walk(tree):
+            if not isinstance(node, allowed_nodes):
+                raise ExecutionError(f"Disallowed expression element: {type(node).__name__}")
+            if isinstance(node, ast.Name) and node.id not in allowed_names:
+                raise ExecutionError(f"Unknown variable or function: {node.id}")
+            if isinstance(node, ast.Call):
+                if not isinstance(node.func, ast.Name):
+                    raise ExecutionError("Only direct function calls are allowed")
+                if node.func.id not in allowed_names:
+                    raise ExecutionError(f"Function not allowed: {node.func.id}")
 
     @staticmethod
     def _run_script(script: str, inputs: dict[str, Any]) -> Any:

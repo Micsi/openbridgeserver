@@ -14,6 +14,7 @@ import { defineStore } from 'pinia'
 import { ref, shallowRef } from 'vue'
 
 export const useWebSocketStore = defineStore('websocket', () => {
+  const WS_TOKEN_PROTOCOL_PREFIX = 'obs.jwt.'
   const connected    = ref(false)
   const liveValues   = ref({})   // { [datapoint_id]: { value, quality, ts } }
   const _ws          = shallowRef(null)
@@ -25,12 +26,12 @@ export const useWebSocketStore = defineStore('websocket', () => {
   function connect() {
     if (_ws.value?.readyState === WebSocket.OPEN) return
 
-    const token = localStorage.getItem('access_token')
-    if (!token) return
-
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const url   = `${proto}://${window.location.host}/api/v1/ws?token=${token}`
-    const ws    = new WebSocket(url)
+    const token = localStorage.getItem('access_token')
+    const url   = `${proto}://${window.location.host}/api/v1/ws`
+    const ws    = token
+      ? new WebSocket(url, [`${WS_TOKEN_PROTOCOL_PREFIX}${token}`])
+      : new WebSocket(url)
     _ws.value   = ws
 
     ws.onopen = () => {
@@ -80,7 +81,9 @@ export const useWebSocketStore = defineStore('websocket', () => {
       connected.value = false
       clearInterval(_pingInterval)
       // Reconnect after 5 s
-      setTimeout(() => { if (localStorage.getItem('access_token')) connect() }, 5000)
+      setTimeout(() => {
+        if (localStorage.getItem('access_token')) connect()
+      }, 5000)
     }
 
     ws.onerror = () => ws.close()
