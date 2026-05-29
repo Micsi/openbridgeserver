@@ -12,9 +12,11 @@ Covers:
 from __future__ import annotations
 
 import io
+import sys
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 from xml.etree import ElementTree
 
 import pytest
@@ -27,6 +29,7 @@ from obs.knxproj.parser import (
     _collect_fi_to_fn,
     _dpt_from_xknxproject,
     _extract_group_names,
+    _walk_spaces,
     _walk_trade_el,
     parse_knxproj,
     parse_knxproj_locations,
@@ -381,3 +384,218 @@ class TestParseKnxprojLocationsReal:
     def test_invalid_file_raises_value_error(self):
         with pytest.raises(ValueError):
             parse_knxproj_locations(b"garbage")
+
+
+# ---------------------------------------------------------------------------
+# _walk_spaces — object-style and advanced branches
+# ---------------------------------------------------------------------------
+
+
+def _make_fn_ns(name="Fn", usage_text="Schalten", ga_address="1/2/3"):
+    """Build a SimpleNamespace function with one GA reference."""
+    ga_ref = SimpleNamespace(address=ga_address)
+    return SimpleNamespace(
+        name=name,
+        usage_text=usage_text,
+        group_addresses={"ref1": ga_ref},
+    )
+
+
+class TestWalkSpaces:
+    def _call(self, spaces, all_functions=None):
+        loc_list: list[LocationRecord] = []
+        fn_list: list[FunctionRecord] = []
+        _walk_spaces(spaces, None, loc_list, fn_list, all_functions or {}, [0])
+        return loc_list, fn_list
+
+    # --- dict-style spaces with function processing ---
+
+    def test_dict_space_with_dict_function(self):
+        all_fns = {
+            "FN-1": {
+                "name": "Licht",
+                "usage_text": "Schalten",
+                "group_addresses": {"r1": {"address": "1/2/3"}},
+            }
+        }
+        spaces = {
+            "S-1": {
+                "identifier": "S-1",
+                "name": "Wohnzimmer",
+                "type": "Room",
+                "functions": ["FN-1"],
+                "spaces": {},
+            }
+        }
+        locs, fns = self._call(spaces, all_fns)
+        assert len(locs) == 1
+        assert locs[0].identifier == "S-1"
+        assert len(fns) == 1
+        assert fns[0].identifier == "FN-1"
+        assert fns[0].ga_addresses == ["1/2/3"]
+
+    def test_fn_not_in_all_functions_skipped(self):
+        spaces = {
+            "S-1": {
+                "identifier": "S-1",
+                "name": "Raum",
+                "type": "Room",
+                "functions": ["FN-MISSING"],
+                "spaces": {},
+            }
+        }
+        locs, fns = self._call(spaces, {})
+        assert len(locs) == 1
+        assert len(fns) == 0  # FN-MISSING skipped
+
+    def test_dict_space_with_object_function(self):
+        """Function stored as object (non-dict) inside all_functions."""
+        fn_ns = _make_fn_ns("Dimmer", "Dimmen", "2/3/4")
+        spaces = {
+            "S-1": {
+                "identifier": "S-1",
+                "name": "Küche",
+                "type": "Room",
+                "functions": ["FN-1"],
+                "spaces": {},
+            }
+        }
+        locs, fns = self._call(spaces, {"FN-1": fn_ns})
+        assert fns[0].name == "Dimmer"
+        assert fns[0].usage_text == "Dimmen"
+        assert fns[0].ga_addresses == ["2/3/4"]
+
+    def test_ga_ref_object_style(self):
+        """GA reference stored as object instead of dict."""
+        ga_ref_obj = SimpleNamespace(address="5/6/7")
+        fn = {"name": "X", "usage_text": "Y", "group_addresses": {"r": ga_ref_obj}}
+        spaces = {
+            "S-1": {
+                "identifier": "S-1",
+                "name": "Z",
+                "type": "Room",
+                "functions": ["FN-1"],
+                "spaces": {},
+            }
+        }
+        locs, fns = self._call(spaces, {"FN-1": fn})
+        assert fns[0].ga_addresses == ["5/6/7"]
+
+    def test_empty_ga_address_skipped(self):
+        """GA refs with blank address should not be added."""
+        fn = {"name": "X", "usage_text": "Y", "group_addresses": {"r": {"address": ""}}}
+        spaces = {"S-1": {"identifier": "S-1", "name": "Z", "type": "Room", "functions": ["FN-1"], "spaces": {}}}
+        locs, fns = self._call(spaces, {"FN-1": fn})
+        assert fns[0].ga_addresses == []
+
+    def test_recursive_sub_spaces(self):
+        """Child spaces are walked recursively with parent_id set."""
+        spaces = {
+            "B-1": {
+                "identifier": "B-1",
+                "name": "Gebäude",
+                "type": "Building",
+                "functions": [],
+                "spaces": {
+                    "F-1": {
+                        "identifier": "F-1",
+                        "name": "EG",
+                        "type": "Floor",
+                        "functions": [],
+                        "spaces": {},
+                    }
+                },
+            }
+        }
+        locs, _ = self._call(spaces)
+        assert len(locs) == 2
+        assert locs[1].identifier == "F-1"
+        assert locs[1].parent_id == "B-1"
+
+    # --- object-style space branch (lines 254-258) ---
+
+    def test_object_style_space(self):
+        fn_ns = _make_fn_ns()
+        space_ns = SimpleNamespace(
+            identifier="S-OBJ",
+            name="ObjRaum",
+            type="Room",
+            space_type="",
+            functions=["FN-OBJ"],
+            spaces={},
+        )
+        locs, fns = self._call({"S-OBJ": space_ns}, {"FN-OBJ": fn_ns})
+        assert locs[0].identifier == "S-OBJ"
+        assert locs[0].name == "ObjRaum"
+        assert fns[0].ga_addresses == ["1/2/3"]
+
+
+# ---------------------------------------------------------------------------
+# parse_knxproj / parse_knxproj_locations — ImportError paths
+# ---------------------------------------------------------------------------
+
+
+class TestImportErrorPaths:
+    def test_parse_knxproj_import_error(self):
+        with mock.patch.dict(sys.modules, {"xknxproject": None}):
+            with pytest.raises(ValueError, match="xknxproject"):
+                parse_knxproj(b"irrelevant")
+
+    def test_parse_knxproj_locations_import_error(self):
+        with mock.patch.dict(sys.modules, {"xknxproject": None}):
+            with pytest.raises(ValueError, match="xknxproject"):
+                parse_knxproj_locations(b"irrelevant")
+
+
+# ---------------------------------------------------------------------------
+# parse_knxproj — password error branch + object-style project
+# ---------------------------------------------------------------------------
+
+
+class TestParseKnxprojPasswordError:
+    def test_password_error_raised_as_value_error(self):
+        """When xknxproject raises a password-related error it must be re-raised as ValueError."""
+        fake_xknx = mock.MagicMock()
+        fake_xknx.XKNXProj.return_value.parse.side_effect = Exception("bad password detected")
+        with mock.patch.dict(sys.modules, {"xknxproject": fake_xknx}):
+            with pytest.raises(ValueError, match="Passwort|verschlüsselt"):
+                parse_knxproj(b"fake")
+
+    def test_locations_password_error(self):
+        fake_xknx = mock.MagicMock()
+        fake_xknx.XKNXProj.return_value.parse.side_effect = Exception("decrypt failed")
+        with mock.patch.dict(sys.modules, {"xknxproject": fake_xknx}):
+            with pytest.raises(ValueError, match="Passwort|verschlüsselt"):
+                parse_knxproj_locations(b"fake")
+
+
+class TestParseKnxprojObjectStyleProject:
+    """Cover the object-style (non-dict) project branches in parse_knxproj and parse_knxproj_locations."""
+
+    def _make_fake_xknx(self, project_obj):
+        fake_xknx = mock.MagicMock()
+        fake_xknx.XKNXProj.return_value.parse.return_value = project_obj
+        return fake_xknx
+
+    def test_parse_knxproj_object_style(self):
+        ga = SimpleNamespace(name="Licht", comment="Kommentar", dpt={"main": 1, "sub": 1})
+        project = SimpleNamespace(
+            group_ranges={},
+            group_addresses={"1/2/3": ga},
+        )
+        fake_xknx = self._make_fake_xknx(project)
+        with mock.patch.dict(sys.modules, {"xknxproject": fake_xknx}):
+            records = parse_knxproj(b"fake")
+        assert len(records) == 1
+        assert records[0].address == "1/2/3"
+        assert records[0].name == "Licht"
+        assert records[0].description == "Kommentar"
+        assert records[0].dpt == "DPT1.001"
+
+    def test_parse_knxproj_locations_object_style(self):
+        project = SimpleNamespace(locations={}, functions={})
+        fake_xknx = self._make_fake_xknx(project)
+        with mock.patch.dict(sys.modules, {"xknxproject": fake_xknx}):
+            locs, fns = parse_knxproj_locations(b"fake")
+        assert locs == []
+        assert fns == []
