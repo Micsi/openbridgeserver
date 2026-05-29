@@ -288,6 +288,20 @@
             </select>
           </div>
 
+          <div class="form-group">
+            <label class="label">Standard-Zeitraum (Stunden)</label>
+            <input
+              v-model.number="histForm.default_window_hours"
+              type="number"
+              min="1"
+              max="8760"
+              class="input text-sm"
+            />
+            <p class="text-xs text-slate-500 mt-1">
+              Gilt für History-API-Aufrufe ohne <span class="font-mono">from</span>-Parameter.
+            </p>
+          </div>
+
           <!-- InfluxDB settings -->
           <template v-if="histForm.plugin === 'influxdb'">
             <div class="form-group">
@@ -978,6 +992,7 @@ const tabs = computed(() => [
 // ── History Backend ────────────────────────────────────────────────────────
 const histForm = reactive({
   plugin: 'sqlite',
+  default_window_hours: 168,
   influx_url: 'http://localhost:8086',
   influx_version: 2,
   influx_token: '',
@@ -1000,10 +1015,18 @@ async function loadHistorySettings() {
   } catch (_) { /* non-critical */ }
 }
 
+function historySettingsPayload() {
+  const hours = Number(histForm.default_window_hours)
+  return {
+    ...histForm,
+    default_window_hours: Number.isFinite(hours) ? hours : 168,
+  }
+}
+
 async function saveHistorySettings() {
   histSaving.value = true; histSaveMsg.value = null
   try {
-    await historySettingsApi.update({ ...histForm })
+    await historySettingsApi.update(historySettingsPayload())
     histSaveMsg.value = { ok: true, text: 'Historie DB gespeichert und aktiviert.' }
   } catch (e) {
     histSaveMsg.value = { ok: false, text: e.response?.data?.detail ?? 'Fehler beim Speichern' }
@@ -1015,7 +1038,7 @@ async function saveHistorySettings() {
 async function testHistoryConnection() {
   histTesting.value = true; histTestResult.value = null
   try {
-    const { data } = await historySettingsApi.test({ ...histForm })
+    const { data } = await historySettingsApi.test(historySettingsPayload())
     histTestResult.value = data
   } catch (e) {
     histTestResult.value = { ok: false, message: e.response?.data?.detail ?? 'Fehler beim Testen' }

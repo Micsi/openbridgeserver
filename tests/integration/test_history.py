@@ -78,6 +78,16 @@ async def _seed_history_value(
     )
 
 
+async def _set_history_default_window_hours(hours: int) -> None:
+    from obs.db.database import get_db
+
+    db = get_db()
+    await db.execute_and_commit(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('history.default_window_hours', ?)",
+        (str(hours),),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests: record_history field returned in API responses
 # ---------------------------------------------------------------------------
@@ -285,6 +295,7 @@ async def test_history_resumes_after_enabling(client, auth_headers):
 
 async def test_history_default_window_is_last_7d(client, auth_headers):
     """Without ?from=..., history endpoint defaults to the last 7 days."""
+    await _set_history_default_window_hours(168)
     dp = await _create_dp(
         client,
         auth_headers,
@@ -308,6 +319,7 @@ async def test_history_default_window_is_last_7d(client, auth_headers):
 
 async def test_history_explicit_from_can_read_older_than_7d(client, auth_headers):
     """With explicit ?from=..., values older than 7d must be returned."""
+    await _set_history_default_window_hours(168)
     dp = await _create_dp(
         client,
         auth_headers,
@@ -335,3 +347,31 @@ async def test_history_explicit_from_can_read_older_than_7d(client, auth_headers
     values = [entry["v"] for entry in resp.json()]
     assert 33.0 in values, "Old value should be included when explicit from is provided"
     assert 44.0 in values, "Recent value should be included"
+
+
+async def test_history_default_window_can_be_changed_via_settings(client, auth_headers):
+    """Changing history.default_window_hours affects API default queries."""
+    await _set_history_default_window_hours(24 * 10)  # 10 days
+    try:
+        dp = await _create_dp(
+            client,
+            auth_headers,
+            f"HistTest-WindowConfig-{uuid.uuid4().hex[:6]}",
+            record_history=True,
+        )
+        dp_id = dp["id"]
+
+        now = datetime.datetime.now(datetime.UTC)
+        old_ts = now - datetime.timedelta(days=8)
+        recent_ts = now - datetime.timedelta(days=1)
+        await _seed_history_value(dp_id, old_ts, 55.0)
+        await _seed_history_value(dp_id, recent_ts, 66.0)
+
+        resp = await client.get(f"/api/v1/history/{dp_id}", headers=auth_headers)
+        assert resp.status_code == 200, f"history query failed: {resp.text}"
+        values = [entry["v"] for entry in resp.json()]
+        assert 55.0 in values, "Old value should be visible with 10d default window"
+        assert 66.0 in values
+    finally:
+        # Restore project default for subsequent tests.
+        await _set_history_default_window_hours(168)

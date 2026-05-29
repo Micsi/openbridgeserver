@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import status as http_status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from obs import __version__
 from obs.adapters import registry as adapter_registry
@@ -70,6 +70,7 @@ class AppSettingsIn(BaseModel):
 
 class HistorySettingsOut(BaseModel):
     plugin: str  # sqlite | influxdb | timescaledb
+    default_window_hours: int
     influx_url: str
     influx_version: int
     influx_token: str
@@ -83,6 +84,7 @@ class HistorySettingsOut(BaseModel):
 
 class HistorySettingsIn(BaseModel):
     plugin: str
+    default_window_hours: int = Field(168, ge=1, le=24 * 365)
     influx_url: str = "http://localhost:8086"
     influx_version: int = 2
     influx_token: str = ""
@@ -236,6 +238,7 @@ async def update_app_settings(
 
 _HISTORY_KEYS = [
     "plugin",
+    "default_window_hours",
     "influx_url",
     "influx_version",
     "influx_token",
@@ -249,6 +252,7 @@ _HISTORY_KEYS = [
 
 _HISTORY_DEFAULTS: dict[str, str] = {
     "plugin": "sqlite",
+    "default_window_hours": "168",
     "influx_url": "http://localhost:8086",
     "influx_version": "2",
     "influx_token": "",
@@ -280,6 +284,7 @@ async def get_history_settings(
     cfg = await _read_history_cfg(db)
     return HistorySettingsOut(
         plugin=cfg["plugin"],
+        default_window_hours=int(cfg["default_window_hours"]),
         influx_url=cfg["influx_url"],
         influx_version=int(cfg["influx_version"]),
         influx_token=cfg["influx_token"],
@@ -307,6 +312,7 @@ async def update_history_settings(
 
     data: dict[str, str] = {
         "plugin": body.plugin,
+        "default_window_hours": str(body.default_window_hours),
         "influx_url": body.influx_url,
         "influx_version": str(body.influx_version),
         "influx_token": body.influx_token,
@@ -337,6 +343,7 @@ async def update_history_settings(
 
     return HistorySettingsOut(
         plugin=body.plugin,
+        default_window_hours=body.default_window_hours,
         influx_url=body.influx_url,
         influx_version=body.influx_version,
         influx_token=body.influx_token,
