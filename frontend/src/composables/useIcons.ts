@@ -6,6 +6,15 @@ const iconNames = ref<string[]>([])
 const svgCache: Record<string, string> = {}  // name → normalised SVG string
 let listPromise: Promise<void> | null = null
 
+function isDangerousHref(raw: string): boolean {
+  // Normalize obfuscated schemes like "java\nscript:" before checking.
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\u0000-\u001f\u007f\s]+/g, '')
+  return normalized.startsWith('javascript:')
+}
+
 function sanitizeSvg(raw: string): string {
   const parser = new DOMParser()
   const doc = parser.parseFromString(raw, 'image/svg+xml')
@@ -14,12 +23,14 @@ function sanitizeSvg(raw: string): string {
 
   // Remove executable or HTML-capable elements
   doc.querySelectorAll('script, foreignObject').forEach((el) => el.remove())
+  // Remove SMIL animation elements that can mutate attributes post-sanitization.
+  doc.querySelectorAll('animate, animateMotion, animateTransform, set').forEach((el) => el.remove())
 
   // Remove dangerous attributes and fixed dimensions
   for (const el of Array.from(doc.querySelectorAll('*'))) {
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase()
-      const value = attr.value.trim().toLowerCase()
+      const value = attr.value
 
       if (name === 'width' || name === 'height') {
         el.removeAttribute(attr.name)
@@ -31,7 +42,7 @@ function sanitizeSvg(raw: string): string {
         continue
       }
 
-      if ((name === 'href' || name === 'xlink:href') && value.startsWith('javascript:')) {
+      if ((name === 'href' || name === 'xlink:href') && isDangerousHref(value)) {
         el.removeAttribute(attr.name)
       }
     }
