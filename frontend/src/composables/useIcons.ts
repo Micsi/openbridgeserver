@@ -5,7 +5,7 @@ import { icons as iconsApi } from '@/api/client'
 const iconNames = ref<string[]>([])
 const svgCache: Record<string, string> = {}  // name → normalised SVG string
 let listPromise: Promise<void> | null = null
-const BLOCKED_URL_SCHEMES = ['javascript:', 'data:', 'http:', 'https:']
+const BLOCKED_URL_SCHEMES = ['javascript:', 'data:', 'http:', 'https:', 'vbscript:', 'file:']
 const URL_FUNCTION_ATTRIBUTES = new Set([
   'fill',
   'stroke',
@@ -18,8 +18,12 @@ const URL_FUNCTION_ATTRIBUTES = new Set([
   'cursor',
 ])
 
+function stripAsciiControlsAndWhitespace(raw: string): string {
+  return raw.toLowerCase().replace(/[\u0000-\u0020\u007f-\u009f]+/g, '')
+}
+
 function isBlockedUrlReference(rawValue: string): boolean {
-  const normalized = rawValue.toLowerCase().replace(/[\u0000-\u0020]+/g, '')
+  const normalized = stripAsciiControlsAndWhitespace(rawValue)
   return normalized.startsWith('//') || BLOCKED_URL_SCHEMES.some((scheme) => normalized.startsWith(scheme))
 }
 
@@ -46,7 +50,7 @@ function sanitizeSvg(raw: string): string {
       const name = attr.name.toLowerCase()
       const localName = (attr.localName || attr.name).toLowerCase()
       const lowerValue = attr.value.toLowerCase()
-      const normalizedValue = attr.value.toLowerCase().replace(/[\u0000-\u0020]+/g, '')
+      const normalizedValue = stripAsciiControlsAndWhitespace(attr.value)
 
       if (el === svg && (name === 'width' || name === 'height')) {
         el.removeAttribute(attr.name)
