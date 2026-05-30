@@ -197,7 +197,8 @@ async def test_search_type_filter(client, auth_headers):
     dp_float = await _create(client, auth_headers, f"SRH-Type-F-{suffix}", data_type="FLOAT")
     dp_bool = await _create(client, auth_headers, f"SRH-Type-B-{suffix}", data_type="BOOLEAN")
     try:
-        body = await _search(client, auth_headers, type="BOOLEAN")
+        # Use the shared suffix as name filter to avoid pagination issues in the shared test DB
+        body = await _search(client, auth_headers, q=suffix, type="BOOLEAN")
         assert dp_bool["id"] in _ids(body)
         assert dp_float["id"] not in _ids(body)
     finally:
