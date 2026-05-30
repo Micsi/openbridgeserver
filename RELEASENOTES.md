@@ -49,6 +49,7 @@
 * Logic: API client nodes can now load optional headers and bearer tokens from secret files. https://github.com/abeggled/openbridgeserver/pull/581
 
 ### Fixes 🐞
+* Logicmodule Security (Upstream PR #576): prevent SSRF/data exfiltration in iCal URL fetching by enforcing public-network URL validation and streamed size limits.
 * Visu Security (Upstream PR #575): prevent stored XSS via SVG icon rendering in Stufenschalter widget
 * Visu Security (Upstream PR #568): prevent stored XSS via SVG icon rendering (Visu)
 * Logic Security (Upstream PR #563): harden Pushover `image_url` fetch against non-global targets, event-loop DNS blocking, and DNS rebinding
@@ -137,4 +138,3 @@
 ### Breaking changes:
 * none
   
-
