@@ -591,13 +591,13 @@ class GraphExecutor:
             case "heating_circuit":
                 # DIN-Norm Sommer/Winter-Umschaltung mit Hysterese
                 # Eingang: Aussentemperatur (kontinuierlicher Datenpunkt, keine Zeitschaltuhr nötig).
-                # Der Block puffert den zuletzt empfangenen Wert und übernimmt ihn als Slot-Wert
-                # in dem Moment, in dem die Uhr genau die Zielstunde erreicht:
-                #   T1 = "anliegender Wert" bei Stunde 7  (07:xx Uhr)
-                #   T2 = "anliegender Wert" bei Stunde 12 (12:xx Uhr)
-                #   T3 = "anliegender Wert" bei Stunde 22 (22:xx Uhr)
-                # "anliegender Wert" = letzter bekannter Wert zum Zeitpunkt des Übergangs,
-                # d.h. wenn um 07:05 ein Wert eintrifft, wird last_value (06:55-Wert) als T1 gespeichert.
+                # "Erste-Kreuzung"-Semantik: ein Slot wird beim ERSTEN Eintreffen einer Messung
+                # AB der jeweiligen Zielstunde befüllt — nicht nur exakt zur Stunde:
+                #   T1 = last_value beim ersten Wert mit Stunde ≥ 7
+                #   T2 = last_value beim ersten Wert mit Stunde ≥ 12
+                #   T3 = last_value beim ersten Wert mit Stunde ≥ 22
+                # Kommt ein Sensor nur alle 2–4 Stunden (und trifft Stunden 7/12/22 nie exakt),
+                # werden Slots trotzdem befüllt — Issue #548.
                 # Jeder Slot wird pro Tag nur EINMAL erfasst; Folgewerte werden verworfen.
                 # T_avg = (T1 + T2 + 2×T3) / 4
                 # heating_mode=1 wenn ref_temp < temp_winter, bleibt 1 bis ref_temp > temp_summer
@@ -638,18 +638,19 @@ class GraphExecutor:
                         state[slot] = fval
                         state[f"{slot}_date"] = today
                     elif state["daily_avg_date"] != today:
-                        # "Anliegender Wert"-Logik: T1/T2/T3 = last_value beim Überqueren der
-                        # Zielstunde.  Ist noch kein last_value vorhanden (erster Wert des Tages),
-                        # wird der aktuelle Wert als bestmögliche Näherung verwendet.
+                        # "Erste-Kreuzung"-Semantik: Slot = last_value beim ersten Eintreffen
+                        # einer Messung AB der Zielstunde.  Mehrere Slots können durch eine
+                        # einzige Messung befüllt werden (z.B. erster Tageswert um 22:30 →
+                        # T1/T2/T3 alle auf einmal).  Jeder Slot wird nur einmal pro Tag gesetzt.
                         hour = inputs.get("_hour", _dt.datetime.now().hour)
                         capture_val = state["last_value"] if state["last_value"] is not None else fval
-                        if hour == 7 and state["t1_date"] != today:
+                        if hour >= 7 and state["t1_date"] != today:
                             state["t1"] = capture_val
                             state["t1_date"] = today
-                        elif hour == 12 and state["t2_date"] != today:
+                        if hour >= 12 and state["t2_date"] != today:
                             state["t2"] = capture_val
                             state["t2_date"] = today
-                        elif hour == 22 and state["t3_date"] != today:
+                        if hour >= 22 and state["t3_date"] != today:
                             state["t3"] = capture_val
                             state["t3_date"] = today
 
