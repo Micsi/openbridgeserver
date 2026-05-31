@@ -145,7 +145,7 @@ async def get_current_principal(
     if api_key:
         key_hash = hash_api_key(api_key)
         row = await db.fetchone(
-            "SELECT name FROM api_keys WHERE key_hash=?",
+            "SELECT id FROM api_keys WHERE key_hash=?",
             (key_hash,),
         )
         if not row:
@@ -153,7 +153,7 @@ async def get_current_principal(
         # Update last_used_at
         now = datetime.now(UTC).isoformat()
         await db.execute_and_commit("UPDATE api_keys SET last_used_at=? WHERE key_hash=?", (now, key_hash))
-        return Principal(subject=row["name"], type="api_key", is_admin=False)
+        return Principal(subject=f"api_key:{row['id']}", type="api_key", is_admin=False)
 
     raise HTTPException(
         status.HTTP_401_UNAUTHORIZED,
