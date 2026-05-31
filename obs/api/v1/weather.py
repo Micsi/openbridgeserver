@@ -50,6 +50,7 @@ _PRIVATE_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
     ipaddress.ip_network("fc00::/7"),
 ]
 
+
 async def _check_ssrf(url: str, *, allow_private_networks: bool) -> None:
     """Löst den Hostnamen der URL auf und verwirft alle Adressen, die in
     einem gesperrten Netzwerk liegen (SSRF-Prävention).
