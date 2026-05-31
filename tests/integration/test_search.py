@@ -272,10 +272,11 @@ async def test_search_adapter_filter_multiple_or_logic(client, auth_headers):
 
 async def test_search_quality_good(client, auth_headers):
     """A DP that received a value has quality=good; must appear in quality=good search."""
-    dp = await _create(client, auth_headers, f"SRH-Qual-Good-{uuid.uuid4().hex[:6]}")
+    suffix = uuid.uuid4().hex[:6]
+    dp = await _create(client, auth_headers, f"SRH-Qual-Good-{suffix}")
     try:
         await _write_value(client, auth_headers, dp["id"], 42.0)
-        body = await _search(client, auth_headers, quality="good")
+        body = await _search(client, auth_headers, q=suffix, quality="good")
         assert dp["id"] in _ids(body)
     finally:
         await _delete(client, auth_headers, dp["id"])
@@ -283,10 +284,11 @@ async def test_search_quality_good(client, auth_headers):
 
 async def test_search_quality_good_excludes_uncertain(client, auth_headers):
     """A DP with no value written is uncertain; must NOT appear in quality=good search."""
-    dp = await _create(client, auth_headers, f"SRH-Qual-Unc-{uuid.uuid4().hex[:6]}")
+    suffix = uuid.uuid4().hex[:6]
+    dp = await _create(client, auth_headers, f"SRH-Qual-Unc-{suffix}")
     try:
         # Do NOT write a value — quality stays uncertain
-        body = await _search(client, auth_headers, quality="good")
+        body = await _search(client, auth_headers, q=suffix, quality="good")
         assert dp["id"] not in _ids(body)
     finally:
         await _delete(client, auth_headers, dp["id"])
@@ -294,9 +296,10 @@ async def test_search_quality_good_excludes_uncertain(client, auth_headers):
 
 async def test_search_quality_uncertain(client, auth_headers):
     """A DP with no value written must appear in quality=uncertain search."""
-    dp = await _create(client, auth_headers, f"SRH-Qual-Unc2-{uuid.uuid4().hex[:6]}")
+    suffix = uuid.uuid4().hex[:6]
+    dp = await _create(client, auth_headers, f"SRH-Qual-Unc2-{suffix}")
     try:
-        body = await _search(client, auth_headers, quality="uncertain")
+        body = await _search(client, auth_headers, q=suffix, quality="uncertain")
         assert dp["id"] in _ids(body)
     finally:
         await _delete(client, auth_headers, dp["id"])
