@@ -1693,7 +1693,23 @@
     "errorDeleting": "Error deleting",
     "errorImporting": "Error importing",
     "confirmDeleteHierarchy": "This hierarchy and all its nodes and links will be permanently deleted.",
-    "confirmDeleteNode": "This node and all sub-nodes and links will be permanently deleted."
+    "confirmDeleteNode": "This node and all sub-nodes and links will be permanently deleted.",
+    "depthOptions": {
+      "generic0": "0 — Root level (default, e.g. \"Building\")",
+      "generic1": "1 — First level (e.g. \"Floor\" instead of \"Building\")",
+      "generic2": "2 — Second level (e.g. \"Room\")",
+      "generic3": "3 — Third level",
+      "generic4": "4 — Fourth level",
+      "levelName0": "Root level",
+      "levelName1": "First level",
+      "levelName2": "Second level",
+      "levelName3": "Third level",
+      "levelName4": "Fourth level",
+      "levelFallback": "Level {level}",
+      "rootSuffix": "root level",
+      "only": "(only \"{example}\")",
+      "examples": "(e.g. \"{example}\" — {count} different)"
+    }
   },
   "topbar": {
     "logout": "Sign out"

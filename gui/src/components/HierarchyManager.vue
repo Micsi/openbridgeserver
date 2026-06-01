@@ -259,6 +259,7 @@ const depthOptions = computed(() =>
     isEdit: treeModal.isEdit,
     tree: treeModal.isEdit ? { id: treeModal.id, name: treeModal.name } : null,
     rootNodes: treeModal.isEdit ? treeNodes[treeModal.id] : null,
+    t,
   })
 )
 const nodeModal = reactive({ open: false, isEdit: false, id: null, treeId: null, parentId: null, name: '', description: '', saving: false, msg: null })
