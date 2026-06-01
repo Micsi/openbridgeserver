@@ -1870,7 +1870,9 @@
       "october": "October",
       "november": "November",
       "december": "December"
-    }
+    },
+    "chooseFile": "Choose file",
+    "noFileSelected": "No file selected"
   },
   "hierarchy": {
     "title": "Device structure",

@@ -1870,7 +1870,9 @@
       "october": "Oktober",
       "november": "November",
       "december": "Dezember"
-    }
+    },
+    "chooseFile": "Datei wählen",
+    "noFileSelected": "Keine Datei ausgewählt"
   },
   "hierarchy": {
     "title": "Gerätestruktur",
