@@ -622,8 +622,16 @@ class GraphExecutor:
                 state.setdefault("daily_temps", [])
                 state.setdefault("heating_mode", 0)
 
-                threshold = float(d.get("threshold_temp", 14.0))
-                hysteresis = float(d.get("hysteresis", 2.0))
+                # Read new config keys; fall back to legacy temp_winter/temp_summer for
+                # graphs saved before this change so existing configurations are preserved.
+                _tw = d.get("temp_winter")
+                _ts = d.get("temp_summer")
+                if "threshold_temp" not in d and _tw is not None:
+                    threshold = float(_tw)
+                    hysteresis = float(_ts) - float(_tw) if _ts is not None else 2.0
+                else:
+                    threshold = float(d.get("threshold_temp", 14.0))
+                    hysteresis = float(d.get("hysteresis", 2.0))
                 today = inputs.get("_date") or _dt.date.today().isoformat()
                 hour = inputs.get("_hour", _dt.datetime.now().hour)
                 val = inputs.get("value")

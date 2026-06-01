@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import datetime as real_dt
 import uuid
+import zoneinfo
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,6 +25,8 @@ import pytest
 
 from obs.logic.manager import LogicManager
 from obs.logic.models import FlowData
+
+_ZURICH = zoneinfo.ZoneInfo("Europe/Zurich")
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +109,9 @@ def _fixed_now(dt: real_dt.datetime):
     class _FixedDt(real_dt.datetime):
         @classmethod
         def now(cls, tz=None):  # type: ignore[override]
-            return dt if tz is None else dt.astimezone(tz)
+            # Always return dt directly; tests pass timezone-aware datetimes so
+            # _hc_now.hour and _hc_now.date() are already correct in app timezone.
+            return dt
 
     with patch.object(real_dt, "datetime", _FixedDt):
         yield
@@ -134,7 +139,7 @@ class TestHeatingCircuitHistoryPrefill:
         plugin = _mock_plugin(6.5)
 
         with (
-            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0)),
+            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0, tzinfo=_ZURICH)),
             patch("obs.history.factory.get_history_plugin", return_value=plugin),
             patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
         ):
@@ -151,7 +156,7 @@ class TestHeatingCircuitHistoryPrefill:
         today = "2025-01-01"
 
         with (
-            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0)),
+            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0, tzinfo=_ZURICH)),
             patch("obs.history.factory.get_history_plugin", return_value=plugin),
             patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
         ):
@@ -187,7 +192,7 @@ class TestHeatingCircuitHistoryPrefill:
         plugin = _mock_plugin(6.5)
 
         with (
-            _fixed_now(real_dt.datetime(2025, 1, 1, 5, 0, 0)),
+            _fixed_now(real_dt.datetime(2025, 1, 1, 5, 0, 0, tzinfo=_ZURICH)),
             patch("obs.history.factory.get_history_plugin", return_value=plugin),
             patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
         ):
@@ -204,7 +209,7 @@ class TestHeatingCircuitHistoryPrefill:
         plugin = _mock_plugin(None)  # empty result
 
         with (
-            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0)),
+            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0, tzinfo=_ZURICH)),
             patch("obs.history.factory.get_history_plugin", return_value=plugin),
             patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
         ):
@@ -221,7 +226,7 @@ class TestHeatingCircuitHistoryPrefill:
         plugin.query = AsyncMock(side_effect=RuntimeError("history DB down"))
 
         with (
-            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0)),
+            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0, tzinfo=_ZURICH)),
             patch("obs.history.factory.get_history_plugin", return_value=plugin),
             patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
         ):
@@ -236,7 +241,7 @@ class TestHeatingCircuitHistoryPrefill:
         manager = _make_manager()
 
         with (
-            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0)),
+            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0, tzinfo=_ZURICH)),
             patch("obs.history.factory.get_history_plugin", side_effect=RuntimeError("no plugin")),
             patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
         ):
@@ -263,7 +268,7 @@ class TestHeatingCircuitHistoryPrefill:
         plugin = _mock_plugin(6.5)
 
         with (
-            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0)),
+            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0, tzinfo=_ZURICH)),
             patch("obs.history.factory.get_history_plugin", return_value=plugin),
             patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
         ):
@@ -279,7 +284,7 @@ class TestHeatingCircuitHistoryPrefill:
         plugin = _mock_plugin(8.0)
 
         with (
-            _fixed_now(real_dt.datetime(2025, 1, 1, 22, 30, 0)),
+            _fixed_now(real_dt.datetime(2025, 1, 1, 22, 30, 0, tzinfo=_ZURICH)),
             patch("obs.history.factory.get_history_plugin", return_value=plugin),
             patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
         ):
@@ -292,3 +297,46 @@ class TestHeatingCircuitHistoryPrefill:
         assert out["hc"]["daily_avg"] == pytest.approx(8.0)
         # 8.0 < threshold (14) → heating ON
         assert out["hc"]["heating_mode"] == 1
+
+    def test_value_formula_applied_to_history_slot(self):
+        """value_formula on the datapoint_read node is applied to the history value."""
+        dp_id = uuid.uuid4()
+        flow = FlowData.model_validate(
+            {
+                "nodes": [
+                    {
+                        "id": "dp",
+                        "type": "datapoint_read",
+                        "position": {"x": 0, "y": 0},
+                        "data": {"datapoint_id": str(dp_id), "value_formula": "x * 2"},
+                    },
+                    {
+                        "id": "hc",
+                        "type": "heating_circuit",
+                        "position": {"x": 200, "y": 0},
+                        "data": {"threshold_temp": 14.0, "hysteresis": 2.0},
+                    },
+                ],
+                "edges": [
+                    {
+                        "id": "e1",
+                        "source": "dp",
+                        "target": "hc",
+                        "sourceHandle": "value",
+                        "targetHandle": "value",
+                    }
+                ],
+            }
+        )
+        manager = _make_manager()
+        plugin = _mock_plugin(5.0)  # raw history value
+
+        with (
+            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0, tzinfo=_ZURICH)),
+            patch("obs.history.factory.get_history_plugin", return_value=plugin),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            out = _run(manager, flow)
+
+        # history value 5.0 transformed by formula x*2 → 10.0
+        assert out["hc"]["t1"] == pytest.approx(10.0)

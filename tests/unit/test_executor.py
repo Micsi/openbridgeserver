@@ -1381,6 +1381,26 @@ class TestHeatingCircuit:
         # Warm day: daily_avg well above threshold+hysteresis → OFF
         assert out["heating_mode"] == 0
 
+    # ── Legacy config migration ───────────────────────────────────────────────
+
+    def test_legacy_temp_winter_temp_summer_honoured(self):
+        """Existing graphs with temp_winter/temp_summer still work after config rename."""
+        legacy_cfg = {"temp_winter": 12.0, "temp_summer": 18.0}
+        state = {}
+        # Cold day: daily_avg = 4.75 < temp_winter (12) → ON
+        out, _ = self._run_full_day(5, 6, 4, config=legacy_cfg, state=state, date=self._d(0))
+        assert out["heating_mode"] == 1
+        # Warm day: daily_avg = 22.5 >= temp_winter + (temp_summer - temp_winter) = 18 → OFF
+        out2, _ = self._run_full_day(22, 24, 22, config=legacy_cfg, state=state, date=self._d(1))
+        assert out2["heating_mode"] == 0
+
+    def test_legacy_fields_ignored_when_new_fields_present(self):
+        """When new config keys are present, legacy fields are ignored."""
+        mixed_cfg = {"threshold_temp": 14.0, "hysteresis": 2.0, "temp_winter": 5.0, "temp_summer": 6.0}
+        out, _ = self._run_full_day(10, 12, 8, config=mixed_cfg)
+        # daily_avg = 9.5 < threshold=14 → ON (uses new key, not legacy temp_winter=5)
+        assert out["heating_mode"] == 1
+
 
 # ===========================================================================
 # min_max_tracker

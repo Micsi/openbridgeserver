@@ -875,22 +875,26 @@ class LogicManager:
         # for the last value at or before that hour and inject it as _history_{slot}.
         # This covers restarts where the slot would otherwise stay empty all day.
         import datetime as _hc_dt  # noqa: PLC0415
+        import zoneinfo as _hc_zi  # noqa: PLC0415
 
-        _hc_now = _hc_dt.datetime.now()
+        _hc_tz = _hc_zi.ZoneInfo(self._app_config.get("timezone", "Europe/Zurich"))
+        _hc_now = _hc_dt.datetime.now(tz=_hc_tz)
         _hc_today = _hc_now.date().isoformat()
         _HC_SLOTS = (("t1", 7), ("t2", 14), ("t3", 21))
 
         for node in flow.nodes:
             if node.type != "heating_circuit":
                 continue
-            # Find the datapoint_id by walking graph edges to the upstream datapoint_read node
+            # Find the datapoint_id and datapoint_read node via graph edges
             _hc_dp_id_str: str | None = None
+            _hc_dp_read_node = None
             for edge in flow.edges:
                 if edge.target != node.id:
                     continue
                 _src = next((n for n in flow.nodes if n.id == edge.source), None)
                 if _src and _src.type == "datapoint_read":
                     _hc_dp_id_str = _src.data.get("datapoint_id")
+                    _hc_dp_read_node = _src
                     break
             if not _hc_dp_id_str:
                 continue
@@ -912,13 +916,32 @@ class LogicManager:
                     _to_dt = _slot_dt.astimezone(UTC)
                     _rows = await _hc_plugin.query(_hc_dp_id, _from_dt, _to_dt, limit=1)
                     if _rows:
-                        _hc_node_aug[f"_history_{_hc_slot}"] = float(_rows[0]["v"])
+                        _hist_val = float(_rows[0]["v"])
+                        # Apply the same value_formula and value_map transforms as live execution
+                        if _hc_dp_read_node:
+                            _hc_formula = (_hc_dp_read_node.data.get("value_formula") or "").strip()
+                            if _hc_formula:
+                                try:
+                                    from obs.logic.executor import GraphExecutor as _GE  # noqa: PLC0415
+
+                                    _hist_val = float(_GE._safe_eval(_hc_formula, {"x": _hist_val}))
+                                except Exception:
+                                    pass
+                            _hc_vmap = _hc_dp_read_node.data.get("value_map")
+                            if _hc_vmap:
+                                try:
+                                    from obs.core.transformation import apply_value_map as _avm  # noqa: PLC0415
+
+                                    _hist_val = float(_avm(_hist_val, _hc_vmap))
+                                except Exception:
+                                    pass
+                        _hc_node_aug[f"_history_{_hc_slot}"] = _hist_val
                         logger.debug(
                             "Graph %s: heating_circuit %s: %s filled from history: %.1f",
                             graph_id[:8],
                             node.id[:8],
                             _hc_slot,
-                            float(_rows[0]["v"]),
+                            _hist_val,
                         )
             except Exception as _hc_exc:
                 logger.debug("Graph %s: heating_circuit history pre-fill failed: %s", graph_id[:8], _hc_exc)
