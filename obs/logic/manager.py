@@ -900,6 +900,10 @@ class LogicManager:
                 continue
             _hc_node_state = hyst.setdefault(node.id, {})
             _hc_node_aug = aug_overrides.setdefault(node.id, {})
+            # Always inject app-timezone date so executor uses the same date as the manager;
+            # without this, system clock vs. app timezone differences around midnight can
+            # cause slots to be tagged with the wrong date and re-filled on every run.
+            _hc_node_aug["_date"] = _hc_today
             try:
                 from obs.history.factory import get_history_plugin as _get_hp  # noqa: PLC0415
 
@@ -916,15 +920,17 @@ class LogicManager:
                     _to_dt = _slot_dt.astimezone(UTC)
                     _rows = await _hc_plugin.query(_hc_dp_id, _from_dt, _to_dt, limit=1)
                     if _rows:
-                        _hist_val = float(_rows[0]["v"])
-                        # Apply the same value_formula and value_map transforms as live execution
+                        # Keep raw value; float() is deferred until after transforms so that
+                        # value_map can handle non-numeric stored values (e.g. "on" → 22.5).
+                        _hist_val: Any = _rows[0]["v"]
+                        # Apply the same transforms as live datapoint_read execution
                         if _hc_dp_read_node:
                             _hc_formula = (_hc_dp_read_node.data.get("value_formula") or "").strip()
                             if _hc_formula:
                                 try:
                                     from obs.logic.executor import GraphExecutor as _GE  # noqa: PLC0415
 
-                                    _hist_val = float(_GE._safe_eval(_hc_formula, {"x": _hist_val}))
+                                    _hist_val = _GE._safe_eval(_hc_formula, {"x": float(_hist_val)})
                                 except Exception:
                                     pass
                             _hc_vmap = _hc_dp_read_node.data.get("value_map")
@@ -932,17 +938,25 @@ class LogicManager:
                                 try:
                                     from obs.core.transformation import apply_value_map as _avm  # noqa: PLC0415
 
-                                    _hist_val = float(_avm(_hist_val, _hc_vmap))
+                                    _hist_val = _avm(_hist_val, _hc_vmap)
                                 except Exception:
                                     pass
-                        _hc_node_aug[f"_history_{_hc_slot}"] = _hist_val
-                        logger.debug(
-                            "Graph %s: heating_circuit %s: %s filled from history: %.1f",
-                            graph_id[:8],
-                            node.id[:8],
-                            _hc_slot,
-                            _hist_val,
-                        )
+                        try:
+                            _hc_node_aug[f"_history_{_hc_slot}"] = float(_hist_val)
+                            logger.debug(
+                                "Graph %s: heating_circuit %s: %s filled from history: %.1f",
+                                graph_id[:8],
+                                node.id[:8],
+                                _hc_slot,
+                                float(_hc_node_aug[f"_history_{_hc_slot}"]),
+                            )
+                        except (TypeError, ValueError):
+                            logger.debug(
+                                "Graph %s: heating_circuit %s: %s history value not numeric after transforms, skipping",
+                                graph_id[:8],
+                                node.id[:8],
+                                _hc_slot,
+                            )
             except Exception as _hc_exc:
                 logger.debug("Graph %s: heating_circuit history pre-fill failed: %s", graph_id[:8], _hc_exc)
 

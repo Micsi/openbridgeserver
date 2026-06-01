@@ -340,3 +340,76 @@ class TestHeatingCircuitHistoryPrefill:
 
         # history value 5.0 transformed by formula x*2 → 10.0
         assert out["hc"]["t1"] == pytest.approx(10.0)
+
+    def test_value_map_applied_to_non_numeric_history_value(self):
+        """value_map works on non-numeric raw history values (e.g. 'warm' → 22.5).
+
+        Regression: float() was called before value_map, crashing on non-numeric
+        stored values and silently leaving the slot empty.
+        """
+        dp_id = uuid.uuid4()
+        flow = FlowData.model_validate(
+            {
+                "nodes": [
+                    {
+                        "id": "dp",
+                        "type": "datapoint_read",
+                        "position": {"x": 0, "y": 0},
+                        "data": {
+                            "datapoint_id": str(dp_id),
+                            "value_map": {"warm": 22.5, "cold": 5.0},
+                        },
+                    },
+                    {
+                        "id": "hc",
+                        "type": "heating_circuit",
+                        "position": {"x": 200, "y": 0},
+                        "data": {"threshold_temp": 14.0, "hysteresis": 2.0},
+                    },
+                ],
+                "edges": [
+                    {
+                        "id": "e1",
+                        "source": "dp",
+                        "target": "hc",
+                        "sourceHandle": "value",
+                        "targetHandle": "value",
+                    }
+                ],
+            }
+        )
+        manager = _make_manager()
+        plugin = MagicMock()
+        plugin.query = AsyncMock(return_value=[{"v": "warm"}])  # non-numeric raw value
+
+        with (
+            _fixed_now(real_dt.datetime(2025, 1, 1, 10, 0, 0, tzinfo=_ZURICH)),
+            patch("obs.history.factory.get_history_plugin", return_value=plugin),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            out = _run(manager, flow)
+
+        # "warm" → 22.5 via value_map; slot must be filled (not skipped due to float() error)
+        assert out["hc"]["t1"] == pytest.approx(22.5)
+
+    def test_app_timezone_date_injected_for_executor(self):
+        """Manager injects _date in app timezone so executor and manager agree on today.
+
+        Without this, around midnight the executor might tag slots with the system-clock
+        date while the manager checks against the app-timezone date, causing perpetual
+        history re-queries.
+        """
+        dp_id = uuid.uuid4()
+        flow = _flow_dp_to_hc(dp_id)
+        manager = _make_manager()
+        plugin = _mock_plugin(8.0)
+
+        with (
+            _fixed_now(real_dt.datetime(2025, 3, 15, 10, 0, 0, tzinfo=_ZURICH)),
+            patch("obs.history.factory.get_history_plugin", return_value=plugin),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            _run(manager, flow)
+
+        # Slot must be tagged with the app-timezone date "2025-03-15"
+        assert manager._hysteresis["g1"]["hc"]["t1_date"] == "2025-03-15"
