@@ -180,7 +180,7 @@ function onCanvasDrop(e: DragEvent) {
   if (!def) return
   const pos = canvasGridPos(e)
   if (!pos) return
-  insertWidgetAt(type, Math.min(pos.x, COLS.value - def.defaultW), Math.max(0, pos.y))
+  insertWidgetAt(type, Math.max(0, Math.min(pos.x, COLS.value - def.defaultW)), Math.max(0, pos.y))
 }
 
 function onPaletteDragEnd() {
@@ -188,15 +188,15 @@ function onPaletteDragEnd() {
   paletteDropPreview.value = null
 }
 
-/** Liefert die Grid-Koordinaten (x/y in Zellen) einer DragEvent-Position. */
+/** Liefert die Grid-Koordinaten (x/y in Zellen) einer DragEvent-Position.
+ *  getBoundingClientRect() liefert bereits viewport-relative Koordinaten;
+ *  ein zusätzliches scrollLeft/scrollTop würde den Scroll-Offset doppelt zählen.
+ */
 function canvasGridPos(e: DragEvent): { x: number; y: number } | null {
   if (!canvasRef.value) return null
   const rect = canvasRef.value.getBoundingClientRect()
-  const scrollEl = canvasRef.value.parentElement
-  const scrollLeft = scrollEl?.scrollLeft ?? 0
-  const scrollTop  = scrollEl?.scrollTop  ?? 0
-  const rawX = e.clientX - rect.left + scrollLeft
-  const rawY = e.clientY - rect.top  + scrollTop
+  const rawX = e.clientX - rect.left
+  const rawY = e.clientY - rect.top
   return {
     x: Math.max(0, Math.floor(rawX / CELL_W.value)),
     y: Math.max(0, Math.floor(rawY / CELL_H.value)),
@@ -804,12 +804,19 @@ const showSettings = ref(false)
           <div
             v-if="paletteDropPreview && paletteDragType"
             class="absolute pointer-events-none rounded-xl border-2 border-dashed border-blue-400 bg-blue-400/10 z-50 transition-none"
-            :style="{
-              left:   `${paletteDropPreview.x * CELL_W}px`,
-              top:    `${paletteDropPreview.y * CELL_H}px`,
-              width:  `${(WidgetRegistry.get(paletteDragType)?.defaultW ?? 2) * CELL_W}px`,
-              height: `${(WidgetRegistry.get(paletteDragType)?.defaultH ?? 2) * CELL_H}px`,
-            }"
+            :style="(() => {
+              const def = WidgetRegistry.get(paletteDragType)
+              const dw  = def?.defaultW ?? 2
+              const dh  = def?.defaultH ?? 2
+              const cx  = Math.max(0, Math.min(paletteDropPreview.x, COLS - dw))
+              const cy  = Math.max(0, paletteDropPreview.y)
+              return {
+                left:   `${cx * CELL_W}px`,
+                top:    `${cy * CELL_H}px`,
+                width:  `${dw * CELL_W}px`,
+                height: `${dh * CELL_H}px`,
+              }
+            })()"
           />
           <!-- Widgets -->
           <div
