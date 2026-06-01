@@ -1079,7 +1079,7 @@
         "mapPresetOnOffBool": "on/off → true/false",
         "mapPresetNumOnOff": "0/1 → off/on",
         "mapPresetOnOffNum": "off/on → 0/1",
-        "valuemapExample": "{\"0\": \"Aus\", \"1\": \"Init\", \"2\": \"Aktiv\", \"3\": \"Fehler\"}"
+        "valuemapPlaceholder": "0: Aus, 1: An"
       },
       "filter": {
         "timeSection": "Zeitlicher Filter",

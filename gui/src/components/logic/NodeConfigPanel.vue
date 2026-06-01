@@ -88,7 +88,7 @@
                 @input="onValueMapCustomInput"
                 @change="onValueMapCustomChange"
                 class="input text-xs font-mono h-24 resize-y"
-                :placeholder="$t('logic.nodeConfig.transform.valuemapExample')"
+                :placeholder="$t('logic.nodeConfig.transform.valuemapPlaceholder')"
                 data-testid="value-map-custom"
               />
               <p v-if="valueMapCustomError" class="text-xs text-red-400 mt-0.5">{{ valueMapCustomError }}</p>
