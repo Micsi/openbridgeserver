@@ -51,6 +51,7 @@ import type { PageConfig, WidgetInstance } from '@/types'
 
 import '@/widgets/ValueDisplay/index'
 import '@/widgets/Toggle/index'
+import '@/widgets/ButtonGroup/index'
 import '@/widgets/Slider/index'
 import '@/widgets/Chart/index'
 import '@/widgets/Link/index'

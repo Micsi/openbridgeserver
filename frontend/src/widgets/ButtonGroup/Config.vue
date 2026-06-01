@@ -1,0 +1,252 @@
+<script setup lang="ts">
+import { reactive, watch } from 'vue'
+import IconPicker from '@/components/IconPicker.vue'
+
+interface ButtonConfig {
+  id: string
+  label: string
+  icon: string
+  color: string
+  value: string
+  resetEnabled: boolean
+  resetValue: string
+  resetDelayMs: number
+}
+
+interface Cfg {
+  label: string
+  columns: number
+  showLabel: boolean
+  buttons: ButtonConfig[]
+}
+
+const MIN_BUTTONS = 1
+const MAX_BUTTONS = 12
+
+const props = defineProps<{ modelValue: Record<string, unknown> }>()
+const emit = defineEmits<{ (e: 'update:modelValue', val: Record<string, unknown>): void }>()
+
+function newId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `button-${Date.now()}-${Math.round(Math.random() * 1000)}`
+}
+
+function parseBoolean(raw: unknown, fallback: boolean): boolean {
+  if (typeof raw === 'boolean') return raw
+  if (typeof raw === 'string') {
+    const value = raw.trim().toLowerCase()
+    if (value === 'true') return true
+    if (value === 'false') return false
+  }
+  return fallback
+}
+
+function parseColumns(raw: unknown): number {
+  const columns = Number(raw)
+  return Number.isFinite(columns) ? Math.min(4, Math.max(1, Math.round(columns))) : 2
+}
+
+function parseDelay(raw: unknown): number {
+  const delay = Number(raw)
+  return Number.isFinite(delay) ? Math.max(0, Math.round(delay)) : 300
+}
+
+function parseButtons(raw: unknown): ButtonConfig[] {
+  const buttons = raw as Partial<ButtonConfig>[] | undefined
+  if (!Array.isArray(buttons) || buttons.length < MIN_BUTTONS) {
+    return [createButton(1)]
+  }
+  return buttons.slice(0, MAX_BUTTONS).map((button, index) => ({
+    id: button.id || newId(),
+    label: button.label ?? `Taste ${index + 1}`,
+    icon: button.icon ?? '',
+    color: button.color ?? '#3b82f6',
+    value: String(button.value ?? 'true'),
+    resetEnabled: parseBoolean(button.resetEnabled, false),
+    resetValue: String(button.resetValue ?? 'false'),
+    resetDelayMs: parseDelay(button.resetDelayMs),
+  }))
+}
+
+function createButton(index: number): ButtonConfig {
+  return {
+    id: newId(),
+    label: `Taste ${index}`,
+    icon: '',
+    color: '#3b82f6',
+    value: 'true',
+    resetEnabled: false,
+    resetValue: 'false',
+    resetDelayMs: 300,
+  }
+}
+
+const cfg = reactive<Cfg>({
+  label: (props.modelValue.label as string) ?? '',
+  columns: parseColumns(props.modelValue.columns),
+  showLabel: props.modelValue.showLabel !== false,
+  buttons: parseButtons(props.modelValue.buttons),
+})
+
+watch(cfg, () => emit('update:modelValue', JSON.parse(JSON.stringify(cfg)) as Record<string, unknown>), { deep: true })
+
+function addButton() {
+  if (cfg.buttons.length >= MAX_BUTTONS) return
+  cfg.buttons.push(createButton(cfg.buttons.length + 1))
+}
+
+function removeButton(index: number) {
+  if (cfg.buttons.length <= MIN_BUTTONS) return
+  cfg.buttons.splice(index, 1)
+}
+
+function moveUp(index: number) {
+  if (index === 0) return
+  ;[cfg.buttons[index - 1], cfg.buttons[index]] = [cfg.buttons[index], cfg.buttons[index - 1]]
+}
+
+function moveDown(index: number) {
+  if (index === cfg.buttons.length - 1) return
+  ;[cfg.buttons[index + 1], cfg.buttons[index]] = [cfg.buttons[index], cfg.buttons[index + 1]]
+}
+</script>
+
+<template>
+  <div class="space-y-4 text-sm">
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Beschriftung</label>
+      <input
+        v-model="cfg.label"
+        type="text"
+        placeholder="z.B. Szenen"
+        class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+      />
+    </div>
+
+    <div class="grid grid-cols-2 gap-2">
+      <label class="block">
+        <span class="block text-xs text-gray-400 mb-1">Spalten</span>
+        <input
+          v-model.number="cfg.columns"
+          type="number"
+          min="1"
+          max="4"
+          class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+        />
+      </label>
+      <label class="flex items-end gap-2 text-xs text-gray-400 pb-2">
+        <input v-model="cfg.showLabel" type="checkbox" />
+        Titel anzeigen
+      </label>
+    </div>
+
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+          Tasten ({{ cfg.buttons.length }}/{{ MAX_BUTTONS }})
+        </p>
+        <button
+          type="button"
+          :disabled="cfg.buttons.length >= MAX_BUTTONS"
+          class="text-xs px-2 py-1 rounded border border-dashed border-gray-600 text-gray-400 hover:border-blue-500 hover:text-blue-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          @click="addButton"
+        >+ Taste</button>
+      </div>
+
+      <p class="text-xs text-gray-600 mb-2">
+        Beim Drücken wird der konfigurierte Wert auf das verknüpfte Objekt gesendet.
+      </p>
+
+      <div class="space-y-2">
+        <div
+          v-for="(button, index) in cfg.buttons"
+          :key="button.id"
+          class="border border-gray-700 rounded p-2 space-y-2"
+        >
+          <div class="flex items-center gap-1">
+            <span class="text-xs font-semibold text-gray-500 w-4 shrink-0">{{ index + 1 }}</span>
+            <input
+              v-model="button.label"
+              type="text"
+              placeholder="Beschriftung"
+              class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+            />
+            <button
+              type="button"
+              :disabled="index === 0"
+              class="w-5 h-5 flex items-center justify-center rounded text-gray-500 hover:text-gray-300 disabled:opacity-20 text-xs"
+              title="Nach oben"
+              @click="moveUp(index)"
+            >▲</button>
+            <button
+              type="button"
+              :disabled="index === cfg.buttons.length - 1"
+              class="w-5 h-5 flex items-center justify-center rounded text-gray-500 hover:text-gray-300 disabled:opacity-20 text-xs"
+              title="Nach unten"
+              @click="moveDown(index)"
+            >▼</button>
+            <button
+              type="button"
+              :disabled="cfg.buttons.length <= MIN_BUTTONS"
+              class="w-5 h-5 flex items-center justify-center rounded text-gray-500 hover:text-red-400 disabled:opacity-20 text-xs"
+              title="Entfernen"
+              @click="removeButton(index)"
+            >✕</button>
+          </div>
+
+          <div class="flex gap-2 items-center">
+            <span class="text-xs text-gray-500 w-10 shrink-0">Icon</span>
+            <IconPicker v-model="button.icon" :dark="true" />
+            <input
+              v-model="button.color"
+              type="color"
+              class="w-7 h-7 rounded cursor-pointer border border-gray-700 bg-transparent p-0.5 shrink-0"
+              title="Farbe"
+            />
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block">
+              <span class="block text-xs text-gray-500 mb-1">Sendewert</span>
+              <input
+                v-model="button.value"
+                type="text"
+                placeholder="true, false, 1 ..."
+                class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+              />
+            </label>
+            <label class="flex items-end gap-2 text-xs text-gray-400 pb-1">
+              <input v-model="button.resetEnabled" type="checkbox" />
+              Rückfall
+            </label>
+          </div>
+
+          <div v-if="button.resetEnabled" class="grid grid-cols-2 gap-2">
+            <label class="block">
+              <span class="block text-xs text-gray-500 mb-1">Rückfallwert</span>
+              <input
+                v-model="button.resetValue"
+                type="text"
+                placeholder="false"
+                class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+              />
+            </label>
+            <label class="block">
+              <span class="block text-xs text-gray-500 mb-1">Delay (ms)</span>
+              <input
+                v-model.number="button.resetDelayMs"
+                type="number"
+                min="0"
+                step="50"
+                class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
