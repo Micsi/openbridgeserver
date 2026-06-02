@@ -234,17 +234,17 @@ def _dpt3_encode(v: Any) -> bytes:
 # --- DPT 10.x — Time of Day (3 bytes) ----------------------------------------
 # Byte0: DoW(7..5)|Hour(4..0)  Byte1: Minutes(5..0)  Byte2: Seconds(5..0)
 # DoW: 1=Mon…7=Sun, 0=any day
-# Rückgabe als ISO-String "HH:MM:SS" (JSON-serialisierbar)
-def _dpt10_decode(b: bytes) -> str:
+# Return datetime.time to match the OBS TIME datapoint type.
+def _dpt10_decode(b: bytes):
     import datetime
 
     try:
         hour = b[0] & 0x1F
         minute = b[1] & 0x3F
         second = b[2] & 0x3F
-        return datetime.time(hour, minute, second).isoformat()
+        return datetime.time(hour, minute, second)
     except Exception:
-        return "00:00:00"
+        return datetime.time(0, 0, 0)
 
 
 def _dpt10_encode(v: Any) -> bytes:

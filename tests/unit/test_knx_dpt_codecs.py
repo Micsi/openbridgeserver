@@ -358,14 +358,14 @@ class TestDPT10Codecs:
     def setup_method(self):
         self.dpt = DPTRegistry.get("DPT10.001")
 
-    def test_decode_returns_iso_string(self):
+    def test_decode_returns_time_object(self):
         result = self.dpt.decoder(bytes([10, 30, 0]))
-        assert result == "10:30:00"
+        assert result == datetime.time(10, 30, 0)
 
     def test_decode_invalid_hour_returns_fallback(self):
         # hour=31 is invalid for datetime.time → fallback
         result = self.dpt.decoder(bytes([0x1F, 0x00, 0x00]))
-        assert result == "00:00:00"
+        assert result == datetime.time(0, 0, 0)
 
     def test_encode_from_time_object(self):
         t = datetime.time(14, 45, 30)
@@ -396,7 +396,7 @@ class TestDPT10Codecs:
         original = "09:15:45"
         raw = self.dpt.encoder(original)
         result = self.dpt.decoder(raw)
-        assert result == original
+        assert result == datetime.time(9, 15, 45)
 
 
 # ---------------------------------------------------------------------------

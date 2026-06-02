@@ -19,6 +19,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from obs.core.json import json_dumps
 from obs.models.datapoint import DataPoint, DataPointCreate, DataPointUpdate
 
 logger = logging.getLogger(__name__)
@@ -263,7 +264,7 @@ class DataPointRegistry:
                        ts=excluded.ts""",
                 (
                     str(dp.id),
-                    json.dumps(event.value),
+                    json_dumps(event.value),
                     dp.unit,
                     event.ts.isoformat(),
                 ),
