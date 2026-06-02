@@ -13,7 +13,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from obs.logic.manager import LogicManager, _is_private_host
+import obs.logic.manager as manager_module
+from obs.logic.manager import LogicManager, _is_private_host, _read_secret_file
 from obs.logic.models import FlowData
 from tests.unit.conftest import edge, make_executor, node
 
@@ -72,6 +73,45 @@ class TestApiClientSsrfHostGuard:
     @patch("obs.logic.manager.socket.getaddrinfo", return_value=[(None, None, None, None, ("127.0.0.1", 0))])
     def test_loopback_dns_answer_is_allowed(self, _mock_getaddrinfo):
         assert _is_private_host("example.com") is False
+
+
+class TestApiClientSecretFileReader:
+    """Security tests for api_client secret-file reads."""
+
+    def test_reads_small_regular_file_from_secret_root(self, tmp_path, monkeypatch):
+        secret_root = tmp_path / "secrets"
+        secret_root.mkdir()
+        secret_file = secret_root / "api-token"
+        secret_file.write_text(" token-value\n", encoding="utf-8")
+        monkeypatch.setattr(manager_module, "_SECRET_FILE_ROOT", secret_root.resolve())
+
+        assert _read_secret_file(str(secret_file)) == "token-value"
+
+    def test_refuses_file_outside_secret_root(self, tmp_path, monkeypatch):
+        secret_root = tmp_path / "secrets"
+        secret_root.mkdir()
+        outside_file = tmp_path / "not-secrets" / "api-token"
+        outside_file.parent.mkdir()
+        outside_file.write_text("leaked-token", encoding="utf-8")
+        monkeypatch.setattr(manager_module, "_SECRET_FILE_ROOT", secret_root.resolve())
+
+        assert _read_secret_file(str(outside_file)) == ""
+
+    def test_refuses_non_regular_file_without_blocking(self, tmp_path, monkeypatch):
+        secret_root = tmp_path / "secrets"
+        secret_root.mkdir()
+        monkeypatch.setattr(manager_module, "_SECRET_FILE_ROOT", secret_root.resolve())
+
+        assert _read_secret_file(str(secret_root)) == ""
+
+    def test_refuses_oversized_secret_file(self, tmp_path, monkeypatch):
+        secret_root = tmp_path / "secrets"
+        secret_root.mkdir()
+        secret_file = secret_root / "too-large"
+        secret_file.write_bytes(b"x" * (manager_module._SECRET_FILE_MAX_BYTES + 1))
+        monkeypatch.setattr(manager_module, "_SECRET_FILE_ROOT", secret_root.resolve())
+
+        assert _read_secret_file(str(secret_file)) == ""
 
 
 # ===========================================================================

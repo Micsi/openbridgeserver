@@ -15,9 +15,12 @@ import http.cookies
 import ipaddress
 import json
 import logging
+import os
 import socket
+import stat
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, urlunparse
 
@@ -79,15 +82,41 @@ def _msg_to_str(v: object) -> str:
     return str(v)
 
 
+_SECRET_FILE_ROOT = Path(os.environ.get("OBS_SECRET_FILE_DIR", "/run/secrets")).resolve()
+_SECRET_FILE_MAX_BYTES = 8192
+
+
 def _read_secret_file(path: str) -> str:
-    """Read a small root-managed secret file without logging its content."""
+    """Read a small regular secret file from the configured secrets directory."""
     clean_path = (path or "").strip()
     if not clean_path:
         return ""
+
     try:
-        with open(clean_path, encoding="utf-8") as handle:
-            return handle.read().strip()
-    except OSError as exc:
+        secret_path = Path(clean_path).resolve(strict=True)
+        if not secret_path.is_relative_to(_SECRET_FILE_ROOT):
+            logger.warning("Refusing api_client secret file outside %s: %s", _SECRET_FILE_ROOT, clean_path)
+            return ""
+
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(secret_path, flags)
+        try:
+            file_stat = os.fstat(fd)
+            if not stat.S_ISREG(file_stat.st_mode):
+                logger.warning("Refusing api_client secret file that is not a regular file: %s", clean_path)
+                return ""
+            if file_stat.st_size > _SECRET_FILE_MAX_BYTES:
+                logger.warning("Refusing api_client secret file larger than %d bytes: %s", _SECRET_FILE_MAX_BYTES, clean_path)
+                return ""
+
+            content = os.read(fd, _SECRET_FILE_MAX_BYTES + 1)
+            if len(content) > _SECRET_FILE_MAX_BYTES:
+                logger.warning("Refusing api_client secret file larger than %d bytes: %s", _SECRET_FILE_MAX_BYTES, clean_path)
+                return ""
+            return content.decode("utf-8").strip()
+        finally:
+            os.close(fd)
+    except (OSError, UnicodeDecodeError) as exc:
         logger.warning("Could not read api_client secret file %s: %s", clean_path, exc)
         return ""
 
