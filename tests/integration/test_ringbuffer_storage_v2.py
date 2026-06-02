@@ -84,6 +84,62 @@ async def test_file_storage_recovers_malformed_database_during_record(tmp_path: 
         await rb.stop()
 
 
+async def test_file_storage_recovers_malformed_database_during_query(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "ringbuffer-malformed-query.db"
+    rb = RingBuffer(storage="file", max_entries=100, disk_path=str(db_path))
+    await rb.start()
+    try:
+        await _record_value(rb, 1, "2026-01-01T00:00:00.000Z")
+
+        calls = {"count": 0}
+        original_fetchall = rb._fetchall  # noqa: SLF001
+
+        async def _raise_malformed_once(*args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise aiosqlite.DatabaseError("file is not a database")
+            return await original_fetchall(*args, **kwargs)
+
+        monkeypatch.setattr(rb, "_fetchall", _raise_malformed_once)
+
+        entries = await rb.query(q="dp-storage-v2", limit=10)
+
+        assert calls["count"] == 2
+        assert entries == []
+        assert list(tmp_path.glob("ringbuffer-malformed-query.db.corrupt-*"))
+    finally:
+        await rb.stop()
+
+
+async def test_file_storage_recovers_malformed_database_during_stats(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "ringbuffer-malformed-stats.db"
+    rb = RingBuffer(storage="file", max_entries=100, disk_path=str(db_path))
+    await rb.start()
+    try:
+        await _record_value(rb, 1, "2026-01-01T00:00:00.000Z")
+
+        original_execute = rb._conn.execute  # noqa: SLF001
+        calls = {"count": 0}
+
+        def _raise_malformed_once(sql, *args, **kwargs):
+            if str(sql).startswith("SELECT COUNT(*) AS c"):
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise aiosqlite.DatabaseError("SQLite integrity_check failed: bad page")
+            return original_execute(sql, *args, **kwargs)
+
+        monkeypatch.setattr(rb._conn, "execute", _raise_malformed_once)  # noqa: SLF001
+
+        stats = await rb.stats()
+
+        assert calls["count"] == 1
+        assert stats["total"] == 0
+        assert stats["file_size_bytes"] >= 0
+        assert list(tmp_path.glob("ringbuffer-malformed-stats.db.corrupt-*"))
+    finally:
+        await rb.stop()
+
+
 async def test_reconfigure_model_switch_restarts_empty_without_migration(tmp_path: Path):
     db_path = tmp_path / "ringbuffer-model-switch.db"
     rb = RingBuffer(storage="disk", max_entries=100, disk_path=str(db_path))
