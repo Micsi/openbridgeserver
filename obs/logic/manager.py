@@ -79,19 +79,6 @@ def _msg_to_str(v: object) -> str:
     return str(v)
 
 
-def _read_secret_file(path: str) -> str:
-    """Read a small root-managed secret file without logging its content."""
-    clean_path = (path or "").strip()
-    if not clean_path:
-        return ""
-    try:
-        with open(clean_path, encoding="utf-8") as handle:
-            return handle.read().strip()
-    except OSError as exc:
-        logger.warning("Could not read api_client secret file %s: %s", clean_path, exc)
-        return ""
-
-
 _THROTTLE_UNITS: dict[str, float] = {
     "ms": 1.0,
     "s": 1000.0,
@@ -928,14 +915,6 @@ class LogicManager:
                     extra_headers = _json.loads(hdr_str)
                 except Exception:
                     pass
-            hdr_secret_file = (node.data.get("headers_secret_file") or "").strip()
-            if hdr_secret_file:
-                try:
-                    secret_headers = _json.loads(_read_secret_file(hdr_secret_file))
-                    if isinstance(secret_headers, dict):
-                        extra_headers = {**extra_headers, **secret_headers}
-                except Exception:
-                    logger.warning("api_client headers_secret_file did not contain a JSON object")
             body = out.get("_body")
             # ── Authentication ──────────────────────────────────────────
             auth_type = (node.data.get("auth_type") or "none").lower()
@@ -947,9 +926,6 @@ class LogicManager:
                     auth = httpx.BasicAuth(username, password) if auth_type == "basic" else httpx.DigestAuth(username, password)
             elif auth_type == "bearer":
                 token = (node.data.get("auth_token") or "").strip()
-                token_file = (node.data.get("auth_token_file") or "").strip()
-                if not token and token_file:
-                    token = _read_secret_file(token_file)
                 if token:
                     extra_headers = {
                         **extra_headers,

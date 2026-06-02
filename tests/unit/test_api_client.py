@@ -432,6 +432,42 @@ class TestApiClientAuthentication:
         assert "Authorization" not in captured_headers[0]
 
     @patch("obs.logic.manager.httpx.AsyncClient")
+    def test_file_based_secret_fields_are_ignored(self, mock_client_cls):
+        """User-controlled graph data must not cause local secret files to be read."""
+        captured_headers: list[dict] = []
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        async def _capture(method, url, **kwargs):
+            captured_headers.append(kwargs.get("headers", {}))
+            return _mock_response(200, {})
+
+        mock_client.request = _capture
+
+        manager = _make_manager()
+        data = {
+            "url": "http://example.com/",
+            "method": "GET",
+            "auth_type": "bearer",
+            "auth_token": "",
+            "auth_token_file": "/tmp/attacker-token",
+            "headers_secret_file": "/tmp/attacker-headers",
+        }
+        n = node("ac", "api_client", data)
+        flow = _flow([n])
+        graph_id = "g-file-secrets"
+        manager._graphs[graph_id] = ("t", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            with patch("builtins.open", side_effect=AssertionError("api_client must not read local files")):
+                asyncio.run(manager._execute_graph(graph_id, "t", flow, {"ac": {"trigger": True}}))
+
+        assert len(captured_headers) == 1
+        assert "Authorization" not in captured_headers[0]
+
+    @patch("obs.logic.manager.httpx.AsyncClient")
     def test_none_auth_no_auth_object(self, mock_client_cls):
         mock_client = AsyncMock()
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
