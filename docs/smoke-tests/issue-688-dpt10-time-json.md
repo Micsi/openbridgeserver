@@ -34,6 +34,12 @@ WriteRouter einen falschen Typ:
 ## Umsetzung
 
 - `DPT10.001` dekodiert jetzt auf `datetime.time`.
+- `DPT11.001` dekodiert jetzt auf `datetime.date`, damit live empfangene
+  DATE-Werte und aus der Persistenz wiederhergestellte DATE-Werte denselben
+  internen Typ verwenden.
+- Ungueltige oder zu kurze DPT10/DPT11-Telegramme werfen einen Decode-Fehler
+  und werden vom KNX-Adapter als `uncertain` statt als gueltiger Ersatzwert
+  publiziert.
 - Die bestehende Kodierung bleibt abwaertskompatibel und akzeptiert weiterhin
   `datetime.time`, ISO-Strings und Sekundenwerte.
 - Fuer JSON-Grenzen wurde ein zentraler Helper eingefuehrt:
@@ -47,6 +53,9 @@ weiterhin lesbare ISO-Werte erhalten. MQTT unterscheidet dabei den Kontext:
 Ohne Payload-Template bleibt der Rohpayload abwaertskompatibel `10:30:00`;
 innerhalb eines Payload-Templates wird der Wert JSON-kompatibel als
 `"10:30:00"` eingesetzt.
+
+History-Readbacks bleiben eine JSON-/Anzeigegrenze: gespeicherte DATE/TIME-Werte
+werden dort als ISO-Strings zurueckgegeben, nicht als Python-Objekte.
 
 ## Abgrenzung
 

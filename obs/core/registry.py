@@ -107,8 +107,13 @@ class DataPointRegistry:
             if dp.data_type in {"DATE", "TIME", "DATETIME"}:
                 try:
                     value = DataTypeRegistry.get(dp.data_type).mqtt_deserializer(row["value"])
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(
+                        "DataPointRegistry: persisted %s value for %s could not be deserialized: %s",
+                        dp.data_type,
+                        dp.id,
+                        exc,
+                    )
             state.value = value
             state.quality = "good"
             from datetime import datetime

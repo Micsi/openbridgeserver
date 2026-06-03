@@ -346,6 +346,8 @@ class MqttAdapter(AdapterBase):
                 val_str = value if isinstance(value, str) else json_dumps(value)
                 payload = bc.payload_template.replace("###DP###", val_str)
             else:
+                # Keep direct MQTT payloads backward-compatible: strings are emitted raw,
+                # while template contexts use JSON quoting for embedded values.
                 raw_value = jsonable(value)
                 if isinstance(raw_value, str):
                     payload = raw_value
