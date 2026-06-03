@@ -9,7 +9,7 @@ BUILDER_IMAGE="obs-lxc-builder:latest"
 
 # ── Defaults ───────────────────────────────────────────────────────────────────
 VERSION=""
-IMAGE_NAME="obs"
+IMAGE_NAME="openbridgeserver"
 PUSH=false
 REPO=""
 OUTPUT_DIR="${PROJECT_ROOT}/dist"
@@ -27,10 +27,11 @@ Commands:
   lxc       Build LXC .tar.zst template (runs inside Docker, needs --privileged)
   bundle    Build app bundle only (no rootfs, much faster than lxc)
   all       Build docker + lxc
+  clean     Remove dist/ artifacts, rootfs cache, and builder image
 
 Options:
   --version VER    Override version (default: git describe --tags --always --dirty)
-  --image   NAME   Docker image name/prefix (default: obs)
+  --image   NAME   Docker image name/prefix (default: openbridgeserver)
                    For registry push: e.g. ghcr.io/owner/openbridgeserver
   --push           Push Docker image to registry after build
   --repo    REPO   GitHub repo slug for the obs-update script, e.g. owner/openbridgeserver
@@ -45,6 +46,7 @@ Examples:
   tools/build-local.sh --push --image ghcr.io/owner/openbridgeserver docker
   tools/build-local.sh --no-cache lxc
   tools/build-local.sh all
+  tools/build-local.sh clean
 
 Notes:
   - The lxc and bundle commands use a builder Docker image (obs-lxc-builder) that is
@@ -100,6 +102,24 @@ check_privileged() {
     fi
 }
 
+# Locate the image that docker compose just built for the obs service.
+# Docker Compose names images as <project>-<service> (v2) or <project>_<service> (legacy);
+# try both so the result is independent of the Compose version.
+compose_image_tag() {
+    local project_name
+    project_name=$(cd "$PROJECT_ROOT" && docker compose config 2>/dev/null | awk '/^name:/{print $2; exit}')
+    local hyphen="${project_name}-obs:latest"
+    local underscore="${project_name}_obs:latest"
+    if docker image inspect "$hyphen" &>/dev/null; then
+        echo "$hyphen"
+    elif docker image inspect "$underscore" &>/dev/null; then
+        echo "$underscore"
+    else
+        echo "error: could not find compose-built image (tried $hyphen and $underscore)" >&2
+        exit 1
+    fi
+}
+
 # ── Build functions ────────────────────────────────────────────────────────────
 build_docker() {
     local version="$1"
@@ -128,20 +148,18 @@ build_docker() {
     restore_stamps
     trap - EXIT
 
-    # If a custom image name or push was requested, retag the compose-built image
-    if [[ "$IMAGE_NAME" != "obs" ]] || [[ "$PUSH" == "true" ]]; then
-        local githash project_name src_image
-        githash=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "local")
-        project_name=$(cd "$PROJECT_ROOT" && docker compose config 2>/dev/null | awk '/^name:/{print $2; exit}')
-        src_image="${project_name}-obs:latest"
+    # Retag the compose-built image with the proper versioned name
+    local githash src_image
+    githash=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo "local")
+    src_image=$(compose_image_tag)
 
-        docker tag "$src_image" "${IMAGE_NAME}:${version}"
-        docker tag "$src_image" "${IMAGE_NAME}:${githash}"
-        if [[ "$PUSH" == "true" ]]; then
-            docker push "${IMAGE_NAME}:${version}"
-            docker push "${IMAGE_NAME}:${githash}"
-        fi
-        echo "==> Tagged: ${IMAGE_NAME}:${version}, ${IMAGE_NAME}:${githash}"
+    docker tag "$src_image" "${IMAGE_NAME}:${version}"
+    docker tag "$src_image" "${IMAGE_NAME}:${githash}"
+    echo "==> Tagged: ${IMAGE_NAME}:${version}, ${IMAGE_NAME}:${githash}"
+
+    if [[ "$PUSH" == "true" ]]; then
+        docker push "${IMAGE_NAME}:${version}"
+        docker push "${IMAGE_NAME}:${githash}"
     fi
 
     echo "==> Docker image built successfully."
@@ -192,18 +210,53 @@ build_bundle() {
     echo "==> Bundle artifacts written to $OUTPUT_DIR"
 }
 
+build_clean() {
+    echo "==> Cleaning build artifacts..."
+
+    local removed=0
+
+    # dist/ artifacts
+    if [[ -d "$OUTPUT_DIR" ]]; then
+        local files
+        files=$(find "$OUTPUT_DIR" -maxdepth 1 \( -name "*.tar.zst" -o -name "*.tar.gz" -o -name "*.sha512" \) 2>/dev/null)
+        if [[ -n "$files" ]]; then
+            echo "$files" | xargs rm -f
+            echo "    Removed artifacts from $OUTPUT_DIR/"
+            removed=1
+        fi
+    fi
+
+    # Rootfs cache
+    local cache_dir="$HOME/.cache/obs-lxc-builder"
+    if compgen -G "$cache_dir/*.tar.zst" &>/dev/null; then
+        rm -f "$cache_dir"/*.tar.zst
+        echo "    Removed rootfs cache from $cache_dir/"
+        removed=1
+    fi
+
+    # Builder image
+    if docker image inspect "$BUILDER_IMAGE" &>/dev/null 2>&1; then
+        docker image rm "$BUILDER_IMAGE"
+        echo "    Removed builder image $BUILDER_IMAGE"
+        removed=1
+    fi
+
+    [[ "$removed" -eq 0 ]] && echo "    Nothing to clean."
+    echo "==> Done."
+}
+
 # ── Argument parsing ───────────────────────────────────────────────────────────
 COMMAND=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        docker|lxc|bundle|all)  COMMAND="$1"; shift ;;
-        --version)              VERSION="$2"; shift 2 ;;
-        --image)                IMAGE_NAME="$2"; shift 2 ;;
-        --push)                 PUSH=true; shift ;;
-        --repo)                 REPO="$2"; shift 2 ;;
-        --output)               OUTPUT_DIR="$2"; shift 2 ;;
-        --no-cache)             NO_CACHE=true; shift ;;
-        -h|--help)              usage; exit 0 ;;
+        docker|lxc|bundle|all|clean)  COMMAND="$1"; shift ;;
+        --version)                    VERSION="$2"; shift 2 ;;
+        --image)                      IMAGE_NAME="$2"; shift 2 ;;
+        --push)                       PUSH=true; shift ;;
+        --repo)                       REPO="$2"; shift 2 ;;
+        --output)                     OUTPUT_DIR="$2"; shift 2 ;;
+        --no-cache)                   NO_CACHE=true; shift ;;
+        -h|--help)                    usage; exit 0 ;;
         *)
             echo "error: unknown argument: $1" >&2
             usage >&2
@@ -215,6 +268,13 @@ if [[ -z "$COMMAND" ]]; then
     echo "error: no command specified" >&2
     usage >&2
     exit 2
+fi
+
+# clean needs no version/repo resolution
+if [[ "$COMMAND" == "clean" ]]; then
+    require_docker
+    build_clean
+    exit 0
 fi
 
 # ── Resolve defaults ───────────────────────────────────────────────────────────
