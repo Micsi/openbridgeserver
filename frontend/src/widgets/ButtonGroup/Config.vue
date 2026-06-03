@@ -23,6 +23,7 @@ interface Cfg {
 
 const MIN_BUTTONS = 1
 const MAX_BUTTONS = 12
+const DEFAULT_BUTTON_LABEL = 'widgets.buttongroup.defaultButton'
 
 const props = defineProps<{ modelValue: Record<string, unknown> }>()
 const emit = defineEmits<{ (e: 'update:modelValue', val: Record<string, unknown>): void }>()
@@ -60,16 +61,16 @@ function defaultButtonLabel(index: number): string {
 }
 
 function normalizeButtonLabel(raw: unknown, index: number): string {
-  if (typeof raw !== 'string') return defaultButtonLabel(index)
+  if (typeof raw !== 'string') return DEFAULT_BUTTON_LABEL
   const label = raw.trim()
-  if (!label || label === 'widgets.buttongroup.defaultButton') return defaultButtonLabel(index)
+  if (!label || label === DEFAULT_BUTTON_LABEL || label === defaultButtonLabel(index)) return DEFAULT_BUTTON_LABEL
   return raw
 }
 
 function parseButtons(raw: unknown): ButtonConfig[] {
   const buttons = raw as Partial<ButtonConfig>[] | undefined
   if (!Array.isArray(buttons) || buttons.length < MIN_BUTTONS) {
-    return [createButton(1)]
+    return [createButton()]
   }
   return buttons.slice(0, MAX_BUTTONS).map((button, index) => ({
     id: button.id || newId(),
@@ -83,10 +84,10 @@ function parseButtons(raw: unknown): ButtonConfig[] {
   }))
 }
 
-function createButton(index: number): ButtonConfig {
+function createButton(): ButtonConfig {
   return {
     id: newId(),
-    label: t('widgets.buttongroup.defaultButtonWithNumber', { number: index }),
+    label: DEFAULT_BUTTON_LABEL,
     icon: '',
     color: '#3b82f6',
     value: 'true',
@@ -103,15 +104,43 @@ const cfg = reactive<Cfg>({
   buttons: parseButtons(props.modelValue.buttons),
 })
 
+function serializedConfig(): Record<string, unknown> {
+  return {
+    label: cfg.label,
+    columns: parseColumns(cfg.columns),
+    showLabel: cfg.showLabel,
+    buttons: cfg.buttons.map((button, index) => ({
+      ...button,
+      label: normalizeButtonLabel(button.label, index),
+      resetDelayMs: parseDelay(button.resetDelayMs),
+    })),
+  }
+}
+
 watch(
   cfg,
-  () => emit('update:modelValue', JSON.parse(JSON.stringify(cfg)) as Record<string, unknown>),
-  { deep: true, immediate: true },
+  () => emit('update:modelValue', serializedConfig()),
+  { deep: true },
 )
+
+function displayButtonLabel(button: ButtonConfig, index: number): string {
+  return normalizeButtonLabel(button.label, index) === DEFAULT_BUTTON_LABEL
+    ? defaultButtonLabel(index)
+    : button.label
+}
+
+function updateButtonLabel(button: ButtonConfig, index: number, event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  button.label = normalizeButtonLabel(value, index)
+}
+
+function updateColumns(event: Event) {
+  cfg.columns = parseColumns((event.target as HTMLInputElement).value)
+}
 
 function addButton() {
   if (cfg.buttons.length >= MAX_BUTTONS) return
-  cfg.buttons.push(createButton(cfg.buttons.length + 1))
+  cfg.buttons.push(createButton())
 }
 
 function removeButton(index: number) {
@@ -146,11 +175,12 @@ function moveDown(index: number) {
       <label class="block">
         <span class="block text-xs text-gray-400 mb-1">{{ $t('widgets.buttongroup.columns') }}</span>
         <input
-          v-model.number="cfg.columns"
+          :value="cfg.columns"
           type="number"
           min="1"
           max="4"
           class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+          @input="updateColumns"
         />
       </label>
       <label class="flex items-end gap-2 text-xs text-gray-400 pb-2">
@@ -185,10 +215,11 @@ function moveDown(index: number) {
           <div class="flex items-center gap-1">
             <span class="text-xs font-semibold text-gray-500 w-4 shrink-0">{{ index + 1 }}</span>
             <input
-              v-model="button.label"
+              :value="displayButtonLabel(button, index)"
               type="text"
               :placeholder="$t('widgets.common.label')"
               class="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+              @input="updateButtonLabel(button, index, $event)"
             />
             <button
               type="button"

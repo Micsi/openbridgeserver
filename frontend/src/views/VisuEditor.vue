@@ -74,7 +74,7 @@ import '@/widgets/Grundriss/index'
 import '@/widgets/HorizontalBar/index'
 
 // ── Props / Router / Store ────────────────────────────────────────────────────
-const { t } = useI18n()
+const { t, locale, te } = useI18n()
 const props = defineProps<{ id: string }>()
 const router = useRouter()
 const store = useVisuStore()
@@ -101,7 +101,7 @@ const selectedDef = computed(() =>
 )
 
 function widgetLabel(label: string): string {
-  return t(label, label)
+  return te(label) ? t(label) : label
 }
 
 const showPaletteMobile = ref(false)
@@ -145,10 +145,13 @@ function widgetHasError(w: WidgetInstance): boolean {
 }
 
 // ── Palette: alphabetisch sortierte Widgets ───────────────────────────────────
-const { locale } = useI18n()
+function widgetSortLabel(label: string): string {
+  return widgetLabel(label)
+}
+
 const sortedWidgets = computed(() =>
   WidgetRegistry.all().slice().sort((a, b) =>
-    a.label.localeCompare(b.label, locale.value, { sensitivity: 'base' })
+    widgetSortLabel(a.label).localeCompare(widgetSortLabel(b.label), locale.value, { sensitivity: 'base' })
   )
 )
 

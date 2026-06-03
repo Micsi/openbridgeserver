@@ -729,7 +729,8 @@
       "resetDelay": "Delay (ms)",
       "sent": "Sent",
       "error": "Error",
-      "empty": "No buttons configured."
+      "empty": "No buttons configured.",
+      "noDatapoint": "No linked object."
     },
     "uhr": {
       "accentColor": "Accent colour",

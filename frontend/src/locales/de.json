@@ -729,7 +729,8 @@
       "resetDelay": "Delay (ms)",
       "sent": "Gesendet",
       "error": "Fehler",
-      "empty": "Keine Tasten konfiguriert."
+      "empty": "Keine Tasten konfiguriert.",
+      "noDatapoint": "Kein Objekt verknüpft."
     },
     "uhr": {
       "accentColor": "Akzentfarbe",

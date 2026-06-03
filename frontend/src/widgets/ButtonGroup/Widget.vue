@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { datapoints } from '@/api/client'
+import { datapoints, getWriteContext } from '@/api/client'
 import VisuIcon from '@/components/VisuIcon.vue'
 import type { DataPointValue } from '@/types'
 
@@ -56,6 +56,9 @@ const gridStyle = computed(() => ({
 const pendingId = ref<string | null>(null)
 const feedback = ref<Record<string, 'success' | 'error'>>({})
 let feedbackTimer: number | undefined
+let resetTimer: number | undefined
+let resolveResetWait: (() => void) | undefined
+let unmounted = false
 
 function parseBoolean(raw: unknown, fallback: boolean): boolean {
   if (typeof raw === 'boolean') return raw
@@ -93,7 +96,16 @@ function parseValue(raw: string): unknown {
 }
 
 function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
+  return new Promise((resolve) => {
+    resolveResetWait = () => {
+      resolveResetWait = undefined
+      resolve(undefined)
+    }
+    resetTimer = window.setTimeout(() => {
+      resetTimer = undefined
+      resolveResetWait?.()
+    }, ms)
+  })
 }
 
 function setFeedback(id: string, value: 'success' | 'error') {
@@ -107,24 +119,30 @@ function setFeedback(id: string, value: 'success' | 'error') {
 
 async function press(button: ButtonConfig) {
   if (props.editorMode || props.readonly || !props.datapointId || pendingId.value) return
+  const datapointId = props.datapointId
+  const writeContext = { ...getWriteContext() }
   pendingId.value = button.id
   feedback.value = {}
   try {
-    await datapoints.write(props.datapointId, parseValue(button.value))
+    await datapoints.write(datapointId, parseValue(button.value), writeContext)
     if (button.resetEnabled) {
       await wait(button.resetDelayMs)
-      await datapoints.write(props.datapointId, parseValue(button.resetValue))
+      if (unmounted) return
+      await datapoints.write(datapointId, parseValue(button.resetValue), writeContext)
     }
     setFeedback(button.id, 'success')
   } catch {
-    setFeedback(button.id, 'error')
+    if (!unmounted) setFeedback(button.id, 'error')
   } finally {
-    pendingId.value = null
+    if (!unmounted) pendingId.value = null
   }
 }
 
 onUnmounted(() => {
+  unmounted = true
   if (feedbackTimer !== undefined) window.clearTimeout(feedbackTimer)
+  if (resetTimer !== undefined) window.clearTimeout(resetTimer)
+  resolveResetWait?.()
 })
 </script>
 
@@ -148,9 +166,10 @@ onUnmounted(() => {
           feedback[button.id] === 'error'
             ? 'border-red-500/50 text-red-500'
             : 'border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-100',
-          editorMode || readonly || pendingId ? 'opacity-60 cursor-default' : 'cursor-pointer',
+          editorMode || readonly || !datapointId || pendingId ? 'opacity-60 cursor-default' : 'cursor-pointer',
         ]"
-        :disabled="editorMode || readonly || !!pendingId"
+        :disabled="editorMode || readonly || !datapointId || !!pendingId"
+        :title="!datapointId ? $t('widgets.buttongroup.noDatapoint') : undefined"
         :style="{ borderColor: feedback[button.id] ? undefined : `${button.color}66` }"
         @click="press(button)"
       >

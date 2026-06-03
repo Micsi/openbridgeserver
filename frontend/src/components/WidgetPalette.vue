@@ -8,13 +8,13 @@ const emit = defineEmits<{
   (e: 'insert', type: string): void
 }>()
 
-const { t } = useI18n()
+const { t, te, locale } = useI18n()
 
 const GROUP_ORDER = ['Steuerung', 'Anzeige', 'Medien & Sonstiges']
 const DEFAULT_GROUP = 'Sonstiges'
 
 function widgetLabel(label: string): string {
-  return t(label, label)
+  return te(label) ? t(label) : label
 }
 
 const groups = computed(() => {
@@ -23,6 +23,11 @@ const groups = computed(() => {
     const g = w.group ?? DEFAULT_GROUP
     if (!map.has(g)) map.set(g, [])
     map.get(g)!.push(w)
+  }
+  for (const widgets of map.values()) {
+    widgets.sort((a, b) =>
+      widgetLabel(a.label).localeCompare(widgetLabel(b.label), locale.value, { sensitivity: 'base' })
+    )
   }
   return [...map.entries()].sort(([a], [b]) => {
     const ia = GROUP_ORDER.indexOf(a)
