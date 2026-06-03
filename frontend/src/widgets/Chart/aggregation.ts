@@ -7,6 +7,17 @@ export interface TimedWeightedChartPoint extends WeightedChartPoint {
   ts: string
 }
 
+const AGGREGATE_INTERVAL_MS: Record<string, number> = {
+  '1m': 60_000,
+  '5m': 5 * 60_000,
+  '15m': 15 * 60_000,
+  '30m': 30 * 60_000,
+  '1h': 3_600_000,
+  '6h': 6 * 3_600_000,
+  '12h': 12 * 3_600_000,
+  '1d': 24 * 3_600_000,
+}
+
 export function weightedAverage(points: WeightedChartPoint[]): number | null {
   const weighted = points.reduce((acc, p) => {
     const value = Number(p.v)
@@ -38,4 +49,18 @@ export function weightedValuesByTimestamp(points: TimedWeightedChartPoint[], tim
     const bucket = grouped.get(ts)
     return bucket ? weightedAverage(bucket) : null
   })
+}
+
+export function aggregateBucketEndTimestamp(
+  bucketTimestamp: string,
+  interval: string,
+  fromMs: number,
+  toMs: number,
+): number {
+  const bucketStartMs = new Date(bucketTimestamp).getTime()
+  const intervalMs = AGGREGATE_INTERVAL_MS[interval]
+
+  if (!Number.isFinite(bucketStartMs) || !Number.isFinite(intervalMs)) return bucketStartMs
+
+  return Math.min(Math.max(bucketStartMs + intervalMs, fromMs), toMs)
 }

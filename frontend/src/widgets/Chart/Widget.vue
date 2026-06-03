@@ -11,7 +11,7 @@ import {
 import { history } from '@/api/client'
 import { useWebSocket } from '@/composables/useWebSocket'
 import type { DataPointValue } from '@/types'
-import { sortedUniqueTimestamps, weightedAverage, weightedValuesByTimestamp } from './aggregation'
+import { aggregateBucketEndTimestamp, sortedUniqueTimestamps, weightedAverage, weightedValuesByTimestamp } from './aggregation'
 import {
   TIME_RANGE_PRESETS,
   DEFAULT_TIME_RANGE,
@@ -262,7 +262,12 @@ async function loadData() {
     chart.data.datasets = defs.map((s, i) => ({
       yAxisID:         s.axis,
       label:           s.label || (hasMultiple ? t('widgets.chart.seriesFallback', { n: i + 1 }) : ''),
-      data:            results[i].map(d => ({ x: new Date(d.ts).getTime(), y: Number(d.v) })),
+      data:            results[i].map(d => ({
+        x: requestPlan.mode === 'aggregate'
+          ? aggregateBucketEndTimestamp(d.ts, requestPlan.interval, fromDate.getTime(), toDate.getTime())
+          : new Date(d.ts).getTime(),
+        y: Number(d.v),
+      })),
       borderColor:     s.color,
       backgroundColor: s.color + '1a',
       borderWidth:     1.5,

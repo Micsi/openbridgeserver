@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { sortedUniqueTimestamps, weightedAverage, weightedValuesByTimestamp } from './aggregation'
+import {
+  aggregateBucketEndTimestamp,
+  sortedUniqueTimestamps,
+  weightedAverage,
+  weightedValuesByTimestamp,
+} from './aggregation'
 
 describe('weightedAverage', () => {
   it('uses equal weights when sample counts are absent', () => {
@@ -49,5 +54,31 @@ describe('aggregated bar bucket alignment', () => {
     ], [t0, t1])
 
     expect(values).toEqual([null, 20])
+  })
+})
+
+describe('aggregateBucketEndTimestamp', () => {
+  it('moves the first partial aggregate bucket inside the requested line range', () => {
+    const fromMs = Date.parse('2026-06-03T12:34:00Z')
+    const toMs = Date.parse('2026-06-10T12:34:00Z')
+
+    expect(aggregateBucketEndTimestamp('2026-06-03T12:00:00Z', '1h', fromMs, toMs))
+      .toBe(Date.parse('2026-06-03T13:00:00Z'))
+  })
+
+  it('caps the final aggregate bucket at the requested range end', () => {
+    const fromMs = Date.parse('2026-06-03T12:34:00Z')
+    const toMs = Date.parse('2026-06-10T12:34:00Z')
+
+    expect(aggregateBucketEndTimestamp('2026-06-10T12:00:00Z', '1h', fromMs, toMs))
+      .toBe(toMs)
+  })
+
+  it('does not let an aggregate timestamp fall before the requested range start', () => {
+    const fromMs = Date.parse('2026-06-03T12:34:00Z')
+    const toMs = Date.parse('2026-06-10T12:34:00Z')
+
+    expect(aggregateBucketEndTimestamp('2026-06-03T06:00:00Z', '6h', fromMs, toMs))
+      .toBe(fromMs)
   })
 })
