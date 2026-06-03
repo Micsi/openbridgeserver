@@ -3,11 +3,57 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+PUSH_REFS="$(cat)"
 
 cd "$REPO_ROOT"
 
+changed_files_for_push() {
+  if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+    git diff --name-only --diff-filter=ACMR '@{upstream}...HEAD'
+    return
+  fi
+
+  while read -r _local_ref local_oid _remote_ref remote_oid; do
+    [ -n "${local_oid:-}" ] || continue
+    case "$local_oid" in
+      0000000000000000000000000000000000000000) continue ;;
+    esac
+    case "$remote_oid" in
+      0000000000000000000000000000000000000000)
+        git diff-tree --root --no-commit-id --name-only -r "$local_oid"
+        ;;
+      *)
+        git diff --name-only --diff-filter=ACMR "$remote_oid" "$local_oid"
+        ;;
+    esac
+  done <<<"$PUSH_REFS"
+}
+
+GUI_CHANGED_FILES="$(
+  changed_files_for_push |
+    grep -E '^(gui/(src|tests)/|gui/(package(-lock)?\.json|vitest\.config\.js)$)' |
+    sort -u || true
+)"
+
 echo "[pre-push] i18n hard gate"
 ./scripts/check-i18n-hardcoded-strings.sh
+
+if [ -n "$GUI_CHANGED_FILES" ]; then
+  echo "[pre-push] gui vitest"
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "pre-push gate: npm not found" >&2
+    exit 1
+  fi
+  if [ ! -d gui/node_modules ]; then
+    echo "pre-push gate: gui/node_modules missing; run npm ci in gui first" >&2
+    exit 1
+  fi
+  (cd gui && npm run test)
+
+  echo "[pre-push] gui coverage"
+  (cd gui && npm run test:coverage)
+  node tools/gui-coverage-summary.mjs --changed-only --threshold=70 || true
+fi
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "pre-push gate: python3 not found" >&2
