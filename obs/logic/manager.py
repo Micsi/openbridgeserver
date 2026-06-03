@@ -27,7 +27,7 @@ import httpx
 
 from obs.logic.executor import GraphExecutor
 from obs.logic.models import FlowData
-from obs.security.url_targets import evaluate_url_target, resolve_url_target
+from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,7 @@ _ICAL_ALLOWED_CONTENT_TYPES = ("text/calendar", "application/ics", "application/
 _PUSHOVER_ATTACHMENT_MAX_BYTES = 5_000_000
 _SECRET_FILE_MAX_BYTES = 8192
 _SECRET_FILE_DEFAULT_ROOT = "/run/secrets"
+_API_CLIENT_RETRYABLE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def _secret_file_root() -> Path:
@@ -196,6 +197,44 @@ def _build_http_host_header(hostname_ascii: str, scheme: str, port: int | None) 
         if port != default_port:
             host_header = f"{host_header}:{port}"
     return host_header
+
+
+def _build_api_client_fetch_targets(url: str) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    parsed = _parse_http_url(url)
+    if not parsed:
+        raise ValueError("Invalid URL target")
+    try:
+        hostname_ascii = parsed.hostname.encode("idna").decode("ascii")
+    except UnicodeError:
+        raise ValueError("Invalid URL target") from None
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValueError("Invalid URL target") from None
+
+    try:
+        target = resolve_url_target(url, allow_loopback=True)
+    except ValueError as exc:
+        raise ValueError(f"Blocked URL target: {exc}") from exc
+    addresses = target.addresses
+    if not addresses:
+        raise ValueError("Blocked unresolved URL target")
+
+    auth_prefix = ""
+    if parsed.username is not None:
+        username = quote(unquote(parsed.username), safe="")
+        password = None if parsed.password is None else quote(unquote(parsed.password), safe="")
+        auth = username if password is None else f"{username}:{password}"
+        auth_prefix = f"{auth}@"
+
+    pinned_urls: list[str] = []
+    for pinned_ip in dict.fromkeys(addresses):
+        pinned_host = f"[{pinned_ip}]" if ":" in pinned_ip else pinned_ip
+        netloc = f"{auth_prefix}{pinned_host}:{port}" if port is not None else f"{auth_prefix}{pinned_host}"
+        pinned_urls.append(parsed._replace(netloc=netloc).geturl())
+    headers = {"Host": _build_http_host_header(hostname_ascii, parsed.scheme, port)}
+    extensions = {"sni_hostname": hostname_ascii} if parsed.scheme == "https" else {}
+    return pinned_urls, headers, extensions
 
 
 def _cookie_domain_matches(hostname: str, cookie_domain: str) -> bool:
@@ -960,10 +999,11 @@ class LogicManager:
             url = (node.data.get("url") or "").strip()
             if not url:
                 continue
-            decision = evaluate_url_target(url, allow_loopback=True)
-            if not decision.allowed:
-                logger.warning("Graph %s: blocked api_client target %s (%s)", graph_id[:8], url, decision.reason)
-                outputs[node.id].update({"response": f"Blocked URL target: {decision.reason}", "status": None, "success": False})
+            try:
+                request_urls, pinned_headers, request_extensions = _build_api_client_fetch_targets(url)
+            except ValueError as exc:
+                logger.warning("Graph %s: blocked api_client target %s: %s", graph_id[:8], url, exc)
+                outputs[node.id].update({"response": str(exc), "status": None, "success": False})
                 continue
             method = (node.data.get("method", "GET") or "GET").upper()
             content_type = node.data.get("content_type", "application/json")
@@ -1026,33 +1066,49 @@ class LogicManager:
                             **extra_headers,
                             "Content-Type": "text/plain",
                         }
+                req_headers = {key: value for key, value in req_kwargs.get("headers", {}).items() if key.lower() != "host"}
+                req_kwargs["headers"] = {**req_headers, **pinned_headers}
+                if request_extensions:
+                    req_kwargs["extensions"] = request_extensions
+                last_transport_error: Exception = ValueError(f"Could not fetch API target after trying {len(request_urls)} address(es)")
+                resp: httpx.Response | Any | None = None
                 async with httpx.AsyncClient(auth=auth, verify=verify_ssl) as client:
-                    resp = await client.request(method, url, **req_kwargs)
-                    resp_text = resp.text
-                    if len(resp_text) > 1_000_000:
-                        resp_text = resp_text[:1_000_000]
-                    if resp_type in ("json", "application/json"):
+                    for request_url in request_urls:
                         try:
-                            resp_data: Any = resp.json()
-                        except Exception:
-                            resp_data = resp_text
-                    else:
+                            resp = await client.request(method, request_url, **req_kwargs)
+                            break
+                        except httpx.RequestError as req_exc:
+                            last_transport_error = req_exc
+                            if method not in _API_CLIENT_RETRYABLE_METHODS:
+                                break
+                            continue
+                if resp is None:
+                    raise last_transport_error
+                resp_text = resp.text
+                if len(resp_text) > 1_000_000:
+                    resp_text = resp_text[:1_000_000]
+                if resp_type in ("json", "application/json"):
+                    try:
+                        resp_data: Any = resp.json()
+                    except Exception:
                         resp_data = resp_text
-                    outputs[node.id].update(
-                        {
-                            "response": resp_data,
-                            "status": resp.status_code,
-                            "success": 200 <= resp.status_code < 300,
-                        },
-                    )
-                    logger.info(
-                        "Graph %s: API %s %s → %d",
-                        graph_id[:8],
-                        method,
-                        url,
-                        resp.status_code,
-                    )
-                    triggered_api_clients.add(node.id)
+                else:
+                    resp_data = resp_text
+                outputs[node.id].update(
+                    {
+                        "response": resp_data,
+                        "status": resp.status_code,
+                        "success": 200 <= resp.status_code < 300,
+                    },
+                )
+                logger.info(
+                    "Graph %s: API %s %s → %d",
+                    graph_id[:8],
+                    method,
+                    url,
+                    resp.status_code,
+                )
+                triggered_api_clients.add(node.id)
             except Exception as exc:
                 logger.warning("Graph %s: api_client failed: %s", graph_id[:8], exc)
                 outputs[node.id].update({"response": str(exc), "status": None, "success": False})
