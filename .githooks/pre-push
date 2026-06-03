@@ -13,6 +13,17 @@ if [ ! -x "$WITH_VENV" ]; then
   exit 1
 fi
 
+default_push_base_ref() {
+  for ref in "${PRE_PUSH_BASE_REF:-}" origin/main upstream/main main; do
+    [ -n "$ref" ] || continue
+    if git rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+      echo "$ref"
+      return 0
+    fi
+  done
+  return 1
+}
+
 changed_files_for_push() {
   if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
     git diff --name-only --diff-filter=ACMR '@{upstream}...HEAD'
@@ -26,7 +37,11 @@ changed_files_for_push() {
     esac
     case "$remote_oid" in
       0000000000000000000000000000000000000000)
-        git diff-tree --root --no-commit-id --name-only -r "$local_oid"
+        if base_ref="$(default_push_base_ref)"; then
+          git diff --name-only --diff-filter=ACMR "$base_ref...$local_oid"
+        else
+          git diff-tree --root --no-commit-id --name-only -r "$local_oid"
+        fi
         ;;
       *)
         git diff --name-only --diff-filter=ACMR "$remote_oid" "$local_oid"
