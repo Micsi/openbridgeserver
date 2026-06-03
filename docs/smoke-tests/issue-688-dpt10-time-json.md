@@ -43,7 +43,10 @@ WriteRouter einen falschen Typ:
 - Angepasst wurden Registry, Ringbuffer, History-Plugins, MQTT und WebSocket.
 
 Damit bleibt der interne Datenpunkttyp korrekt, waehrend externe Schnittstellen
-weiterhin lesbare ISO-Werte erhalten.
+weiterhin lesbare ISO-Werte erhalten. MQTT unterscheidet dabei den Kontext:
+Ohne Payload-Template bleibt der Rohpayload abwaertskompatibel `10:30:00`;
+innerhalb eines Payload-Templates wird der Wert JSON-kompatibel als
+`"10:30:00"` eingesetzt.
 
 ## Abgrenzung
 
@@ -59,7 +62,7 @@ Dieser PR enthaelt keine Aenderungen an:
 Lokal ausgefuehrt:
 
 ```bash
-.venv/bin/python -m pytest tests/unit/test_knx_dpt_codecs.py tests/unit/test_dpt_registry.py tests/unit/test_json_serialization.py -q
+.venv/bin/python -m pytest tests/unit/test_write_router.py tests/test_write_router_value_event.py tests/adapters/test_mqtt_adapter.py tests/unit/test_dpt_registry.py tests/unit/test_knx_dpt_codecs.py tests/unit/test_json_serialization.py tests/unit/test_ringbuffer_baseline.py tests/unit/test_ringbuffer_query_v2.py tests/integration/test_ringbuffer_filters.py -q
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format --check .
 ```
@@ -67,7 +70,7 @@ Lokal ausgefuehrt:
 Ergebnis:
 
 ```text
-213 passed
+325 passed
 All checks passed!
 221 files already formatted
 ```
@@ -92,8 +95,11 @@ Nach Deployment oder lokalem Start:
 2. Einen Telegrammwert auf dem Bus empfangen, z. B. `10:30:00`.
 3. Im OBS-Monitor pruefen, dass der Datenpunkt aktualisiert wird.
 4. Im Log darf kein Typfehler `expected=time got=str` mehr erscheinen.
-5. Ueber WebSocket, MQTT oder History darf der Wert als JSON-kompatibler
+5. Ueber WebSocket oder History darf der Wert als JSON-kompatibler
    ISO-Zeitwert erscheinen.
+6. Bei einem MQTT-DEST-Binding ohne Payload-Template muss der Publish-Payload
+   roh `10:30:00` sein. In einem Payload-Template muss der eingesetzte Wert
+   JSON-kompatibel `"10:30:00"` sein.
 
 ## Erwartetes Verhalten
 
@@ -107,6 +113,12 @@ Extern an JSON-Grenzen:
 
 ```json
 "10:30:00"
+```
+
+MQTT-DEST ohne Payload-Template:
+
+```text
+10:30:00
 ```
 
 Dieses Verhalten trennt den fachlich korrekten OBS-Datentyp von der noetigen
