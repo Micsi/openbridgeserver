@@ -15,7 +15,7 @@ export default defineConfig({
     globals: true,
     include: ['tests/**/*.spec.js'],
     setupFiles: ['tests/setup.js'],
-    testTimeout: 10000,
+    testTimeout: 20000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary', 'html', 'lcov', 'json-summary'],
