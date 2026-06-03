@@ -136,16 +136,28 @@ def test_remove_missing_allowlist_entry_returns_false(tmp_path):
     assert remove_allowed_url_target("10.38.113.23") is False
 
 
-def test_hostname_allowlist_allows_dns_failure(tmp_path):
+def test_hostname_allowlist_does_not_allow_dns_failure(tmp_path):
     override_settings(_settings_for(tmp_path / "allow.yaml"))
     add_allowed_url_target("http://internal.example/path")
 
     with patch("obs.security.url_targets.socket.getaddrinfo", side_effect=OSError("dns down")):
         decision = evaluate_url_target("http://internal.example/status")
 
-    assert decision.allowed is True
-    assert decision.allowlisted_by == "internal.example"
+    assert decision.allowed is False
+    assert decision.allowlisted_by is None
     assert decision.resolved_ips == []
+    assert "Hostname could not be resolved" in decision.reason
+
+
+def test_hostname_allowlist_does_not_allow_empty_dns_answer(tmp_path):
+    override_settings(_settings_for(tmp_path / "allow.yaml"))
+    add_allowed_url_target("internal.example")
+
+    with patch("obs.security.url_targets.socket.getaddrinfo", return_value=[]):
+        decision = evaluate_url_target("http://internal.example/status")
+
+    assert decision.allowed is False
+    assert decision.reason == "Hostname did not resolve to any usable address"
 
 
 def test_exact_hostname_allowlist_does_not_override_resolved_private_ip(tmp_path):
@@ -179,6 +191,19 @@ def test_hostname_allowlist_match_tolerates_unencodable_hostname(tmp_path):
     assert _match_allowlist("\udcff") is None
 
 
+def test_url_ip_literal_allowlist_entry_is_canonicalized(tmp_path):
+    override_settings(_settings_for(tmp_path / "allow.yaml"))
+
+    first = add_allowed_url_target("http://10.38.113.23/api/v1/status", reason="url")
+    second = add_allowed_url_target("10.38.113.23", reason="ip")
+
+    entries = list_allowed_url_targets()
+    assert first.target == "10.38.113.23/32"
+    assert second.target == "10.38.113.23/32"
+    assert [entry.target for entry in entries] == ["10.38.113.23/32"]
+    assert entries[0].reason == "ip"
+
+
 def test_evaluate_rejects_wrong_scheme_and_missing_host(tmp_path):
     override_settings(_settings_for(tmp_path / "allow.yaml"))
 
@@ -209,6 +234,15 @@ def test_evaluate_allows_loopback_when_requested(tmp_path):
     override_settings(_settings_for(tmp_path / "allow.yaml"))
 
     decision = evaluate_url_target("http://localhost/status", allow_loopback=True)
+
+    assert decision.allowed is True
+    assert decision.resolved_ips == ["127.0.0.1"]
+
+
+def test_evaluate_allows_direct_loopback_ip_when_requested(tmp_path):
+    override_settings(_settings_for(tmp_path / "allow.yaml"))
+
+    decision = evaluate_url_target("http://127.0.0.1/status", allow_loopback=True)
 
     assert decision.allowed is True
     assert decision.resolved_ips == ["127.0.0.1"]
@@ -256,6 +290,13 @@ def test_resolve_url_target_returns_dns_pinned_target(tmp_path):
     assert target.hostname_ascii == "example.com"
     assert target.port == 8443
     assert target.addresses == ["93.184.216.34"]
+
+
+def test_resolve_url_target_raises_for_blocked_target(tmp_path):
+    override_settings(_settings_for(tmp_path / "allow.yaml"))
+
+    with pytest.raises(ValueError, match="internal, reserved"):
+        resolve_url_target("http://10.38.113.23/status")
 
 
 def test_url_target_decision_api_detail():

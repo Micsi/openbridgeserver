@@ -1119,7 +1119,7 @@ class LogicManager:
                     if image_url:
                         resolved = await _resolve_safe_image_url(image_url)
                         if resolved is None:
-                            raise ValueError("Unsafe image_url: only public HTTPS hosts are allowed")
+                            raise ValueError("Unsafe image_url: only validated HTTPS targets are allowed")
                         pinned_url, host_header, pinned_ip = resolved
                         # Stream attachment bytes and enforce max size while downloading.
                         async with client.stream(

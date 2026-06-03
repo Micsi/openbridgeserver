@@ -94,6 +94,14 @@ def _normalise_target(raw: str) -> str:
         if not parsed.hostname:
             raise ValueError("URL target must contain a hostname")
         value = parsed.hostname.lower()
+        try:
+            return str(ipaddress.ip_network(value, strict=False))
+        except ValueError:
+            pass
+        try:
+            return str(ipaddress.ip_address(value))
+        except ValueError:
+            pass
     return value.encode("idna").decode("ascii")
 
 
@@ -258,8 +266,6 @@ def evaluate_url_target(
     try:
         infos = socket.getaddrinfo(hostname_ascii, port, type=socket.SOCK_STREAM)
     except (OSError, ValueError) as exc:
-        if host_allow_entry:
-            return UrlTargetDecision(True, url, hostname_ascii, [], [], "Host is allowlisted", allowlisted_by=host_allow_entry)
         return UrlTargetDecision(False, url, hostname_ascii, [], [], f"Hostname could not be resolved: {exc}")
 
     resolved_ips: list[str] = []
@@ -298,7 +304,7 @@ def evaluate_url_target(
             suggested_target=suggested,
         )
 
-    if not resolved_ips and not host_allow_entry:
+    if not resolved_ips:
         return UrlTargetDecision(False, url, hostname_ascii, [], [], "Hostname did not resolve to any usable address")
 
     return UrlTargetDecision(True, url, hostname_ascii, resolved_ips, [], "URL target is allowed", allowlisted_by=allowlisted_by)
