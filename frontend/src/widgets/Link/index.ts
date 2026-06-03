@@ -11,7 +11,11 @@ WidgetRegistry.register({
   defaultW: 2, defaultH: 2,
   component: Widget,
   configComponent: Config,
-  defaultConfig: { label: '', icon: '🔗', target_node_id: '' },
+  defaultConfig: {
+    label: '',
+    icon: '🔗',
+    target_node_id: '',
+  },
   compatibleTypes: ['*'],
   noDatapoint: true,
   getExtraDatapointIds: () => [],

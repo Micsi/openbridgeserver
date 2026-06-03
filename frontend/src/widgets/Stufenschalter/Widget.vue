@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { datapoints } from '@/api/client'
 import { useIcons } from '@/composables/useIcons'
 import type { DataPointValue } from '@/types'
@@ -21,6 +22,7 @@ const props = defineProps<{
 }>()
 
 const { getSvg, isSvgIcon, svgIconName } = useIcons()
+const { t } = useI18n()
 
 const label = computed(() => (props.config.label as string | undefined) ?? '')
 
@@ -32,10 +34,18 @@ function sanitizeColor(value: unknown, fallback = '#6b7280'): string {
   return fallback
 }
 
+function normalizeStepLabel(raw: unknown, index: number): string {
+  if (typeof raw !== 'string') return t('widgets.stufenschalter.defaultStepLabel', { n: index + 1 })
+  if (raw === 'widgets.stufenschalter.defaultStepLabel') {
+    return t('widgets.stufenschalter.defaultStepLabel', { n: index + 1 })
+  }
+  return raw
+}
+
 const steps = computed<Step[]>(() => {
   const raw = props.config.steps as Partial<Step>[] | undefined
-  return (raw ?? []).map((s) => ({
-    label: s.label ?? '',
+  return (raw ?? []).map((s, index) => ({
+    label: normalizeStepLabel(s.label, index),
     value: String(s.value ?? ''),
     icon:  s.icon  ?? '',
     color: sanitizeColor(s.color),

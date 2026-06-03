@@ -15,7 +15,12 @@ WidgetRegistry.register({
   defaultW: 3, defaultH: 3,
   component: Widget,
   configComponent: Config,
-  defaultConfig: { label: '', decimals: 1, unit: '', extra_datapoints: [] },
+  defaultConfig: {
+    label: '',
+    decimals: 1,
+    unit: '',
+    extra_datapoints: [],
+  },
   compatibleTypes: ['FLOAT', 'INTEGER', 'BOOLEAN', 'STRING'],
   getExtraDatapointIds: (config) => {
     const extras = config.extra_datapoints as ExtraDatapoint[] | undefined
