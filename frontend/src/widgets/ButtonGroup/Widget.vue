@@ -56,8 +56,6 @@ const gridStyle = computed(() => ({
 const pendingId = ref<string | null>(null)
 const feedback = ref<Record<string, 'success' | 'error'>>({})
 let feedbackTimer: number | undefined
-let resetTimer: number | undefined
-let resolveResetWait: (() => void) | undefined
 let unmounted = false
 
 function parseBoolean(raw: unknown, fallback: boolean): boolean {
@@ -96,16 +94,7 @@ function parseValue(raw: string): unknown {
 }
 
 function wait(ms: number) {
-  return new Promise((resolve) => {
-    resolveResetWait = () => {
-      resolveResetWait = undefined
-      resolve(undefined)
-    }
-    resetTimer = window.setTimeout(() => {
-      resetTimer = undefined
-      resolveResetWait?.()
-    }, ms)
-  })
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
 function setFeedback(id: string, value: 'success' | 'error') {
@@ -127,10 +116,9 @@ async function press(button: ButtonConfig) {
     await datapoints.write(datapointId, parseValue(button.value), writeContext)
     if (button.resetEnabled) {
       await wait(button.resetDelayMs)
-      if (unmounted) return
       await datapoints.write(datapointId, parseValue(button.resetValue), writeContext)
     }
-    setFeedback(button.id, 'success')
+    if (!unmounted) setFeedback(button.id, 'success')
   } catch {
     if (!unmounted) setFeedback(button.id, 'error')
   } finally {
@@ -141,8 +129,6 @@ async function press(button: ButtonConfig) {
 onUnmounted(() => {
   unmounted = true
   if (feedbackTimer !== undefined) window.clearTimeout(feedbackTimer)
-  if (resetTimer !== undefined) window.clearTimeout(resetTimer)
-  resolveResetWait?.()
 })
 </script>
 

@@ -111,7 +111,7 @@ describe('ButtonGroup widget pulses', () => {
     })
   })
 
-  it('does not write the delayed reset after unmount', async () => {
+  it('writes the delayed reset after unmount with the captured context', async () => {
     mountWidget()
 
     await wrapper!.get('button').trigger('click')
@@ -121,8 +121,8 @@ describe('ButtonGroup widget pulses', () => {
 
     await vi.advanceTimersByTimeAsync(1000)
 
-    expect(writeMock).toHaveBeenCalledTimes(1)
-    expect(writeMock).toHaveBeenCalledWith('dp-1', true, {
+    expect(writeMock).toHaveBeenCalledTimes(2)
+    expect(writeMock).toHaveBeenLastCalledWith('dp-1', false, {
       pageId: 'page-1',
       sessionToken: 'token-1',
       definingId: 'def-1',
