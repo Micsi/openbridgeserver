@@ -179,6 +179,17 @@ def _is_builtin_default_db_path(path: str) -> bool:
     return Path(path).as_posix() == "/data/obs.db"
 
 
+def _is_builtin_default_url_target_allowlist_path(path: str) -> bool:
+    return Path(path).as_posix() == "/data/secrets/url-target-allowlist.yaml"
+
+
+def _resolve_default_url_target_allowlist_path(database_path: str) -> str:
+    secret_root = _get_env_case_insensitive("OBS_SECRET_FILE_DIR", "OPENTWS_SECRET_FILE_DIR")
+    if secret_root:
+        return str(Path(secret_root) / "url-target-allowlist.yaml")
+    return str(Path(database_path).parent / "secrets" / "url-target-allowlist.yaml")
+
+
 _import_legacy_env_vars()
 
 
@@ -245,6 +256,12 @@ class Settings(BaseSettings):
                     result[database_key] = merged_database
 
         return result
+
+    @model_validator(mode="after")
+    def _derive_url_target_allowlist_path(self) -> Settings:
+        if _is_builtin_default_url_target_allowlist_path(self.security.url_target_allowlist_path):
+            self.security.url_target_allowlist_path = _resolve_default_url_target_allowlist_path(self.database.path)
+        return self
 
     @classmethod
     def settings_customise_sources(

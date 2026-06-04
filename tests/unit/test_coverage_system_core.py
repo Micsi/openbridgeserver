@@ -1409,6 +1409,48 @@ class TestSecuritySettingsValidator:
             sec = SecuritySettings(jwt_secret="a" * 32)
         assert sec.jwt_secret == "a" * 32
 
+    def test_default_url_target_allowlist_path_uses_database_secret_dir(self, tmp_path, monkeypatch):
+        from obs.config import DatabaseSettings, SecuritySettings, Settings
+
+        monkeypatch.delenv("OBS_SECRET_FILE_DIR", raising=False)
+        db_path = tmp_path / "obs.db"
+
+        settings = Settings(
+            database=DatabaseSettings(path=str(db_path)),
+            security=SecuritySettings(jwt_secret="unit-test-secret-32-chars-xxx"),
+        )
+
+        assert settings.security.url_target_allowlist_path == str(tmp_path / "secrets" / "url-target-allowlist.yaml")
+
+    def test_default_url_target_allowlist_path_uses_configured_secret_root(self, tmp_path, monkeypatch):
+        from obs.config import DatabaseSettings, SecuritySettings, Settings
+
+        secret_root = tmp_path / "configured-secrets"
+        monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(secret_root))
+
+        settings = Settings(
+            database=DatabaseSettings(path=str(tmp_path / "obs.db")),
+            security=SecuritySettings(jwt_secret="unit-test-secret-32-chars-xxx"),
+        )
+
+        assert settings.security.url_target_allowlist_path == str(secret_root / "url-target-allowlist.yaml")
+
+    def test_custom_url_target_allowlist_path_is_preserved(self, tmp_path, monkeypatch):
+        from obs.config import DatabaseSettings, SecuritySettings, Settings
+
+        monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(tmp_path / "configured-secrets"))
+        custom_path = tmp_path / "custom" / "allow.yaml"
+
+        settings = Settings(
+            database=DatabaseSettings(path=str(tmp_path / "obs.db")),
+            security=SecuritySettings(
+                jwt_secret="unit-test-secret-32-chars-xxx",
+                url_target_allowlist_path=str(custom_path),
+            ),
+        )
+
+        assert settings.security.url_target_allowlist_path == str(custom_path)
+
 
 class TestHelperFunctions:
     def test_has_env_key_case_insensitive(self, monkeypatch):

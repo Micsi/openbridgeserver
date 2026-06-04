@@ -45,4 +45,6 @@ security:
   #       reason: "Interne OBS-Instanz"
   #       created_by: admin
   #       created_at: "2026-06-03T12:00:00Z"
-  url_target_allowlist_path: /data/secrets/url-target-allowlist.yaml
+  # Optional override. By default OBS writes this to OBS_SECRET_FILE_DIR when
+  # set, otherwise to "secrets/url-target-allowlist.yaml" next to the database.
+  # url_target_allowlist_path: /data/secrets/url-target-allowlist.yaml
