@@ -108,12 +108,26 @@ class ModbusTcpAdapter(AdapterBase):
     # ------------------------------------------------------------------
 
     async def _on_bindings_reloaded(self) -> None:
-        # Cancel existing pollers
+        # Cancel existing pollers and wait for them to actually finish.
+        # Without awaiting gather(), old tasks may still be executing a Modbus read
+        # concurrently with the new tasks, which corrupts the shared TCP connection.
         for t in self._poll_tasks:
             t.cancel()
+        if self._poll_tasks:
+            await asyncio.gather(*self._poll_tasks, return_exceptions=True)
         self._poll_tasks.clear()
 
-        # Start a poller task per unique poll_interval group
+        # After cancellation, the pymodbus AsyncModbusTcpClient may be left in an
+        # inconsistent state (a pending request was abandoned mid-flight).
+        # Reconnect to ensure a clean TCP session before starting new pollers.
+        if self._client and not self._client.connected:
+            try:
+                await self._client.connect()
+                logger.info("Modbus TCP: reconnected after binding reload")
+            except Exception as exc:
+                logger.warning("Modbus TCP: reconnect after reload failed: %s", exc)
+
+        # Start a poller task per SOURCE/BOTH binding
         source_bindings = [b for b in self._bindings if b.direction in ("SOURCE", "BOTH")]
         for binding in source_bindings:
             t = asyncio.create_task(
@@ -136,6 +150,26 @@ class ModbusTcpAdapter(AdapterBase):
             return
 
         while True:
+            # Auto-reconnect if the client became disconnected (e.g. after a reload
+            # that cancelled tasks mid-read, or a transient network failure).
+            if self._client and not self._client.connected:
+                try:
+                    await self._client.connect()
+                    logger.info("Modbus TCP: reconnected in poll loop (binding %s)", binding.id)
+                except Exception as exc:
+                    logger.warning("Modbus TCP: reconnect failed (binding %s): %s", binding.id, exc)
+                    await self._bus.publish(
+                        DataValueEvent(
+                            datapoint_id=binding.datapoint_id,
+                            value=None,
+                            quality="bad",
+                            source_adapter=self.adapter_type,
+                            binding_id=binding.id,
+                        ),
+                    )
+                    await asyncio.sleep(bc.poll_interval)
+                    continue
+
             try:
                 value = await self._read_register(bc)
                 quality = "good" if value is not None else "bad"
