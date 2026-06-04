@@ -70,6 +70,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Prune old nightly container versions
+        # Only runs when the build-and-push step succeeded, so a failed nightly
+        # never deletes previously published nightly images.
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}

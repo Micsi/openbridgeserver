@@ -12,7 +12,7 @@ The nightly Docker workflow publishes these tags:
 - `nightly-YYYYMMDD`: date based build tag
 - `nightly-YYYYMMDD-<short-sha>`: traceable build tag for debugging
 
-Stable release tags are untouched. The cleanup step only considers package versions with nightly tags and keeps the newest 14 nightly container versions. This keeps GHCR from accumulating old preview images while still leaving enough history for short-term rollback and issue reproduction.
+Stable release tags are untouched. The cleanup step only runs after the image was built and pushed successfully, only considers package versions with nightly tags, and keeps the newest 14 nightly container versions. This keeps GHCR from accumulating old preview images while still leaving enough history for short-term rollback and issue reproduction. A failed nightly never prunes previously published nightlies.
 
 ## LXC
 
@@ -26,7 +26,7 @@ The existing LXC workflow uploads these GitHub Actions artifacts:
 - `lxc-arm64`
 - `app-bundle`
 
-The nightly dispatcher deletes matching LXC artifacts older than 14 days before starting the next build. No GitHub release is created for nightlies and no nightly release tag has to move.
+The nightly dispatcher triggers the template build, waits for it to finish, and only then deletes matching LXC artifacts older than 14 days. Pruning is skipped whenever the dispatched build fails (or cannot be located), so the last good nightly artifacts survive a prolonged build outage instead of expiring while no fresh build replaces them. No GitHub release is created for nightlies and no nightly release tag has to move.
 
 ## Why this split
 
