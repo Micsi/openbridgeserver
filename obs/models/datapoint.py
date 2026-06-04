@@ -1,6 +1,7 @@
 """DataPoint Pydantic model — Phase 1."""
 
 from __future__ import annotations
+from typing import Any
 
 import datetime
 import uuid
