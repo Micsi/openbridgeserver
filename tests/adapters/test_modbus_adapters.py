@@ -880,3 +880,345 @@ class TestModbusRtuAdditional:
         adapter._client = client
         binding = make_binding(_HOLDING_CFG)
         await adapter.write(binding, 99)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Fix PR#714 — _on_bindings_reloaded: await gather + reconnect
+# ---------------------------------------------------------------------------
+
+
+class TestBindingsReloadedAwaitAndReconnect:
+    """Tests for the fix in PR#714:
+    - Old tasks must be fully awaited before new tasks start (no race condition)
+    - Client is reconnected if it became disconnected during cancellation
+    """
+
+    async def test_old_tasks_are_fully_done_after_reload(self):
+        """_on_bindings_reloaded must await old tasks, not just cancel them.
+
+        Without asyncio.gather(), t.cancel() only *requests* cancellation.
+        The old task keeps running until its next await point, which means it
+        can still be executing a Modbus read concurrently with the new tasks.
+        After the fix, every old task.done() must be True once reload returns.
+        """
+        adapter, _ = _make_tcp()
+        adapter._client = _make_client()
+
+        handled_cancel = asyncio.Event()
+
+        async def slow_cancel():
+            try:
+                await asyncio.sleep(100)
+            except asyncio.CancelledError:
+                await asyncio.sleep(0)
+                handled_cancel.set()
+                raise
+
+        old_task = asyncio.create_task(slow_cancel())
+        adapter._poll_tasks.append(old_task)
+        adapter._bindings = []
+
+        await adapter._on_bindings_reloaded()
+
+        assert old_task.done(), (
+            "Old task is not done after _on_bindings_reloaded — "
+            "asyncio.gather() was not awaited, leaving a race condition "
+            "where old and new tasks read the same TCP client concurrently."
+        )
+        assert handled_cancel.is_set(), "Old task never processed its CancelledError"
+
+    async def test_new_tasks_start_only_after_old_tasks_finish(self):
+        """New poll tasks must not start before old tasks have finished.
+
+        This is the core race condition: if a new task starts while an old
+        task is still mid-read, both call read_holding_registers() on the
+        same AsyncModbusTcpClient, corrupting the TCP stream.
+        """
+        adapter, _ = _make_tcp()
+        adapter._client = _make_client()
+        old_task_done_when_new_started = []
+
+        async def slow_cancel():
+            try:
+                await asyncio.sleep(100)
+            except asyncio.CancelledError:
+                await asyncio.sleep(0)
+                raise
+
+        old_task = asyncio.create_task(slow_cancel())
+        adapter._poll_tasks.append(old_task)
+
+        binding = make_binding(_HOLDING_CFG, direction="SOURCE")
+        adapter._bindings = [binding]
+
+        original_create_task = asyncio.create_task
+
+        def recording_create_task(coro, **kwargs):
+            old_task_done_when_new_started.append(old_task.done())
+            return original_create_task(coro, **kwargs)
+
+        with patch.object(adapter, "_poll_loop", new=AsyncMock()):
+            with patch("asyncio.create_task", side_effect=recording_create_task):
+                await adapter._on_bindings_reloaded()
+
+        assert old_task_done_when_new_started, "No new task was created"
+        assert all(old_task_done_when_new_started), (
+            "New task was created before old task finished — "
+            "gather() was not awaited properly."
+        )
+
+        for t in adapter._poll_tasks:
+            t.cancel()
+
+    async def test_reconnects_when_client_disconnected_after_cancel(self):
+        """After cancelling tasks, if the TCP client is disconnected,
+        _on_bindings_reloaded must reconnect before starting new pollers.
+
+        Cancelled tasks may leave the AsyncModbusTcpClient in a bad state
+        (a pending Modbus request was abandoned mid-flight). Reconnecting
+        ensures a clean TCP session for the new poll tasks.
+        """
+        adapter, _ = _make_tcp()
+        client = _make_client(connected=False)
+        adapter._client = client
+        adapter._bindings = []
+
+        await adapter._on_bindings_reloaded()
+
+        client.connect.assert_awaited_once()
+
+    async def test_does_not_reconnect_when_client_still_connected(self):
+        """If the client is still connected, no reconnect should happen."""
+        adapter, _ = _make_tcp()
+        client = _make_client(connected=True)
+        adapter._client = client
+        adapter._bindings = []
+
+        await adapter._on_bindings_reloaded()
+
+        client.connect.assert_not_awaited()
+
+    async def test_reconnect_failure_is_swallowed_new_tasks_still_start(self):
+        """A reconnect failure must not propagate — new tasks still start."""
+        adapter, _ = _make_tcp()
+        client = _make_client(connected=False)
+        client.connect = AsyncMock(side_effect=OSError("connection refused"))
+        adapter._client = client
+
+        binding = make_binding(_HOLDING_CFG, direction="SOURCE")
+        adapter._bindings = [binding]
+
+        with patch.object(adapter, "_poll_loop", new=AsyncMock()):
+            await adapter._on_bindings_reloaded()
+
+        assert len(adapter._poll_tasks) == 1
+
+        for t in adapter._poll_tasks:
+            t.cancel()
+
+    async def test_no_reconnect_attempt_when_no_client(self):
+        """If _client is None, no AttributeError must be raised."""
+        adapter, _ = _make_tcp()
+        adapter._client = None
+        adapter._bindings = []
+
+        await adapter._on_bindings_reloaded()
+
+
+# ---------------------------------------------------------------------------
+# Fix PR#714 — _poll_loop: auto-reconnect on disconnected client
+# ---------------------------------------------------------------------------
+
+
+class TestPollLoopAutoReconnect:
+    """Tests for the auto-reconnect behaviour added to _poll_loop in PR#714."""
+
+    async def test_reconnects_and_resumes_polling_when_disconnected(self):
+        """When client is disconnected at the start of a poll iteration,
+        _poll_loop must reconnect and then publish a good-quality value.
+        """
+        adapter, bus = _make_tcp()
+
+        async def mock_connect():
+            adapter._client.connected = True
+
+        client = _make_client(connected=False, response=_ok_response([55]))
+        client.connect = AsyncMock(side_effect=mock_connect)
+        adapter._client = client
+
+        binding = make_binding(_HOLDING_CFG, direction="SOURCE")
+        task = asyncio.create_task(adapter._poll_loop(binding))
+        await asyncio.sleep(0.15)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        client.connect.assert_awaited()
+        good_events = [
+            c.args[0]
+            for c in bus.publish.call_args_list
+            if hasattr(c.args[0], "quality") and c.args[0].quality == "good"
+        ]
+        assert len(good_events) >= 1, (
+            "No good-quality value published after reconnect — "
+            "poll loop did not resume after re-establishing connection."
+        )
+        assert good_events[0].value == 55
+
+    async def test_publishes_bad_and_retries_when_reconnect_fails(self):
+        """When reconnect fails, publish quality=bad and retry next cycle."""
+        adapter, bus = _make_tcp()
+        client = _make_client(connected=False)
+        client.connect = AsyncMock(side_effect=OSError("refused"))
+        adapter._client = client
+
+        binding = make_binding(_HOLDING_CFG, direction="SOURCE")
+        task = asyncio.create_task(adapter._poll_loop(binding))
+        await asyncio.sleep(0.15)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        events = [
+            c.args[0]
+            for c in bus.publish.call_args_list
+            if hasattr(c.args[0], "quality")
+        ]
+        assert len(events) >= 1, "No events published when reconnect failed"
+        assert all(e.quality == "bad" for e in events)
+
+    async def test_recovers_after_transient_disconnect(self):
+        """After a transient disconnect mid-loop, the poll loop reconnects
+        and resumes publishing good values.
+        """
+        adapter, bus = _make_tcp()
+        call_count = 0
+
+        async def flaky_read(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                adapter._client.connected = False
+                raise OSError("connection lost")
+            return _ok_response([77])
+
+        async def mock_connect():
+            adapter._client.connected = True
+
+        client = _make_client(connected=True)
+        client.read_holding_registers = AsyncMock(side_effect=flaky_read)
+        client.connect = AsyncMock(side_effect=mock_connect)
+        adapter._client = client
+
+        binding = make_binding(_HOLDING_CFG, direction="SOURCE")
+        task = asyncio.create_task(adapter._poll_loop(binding))
+        await asyncio.sleep(0.25)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        client.connect.assert_awaited()
+        good_events = [
+            c.args[0]
+            for c in bus.publish.call_args_list
+            if hasattr(c.args[0], "quality") and c.args[0].quality == "good"
+        ]
+        assert len(good_events) >= 1, "No good values published after recovery"
+
+
+# ---------------------------------------------------------------------------
+# Regression — delete+recreate cycle (the original production bug)
+# ---------------------------------------------------------------------------
+
+
+class TestBindingDeleteRecreateCycleRegression:
+    """Regression tests for the full delete+recreate bug reported in PR#714.
+
+    Before the fix, deleting a binding and creating a new one (two sequential
+    _on_bindings_reloaded calls) caused the new binding to poll exactly once
+    then stop permanently. Values appeared in the visu briefly then vanished.
+    """
+
+    async def test_new_binding_continues_polling_after_delete_recreate(self):
+        """After a delete+recreate cycle the new binding must keep polling,
+        not just fire once and stop.
+        """
+        adapter, bus = _make_tcp()
+        client = _make_client(response=_ok_response([42]))
+        adapter._client = client
+
+        b_original = make_binding(_HOLDING_CFG, direction="SOURCE")
+        b_new = make_binding(_HOLDING_CFG, direction="SOURCE")
+
+        # Step 1: original binding active
+        adapter._bindings = [b_original]
+        await adapter._on_bindings_reloaded()
+        original_tasks = list(adapter._poll_tasks)
+
+        # Step 2: DELETE — reload without original
+        adapter._bindings = []
+        await adapter._on_bindings_reloaded()
+        for t in original_tasks:
+            assert t.done(), "Old task not awaited — race condition risk"
+
+        # Step 3: POST (recreate) — reload with new binding
+        adapter._bindings = [b_new]
+        await adapter._on_bindings_reloaded()
+        assert len(adapter._poll_tasks) == 1
+
+        # Step 4: new binding must poll multiple times, not just once
+        bus.publish.reset_mock()
+        await asyncio.sleep(0.2)  # ~4 cycles at poll_interval=0.05
+
+        good_events = [
+            c.args[0]
+            for c in bus.publish.call_args_list
+            if hasattr(c.args[0], "quality") and c.args[0].quality == "good"
+        ]
+        assert len(good_events) >= 2, (
+            f"Expected >=2 good polls after delete+recreate, got {len(good_events)}. "
+            "New binding only polled once then stopped — original bug not fixed."
+        )
+
+        for t in adapter._poll_tasks:
+            t.cancel()
+        await asyncio.gather(*adapter._poll_tasks, return_exceptions=True)
+
+    async def test_rapid_reload_does_not_corrupt_tcp_connection(self):
+        """Rapid _on_bindings_reloaded calls (bulk binding creation) must not
+        corrupt the TCP client via concurrent reads.
+        """
+        adapter, bus = _make_tcp()
+        client = _make_client(response=_ok_response([99]))
+        adapter._client = client
+
+        bindings = [make_binding(_HOLDING_CFG, direction="SOURCE") for _ in range(5)]
+
+        for i in range(len(bindings)):
+            adapter._bindings = bindings[: i + 1]
+            await adapter._on_bindings_reloaded()
+
+        assert len(adapter._poll_tasks) == 5
+
+        bus.publish.reset_mock()
+        await asyncio.sleep(0.15)
+
+        good_events = [
+            c.args[0]
+            for c in bus.publish.call_args_list
+            if hasattr(c.args[0], "quality") and c.args[0].quality == "good"
+        ]
+        assert len(good_events) >= 5, (
+            f"Expected >=5 good events after rapid reloads, got {len(good_events)}. "
+            "TCP connection may be corrupted by concurrent reads."
+        )
+
+        for t in adapter._poll_tasks:
+            t.cancel()
+        await asyncio.gather(*adapter._poll_tasks, return_exceptions=True)
