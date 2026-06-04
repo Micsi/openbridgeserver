@@ -213,7 +213,7 @@ def _build_api_client_fetch_targets(url: str) -> tuple[list[str], dict[str, str]
         raise ValueError("Invalid URL target") from None
 
     try:
-        target = resolve_url_target(url, allow_loopback=True)
+        target = resolve_url_target(url)
     except ValueError as exc:
         raise ValueError(f"Blocked URL target: {exc}") from exc
     addresses = target.addresses

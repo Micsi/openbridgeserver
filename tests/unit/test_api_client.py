@@ -16,14 +16,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
+from obs.config import SecuritySettings, Settings, override_settings
 from obs.logic.manager import LogicManager, _build_api_client_fetch_targets, _read_secret_file
 from obs.logic.models import FlowData
-from obs.security.url_targets import evaluate_url_target
+from obs.security.url_targets import add_allowed_url_target, evaluate_url_target
 from tests.unit.conftest import edge, make_executor, node
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
+
+
+def _settings_for(path) -> Settings:
+    return Settings(security=SecuritySettings(jwt_secret="unit-test-secret-32-chars-xxx", url_target_allowlist_path=str(path)))
 
 
 def _flow(nodes: list[dict], edges: list[dict] | None = None) -> FlowData:
@@ -57,25 +62,35 @@ class TestApiClientSsrfHostGuard:
     """Unit tests for api_client URL target policy settings."""
 
     def test_empty_host_is_blocked(self):
-        assert evaluate_url_target("http://", allow_loopback=True).allowed is False
+        assert evaluate_url_target("http://").allowed is False
 
-    def test_localhost_localdomain_is_allowed(self):
-        assert evaluate_url_target("http://localhost.localdomain", allow_loopback=True).allowed is True
+    @patch("obs.security.url_targets.socket.getaddrinfo", return_value=[(None, None, None, None, ("127.0.0.1", 0))])
+    def test_localhost_localdomain_is_blocked_without_allowlist(self, _mock_getaddrinfo):
+        decision = evaluate_url_target("http://localhost.localdomain")
 
-    def test_direct_loopback_ip_is_allowed(self):
-        assert evaluate_url_target("http://127.0.0.1", allow_loopback=True).allowed is True
+        assert decision.allowed is False
+        assert decision.blocked_ips == ["127.0.0.1"]
+
+    def test_direct_loopback_ip_is_blocked_without_allowlist(self):
+        decision = evaluate_url_target("http://127.0.0.1")
+
+        assert decision.allowed is False
+        assert decision.blocked_ips == ["127.0.0.1"]
 
     @patch("obs.security.url_targets.socket.getaddrinfo", side_effect=OSError("dns fail"))
     def test_dns_failure_is_blocked(self, _mock_getaddrinfo):
-        assert evaluate_url_target("http://example.com", allow_loopback=True).allowed is False
+        assert evaluate_url_target("http://example.com").allowed is False
 
     @patch("obs.security.url_targets.socket.getaddrinfo", return_value=[(None, None, None, None, ("not-an-ip", 0))])
     def test_invalid_dns_answer_is_blocked(self, _mock_getaddrinfo):
-        assert evaluate_url_target("http://example.com", allow_loopback=True).allowed is False
+        assert evaluate_url_target("http://example.com").allowed is False
 
     @patch("obs.security.url_targets.socket.getaddrinfo", return_value=[(None, None, None, None, ("127.0.0.1", 0))])
-    def test_loopback_dns_answer_is_allowed(self, _mock_getaddrinfo):
-        assert evaluate_url_target("http://example.com", allow_loopback=True).allowed is True
+    def test_loopback_dns_answer_is_blocked_without_allowlist(self, _mock_getaddrinfo):
+        decision = evaluate_url_target("http://example.com")
+
+        assert decision.allowed is False
+        assert decision.blocked_ips == ["127.0.0.1"]
 
 
 class TestApiClientSecretFileGuard:
@@ -198,6 +213,16 @@ class TestApiClientFetchTarget:
         ]
         assert headers == {"Host": "example.com:8443"}
         assert extensions == {"sni_hostname": "example.com"}
+
+    def test_allowlisted_loopback_target_is_pinned_and_allowed(self, tmp_path):
+        override_settings(_settings_for(tmp_path / "allow.yaml"))
+        add_allowed_url_target("127.0.0.1/32", reason="unit test")
+
+        pinned_urls, headers, extensions = _build_api_client_fetch_targets("http://127.0.0.1:8080/api/v1/status")
+
+        assert pinned_urls == ["http://127.0.0.1:8080/api/v1/status"]
+        assert headers == {"Host": "127.0.0.1:8080"}
+        assert extensions == {}
 
 
 # ===========================================================================
@@ -641,8 +666,9 @@ class TestApiClientManagerHttp:
         assert captured_headers[0]["Authorization"] == "Bearer file-token"
 
     @patch("obs.logic.manager.httpx.AsyncClient")
-    def test_localhost_target_is_allowed_with_loopback_policy(self, mock_client_cls):
-        """api_client targets may use loopback addresses for local integrations."""
+    def test_localhost_target_is_blocked_without_allowlist(self, mock_client_cls, tmp_path):
+        """api_client loopback targets require an explicit admin allowlist entry."""
+        override_settings(_settings_for(tmp_path / "allow.yaml"))
         mock_client = AsyncMock()
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -653,9 +679,10 @@ class TestApiClientManagerHttp:
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
             outputs = self._run(manager, flow)
 
-        mock_client.request.assert_called_once()
-        assert outputs["ac"]["status"] == 200
-        assert outputs["ac"]["success"] is True
+        mock_client.request.assert_not_called()
+        assert outputs["ac"]["status"] is None
+        assert outputs["ac"]["success"] is False
+        assert str(outputs["ac"]["response"]).startswith("Blocked URL target:")
 
 
 # ===========================================================================
