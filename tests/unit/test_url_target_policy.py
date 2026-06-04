@@ -64,6 +64,18 @@ def test_hostname_resolving_to_private_ip_uses_allowlisted_network(tmp_path):
     assert decision.allowlisted_by == "10.38.113.0/24"
 
 
+def test_hostname_resolving_to_allowlisted_ip_is_allowed(tmp_path):
+    override_settings(_settings_for(tmp_path / "allow.yaml"))
+    add_allowed_url_target("10.38.113.23", reason="internal host", created_by="admin")
+
+    with patch("obs.security.url_targets.socket.getaddrinfo", return_value=[(None, None, None, None, ("10.38.113.23", 0))]):
+        decision = evaluate_url_target("http://internal.example/status")
+
+    assert decision.allowed is True
+    assert decision.resolved_ips == ["10.38.113.23"]
+    assert decision.allowlisted_by == "10.38.113.23/32"
+
+
 def test_remove_allowlist_entry(tmp_path):
     override_settings(_settings_for(tmp_path / "allow.yaml"))
     add_allowed_url_target("10.38.113.23", reason="", created_by="admin")
@@ -129,6 +141,18 @@ def test_malformed_allowlist_yaml_is_ignored(tmp_path):
 
     assert decision.allowed is False
     assert decision.blocked_ips == ["10.38.113.23"]
+
+
+def test_allowlist_read_errors_are_ignored(tmp_path):
+    allowlist = tmp_path / "allow.yaml"
+    allowlist.write_bytes(b"\xff\xfe\x00")
+    override_settings(_settings_for(allowlist))
+
+    assert list_allowed_url_targets() == []
+
+    allowlist.write_text("version: 1\nallowed_targets: []\n", encoding="utf-8")
+    with patch("builtins.open", side_effect=OSError("permission denied")):
+        assert list_allowed_url_targets() == []
 
 
 def test_invalid_allowlist_items_are_skipped(tmp_path):
@@ -218,6 +242,19 @@ def test_url_ip_literal_allowlist_entry_is_canonicalized(tmp_path):
     assert entries[0].reason == "ip"
 
 
+def test_bare_hostname_url_target_entry_is_canonicalized(tmp_path):
+    override_settings(_settings_for(tmp_path / "allow.yaml"))
+
+    first = add_allowed_url_target("internal.example:8443/status", reason="bare")
+    second = add_allowed_url_target("https://internal.example/api", reason="url")
+
+    entries = list_allowed_url_targets()
+    assert first.target == "internal.example"
+    assert second.target == "internal.example"
+    assert [entry.target for entry in entries] == ["internal.example"]
+    assert entries[0].reason == "url"
+
+
 def test_evaluate_rejects_wrong_scheme_and_missing_host(tmp_path):
     override_settings(_settings_for(tmp_path / "allow.yaml"))
 
@@ -271,6 +308,17 @@ def test_evaluate_blocks_nat64_embedded_private_address(tmp_path):
     assert decision.allowed is False
     assert decision.blocked_ips == ["64:ff9b::a00:1"]
     assert decision.suggested_target == "64:ff9b::a00:1/128"
+
+
+def test_evaluate_blocks_nat64_embedded_multicast_address(tmp_path):
+    override_settings(_settings_for(tmp_path / "allow.yaml"))
+
+    with patch("obs.security.url_targets.socket.getaddrinfo", return_value=[(None, None, None, None, ("64:ff9b::e000:1", 0))]):
+        decision = evaluate_url_target("http://nat64.example/status")
+
+    assert decision.allowed is False
+    assert decision.blocked_ips == ["64:ff9b::e000:1"]
+    assert decision.suggested_target == "64:ff9b::e000:1/128"
 
 
 @pytest.mark.parametrize("address", ["224.0.0.1", "ff02::1"])

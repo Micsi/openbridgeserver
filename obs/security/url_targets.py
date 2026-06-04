@@ -89,10 +89,8 @@ def _normalise_target(raw: str) -> str:
         return str(ipaddress.ip_address(value))
     except ValueError:
         pass
-    if "://" in value:
-        parsed = urlparse(value)
-        if not parsed.hostname:
-            raise ValueError("URL target must contain a hostname")
+    parsed = urlparse(value if "://" in value else f"//{value}")
+    if parsed.hostname:
         value = parsed.hostname.lower()
         try:
             return str(ipaddress.ip_network(value, strict=False))
@@ -102,7 +100,12 @@ def _normalise_target(raw: str) -> str:
             return str(ipaddress.ip_address(value))
         except ValueError:
             pass
-    return value.encode("idna").decode("ascii")
+    elif "://" in value:
+        raise ValueError("URL target must contain a hostname")
+    try:
+        return value.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("target must be an IP/CIDR, hostname, or URL with hostname") from exc
 
 
 def _read_allowlist_document(path: Path | None = None) -> dict[str, Any]:
@@ -112,7 +115,7 @@ def _read_allowlist_document(path: Path | None = None) -> dict[str, Any]:
     try:
         with open(target_path, encoding="utf-8") as handle:
             raw = yaml.safe_load(handle) or {}
-    except yaml.YAMLError:
+    except (OSError, UnicodeError, yaml.YAMLError):
         return {"version": 1, "allowed_targets": []}
     if isinstance(raw, list):
         return {"version": 1, "allowed_targets": raw}
@@ -217,6 +220,8 @@ def _is_blocked_ip(addr: ipaddress._BaseAddress, *, allow_loopback: bool) -> boo
         return True
     if isinstance(addr, ipaddress.IPv6Address) and addr in _NAT64_WELL_KNOWN_PREFIX:
         embedded = ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF)
+        if embedded.is_multicast:
+            return True
         return not embedded.is_global
     return not addr.is_global
 
