@@ -80,7 +80,7 @@
           @input="setString(key, $event.target.value, isOptional(prop))"
         />
 
-        <p v-if="prop.description" class="text-xs text-slate-400 mt-1">{{ prop.description }}</p>
+        <p v-if="fieldDescription(key, prop)" class="text-xs text-slate-400 mt-1">{{ fieldDescription(key, prop) }}</p>
       </div>
 
     </template>
@@ -91,11 +91,12 @@
 import { reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const props = defineProps({
-  schema:     { type: Object, required: true },
-  modelValue: { type: Object, default: () => ({}) },
-  exclude:    { type: Array,  default: () => [] },
+  schema:      { type: Object, required: true },
+  modelValue:  { type: Object, default: () => ({}) },
+  exclude:     { type: Array,  default: () => [] },
+  adapterType: { type: String, default: '' },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -121,8 +122,20 @@ function isRequired(key) {
 }
 
 function fieldLabel(key, prop) {
+  if (props.adapterType) {
+    const i18nKey = `adapters.schema.${props.adapterType}.${key}.title`
+    if (te(i18nKey)) return t(i18nKey)
+  }
   if (prop?.title) return prop.title
   return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+function fieldDescription(key, prop) {
+  if (props.adapterType) {
+    const i18nKey = `adapters.schema.${props.adapterType}.${key}.description`
+    if (te(i18nKey)) return t(i18nKey)
+  }
+  return prop?.description ?? ''
 }
 
 function defaultPlaceholder(prop) {
