@@ -1250,9 +1250,9 @@ class TestModbusTcpConfigOptions:
         with patch.dict("sys.modules", {"pymodbus.client": fake_mod}):
             await adapter.connect()
         # Semaphore(1): first acquire succeeds, second blocks
-        await adapter._read_sem.acquire()
-        assert adapter._read_sem.locked()
-        adapter._read_sem.release()
+        await adapter._io_sem.acquire()
+        assert adapter._io_sem.locked()
+        adapter._io_sem.release()
 
     async def test_serialize_reads_false_creates_unlimited_semaphore(self):
         """serialize_reads=False must allow concurrent reads (Semaphore with large value)."""
@@ -1264,10 +1264,10 @@ class TestModbusTcpConfigOptions:
             await adapter.connect()
         # Should be able to acquire many times without blocking
         for _ in range(10):
-            await adapter._read_sem.acquire()
-        assert not adapter._read_sem.locked()
+            await adapter._io_sem.acquire()
+        assert not adapter._io_sem.locked()
         for _ in range(10):
-            adapter._read_sem.release()
+            adapter._io_sem.release()
 
     async def test_default_config_has_serialize_reads_true(self):
         """Default adapter config must have serialize_reads=True (safe default)."""
@@ -1343,3 +1343,202 @@ class TestModbusTcpConfigOptions:
 
         assert len(sleep_calls) >= 1, "No initial jitter sleep produced"
         assert sleep_calls[0] <= 5.0, f"Jitter sleep {sleep_calls[0]:.2f}s exceeds startup_jitter_s=5.0"
+
+
+# ---------------------------------------------------------------------------
+# Maintainer review fixes — write path, disconnect, jitter, None semaphore
+# ---------------------------------------------------------------------------
+
+
+class TestWritePathUsesIoSemaphore:
+    """Fix 1: _write_register must hold _io_sem so reads and writes are mutually
+    exclusive on the shared TCP socket.
+    """
+
+    async def test_write_acquires_io_sem_when_serialize_reads_true(self):
+        """With serialize_reads=True, _write_register must acquire _io_sem."""
+        adapter, _ = _make_tcp({"host": "127.0.0.1", "port": 502, "timeout": 1.0, "serialize_reads": True})
+        client = _make_client()
+        fake_mod = MagicMock()
+        fake_mod.AsyncModbusTcpClient = MagicMock(return_value=client)
+        with patch.dict("sys.modules", {"pymodbus.client": fake_mod}):
+            await adapter.connect()
+        adapter._client = client
+
+        # Acquire the semaphore manually — write must then block until released
+        await adapter._io_sem.acquire()
+        write_completed = False
+
+        async def do_write():
+            nonlocal write_completed
+            bc = ModbusBindingConfig(**{**_HOLDING_CFG, "data_format": "uint16"})
+            await adapter._write_register(bc, 42)
+            write_completed = True
+
+        write_task = asyncio.create_task(do_write())
+        await asyncio.sleep(0.05)
+        assert not write_completed, "_write_register completed despite locked semaphore"
+        adapter._io_sem.release()
+        await write_task
+        assert write_completed
+
+    async def test_write_skips_sem_when_serialize_reads_false(self):
+        """With serialize_reads=False, _io_sem is None — write proceeds without locking."""
+        adapter, _ = _make_tcp({"host": "127.0.0.1", "port": 502, "timeout": 1.0, "serialize_reads": False})
+        client = _make_client()
+        fake_mod = MagicMock()
+        fake_mod.AsyncModbusTcpClient = MagicMock(return_value=client)
+        with patch.dict("sys.modules", {"pymodbus.client": fake_mod}):
+            await adapter.connect()
+        adapter._client = client
+
+        assert adapter._io_sem is None
+        bc = ModbusBindingConfig(**{**_HOLDING_CFG, "data_format": "uint16"})
+        # Must not raise even without semaphore
+        await adapter._write_register(bc, 42)
+        client.write_register.assert_awaited_once()
+
+
+class TestDisconnectAwaitsGather:
+    """Fix 2: disconnect() must await gather() so cancelled tasks finish
+    before the TCP client is closed.
+    """
+
+    async def test_disconnect_waits_for_tasks_before_closing(self):
+        """All poll tasks must be done before self._client.close() is called."""
+        adapter, _ = _make_tcp()
+        client = _make_client()
+        adapter._client = client
+
+        task_done_at_close = []
+
+        async def slow_task():
+            try:
+                await asyncio.sleep(100)
+            except asyncio.CancelledError:
+                raise
+
+        task = asyncio.create_task(slow_task())
+        adapter._poll_tasks.append(task)
+        await asyncio.sleep(0)  # let task start
+
+        original_close = client.close
+
+        def recording_close():
+            task_done_at_close.append(task.done())
+            original_close()
+
+        client.close = recording_close
+        await adapter.disconnect()
+
+        assert task_done_at_close, "close() was never called"
+        assert task_done_at_close[0], "close() called before task finished — gather() not awaited"
+
+    async def test_disconnect_resets_initial_load_flag(self):
+        """After disconnect, jitter applies again on the next connect/reload cycle."""
+        adapter, _ = _make_tcp()
+        adapter._client = _make_client()
+        adapter._initial_load_done = True
+
+        await adapter.disconnect()
+
+        assert not adapter._initial_load_done
+
+
+class TestJitterOnlyOnInitialLoad:
+    """Fix 3: Startup jitter is applied only on the first _on_bindings_reloaded()
+    call after connect, not on subsequent binding changes.
+    """
+
+    async def test_jitter_applied_on_first_reload(self):
+        """First _on_bindings_reloaded: apply_jitter=True passed to _poll_loop."""
+        adapter, _ = _make_tcp({"host": "127.0.0.1", "port": 502, "timeout": 1.0, "startup_jitter_s": 5.0})
+        adapter._client = _make_client()
+        assert not adapter._initial_load_done
+
+        jitter_flags = []
+
+        async def recording_poll_loop(binding, *, apply_jitter=True):
+            jitter_flags.append(apply_jitter)
+
+        with patch.object(adapter, "_poll_loop", side_effect=recording_poll_loop):
+            adapter._bindings = [make_binding(_HOLDING_CFG, direction="SOURCE")]
+            await adapter._on_bindings_reloaded()
+
+        assert jitter_flags == [True], "Jitter must be applied on first reload"
+        assert adapter._initial_load_done
+
+        for t in adapter._poll_tasks:
+            t.cancel()
+
+    async def test_jitter_skipped_on_subsequent_reloads(self):
+        """After the first reload, apply_jitter=False for all new tasks."""
+        adapter, _ = _make_tcp({"host": "127.0.0.1", "port": 502, "timeout": 1.0, "startup_jitter_s": 5.0})
+        adapter._client = _make_client()
+        adapter._initial_load_done = True  # simulate already-started adapter
+
+        jitter_flags = []
+
+        async def recording_poll_loop(binding, *, apply_jitter=True):
+            jitter_flags.append(apply_jitter)
+
+        with patch.object(adapter, "_poll_loop", side_effect=recording_poll_loop):
+            adapter._bindings = [make_binding(_HOLDING_CFG, direction="SOURCE")]
+            await adapter._on_bindings_reloaded()
+
+        assert jitter_flags == [False], "Jitter must NOT be applied on subsequent reloads"
+
+        for t in adapter._poll_tasks:
+            t.cancel()
+
+
+class TestNoneIoSemaphore:
+    """Fix 4: _io_sem is None when serialize_reads=False (no sys.maxsize hack).
+    The None sentinel is used with `async with (sem or nullcontext())`.
+    """
+
+    async def test_io_sem_is_semaphore_when_serialize_reads_true(self):
+        adapter, _ = _make_tcp({"host": "127.0.0.1", "port": 502, "timeout": 1.0, "serialize_reads": True})
+        client = _make_client(connected=True)
+        fake_mod = MagicMock()
+        fake_mod.AsyncModbusTcpClient = MagicMock(return_value=client)
+        with patch.dict("sys.modules", {"pymodbus.client": fake_mod}):
+            await adapter.connect()
+        assert isinstance(adapter._io_sem, asyncio.Semaphore)
+
+    async def test_io_sem_is_none_when_serialize_reads_false(self):
+        adapter, _ = _make_tcp({"host": "127.0.0.1", "port": 502, "timeout": 1.0, "serialize_reads": False})
+        client = _make_client(connected=True)
+        fake_mod = MagicMock()
+        fake_mod.AsyncModbusTcpClient = MagicMock(return_value=client)
+        with patch.dict("sys.modules", {"pymodbus.client": fake_mod}):
+            await adapter.connect()
+        assert adapter._io_sem is None
+
+
+class TestSilentReconnectFailure:
+    """Fix 5: When connect() returns without error but client.connected stays False,
+    the poll loop publishes quality=bad and retries after poll_interval.
+    """
+
+    async def test_silent_reconnect_fail_publishes_bad_quality(self):
+        """connect() no exception but still disconnected → bad quality + retry."""
+        adapter, bus = _make_tcp()
+        # Client stays disconnected even after connect()
+        client = _make_client(connected=False)
+        client.connect = AsyncMock()  # no exception, but connected stays False
+        adapter._client = client
+
+        binding = make_binding(_HOLDING_CFG, direction="SOURCE")
+        task = asyncio.create_task(adapter._poll_loop(binding))
+        await asyncio.sleep(0.15)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        events = [c.args[0] for c in bus.publish.call_args_list if hasattr(c.args[0], "quality")]
+        assert any(e.quality == "bad" for e in events), (
+            "Expected bad-quality event when connect() succeeds but client stays disconnected"
+        )
