@@ -679,6 +679,122 @@
         "uploadButton": "Hochladen & Parsen",
         "uploadFailed": "Upload fehlgeschlagen"
       }
+    },
+    "schema": {
+      "MODBUS_TCP": {
+        "serialize_reads": {
+          "title": "Lesezugriffe serialisieren",
+          "description": "Sendet Modbus-Requests nacheinander statt gleichzeitig. Empfohlen für einfache Geräte (Heizungsregler, Wechselrichter, Zähler), die nur einen Request gleichzeitig verarbeiten können. Deaktivieren bei leistungsstarken PLCs mit Multi-Request-Unterstützung."
+        },
+        "startup_jitter_s": {
+          "title": "Startup-Jitter (s)",
+          "description": "Maximale zufällige Verzögerung (Sekunden) vor dem ersten Poll jedes Bindings. Verhindert einen Request-Burst wenn alle Tasks gleichzeitig starten. 0 = deaktiviert."
+        }
+      },
+      "SNMP": {
+        "version": {
+          "title": "SNMP-Version"
+        },
+        "community": {
+          "title": "Community-String (v1/v2c)"
+        },
+        "security_name": {
+          "title": "Security Name / Benutzername (v3)"
+        },
+        "security_level": {
+          "title": "Sicherheitsstufe (v3)"
+        },
+        "auth_protocol": {
+          "title": "Auth-Protokoll (v3)"
+        },
+        "auth_key": {
+          "title": "Auth-Key (v3)"
+        },
+        "priv_protocol": {
+          "title": "Privacy-Protokoll (v3)"
+        },
+        "priv_key": {
+          "title": "Privacy-Key (v3)"
+        }
+      },
+      "ZEITSCHALTUHR": {
+        "latitude": {
+          "title": "Breitengrad",
+          "description": "Breitengrad für Sonnenauf/-untergang"
+        },
+        "longitude": {
+          "title": "Längengrad",
+          "description": "Längengrad für Sonnenauf/-untergang"
+        },
+        "altitude": {
+          "title": "Höhe ü.M. (m)",
+          "description": "Höhe ü.M. in Metern"
+        },
+        "timezone": {
+          "title": "Zeitzone",
+          "description": "Zeitzone (leer = App-Zeitzone, z.B. Europe/Zurich)"
+        },
+        "holiday_country": {
+          "title": "Feiertagsland",
+          "description": "Feiertagsland (ISO 3166-1: DE, AT, CH, FR …)"
+        },
+        "holiday_subdivision": {
+          "title": "Kanton / Bundesland",
+          "description": "Kanton/Bundesland (z.B. ZH, BY, OÖ) — leer = nur nationale Feiertage"
+        },
+        "holiday_language": {
+          "title": "Feiertagssprache",
+          "description": "Sprache der Feiertagsnamen (de, fr, it, en) — Standard: de"
+        },
+        "vacation_1_start": {
+          "title": "Ferien 1 Beginn",
+          "description": "Ferienperiode 1 Beginn (JJJJ-MM-TT)"
+        },
+        "vacation_1_end": {
+          "title": "Ferien 1 Ende",
+          "description": "Ferienperiode 1 Ende (JJJJ-MM-TT)"
+        },
+        "vacation_2_start": {
+          "title": "Ferien 2 Beginn",
+          "description": "Ferienperiode 2 Beginn (JJJJ-MM-TT)"
+        },
+        "vacation_2_end": {
+          "title": "Ferien 2 Ende",
+          "description": "Ferienperiode 2 Ende (JJJJ-MM-TT)"
+        },
+        "vacation_3_start": {
+          "title": "Ferien 3 Beginn",
+          "description": "Ferienperiode 3 Beginn (JJJJ-MM-TT)"
+        },
+        "vacation_3_end": {
+          "title": "Ferien 3 Ende",
+          "description": "Ferienperiode 3 Ende (JJJJ-MM-TT)"
+        },
+        "vacation_4_start": {
+          "title": "Ferien 4 Beginn",
+          "description": "Ferienperiode 4 Beginn (JJJJ-MM-TT)"
+        },
+        "vacation_4_end": {
+          "title": "Ferien 4 Ende",
+          "description": "Ferienperiode 4 Ende (JJJJ-MM-TT)"
+        },
+        "vacation_5_start": {
+          "title": "Ferien 5 Beginn",
+          "description": "Ferienperiode 5 Beginn (JJJJ-MM-TT)"
+        },
+        "vacation_5_end": {
+          "title": "Ferien 5 Ende",
+          "description": "Ferienperiode 5 Ende (JJJJ-MM-TT)"
+        },
+        "vacation_6_start": {
+          "title": "Ferien 6 Beginn",
+          "description": "Ferienperiode 6 Beginn (JJJJ-MM-TT)"
+        },
+        "vacation_6_end": {
+          "title": "Ferien 6 Ende",
+          "description": "Ferienperiode 6 Ende (JJJJ-MM-TT)"
+        }
+      }
     }
   },
   "history": {
