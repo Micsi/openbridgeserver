@@ -310,9 +310,7 @@ async def _build_adapter_info(db: Database) -> list[dict[str, Any]]:
                 "transactions_per_second": tps if tps_available else None,
                 "metrics_available": tps_available,
                 "metrics_source": "ringbuffer_metadata_adapter_instance_60s" if tps_available else None,
-                "adapter_type_transactions_per_second": (
-                    tps_by_adapter_type.get(adapter_type.upper(), 0.0) if tps_available else None
-                ),
+                "adapter_type_transactions_per_second": (tps_by_adapter_type.get(adapter_type.upper(), 0.0) if tps_available else None),
                 "health": {
                     "severity": getattr(instance, "last_severity", "ok") if instance else "ok",
                     "detail": sanitize_support_data(getattr(instance, "last_detail", "") if instance else ""),
@@ -463,9 +461,7 @@ async def _history_table_stats(db: Database) -> dict[str, Any]:
         "datapoints": int(row["datapoints"]) if row else 0,
         "oldest_ts": row["oldest_ts"] if row else None,
         "newest_ts": row["newest_ts"] if row else None,
-        "source_adapter_counts": {
-            (adapter_row["source_adapter"] or "unknown"): int(adapter_row["count"]) for adapter_row in by_adapter_rows
-        },
+        "source_adapter_counts": {(adapter_row["source_adapter"] or "unknown"): int(adapter_row["count"]) for adapter_row in by_adapter_rows},
     }
 
 

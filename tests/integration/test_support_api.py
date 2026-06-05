@@ -244,9 +244,9 @@ async def test_support_package_contains_history_and_monitor_sections(client, aut
 
 async def test_support_package_sanitizes_error_history(client, auth_headers):
     logging.getLogger("tests.support").error(
-        'connection failed url=http://admin:secret@192.168.1.20/api?token=abc password=hidden '
-        'Authorization: Bearer bearer-token X-API-Key: header-secret password: colon-secret '
-        'Authorization: Basic basic-secret '
+        "connection failed url=http://admin:secret@192.168.1.20/api?token=abc password=hidden "
+        "Authorization: Bearer bearer-token X-API-Key: header-secret password: colon-secret "
+        "Authorization: Basic basic-secret "
         '{"token":"json-token"}'
     )
 
