@@ -67,7 +67,10 @@ detect_version() {
 detect_repo() {
     local url result
     url=$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || echo "")
-    result=$(echo "$url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+?)(\.git)?$|\1|')
+    # Strip trailing .git, then extract the owner/repo suffix after github.com: or github.com/
+    # Pure Bash — no sed, avoids BSD vs GNU sed ERE incompatibilities (non-greedy, etc.)
+    url="${url%.git}"
+    result="${url##*github.com[:/]}"   # remove everything up to and including github.com: or github.com/
     if [[ "$result" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
         echo "$result"
     else
@@ -138,7 +141,7 @@ build_docker() {
 
     local base rc
     base=$(grep -m1 '^## ' "$PROJECT_ROOT/RELEASENOTES.md" | sed 's/^## *//')
-    rc=$(echo "$version" | grep -oP -- '-RC\d*$' || true)
+    if [[ "$version" =~ (-RC[0-9]*)$ ]]; then rc="${BASH_REMATCH[1]}"; else rc=""; fi
     echo "${base}${rc}" > "$PROJECT_ROOT/obs/version"
     (command -v npm &>/dev/null && npm pkg set version="$version" --prefix "$PROJECT_ROOT/gui") || true
 
