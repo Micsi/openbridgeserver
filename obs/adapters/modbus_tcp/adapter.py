@@ -26,7 +26,6 @@ import asyncio
 import contextlib
 import logging
 import random
-import sys
 from typing import Any
 
 from pydantic import BaseModel, Field
