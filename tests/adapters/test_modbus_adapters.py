@@ -1322,17 +1322,13 @@ class TestModbusTcpConfigOptions:
 
         sleep_calls = []
 
-        async def recording_sleep(delay, *args, **kwargs):
+        async def _sleep(delay, *args, **kwargs):
             sleep_calls.append(delay)
+            raise asyncio.CancelledError
 
         binding = make_binding({**_HOLDING_CFG, "poll_interval": 60.0}, direction="SOURCE")
 
-        # Only one task — track and cancel it properly to avoid leaked pending tasks.
-        async def recording_sleep_cancel(delay: float, *_a, **_kw) -> None:
-            sleep_calls.append(delay)
-            raise asyncio.CancelledError  # exit loop immediately after first sleep
-
-        with patch("asyncio.sleep", side_effect=recording_sleep_cancel):
+        with patch("asyncio.sleep", side_effect=_sleep):
             task = asyncio.create_task(adapter._poll_loop(binding))
             try:
                 await task
