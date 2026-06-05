@@ -22,12 +22,16 @@
       <!-- Set-Metadaten -->
       <section class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div class="flex flex-col gap-1">
-          <label class="text-xs text-slate-500">{{ $t('ringbuffer.filterEditor.nameLabel') }}</label>
+          <label class="text-xs text-slate-500">
+            {{ $t('ringbuffer.filterEditor.nameLabel') }}
+            <span class="text-red-500">*</span>
+          </label>
           <input
             v-model="form.name"
             class="input"
             data-testid="filter-editor-name"
             :placeholder="$t('ringbuffer.filterEditor.namePlaceholder')"
+            required
             @input="markDirty"
           />
         </div>
@@ -161,51 +165,74 @@
           </div>
           <template v-if="form.valueOperator === 'between'">
             <div class="flex flex-col gap-1">
-              <label class="text-xs text-slate-500">{{ $t('ringbuffer.filterEditor.lowerBound') }}</label>
+              <label class="text-xs text-slate-500">
+                {{ $t('ringbuffer.filterEditor.lowerBound') }}
+                <span class="text-red-500">*</span>
+              </label>
               <input
                 v-model="form.valueLower"
-                class="input"
+                :class="['input', valueFilterError ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : '']"
                 data-testid="filter-editor-value-lower"
                 placeholder="0"
+                required
+                :aria-invalid="Boolean(valueFilterError)"
                 @input="markDirty"
               />
             </div>
             <div class="flex flex-col gap-1">
-              <label class="text-xs text-slate-500">{{ $t('ringbuffer.filterEditor.upperBound') }}</label>
+              <label class="text-xs text-slate-500">
+                {{ $t('ringbuffer.filterEditor.upperBound') }}
+                <span class="text-red-500">*</span>
+              </label>
               <input
                 v-model="form.valueUpper"
-                class="input"
+                :class="['input', valueFilterError ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : '']"
                 data-testid="filter-editor-value-upper"
                 placeholder="100"
+                required
+                :aria-invalid="Boolean(valueFilterError)"
                 @input="markDirty"
               />
             </div>
           </template>
           <template v-else-if="form.valueOperator === 'regex' || form.valueDataType === 'regex'">
             <div class="flex flex-col gap-1 md:col-span-2">
-              <label class="text-xs text-slate-500">{{ $t('ringbuffer.filterEditor.patternLabel') }}</label>
+              <label class="text-xs text-slate-500">
+                {{ $t('ringbuffer.filterEditor.patternLabel') }}
+                <span v-if="form.valueOperator === 'regex'" class="text-red-500">*</span>
+              </label>
               <input
                 v-model="form.valuePattern"
-                class="input"
+                :class="['input', valueFilterError ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : '']"
                 data-testid="filter-editor-value-pattern"
-                placeholder="^temp"
+                :placeholder="$t('ringbuffer.filterEditor.patternPlaceholder')"
+                :required="form.valueOperator === 'regex'"
+                :aria-invalid="Boolean(valueFilterError)"
                 @input="markDirty"
               />
             </div>
           </template>
           <template v-else-if="form.valueOperator">
             <div class="flex flex-col gap-1 md:col-span-2">
-              <label class="text-xs text-slate-500">{{ $t('ringbuffer.filterEditor.valueLabel') }}</label>
+              <label class="text-xs text-slate-500">
+                {{ $t('ringbuffer.filterEditor.valueLabel') }}
+                <span class="text-red-500">*</span>
+              </label>
               <input
                 v-model="form.valueInput"
-                class="input"
+                :class="['input', valueFilterError ? 'border-red-500 focus:border-red-500 focus:ring-red-500' : '']"
                 data-testid="filter-editor-value-input"
                 placeholder="42"
+                required
+                :aria-invalid="Boolean(valueFilterError)"
                 @input="markDirty"
               />
             </div>
           </template>
         </div>
+        <p v-if="valueFilterError" class="text-xs text-red-500" data-testid="filter-editor-value-error">
+          {{ valueFilterError }}
+        </p>
         <label
           v-if="form.valueOperator === 'regex' || form.valueDataType === 'regex'"
           class="inline-flex items-center gap-2 text-xs text-slate-500"
@@ -225,8 +252,11 @@
 
     <template #footer>
       <p class="text-xs mr-auto self-center" data-testid="filter-editor-semantics-hint"
-         :class="filterIsEmpty ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'">
-        <span v-if="filterIsEmpty" data-testid="filter-editor-empty-hint">
+         :class="filterIsEmpty || valueFilterError ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'">
+        <span v-if="valueFilterError" data-testid="filter-editor-validation-hint">
+          {{ valueFilterError }}
+        </span>
+        <span v-else-if="filterIsEmpty" data-testid="filter-editor-empty-hint">
           {{ $t('ringbuffer.filterEditor.emptyFilterWarning') }}
         </span>
         <span v-else>
@@ -246,7 +276,7 @@
       <button class="btn-secondary btn-sm" data-testid="filter-editor-cancel" @click="onCancel">{{ $t('ringbuffer.filterEditor.discard') }}</button>
       <button
         class="btn-primary btn-sm"
-        :disabled="saving || filterIsEmpty || deleting || !canEdit"
+        :disabled="saving || filterIsEmpty || Boolean(valueFilterError) || deleting || !canEdit"
         data-testid="filter-editor-save-topbar"
         :title="canEdit ? '' : $t('ringbuffer.filterEditor.saveRestricted')"
         @click="onSave(true)"
@@ -345,6 +375,47 @@ function makeEmptyForm() {
 }
 
 const form = reactive(makeEmptyForm())
+
+function valueFilterValidationKey() {
+  if (!form.valueOperator) return ''
+  if (form.valueOperator === 'between') {
+    const lowerText = String(form.valueLower ?? '').trim()
+    const upperText = String(form.valueUpper ?? '').trim()
+    if (!lowerText || !upperText) return 'ringbuffer.filterEditor.valueBetweenRequired'
+    const lower = Number(lowerText)
+    const upper = Number(upperText)
+    if (!Number.isFinite(lower) || !Number.isFinite(upper)) return 'ringbuffer.filterEditor.valueNumberRequired'
+    if (lower > upper) return 'ringbuffer.filterEditor.valueRangeInvalid'
+    return ''
+  }
+  if (form.valueOperator === 'regex') {
+    const pattern = form.valuePattern.trim()
+    if (!pattern) return 'ringbuffer.filterEditor.valuePatternRequired'
+    try {
+      new RegExp(pattern)
+    } catch {
+      return 'ringbuffer.filterEditor.valuePatternInvalid'
+    }
+    return ''
+  }
+
+  const text = String(form.valueInput ?? '').trim()
+  if (!text) return 'ringbuffer.filterEditor.valueRequired'
+  if (form.valueDataType === 'number') {
+    return Number.isFinite(Number(text)) ? '' : 'ringbuffer.filterEditor.valueNumberRequired'
+  }
+  if (form.valueDataType === 'bool') {
+    return ['true', 'false', '1', '0'].includes(text.toLowerCase())
+      ? ''
+      : 'ringbuffer.filterEditor.valueBoolRequired'
+  }
+  return ''
+}
+
+const valueFilterError = computed(() => {
+  const key = valueFilterValidationKey()
+  return key ? t(key) : ''
+})
 
 // Disable Save when the filter has no populated criteria — matches backend
 // validation (POST/PUT /filtersets reject empty FilterCriteria with 422).
@@ -674,6 +745,10 @@ async function onSave(addToTopbar) {
   errorMsg.value = ''
   if (!form.name.trim()) {
     errorMsg.value = t('ringbuffer.filterEditor.nameRequired')
+    return
+  }
+  if (valueFilterError.value) {
+    errorMsg.value = valueFilterError.value
     return
   }
   saving.value = true

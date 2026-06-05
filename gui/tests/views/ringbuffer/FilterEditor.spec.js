@@ -493,6 +493,51 @@ describe('FilterEditor (#436)', () => {
     expect(payload.filter.value_filter).toMatchObject({ operator: 'gt', value: 42 })
   })
 
+  it('marks value-filter value as required and prevents saving without it', async () => {
+    const ringbufferApi = makeRingbufferApi()
+    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
+    await wrapper.find('[data-testid="filter-editor-name"]').setValue('VF missing')
+    await wrapper.find('[data-testid="filter-editor-value-type"]').setValue('number')
+    await wrapper.find('[data-testid="filter-editor-value-operator"]').setValue('gt')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="filter-editor-value-error"]').text()).toMatch(/Wert/i)
+    expect(wrapper.find('[data-testid="filter-editor-save-topbar"]').element.disabled).toBe(true)
+    await wrapper.find('[data-testid="filter-editor-save-topbar"]').trigger('click')
+    await flushPromises()
+    expect(ringbufferApi.createFilterset).not.toHaveBeenCalled()
+  })
+
+  it('explains invalid numeric value filters before any API call', async () => {
+    const ringbufferApi = makeRingbufferApi()
+    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
+    await wrapper.find('[data-testid="filter-editor-name"]').setValue('VF invalid')
+    await wrapper.find('[data-testid="filter-editor-value-type"]').setValue('number')
+    await wrapper.find('[data-testid="filter-editor-value-operator"]').setValue('gt')
+    await wrapper.find('[data-testid="filter-editor-value-input"]').setValue('not-a-number')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="filter-editor-value-error"]').text()).toMatch(/Zahl/i)
+    expect(wrapper.find('[data-testid="filter-editor-validation-hint"]').text()).toMatch(/Zahl/i)
+    expect(wrapper.find('[data-testid="filter-editor-save-topbar"]').element.disabled).toBe(true)
+    expect(ringbufferApi.createFilterset).not.toHaveBeenCalled()
+  })
+
+  it('rejects contradictory between value-filter bounds in the dialog', async () => {
+    const ringbufferApi = makeRingbufferApi()
+    const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
+    await wrapper.find('[data-testid="filter-editor-name"]').setValue('VF range')
+    await wrapper.find('[data-testid="filter-editor-value-type"]').setValue('number')
+    await wrapper.find('[data-testid="filter-editor-value-operator"]').setValue('between')
+    await wrapper.find('[data-testid="filter-editor-value-lower"]').setValue('20')
+    await wrapper.find('[data-testid="filter-editor-value-upper"]').setValue('10')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="filter-editor-value-error"]').text()).toMatch(/Untergrenze/i)
+    expect(wrapper.find('[data-testid="filter-editor-save-topbar"]').element.disabled).toBe(true)
+    expect(ringbufferApi.createFilterset).not.toHaveBeenCalled()
+  })
+
   it('emits "saved" after a successful save', async () => {
     const ringbufferApi = makeRingbufferApi()
     const { wrapper } = await mountEditor({ props: { setId: null }, ringbufferApi })
