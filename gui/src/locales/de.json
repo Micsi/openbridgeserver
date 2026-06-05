@@ -683,7 +683,7 @@
     "schema": {
       "MODBUS_TCP": {
         "serialize_reads": {
-          "title": "Reads serialisieren",
+          "title": "Lesezugriffe serialisieren",
           "description": "Sendet Modbus-Requests nacheinander statt gleichzeitig. Empfohlen für einfache Geräte (Heizungsregler, Wechselrichter, Zähler), die nur einen Request gleichzeitig verarbeiten können. Deaktivieren bei leistungsstarken PLCs mit Multi-Request-Unterstützung."
         },
         "startup_jitter_s": {
