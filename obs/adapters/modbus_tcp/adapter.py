@@ -24,7 +24,7 @@ import asyncio
 import logging
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from obs.adapters.base import AdapterBase
 from obs.adapters.modbus_base import (
@@ -48,6 +48,27 @@ class ModbusTcpAdapterConfig(BaseModel):
     host: str = "192.168.1.1"
     port: int = 502
     timeout: float = 3.0
+    serialize_reads: bool = Field(
+        default=True,
+        title="Reads serialisieren",
+        description=(
+            "Sendet Modbus-Requests nacheinander statt gleichzeitig. "
+            "Empfohlen fuer einfache Geraete (Heizungsregler, Wechselrichter, Zaehler), "
+            "die nur einen Request gleichzeitig verarbeiten koennen. "
+            "Deaktivieren bei leistungsstarken PLCs mit Multi-Request-Unterstuetzung."
+        ),
+    )
+    startup_jitter_s: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=300.0,
+        title="Startup-Jitter (s)",
+        description=(
+            "Maximale zufaellige Verzoegerung (Sekunden) vor dem ersten Poll jedes Bindings. "
+            "Verhindert einen Request-Burst wenn alle Tasks gleichzeitig starten. "
+            "0 = deaktiviert."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +105,17 @@ class ModbusTcpAdapter(AdapterBase):
             return
 
         cfg = ModbusTcpAdapterConfig(**self._config)
+        self._adp_cfg = cfg
+
+        # Configure read serialization based on adapter option.
+        import sys
+        self._read_sem = asyncio.Semaphore(1 if cfg.serialize_reads else sys.maxsize)
+        logger.debug(
+            "Modbus TCP: serialize_reads=%s startup_jitter_s=%.1f",
+            cfg.serialize_reads,
+            cfg.startup_jitter_s,
+        )
+
         self._client = AsyncModbusTcpClient(
             host=cfg.host,
             port=cfg.port,
