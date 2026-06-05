@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
+import sys
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -91,6 +93,8 @@ class ModbusTcpAdapter(AdapterBase):
         # support concurrent requests — sending multiple requests before the
         # previous response arrives causes timeouts and corrupts the TCP stream.
         self._read_sem: asyncio.Semaphore = asyncio.Semaphore(1)
+        self._reconnect_lock: asyncio.Lock = asyncio.Lock()
+        self._adp_cfg: ModbusTcpAdapterConfig = ModbusTcpAdapterConfig()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -108,7 +112,6 @@ class ModbusTcpAdapter(AdapterBase):
         self._adp_cfg = cfg
 
         # Configure read serialization based on adapter option.
-        import sys
         self._read_sem = asyncio.Semaphore(1 if cfg.serialize_reads else sys.maxsize)
         logger.debug(
             "Modbus TCP: serialize_reads=%s startup_jitter_s=%.1f",
@@ -195,104 +198,27 @@ class ModbusTcpAdapter(AdapterBase):
             # Auto-reconnect if the client became disconnected (e.g. after a reload
             # that cancelled tasks mid-read, or a transient network failure).
             if self._client and not self._client.connected:
-                try:
-                    await self._client.connect()
-                    logger.info("Modbus TCP: reconnected in poll loop (binding %s)", binding.id)
-                except Exception as exc:
-                    logger.warning("Modbus TCP: reconnect failed (binding %s): %s", binding.id, exc)
-                    await self._bus.publish(
-                        DataValueEvent(
-                            datapoint_id=binding.datapoint_id,
-                            value=None,
-                            quality="bad",
-                            source_adapter=self.adapter_type,
-                            binding_id=binding.id,
-                        ),
-                    )
-                    await asyncio.sleep(bc.poll_interval)
-                    continue
-
-            try:
-                value = await self._read_register(bc)
-                quality = "good" if value is not None else "bad"
-                if quality == "good":
-                    if binding.value_formula:
-                        from obs.core.formula import apply_formula
-
-                        value = apply_formula(binding.value_formula, value)
-                    if binding.value_map:
-                        from obs.core.transformation import apply_value_map
-
-                        value = apply_value_map(value, binding.value_map)
-                await self._bus.publish(
-                    DataValueEvent(
-                        datapoint_id=binding.datapoint_id,
-                        value=value,
-                        quality=quality,
-                        source_adapter=self.adapter_type,
-                        binding_id=binding.id,
-                    ),
-                )
-            except asyncio.CancelledError:
-                return
-            except Exception as exc:
-                logger.warning("Modbus TCP poll error (binding %s): %s", binding.id, exc)
-                await self._bus.publish(
-                    DataValueEvent(
-                        datapoint_id=binding.datapoint_id,
-                        value=None,
-                        quality="bad",
-                        source_adapter=self.adapter_type,
-                        binding_id=binding.id,
-                    ),
-                )
-            await asyncio.sleep(bc.poll_interval)
-
-    # ------------------------------------------------------------------
-    # Read / Write
-    # ------------------------------------------------------------------
-
-    async def read(self, binding: Any) -> Any:
-        try:
-            bc = ModbusBindingConfig(**binding.config)
-            return await self._read_register(bc)
-        except Exception:
-            logger.exception("Modbus TCP read failed for binding %s", binding.id)
-            return None
-
-    async def write(self, binding: Any, value: Any) -> None:
-        if not self._client or not self._client.connected:
-            logger.warning("Modbus TCP write skipped — not connected")
-            return
-        try:
-            bc = ModbusBindingConfig(**binding.config)
-            await self._write_register(bc, value)
-        except Exception:
-            logger.exception("Modbus TCP write failed for binding %s", binding.id)
-
-    # ------------------------------------------------------------------
-    # Low-level Modbus operations
-    # ------------------------------------------------------------------
-
-    async def _modbus_call(self, fn, *pos_args, unit_id: int, **extra_kwargs) -> Any:
-        """Version-safe pymodbus call across 2.x / 3.x / 3.12+.
-
-        Tries every combination of slave kwarg name and whether positional args
-        need to become keyword args (pymodbus 3.12+ made count keyword-only).
-        """
-        slave_variants = [
-            {"device_id": unit_id},
-            {"slave": unit_id},
-            {"unit": unit_id},
-            {},
-        ]
-
-        # First: try all args positional (works for 2.x and 3.0-3.11)
-        for sk in slave_variants:
-            try:
-                return await fn(*pos_args, **sk, **extra_kwargs)
-            except TypeError:
-                continue
+                async with self._reconnect_lock:
+                    if not self._client.connected:
+                        try:
+                            await self._client.connect()
+                            host = self._adp_cfg.host
+                            port = self._adp_cfg.port
+                            await self._publish_status(True, str(host) + ':' + str(port))
+                            logger.info('Modbus TCP: reconnected in poll loop (binding %s)', binding.id)
+                        except Exception as exc:
+                            logger.warning('Modbus TCP: reconnect failed (binding %s): %s', binding.id, exc)
+                            await self._bus.publish(
+                                DataValueEvent(
+                                    datapoint_id=binding.datapoint_id,
+                                    value=None,
+                                    quality='bad',
+                                    source_adapter=self.adapter_type,
+                                    binding_id=binding.id,
+                                ),
+                            )
+                            await asyncio.sleep(bc.poll_interval)
+                            continue
 
         # Second: try last positional arg as keyword (pymodbus 3.12+ keyword-only params)
         if len(pos_args) >= 2:
