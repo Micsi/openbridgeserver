@@ -62,7 +62,9 @@ function _matchValueFilter(entryValue, vf) {
       const re = new RegExp(vf.pattern, vf.ignore_case ? 'i' : '')
       return re.test(String(entryValue ?? ''))
     } catch {
-      return false
+      // The backend accepts Python regex syntax that JavaScript cannot compile.
+      // Treat it as not client-evaluable instead of dropping live rows.
+      return true
     }
   }
   // Unknown operator → don't drop the entry, defer to server.
