@@ -84,6 +84,9 @@ async def test_support_package_contains_phase1_privacy_contract(client, auth_hea
     assert "health" in body
     assert isinstance(body["debug_log"], list)
     assert "/" not in body["installation"]["database"]["path"]
+    assert body["installation"]["config_source"]
+    assert "/" not in body["installation"]["config_source"]
+    assert not body["installation"]["config_source"].startswith("[REDACTED")
 
 
 async def test_support_package_sanitizes_adapter_config_and_counts(client, auth_headers):
@@ -96,8 +99,12 @@ async def test_support_package_sanitizes_adapter_config_and_counts(client, auth_
             "config": {
                 "host": "192.168.10.25",
                 "port": 1883,
+                "individual_address": "1.1.100",
+                "auth_protocol": "SHA",
                 "username": "support-user",
                 "password": "top-secret",
+                "community": "support-community",
+                "knxkeys_file_path": "/home/support/secret.knxkeys",
                 "psk": "support-psk",
                 "pin": "123456",
                 "pre_shared_key": "support-pre-shared",
@@ -140,8 +147,12 @@ async def test_support_package_sanitizes_adapter_config_and_counts(client, auth_
     adapter = next(entry for entry in package["adapters"] if entry["id"] == instance_id)
     assert adapter["name"] == "[REDACTED_DOMAIN]"
     assert adapter["config"]["host"] == "[REDACTED_ENDPOINT]"
+    assert adapter["config"]["individual_address"] == "1.1.100"
+    assert adapter["config"]["auth_protocol"] == "SHA"
     assert adapter["config"]["username"] == "[REDACTED]"
     assert adapter["config"]["password"] == "[REDACTED]"
+    assert adapter["config"]["community"] == "[REDACTED]"
+    assert adapter["config"]["knxkeys_file_path"] == "[REDACTED]"
     assert adapter["config"]["psk"] == "[REDACTED]"
     assert adapter["config"]["pin"] == "[REDACTED]"
     assert adapter["config"]["pre_shared_key"] == "[REDACTED]"
@@ -271,6 +282,7 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
         "Authorization: Bearer bearer-token X-API-Key: header-secret password: colon-secret "
         "Authorization: Basic basic-secret "
         "access_token=access-secret refresh_token=refresh-secret client_secret: prefixed-colon "
+        "community=public-community knxkeys_file_path=/home/support/secret.knxkeys "
         "contact admin@example.com connecting to mqtt.customer-site.com failed "
         '{"token":"json-token","client_secret":"json-client-secret"}'
     )
@@ -292,11 +304,15 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
     assert "access-secret" not in message
     assert "refresh-secret" not in message
     assert "prefixed-colon" not in message
+    assert "public-community" not in message
+    assert "secret.knxkeys" not in message
     assert "admin@example.com" not in message
     assert "mqtt.customer-site.com" not in message
     assert "json-token" not in message
     assert "json-client-secret" not in message
     assert "[REDACTED" in message
+    assert matching[-1]
+    assert [entry for entry in resp.json()["error_history"] if entry["message"] == message][-1]["logger"] == "tests.support"
 
 
 async def test_support_package_includes_warning_history(client, auth_headers):

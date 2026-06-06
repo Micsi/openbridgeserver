@@ -55,6 +55,16 @@ _SENSITIVE_KEY_PARTS = (
     "psk",
     "jwt",
 )
+_SENSITIVE_KEYS = {
+    "community",
+    "knxkeys_file_path",
+}
+_PASSTHROUGH_KEYS = {
+    "auth_protocol",
+    "config_source",
+    "individual_address",
+    "logger",
+}
 _ENDPOINT_KEY_PARTS = (
     "host",
     "hostname",
@@ -72,7 +82,7 @@ _SECRET_KEY_PATTERN = (
     r"[a-z0-9_-]*(?:"
     r"token|secret|password|passwd|api[_-]?key|private[_-]?key|"
     r"psk|pin|pre[_-]?shared[_-]?key|auth|bearer|passphrase|"
-    r"keyring|ca[_-]?cert|client[_-]?cert|cert"
+    r"keyring|ca[_-]?cert|client[_-]?cert|cert|community|knxkeys[_-]?file[_-]?path"
     r")"
 )
 _LONG_TOKEN_RE = re.compile(rf"(?i)(?<![a-z0-9_-])({_SECRET_KEY_PATTERN})=([^&\s]+)")
@@ -233,6 +243,8 @@ async def disable_debug_log(
 
 def sanitize_support_data(value: Any, key: str | None = None) -> Any:
     """Recursively redact secrets, credentials, endpoints and IP addresses."""
+    if _is_passthrough_key(key):
+        return value
     if _is_sensitive_key(key):
         return "[REDACTED]"
     if _is_endpoint_key(key):
@@ -499,10 +511,10 @@ async def _history_table_stats(db: Database) -> dict[str, Any]:
 
 def _sanitize_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {
-        "ts": sanitize_support_data(entry.get("ts", "")),
-        "level": sanitize_support_data(entry.get("level", "")),
-        "logger": sanitize_support_data(entry.get("logger", "")),
-        "message": sanitize_support_data(entry.get("message", "")),
+        "ts": sanitize_support_data(entry.get("ts", ""), "ts"),
+        "level": sanitize_support_data(entry.get("level", ""), "level"),
+        "logger": sanitize_support_data(entry.get("logger", ""), "logger"),
+        "message": sanitize_support_data(entry.get("message", ""), "message"),
     }
 
 
@@ -559,7 +571,13 @@ def _is_sensitive_key(key: str | None) -> bool:
     if key is None:
         return False
     lowered = key.lower()
-    return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
+    return lowered in _SENSITIVE_KEYS or any(part in lowered for part in _SENSITIVE_KEY_PARTS)
+
+
+def _is_passthrough_key(key: str | None) -> bool:
+    if key is None:
+        return False
+    return key.lower() in _PASSTHROUGH_KEYS
 
 
 def _is_endpoint_key(key: str | None) -> bool:
