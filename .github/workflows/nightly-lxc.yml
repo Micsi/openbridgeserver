@@ -101,6 +101,13 @@ jobs:
 
           TAG="nightly-$(date -u +%Y%m%d)"
           DAY="$(date -u +%Y-%m-%d)"
+          RUN_ID="${{ steps.watch.outputs.run_id }}"
+          TARGET_SHA="$(gh run view "$RUN_ID" --repo "$REPO" --json headSha --jq .headSha)"
+
+          if [[ -z "$TARGET_SHA" ]]; then
+            echo "Could not determine commit SHA for run ${RUN_ID}; aborting." >&2
+            exit 1
+          fi
 
           mapfile -t ASSETS < <(find artifacts -type f \
             \( -name '*.tar.zst' -o -name '*.tar.gz' -o -name '*.sha512' \) | sort)
@@ -116,8 +123,9 @@ jobs:
 
           gh release create "$TAG" \
             --repo "$REPO" \
+            --target "$TARGET_SHA" \
             --title "Nightly $DAY" \
-            --notes "Automated nightly LXC template + app-bundle build for ${DAY} (commit ${GITHUB_SHA}). Pre-release — not for production use." \
+            --notes "Automated nightly LXC template + app-bundle build for ${DAY} (commit ${TARGET_SHA}). Pre-release — not for production use." \
             --prerelease \
             "${ASSETS[@]}"
 
