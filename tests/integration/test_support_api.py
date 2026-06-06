@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from obs.api.auth import create_access_token
+from obs.api.v1.support import _parse_procfs_stat_cpu_seconds
 
 pytestmark = pytest.mark.integration
 
@@ -93,6 +94,17 @@ async def test_support_package_contains_phase1_privacy_contract(client, auth_hea
     assert body["installation"]["config_source"]
     assert "/" not in body["installation"]["config_source"]
     assert not body["installation"]["config_source"].startswith("[REDACTED")
+
+
+async def test_support_package_config_source_keeps_basename_but_sanitizes_endpoints(client, auth_headers):
+    with patch.dict("os.environ", {"OBS_CONFIG": "/etc/obs/prod-192.168.10.5.yaml"}):
+        resp = await client.post("/api/v1/support/package", headers=auth_headers)
+
+    assert resp.status_code == 200
+    config_source = resp.json()["installation"]["config_source"]
+    assert "/" not in config_source
+    assert "192.168.10.5" not in config_source
+    assert config_source == "prod-[REDACTED_IP].yaml"
 
 
 async def test_support_package_sanitizes_adapter_config_and_counts(client, auth_headers):
@@ -291,6 +303,8 @@ async def test_support_package_contains_history_and_monitor_sections(client, aut
 async def test_support_package_sanitizes_error_history(client, auth_headers):
     logging.getLogger("tests.support").error(
         "connection failed url=http://admin:secret@192.168.1.20/api?token=abc password=hidden "
+        "dsn=mqtt://mqtt-user:mqtt-pass@broker.internal.local/topic "
+        "postgres://pg-user:pg-pass@db.internal.local/app "
         "Authorization: Bearer bearer-token X-API-Key: header-secret password: colon-secret "
         "Authorization: Basic basic-secret "
         "access_token=access-secret refresh_token=refresh-secret client_secret: prefixed-colon "
@@ -308,6 +322,10 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
     message = matching[-1]
     assert "192.168.1.20" not in message
     assert "admin:secret" not in message
+    assert "mqtt-user:mqtt-pass" not in message
+    assert "pg-user:pg-pass" not in message
+    assert "broker.internal.local" not in message
+    assert "db.internal.local" not in message
     assert "abc" not in message
     assert "hidden" not in message
     assert "bearer-token" not in message
@@ -390,3 +408,9 @@ async def test_support_debug_log_rejects_unknown_level(client, auth_headers):
         headers=auth_headers,
     )
     assert resp.status_code == 422
+
+
+def test_parse_procfs_stat_cpu_seconds_handles_comm_with_spaces_and_parentheses():
+    stat_row = "123 (worker (tenant a)) S 1 2 3 4 5 6 7 8 9 10 25 75 16 17"
+
+    assert _parse_procfs_stat_cpu_seconds(stat_row, clock_ticks=100) == 1.0

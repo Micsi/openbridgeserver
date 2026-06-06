@@ -63,7 +63,6 @@ _SENSITIVE_KEYS = {
 }
 _PASSTHROUGH_KEYS = {
     "auth_protocol",
-    "config_source",
     "individual_address",
     "logger",
     "sniffer.process",
@@ -595,7 +594,7 @@ def _sanitize_urls(value: str) -> str:
         replacement = urlunsplit((parsed.scheme, "[REDACTED_ENDPOINT]", parsed.path, "", ""))
         return replacement.rstrip("/")
 
-    return re.sub(r"https?://[^\s\"'<>]+", repl, value)
+    return re.sub(r"\b[a-z][a-z0-9+.-]*://[^\s\"'<>]+", repl, value, flags=re.IGNORECASE)
 
 
 def _sanitize_ipv6_candidate(match: re.Match[str]) -> str:
@@ -817,22 +816,37 @@ def _read_procfs_processes() -> dict[int, dict[str, Any]]:
             with open(os.path.join(proc_dir, "comm"), encoding="utf-8") as fh:
                 name = fh.read().strip()
             with open(os.path.join(proc_dir, "stat"), encoding="utf-8") as fh:
-                stat = fh.read().split()
+                stat_row = fh.read()
             with open(os.path.join(proc_dir, "statm"), encoding="utf-8") as fh:
                 statm = fh.read().split()
         except OSError:
             continue
-        if len(stat) <= 15:
+        cpu_seconds = _parse_procfs_stat_cpu_seconds(stat_row, clock_ticks)
+        if cpu_seconds is None:
             continue
-        utime = int(stat[13])
-        stime = int(stat[14])
         rss_pages = int(statm[1]) if len(statm) > 1 and statm[1].isdigit() else 0
         items[pid] = {
             "name": name,
-            "cpu_seconds": (utime + stime) / clock_ticks,
+            "cpu_seconds": cpu_seconds,
             "rss_bytes": rss_pages * page_size,
         }
     return items
+
+
+def _parse_procfs_stat_cpu_seconds(stat_row: str, clock_ticks: int) -> float | None:
+    """Parse CPU ticks from /proc/<pid>/stat without splitting the comm field."""
+    end_comm = stat_row.rfind(")")
+    if end_comm == -1:
+        return None
+    fields = stat_row[end_comm + 1 :].strip().split()
+    if len(fields) <= 12:
+        return None
+    try:
+        utime = int(fields[11])
+        stime = int(fields[12])
+    except ValueError:
+        return None
+    return (utime + stime) / clock_ticks
 
 
 def _process_item(pid: Any, name: Any, cpu_percent: Any, rss_bytes: Any) -> dict[str, Any]:
