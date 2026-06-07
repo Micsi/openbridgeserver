@@ -88,6 +88,17 @@ _BASENAME_ONLY_KEYS = {
     "config_source",
     "path",
 }
+_BASENAME_FILE_EXTENSIONS = {
+    "conf",
+    "db",
+    "json",
+    "key",
+    "sqlite",
+    "sqlite3",
+    "toml",
+    "yaml",
+    "yml",
+}
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _IPV6_CANDIDATE_RE = re.compile(r"(?<![0-9a-fA-F:])(?:[0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}(?![0-9a-fA-F:])")
 _SECRET_KEY_PATTERN = (
@@ -97,10 +108,13 @@ _SECRET_KEY_PATTERN = (
     r"keyring|ca[_-]?cert|client[_-]?cert|cert|community|knxkeys[_-]?file[_-]?path"
     r")"
 )
-_QUOTED_SECRET_RE = re.compile(rf"(?i)(?<![a-z0-9_-])({_SECRET_KEY_PATTERN})\s*=\s*([\"'])(.*?)(\3)")
+_QUOTED_SECRET_RE = re.compile(rf"(?i)(?<![a-z0-9_-])({_SECRET_KEY_PATTERN})\s*=\s*([\"'])(.*?)(\2)")
 _LONG_TOKEN_RE = re.compile(rf"(?i)(?<![a-z0-9_-])({_SECRET_KEY_PATTERN})\s*=\s*([^&\s]+)")
-_QUOTED_COLON_SECRET_RE = re.compile(rf"(?i)(?<![a-z0-9_-])({_SECRET_KEY_PATTERN})\s*:\s*([\"'])(.*?)(\3)")
-_AUTH_HEADER_RE = re.compile(r"(?i)\bauthorization\s*[:=]\s*(?:bearer|basic)\s+[^\s,;]+")
+_QUOTED_COLON_SECRET_RE = re.compile(rf"(?i)(?<![a-z0-9_-])({_SECRET_KEY_PATTERN})\s*:\s*([\"'])(.*?)(\2)")
+_AUTH_HEADER_RE = re.compile(
+    r"(?i)\bauthorization\s*[:=]\s*.*?"
+    rf"(?=(?:\s+\b(?:x-api-key|api-key|cookie|set-cookie|{_SECRET_KEY_PATTERN})\s*[:=])|$|[,\n\r])"
+)
 _COOKIE_HEADER_RE = re.compile(
     r"(?i)\b(cookie|set-cookie)\s*[:=]\s*.*?"
     rf"(?=(?:\s+\b(?:authorization|x-api-key|api-key|cookie|set-cookie|{_SECRET_KEY_PATTERN})\s*[:=])|$|[,\n\r])"
@@ -634,6 +648,8 @@ def _sanitize_basename(value: str) -> str:
     sanitized = _IPV4_RE.sub("[REDACTED_IP]", sanitized)
     sanitized = _IPV6_CANDIDATE_RE.sub(_sanitize_ipv6_candidate, sanitized)
     sanitized = _EMAIL_RE.sub("[REDACTED_EMAIL]", sanitized)
+    if _is_domain_only_basename(sanitized):
+        return "[REDACTED_DOMAIN]"
     return _FILENAME_DOMAIN_RE.sub("[REDACTED_DOMAIN]", sanitized)
 
 
@@ -648,6 +664,13 @@ def _deduplicate_dict_key(key: str, existing: dict[str, Any]) -> str:
     while f"{key} ({index})" in existing:
         index += 1
     return f"{key} ({index})"
+
+
+def _is_domain_only_basename(value: str) -> bool:
+    if not _DOMAIN_RE.fullmatch(value):
+        return False
+    extension = value.rsplit(".", 1)[-1].lower()
+    return extension not in _BASENAME_FILE_EXTENSIONS
 
 
 def _sanitize_paths(value: str, tokens: dict[str, str] | None = None) -> str:
@@ -711,7 +734,7 @@ def _sanitize_ipv6_candidate(match: re.Match[str]) -> str:
 def _is_sensitive_key(key: str | None) -> bool:
     if key is None:
         return False
-    lowered = key.lower()
+    lowered = key.lower().replace("-", "_")
     return lowered in _SENSITIVE_KEYS or any(part in lowered for part in _SENSITIVE_KEY_PARTS)
 
 

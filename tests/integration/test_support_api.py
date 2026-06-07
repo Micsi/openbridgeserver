@@ -136,6 +136,14 @@ async def test_support_package_config_source_keeps_basename_but_sanitizes_endpoi
     assert "customer.com" not in two_label_config_source
     assert two_label_config_source == "[REDACTED_DOMAIN].yaml"
 
+    with patch.dict("os.environ", {"OBS_CONFIG": "/etc/obs/site.internal.local"}):
+        domain_only_resp = await client.post("/api/v1/support/package", headers=auth_headers)
+
+    assert domain_only_resp.status_code == 200
+    domain_only_config_source = domain_only_resp.json()["installation"]["config_source"]
+    assert "site.internal.local" not in domain_only_config_source
+    assert domain_only_config_source == "[REDACTED_DOMAIN]"
+
 
 async def test_support_package_sanitizes_adapter_config_and_counts(client, auth_headers):
     instance_resp = await client.post(
@@ -158,8 +166,12 @@ async def test_support_package_sanitizes_adapter_config_and_counts(client, auth_
                 "psk": "support-psk",
                 "pin": "123456",
                 "pre_shared_key": "support-pre-shared",
+                "pre-shared-key": "support-hyphen-pre-shared",
                 "priv_key": "support-private-protocol-key",
                 "backbone_key": "support-backbone-key",
+                "api-key": "support-hyphen-api-key",
+                "x-api-key": "support-hyphen-x-api-key",
+                "private-key": "support-hyphen-private-key",
                 "auth": "support-auth",
                 "bearer": "support-bearer",
                 "passphrase": "support-passphrase",
@@ -213,8 +225,12 @@ async def test_support_package_sanitizes_adapter_config_and_counts(client, auth_
     assert adapter["config"]["psk"] == "[REDACTED]"
     assert adapter["config"]["pin"] == "[REDACTED]"
     assert adapter["config"]["pre_shared_key"] == "[REDACTED]"
+    assert adapter["config"]["pre-shared-key"] == "[REDACTED]"
     assert adapter["config"]["priv_key"] == "[REDACTED]"
     assert adapter["config"]["backbone_key"] == "[REDACTED]"
+    assert adapter["config"]["api-key"] == "[REDACTED]"
+    assert adapter["config"]["x-api-key"] == "[REDACTED]"
+    assert adapter["config"]["private-key"] == "[REDACTED]"
     assert adapter["config"]["auth"] == "[REDACTED]"
     assert adapter["config"]["bearer"] == "[REDACTED]"
     assert adapter["config"]["passphrase"] == "[REDACTED]"
@@ -393,11 +409,12 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
         "Authorization: Bearer bearer-token X-API-Key: header-secret password: colon-secret "
         "Authorization: Basic basic-secret "
         "Authorization=Bearer equals-bearer-token Authorization=Basic equals-basic-token "
+        "Authorization: Token token-scheme-secret Authorization=Digest digest-scheme-secret "
         "Cookie: sessionid=cookie-secret; csrftoken=csrf-secret "
         "Set-Cookie: refresh_token=set-cookie-secret; Path=/; HttpOnly "
         "api_key = spaced-api-key password = spaced-password "
-        "password=\"quoted password\" api_key='quoted api key' "
-        "password: \"quoted colon password\" api_key: 'quoted colon api key' "
+        'password="quoted password" api_key=\'quoted api key\' password="multi word secret" '
+        "password: \"quoted colon password\" api_key: 'quoted colon api key' api_key: 'multi word api secret' "
         "access_token=access-secret refresh_token=refresh-secret client_secret: prefixed-colon "
         "community=public-community knxkeys_file_path=/home/support/secret.knxkeys "
         "failed to open /home/alice/obs/config.yaml "
@@ -434,6 +451,8 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
     assert "basic-secret" not in message
     assert "equals-bearer-token" not in message
     assert "equals-basic-token" not in message
+    assert "token-scheme-secret" not in message
+    assert "digest-scheme-secret" not in message
     assert "cookie-secret" not in message
     assert "csrf-secret" not in message
     assert "set-cookie-secret" not in message
@@ -441,6 +460,8 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
     assert "spaced-password" not in message
     assert "quoted password" not in message
     assert "quoted api key" not in message
+    assert "multi word secret" not in message
+    assert "multi word api secret" not in message
     assert "quoted colon password" not in message
     assert "quoted colon api key" not in message
     assert "access-secret" not in message
