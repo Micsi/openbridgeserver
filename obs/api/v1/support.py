@@ -103,9 +103,9 @@ _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _IPV6_CANDIDATE_RE = re.compile(r"(?<![0-9a-fA-F:])(?:[0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}(?![0-9a-fA-F:])")
 _SECRET_KEY_PATTERN = (
     r"[a-z0-9_-]*(?:"
-    r"token|secret|password|passwd|api[_-]?key|private[_-]?key|"
-    r"psk|pin|pre[_-]?shared[_-]?key|auth|bearer|passphrase|"
-    r"keyring|ca[_-]?cert|client[_-]?cert|cert|community|knxkeys[_-]?file[_-]?path"
+    r"token|secret|password|passwd|api[_.-]?key|private[_.-]?key|"
+    r"psk|pin|pre[_.-]?shared[_.-]?key|auth|bearer|passphrase|"
+    r"keyring|ca[_.-]?cert|client[_.-]?cert|cert|community|knxkeys[_.-]?file[_.-]?path"
     r")"
 )
 _QUOTED_SECRET_RE = re.compile(rf"(?i)(?<![a-z0-9_-])({_SECRET_KEY_PATTERN})\s*=\s*([\"'])(.*?)(\2)")
@@ -127,6 +127,10 @@ _COLON_SECRET_RE = re.compile(
 _JSON_SECRET_RE = re.compile(
     rf"(?i)([\"']{_SECRET_KEY_PATTERN}[\"']\s*:\s*)"
     r"([\"'])(.*?)(\2)"
+)
+_JSON_UNQUOTED_SECRET_RE = re.compile(
+    rf"(?i)([\"']{_SECRET_KEY_PATTERN}[\"']\s*:\s*)"
+    r"(?![\"'])([^,}\]\s]+)"
 )
 _HOSTLIKE_NAME_RE = re.compile(r"(?i)\b(?:[a-z0-9-]+\.)+[a-z0-9-]+\b")
 _EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
@@ -439,7 +443,10 @@ async def _build_adapter_info(db: Database) -> list[dict[str, Any]]:
 async def _build_history_info(db: Database) -> dict[str, Any]:
     settings = await _read_history_settings(db)
     active_plugin = settings.get("plugin", "sqlite") or "sqlite"
-    table_stats = await _history_table_stats(db)
+    try:
+        table_stats = await _history_table_stats(db)
+    except Exception as exc:
+        table_stats = {"available": False, "reason": _support_unavailable_reason(exc)}
     runtime_plugin = None
     try:
         from obs.history.factory import get_history_plugin
@@ -606,6 +613,7 @@ def _sanitize_string(value: str) -> str:
     sanitized = _COOKIE_HEADER_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", sanitized)
     sanitized = _LONG_TOKEN_RE.sub(lambda match: f"{match.group(1)}=[REDACTED]", sanitized)
     sanitized = _JSON_SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]{match.group(4)}", sanitized)
+    sanitized = _JSON_UNQUOTED_SECRET_RE.sub(lambda match: f"{match.group(1)}[REDACTED]", sanitized)
     sanitized = _QUOTED_COLON_SECRET_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", sanitized)
     sanitized = _COLON_SECRET_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", sanitized)
     sanitized = _HEADER_SECRET_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", sanitized)
@@ -641,6 +649,7 @@ def _sanitize_basename(value: str) -> str:
     sanitized = _COOKIE_HEADER_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", sanitized)
     sanitized = _LONG_TOKEN_RE.sub(lambda match: f"{match.group(1)}=[REDACTED]", sanitized)
     sanitized = _JSON_SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]{match.group(4)}", sanitized)
+    sanitized = _JSON_UNQUOTED_SECRET_RE.sub(lambda match: f"{match.group(1)}[REDACTED]", sanitized)
     sanitized = _QUOTED_COLON_SECRET_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", sanitized)
     sanitized = _COLON_SECRET_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", sanitized)
     sanitized = _HEADER_SECRET_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", sanitized)

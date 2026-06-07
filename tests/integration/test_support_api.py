@@ -399,6 +399,17 @@ async def test_support_package_contains_history_and_monitor_sections(client, aut
     assert "recent_source_adapter_counts" in body["monitor"]
 
 
+async def test_support_package_tolerates_history_stats_failure(client, auth_headers):
+    with patch("obs.api.v1.support._history_table_stats", side_effect=OSError("locked")):
+        resp = await client.post("/api/v1/support/package", headers=auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["history"]["sqlite_storage"] == {
+        "available": False,
+        "reason": "OSError",
+    }
+
+
 async def test_support_package_sanitizes_error_history(client, auth_headers):
     logging.getLogger("tests.support").error(
         "connection failed url=http://admin:secret@192.168.1.20/api?token=abc password=hidden "
@@ -413,6 +424,7 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
         "Cookie: sessionid=cookie-secret; csrftoken=csrf-secret "
         "Set-Cookie: refresh_token=set-cookie-secret; Path=/; HttpOnly "
         "api_key = spaced-api-key password = spaced-password "
+        "api.key=dotted-api-key x.api.key: dotted-colon-api-key "
         'password="quoted password" api_key=\'quoted api key\' password="multi word secret" '
         "password: \"quoted colon password\" api_key: 'quoted colon api key' api_key: 'multi word api secret' "
         "access_token=access-secret refresh_token=refresh-secret client_secret: prefixed-colon "
@@ -423,7 +435,7 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
         "logger sniffer.process still visible and sniffer.process: label visible "
         "but sniffer.process.com and sniffer.process:123 are private "
         "contact admin@example.com connecting to mqtt.customer-site.com failed "
-        '{"token":"json-token","client_secret":"json-client-secret"}'
+        '{"token":"json-token","client_secret":"json-client-secret","pin":123456,"api_key":true}'
     )
     logging.getLogger("mqtt.customer.local.192.168.1.5").error("endpoint logger leak sentinel")
 
@@ -458,6 +470,8 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
     assert "set-cookie-secret" not in message
     assert "spaced-api-key" not in message
     assert "spaced-password" not in message
+    assert "dotted-api-key" not in message
+    assert "dotted-colon-api-key" not in message
     assert "quoted password" not in message
     assert "quoted api key" not in message
     assert "multi word secret" not in message
@@ -486,6 +500,8 @@ async def test_support_package_sanitizes_error_history(client, auth_headers):
     assert "mqtt.customer-site.com" not in message
     assert "json-token" not in message
     assert "json-client-secret" not in message
+    assert "123456" not in message
+    assert "true" not in message
     assert "[REDACTED" in message
     assert matching[-1]
     assert [entry for entry in resp.json()["error_history"] if entry["message"] == message][-1]["logger"] == "[REDACTED_DOMAIN]"
