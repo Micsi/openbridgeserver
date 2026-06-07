@@ -16,6 +16,7 @@ import re
 import shutil
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -266,6 +267,8 @@ async def disable_debug_log(
 def sanitize_support_data(value: Any, key: str | None = None) -> Any:
     """Recursively redact secrets, credentials, endpoints and IP addresses."""
     if _is_passthrough_key(key) and not isinstance(value, (dict, list, tuple)):
+        if isinstance(value, str):
+            return _sanitize_string(value)
         return value
     if _is_sensitive_key(key):
         return "[REDACTED]"
@@ -274,7 +277,11 @@ def sanitize_support_data(value: Any, key: str | None = None) -> Any:
     if _is_endpoint_key(key):
         return "[REDACTED_ENDPOINT]"
     if isinstance(value, dict):
-        return {_sanitize_dict_key(k): sanitize_support_data(v, str(k)) for k, v in value.items()}
+        sanitized: dict[str, Any] = {}
+        for raw_key, raw_value in value.items():
+            sanitized_key = _deduplicate_dict_key(_sanitize_dict_key(raw_key), sanitized)
+            sanitized[sanitized_key] = sanitize_support_data(raw_value, str(raw_key))
+        return sanitized
     if isinstance(value, list):
         return [sanitize_support_data(item, key) for item in value]
     if isinstance(value, tuple):
@@ -634,6 +641,15 @@ def _sanitize_dict_key(key: Any) -> str:
     return _sanitize_string(str(key))
 
 
+def _deduplicate_dict_key(key: str, existing: dict[str, Any]) -> str:
+    if key not in existing:
+        return key
+    index = 2
+    while f"{key} ({index})" in existing:
+        index += 1
+    return f"{key} ({index})"
+
+
 def _sanitize_paths(value: str, tokens: dict[str, str] | None = None) -> str:
     def repl(match: re.Match[str]) -> str:
         raw = match.group(0).rstrip("/\\")
@@ -781,18 +797,28 @@ def _process_resource_snapshot() -> dict[str, Any]:
 
 
 def _disk_resource_snapshot() -> dict[str, Any]:
-    path = os.getcwd()
+    configured_path = Path(get_settings().database.path).expanduser()
+    path = _disk_usage_target(configured_path)
     try:
         usage = shutil.disk_usage(path)
     except OSError:
-        return {"path": _basename_only(path), "available": False}
+        return {"path": _sanitize_basename(str(configured_path)), "available": False}
     return {
-        "path": _basename_only(path),
+        "path": _sanitize_basename(str(configured_path)),
         "available": True,
         "total_bytes": usage.total,
         "used_bytes": usage.used,
         "free_bytes": usage.free,
     }
+
+
+def _disk_usage_target(path: Path) -> Path:
+    candidate = path if path.exists() else path.parent
+    if str(candidate) == "":
+        return Path.cwd()
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return candidate if candidate.exists() else Path.cwd()
 
 
 def _top_cpu_process_snapshot(limit: int = 5) -> dict[str, Any]:

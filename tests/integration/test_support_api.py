@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+import obs.api.v1.support as support_api
 from obs.api.auth import create_access_token
 from obs.api.v1.support import (
     _build_monitor_info,
+    _disk_resource_snapshot,
     _parse_procfs_stat_cpu_seconds,
     _ringbuffer_tps,
     sanitize_support_data,
@@ -503,11 +506,13 @@ def test_sanitize_support_data_redacts_dictionary_keys_and_preserves_path_basena
         {
             "devices": {
                 "192.168.1.5": {"status": "ok"},
+                "10.0.0.8": {"status": "ok"},
                 "broker.internal.local": {"status": "ok"},
                 "access_token": "secret-token",
                 "https://api.telegram.org/bot123456:dict-key-token/sendMessage": {"status": "ok"},
                 "sniffer.process.com": {"status": "ok"},
             },
+            "logger": "mqtt.customer.local api_key=logger-secret",
             "path": "obs.db",
             "config_source": r"C:\Users\Alice\obs\customer.com.key",
         }
@@ -520,11 +525,45 @@ def test_sanitize_support_data_redacts_dictionary_keys_and_preserves_path_basena
     assert "sniffer.process.com" not in sanitized_device_keys
     assert not any("/sendMessage" in key for key in sanitized["devices"])
     assert "[REDACTED_IP]" in sanitized["devices"]
+    assert "[REDACTED_IP] (2)" in sanitized["devices"]
     assert "[REDACTED_DOMAIN]" in sanitized["devices"]
     assert sanitized["devices"]["access_token"] == "[REDACTED]"
+    assert "mqtt.customer.local" not in sanitized["logger"]
+    assert "logger-secret" not in sanitized["logger"]
+    assert "[REDACTED_DOMAIN]" in sanitized["logger"]
+    assert "api_key=[REDACTED]" in sanitized["logger"]
     assert sanitized["path"] == "obs.db"
     assert sanitized["config_source"] == "[REDACTED_DOMAIN].key"
     assert all(isinstance(key, str) for key in sanitized["devices"])
+
+
+def test_disk_resource_snapshot_measures_configured_database_volume(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    db_path = data_dir / "obs.db"
+    captured: dict[str, object] = {}
+
+    def fake_disk_usage(path):
+        captured["path"] = path
+        return SimpleNamespace(total=100, used=40, free=60)
+
+    monkeypatch.setattr(
+        support_api,
+        "get_settings",
+        lambda: SimpleNamespace(database=SimpleNamespace(path=str(db_path))),
+    )
+    monkeypatch.setattr(support_api.shutil, "disk_usage", fake_disk_usage)
+
+    snapshot = _disk_resource_snapshot()
+
+    assert captured["path"] == data_dir
+    assert snapshot == {
+        "path": "obs.db",
+        "available": True,
+        "total_bytes": 100,
+        "used_bytes": 40,
+        "free_bytes": 60,
+    }
 
 
 async def test_support_package_includes_warning_history(client, auth_headers):
