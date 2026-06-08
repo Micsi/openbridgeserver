@@ -108,6 +108,8 @@ function _matchValueFilter(entryValue, vf) {
       const re = new RegExp(vf.pattern, vf.ignore_case ? 'i' : '')
       return re.test(String(entryValue ?? ''))
     } catch {
+      // The backend accepts Python regex syntax that JavaScript cannot compile.
+      // Do not count an unevaluable criterion as a positive live match.
       return false
     }
   }
