@@ -129,6 +129,12 @@ export interface Ctx {
   nf(v: number | string, dec?: number): string;
   /** Is a sensor outside its comfort range? */
   warn(d: Device): boolean;
+  /**
+   * Optional translator injected by the host (v1.1). When present, text helpers
+   * (e.g. {@link Ctx.stateText}) resolve i18n keys through it; when absent they
+   * fall back to the German core literals (backward compatible).
+   */
+  t?(key: string, params?: Record<string, unknown>): string;
 }
 
 /**

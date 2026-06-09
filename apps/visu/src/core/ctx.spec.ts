@@ -9,7 +9,7 @@ import type {
   SensorDevice,
   SceneDevice,
 } from '@obs/visu-contract';
-import { ctx, DEFAULT_ICONS } from './ctx';
+import { ctx, makeCtx, DEFAULT_ICONS } from './ctx';
 
 /**
  * core/ctx (CONTRACT-v1.md §5) — the shared helpers a renderer receives.
@@ -132,6 +132,68 @@ describe('ctx.stateText — centralised footer text (§5)', () => {
   it('scene → its subtitle, empty when none', () => {
     expect(ctx.stateText(withType<SceneDevice>(f.scene.film, 'scene'))).toBe(
       'Licht · Rollladen · TV',
+    );
+  });
+});
+
+describe('ctx i18n — makeCtx with an injected translator (CONTRACT v1.1)', () => {
+  // A spy translator that echoes the key + interpolates {x} placeholders, so we
+  // can assert which i18n keys/params stateText resolves through ctx.t.
+  const calls: Array<{ key: string; params?: Record<string, unknown> }> = [];
+  const t = (key: string, params?: Record<string, unknown>): string => {
+    calls.push({ key, params });
+    if (!params) return `[${key}]`;
+    return `[${key} ${JSON.stringify(params)}]`;
+  };
+  const tctx = makeCtx(t);
+
+  it('exposes the injected t on the ctx surface', () => {
+    expect(tctx.t).toBe(t);
+  });
+
+  it('light off/on resolve widgets.state.off / .on keys', () => {
+    expect(tctx.stateText(withType<LightDevice>(f.light.off, 'light'))).toBe('[widgets.state.off]');
+    expect(tctx.stateText(withType<LightDevice>(f.light.on, 'light'))).toBe('[widgets.state.on]');
+  });
+
+  it('light dimmed resolves widgets.state.dimmed with the dim param', () => {
+    expect(tctx.stateText(withType<LightDevice>(f.light.dimmed, 'light'))).toBe(
+      '[widgets.state.dimmed {"dim":45}]',
+    );
+  });
+
+  it('switch on resolves widgets.state.switchOn, off resolves .off', () => {
+    expect(tctx.stateText(withType<SwitchDevice>(f.switch.on, 'switch'))).toBe(
+      '[widgets.state.switchOn]',
+    );
+    expect(tctx.stateText(withType<SwitchDevice>(f.switch.off, 'switch'))).toBe(
+      '[widgets.state.off]',
+    );
+  });
+
+  it('blind position resolves widgets.state.position with position + translated word', () => {
+    expect(tctx.stateText(withType<BlindDevice>(f.blind.half, 'blind'))).toBe(
+      '[widgets.state.position {"position":62,"word":"[widgets.state.partial]"}]',
+    );
+    expect(tctx.stateText(withType<BlindDevice>(f.blind.open, 'blind'))).toBe(
+      '[widgets.state.position {"position":0,"word":"[widgets.state.open]"}]',
+    );
+    expect(tctx.stateText(withType<BlindDevice>(f.blind.locked, 'blind'))).toBe(
+      '[widgets.state.position {"position":100,"word":"[widgets.state.closed]"}]',
+    );
+  });
+});
+
+describe('ctx i18n — makeCtx() without a translator keeps the German literals', () => {
+  it('produces the same output as the default ctx export', () => {
+    const plain = makeCtx();
+    expect(plain.t).toBeUndefined();
+    expect(plain.stateText(withType<LightDevice>(f.light.dimmed, 'light'))).toBe(
+      `Ein — 45${NBSP}%`,
+    );
+    expect(plain.stateText(withType<SwitchDevice>(f.switch.on, 'switch'))).toBe('An');
+    expect(plain.stateText(withType<BlindDevice>(f.blind.half, 'blind'))).toBe(
+      `62${NBSP}% · Teil`,
     );
   });
 });
