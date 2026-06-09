@@ -41,6 +41,9 @@ importers:
       '@ionic/vue-router':
         specifier: ^8.4.0
         version: 8.8.9(@stencil/core@4.43.5)(vue-router@4.6.4(vue@3.5.35(typescript@5.9.3)))(vue@3.5.35(typescript@5.9.3))
+      '@obs/visu-contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
       chroma-js:
         specifier: ^3.1.2
         version: 3.2.0
