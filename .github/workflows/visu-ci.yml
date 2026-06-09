@@ -1,0 +1,46 @@
+name: visu-ci
+
+on:
+  push:
+    branches:
+      - feat/visu-mobile-skins
+      - 'feat/visu-*'
+  pull_request:
+    branches:
+      - feat/visu-mobile-skins
+      - 'feat/visu-*'
+
+# Only the Visu workspace; existing openbridgeserver workflows are untouched.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  visu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -r build
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Test (Vitest)
+        run: pnpm -r test
+
+      - name: Import boundaries
+        run: pnpm boundaries
