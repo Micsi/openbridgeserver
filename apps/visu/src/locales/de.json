@@ -35,5 +35,26 @@
     "error": {
       "title": "Etwas ist schiefgelaufen."
     }
+  },
+  "overview": {
+    "tweaks": {
+      "toggle": "Anpassen"
+    }
+  },
+  "tweaks": {
+    "title": "Anpassen",
+    "empty": "Keine Tweaks",
+    "stil": {
+      "label": "Stil",
+      "options": { "glass": "Glas", "ios": "iOS", "md": "Material" }
+    },
+    "accentStyle": {
+      "label": "Akzent",
+      "options": { "bar": "Balken", "glow": "Leuchten", "ring": "Rahmen" }
+    },
+    "glassBlur": { "label": "Unschärfe" },
+    "tileAlpha": { "label": "Deckkraft" },
+    "cellScale": { "label": "Rasterdichte" },
+    "glow": { "label": "Leuchtkraft" }
   }
 }

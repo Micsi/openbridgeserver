@@ -35,5 +35,26 @@
     "error": {
       "title": "Something went wrong."
     }
+  },
+  "overview": {
+    "tweaks": {
+      "toggle": "Customise"
+    }
+  },
+  "tweaks": {
+    "title": "Customise",
+    "empty": "No tweaks",
+    "stil": {
+      "label": "Style",
+      "options": { "glass": "Glass", "ios": "iOS", "md": "Material" }
+    },
+    "accentStyle": {
+      "label": "Accent",
+      "options": { "bar": "Bar", "glow": "Glow", "ring": "Ring" }
+    },
+    "glassBlur": { "label": "Blur" },
+    "tileAlpha": { "label": "Opacity" },
+    "cellScale": { "label": "Grid density" },
+    "glow": { "label": "Glow strength" }
   }
 }
