@@ -11,6 +11,13 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "tests/**/*.ts", "scripts/**/*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "src/**/*.json",
+    "tests/**/*.ts",
+    "scripts/**/*.ts"
+  ],
   "references": [{ "path": "../../packages/contract" }]
 }

@@ -1,0 +1,14 @@
+{
+  "widgets": {
+    "state": {
+      "off": "Off",
+      "on": "On",
+      "switchOn": "On",
+      "dimmed": "On — {dim} %",
+      "open": "Open",
+      "closed": "Closed",
+      "partial": "Partial",
+      "position": "{position} % · {word}"
+    }
+  }
+}

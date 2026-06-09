@@ -61,6 +61,12 @@ describe('Ctx (§5) — sandbox helpers', () => {
     expectTypeOf<Ctx['nf']>().parameter(0).toEqualTypeOf<number | string>();
     expectTypeOf<Ctx['nf']>().returns.toEqualTypeOf<string>();
   });
+
+  it('exposes an optional host-injected translator t (v1.1)', () => {
+    expectTypeOf<Ctx['t']>().toEqualTypeOf<
+      ((key: string, params?: Record<string, unknown>) => string) | undefined
+    >();
+  });
 });
 
 describe('Renderer (§5)', () => {

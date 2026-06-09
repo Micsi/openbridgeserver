@@ -23,6 +23,19 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.1.0] — 2026-06-09
+
+v1.1: Ctx.t (i18n) optional.
+
+### Added
+
+- **Ctx (§5):** optionale Methode `t?(key: string, params?: Record<string, unknown>): string`
+  — ein vom Host injizierter Übersetzer. Additive Minor-Änderung (§9): bestehende Skins und
+  die App bleiben gültig; Text-Helfer (z. B. `stateText`) nutzen `t`, wenn vorhanden, und
+  fallen sonst auf die deutschen Kern-Literale zurück (rückwärtskompatibel).
+- **Schema/Exports:** `contract.schema.json` und `index.ts` deklarieren `version: "1.1"`.
+  Die `fixtures` bleiben auf `contractVersion: "1.0"` (keine Datenform-Änderung).
+
 ## [1.0.0] — 2026-06-09
 
 Erste stabile Vertragsversion (`version: "1.0"`).
@@ -49,4 +62,5 @@ Erste stabile Vertragsversion (`version: "1.0"`).
 - **Exports:** `index.ts` exportiert `schema`, `fixtures`, `version` (= `"1.0"`) und die
   Typen.
 
+[1.1.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.0.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract

@@ -67,34 +67,60 @@ function hyphenate(text: string): string {
 
 /* ------------------------------------------------------------ stateText --- */
 
-/** Blind/jalousie position label (widgets.js): 0 → Offen, 100 → Zu, sonst Teil. */
-function positionWord(position: number): string {
-  if (position === 0) return 'Offen';
-  if (position === 100) return 'Zu';
-  return 'Teil';
+/** Optional host-injected translator (CONTRACT v1.1, `Ctx.t`). */
+type Translate = (key: string, params?: Record<string, unknown>) => string;
+
+/**
+ * Blind/jalousie position word: 0 → Offen, 100 → Zu, sonst Teil.
+ * With a translator → `widgets.state.{open,closed,partial}`; without → German literals.
+ */
+function positionWord(position: number, t?: Translate): string {
+  if (position === 0) return t ? t('widgets.state.open') : 'Offen';
+  if (position === 100) return t ? t('widgets.state.closed') : 'Zu';
+  return t ? t('widgets.state.partial') : 'Teil';
 }
 
 /**
  * Centralised footer text so every skin phrases it identically (§5):
  * "Aus" · "Ein" · "Ein — 45 %" · "62 % · Teil". Mirrors the vz-tile-foot
  * branch of widgets.js for the stable core types.
+ *
+ * When the host injected a translator (`Ctx.t`, v1.1) the phrasing comes from
+ * i18n keys; otherwise it falls back to the German core literals (backward
+ * compatible — Goldene Regel 7: behaviour in code, the contract executes nothing).
  */
-function stateText(d: Device): string {
-  switch (d.type) {
-    case 'light':
-      return d.dim != null ? `Ein — ${d.dim}${NBSP}%` : d.on ? 'Ein' : 'Aus';
-    case 'switch':
-      return d.on ? 'An' : 'Aus';
-    case 'blind':
-    case 'jalousie':
-      return `${d.position}${NBSP}% · ${positionWord(d.position)}`;
-    case 'sensor':
-      return d.status ?? '';
-    case 'scene':
-      return d.sub ?? '';
-    default:
-      return '';
-  }
+function makeStateText(t?: Translate) {
+  return function stateText(d: Device): string {
+    switch (d.type) {
+      case 'light':
+        if (d.dim != null) {
+          return t
+            ? t('widgets.state.dimmed', { dim: d.dim })
+            : `Ein — ${d.dim}${NBSP}%`;
+        }
+        return t ? t(d.on ? 'widgets.state.on' : 'widgets.state.off') : d.on ? 'Ein' : 'Aus';
+      case 'switch':
+        return t
+          ? t(d.on ? 'widgets.state.switchOn' : 'widgets.state.off')
+          : d.on
+            ? 'An'
+            : 'Aus';
+      case 'blind':
+      case 'jalousie':
+        return t
+          ? t('widgets.state.position', {
+              position: d.position,
+              word: positionWord(d.position, t),
+            })
+          : `${d.position}${NBSP}% · ${positionWord(d.position)}`;
+      case 'sensor':
+        return d.status ?? '';
+      case 'scene':
+        return d.sub ?? '';
+      default:
+        return '';
+    }
+  };
 }
 
 /* ----------------------------------------------------------------- warn --- */
@@ -147,11 +173,27 @@ function icon(_d: Device, slot: string): string {
   return DEFAULT_ICONS[slot] ?? '';
 }
 
-/** The frozen helper bundle handed to renderers — the entire sandbox surface. */
-export const ctx: Ctx = Object.freeze({
-  stateText,
-  hyphenate,
-  icon,
-  nf,
-  warn,
-});
+/**
+ * Build the renderer sandbox `Ctx` (§5). The host calls this with its translator
+ * so text helpers resolve i18n keys (CONTRACT v1.1 `Ctx.t`); called without one
+ * the helpers fall back to the German core literals (backward compatible).
+ *
+ * This is the single seam where the host injects `t` into `ctx`.
+ */
+export function makeCtx(t?: Translate): Ctx {
+  return Object.freeze({
+    stateText: makeStateText(t),
+    hyphenate,
+    icon,
+    nf,
+    warn,
+    ...(t ? { t } : {}),
+  });
+}
+
+/**
+ * The default helper bundle handed to renderers — no translator injected, so it
+ * phrases the core state text in German (the M1 behaviour). The host swaps in a
+ * translated `Ctx` via {@link makeCtx} once vue-i18n is available.
+ */
+export const ctx: Ctx = makeCtx();
