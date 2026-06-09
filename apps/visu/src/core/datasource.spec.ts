@@ -1,0 +1,203 @@
+import { describe, it, expect, vi } from 'vitest';
+import type { Device, LightDevice, BlindDevice, JalousieDevice } from '@obs/visu-contract';
+
+import { MockDataSource, type DataSource, type DevicePatch } from './datasource';
+import { byId } from './model';
+
+/**
+ * core/datasource — the austauschbare Andockpunkt (CO6, Issue #92).
+ *
+ * MIGRATION §4: a `DataSource` interface (list / subscribe / dispatch) plus a
+ * `MockDataSource` that today holds a local reactive state seeded from
+ * `core/model.ts`. `dispatch` is a local mutator; later KNX/MQTT/obs-REST plug
+ * in behind the *same* interface, UI unchanged.
+ *
+ * Goldene Regeln honoured here:
+ *  - State lives in core (this module is that single owner for live device state).
+ *  - `dispatch` performs only the canonical actions (CONTRACT-v1 §6); callers send
+ *    intents, never mutate a Device directly.
+ *  - Imports no skin/renderer — only the model + the data/type contract.
+ */
+
+function freshDevices(ds: DataSource): Promise<Device[]> {
+  return ds.list();
+}
+
+describe('core/datasource — list()', () => {
+  it('returns the model devices (seeded from store.js dataset)', async () => {
+    const ds = new MockDataSource();
+    const list = await ds.list();
+    expect(Array.isArray(list)).toBe(true);
+    expect(list.length).toBe(Object.keys(byId).length);
+    const ids = new Set(list.map((d) => d.id));
+    for (const id of Object.keys(byId)) {
+      expect(ids.has(id)).toBe(true);
+    }
+  });
+
+  it('returns deep copies — the caller cannot mutate the source state', async () => {
+    const ds = new MockDataSource();
+    const a = await ds.list();
+    const target = a.find((d) => d.type === 'light') as LightDevice;
+    // Mutating the returned object must not leak back into the source.
+    (target as { on: boolean }).on = !target.on;
+    const b = await ds.list();
+    const same = b.find((d) => d.id === target.id) as LightDevice;
+    expect(same.on).toBe(byId[target.id!] ? (byId[target.id!] as LightDevice).on : false);
+  });
+});
+
+describe('core/datasource — subscribe()', () => {
+  it('returns an unsubscribe function that stops further patches', async () => {
+    const ds = new MockDataSource();
+    const cb = vi.fn<(p: DevicePatch) => void>();
+    const off = ds.subscribe(cb);
+    expect(typeof off).toBe('function');
+
+    const lightId = (await firstOfType(ds, 'light')).id!;
+    await ds.dispatch(lightId, 'toggle');
+    expect(cb).toHaveBeenCalledTimes(1);
+
+    off();
+    await ds.dispatch(lightId, 'toggle');
+    expect(cb).toHaveBeenCalledTimes(1); // no further deliveries
+  });
+
+  it('delivers a patch addressed to the mutated device id', async () => {
+    const ds = new MockDataSource();
+    const lightId = (await firstOfType(ds, 'light')).id!;
+    const patches: DevicePatch[] = [];
+    ds.subscribe((p) => patches.push(p));
+    await ds.dispatch(lightId, 'toggle');
+    expect(patches).toHaveLength(1);
+    expect(patches[0].id).toBe(lightId);
+    expect('on' in patches[0].changes).toBe(true);
+  });
+
+  it('supports multiple independent subscribers', async () => {
+    const ds = new MockDataSource();
+    const a = vi.fn();
+    const b = vi.fn();
+    ds.subscribe(a);
+    ds.subscribe(b);
+    const lightId = (await firstOfType(ds, 'light')).id!;
+    await ds.dispatch(lightId, 'toggle');
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('core/datasource — dispatch() canonical actions', () => {
+  it('toggle flips a light/switch on-state', async () => {
+    const ds = new MockDataSource();
+    const id = (await firstOfType(ds, 'light')).id!;
+    const before = (await getById(ds, id)) as LightDevice;
+    await ds.dispatch(id, 'toggle');
+    const after = (await getById(ds, id)) as LightDevice;
+    expect(after.on).toBe(!before.on);
+  });
+
+  it('setDim sets a clamped brightness 0..100 and turns the light on when > 0', async () => {
+    const ds = new MockDataSource();
+    const id = (await firstDimmable(ds)).id!;
+    await ds.dispatch(id, 'setDim', { value: 150 });
+    let d = (await getById(ds, id)) as LightDevice;
+    expect(d.dim).toBe(100);
+    expect(d.on).toBe(true);
+    await ds.dispatch(id, 'setDim', { value: -10 });
+    d = (await getById(ds, id)) as LightDevice;
+    expect(d.dim).toBe(0);
+    expect(d.on).toBe(false);
+  });
+
+  it('setPosition clamps a blind/jalousie position 0..100', async () => {
+    const ds = new MockDataSource();
+    const id = (await firstOfType(ds, 'blind')).id!;
+    await ds.dispatch(id, 'setPosition', { value: 200 });
+    const d = (await getById(ds, id)) as BlindDevice;
+    expect(d.position).toBe(100);
+  });
+
+  it('setSlat clamps a jalousie slat angle 0..100', async () => {
+    const ds = new MockDataSource();
+    const id = (await firstOfType(ds, 'jalousie')).id!;
+    await ds.dispatch(id, 'setSlat', { value: -5 });
+    const d = (await getById(ds, id)) as JalousieDevice;
+    expect(d.slat).toBe(0);
+  });
+
+  it('lock / unlock toggles the locked flag', async () => {
+    const ds = new MockDataSource();
+    const id = (await firstOfType(ds, 'blind')).id!;
+    await ds.dispatch(id, 'lock');
+    expect(((await getById(ds, id)) as BlindDevice).locked).toBe(true);
+    await ds.dispatch(id, 'unlock');
+    expect(((await getById(ds, id)) as BlindDevice).locked).toBe(false);
+  });
+
+  it('rejects an unknown device id', async () => {
+    const ds = new MockDataSource();
+    await expect(ds.dispatch('does-not-exist', 'toggle')).rejects.toThrow();
+  });
+
+  it('rejects an action the device type does not support', async () => {
+    const ds = new MockDataSource();
+    const id = (await firstOfType(ds, 'blind')).id!;
+    await expect(ds.dispatch(id, 'toggle')).rejects.toThrow();
+  });
+});
+
+describe('core/datasource — optimistic update', () => {
+  it('applies the change to local state synchronously before dispatch resolves', async () => {
+    const ds = new MockDataSource();
+    const id = (await firstOfType(ds, 'light')).id!;
+    const before = ((await getById(ds, id)) as LightDevice).on;
+    const seen: boolean[] = [];
+    ds.subscribe((p) => {
+      if (p.id === id && 'on' in p.changes) seen.push(p.changes.on as boolean);
+    });
+    const pending = ds.dispatch(id, 'toggle');
+    // The patch must already have been delivered (optimistic) before the await.
+    expect(seen).toEqual([!before]);
+    await pending;
+    expect(((await getById(ds, id)) as LightDevice).on).toBe(!before);
+  });
+
+  it('a patch carries only the changed fields, not the whole device', async () => {
+    const ds = new MockDataSource();
+    const id = (await firstDimmable(ds)).id!;
+    let patch: DevicePatch | undefined;
+    ds.subscribe((p) => {
+      patch = p;
+    });
+    await ds.dispatch(id, 'setDim', { value: 40 });
+    expect(patch).toBeDefined();
+    expect(patch!.changes).toMatchObject({ dim: 40, on: true });
+    expect('position' in patch!.changes).toBe(false);
+  });
+});
+
+/* ----------------------------------------------------------------- helpers */
+
+async function firstOfType(ds: DataSource, type: Device['type']): Promise<Device> {
+  const list = await freshDevices(ds);
+  const d = list.find((x) => x.type === type);
+  if (!d) throw new Error(`no device of type ${type}`);
+  return d;
+}
+
+async function firstDimmable(ds: DataSource): Promise<LightDevice> {
+  const list = await freshDevices(ds);
+  const d = list.find((x) => x.type === 'light' && (x as LightDevice).dim !== null) as
+    | LightDevice
+    | undefined;
+  if (!d) throw new Error('no dimmable light');
+  return d;
+}
+
+async function getById(ds: DataSource, id: string): Promise<Device> {
+  const list = await ds.list();
+  const d = list.find((x) => x.id === id);
+  if (!d) throw new Error(`no device ${id}`);
+  return d;
+}
