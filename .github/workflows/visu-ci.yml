@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Micsi/obs-visu-skins
-          ref: feat/visu-m2-ionic
+          ref: main
           path: .obs-visu-skins
 
       - name: Recreate dev-link paths
