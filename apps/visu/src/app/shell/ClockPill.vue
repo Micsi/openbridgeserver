@@ -51,12 +51,22 @@ function onClick(): void {
 </script>
 
 <template>
-  <button type="button" class="clock-pill" :class="{ unread: props.unread }" :aria-label="label" @click="onClick">
+  <button
+    type="button"
+    class="clock-pill"
+    :class="{ unread: props.unread }"
+    :aria-label="label"
+    @click="onClick"
+  >
     <span class="clock-txt">
       <span class="d">{{ date }}</span>
       <span class="t">{{ time }}</span>
     </span>
-    <span v-if="props.unread" class="clock-dot" aria-hidden="true" />
+    <span
+      v-if="props.unread"
+      class="clock-dot"
+      aria-hidden="true"
+    />
   </button>
 </template>
 

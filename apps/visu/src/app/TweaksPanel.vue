@@ -117,27 +117,45 @@ function unsupportedType(spec: SkinTweak): never {
 </script>
 
 <template>
-  <section class="tweaks-panel" :data-skin="skin">
+  <section
+    class="tweaks-panel"
+    :data-skin="skin"
+  >
     <header class="tweaks-panel__head">
       <h2 class="tweaks-panel__title">
         {{ tr('tweaks.title', 'Tweaks') }}
       </h2>
     </header>
 
-    <p v-if="schema.length === 0" class="tweaks-panel__empty">
+    <p
+      v-if="schema.length === 0"
+      class="tweaks-panel__empty"
+    >
       {{ tr('tweaks.empty', 'Keine Tweaks') }}
     </p>
 
-    <div v-for="[key, spec] in schema" :key="key" class="tweaks-panel__row" :data-tweak="key">
+    <div
+      v-for="[key, spec] in schema"
+      :key="key"
+      class="tweaks-panel__row"
+      :data-tweak="key"
+    >
       <div class="tweaks-panel__label">
         <span class="tweaks-panel__label-text">{{ tweakLabel(key) }}</span>
-        <span v-if="spec.type === 'slider'" class="tweaks-panel__value">
+        <span
+          v-if="spec.type === 'slider'"
+          class="tweaks-panel__value"
+        >
           {{ sliderDisplay(values[key]) }}
         </span>
       </div>
 
       <!-- select → segmented buttons over the schema options -->
-      <div v-if="spec.type === 'select'" class="tweaks-panel__seg" role="group">
+      <div
+        v-if="spec.type === 'select'"
+        class="tweaks-panel__seg"
+        role="group"
+      >
         <button
           v-for="opt in spec.options ?? []"
           :key="opt"
@@ -162,7 +180,7 @@ function unsupportedType(spec: SkinTweak): never {
         :value="values[key]"
         :aria-label="tweakLabel(key)"
         @input="setTweak(key, Number(($event.target as HTMLInputElement).value))"
-      />
+      >
 
       <!-- never a silent default: an unknown tweak type is a visible failure -->
       <template v-else>

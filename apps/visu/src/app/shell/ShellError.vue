@@ -18,11 +18,17 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <div class="shell-error" role="alert">
+  <div
+    class="shell-error"
+    role="alert"
+  >
     <p class="shell-error-title">
       {{ t('shell.error.title') }}
     </p>
-    <p v-if="message" class="shell-error-detail">
+    <p
+      v-if="message"
+      class="shell-error-detail"
+    >
       {{ message }}
     </p>
   </div>

@@ -94,7 +94,10 @@ defineExpose({ shell });
 <template>
   <IonApp class="app-shell">
     <!-- Navigation: the top-level sections in source order (the floor). -->
-    <IonMenu content-id="app-shell-content" type="overlay">
+    <IonMenu
+      content-id="app-shell-content"
+      type="overlay"
+    >
       <IonHeader>
         <IonToolbar>
           <IonTitle>{{ t('shell.nav.menuTitle') }}</IonTitle>
@@ -124,19 +127,40 @@ defineExpose({ shell });
     >
       <!-- Optional brand titlebar (store.js → showTitlebar). Holds the clock pill
            when shown; otherwise the pill rides in the header below. -->
-      <IonHeader v-if="shell.showTitlebar.value" class="app-shell-titlebar">
+      <IonHeader
+        v-if="shell.showTitlebar.value"
+        class="app-shell-titlebar"
+      >
         <IonToolbar>
           <IonTitle>{{ t('shell.titlebar.brand') }}</IonTitle>
-          <slot name="header" :title="activeTitle" :with-clock="true" :unread="shell.unread.value">
-            <ShellHeader :title="activeTitle" :with-clock="true" :unread="shell.unread.value" @read="shell.markRead" />
+          <slot
+            name="header"
+            :title="activeTitle"
+            :with-clock="true"
+            :unread="shell.unread.value"
+          >
+            <ShellHeader
+              :title="activeTitle"
+              :with-clock="true"
+              :unread="shell.unread.value"
+              @read="shell.markRead"
+            />
           </slot>
         </IonToolbar>
       </IonHeader>
 
       <!-- Section header (RoomBar). Skin may replace via the `header` slot. -->
-      <IonHeader v-else class="app-shell-header">
+      <IonHeader
+        v-else
+        class="app-shell-header"
+      >
         <IonToolbar>
-          <slot name="header" :title="activeTitle" :with-clock="headerWithClock" :unread="shell.unread.value">
+          <slot
+            name="header"
+            :title="activeTitle"
+            :with-clock="headerWithClock"
+            :unread="shell.unread.value"
+          >
             <ShellHeader
               :title="activeTitle"
               :with-clock="headerWithClock"
@@ -155,12 +179,19 @@ defineExpose({ shell });
 
         <div class="app-shell-body">
           <!-- Hard failure: surfaced loudly, never a silent gap. -->
-          <slot v-if="error" name="error" :message="error">
+          <slot
+            v-if="error"
+            name="error"
+            :message="error"
+          >
             <ShellError :message="error" />
           </slot>
 
           <!-- Empty section. -->
-          <slot v-else-if="empty" name="empty">
+          <slot
+            v-else-if="empty"
+            name="empty"
+          >
             <ShellEmpty />
           </slot>
 
@@ -168,7 +199,10 @@ defineExpose({ shell });
                so a page/skin can draw the per-group label with the host default;
                the embedded router outlet is opt-in (the running app). -->
           <template v-else>
-            <slot :room-divider="RoomDivider" :shell="shell" />
+            <slot
+              :room-divider="RoomDivider"
+              :shell="shell"
+            />
             <IonRouterOutlet v-if="withRouterOutlet" />
           </template>
         </div>

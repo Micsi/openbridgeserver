@@ -59,11 +59,26 @@ const theme = computed<'light' | 'dark' | 'image'>(() => {
 </script>
 
 <template>
-  <AppShell class="overview-page" :state="{ active: 'overview' }" :root-bind="rootTweaks">
+  <AppShell
+    class="overview-page"
+    :state="{ active: 'overview' }"
+    :root-bind="rootTweaks"
+  >
     <template #default>
-      <DetailModalHost :skin="SKIN" :theme="theme">
-        <div class="visu-root overview-root" v-bind="rootTweaks.attrs" :style="rootTweaks.style">
-          <OverviewGrid :skin="SKIN" :groups="groups" :theme="theme" />
+      <DetailModalHost
+        :skin="SKIN"
+        :theme="theme"
+      >
+        <div
+          class="visu-root overview-root"
+          v-bind="rootTweaks.attrs"
+          :style="rootTweaks.style"
+        >
+          <OverviewGrid
+            :skin="SKIN"
+            :groups="groups"
+            :theme="theme"
+          />
         </div>
 
         <!-- Tweaks editor (A6): the page owns the values; the skin reads them. -->
@@ -75,7 +90,11 @@ const theme = computed<'light' | 'dark' | 'image'>(() => {
         >
           {{ t('overview.tweaks.toggle') }}
         </button>
-        <TweaksPanel v-if="showTweaks" v-model="tweaks" :skin="SKIN" />
+        <TweaksPanel
+          v-if="showTweaks"
+          v-model="tweaks"
+          :skin="SKIN"
+        />
       </DetailModalHost>
     </template>
   </AppShell>

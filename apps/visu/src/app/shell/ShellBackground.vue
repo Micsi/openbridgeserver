@@ -11,7 +11,10 @@
 </script>
 
 <template>
-  <div class="shell-background" aria-hidden="true" />
+  <div
+    class="shell-background"
+    aria-hidden="true"
+  />
 </template>
 
 <style scoped>

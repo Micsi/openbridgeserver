@@ -22,7 +22,10 @@ defineProps<{
 <template>
   <div class="room-divider">
     <span class="room-divider-name">{{ room }}</span>
-    <span v-if="count != null" class="room-divider-meta">{{ count }}</span>
+    <span
+      v-if="count != null"
+      class="room-divider-meta"
+    >{{ count }}</span>
   </div>
 </template>
 

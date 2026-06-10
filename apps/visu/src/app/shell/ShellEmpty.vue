@@ -12,7 +12,10 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <div class="shell-empty" role="status">
+  <div
+    class="shell-empty"
+    role="status"
+  >
     <p class="shell-empty-text">
       {{ t('shell.empty') }}
     </p>

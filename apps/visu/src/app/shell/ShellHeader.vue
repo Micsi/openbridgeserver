@@ -24,12 +24,20 @@ const emit = defineEmits<{ (e: 'read'): void }>();
 </script>
 
 <template>
-  <div class="shell-header" :class="{ 'has-clock': withClock }">
+  <div
+    class="shell-header"
+    :class="{ 'has-clock': withClock }"
+  >
     <IonButtons>
       <IonMenuButton />
     </IonButtons>
     <span class="shell-header-title">{{ title }}</span>
-    <ClockPill v-if="withClock" class="shell-header-clock" :unread="unread" @read="emit('read')" />
+    <ClockPill
+      v-if="withClock"
+      class="shell-header-clock"
+      :unread="unread"
+      @read="emit('read')"
+    />
   </div>
 </template>
 

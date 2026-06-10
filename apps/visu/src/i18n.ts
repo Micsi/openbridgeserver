@@ -1,6 +1,12 @@
 import { createI18n } from 'vue-i18n';
 import de from './locales/de.json';
 import en from './locales/en.json';
+// Skin locale namespaces (`skin.*`) are merged into the app messages so the
+// host-injected `ctx.t` actually resolves skin strings — and a locale switch
+// (e.g. en) translates them — instead of always falling back to the skin's
+// German literals. App vs. skin top-level namespaces are disjoint.
+import skinIonicDe from '@obs-visu-skins/ionic/locales/de.json';
+import skinIonicEn from '@obs-visu-skins/ionic/locales/en.json';
 
 /**
  * Supported locales.
@@ -28,7 +34,12 @@ const i18n = createI18n({
   legacy: false,
   locale: detectLocale(),
   fallbackLocale: 'de',
-  messages: { de, en },
+  messages: {
+    // Only the skin's `skin.*` namespace is merged (its locale files also carry
+    // a `$comment` documentation key that must not become a message).
+    de: { ...de, skin: skinIonicDe.skin },
+    en: { ...en, skin: skinIonicEn.skin },
+  },
 });
 
 export function setLocale(code: LocaleCode): void {
