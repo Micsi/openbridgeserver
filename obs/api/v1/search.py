@@ -17,7 +17,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from obs.api.auth import get_current_user
+from obs.api.auth import Principal, get_current_principal
+from obs.api.authz import AuthzAction
+from obs.api.authz_service import filter_authorized_datapoints
 from obs.api.v1.datapoints import _SORT_KEYS, DataPointOut, HierarchyNodeRef, NodePathSegment, _enrich
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
@@ -112,9 +114,10 @@ async def search(
     order: str = Query("asc", pattern="^(asc|desc)$"),
     page: int = Query(0, ge=0),
     size: int = Query(50, ge=1, le=500),
-    _user: str = Depends(get_current_user),
+    _user: Principal | str = Depends(get_current_principal),
     db: Database = Depends(lambda: get_db()),
 ) -> SearchPage:
+    principal = _user if isinstance(_user, Principal) else Principal(subject=_user, type="user", is_admin=_user == "admin")
     reg = get_registry()
     results = reg.all()
 
@@ -210,15 +213,27 @@ async def search(
 
         results = [dp for dp in results if _quality_of(dp) == quality]
 
-    # 7. Sort
+    # 7. AuthZ read scope filter
+    if results and not (principal.type == "user" and principal.is_admin):
+        authorized_ids = set(
+            await filter_authorized_datapoints(
+                db,
+                principal,
+                [str(dp.id) for dp in results],
+                action=AuthzAction.READ,
+            )
+        )
+        results = [dp for dp in results if str(dp.id) in authorized_ids]
+
+    # 8. Sort
     results = sorted(results, key=_SORT_KEYS[sort], reverse=(order == "desc"))
 
-    # 8. Paginate
+    # 9. Paginate
     total = len(results)
     offset = page * size
     items = [_enrich(dp) for dp in results[offset : offset + size]]
 
-    # 9. Enrich with hierarchy node assignments (single batch query)
+    # 10. Enrich with hierarchy node assignments (single batch query)
     await _add_hierarchy(items, db)
 
     return SearchPage(
