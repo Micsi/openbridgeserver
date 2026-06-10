@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { SkinLayout } from '@obs/visu-contract';
 
 import { resolveLayout, clampColumns, type ColumnProfile } from './layout';
-import { rooms as modelRooms, byId, layoutRole } from '../core/model';
+import { rooms as modelRooms } from '../core/model';
 
 /**
  * skin-host/layout — generic layout profile (A4, Issue #100).
@@ -75,23 +75,23 @@ describe('resolveLayout — grouping is the floor', () => {
 });
 
 describe('resolveLayout — role is additive (grid honours, list degrades)', () => {
-  it('grid model maps each role through the manifest roleMap', () => {
+  it('grid model maps each role through the roleMap, widened by explicit span/row hints', () => {
     const out = resolveLayout(GRID_LAYOUT, modelRooms);
     expect(out.honorsRole).toBe(true);
+    // id → source entry (carries the optional span/row layout hints)
+    const entryById = new Map(modelRooms.flatMap((g) => g.entries.map((e) => [e.id, e] as const)));
+    const roleMap = GRID_LAYOUT.roleMap as Record<string, { c: number; r: number }>;
     for (const item of out.items) {
-      const expectedRole = layoutRole(
-        { id: item.id },
-        byId[item.id],
-      );
-      // the resolved role matches the core baseline …
-      // (span resolution is checked against the roleMap below)
-      const expectedSpan = (GRID_LAYOUT.roleMap as Record<string, { c: number; r: number }>)[
-        item.role
-      ];
+      const base = roleMap[item.role] ?? { c: 1, r: 1 };
+      const e = entryById.get(item.id)!;
+      // footprint = role baseline widened by the page's explicit hint (CONTRACT §4)
+      const expectedSpan = {
+        c: typeof e.span === 'number' && e.span > base.c ? e.span : base.c,
+        r: typeof e.row === 'number' && e.row > base.r ? e.row : base.r,
+      };
       expect(item.span).toEqual(expectedSpan);
       // role is derived from the core, not invented by the layout
       expect(['default', 'compact', 'wide', 'tall', 'feature', 'banner']).toContain(item.role);
-      void expectedRole;
     }
   });
 
@@ -119,14 +119,19 @@ describe('resolveLayout — role is additive (grid honours, list degrades)', () 
     }
   });
 
-  it('an unmapped role degrades to the 1×1 floor, never broken', () => {
+  it('an unmapped role with no hint degrades to the 1×1 floor, never broken', () => {
     const sparseMap: SkinLayout = {
       ...GRID_LAYOUT,
       roleMap: { default: { c: 1, r: 1 } }, // wide/tall/feature missing
     };
     const out = resolveLayout(sparseMap, modelRooms);
+    const entryById = new Map(modelRooms.flatMap((g) => g.entries.map((e) => [e.id, e] as const)));
     for (const item of out.items) {
-      if (item.role !== 'default') {
+      const e = entryById.get(item.id)!;
+      const hasHint = typeof e.span === 'number' || typeof e.row === 'number';
+      // An unmapped role falls back to the 1×1 floor — unless the page gave an
+      // explicit span/row hint, which is always honoured (never broken either way).
+      if (item.role !== 'default' && !hasHint) {
         expect(item.span).toEqual({ c: 1, r: 1 });
       }
     }

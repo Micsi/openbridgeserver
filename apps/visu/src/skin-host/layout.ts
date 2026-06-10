@@ -101,6 +101,20 @@ function spanForRole(layout: SkinLayout, role: Role): GridSpan {
   return { c: m.c, r: m.r };
 }
 
+/**
+ * Footprint for an item: the role's roleMap span, widened/heightened by the
+ * page's explicit `span`/`row` hints when those are larger (CONTRACT-v1 §4 —
+ * the layout intent). This lets a tall control (jalousie: span 2, row 3) claim
+ * the fixed fields it needs instead of growing its row and dragging the small
+ * widget beside it to the same height.
+ */
+function footprintFor(layout: SkinLayout, role: Role, entry: LayoutEntry): GridSpan {
+  const base = spanForRole(layout, role);
+  const c = typeof entry.span === 'number' && entry.span > base.c ? entry.span : base.c;
+  const r = typeof entry.row === 'number' && entry.row > base.r ? entry.row : base.r;
+  return { c, r };
+}
+
 /** Clamp a requested column count into the profile's [min, max] window. */
 export function clampColumns(profile: ColumnProfile, requested: number): number {
   if (!Number.isFinite(requested)) return profile.default;
@@ -155,7 +169,7 @@ export function resolveLayout(
         role,
         group: group.room,
         firstInGroup: first,
-        span: honorsRole ? spanForRole(layout, role) : UNIT_SPAN,
+        span: honorsRole ? footprintFor(layout, role, entry) : UNIT_SPAN,
       });
       first = false;
     }
