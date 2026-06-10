@@ -112,6 +112,8 @@ class TestInstanceOut:
         inst.connected = True
         inst.last_severity = "warning"
         inst.last_detail = "some detail"
+        inst.last_detail_code = "knxTunnelOverload"
+        inst.last_detail_params = {}
         inst.get_bindings.return_value = [1, 2, 3]
         row = _inst_row()
         result = adp_api._instance_out(row, inst)
@@ -119,6 +121,7 @@ class TestInstanceOut:
         assert result.connected is True
         assert result.severity == "warning"
         assert result.status_detail == "some detail"
+        assert result.status_detail_code == "knxTunnelOverload"
         assert result.bindings == 3
 
     @pytest.mark.asyncio
