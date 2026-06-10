@@ -1764,6 +1764,7 @@ class TestEtsImport:
         result = await replace_existing_ets_trees(_DbStub(rows=[]), "groups")
 
         assert result == 0
+
     @pytest.mark.asyncio
     async def test_create_ets_hierarchy_buildings_auto_links_datapoints(self):
         from obs.api.v1.services.hierarchy_import import EtsImportRequest, create_ets_hierarchy

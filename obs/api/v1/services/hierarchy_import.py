@@ -41,6 +41,7 @@ def _new_id() -> str:
 def _ets_import_description(mode: str) -> str:
     return f"ets_import:{mode}"
 
+
 def _chunks(values: list[str], size: int) -> list[list[str]]:
     return [values[i : i + size] for i in range(0, len(values), size)]
 
