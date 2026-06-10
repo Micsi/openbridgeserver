@@ -328,6 +328,9 @@ async def _import_knx_devices_and_comm_objects(
     if not await _knx_device_schema_ready(db):
         return 0, 0
 
+    # Offload the blocking XKNXProj parse (writes a temp file + parses the ZIP)
+    # to a thread, like the GA/location/trade parsers, so large imports don't
+    # stall the event loop.
     devices, comm_objects, co_ga_links = await run_in_threadpool(parse_knxproj_devices, file_bytes, password)
 
     # Keep the latest project snapshot deterministic: tables mirror the current
@@ -660,6 +663,8 @@ async def import_knxproj_file(
             await db.commit()
             functions_count = len(fn_records)
     except Exception as e:
+        # Discard any partial inserts so they can't be made durable by a later commit.
+        await db.rollback()
         logger.warning("Gebäude/Gewerke-Import fehlgeschlagen (wird ignoriert): %s", e)
 
     # Import Trades (Gewerke) — direct ZIP/XML parsing; password forwarded for protected files
@@ -705,6 +710,8 @@ async def import_knxproj_file(
                     )
                     await db.commit()
     except Exception as e:
+        # Discard any partial inserts so they can't be made durable by a later commit.
+        await db.rollback()
         logger.warning("Trades-Import fehlgeschlagen (wird ignoriert): %s", e)
 
     devices_count = 0
