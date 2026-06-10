@@ -25,7 +25,7 @@ async function seedStore(devices?: readonly Device[]): Promise<void> {
 describe('SkinHost — present types render (ionic, real model)', () => {
   beforeEach(() => setActivePinia(createPinia()));
 
-  it('renders one cell per layout item, in source order, grouped', async () => {
+  it('renders one cell per layout item, in source order, one grid per room', async () => {
     await seedStore();
     // a small ordered, grouped page using real model device ids
     const groups: RoomGroup[] = [
@@ -38,10 +38,12 @@ describe('SkinHost — present types render (ionic, real model)', () => {
     const cells = wrapper.findAll('.skin-host-cell');
     expect(cells.length).toBe(3);
 
-    // order preserved
-    // grouping carried as data-group; first item of each group flagged
-    const groupStarts = wrapper.findAll('.skin-host-group-start');
-    expect(groupStarts.length).toBe(2);
+    // Each room block is its own grid (clean rows + room separation); order is
+    // preserved and grouping is carried as data-group on the cells.
+    const roomGrids = wrapper.findAll('.skin-host-model-grid');
+    expect(roomGrids.length).toBe(2);
+    expect(roomGrids[0].attributes('data-group')).toBe('Küche');
+    expect(roomGrids[1].attributes('data-group')).toBe('WC');
     expect(cells[0].attributes('data-group')).toBe('Küche');
     expect(cells[2].attributes('data-group')).toBe('WC');
   });

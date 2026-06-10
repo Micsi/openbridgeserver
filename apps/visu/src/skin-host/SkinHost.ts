@@ -72,7 +72,9 @@ export default defineComponent({
       const sk = skin.value;
       const lay = layout.value;
 
-      const tiles: VNode[] = lay.items.map((item) => {
+      // Render one cell: type-addressed dispatch + AA tokens + the role/group
+      // data the skin's CSS honours. Order is the array order (the floor).
+      const renderCell = (item: (typeof lay.items)[number]): VNode => {
         // resolveLayout already proved the device exists; re-read it for render.
         const device = liveDevice(item.id) as Device;
 
@@ -89,13 +91,11 @@ export default defineComponent({
             ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
             : (selection.renderer(device, tokens, defaultCtx) as VNode);
 
-        // A4: grouping + span are carried as data the skin's CSS can honour;
-        // order is already the array order (the floor).
         return h(
           'div',
           {
             key: item.id,
-            class: ['skin-host-cell', { 'skin-host-group-start': item.firstInGroup }],
+            class: 'skin-host-cell',
             'data-group': item.group,
             'data-role': item.role,
             // Grid footprint: only meaningful in a role-honouring grid model.
@@ -105,17 +105,37 @@ export default defineComponent({
           },
           [body],
         );
-      });
+      };
+
+      // List model (e.g. terminal): one flat column.
+      if (lay.model !== 'grid') {
+        return h('div', { class: ['skin-host', 'skin-host-model-list'] }, lay.items.map(renderCell));
+      }
+
+      // Grid model: one grid PER room block so each room lays out cleanly (uniform
+      // rows within a block) and reads as a separate room via the gap between
+      // blocks (A4 — order + grouping are the floor). The clamped column count is
+      // exposed once on the host and inherited by every room grid.
+      const blocks: { group: string; items: (typeof lay.items)[number][] }[] = [];
+      for (const item of lay.items) {
+        const last = blocks[blocks.length - 1];
+        if (last && last.group === item.group) last.items.push(item);
+        else blocks.push({ group: item.group, items: [item] });
+      }
 
       return h(
         'div',
         {
-          class: ['skin-host', `skin-host-model-${lay.model}`],
-          // Grid model exposes the (clamped) column count as a CSS variable the
-          // skin's stylesheet turns into a real grid-template-columns.
-          style: lay.model === 'grid' ? { '--skin-host-columns': String(cols.value) } : undefined,
+          class: ['skin-host', 'skin-host-grouped'],
+          style: { '--skin-host-columns': String(cols.value) },
         },
-        tiles,
+        blocks.map((blk) =>
+          h(
+            'div',
+            { key: `grid-${blk.group}`, class: 'skin-host-model-grid', 'data-group': blk.group },
+            blk.items.map(renderCell),
+          ),
+        ),
       );
     };
   },

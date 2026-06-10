@@ -88,11 +88,13 @@ describe('OverviewPage — mounts and renders the room-grouped overview', () => 
     expect(cells.length).toBeGreaterThanOrEqual(modelRooms.length);
   });
 
-  it('marks the first item of each room group (grouping is part of the floor)', async () => {
+  it('renders one grid per room block (grouping is part of the floor)', async () => {
     await seedStore();
     const wrapper = await mountOverview();
-    const groupStarts = wrapper.findAll('.skin-host-group-start');
-    expect(groupStarts.length).toBe(modelRooms.length);
+    // Each room block is its own grid (clean rows + room separation).
+    const roomGrids = wrapper.findAll('.skin-host-model-grid');
+    expect(roomGrids.length).toBe(modelRooms.length);
+    expect(roomGrids[0].attributes('data-group')).toBe(modelRooms[0].room);
     // first cell belongs to the first room block, in source order
     const first = wrapper.find('.skin-host-cell');
     expect(first.attributes('data-group')).toBe(modelRooms[0].room);
