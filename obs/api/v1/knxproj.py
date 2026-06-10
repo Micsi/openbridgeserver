@@ -632,11 +632,6 @@ async def import_knxproj_file(
     )
     await db.commit()
 
-    try:
-        await _import_knx_devices_and_comm_objects(file_bytes=content, password=pwd, db=db, now=now)
-    except Exception as e:
-        logger.warning("Geräte-/Kommunikationsobjekt-Import fehlgeschlagen (wird ignoriert): %s", e)
-
     # Import Gebäude/Gewerke structure — already parsed in parallel above
     locations_count = 0
     functions_count = 0
