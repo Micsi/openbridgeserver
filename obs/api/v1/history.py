@@ -102,7 +102,10 @@ async def _optional_history_principal(
 ) -> Principal | None:
     if credentials is None and api_key is None:
         return None
-    return await get_current_principal(credentials=credentials, api_key=api_key, db=db)
+    try:
+        return await get_current_principal(credentials=credentials, api_key=api_key, db=db)
+    except HTTPException:
+        return None
 
 
 async def _resolve_page_access(db: Database, node_id: str) -> str:

@@ -114,6 +114,46 @@ def _principal(subject: str = "alice", *, is_admin: bool = False) -> Principal:
 
 
 @pytest.mark.asyncio
+async def test_invalid_auth_with_public_page_falls_back_to_page_access(monkeypatch, db: Database):
+    dp_id = uuid.uuid4()
+    await _insert_datapoint(db, dp_id)
+    monkeypatch.setattr(history_api, "get_registry", lambda: _RegistryStub(dp_id))
+
+    async def _invalid_auth(*, credentials, api_key, db):
+        raise HTTPException(status_code=401, detail="invalid auth")
+
+    monkeypatch.setattr(history_api, "get_current_principal", _invalid_auth)
+
+    principal = await history_api._optional_history_principal(
+        credentials=SimpleNamespace(credentials="invalid-token"),
+        api_key=None,
+        db=db,
+    )
+
+    plugin = MagicMock()
+    plugin.query = AsyncMock(return_value=[])
+    monkeypatch.setattr(history_api, "get_history_plugin", lambda: plugin)
+    monkeypatch.setattr(history_api, "_resolve_page_access", AsyncMock(return_value="public"))
+
+    request = MagicMock()
+    request.headers.get.return_value = "page-1"
+
+    result = await history_api.query_history(
+        dp_id=dp_id,
+        from_ts=None,
+        to_ts=None,
+        limit=100,
+        request=request,
+        principal=principal,
+        db=db,
+    )
+
+    assert principal is None
+    assert result == []
+    plugin.query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_query_history_with_read_grant_reaches_plugin(monkeypatch, db: Database):
     dp_id = uuid.uuid4()
     await _seed_datapoint_scope(db, dp_id, grant_principal="alice")
