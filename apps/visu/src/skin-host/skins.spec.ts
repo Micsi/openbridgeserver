@@ -20,8 +20,18 @@ describe('skins registry', () => {
     expect(skins.ionic.manifest.name).toBe('ionic');
   });
 
+  it('registers the terminal skin with tiles/details/manifest (A5, #101)', () => {
+    expect(skins.terminal).toBeDefined();
+    expect(skins.terminal.tiles).toBeTypeOf('object');
+    expect(skins.terminal.details).toBeTypeOf('object');
+    expect(skins.terminal.manifest.name).toBe('terminal');
+    // the terminal skin is the list model (vs. ionic's grid).
+    expect(skins.terminal.manifest.layout.model).toBe('list');
+  });
+
   it('resolveSkin returns the skin for a known key', () => {
     expect(resolveSkin('ionic')).toBe(skins.ionic);
+    expect(resolveSkin('terminal')).toBe(skins.terminal);
   });
 
   it('resolveSkin throws a visible error for an unknown key (no silent default)', () => {

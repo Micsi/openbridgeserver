@@ -23,6 +23,9 @@ import type { SkinManifest, Renderer, CoreWidgetType } from '@obs/visu-contract'
 import { tiles as ionicTiles, details as ionicDetails } from '@obs-visu-skins/ionic';
 import ionicManifest from '@obs-visu-skins/ionic/manifest.json';
 
+import { tiles as terminalTiles, details as terminalDetails } from '@obs-visu-skins/terminal';
+import terminalManifest from '@obs-visu-skins/terminal/manifest.json';
+
 /** A partial renderer map over the core widget types (mirror of the skin export). */
 export type RendererMap = Partial<Record<CoreWidgetType, Renderer>>;
 
@@ -46,6 +49,11 @@ export const skins = {
     tiles: ionicTiles,
     details: ionicDetails,
     manifest: ionicManifest as SkinManifest,
+  },
+  terminal: {
+    tiles: terminalTiles,
+    details: terminalDetails,
+    manifest: terminalManifest as SkinManifest,
   },
 } as const satisfies Record<string, Skin>;
 
