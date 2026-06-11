@@ -80,7 +80,13 @@ class WriteRouter:
     # ------------------------------------------------------------------
 
     async def handle(self, dp_id: uuid.UUID, raw_payload: str) -> None:
-        """Deserialize payload and write to all DEST/BOTH bindings."""
+        """Deserialize an inbound MQTT set payload.
+
+        Bound datapoints keep the adapter write semantics: only DEST/BOTH
+        bindings receive commands, and registry state changes only when an
+        adapter later publishes a value event. Bindingless datapoints are OBS
+        internal objects, so their validated set payload becomes the value event.
+        """
         from obs.models.types import DataTypeRegistry
 
         logger.info("WriteRouter.handle: dp_id=%s payload=%r", dp_id, raw_payload)
@@ -89,15 +95,39 @@ class WriteRouter:
             logger.warning("Write request for unknown DataPoint %s — ignored", dp_id)
             return
 
+        rows = await self._db.fetchall(
+            """SELECT direction FROM adapter_bindings
+               WHERE datapoint_id=? AND enabled=1""",
+            (str(dp_id),),
+        )
+        has_bindings = bool(rows)
+        has_writable_bindings = any(_row_value(row, "direction") in {"DEST", "BOTH"} for row in rows)
+        if has_bindings and not has_writable_bindings:
+            logger.warning("Write request for source-only DataPoint %s — ignored", dp_id)
+            return
+
         dt = DataTypeRegistry.get(dp.data_type)
-        try:
-            value = dt.mqtt_deserializer(raw_payload)
-        except Exception:
+        if dt.name == "UNKNOWN":
             try:
                 value = json.loads(raw_payload)
             except Exception:
                 value = raw_payload
+        else:
+            try:
+                value = dt.mqtt_deserializer(raw_payload)
+            except Exception:
+                logger.warning(
+                    "WriteRouter: invalid MQTT set payload for dp=%s data_type=%s payload=%r",
+                    dp_id,
+                    dp.data_type,
+                    raw_payload,
+                )
+                return
         logger.info("WriteRouter: dp=%s value=%r (type=%s)", dp.name, value, dp.data_type)
+
+        if has_writable_bindings:
+            await self._write_to_dest_bindings(dp_id, value, skip_binding_id=None)
+            return
 
         from obs.core.event_bus import DataValueEvent, get_event_bus
 

@@ -211,18 +211,27 @@ async def test_handle_value_event_forwards_skip_binding_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handle_uses_json_fallback_when_deserializer_fails(monkeypatch):
+async def test_handle_rejects_invalid_typed_payload_without_publishing_event():
     dp_id = uuid.uuid4()
     router = _make_router([])
-    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="dp", data_type="dummy"))
+    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="dp", data_type="FLOAT"))
     bus = SimpleNamespace(publish=AsyncMock())
     router._bus = bus
+    router._write_to_dest_bindings = AsyncMock()
 
-    def _failing_deserializer(_raw):
-        raise ValueError("boom")
+    await router.handle(dp_id, "not json")
 
-    fake_dt = SimpleNamespace(mqtt_deserializer=_failing_deserializer)
-    monkeypatch.setattr("obs.models.types.DataTypeRegistry.get", lambda _dt: fake_dt)
+    bus.publish.assert_not_awaited()
+    router._write_to_dest_bindings.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_publishes_unknown_json_payload_for_bindingless_datapoint():
+    dp_id = uuid.uuid4()
+    router = _make_router([])
+    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="dp", data_type="UNKNOWN"))
+    bus = SimpleNamespace(publish=AsyncMock())
+    router._bus = bus
 
     await router.handle(dp_id, '{"n": 7}')
     bus.publish.assert_awaited_once()
@@ -235,18 +244,12 @@ async def test_handle_uses_json_fallback_when_deserializer_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handle_uses_raw_payload_when_deserializer_and_json_fallback_fail(monkeypatch):
+async def test_handle_publishes_unknown_raw_payload_for_bindingless_datapoint():
     dp_id = uuid.uuid4()
     router = _make_router([])
-    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="dp", data_type="dummy"))
+    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="dp", data_type="UNKNOWN"))
     bus = SimpleNamespace(publish=AsyncMock())
     router._bus = bus
-
-    def _failing_deserializer(_raw):
-        raise ValueError("boom")
-
-    fake_dt = SimpleNamespace(mqtt_deserializer=_failing_deserializer)
-    monkeypatch.setattr("obs.models.types.DataTypeRegistry.get", lambda _dt: fake_dt)
 
     await router.handle(dp_id, "not json")
     bus.publish.assert_awaited_once()
@@ -254,6 +257,36 @@ async def test_handle_uses_raw_payload_when_deserializer_and_json_fallback_fail(
     assert event.datapoint_id == dp_id
     assert event.value == "not json"
     assert event.quality == "good"
+
+
+@pytest.mark.asyncio
+async def test_handle_ignores_source_only_datapoint_without_publishing_state():
+    dp_id = uuid.uuid4()
+    bus = SimpleNamespace(publish=AsyncMock())
+    router = _make_router([_row(datapoint_id=str(dp_id), direction="SOURCE")])
+    router._bus = bus
+    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="Sensor", data_type="FLOAT"))
+    router._write_to_dest_bindings = AsyncMock()
+
+    await router.handle(dp_id, "21.5")
+
+    bus.publish.assert_not_awaited()
+    router._write_to_dest_bindings.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_with_writable_binding_writes_adapter_without_publishing_state():
+    dp_id = uuid.uuid4()
+    bus = SimpleNamespace(publish=AsyncMock())
+    router = _make_router([_row(datapoint_id=str(dp_id), direction="DEST")])
+    router._bus = bus
+    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="Actuator", data_type="FLOAT"))
+    router._write_to_dest_bindings = AsyncMock()
+
+    await router.handle(dp_id, "21.5")
+
+    router._write_to_dest_bindings.assert_awaited_once_with(dp_id, pytest.approx(21.5), skip_binding_id=None)
+    bus.publish.assert_not_awaited()
 
 
 @pytest.mark.asyncio

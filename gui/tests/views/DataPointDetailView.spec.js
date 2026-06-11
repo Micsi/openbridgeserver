@@ -76,4 +76,17 @@ describe('DataPointDetailView', () => {
 
     expect(apiMocks.dpApi.writeValue).toHaveBeenCalledWith('dp-internal', 21.5)
   })
+
+  it('does not expose the write form for source-only adapter bindings', async () => {
+    apiMocks.dpApi.listBindings.mockResolvedValue({
+      data: [{ id: 'binding-source', enabled: true, direction: 'SOURCE', adapter_type: 'KNX', config: {} }],
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Kein schreibbares Binding vorhanden.')
+    expect(wrapper.find('input[type="text"]').exists()).toBe(false)
+    expect(wrapper.findAll('button').some(button => button.text() === 'Schreiben')).toBe(false)
+  })
 })

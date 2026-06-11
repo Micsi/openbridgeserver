@@ -29,7 +29,7 @@
         <div v-if="dp.mqtt_alias" class="font-mono text-xs text-slate-600 break-all">{{ dp.mqtt_alias }}</div>
         <div class="border-t border-slate-200 dark:border-slate-700 pt-4 mt-1">
           <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{{ $t('datapoints.detail.writeValue') }}</div>
-          <div class="flex flex-wrap items-center gap-2">
+          <div v-if="canWriteValue" class="flex flex-wrap items-center gap-2">
             <template v-if="dp.data_type === 'BOOLEAN'">
               <button
                 @click="writeDetailValue(true)"
@@ -59,6 +59,9 @@
                 {{ $t('datapoints.detail.write') }}
               </button>
             </template>
+          </div>
+          <div v-else class="text-xs text-slate-500">
+            {{ $t('datapoints.detail.noWritableBinding') }}
           </div>
           <div v-if="writeFeedback" class="text-xs mt-2" :class="writeFeedback.type === 'error' ? 'text-red-500' : 'text-green-600'">
             {{ writeFeedback.text }}
@@ -228,6 +231,10 @@ const displayVal = computed(() => {
   if (v === null || v === undefined) return '—'
   return dp.value?.unit ? `${v} ${dp.value.unit}` : String(v)
 })
+const activeBindings = computed(() => bindings.value.filter(b => b.enabled))
+const canWriteValue = computed(() =>
+  activeBindings.value.length === 0 || activeBindings.value.some(b => ['DEST', 'BOTH'].includes(b.direction))
+)
 watch(currentRawValue, (value) => {
   if (!writeBusy.value && value !== undefined && value !== null) writeDraft.value = String(value)
 })
