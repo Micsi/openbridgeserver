@@ -269,6 +269,7 @@ function gridStyle(w: WidgetInstance) {
             :editor-mode="false"
             :readonly="isReadOnly"
             :h="w.h"
+            v-bind="w.type === 'Kamera' ? { pageId: props.id } : {}"
           />
           <MissingWidget v-else :widget-type="w.type" />
         </div>

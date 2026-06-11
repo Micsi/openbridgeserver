@@ -12,6 +12,8 @@ SSRF-Schutz:
 from __future__ import annotations
 
 import asyncio
+import json
+from typing import Any
 from collections.abc import AsyncGenerator
 
 import httpx
@@ -19,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from obs.api.auth import decode_token
+from obs.db.database import Database, get_db
 from obs.security.url_targets import UrlTargetBlockedError, build_pinned_url_targets
 
 router = APIRouter(tags=["camera"])
@@ -55,6 +58,48 @@ async def _camera_auth(
     )
 
 
+def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
+    if isinstance(page_config, str):
+        try:
+            page_config = json.loads(page_config)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(page_config, dict):
+        return False
+
+    widgets = page_config.get("widgets")
+    if not isinstance(widgets, list):
+        return False
+
+    expected_url = url.strip()
+    for widget in widgets:
+        if not isinstance(widget, dict):
+            continue
+        if str(widget.get("type", "")).lower() not in {"kamera", "camera"}:
+            continue
+        config = widget.get("config")
+        if not isinstance(config, dict):
+            continue
+        if str(config.get("url", "")).strip() == expected_url:
+            return True
+    return False
+
+
+async def _ensure_camera_page_scope(db: Database, page_id: str, url: str, user: str) -> None:
+    row = await db.fetchone(
+        "SELECT page_config FROM visu_nodes WHERE id = ? AND type = 'PAGE'",
+        (page_id,),
+    )
+    if row is None or not _page_config_contains_camera_url(row["page_config"], url):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kamera nicht gefunden")
+
+    from obs.api.v1.visu import _check_user_access, _resolve_access_with_node
+
+    access, _ = await _resolve_access_with_node(db, page_id)
+    if access == "user" and not await _check_user_access(db, page_id, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
+
+
 # ── Proxy-Endpunkt ─────────────────────────────────────────────────────────────
 
 
@@ -65,7 +110,9 @@ async def proxy_camera(
     password: str = Query("", description="Basic-Auth Passwort"),
     apikey_param: str = Query("", description="API-Key Query-Parameter-Name"),
     apikey_value: str = Query("", description="API-Key Wert"),
+    page_id: str = "",
     _user: str = Depends(_camera_auth),
+    db: Database = Depends(get_db),
 ) -> StreamingResponse:
     """Proxyt den Kamera-Stream vom Backend aus.
     Ermöglicht HTTPS-Browser → Server → HTTP-Kamera (Mixed-Content-Bypass).
@@ -83,11 +130,15 @@ async def proxy_camera(
         sep = "&" if "?" in target else "?"
         target = f"{target}{sep}{apikey_param}={apikey_value}"
 
-    # 3. SSRF-Prüfung und DNS-Pinning auf validierte Ziel-IP
+    # 3. Optionaler Visu-Page-Scope für Kamera-Widgets
+    if page_id:
+        await _ensure_camera_page_scope(db, page_id, url, _user)
+
+    # 4. SSRF-Prüfung und DNS-Pinning auf validierte Ziel-IP
     request_urls, pinned_headers, request_extensions = await _build_fetch_targets(target)
     auth = (username, password) if username else None
 
-    # 4. HEAD-Request: Erreichbarkeit prüfen + Content-Type holen
+    # 5. HEAD-Request: Erreichbarkeit prüfen + Content-Type holen
     content_type = "application/octet-stream"
     stream_target = request_urls[0]
     try:
@@ -141,7 +192,7 @@ async def proxy_camera(
             detail=f"Kamera nicht erreichbar: {exc}",
         ) from exc
 
-    # 5. Streaming-Generator (kein follow_redirects)
+    # 6. Streaming-Generator (kein follow_redirects)
     async def _stream() -> AsyncGenerator[bytes]:
         async with httpx.AsyncClient(
             timeout=None,

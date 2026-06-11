@@ -8,6 +8,7 @@ const props = defineProps<{
   value: DataPointValue | null
   statusValue: DataPointValue | null
   editorMode: boolean
+  pageId?: string | null
 }>()
 
 const label           = computed(() => (props.config.label           as string) ?? '')
@@ -33,6 +34,7 @@ const streamUrl = computed(() => {
     const jwt = localStorage.getItem('visu_jwt') ?? ''
     const p = new URLSearchParams({ url: base })
     if (jwt) p.set('_token', jwt)
+    if (props.pageId) p.set('page_id', props.pageId)
     if (authType.value === 'basic' && username.value) {
       p.set('username', username.value)
       p.set('password', password.value)
@@ -155,7 +157,7 @@ const imgSrc = computed(() =>
       class="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2"
     >
       <span class="text-4xl">📷</span>
-      <span class="text-xs">Kamera-URL konfigurieren</span>
+      <span class="text-xs">{{ $t('widgets.kamera.configureUrl') }}</span>
     </div>
 
     <!-- Kein URL im Live-Modus -->
@@ -163,7 +165,7 @@ const imgSrc = computed(() =>
       v-else-if="!url"
       class="flex-1 flex items-center justify-center text-gray-600 text-xs"
     >
-      Keine URL konfiguriert
+      {{ $t('widgets.kamera.noUrlConfigured') }}
     </div>
 
     <!-- MJPEG / Snapshot -->
@@ -176,7 +178,7 @@ const imgSrc = computed(() =>
         :src="imgSrc"
         :style="containerStyle"
         class="max-h-full max-w-full"
-        alt="Kamera"
+        :alt="$t('widgets.kamera.alt')"
         @error="onStreamError"
         @load="onStreamLoad"
       />
@@ -206,13 +208,13 @@ const imgSrc = computed(() =>
       class="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-2 z-20"
     >
       <span class="text-2xl">⚠️</span>
-      <span class="text-xs text-red-400 text-center px-4">Stream nicht erreichbar</span>
-      <span class="text-xs text-gray-500 text-center px-4">Automatischer Neuversuch in 10 s</span>
+      <span class="text-xs text-red-400 text-center px-4">{{ $t('widgets.kamera.streamUnavailable') }}</span>
+      <span class="text-xs text-gray-500 text-center px-4">{{ $t('widgets.kamera.retryInTenSeconds') }}</span>
       <button
         class="mt-1 px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-200 transition-colors"
         @click="reload"
       >
-        Jetzt neu laden
+        {{ $t('widgets.kamera.reloadNow') }}
       </button>
     </div>
 
