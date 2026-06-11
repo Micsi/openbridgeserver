@@ -41,20 +41,44 @@
       "toggle": "Anpassen"
     }
   },
+  "pages": {
+    "overview": {
+      "title": "Übersicht"
+    },
+    "terminal": {
+      "title": "Terminal"
+    }
+  },
   "tweaks": {
     "title": "Anpassen",
     "empty": "Keine Tweaks",
     "stil": {
       "label": "Stil",
-      "options": { "glass": "Glas", "ios": "iOS", "md": "Material" }
+      "options": {
+        "glass": "Glas",
+        "ios": "iOS",
+        "md": "Material"
+      }
     },
     "accentStyle": {
       "label": "Akzent",
-      "options": { "bar": "Balken", "glow": "Leuchten", "ring": "Rahmen" }
+      "options": {
+        "bar": "Balken",
+        "glow": "Leuchten",
+        "ring": "Rahmen"
+      }
     },
-    "glassBlur": { "label": "Unschärfe" },
-    "tileAlpha": { "label": "Deckkraft" },
-    "cellScale": { "label": "Rasterdichte" },
-    "glow": { "label": "Leuchtkraft" }
+    "glassBlur": {
+      "label": "Unschärfe"
+    },
+    "tileAlpha": {
+      "label": "Deckkraft"
+    },
+    "cellScale": {
+      "label": "Rasterdichte"
+    },
+    "glow": {
+      "label": "Leuchtkraft"
+    }
   }
 }

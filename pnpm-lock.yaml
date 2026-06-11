@@ -44,6 +44,9 @@ importers:
       '@obs-visu-skins/ionic':
         specifier: link:/Volumes/Daten/Projekte/openbridge/obs-visu-skins/packages/skins/ionic
         version: link:../../../obs-visu-skins/packages/skins/ionic
+      '@obs-visu-skins/terminal':
+        specifier: link:/Volumes/Daten/Projekte/openbridge/obs-visu-skins/packages/skins/terminal
+        version: link:../../../obs-visu-skins/packages/skins/terminal
       '@obs/visu-contract':
         specifier: workspace:*
         version: link:../../packages/contract

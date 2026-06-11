@@ -16,6 +16,7 @@
     "@ionic/vue": "^8.4.0",
     "@ionic/vue-router": "^8.4.0",
     "@obs-visu-skins/ionic": "link:/Volumes/Daten/Projekte/openbridge/obs-visu-skins/packages/skins/ionic",
+    "@obs-visu-skins/terminal": "link:/Volumes/Daten/Projekte/openbridge/obs-visu-skins/packages/skins/terminal",
     "@obs/visu-contract": "workspace:*",
     "chroma-js": "^3.1.2",
     "pinia": "^2.2.6",
