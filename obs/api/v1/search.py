@@ -51,7 +51,7 @@ async def _filter_authorized_hierarchy_rows(db: Database, principal: Principal, 
     ]
 
 
-async def _add_hierarchy(items: list[DataPointOut], db: Database, principal: Principal) -> None:
+async def _add_hierarchy(items: list[DataPointOut], db: Database, principal: Principal | None = None) -> None:
     """Batch-query hierarchy node links and inject into items in-place.
 
     Also computes each node's ancestor path (root → leaf, excluding tree name)
@@ -72,7 +72,8 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database, principal: Pri
             ORDER BY ht.name, hn.name""",
         dp_ids,
     )
-    rows = await _filter_authorized_hierarchy_rows(db, principal, rows)
+    if principal is not None:
+        rows = await _filter_authorized_hierarchy_rows(db, principal, rows)
     # Build ancestor paths for all linked nodes via recursive CTE (upstream
     # PR #462) — produces the richer node_path schema (objects with stable
     # node_id + node_name per segment) that the epic switched to during the
