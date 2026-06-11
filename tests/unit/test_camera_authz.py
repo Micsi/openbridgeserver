@@ -126,6 +126,28 @@ async def test_proxy_camera_blocks_unassigned_user_page_scope(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
+async def test_proxy_camera_requires_page_scope(monkeypatch: pytest.MonkeyPatch, db: Database):
+    build_targets = AsyncMock()
+    monkeypatch.setattr(camera_api, "_build_fetch_targets", build_targets)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await camera_api.proxy_camera(
+            url=CAMERA_URL,
+            username="",
+            password="",
+            apikey_param="",
+            apikey_value="",
+            page_id="",
+            _user="alice",
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "Page-Scope" in exc_info.value.detail
+    build_targets.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_proxy_camera_requires_matching_camera_url_for_page_scope(monkeypatch: pytest.MonkeyPatch, db: Database):
     await _insert_user(db, "alice")
     await _insert_camera_page(db, access="public", url="http://camera.local/other")

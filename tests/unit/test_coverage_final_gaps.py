@@ -440,6 +440,7 @@ async def test_proxy_camera_rejects_non_http(monkeypatch):
 @pytest.mark.asyncio
 async def test_proxy_camera_head_returns_redirect(monkeypatch):
     monkeypatch.setattr("obs.api.v1.camera._build_fetch_targets", AsyncMock(return_value=(["http://camera.local/stream"], {}, {})))
+    monkeypatch.setattr("obs.api.v1.camera._ensure_camera_page_scope", AsyncMock(return_value=None))
     mock_head = MagicMock(status_code=301, headers={})
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -453,6 +454,7 @@ async def test_proxy_camera_head_returns_redirect(monkeypatch):
             password="",
             apikey_param="",
             apikey_value="",
+            page_id="page-camera",
             _user="admin",
         )
     assert exc_info.value.status_code == 400
@@ -461,6 +463,7 @@ async def test_proxy_camera_head_returns_redirect(monkeypatch):
 @pytest.mark.asyncio
 async def test_proxy_camera_head_returns_401(monkeypatch):
     monkeypatch.setattr("obs.api.v1.camera._build_fetch_targets", AsyncMock(return_value=(["http://camera.local/stream"], {}, {})))
+    monkeypatch.setattr("obs.api.v1.camera._ensure_camera_page_scope", AsyncMock(return_value=None))
     mock_head = MagicMock(status_code=401, headers={})
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -474,6 +477,7 @@ async def test_proxy_camera_head_returns_401(monkeypatch):
             password="",
             apikey_param="",
             apikey_value="",
+            page_id="page-camera",
             _user="admin",
         )
     assert exc_info.value.status_code == 502
@@ -484,6 +488,7 @@ async def test_proxy_camera_head_request_error(monkeypatch):
     import httpx
 
     monkeypatch.setattr("obs.api.v1.camera._build_fetch_targets", AsyncMock(return_value=(["http://camera.local/stream"], {}, {})))
+    monkeypatch.setattr("obs.api.v1.camera._ensure_camera_page_scope", AsyncMock(return_value=None))
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
@@ -496,6 +501,7 @@ async def test_proxy_camera_head_request_error(monkeypatch):
             password="",
             apikey_param="",
             apikey_value="",
+            page_id="page-camera",
             _user="admin",
         )
     assert exc_info.value.status_code == 502
@@ -506,6 +512,7 @@ async def test_proxy_camera_success_returns_streaming_response(monkeypatch):
     from fastapi.responses import StreamingResponse
 
     monkeypatch.setattr("obs.api.v1.camera._build_fetch_targets", AsyncMock(return_value=(["http://camera.local/stream"], {}, {})))
+    monkeypatch.setattr("obs.api.v1.camera._ensure_camera_page_scope", AsyncMock(return_value=None))
     mock_head = MagicMock(status_code=200, headers={"content-type": "video/mjpeg"})
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -518,6 +525,7 @@ async def test_proxy_camera_success_returns_streaming_response(monkeypatch):
         password="pw",
         apikey_param="key",
         apikey_value="abc",
+        page_id="page-camera",
         _user="admin",
     )
     assert isinstance(result, StreamingResponse)
@@ -530,6 +538,7 @@ async def test_proxy_camera_head_405_optimistic(monkeypatch):
     from fastapi.responses import StreamingResponse
 
     monkeypatch.setattr("obs.api.v1.camera._build_fetch_targets", AsyncMock(return_value=(["http://camera.local/stream"], {}, {})))
+    monkeypatch.setattr("obs.api.v1.camera._ensure_camera_page_scope", AsyncMock(return_value=None))
     mock_head = MagicMock(status_code=405, headers={})
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -542,6 +551,7 @@ async def test_proxy_camera_head_405_optimistic(monkeypatch):
         password="",
         apikey_param="",
         apikey_value="",
+        page_id="page-camera",
         _user="admin",
     )
     assert isinstance(result, StreamingResponse)
