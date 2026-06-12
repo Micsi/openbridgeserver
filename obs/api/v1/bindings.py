@@ -133,6 +133,8 @@ async def _ensure_binding_mutation_scope(db: Database, principal: Principal, dp_
         targets=targets,
         grants=grants,
     )
+    if decision.reason == "explicit_deny":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Binding-Änderung nicht erlaubt")
     if not decision.allowed and not direct_decision.allowed:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Binding-Änderung nicht erlaubt")
 
