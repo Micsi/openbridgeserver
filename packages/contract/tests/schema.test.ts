@@ -6,8 +6,8 @@ import schema from '../contract.schema.json' with { type: 'json' };
 import fixtures from '../fixtures.json' with { type: 'json' };
 
 // Kern-Typen (stabiler Kern v1) und ihre erwarteten Fixture-Zustände — CONTRACT-v1.md §3/§4.
-const CORE_TYPES = ['light', 'switch', 'blind', 'jalousie', 'sensor', 'scene'] as const;
-const RESERVED_TYPES = ['climate', 'weather', 'energy', 'chart', 'media', 'camera', 'alarm'] as const;
+const CORE_TYPES = ['light', 'switch', 'blind', 'jalousie', 'sensor', 'scene', 'media', 'camera'] as const;
+const RESERVED_TYPES = ['climate', 'weather', 'energy', 'chart', 'alarm'] as const;
 const EXPECTED_STATES: Record<(typeof CORE_TYPES)[number], string[]> = {
   light: ['off', 'on', 'dimmed'],
   switch: ['off', 'on'],
@@ -15,6 +15,8 @@ const EXPECTED_STATES: Record<(typeof CORE_TYPES)[number], string[]> = {
   jalousie: ['open', 'tilted', 'locked'],
   sensor: ['ok', 'warn'],
   scene: ['film', 'morgen'],
+  media: ['playing', 'paused', 'stopped'],
+  camera: ['online', 'offline'],
 };
 
 const ROLES = ['compact', 'default', 'wide', 'tall', 'feature', 'banner'];
@@ -27,8 +29,8 @@ const s = schema as Record<string, any>;
 const f = fixtures as Record<string, any>;
 
 describe('contract.schema.json — Globals (§2)', () => {
-  it('declares version 1.1', () => {
-    expect(s.version).toBe('1.1');
+  it('declares version 1.2', () => {
+    expect(s.version).toBe('1.2');
   });
 
   it('declares roles exactly [compact,default,wide,tall,feature,banner]', () => {
@@ -45,13 +47,13 @@ describe('contract.schema.json — Globals (§2)', () => {
 });
 
 describe('contract.schema.json — widget types (§3)', () => {
-  it('declares all 6 core types', () => {
+  it('declares all 8 core types', () => {
     for (const t of CORE_TYPES) {
       expect(s.widgets, `core type ${t}`).toHaveProperty(t);
     }
   });
 
-  it('declares all 7 reserved v1.1 types', () => {
+  it('declares all 5 remaining reserved types', () => {
     for (const t of RESERVED_TYPES) {
       expect(s.widgets, `reserved type ${t}`).toHaveProperty(t);
     }
@@ -133,8 +135,8 @@ describe('contract.schema.json — widget types (§3)', () => {
 });
 
 describe('fixtures.json — completeness (§4)', () => {
-  it('declares contractVersion 1.0', () => {
-    expect(f.contractVersion).toBe('1.0');
+  it('declares contractVersion 1.2', () => {
+    expect(f.contractVersion).toBe('1.2');
   });
 
   it('provides every core type with its expected states', () => {

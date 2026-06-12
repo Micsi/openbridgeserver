@@ -1,6 +1,6 @@
 {
   "name": "@obs/visu-contract",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Versioned data/type contract between the obs Visu app and Visu skins. Data and types only — executes nothing.",
   "license": "MIT",
   "type": "module",

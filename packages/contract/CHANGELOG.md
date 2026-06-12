@@ -23,6 +23,26 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.2.0] — 2026-06-12
+
+v1.2: `camera` + `media` werden Kern-Typen (vorher reserved).
+
+### Added
+
+- **Stabiler Kern (§3):** `media` und `camera` rücken von *reserved* in den stabilen
+  Kern auf (`CoreWidgetType`), je mit `data`, `actions`, `icon`, `roles` und einem
+  maschinell validierbaren `dataSchema` (`since: "1.2"`). Additive Minor-Änderung (§9):
+  bestehende Skins bleiben gültig; solange sie `media`/`camera` weder rendern noch als
+  `unsupported` deklarieren, erscheinen die Typen in ihrer Fixture-Wand als `gap`.
+  - `MediaDevice` (read-only): `playState` (`playing|paused|stopped`), `title`,
+    `subtitle`, `volume` (0–100), optional `artUrl`.
+  - `CameraDevice` (read-only): `online`, `snapshotUrl`, optional `streamUrl`.
+- **Aktionen (§6):** `WidgetAction` um `playPause`, `stop`, `next`, `previous`,
+  `setVolume` (media) und `refresh` (camera) erweitert.
+- **Fixtures (§4):** `media: playing/paused/stopped`, `camera: online/offline`;
+  `contractVersion` → `"1.2"`.
+- **Schema/Exports:** `contract.schema.json` und `index.ts` deklarieren `version: "1.2"`.
+
 ## [1.1.0] — 2026-06-09
 
 v1.1: Ctx.t (i18n) optional.
@@ -62,5 +82,6 @@ Erste stabile Vertragsversion (`version: "1.0"`).
 - **Exports:** `index.ts` exportiert `schema`, `fixtures`, `version` (= `"1.0"`) und die
   Typen.
 
+[1.2.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.1.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.0.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract

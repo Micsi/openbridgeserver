@@ -17,13 +17,13 @@ export type IconSlot =
 export type AccentToken =
   | 'orange' | 'teal' | 'violet' | 'green' | 'blue' | 'rose' | 'amber' | 'slate';
 
-/** The stable core widget types of contract v1. */
+/** The stable core widget types of the contract (v1.2: + media, camera). */
 export type CoreWidgetType =
-  | 'light' | 'switch' | 'blind' | 'jalousie' | 'sensor' | 'scene';
+  | 'light' | 'switch' | 'blind' | 'jalousie' | 'sensor' | 'scene' | 'media' | 'camera';
 
-/** Reserved-for-v1.1 widget types — declared so skins can opt out deliberately. */
+/** Reserved widget types — declared so skins can opt out deliberately. */
 export type ReservedWidgetType =
-  | 'climate' | 'weather' | 'energy' | 'chart' | 'media' | 'camera' | 'alarm';
+  | 'climate' | 'weather' | 'energy' | 'chart' | 'alarm';
 
 export type WidgetType = CoreWidgetType | ReservedWidgetType;
 
@@ -91,6 +91,24 @@ export interface SceneDevice extends DeviceBase {
   readonly sub?: string;
 }
 
+/** `media` — playback transport state (read-only; control via WidgetActions). */
+export interface MediaDevice extends DeviceBase {
+  readonly type: 'media';
+  readonly playState: 'playing' | 'paused' | 'stopped';
+  readonly title: string | null;
+  readonly subtitle: string | null;
+  readonly volume: number;
+  readonly artUrl?: string | null;
+}
+
+/** `camera` — snapshot/stream feed (read-only; refresh via WidgetAction). */
+export interface CameraDevice extends DeviceBase {
+  readonly type: 'camera';
+  readonly online: boolean;
+  readonly snapshotUrl: string | null;
+  readonly streamUrl?: string | null;
+}
+
 /** Discriminated union of every core device. Read-only for skins (golden rule 1/4). */
 export type Device =
   | LightDevice
@@ -98,7 +116,9 @@ export type Device =
   | BlindDevice
   | JalousieDevice
   | SensorDevice
-  | SceneDevice;
+  | SceneDevice
+  | MediaDevice
+  | CameraDevice;
 
 /* ----------------------------------------------------- Tokens / Ctx (§5) -- */
 
@@ -155,7 +175,13 @@ export type WidgetAction =
   | 'unlock'
   | 'activateScene'
   | 'arm'
-  | 'disarm';
+  | 'disarm'
+  | 'playPause'
+  | 'stop'
+  | 'next'
+  | 'previous'
+  | 'setVolume'
+  | 'refresh';
 
 /** Which canonical actions a skin wires up for a given type → full/partial/display. */
 export interface SkinWidgetEntry {

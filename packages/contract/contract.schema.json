@@ -1,6 +1,6 @@
 {
   "$schema": "https://obs.visu/contract/v1",
-  "version": "1.1",
+  "version": "1.2",
 
   "roles": ["compact", "default", "wide", "tall", "feature", "banner"],
 
@@ -225,14 +225,72 @@
       "data": { "points": "number[]", "unit": "string" }
     },
     "media": {
-      "reserved": true,
-      "since": "1.1",
-      "data": { "track": "string", "playing": "boolean" }
+      "since": "1.2",
+      "data": {
+        "playState": "'playing'|'paused'|'stopped'",
+        "title": "string|null",
+        "subtitle": "string|null",
+        "volume": "number  (0–100)",
+        "artUrl": "string|null|undefined  (Cover-URL)",
+        "room": "string",
+        "label": "string",
+        "accent": "token"
+      },
+      "actions": {
+        "playPause": {},
+        "stop": {},
+        "next": {},
+        "previous": {},
+        "setVolume": { "pct": "0–100" }
+      },
+      "icon": "play",
+      "roles": { "allow": ["default", "wide", "feature"], "default": "wide" },
+      "dataSchema": {
+        "type": "object",
+        "required": ["playState", "title", "subtitle", "volume", "room", "label", "accent"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "media" },
+          "id": { "type": "string" },
+          "playState": { "type": "string", "enum": ["playing", "paused", "stopped"] },
+          "title": { "type": ["string", "null"] },
+          "subtitle": { "type": ["string", "null"] },
+          "volume": { "type": "number", "minimum": 0, "maximum": 100 },
+          "artUrl": { "type": ["string", "null"] },
+          "room": { "type": "string" },
+          "label": { "type": "string" },
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+        }
+      }
     },
     "camera": {
-      "reserved": true,
-      "since": "1.1",
-      "data": {}
+      "since": "1.2",
+      "data": {
+        "online": "boolean",
+        "snapshotUrl": "string|null",
+        "streamUrl": "string|null|undefined  (Live-Stream-URL)",
+        "room": "string",
+        "label": "string",
+        "accent": "token"
+      },
+      "actions": { "refresh": {} },
+      "icon": "cam",
+      "roles": { "allow": ["default", "wide", "tall", "feature"], "default": "wide" },
+      "dataSchema": {
+        "type": "object",
+        "required": ["online", "snapshotUrl", "room", "label", "accent"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "camera" },
+          "id": { "type": "string" },
+          "online": { "type": "boolean" },
+          "snapshotUrl": { "type": ["string", "null"] },
+          "streamUrl": { "type": ["string", "null"] },
+          "room": { "type": "string" },
+          "label": { "type": "string" },
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+        }
+      }
     },
     "alarm": {
       "reserved": true,

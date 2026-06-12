@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.0",
+  "contractVersion": "1.2",
 
   "light": {
     "off":    { "on": false, "dim": null, "room": "EG Küche",  "label": "Wandleuchten",  "accent": "orange" },
@@ -31,5 +31,14 @@
   "scene": {
     "film":   { "icon": "sparkle", "sub": "Licht · Rollladen · TV", "room": "Szenen", "label": "Filmabend",    "accent": "violet" },
     "morgen": { "icon": "scene",   "sub": "Rollladen · Kaffee",     "room": "Szenen", "label": "Guten Morgen", "accent": "violet" }
+  },
+  "media": {
+    "playing": { "playState": "playing", "title": "Sunset Drive", "subtitle": "The Midnight", "volume": 42, "artUrl": null, "room": "Wohnz.", "label": "Sonos",  "accent": "violet" },
+    "paused":  { "playState": "paused",  "title": "Nocturne",     "subtitle": "Chopin",       "volume": 30, "artUrl": null, "room": "Schlafz.", "label": "Radio", "accent": "blue"   },
+    "stopped": { "playState": "stopped", "title": null,           "subtitle": null,           "volume": 0,  "artUrl": null, "room": "Küche",  "label": "Küchenradio", "accent": "teal" }
+  },
+  "camera": {
+    "online":  { "online": true,  "snapshotUrl": "https://cam.local/front/snapshot.jpg", "streamUrl": "https://cam.local/front/stream", "room": "Eingang", "label": "Haustür", "accent": "slate" },
+    "offline": { "online": false, "snapshotUrl": null, "room": "Garage", "label": "Garage", "accent": "slate" }
   }
 }

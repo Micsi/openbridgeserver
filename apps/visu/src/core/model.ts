@@ -241,6 +241,8 @@ const DEFAULT_ROLE: Record<Device['type'], Role> = {
   jalousie: 'wide',
   sensor: 'compact',
   scene: 'default',
+  media: 'wide',
+  camera: 'wide',
 };
 
 /**
