@@ -38,7 +38,12 @@ class _RingbufferStub:
 
     async def query_v2(self, **kwargs):
         self.query_v2_kwargs = kwargs
-        return self._filter(kwargs.get("datapoint_ids"))
+        rows = self._filter(kwargs.get("datapoint_ids"))
+        q = (kwargs.get("q") or "").lower()
+        dp_ids_by_name = set(kwargs.get("dp_ids_by_name") or [])
+        if not q and not dp_ids_by_name:
+            return rows
+        return [row for row in rows if q in row.datapoint_id.lower() or q in row.source_adapter.lower() or row.datapoint_id in dp_ids_by_name]
 
     def _filter(self, allowed_ids):
         if allowed_ids is None:
@@ -74,7 +79,7 @@ def _dp(dp_id: str, name: str):
     )
 
 
-def _row(row_id: int, datapoint_id: str):
+def _row(row_id: int, datapoint_id: str, *, source_adapter: str = "api"):
     return SimpleNamespace(
         id=row_id,
         ts=f"2026-06-10T00:00:0{row_id}+00:00",
@@ -82,7 +87,7 @@ def _row(row_id: int, datapoint_id: str):
         topic=f"dp/{datapoint_id}/value",
         old_value=1,
         new_value=2,
-        source_adapter="api",
+        source_adapter=source_adapter,
         quality="good",
         metadata_version=1,
         metadata={},
@@ -239,6 +244,30 @@ async def test_legacy_query_scopes_source_adapter_matches_to_authorized_datapoin
 
     assert [row.datapoint_id for row in rows] == [str(allowed.id)]
     assert rb.query_v2_kwargs["datapoint_ids"] == [str(allowed.id)]
+
+
+@pytest.mark.asyncio
+async def test_legacy_query_keeps_allowed_source_adapter_matches_when_name_matches_are_hidden(monkeypatch, db: Database):
+    allowed = _dp("00000000-0000-0000-0000-000000000629", "Allowed room")
+    hidden = _dp("00000000-0000-0000-0000-000000000630", "Hidden KNX datapoint")
+    await _prepare_authz(db, allowed, hidden)
+    rb = _RingbufferStub([_row(1, str(allowed.id), source_adapter="knx"), _row(2, str(hidden.id), source_adapter="api")])
+
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([allowed, hidden]))
+    monkeypatch.setattr(rb_api, "get_ringbuffer", lambda: rb)
+
+    rows = await rb_api.query_ringbuffer(
+        q="knx",
+        adapter="",
+        from_ts="",
+        limit=100,
+        _user=_principal(),
+        db=db,
+    )
+
+    assert [row.datapoint_id for row in rows] == [str(allowed.id)]
+    assert rb.query_v2_kwargs["datapoint_ids"] == [str(allowed.id)]
+    assert rb.query_v2_kwargs["dp_ids_by_name"] is None
 
 
 @pytest.mark.asyncio

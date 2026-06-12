@@ -1043,14 +1043,15 @@ async def query_ringbuffer(
     dp_ids_by_name: list[str] = []
     if q:
         q_lower = q.lower()
-        dp_ids_by_name = [str(dp.id) for dp in registry.all() if q_lower in dp.name.lower()]
+        dp_ids_by_name = [str(dp.id) for dp in registry_entries if q_lower in dp.name.lower()]
 
     principal = _principal_from_dependency(_user)
-    scoped_dp_ids = dp_ids_by_name
+    scoped_dp_ids: list[str] | None = None
     if not _is_admin_principal(principal):
         allowed_ids = await _readable_datapoint_ids(db, principal, list(name_map.keys()))
         allowed_set = set(allowed_ids)
-        scoped_dp_ids = [dp_id for dp_id in dp_ids_by_name if dp_id in allowed_set] if dp_ids_by_name else allowed_ids
+        scoped_dp_ids = allowed_ids
+        dp_ids_by_name = [dp_id for dp_id in dp_ids_by_name if dp_id in allowed_set]
         if not scoped_dp_ids:
             return []
 
