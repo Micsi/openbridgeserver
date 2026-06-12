@@ -73,6 +73,33 @@ def _unwrap_mqtt_set_payload(raw_payload: str) -> tuple[Any, bool]:
     return payload, True
 
 
+def _coerce_mqtt_boolean(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value in {0, 1}:
+            return bool(value)
+        raise ValueError(f"Invalid boolean numeric value: {value!r}")
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    raise ValueError(f"Invalid boolean value: {value!r}")
+
+
+def _deserialize_typed_mqtt_set_value(dt: Any, raw_payload: str, payload_value: Any, payload_was_json: bool) -> Any:
+    if dt.name == "BOOLEAN":
+        value = payload_value if payload_was_json else json.loads(raw_payload)
+        return _coerce_mqtt_boolean(value)
+    if dt.name == "STRING" and not payload_was_json:
+        return raw_payload
+    if dt.name in {"DATE", "TIME", "DATETIME"} and not payload_was_json:
+        return dt.mqtt_deserializer(json.dumps(raw_payload))
+    return dt.mqtt_deserializer(json.dumps(payload_value) if payload_was_json else raw_payload)
+
+
 class WriteRouter:
     def __init__(self, db: Any, registry: Any, event_bus: Any | None = None) -> None:
         from obs.core.registry import DataPointRegistry
@@ -121,13 +148,9 @@ class WriteRouter:
         payload_value, payload_was_json = _unwrap_mqtt_set_payload(raw_payload)
         if dt.name == "UNKNOWN":
             value = payload_value if payload_was_json else raw_payload
-        elif dt.name == "STRING" and not payload_was_json:
-            value = raw_payload
-        elif dt.name in {"DATE", "TIME", "DATETIME"} and not payload_was_json:
-            value = dt.mqtt_deserializer(json.dumps(raw_payload))
         else:
             try:
-                value = dt.mqtt_deserializer(json.dumps(payload_value) if payload_was_json else raw_payload)
+                value = _deserialize_typed_mqtt_set_value(dt, raw_payload, payload_value, payload_was_json)
             except Exception:
                 logger.warning(
                     "WriteRouter: invalid MQTT set payload for dp=%s data_type=%s payload=%r",
