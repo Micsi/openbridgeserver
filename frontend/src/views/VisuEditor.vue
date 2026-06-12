@@ -846,6 +846,7 @@ const showSettings = ref(false)
                 :value="null"
                 :status-value="null"
                 :editor-mode="true"
+                :page-id="isNew ? null : props.id"
                 :h="w.h"
               />
               <MissingWidget v-else :widget-type="w.type" />

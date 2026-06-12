@@ -109,18 +109,24 @@ async def _optional_history_principal(
         return None
 
 
-async def _resolve_page_access(db: Database, node_id: str) -> str:
-    """Traversiert die parent_id-Kette und gibt das effektive Access-Level zurück."""
+async def _resolve_page_access_with_node(db: Database, node_id: str) -> tuple[str, str | None]:
+    """Return the effective access level and the node that defines it."""
     current_id: str | None = node_id
     while current_id:
         async with db.conn.execute("SELECT access, parent_id FROM visu_nodes WHERE id = ?", (current_id,)) as cur:
             row = await cur.fetchone()
         if not row:
-            return "private"  # Unbekannter Knoten → sicher ablehnen
+            return "private", None
         if row["access"] is not None:
-            return row["access"]
+            return row["access"], current_id
         current_id = row["parent_id"]
-    return "public"
+    return "public", None
+
+
+async def _resolve_page_access(db: Database, node_id: str) -> str:
+    """Traversiert die parent_id-Kette und gibt das effektive Access-Level zurück."""
+    access, _ = await _resolve_page_access_with_node(db, node_id)
+    return access
 
 
 async def _check_history_access(
@@ -136,13 +142,14 @@ async def _check_history_access(
     if not page_id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
-    access = await _resolve_page_access(db, page_id)
+    access, defining_node_id = await _resolve_page_access_with_node(db, page_id)
 
     if access in ("public", "readonly"):
         return  # Öffentliche Seite → History-Lesen erlaubt
     if access == "protected":
         session_token = request.headers.get("X-Session-Token")
-        if session_token and validate_session(session_token, page_id):
+        validate_id = defining_node_id or page_id
+        if session_token and validate_session(session_token, validate_id):
             return
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Valid session token required")
     # private oder unbekannt

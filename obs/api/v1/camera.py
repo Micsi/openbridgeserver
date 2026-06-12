@@ -70,6 +70,16 @@ def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
 
     expected_url = url.strip()
 
+    def _camera_target(config: dict[str, Any]) -> str:
+        target = str(config.get("url", "")).strip()
+        if str(config.get("authType", "")) == "apikey":
+            api_key_param = str(config.get("apiKeyParam", "")).strip()
+            api_key_value = str(config.get("apiKeyValue", "")).strip()
+            if api_key_param and api_key_value:
+                sep = "&" if "?" in target else "?"
+                target = f"{target}{sep}{api_key_param}={api_key_value}"
+        return target
+
     def _is_camera_widget(widget: dict[str, Any]) -> bool:
         widget_type = widget.get("type", widget.get("widgetType"))
         return str(widget_type or "").lower() in {"kamera", "camera"}
@@ -77,7 +87,7 @@ def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
     def _contains_camera(widget: dict[str, Any]) -> bool:
         config = widget.get("config")
         if isinstance(config, dict):
-            if _is_camera_widget(widget) and str(config.get("url", "")).strip() == expected_url:
+            if _is_camera_widget(widget) and _camera_target(config) == expected_url:
                 return True
             mini_widgets = config.get("miniWidgets")
             if isinstance(mini_widgets, list):
@@ -152,7 +162,7 @@ async def proxy_camera(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Kamera-Page-Scope erforderlich",
         )
-    await _ensure_camera_page_scope(db, page_id.strip(), url, _user, session_token)
+    await _ensure_camera_page_scope(db, page_id.strip(), target, _user, session_token)
 
     # 4. SSRF-Prüfung und DNS-Pinning auf validierte Ziel-IP
     request_urls, pinned_headers, request_extensions = await _build_fetch_targets(target)

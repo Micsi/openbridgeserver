@@ -121,6 +121,47 @@ async def _insert_public_visu_page(db: Database, page_id: str, dp_id: uuid.UUID,
     )
 
 
+async def _insert_inherited_protected_visu_page(db: Database, page_id: str, dp_id: uuid.UUID) -> None:
+    await db.execute_and_commit(
+        """
+        INSERT INTO visu_nodes
+            (id, parent_id, name, type, node_order, icon, access, access_pin, page_config, created_at, updated_at)
+        VALUES ('protected-root', NULL, 'Protected Root', 'LOCATION', 0, NULL, 'protected', 'hash', '{}', ?, ?)
+        """,
+        (NOW, NOW),
+    )
+    page_config = f"""
+    {{
+      "grid_cols": 12,
+      "grid_row_height": 80,
+      "grid_cell_width": 120,
+      "background": null,
+      "widgets": [
+        {{
+          "id": "widget-1",
+          "name": "Chart",
+          "type": "chart",
+          "datapoint_id": "{dp_id}",
+          "status_datapoint_id": null,
+          "x": 0,
+          "y": 0,
+          "w": 4,
+          "h": 3,
+          "config": {{}}
+        }}
+      ]
+    }}
+    """
+    await db.execute_and_commit(
+        """
+        INSERT INTO visu_nodes
+            (id, parent_id, name, type, node_order, icon, access, access_pin, page_config, created_at, updated_at)
+        VALUES (?, 'protected-root', 'Page', 'PAGE', 0, NULL, NULL, NULL, ?, ?, ?)
+        """,
+        (page_id, page_config, NOW, NOW),
+    )
+
+
 async def _insert_user_visu_page(db: Database, page_id: str, username: str, dp_id: uuid.UUID) -> None:
     page_config = f"""
     {{
@@ -386,6 +427,41 @@ async def test_query_history_authenticated_protected_source_page_remains_compati
     )
 
     assert result == []
+    plugin.query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_anonymous_inherited_protected_page_history_uses_defining_session_node(monkeypatch, db: Database):
+    dp_id = uuid.uuid4()
+    await _insert_datapoint(db, dp_id)
+    await _insert_inherited_protected_visu_page(db, "page-protected-history", dp_id)
+    monkeypatch.setattr(history_api, "get_registry", lambda: _RegistryStub(dp_id))
+    validate_session = MagicMock(return_value=True)
+    monkeypatch.setattr(history_api, "validate_session", validate_session)
+    monkeypatch.setattr("obs.api.v1.datapoints.validate_session", validate_session)
+
+    plugin = MagicMock()
+    plugin.query = AsyncMock(return_value=[])
+    monkeypatch.setattr(history_api, "get_history_plugin", lambda: plugin)
+
+    request = MagicMock()
+    request.headers.get = lambda key, default=None: {
+        "X-Page-Id": "page-protected-history",
+        "X-Session-Token": "session-1",
+    }.get(key, default)
+
+    result = await history_api.query_history(
+        dp_id=dp_id,
+        from_ts=None,
+        to_ts=None,
+        limit=100,
+        request=request,
+        principal=None,
+        db=db,
+    )
+
+    assert result == []
+    validate_session.assert_any_call("session-1", "protected-root")
     plugin.query.assert_awaited_once()
 
 
