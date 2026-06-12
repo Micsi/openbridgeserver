@@ -9,6 +9,7 @@ const props = defineProps<{
   statusValue: DataPointValue | null
   editorMode: boolean
   pageId?: string | null
+  sessionToken?: string | null
 }>()
 
 const label           = computed(() => (props.config.label           as string) ?? '')
@@ -35,6 +36,7 @@ const streamUrl = computed(() => {
     const p = new URLSearchParams({ url: base })
     if (jwt) p.set('_token', jwt)
     if (props.pageId) p.set('page_id', props.pageId)
+    if (props.sessionToken) p.set('session_token', props.sessionToken)
     if (authType.value === 'basic' && username.value) {
       p.set('username', username.value)
       p.set('password', password.value)

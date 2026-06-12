@@ -24,25 +24,38 @@ const dpStore = useDatapointsStore()
 const sourceWidget = ref<WidgetInstance | null>(null)
 const loading = ref(false)
 const errorMsg = ref('')
+const sourceSessionNodeId = ref('')
 let subscribedIds: string[] = []
 
 const sourcePageId     = computed(() => (props.config.source_page_id     as string | undefined) ?? '')
 const sourceWidgetName = computed(() => (props.config.source_widget_name as string | undefined) ?? '')
-const sourceSessionToken = computed(() => sourcePageId.value ? getSessionToken(sourcePageId.value) : null)
+const sourceSessionToken = computed(() => sourceSessionNodeId.value ? getSessionToken(sourceSessionNodeId.value) : null)
 const sourceReadContext = computed(() => ({
   pageId: sourcePageId.value,
   ...(sourceSessionToken.value ? { sessionToken: sourceSessionToken.value } : {}),
 }))
 
+async function resolveSourceSessionNodeId(pageId: string): Promise<string> {
+  try {
+    const breadcrumb = await visu.getBreadcrumb(pageId)
+    const definingNode = [...breadcrumb].reverse().find(node => node.access !== null)
+    return definingNode?.id ?? pageId
+  } catch {
+    return pageId
+  }
+}
+
 async function loadReference() {
   if (!sourcePageId.value || !sourceWidgetName.value) {
     sourceWidget.value = null
+    sourceSessionNodeId.value = ''
     return
   }
   loading.value = true
   errorMsg.value = ''
   try {
-    const widgets = await visu.getWidgetRef(sourcePageId.value)
+    sourceSessionNodeId.value = await resolveSourceSessionNodeId(sourcePageId.value)
+    const widgets = await visu.getWidgetRef(sourcePageId.value, sourceSessionNodeId.value)
     const found = widgets.find(w => w.name === sourceWidgetName.value) ?? null
 
     // Alte Subscriptions ablösen

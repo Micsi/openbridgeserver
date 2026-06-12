@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from obs.api.auth import decode_token
+from obs.api.v1.sessions import validate_session
 from obs.db.database import Database, get_db
 from obs.security.url_targets import UrlTargetBlockedError, build_pinned_url_targets
 
@@ -93,7 +94,7 @@ def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
     return False
 
 
-async def _ensure_camera_page_scope(db: Database, page_id: str, url: str, user: str) -> None:
+async def _ensure_camera_page_scope(db: Database, page_id: str, url: str, user: str, session_token: str = "") -> None:
     row = await db.fetchone(
         "SELECT page_config FROM visu_nodes WHERE id = ? AND type = 'PAGE'",
         (page_id,),
@@ -103,7 +104,11 @@ async def _ensure_camera_page_scope(db: Database, page_id: str, url: str, user: 
 
     from obs.api.v1.visu import _check_user_access, _resolve_access_with_node
 
-    access, _ = await _resolve_access_with_node(db, page_id)
+    access, defining_node_id = await _resolve_access_with_node(db, page_id)
+    if access == "protected":
+        validate_id = defining_node_id or page_id
+        if not session_token or not validate_session(session_token, validate_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Valid session token required")
     if access == "user" and not await _check_user_access(db, page_id, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
 
@@ -119,6 +124,7 @@ async def proxy_camera(
     apikey_param: str = Query("", description="API-Key Query-Parameter-Name"),
     apikey_value: str = Query("", description="API-Key Wert"),
     page_id: str = Query("", description="Visu-Seite, die das Kamera-Widget enthält"),
+    session_token: str = Query("", description="PIN-Session-Token für geschützte Visu-Seiten"),
     _user: str = Depends(_camera_auth),
     db: Database = Depends(get_db),
 ) -> StreamingResponse:
@@ -144,7 +150,7 @@ async def proxy_camera(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Kamera-Page-Scope erforderlich",
         )
-    await _ensure_camera_page_scope(db, page_id.strip(), url, _user)
+    await _ensure_camera_page_scope(db, page_id.strip(), url, _user, session_token)
 
     # 4. SSRF-Prüfung und DNS-Pinning auf validierte Ziel-IP
     request_urls, pinned_headers, request_extensions = await _build_fetch_targets(target)

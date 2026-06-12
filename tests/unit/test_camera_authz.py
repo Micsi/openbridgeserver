@@ -67,6 +67,47 @@ async def _insert_camera_page(db: Database, *, access: str = "public", url: str 
     )
 
 
+async def _insert_inherited_protected_camera_page(db: Database, *, url: str = CAMERA_URL) -> None:
+    await db.execute_and_commit(
+        """
+        INSERT INTO visu_nodes
+            (id, parent_id, name, type, node_order, icon, access, access_pin, page_config, created_at, updated_at)
+        VALUES ('protected-root', NULL, 'Protected Root', 'LOCATION', 0, NULL, 'protected', 'hash', '{}', ?, ?)
+        """,
+        (NOW, NOW),
+    )
+    page_config = f"""
+    {{
+      "grid_cols": 12,
+      "grid_row_height": 80,
+      "grid_cell_width": 120,
+      "background": null,
+      "widgets": [
+        {{
+          "id": "camera-widget",
+          "name": "Front Door",
+          "type": "Kamera",
+          "datapoint_id": null,
+          "status_datapoint_id": null,
+          "x": 0,
+          "y": 0,
+          "w": 4,
+          "h": 3,
+          "config": {{"url": "{url}", "useProxy": true}}
+        }}
+      ]
+    }}
+    """
+    await db.execute_and_commit(
+        """
+        INSERT INTO visu_nodes
+            (id, parent_id, name, type, node_order, icon, access, access_pin, page_config, created_at, updated_at)
+        VALUES ('page-camera', 'protected-root', 'Camera Page', 'PAGE', 0, NULL, NULL, NULL, ?, ?, ?)
+        """,
+        (page_config, NOW, NOW),
+    )
+
+
 async def _insert_grundriss_camera_page(db: Database, *, url: str = CAMERA_URL) -> None:
     page_config = f"""
     {{
@@ -191,6 +232,58 @@ async def test_proxy_camera_blocks_unassigned_user_page_scope(monkeypatch: pytes
 
     assert exc_info.value.status_code == 403
     build_targets.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_proxy_camera_requires_session_for_inherited_protected_page_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    db: Database,
+):
+    await _insert_inherited_protected_camera_page(db)
+    build_targets = AsyncMock()
+    monkeypatch.setattr(camera_api, "_build_fetch_targets", build_targets)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await camera_api.proxy_camera(
+            url=CAMERA_URL,
+            username="",
+            password="",
+            apikey_param="",
+            apikey_value="",
+            page_id="page-camera",
+            _user="alice",
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Valid session token required"
+    build_targets.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_proxy_camera_accepts_session_for_inherited_protected_page_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    db: Database,
+):
+    await _insert_inherited_protected_camera_page(db)
+    _mock_camera_fetch(monkeypatch)
+    validate_session = MagicMock(return_value=True)
+    monkeypatch.setattr(camera_api, "validate_session", validate_session)
+
+    result = await camera_api.proxy_camera(
+        url=CAMERA_URL,
+        username="",
+        password="",
+        apikey_param="",
+        apikey_value="",
+        page_id="page-camera",
+        session_token="session-1",
+        _user="alice",
+        db=db,
+    )
+
+    assert isinstance(result, StreamingResponse)
+    validate_session.assert_called_once_with("session-1", "protected-root")
 
 
 @pytest.mark.asyncio

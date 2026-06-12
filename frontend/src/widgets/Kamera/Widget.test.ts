@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import KameraWidget from './Widget.vue'
 
-function mountWidget(pageId?: string | null) {
+function mountWidget(pageId?: string | null, sessionToken?: string | null) {
   return mount(KameraWidget, {
     props: {
       config: {
@@ -15,6 +15,7 @@ function mountWidget(pageId?: string | null) {
       statusValue: null,
       editorMode: false,
       pageId,
+      sessionToken,
     },
     global: {
       mocks: {
@@ -45,5 +46,16 @@ describe('Kamera widget proxy scope', () => {
     expect(params.get('url')).toBe('http://camera.local/stream')
     expect(params.get('_token')).toBe('jwt-1')
     expect(params.get('page_id')).toBe('page-1')
+  })
+
+  it('adds the protected page session token to proxied camera URLs', () => {
+    const wrapper = mountWidget('page-1', 'session-1')
+
+    const src = wrapper.get('img').attributes('src')
+    expect(src).toBeDefined()
+    if (!src) return
+    const params = new URLSearchParams(src.split('?')[1])
+
+    expect(params.get('session_token')).toBe('session-1')
   })
 })

@@ -68,12 +68,14 @@ export const useDatapointsStore = defineStore('datapoints', () => {
    * oder für öffentliche Seiten ohne JWT).
    * Nur IDs mit Qualität "good" werden gesetzt.
    */
-  async function fetchInitialValues(ids: string[], context: WriteContext = {}): Promise<void> {
+  async function fetchInitialValues(ids: string[], context?: WriteContext): Promise<void> {
     await Promise.allSettled(
       ids.map(async (id) => {
         try {
           // Backend gibt { value, unit, quality, ts } zurück (nicht v/u/q/t)
-          const v = await datapointsApi.getValue(id, true, context)
+          const v = context
+            ? await datapointsApi.getValue(id, true, context)
+            : await datapointsApi.getValue(id, true)
           const quality = (v.quality as DataPointValue['q']) ?? 'good'
           if (quality === 'good' || quality === 'uncertain') {
             values.value[id] = {

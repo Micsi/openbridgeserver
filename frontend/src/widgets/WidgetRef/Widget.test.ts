@@ -6,6 +6,7 @@ import { WidgetRegistry } from '@/widgets/registry'
 import WidgetRef from './Widget.vue'
 
 const mocks = vi.hoisted(() => ({
+  getBreadcrumb: vi.fn(),
   getWidgetRef: vi.fn(),
   fetchInitialValues: vi.fn(),
   subscribe: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('@/api/client', () => ({
     return parsed.token as string
   },
   visu: {
+    getBreadcrumb: mocks.getBreadcrumb,
     getWidgetRef: mocks.getWidgetRef,
   },
 }))
@@ -50,6 +52,7 @@ const RefTarget = defineComponent({
 beforeEach(() => {
   vi.clearAllMocks()
   sessionStorage.clear()
+  mocks.getBreadcrumb.mockResolvedValue([{ id: 'source-page', access: 'public' }])
   WidgetRegistry.register({
     type: 'RefTarget',
     label: 'RefTarget',
@@ -96,7 +99,7 @@ describe('WidgetRef source page context', () => {
     })
     await flushPromises()
 
-    expect(mocks.getWidgetRef).toHaveBeenCalledWith('source-page')
+    expect(mocks.getWidgetRef).toHaveBeenCalledWith('source-page', 'source-page')
     expect(mocks.fetchInitialValues).toHaveBeenCalledWith(['dp-1'], { pageId: 'source-page' })
     expect(wrapper.get('[data-testid="ref-target"]').attributes('data-page-id')).toBe('source-page')
   })
@@ -140,5 +143,51 @@ describe('WidgetRef source page context', () => {
       sessionToken: 'session-1',
     })
     expect(wrapper.get('[data-testid="ref-target"]').attributes('data-session-token')).toBe('session-1')
+  })
+
+  it('uses the defining protected node session token for inherited source pages', async () => {
+    sessionStorage.setItem(
+      'session_protected-root',
+      JSON.stringify({ token: 'session-root', expiresAt: Date.now() + 60_000 }),
+    )
+    mocks.getBreadcrumb.mockResolvedValue([
+      { id: 'protected-root', access: 'protected' },
+      { id: 'source-page', access: null },
+    ])
+    mocks.getWidgetRef.mockResolvedValue([
+      {
+        id: 'widget-1',
+        name: 'Inherited Widget',
+        type: 'RefTarget',
+        datapoint_id: 'dp-1',
+        status_datapoint_id: null,
+        x: 0,
+        y: 0,
+        w: 2,
+        h: 2,
+        config: {},
+      },
+    ])
+
+    const wrapper = mount(WidgetRef, {
+      props: {
+        config: {
+          source_page_id: 'source-page',
+          source_widget_name: 'Inherited Widget',
+        },
+        datapointId: null,
+        value: null,
+        statusValue: null,
+        editorMode: false,
+      },
+    })
+    await flushPromises()
+
+    expect(mocks.getWidgetRef).toHaveBeenCalledWith('source-page', 'protected-root')
+    expect(mocks.fetchInitialValues).toHaveBeenCalledWith(['dp-1'], {
+      pageId: 'source-page',
+      sessionToken: 'session-root',
+    })
+    expect(wrapper.get('[data-testid="ref-target"]').attributes('data-session-token')).toBe('session-root')
   })
 })
