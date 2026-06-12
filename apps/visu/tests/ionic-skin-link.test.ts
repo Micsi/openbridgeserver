@@ -5,18 +5,21 @@
 // (Stub-)Renderer-Maps, nicht deren Inhalt — die Renderer-Wellen füllen die Maps.
 
 import { describe, it, expect } from 'vitest';
+import { version } from '@obs/visu-contract';
 import manifest from '@obs-visu-skins/ionic/manifest.json';
 import { tiles, details } from '@obs-visu-skins/ionic';
 
 describe('ionic skin dev-link (cross-repo)', () => {
   it('resolves the ionic manifest and targets the contract', () => {
     expect(manifest.name).toBe('ionic');
-    expect(manifest.targetsContract).toBe('1.1');
+    // Wächter gegen cross-repo-Versionsdrift: die Skin muss exakt die App-Vertragsversion
+    // targeten — kein hartcodiertes Literal, das bei jedem Contract-Bump erneut bricht.
+    expect(manifest.targetsContract).toBe(version);
     expect(manifest.layout.model).toBe('grid');
-    // Bewusste Abwahl ist Pflichtangabe, kein Vergessen (golden rule 3).
-    expect(manifest.unsupported).toEqual(expect.arrayContaining(['camera', 'media']));
+    // Seit Contract 1.2 unterstützt ionic alle Kern-Typen inkl. camera/media — nichts abgewählt.
+    expect(manifest.unsupported).toEqual([]);
     // Kern-Typen sind deklariert (sonst meldet der Generator gap).
-    expect(Object.keys(manifest.widgets).sort()).toEqual(['blind', 'jalousie', 'light', 'scene', 'sensor', 'switch']);
+    expect(Object.keys(manifest.widgets).sort()).toEqual(['blind', 'camera', 'jalousie', 'light', 'media', 'scene', 'sensor', 'switch']);
   });
 
   it('resolves the ionic renderer maps (typed stubs in M2)', () => {
