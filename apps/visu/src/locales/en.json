@@ -47,6 +47,9 @@
     },
     "terminal": {
       "title": "Terminal"
+    },
+    "demoMedia": {
+      "title": "Media"
     }
   },
   "tweaks": {

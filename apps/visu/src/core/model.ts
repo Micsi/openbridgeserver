@@ -3,10 +3,16 @@
  *
  * Ported 1:1 in shape from reference/vue-ionic/store.js (the `list` device
  * dataset and the `mobileGroups` room grouping). Data shapes follow
- * CONTRACT-v1 §3 — every device here is a contract-v1 *core* `Device`
- * (light | switch | blind | jalousie). The reserved tablet/desktop widget
- * types (climate, weather, energy, chart, media, camera, alarm) are out of
- * scope for the mobile model and intentionally not ported.
+ * CONTRACT-v1 §3 — every device here is a contract *core* `Device`
+ * (light | switch | blind | jalousie, plus the v1.2 additions media | camera).
+ * The reserved tablet/desktop widget types (climate, weather, energy, chart,
+ * alarm) are out of scope for the mobile model and intentionally not ported.
+ *
+ * The v1.2 `media`/`camera` devices live in a dedicated "Medien" demo block
+ * ({@link demoRooms}) kept OUT of the mobile overview ({@link rooms}): they are
+ * one model (golden rule 1 — no data fork, the data source serves them too), but
+ * the overview floor stays the ported store.js set so the ionic overview page is
+ * unaffected. A dedicated demo page renders the Medien block (Issue #122).
  *
  * Goldene Regeln honoured here:
  *  - One model/state lives in core; this module is that single source of
@@ -28,6 +34,8 @@ import type {
   SwitchDevice,
   BlindDevice,
   JalousieDevice,
+  MediaDevice,
+  CameraDevice,
   Role,
 } from '@obs/visu-contract';
 
@@ -91,6 +99,37 @@ function jalousie(
   };
 }
 
+function media(
+  id: string,
+  room: string,
+  label: MediaDevice['label'],
+  accent: MediaDevice['accent'],
+  extra: Partial<Pick<MediaDevice, 'playState' | 'title' | 'subtitle' | 'volume' | 'artUrl'>> = {},
+): MediaDevice {
+  return {
+    id,
+    type: 'media',
+    room,
+    label,
+    accent,
+    playState: 'stopped',
+    title: null,
+    subtitle: null,
+    volume: 0,
+    ...extra,
+  };
+}
+
+function camera(
+  id: string,
+  room: string,
+  label: CameraDevice['label'],
+  accent: CameraDevice['accent'],
+  extra: Partial<Pick<CameraDevice, 'online' | 'snapshotUrl' | 'streamUrl'>> = {},
+): CameraDevice {
+  return { id, type: 'camera', room, label, accent, online: false, snapshotUrl: null, ...extra };
+}
+
 /* ------------------------------------------------------- device dataset §3 */
 // The mobile-overview devices, in store.js source order. Each device carries
 // its own state; screens reference them by id.
@@ -142,6 +181,30 @@ const list: readonly Device[] = [
   blind('gaeste-roll', 'EG Gästez.', 'Rollladen', 'orange'),
   light('treppe-eingang', 'EG Treppe', 'Hauseingang', 'orange'),
   light('treppe-haus', 'EG Treppe', 'Treppenhaus', 'orange'),
+
+  // ── Medien (v1.2 demo block — not in the mobile overview floor) ──
+  media('wohn-sonos', 'Medien', 'Sonos Wohnzimmer', 'blue', {
+    playState: 'playing',
+    title: 'Strobe',
+    subtitle: 'deadmau5',
+    volume: 34,
+    artUrl: 'https://example.invalid/art/strobe.jpg',
+  }),
+  media('kueche-radio', 'Medien', 'Küchenradio', 'amber', {
+    playState: 'paused',
+    title: 'Nachrichten',
+    subtitle: 'SWR1',
+    volume: 18,
+  }),
+  camera('hof-cam', 'Medien', 'Kamera Hofeinfahrt', 'slate', {
+    online: true,
+    snapshotUrl: 'https://example.invalid/cam/hof/snapshot.jpg',
+    streamUrl: 'https://example.invalid/cam/hof/stream.m3u8',
+  }),
+  camera('garage-cam', 'Medien', 'Kamera Garage', 'slate', {
+    online: false,
+    snapshotUrl: null,
+  }),
 ];
 
 /**
@@ -217,6 +280,20 @@ export const rooms: readonly RoomGroup[] = Object.freeze([
   { room: 'Schlafzimmer', entries: ['schlaf-ost', 'schlaf-sued'].map((id) => e(id)) },
   { room: 'Wohnzimmer', entries: ['wohn-west', 'wohn-balkon', 'wohn-sued'].map((id) => e(id)) },
   { room: 'Gäste & Treppe', entries: ['gaeste-roll', 'treppe-eingang', 'treppe-haus'].map((id) => e(id)) },
+] satisfies RoomGroup[]);
+
+/**
+ * The v1.2 "Medien" demo block — `media` + `camera` devices grouped as one room
+ * (Issue #122). Kept SEPARATE from {@link rooms} so the mobile overview floor is
+ * unchanged; a dedicated demo page renders this block. The devices themselves are
+ * part of the single model ({@link devices}/{@link byId}), so the data source
+ * serves them — no data fork (golden rule 1).
+ */
+export const demoRooms: readonly RoomGroup[] = Object.freeze([
+  {
+    room: 'Medien',
+    entries: [e('wohn-sonos', 2), e('kueche-radio', 2), e('hof-cam', 2), e('garage-cam', 2)],
+  },
 ] satisfies RoomGroup[]);
 
 /* ----------------------------------------------------------- span/row → role */

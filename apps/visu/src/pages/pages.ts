@@ -20,8 +20,22 @@
  *    hard, visible failure — never a silent default.
  */
 
-import { rooms as modelRooms, type RoomGroup } from '../core/model';
+import { rooms as modelRooms, demoRooms, type RoomGroup } from '../core/model';
 import type { SkinKey } from '../skin-host/skins';
+
+/**
+ * Which model room set a page draws from. `overview` = the ported store.js mobile
+ * floor ({@link modelRooms}); `demo` = the v1.2 Medien block ({@link demoRooms},
+ * media/camera — Issue #122). A page picks one source, then optionally filters it
+ * by room name. Both sets are the core model (no data fork); the split only keeps
+ * the media/camera demo out of the overview floor.
+ */
+export type RoomSource = 'overview' | 'demo';
+
+/** The base room blocks for a page's declared {@link RoomSource}. */
+function baseRooms(source: RoomSource | undefined): readonly RoomGroup[] {
+  return source === 'demo' ? demoRooms : modelRooms;
+}
 
 /**
  * One page definition — pure data (the JSON half of "Daten=JSON, Verhalten=Code").
@@ -38,9 +52,15 @@ export interface PageDef {
   /** The skin that renders this page (author's choice; resolved by the host). */
   readonly skin: SkinKey;
   /**
+   * Which model room set the page draws from (default `overview`). `demo` selects
+   * the v1.2 Medien block (media/camera). The source is filtered further by
+   * `rooms` when present.
+   */
+  readonly source?: RoomSource;
+  /**
    * Optional room allowlist (by `RoomGroup.room`). When omitted, the page shows
-   * every core room in source order. When given, only those rooms render — still
-   * in core source order, so order + grouping stay the floor.
+   * every room of its source in source order. When given, only those rooms render
+   * — still in core source order, so order + grouping stay the floor.
    */
   readonly rooms?: readonly string[];
 }
@@ -54,6 +74,10 @@ export interface PageDef {
 export const PAGES: readonly PageDef[] = Object.freeze([
   { id: 'overview', titleKey: 'pages.overview.title', skin: 'ionic' },
   { id: 'terminal', titleKey: 'pages.terminal.title', skin: 'terminal' },
+  // The v1.2 media/camera demo (Issue #122): the Medien block, rendered by the
+  // ionic skin. Until the ionic skin ships media/camera renderers (parallel skins
+  // work), the host shows a declared gap at runtime — resolution + data are tested.
+  { id: 'demo-media', titleKey: 'pages.demoMedia.title', skin: 'ionic', source: 'demo' },
 ] satisfies PageDef[]);
 
 /** Lookup a page definition by id (the route param / nav key). */
@@ -84,18 +108,19 @@ export function resolvePage(id: string): ResolvedPage {
     throw new Error(`pages: unknown page "${id}" — no such page definition (known: ${known}).`);
   }
 
+  const source = baseRooms(def.source);
   if (!def.rooms) {
-    return { def, groups: modelRooms };
+    return { def, groups: source };
   }
 
   const allow = new Set(def.rooms);
-  const known = new Set(modelRooms.map((g) => g.room));
+  const known = new Set(source.map((g) => g.room));
   for (const room of def.rooms) {
     if (!known.has(room)) {
       throw new Error(`pages: page "${id}" filters on room "${room}" which the core model does not define.`);
     }
   }
   // Filter in CORE source order (the floor), not in the allowlist's order.
-  const groups = modelRooms.filter((g) => allow.has(g.room));
+  const groups = source.filter((g) => allow.has(g.room));
   return { def, groups };
 }
