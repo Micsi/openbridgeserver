@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import { PAGES, pageById, resolvePage } from './pages';
 import { resolveSkin } from '../skin-host/skins';
-import { rooms as modelRooms } from '../core/model';
+import { rooms as modelRooms, demoRooms, byId } from '../core/model';
 
 /**
  * pages/pages — page definitions resolve to the right devices + skin (A5, #101).
@@ -62,5 +62,37 @@ describe('resolvePage — devices per page (no data fork)', () => {
 
   it('throws a visible gap for an unknown page id (no silent default)', () => {
     expect(() => resolvePage('does-not-exist')).toThrow(/unknown page/i);
+  });
+});
+
+describe('resolvePage — v1.2 media/camera demo page (Issue #122)', () => {
+  it('ships a demo-media page rendered by the ionic skin', () => {
+    const def = pageById['demo-media'];
+    expect(def).toBeDefined();
+    expect(def.skin).toBe('ionic');
+    expect(def.source).toBe('demo');
+    // its named skin still resolves through the host registry
+    expect(resolveSkin(def.skin).manifest.name).toBe('ionic');
+  });
+
+  it('resolves the demo-media page to the Medien block (media + camera) by reference', () => {
+    const { def, groups } = resolvePage('demo-media');
+    expect(def.id).toBe('demo-media');
+    // No data fork: the demo page selects the core demoRooms by reference.
+    expect(groups).toBe(demoRooms);
+    expect(groups.map((g) => g.room)).toEqual(['Medien']);
+
+    const ids = groups.flatMap((g) => g.entries.map((e) => e.id));
+    const types = ids.map((id) => byId[id]?.type);
+    expect(types).toContain('media');
+    expect(types).toContain('camera');
+    // every resolved entry points at a real device in the single model
+    for (const id of ids) expect(byId[id]).toBeDefined();
+  });
+
+  it('keeps the media/camera demo OUT of the mobile overview floor (overview unaffected)', () => {
+    const overview = resolvePage('overview');
+    expect(overview.groups).toBe(modelRooms);
+    expect(overview.groups.map((g) => g.room)).not.toContain('Medien');
   });
 });

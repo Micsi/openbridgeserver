@@ -6,6 +6,7 @@ import {
   devices,
   byId,
   rooms,
+  demoRooms,
   layoutRole,
   type RoomGroup,
   type LayoutEntry,
@@ -25,8 +26,19 @@ describe('core/model — loads', () => {
     expect(devices.length).toBeGreaterThan(0);
   });
 
-  it('only carries stable core v1 widget types (no reserved/tablet-only types)', () => {
-    const coreTypes = new Set(['light', 'switch', 'blind', 'jalousie', 'sensor', 'scene']);
+  it('only carries stable core widget types (no reserved/tablet-only types)', () => {
+    // v1.2 added media + camera to the core types (Issue #122); reserved
+    // tablet-only types (climate/weather/energy/chart/alarm) stay out of the model.
+    const coreTypes = new Set([
+      'light',
+      'switch',
+      'blind',
+      'jalousie',
+      'sensor',
+      'scene',
+      'media',
+      'camera',
+    ]);
     for (const d of devices) {
       expect(coreTypes.has(d.type)).toBe(true);
     }
@@ -97,11 +109,48 @@ describe('core/model — room grouping', () => {
     ]);
   });
 
-  it('covers exactly the devices reachable from the room groups', () => {
-    const grouped = new Set(rooms.flatMap((g) => g.entries.map((e) => e.id)));
+  it('covers exactly the devices reachable from the room groups (overview + demo)', () => {
+    // Every model device is reachable from some exported group set: the mobile
+    // overview floor (`rooms`) plus the v1.2 Medien demo block (`demoRooms`).
+    const grouped = new Set(
+      [...rooms, ...demoRooms].flatMap((g) => g.entries.map((e) => e.id)),
+    );
     expect(grouped.size).toBe(devices.length);
     for (const d of devices) {
       expect(grouped.has(d.id!)).toBe(true);
+    }
+  });
+});
+
+describe('core/model — v1.2 media/camera demo block (Issue #122)', () => {
+  it('exposes the Medien demo room kept out of the mobile overview floor', () => {
+    expect(rooms.map((g) => g.room)).not.toContain('Medien');
+    const medien = demoRooms.find((g) => g.room === 'Medien') as RoomGroup;
+    expect(medien).toBeDefined();
+    expect(Object.isFrozen(demoRooms)).toBe(true);
+    // Every demo entry references a real device in the single model.
+    for (const entry of medien.entries) expect(byId[entry.id]).toBeDefined();
+  });
+
+  it('seeds at least one media and one camera device with v1.2 fields', () => {
+    const mediaDevs = devices.filter((d) => d.type === 'media');
+    const cameraDevs = devices.filter((d) => d.type === 'camera');
+    expect(mediaDevs.length).toBeGreaterThanOrEqual(1);
+    expect(cameraDevs.length).toBeGreaterThanOrEqual(1);
+
+    const playing = mediaDevs.find((d) => d.type === 'media' && d.playState === 'playing');
+    expect(playing).toBeDefined();
+    if (playing?.type === 'media') {
+      expect(typeof playing.title).toBe('string');
+      expect(typeof playing.subtitle).toBe('string');
+      expect(typeof playing.volume).toBe('number');
+      expect(typeof playing.artUrl).toBe('string');
+    }
+
+    const onlineCam = cameraDevs.find((d) => d.type === 'camera' && d.online);
+    expect(onlineCam).toBeDefined();
+    if (onlineCam?.type === 'camera') {
+      expect(typeof onlineCam.snapshotUrl).toBe('string');
     }
   });
 });

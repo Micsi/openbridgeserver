@@ -19,6 +19,13 @@ const routes: RouteRecordRaw[] = [
     component: SkinPage,
     props: { pageId: 'terminal' },
   },
+  {
+    // v1.2 media/camera demo (Issue #122): the Medien block via the ionic skin.
+    path: '/demo-media',
+    name: 'demo-media',
+    component: SkinPage,
+    props: { pageId: 'demo-media' },
+  },
 ];
 
 export const router = createRouter({

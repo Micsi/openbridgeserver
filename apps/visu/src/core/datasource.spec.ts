@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Device, LightDevice, BlindDevice, JalousieDevice } from '@obs/visu-contract';
+import type {
+  Device,
+  LightDevice,
+  BlindDevice,
+  JalousieDevice,
+  MediaDevice,
+  CameraDevice,
+} from '@obs/visu-contract';
 
 import { MockDataSource, type DataSource, type DevicePatch } from './datasource';
 import { byId } from './model';
@@ -44,6 +51,26 @@ describe('core/datasource — list()', () => {
     const b = await ds.list();
     const same = b.find((d) => d.id === target.id) as LightDevice;
     expect(same.on).toBe(byId[target.id!] ? (byId[target.id!] as LightDevice).on : false);
+  });
+
+  it('serves the v1.2 media + camera demo devices with their contract fields (Issue #122)', async () => {
+    const ds = new MockDataSource();
+    const list = await ds.list();
+
+    const playing = list.find((d) => d.type === 'media' && (d as MediaDevice).playState === 'playing') as
+      | MediaDevice
+      | undefined;
+    expect(playing).toBeDefined();
+    expect(playing!.title).toBeTypeOf('string');
+    expect(playing!.subtitle).toBeTypeOf('string');
+    expect(playing!.volume).toBeTypeOf('number');
+    expect(playing!.artUrl).toBeTypeOf('string');
+
+    const onlineCam = list.find((d) => d.type === 'camera' && (d as CameraDevice).online) as
+      | CameraDevice
+      | undefined;
+    expect(onlineCam).toBeDefined();
+    expect(onlineCam!.snapshotUrl).toBeTypeOf('string');
   });
 
   it('deep-clones nested jalousie statuses — mutating a snapshot does not leak back', async () => {
