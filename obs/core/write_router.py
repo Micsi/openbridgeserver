@@ -89,15 +89,39 @@ def _coerce_mqtt_boolean(value: Any) -> bool:
     raise ValueError(f"Invalid boolean value: {value!r}")
 
 
+def _coerce_mqtt_integer(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float) and not isinstance(value, bool) and value == int(value):
+        return int(value)
+    raise ValueError(f"Invalid integer value: {value!r}")
+
+
+def _coerce_mqtt_float(value: Any) -> float:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    raise ValueError(f"Invalid float value: {value!r}")
+
+
 def _deserialize_typed_mqtt_set_value(dt: Any, raw_payload: str, payload_value: Any, payload_was_json: bool) -> Any:
     if dt.name == "BOOLEAN":
-        value = payload_value if payload_was_json else json.loads(raw_payload)
+        value = payload_value if payload_was_json else raw_payload
         return _coerce_mqtt_boolean(value)
+    if dt.name == "INTEGER":
+        value = payload_value if payload_was_json else json.loads(raw_payload)
+        return _coerce_mqtt_integer(value)
+    if dt.name == "FLOAT":
+        value = payload_value if payload_was_json else json.loads(raw_payload)
+        return _coerce_mqtt_float(value)
     if dt.name == "STRING" and not payload_was_json:
         return raw_payload
     if dt.name in {"DATE", "TIME", "DATETIME"} and not payload_was_json:
         return dt.mqtt_deserializer(json.dumps(raw_payload))
     return dt.mqtt_deserializer(json.dumps(payload_value) if payload_was_json else raw_payload)
+
+
+def _row_is_enabled(row: Any) -> bool:
+    return _row_value(row, "enabled") in {1, True, "1"}
 
 
 class WriteRouter:
@@ -134,14 +158,15 @@ class WriteRouter:
             return
 
         rows = await self._db.fetchall(
-            """SELECT direction FROM adapter_bindings
-               WHERE datapoint_id=? AND enabled=1""",
+            """SELECT direction, enabled FROM adapter_bindings
+               WHERE datapoint_id=?""",
             (str(dp_id),),
         )
         has_bindings = bool(rows)
-        has_writable_bindings = any(_row_value(row, "direction") in {"DEST", "BOTH"} for row in rows)
+        active_rows = [row for row in rows if _row_is_enabled(row)]
+        has_writable_bindings = any(_row_value(row, "direction") in {"DEST", "BOTH"} for row in active_rows)
         if has_bindings and not has_writable_bindings:
-            logger.warning("Write request for source-only DataPoint %s — ignored", dp_id)
+            logger.warning("Write request for non-writable DataPoint %s — ignored", dp_id)
             return
 
         dt = DataTypeRegistry.get(dp.data_type)
