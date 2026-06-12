@@ -47,9 +47,35 @@ vi.mock('@ionic/vue', () => {
 });
 
 import OverviewPage from './OverviewPage.vue';
+import AppShell from '../app/AppShell.vue';
+import { provideShellContext } from '../app/shell/shellContext';
 
 function makeI18n(locale = 'de') {
   return createI18n({ legacy: false, locale, fallbackLocale: 'de', messages: { de, en } });
+}
+
+/**
+ * Mount the page through the real app-level composition (#118): App.vue mounts
+ * the single AppShell and provides the shared shell context; the routed page
+ * renders its body inside the shell. We mirror that here — provide the context,
+ * render the page inside AppShell's body slot — so the integration (one ion-app,
+ * the page writing chrome to the shell, the shell-provided roomDivider reaching
+ * SkinHost) is exercised end to end. `slots` lets a test inject a skin override.
+ */
+function mountInApp(slots: Record<string, string> = {}) {
+  const Root = defineComponent({
+    components: { AppShell, OverviewPage },
+    setup() {
+      const ctx = provideShellContext();
+      return { ctx };
+    },
+    template: `
+      <AppShell with-router-outlet :title="ctx.title" :state="ctx.state" :root-bind="ctx.rootBind">
+        <template #default><OverviewPage /></template>
+        ${slots.roomDivider ? `<template #roomDivider="p">${slots.roomDivider}</template>` : ''}
+      </AppShell>`,
+  });
+  return mount(Root, { global: { plugins: [makeI18n()] } });
 }
 
 /** Total devices referenced across the room groups (the floor item count). */
@@ -71,12 +97,14 @@ async function mountOverview() {
 describe('OverviewPage — mounts and renders the room-grouped overview', () => {
   beforeEach(() => setActivePinia(createPinia()));
 
-  it('mounts without error', async () => {
+  it('mounts without error and renders only the page body (no nested ion-app, #118)', async () => {
     await seedStore();
     const wrapper = await mountOverview();
     expect(wrapper.exists()).toBe(true);
-    // chrome present: the host shell + the skin grid
-    expect(wrapper.find('ion-app').exists()).toBe(true);
+    // The page renders ONLY its body — the ion-app shell is mounted once at app
+    // level (App.vue), never by the page. A nested ion-app here was the #118 bug.
+    expect(wrapper.find('ion-app').exists()).toBe(false);
+    // the skin grid (the page's actual content) is present
     expect(wrapper.find('.skin-host').exists()).toBe(true);
   });
 
@@ -142,5 +170,49 @@ describe('OverviewPage — mounts and renders the room-grouped overview', () => 
     expect(wrapper.find('.tweaks-panel').exists()).toBe(true);
     // the panel renders the ionic skin's declared tweaks (stil/accentStyle/…)
     expect(wrapper.find('[data-tweak="stil"]').exists()).toBe(true);
+  });
+});
+
+describe('OverviewPage — app-level shell composition (#118 / #116)', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('mounts exactly ONE ion-app for the whole app (no nested shell, #118)', async () => {
+    await seedStore();
+    const wrapper = mountInApp();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.findAll('ion-app')).toHaveLength(1);
+    // the page body still rendered inside the single shell
+    expect(wrapper.find('.skin-host').exists()).toBe(true);
+  });
+
+  it('flows the page title into the app-level shell header (per-page context)', async () => {
+    await seedStore();
+    const wrapper = mountInApp();
+    await wrapper.vm.$nextTick();
+    // the page wrote pages.overview.title into the shared shell context; the
+    // header shows it (not a stale nav label).
+    expect(wrapper.find('.shell-header-title').text()).toBe(de.pages.overview.title);
+  });
+
+  it('renders the default RoomDivider per room block when no override is given (#116)', async () => {
+    await seedStore();
+    const wrapper = mountInApp();
+    await wrapper.vm.$nextTick();
+    const dividers = wrapper.findAll('.room-divider');
+    expect(dividers.length).toBe(modelRooms.length);
+    expect(dividers[0].find('.room-divider-name').text()).toBe(modelRooms[0].room);
+  });
+
+  it('a #roomDivider skin override actually replaces the default (#116)', async () => {
+    await seedStore();
+    const wrapper = mountInApp({
+      roomDivider: `<span class="skin-divider">{{ p.room }}#{{ p.count }}</span>`,
+    });
+    await wrapper.vm.$nextTick();
+    // the override took effect — the default divider is gone, the skin one renders
+    expect(wrapper.find('.room-divider').exists()).toBe(false);
+    const overrides = wrapper.findAll('.skin-divider');
+    expect(overrides.length).toBe(modelRooms.length);
+    expect(overrides[0].text()).toBe(`${modelRooms[0].room}#${modelRooms[0].entries.length}`);
   });
 });

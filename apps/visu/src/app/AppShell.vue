@@ -27,11 +27,13 @@
  *   - `header`      { title, withClock, unread, markRead } — `markRead` lets a
  *                   custom header acknowledge the unread pulse without reaching
  *                   outside the slot contract (the default header is wired to it).
- *   - `roomDivider` { room, count } — exposed per group via the default slot's
- *                   own iteration; here the slot is offered shell-wide so a skin
- *                   that draws its own grouping can pull the divider component.
+ *   - `roomDivider` { room, count } — the per-group label. The shell turns this
+ *                   named slot into a renderer it `provide`s to the body
+ *                   (ROOM_DIVIDER_KEY); SkinHost calls it above each room block,
+ *                   so a skin override of `#roomDivider` actually takes effect.
+ *                   With no override the default RoomDivider is the fallback.
  */
-import { computed } from 'vue';
+import { computed, h, provide, useSlots, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   IonApp,
@@ -54,6 +56,8 @@ import ShellBackground from './shell/ShellBackground.vue';
 import RoomDivider from './shell/RoomDivider.vue';
 import ShellEmpty from './shell/ShellEmpty.vue';
 import ShellError from './shell/ShellError.vue';
+import { useShellContext } from './shell/shellContext';
+import { ROOM_DIVIDER_KEY, type RoomDividerRenderer } from './shell/roomDivider';
 import type { RootTweakStyle } from '@obs-visu-skins/ionic';
 
 const props = withDefaults(
@@ -81,12 +85,41 @@ const props = withDefaults(
 );
 
 const { t } = useI18n();
+const slots = useSlots();
 
-const shell = useShellState(props.state);
+/** Per-page context from the active routed page (app-level mount). Props win when
+ *  given (standalone/test mounting); otherwise the shell reads the active page's
+ *  context the page wrote into the shared seam. */
+const ctx = useShellContext();
+const ctxState = computed<ShellStateOptions | undefined>(() => props.state ?? ctx.state);
+const ctxTitle = computed<string | undefined>(() => props.title ?? ctx.title);
+const ctxError = computed<string | null>(() => (props.error ?? ctx.error) ?? null);
+const ctxEmpty = computed<boolean>(() => props.empty || ctx.empty === true);
+const ctxRootBind = computed<RootTweakStyle | undefined>(() => props.rootBind ?? ctx.rootBind);
+
+const shell = useShellState(ctxState.value);
+
+// Track the active page's nav so the menu highlights the routed page (the shell
+// lives once at app level, so its state must follow the routed page's context).
+watch(
+  () => ctxState.value?.active,
+  (active) => {
+    if (active) shell.setNav(active);
+  },
+);
 
 /** Active section title: the page's explicit override, else derived from the
  *  active nav key. Fed to the header slot and the default ShellHeader. */
-const activeTitle = computed(() => props.title ?? t(`shell.nav.${shell.active.value}`));
+const activeTitle = computed(() => ctxTitle.value ?? t(`shell.nav.${shell.active.value}`));
+
+/** The per-group divider renderer offered to the body (SkinHost) — the
+ *  `#roomDivider` slot override, or the default RoomDivider as fallback content.
+ *  This makes the documented `#roomDivider` slot API real (#116). */
+const roomDividerRenderer: RoomDividerRenderer = (dividerProps) =>
+  slots.roomDivider
+    ? slots.roomDivider(dividerProps)
+    : h(RoomDivider, dividerProps);
+provide(ROOM_DIVIDER_KEY, roomDividerRenderer);
 
 /** Clock pill lives inline in the header only when no brand titlebar is shown. */
 const headerWithClock = computed(() => !shell.showTitlebar.value);
@@ -130,8 +163,8 @@ defineExpose({ shell });
     <IonPage
       id="app-shell-content"
       class="visu-root app-shell-page"
-      v-bind="rootBind?.attrs"
-      :style="rootBind?.style"
+      v-bind="ctxRootBind?.attrs"
+      :style="ctxRootBind?.style"
     >
       <!-- Optional brand titlebar (store.js → showTitlebar). Holds the clock pill
            when shown; otherwise the pill rides in the header below. -->
@@ -190,16 +223,16 @@ defineExpose({ shell });
         <div class="app-shell-body">
           <!-- Hard failure: surfaced loudly, never a silent gap. -->
           <slot
-            v-if="error"
+            v-if="ctxError"
             name="error"
-            :message="error"
+            :message="ctxError"
           >
-            <ShellError :message="error" />
+            <ShellError :message="ctxError" />
           </slot>
 
           <!-- Empty section. -->
           <slot
-            v-else-if="empty"
+            v-else-if="ctxEmpty"
             name="empty"
           >
             <ShellEmpty />

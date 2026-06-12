@@ -25,18 +25,18 @@
  * skin is addressed by name (resolved by the host registry); order + grouping are
  * the floor; AA tokens come from core.
  */
-import { ref, computed } from 'vue';
+import { ref, computed, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { applyTweaks, type IonicTweaks } from '@obs-visu-skins/ionic';
 import '@obs-visu-skins/ionic/ionic.css';
 
-import AppShell from '../app/AppShell.vue';
 import DetailModalHost from '../app/DetailModalHost.vue';
 import TweaksPanel, { type TweakValues } from '../app/TweaksPanel.vue';
 import OverviewGrid from './OverviewGrid';
 import { resolvePage } from './pages';
 import { resolveSkin } from '../skin-host/skins';
 import { NAV_KEYS, type NavKey } from '../app/shell/useShellState';
+import { useShellContext } from '../app/shell/shellContext';
 
 const props = withDefaults(defineProps<{ pageId?: string }>(), { pageId: 'overview' });
 
@@ -76,54 +76,65 @@ const theme = computed<'light' | 'dark' | 'image'>(() => {
   const v = tweaks.value['theme'];
   return v === 'dark' || v === 'image' ? v : 'light';
 });
+
+/* ------------------------------------------------ app-level shell context (#118) */
+// The shell is mounted once at app level (App.vue). This page feeds it the
+// per-page chrome — title, active nav, themed root bindings — through the shared
+// reactive seam; the shell reads it to draw the page-dependent chrome. With no
+// app provider (a page mounted standalone in a test) this writes to a local
+// context, leaving the page fully self-contained.
+const shellContext = useShellContext();
+watchEffect(() => {
+  shellContext.title = pageTitle.value;
+  shellContext.state = shellState.value;
+  shellContext.rootBind = rootTweaks.value;
+});
 </script>
 
 <template>
-  <AppShell
+  <!-- The page renders ONLY its body — the Ionic shell (ion-app + chrome) is
+       mounted once at app level (App.vue) and reads this page's chrome from the
+       shared shell context. No nested ion-app per page (#118). -->
+  <div
     class="skin-page"
     :data-page="page.def.id"
-    :state="shellState"
-    :title="pageTitle"
-    :root-bind="rootTweaks"
   >
-    <template #default>
-      <DetailModalHost
-        :skin="skin"
-        :theme="theme"
-        :root-bind="rootTweaks"
+    <DetailModalHost
+      :skin="skin"
+      :theme="theme"
+      :root-bind="rootTweaks"
+    >
+      <div
+        class="visu-root overview-root"
+        v-bind="rootTweaks.attrs"
+        :style="rootTweaks.style"
       >
-        <div
-          class="visu-root overview-root"
-          v-bind="rootTweaks.attrs"
-          :style="rootTweaks.style"
-        >
-          <OverviewGrid
-            :skin="skin"
-            :groups="groups"
-            :theme="theme"
-          />
-        </div>
+        <OverviewGrid
+          :skin="skin"
+          :groups="groups"
+          :theme="theme"
+        />
+      </div>
 
-        <!-- Tweaks editor (A6): only when the active skin declares tweaks. The
-             page owns the values; the skin reads them. -->
-        <template v-if="hasTweaks">
-          <button
-            type="button"
-            class="overview-tweaks-toggle"
-            :aria-expanded="showTweaks"
-            @click="showTweaks = !showTweaks"
-          >
-            {{ t('overview.tweaks.toggle') }}
-          </button>
-          <TweaksPanel
-            v-if="showTweaks"
-            v-model="tweaks"
-            :skin="skin"
-          />
-        </template>
-      </DetailModalHost>
-    </template>
-  </AppShell>
+      <!-- Tweaks editor (A6): only when the active skin declares tweaks. The
+           page owns the values; the skin reads them. -->
+      <template v-if="hasTweaks">
+        <button
+          type="button"
+          class="overview-tweaks-toggle"
+          :aria-expanded="showTweaks"
+          @click="showTweaks = !showTweaks"
+        >
+          {{ t('overview.tweaks.toggle') }}
+        </button>
+        <TweaksPanel
+          v-if="showTweaks"
+          v-model="tweaks"
+          :skin="skin"
+        />
+      </template>
+    </DetailModalHost>
+  </div>
 </template>
 
 <style scoped>

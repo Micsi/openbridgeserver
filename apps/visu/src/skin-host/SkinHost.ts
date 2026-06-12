@@ -24,13 +24,14 @@
  * directly and stays trivially unit-testable.
  */
 
-import { defineComponent, h, computed, type PropType, type VNode } from 'vue';
+import { defineComponent, h, computed, inject, Fragment, type PropType, type VNode } from 'vue';
 
 import type { Device } from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
 import { ctx as defaultCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
 import { rooms as modelRooms, type RoomGroup } from '../core/model';
+import { ROOM_DIVIDER_KEY } from '../app/shell/roomDivider';
 
 import { resolveSkin } from './skins';
 import { resolveLayout, clampColumns } from './layout';
@@ -53,6 +54,12 @@ export default defineComponent({
   },
   setup(props) {
     const store = useDeviceStore();
+
+    // The shell provides the per-group divider renderer (the `#roomDivider` slot
+    // override, or the default RoomDivider as fallback). When no shell is mounted
+    // above (a standalone unit mount) there is no divider — the grouping gap is
+    // still the floor signal. (#116)
+    const roomDivider = inject(ROOM_DIVIDER_KEY, null);
 
     /** Live device for an id: store state (the host owns state), else undefined. */
     function liveDevice(id: string): Device | undefined {
@@ -134,11 +141,17 @@ export default defineComponent({
           style: { '--skin-host-columns': String(cols.value) },
         },
         blocks.map((blk) =>
-          h(
-            'div',
-            { key: `grid-${blk.group}`, class: 'skin-host-model-grid', 'data-group': blk.group },
-            blk.items.map(renderCell),
-          ),
+          h(Fragment, { key: `block-${blk.group}` }, [
+            // Per-group divider (shell-owned chrome): the `#roomDivider` slot
+            // override, else the default RoomDivider. The grouping gap stays the
+            // floor signal; the divider is the additive, ignorable label (#116).
+            roomDivider ? roomDivider({ room: blk.group, count: blk.items.length }) : null,
+            h(
+              'div',
+              { key: `grid-${blk.group}`, class: 'skin-host-model-grid', 'data-group': blk.group },
+              blk.items.map(renderCell),
+            ),
+          ]),
         ),
       );
     };
