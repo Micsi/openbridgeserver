@@ -1,8 +1,14 @@
 {
   "$schema": "https://obs.visu/contract/v1",
-  "version": "1.2",
+  "version": "1.3",
 
   "roles": ["compact", "default", "wide", "tall", "feature", "banner"],
+
+  "hostActions": {
+    "openDetail": { "kind": "navigation", "note": "open the detail surface (host shell)" },
+    "close": { "kind": "navigation", "note": "close the detail surface (host shell)" },
+    "stop": { "kind": "ui-momentary", "note": "movement widgets (blind/jalousie): UI-only momentary, no core write in v1; also a canonical media transport action" }
+  },
 
   "iconSlots": [
     "bulb", "blind", "thermo", "wind", "sun", "cloud", "cam", "shield",

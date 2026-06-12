@@ -183,6 +183,24 @@ export type WidgetAction =
   | 'setVolume'
   | 'refresh';
 
+/**
+ * Host-/UI-level action names — handled by the host shell, never a canonical core
+ * write. A skin renderer MAY mark these on `data-action`; they are **universal**
+ * (not widget-specific) and therefore need no per-widget declaration in a manifest:
+ *
+ *  - `openDetail` — open the detail surface (host shell navigation).
+ *  - `close`      — close the detail surface (host shell navigation).
+ *
+ * `stop` is dual-natured: a canonical media transport {@link WidgetAction}, and — for
+ * the movement widgets (`blind`/`jalousie`) — a UI-only momentary control with no core
+ * write in v1. The host treats it as UI-only there, so it likewise needs no per-widget
+ * manifest declaration.
+ */
+export type HostUiAction = 'openDetail' | 'close';
+
+/** Every action a skin may mark on `data-action`: the canonical set plus host/UI ones. */
+export type HostAction = WidgetAction | HostUiAction;
+
 /** Which canonical actions a skin wires up for a given type → full/partial/display. */
 export interface SkinWidgetEntry {
   readonly actions: readonly WidgetAction[];

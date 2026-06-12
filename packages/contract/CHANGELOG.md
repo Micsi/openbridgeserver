@@ -23,6 +23,26 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.3.0] — 2026-06-12
+
+v1.3: universelle **Host-Aktionen** (`openDetail` · `close` · `stop`-momentary) werden Vertragsbestandteil.
+
+### Added
+
+- **Host-Aktionen (§6):** neue Typen `HostUiAction` (`openDetail` | `close`) und
+  `HostAction` (`WidgetAction | HostUiAction`). Sie benennen die **universellen**,
+  vom Host-Shell behandelten Intents, die ein Skin auf `data-action` markieren darf,
+  ohne sie pro Widget im Manifest zu deklarieren — denn sie sind kein kanonischer
+  Core-Write. `openDetail`/`close` sind Navigation (Detail-Surface auf/zu); `stop` ist
+  für die Bewegungs-Widgets (`blind`/`jalousie`) ein UI-only Momentary (kein Core-Write
+  in v1) und bleibt zugleich kanonische Media-Transport-`WidgetAction`. Additive
+  Minor-Änderung (§9): bestehende Skins und die App bleiben unverändert gültig.
+- **Schema (§8):** `contract.schema.json` deklariert `version: "1.3"` und einen
+  Top-Level-Block `hostActions` (`openDetail`/`close`/`stop`) als maschinenlesbares
+  Pendant zu `HostAction` — die Datenform-Quelle für die universellen Host-Intents.
+- **Fixtures (§4):** unverändert — v1.3 ändert keine Datenform (nur die Aktions-/Typen-
+  Oberfläche), daher bleiben die `fixtures` auf `contractVersion: "1.2"`.
+
 ## [1.2.0] — 2026-06-12
 
 v1.2: `camera` + `media` werden Kern-Typen (vorher reserved).

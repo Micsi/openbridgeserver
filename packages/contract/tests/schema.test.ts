@@ -29,8 +29,8 @@ const s = schema as Record<string, any>;
 const f = fixtures as Record<string, any>;
 
 describe('contract.schema.json — Globals (§2)', () => {
-  it('declares version 1.2', () => {
-    expect(s.version).toBe('1.2');
+  it('declares version 1.3', () => {
+    expect(s.version).toBe('1.3');
   });
 
   it('declares roles exactly [compact,default,wide,tall,feature,banner]', () => {
