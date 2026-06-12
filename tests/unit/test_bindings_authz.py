@@ -196,6 +196,28 @@ async def test_non_admin_create_binding_allows_direct_datapoint_operator_scope(m
 
 
 @pytest.mark.asyncio
+async def test_non_admin_create_binding_hierarchy_deny_beats_direct_datapoint_allow(monkeypatch, db: Database):
+    dp_id = uuid.uuid4()
+    instance_id = uuid.uuid4()
+    await _insert_tree_and_nodes(db)
+    await _insert_datapoint(db, dp_id, "allowed-room")
+    await _insert_grant(db, node_type="datapoint", node_id=str(dp_id), role="operator")
+    await _insert_grant(db, node_id="allowed-room", role="operator", effect="deny")
+    await _insert_instance(db, instance_id)
+    monkeypatch.setattr(bindings_api, "get_registry", lambda: _RegistryStub(dp_id))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await bindings_api.create_binding(
+            dp_id=dp_id,
+            body=AdapterBindingCreate(adapter_instance_id=instance_id, direction="SOURCE"),
+            _user=_principal("alice"),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_non_admin_create_binding_direct_datapoint_deny_beats_hierarchy_operator(monkeypatch, db: Database):
     dp_id = uuid.uuid4()
     instance_id = uuid.uuid4()

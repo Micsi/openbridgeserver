@@ -156,7 +156,9 @@ async def _check_datapoint_read_access(
     request: Request,
 ) -> None:
     if principal is None:
-        return
+        if await _page_context_allows_datapoint_read(db, request, dp_id, None):
+            return
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
 
     allowed = await filter_authorized_datapoints(
         db,

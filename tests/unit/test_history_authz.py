@@ -187,6 +187,7 @@ def _principal(subject: str = "alice", *, is_admin: bool = False) -> Principal:
 async def test_invalid_auth_with_public_page_falls_back_to_page_access(monkeypatch, db: Database):
     dp_id = uuid.uuid4()
     await _insert_datapoint(db, dp_id)
+    await _insert_public_visu_page(db, "page-1", dp_id)
     monkeypatch.setattr(history_api, "get_registry", lambda: _RegistryStub(dp_id))
 
     async def _invalid_auth(*, credentials, api_key, db):
@@ -206,7 +207,7 @@ async def test_invalid_auth_with_public_page_falls_back_to_page_access(monkeypat
     monkeypatch.setattr(history_api, "_resolve_page_access", AsyncMock(return_value="public"))
 
     request = MagicMock()
-    request.headers.get.return_value = "page-1"
+    request.headers.get = lambda key, default=None: {"X-Page-Id": "page-1"}.get(key, default)
 
     result = await history_api.query_history(
         dp_id=dp_id,
@@ -221,6 +222,37 @@ async def test_invalid_auth_with_public_page_falls_back_to_page_access(monkeypat
     assert principal is None
     assert result == []
     plugin.query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_anonymous_public_page_history_rejects_datapoint_outside_page(monkeypatch, db: Database):
+    page_dp = uuid.uuid4()
+    blocked_dp = uuid.uuid4()
+    await _insert_datapoint(db, page_dp)
+    await _insert_datapoint(db, blocked_dp)
+    await _insert_public_visu_page(db, "page-1", page_dp)
+    monkeypatch.setattr(history_api, "get_registry", lambda: _RegistryStub(blocked_dp))
+
+    plugin = MagicMock()
+    plugin.query = AsyncMock(return_value=[])
+    monkeypatch.setattr(history_api, "get_history_plugin", lambda: plugin)
+
+    request = MagicMock()
+    request.headers.get = lambda key, default=None: {"X-Page-Id": "page-1"}.get(key, default)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await history_api.query_history(
+            dp_id=blocked_dp,
+            from_ts=None,
+            to_ts=None,
+            limit=100,
+            request=request,
+            principal=None,
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 404
+    plugin.query.assert_not_called()
 
 
 @pytest.mark.asyncio
