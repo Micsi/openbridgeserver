@@ -7,6 +7,8 @@ import type {
   JalousieDevice,
   SensorDevice,
   SceneDevice,
+  MediaDevice,
+  CameraDevice,
   Tokens,
   Ctx,
   Renderer,
@@ -22,6 +24,17 @@ describe('Device unions (§5) — readonly', () => {
     expectTypeOf<JalousieDevice>().toMatchTypeOf<Device>();
     expectTypeOf<SensorDevice>().toMatchTypeOf<Device>();
     expectTypeOf<SceneDevice>().toMatchTypeOf<Device>();
+    expectTypeOf<MediaDevice>().toMatchTypeOf<Device>();
+    expectTypeOf<CameraDevice>().toMatchTypeOf<Device>();
+  });
+
+  it('media/camera (v1.2) carry their discriminants and fields', () => {
+    expectTypeOf<MediaDevice['type']>().toEqualTypeOf<'media'>();
+    expectTypeOf<MediaDevice['playState']>().toEqualTypeOf<'playing' | 'paused' | 'stopped'>();
+    expectTypeOf<MediaDevice['volume']>().toEqualTypeOf<number>();
+    expectTypeOf<CameraDevice['type']>().toEqualTypeOf<'camera'>();
+    expectTypeOf<CameraDevice['online']>().toEqualTypeOf<boolean>();
+    expectTypeOf<CameraDevice['snapshotUrl']>().toEqualTypeOf<string | null>();
   });
 
   it('light device carries its discriminant and fields', () => {
