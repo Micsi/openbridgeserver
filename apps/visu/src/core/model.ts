@@ -144,12 +144,32 @@ const list: readonly Device[] = [
   light('treppe-haus', 'EG Treppe', 'Treppenhaus', 'orange'),
 ];
 
-/** All mobile devices, in source order. Read-only to the outside (Regel 1). */
-export const devices: readonly Device[] = Object.freeze(list);
+/**
+ * Recursively freeze a value so the read-only boundary holds for nested fields
+ * too — a shallow `Object.freeze` still allows `devices[0].on = true` or
+ * `statuses.push(...)`. Freezes objects/arrays in place and returns the value.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    Object.freeze(value);
+    for (const v of Object.values(value as Record<string, unknown>)) deepFreeze(v);
+  }
+  return value;
+}
 
-/** Lookup by id — the canonical handle screens use to reference a device. */
-export const byId: Readonly<Record<string, Device>> = Object.freeze(
-  Object.fromEntries(list.map((d) => [d.id, d])) as Record<string, Device>,
+/** All mobile devices, in source order. Read-only to the outside (Regel 1). */
+export const devices: readonly Device[] = deepFreeze(list);
+
+/**
+ * Lookup by id — the canonical handle screens use to reference a device.
+ *
+ * Typed `Device | undefined` because an unknown or stale id (a route param, a
+ * persisted layout, an edited room entry) resolves to `undefined` at runtime;
+ * the type forces callers to guard before passing the result to code that reads
+ * `device.type` (e.g. {@link layoutRole}).
+ */
+export const byId: Readonly<Record<string, Device | undefined>> = Object.freeze(
+  Object.fromEntries(list.map((d) => [d.id, d])) as Record<string, Device | undefined>,
 );
 
 /* ---------------------------------------------------------- room grouping */
@@ -224,11 +244,23 @@ const DEFAULT_ROLE: Record<Device['type'], Role> = {
 };
 
 /**
+ * Types whose contract `roles.allow` includes `wide` (CONTRACT-v1 §3). A span ≥ 2
+ * may only promote these to `wide`; switch/sensor (allow compact|default only)
+ * keep their default role so the host never hands a skin an invalid role.
+ */
+const WIDE_ALLOWED: ReadonlySet<Device['type']> = new Set<Device['type']>([
+  'light',
+  'blind',
+  'jalousie',
+  'scene',
+]);
+
+/**
  * Derive the contract prominence role for a layout entry + its device.
  * Pure function — no state, no side effects.
  */
 export function layoutRole(entry: LayoutEntry, device: Device): Role {
   if (device.type === 'jalousie') return DEFAULT_ROLE.jalousie;
-  if (entry.span !== undefined && entry.span >= 2) return 'wide';
+  if (entry.span !== undefined && entry.span >= 2 && WIDE_ALLOWED.has(device.type)) return 'wide';
   return DEFAULT_ROLE[device.type];
 }

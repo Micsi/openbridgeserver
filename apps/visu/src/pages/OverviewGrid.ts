@@ -83,6 +83,7 @@ export default defineComponent({
           onPointermove: longPress.onPointermove,
           onPointerup: longPress.onPointerup,
           onPointerleave: longPress.onPointerleave,
+          onPointercancel: longPress.onPointercancel,
           onContextmenu: longPress.onContextmenu,
         },
         [

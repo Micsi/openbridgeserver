@@ -133,6 +133,22 @@ export default defineComponent({
       dispatchIntent(actionStore, id, intent, eventSliderValue(ev));
     }
 
+    /** Ionic range custom events the modal body listens for (exact camelCase). */
+    const ION_EVENTS = ['ionInput', 'ionChange'] as const;
+
+    /** Attach the exact-cased Ionic range listeners to the modal body element. */
+    function bindIonEvents(vnode: VNode): void {
+      const el = vnode.el as HTMLElement | null;
+      if (!el) return;
+      for (const name of ION_EVENTS) el.addEventListener(name, onModalEvent);
+    }
+    /** Detach them again so a re-rendered body never double-binds. */
+    function unbindIonEvents(vnode: VNode): void {
+      const el = vnode.el as HTMLElement | null;
+      if (!el) return;
+      for (const name of ION_EVENTS) el.removeEventListener(name, onModalEvent);
+    }
+
     /**
      * The generic DEFAULT-DETAIL — used when the skin ships no `details[type]`.
      * Built from the core model (label/room/state) + the type's canonical actions,
@@ -215,6 +231,14 @@ export default defineComponent({
                       // the host owns the mapping to canonical store actions.
                       onClick: onModalEvent,
                       onInput: onModalEvent,
+                      // Ionic range controls emit bubbling `ionInput`/`ionChange`
+                      // custom events (carrying detail.value), not native `input`.
+                      // Vue's `on*` render-prop lowercases/hyphenates the event
+                      // name (`onIonInput` → `ion-input`), so it would miss the
+                      // real camelCase events; attach exact-cased native listeners
+                      // on the body element directly via the vnode lifecycle.
+                      onVnodeMounted: bindIonEvents,
+                      onVnodeBeforeUnmount: unbindIonEvents,
                     },
                     [detailBody.value],
                   )

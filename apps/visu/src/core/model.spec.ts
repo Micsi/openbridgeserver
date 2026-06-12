@@ -54,8 +54,8 @@ describe('core/model — byId', () => {
   it('resolves a known id to the matching device', () => {
     const light = byId['kueche-wand'];
     expect(light).toBeDefined();
-    expect(light.type).toBe('light');
-    expect(light.room).toBe('EG Küche');
+    expect(light?.type).toBe('light');
+    expect(light?.room).toBe('EG Küche');
   });
 
   it('has no duplicate ids', () => {
@@ -109,17 +109,31 @@ describe('core/model — room grouping', () => {
 describe('core/model — span/row → role', () => {
   it('maps a plain entry to the device type default role', () => {
     const plain: LayoutEntry = { id: 'kueche-wand' };
-    expect(layoutRole(plain, byId[plain.id])).toBe('default');
+    expect(layoutRole(plain, byId[plain.id]!)).toBe('default');
   });
 
   it('maps a wide span hint to the "wide" role', () => {
     const wide: LayoutEntry = { id: 'wiga-pendel', span: 2 };
-    expect(layoutRole(wide, byId[wide.id])).toBe('wide');
+    expect(layoutRole(wide, byId[wide.id]!)).toBe('wide');
   });
 
   it('keeps the jalousie default role even with span/row hints', () => {
     const jal: LayoutEntry = { id: 'wiga-jalousie', span: 2, row: 3 };
-    expect(layoutRole(jal, byId[jal.id])).toBe('wide');
+    expect(layoutRole(jal, byId[jal.id]!)).toBe('wide');
+  });
+
+  it('does not promote a span≥2 switch/sensor to "wide" (not in their allowed roles)', () => {
+    // switch + sensor allow only compact|default — a wide span must not override.
+    const swDevice = { id: 's', type: 'switch', room: 'r', label: 'l', accent: 'teal', on: false } as Device;
+    expect(layoutRole({ id: 's', span: 2 }, swDevice)).toBe('compact');
+    const seDevice = {
+      id: 'x', type: 'sensor', room: 'r', label: 'l', accent: 'blue', value: '1', unit: '°C',
+    } as Device;
+    expect(layoutRole({ id: 'x', span: 2 }, seDevice)).toBe('compact');
+  });
+
+  it('byId resolves to undefined for an unknown id (the type reflects this)', () => {
+    expect(byId['no-such-device']).toBeUndefined();
   });
 });
 
@@ -128,7 +142,7 @@ describe('core/model — shapes match the contract fixtures', () => {
     const fixtureLight = (fixtures as unknown as Record<string, Record<string, Device>>).light
       .dimmed;
     const modelLight = byId['kueche-pendel'];
-    expect(modelLight.type).toBe('light');
+    expect(modelLight?.type).toBe('light');
     // Same data fields as the contract fixture (plus the runtime id/type).
     for (const key of Object.keys(fixtureLight)) {
       expect(modelLight).toHaveProperty(key);
@@ -139,7 +153,7 @@ describe('core/model — shapes match the contract fixtures', () => {
     const fixtureJal = (fixtures as unknown as Record<string, Record<string, Device>>).jalousie
       .tilted;
     const modelJal = byId['wiga-jalousie'];
-    expect(modelJal.type).toBe('jalousie');
+    expect(modelJal?.type).toBe('jalousie');
     for (const key of Object.keys(fixtureJal)) {
       expect(modelJal).toHaveProperty(key);
     }
@@ -151,5 +165,15 @@ describe('core/model — read-only to the outside (Goldene Regel 1)', () => {
     expect(Object.isFrozen(devices)).toBe(true);
     expect(Object.isFrozen(byId)).toBe(true);
     expect(Object.isFrozen(rooms)).toBe(true);
+  });
+
+  it('deep-freezes each device and its nested fields (no reference-mutation escape)', () => {
+    for (const d of devices) expect(Object.isFrozen(d)).toBe(true);
+    const jal = byId['wiga-jalousie'];
+    expect(jal?.type).toBe('jalousie');
+    if (jal?.type !== 'jalousie') return;
+    expect(Object.isFrozen(jal.statuses)).toBe(true);
+    // A nested status object is frozen too.
+    expect(Object.isFrozen(jal.statuses[0])).toBe(true);
   });
 });

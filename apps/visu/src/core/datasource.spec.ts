@@ -45,6 +45,20 @@ describe('core/datasource — list()', () => {
     const same = b.find((d) => d.id === target.id) as LightDevice;
     expect(same.on).toBe(byId[target.id!] ? (byId[target.id!] as LightDevice).on : false);
   });
+
+  it('deep-clones nested jalousie statuses — mutating a snapshot does not leak back', async () => {
+    const ds = new MockDataSource();
+    const a = await ds.list();
+    const jal = a.find((d) => d.type === 'jalousie' && (d as JalousieDevice).statuses.length > 0) as
+      | JalousieDevice
+      | undefined;
+    if (!jal) throw new Error('no jalousie with statuses in the model');
+    // Mutate a nested status object on the returned snapshot.
+    (jal.statuses[0] as { val: boolean | null }).val = !jal.statuses[0].val;
+    const b = await ds.list();
+    const same = b.find((d) => d.id === jal.id) as JalousieDevice;
+    expect(same.statuses[0].val).not.toBe(jal.statuses[0].val);
+  });
 });
 
 describe('core/datasource — subscribe()', () => {
@@ -84,6 +98,20 @@ describe('core/datasource — subscribe()', () => {
     await ds.dispatch(lightId, 'toggle');
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
+  });
+
+  it('isolates a throwing subscriber — later subscribers still receive the patch and dispatch resolves', async () => {
+    const ds = new MockDataSource();
+    const bad = vi.fn(() => {
+      throw new Error('boom');
+    });
+    const good = vi.fn();
+    ds.subscribe(bad);
+    ds.subscribe(good);
+    const lightId = (await firstOfType(ds, 'light')).id!;
+    await expect(ds.dispatch(lightId, 'toggle')).resolves.toBeUndefined();
+    expect(bad).toHaveBeenCalledTimes(1);
+    expect(good).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -133,6 +161,33 @@ describe('core/datasource — dispatch() canonical actions', () => {
     expect(((await getById(ds, id)) as BlindDevice).locked).toBe(true);
     await ds.dispatch(id, 'unlock');
     expect(((await getById(ds, id)) as BlindDevice).locked).toBe(false);
+  });
+
+  it('accepts the contract `{ pct }` payload for slider actions (setDim/setPosition/setSlat)', async () => {
+    const ds = new MockDataSource();
+    const lightId = (await firstDimmable(ds)).id!;
+    await ds.dispatch(lightId, 'setDim', { pct: 30 });
+    expect(((await getById(ds, lightId)) as LightDevice).dim).toBe(30);
+
+    const blindId = (await firstOfType(ds, 'blind')).id!;
+    await ds.dispatch(blindId, 'setPosition', { pct: 80 });
+    expect(((await getById(ds, blindId)) as BlindDevice).position).toBe(80);
+
+    const jalId = (await firstOfType(ds, 'jalousie')).id!;
+    await ds.dispatch(jalId, 'setSlat', { pct: 55 });
+    expect(((await getById(ds, jalId)) as JalousieDevice).slat).toBe(55);
+  });
+
+  it('rejects setDim on a non-dimmable (dim === null) light', async () => {
+    const ds = new MockDataSource();
+    const list = await ds.list();
+    const nonDim = list.find((x) => x.type === 'light' && (x as LightDevice).dim === null) as
+      | LightDevice
+      | undefined;
+    if (!nonDim) throw new Error('no non-dimmable light in the model');
+    await expect(ds.dispatch(nonDim.id!, 'setDim', { pct: 50 })).rejects.toThrow();
+    // The light stays non-dimmable (its classification is unchanged).
+    expect(((await getById(ds, nonDim.id!)) as LightDevice).dim).toBeNull();
   });
 
   it('rejects an unknown device id', async () => {

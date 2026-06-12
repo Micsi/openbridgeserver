@@ -78,6 +78,19 @@ describe('useLongPress', () => {
     expect(cb).not.toHaveBeenCalled();
   });
 
+  it('cancels on pointercancel before the threshold', () => {
+    const cb = vi.fn();
+    const lp = useLongPress(cb);
+
+    lp.onPointerdown(down());
+    vi.advanceTimersByTime(200);
+    lp.onPointercancel();
+
+    vi.advanceTimersByTime(1000);
+    expect(cb).not.toHaveBeenCalled();
+    expect(lp.fired).toBe(false);
+  });
+
   it('aborts when the pointer moves more than 10 px on the x axis', () => {
     const cb = vi.fn();
     const lp = useLongPress(cb);

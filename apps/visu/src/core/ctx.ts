@@ -93,7 +93,9 @@ function makeStateText(t?: Translate) {
   return function stateText(d: Device): string {
     switch (d.type) {
       case 'light':
-        if (d.dim != null) {
+        // A dimmable light (`dim` is a number) reads as a brightness only while
+        // it is on; off — even with a retained last brightness — reads as "Aus".
+        if (d.dim != null && d.on) {
           return t
             ? t('widgets.state.dimmed', { dim: d.dim })
             : `Ein — ${d.dim}${NBSP}%`;
@@ -138,6 +140,10 @@ function warn(d: Device): boolean {
  */
 export const DEFAULT_ICONS: Readonly<Record<string, string>> = {
   bulb: `<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.8.6 1.5 1.5 1.5 2.5v.6h4v-.6c0-1 .7-1.9 1.5-2.5A6 6 0 0 0 12 3z"/>`,
+  // Contract `iconSlots` declares `blind`, and both the blind and jalousie
+  // widgets reference `"icon": "blind"`; ship a default so contract-following
+  // renderers (`ctx.icon(d, 'blind')`) get a glyph without a per-skin override.
+  blind: `<rect x="4" y="4" width="16" height="16" rx="1"/><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="13" x2="20" y2="13"/><line x1="4" y1="17" x2="20" y2="17"/>`,
   'chev-down': `<polyline points="6 9 12 15 18 9"/>`,
   'chev-up': `<polyline points="6 15 12 9 18 15"/>`,
   'chev-dd': `<polyline points="6 7 12 13 18 7"/><polyline points="6 13 12 19 18 13"/>`,

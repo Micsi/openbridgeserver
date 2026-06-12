@@ -57,6 +57,12 @@ describe('core/tokens — ink()', () => {
     expect(ink('#000000')).toBe('#ffffff');
     expect(ink('#ffffff')).not.toBe('#ffffff');
   });
+
+  it('clears AA for a mid-luminance custom accent (#777777 — white alone fails AA)', () => {
+    // White is only ~4.48:1 against #777777; the dark ink (#000000) must win.
+    const fg = ink('#777777');
+    expect(chroma.contrast(fg, '#777777')).toBeGreaterThanOrEqual(AA);
+  });
 });
 
 describe('core/tokens — readableOn() clears AA across ALL palette × theme', () => {

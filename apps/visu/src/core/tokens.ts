@@ -47,11 +47,16 @@ const SPACE_BASE = 4;
 const FONT =
   "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
 
-/** Text colour that sits legibly ON a filled swatch of `c`. */
+/**
+ * Text colour that sits legibly ON a filled swatch of `c`: white or black,
+ * whichever has more contrast. Black (not a near-black like `#171307`) is the
+ * dark candidate so a mid-luminance custom accent — e.g. `#777777`, where white
+ * is only ~4.48:1 — still clears AA on the dark side (~4.69:1).
+ */
 export function ink(c: string): string {
-  return chroma.contrast(c, '#ffffff') >= chroma.contrast(c, '#171307')
+  return chroma.contrast(c, '#ffffff') >= chroma.contrast(c, '#000000')
     ? '#ffffff'
-    : '#171307';
+    : '#000000';
 }
 
 /**

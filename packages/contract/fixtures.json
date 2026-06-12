@@ -11,9 +11,9 @@
     "on":  { "on": true,  "room": "EG WC",  "label": "Lüfter (10 Min)",  "accent": "teal" }
   },
   "blind": {
-    "open":   { "position": 0,   "locked": false, "room": "EG Wohnz.",     "label": "Rollladen West" },
-    "half":   { "position": 62,  "locked": false, "room": "EG Schlafz.",   "label": "Rollladen Süd"  },
-    "locked": { "position": 100, "locked": true,  "room": "Wintergarten",  "label": "Rollladen"      }
+    "open":   { "position": 0,   "locked": false, "room": "EG Wohnz.",     "label": "Rollladen West", "accent": "orange" },
+    "half":   { "position": 62,  "locked": false, "room": "EG Schlafz.",   "label": "Rollladen Süd",  "accent": "orange" },
+    "locked": { "position": 100, "locked": true,  "room": "Wintergarten",  "label": "Rollladen",      "accent": "green"  }
   },
   "jalousie": {
     "open":   { "position": 0,  "slat": 0,  "locked": false, "mode": "jalousie",

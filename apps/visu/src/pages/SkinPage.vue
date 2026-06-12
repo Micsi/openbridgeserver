@@ -36,6 +36,7 @@ import TweaksPanel, { type TweakValues } from '../app/TweaksPanel.vue';
 import OverviewGrid from './OverviewGrid';
 import { resolvePage } from './pages';
 import { resolveSkin } from '../skin-host/skins';
+import { NAV_KEYS, type NavKey } from '../app/shell/useShellState';
 
 const props = withDefaults(defineProps<{ pageId?: string }>(), { pageId: 'overview' });
 
@@ -45,6 +46,14 @@ const { t } = useI18n();
 const page = computed(() => resolvePage(props.pageId));
 /** The skin this page is authored against (the def's choice — no runtime switch). */
 const skin = computed(() => page.value.def.skin);
+/** The page's own localised title (pages.<id>.title) — feeds the shell chrome so
+ *  a non-overview page (e.g. terminal) shows its title, not a stale "Overview". */
+const pageTitle = computed(() => t(page.value.def.titleKey));
+/** Seed the shell's active nav from the page id when it is a top-level nav key,
+ *  else leave the default so the menu does not falsely highlight "Overview". */
+const shellState = computed(() =>
+  NAV_KEYS.includes(page.value.def.id as NavKey) ? { active: page.value.def.id as NavKey } : {},
+);
 /** The ordered, room-grouped blocks this page renders (core rooms, filtered). */
 const groups = computed(() => page.value.groups);
 
@@ -73,7 +82,8 @@ const theme = computed<'light' | 'dark' | 'image'>(() => {
   <AppShell
     class="skin-page"
     :data-page="page.def.id"
-    :state="{ active: 'overview' }"
+    :state="shellState"
+    :title="pageTitle"
     :root-bind="rootTweaks"
   >
     <template #default>

@@ -207,10 +207,33 @@ describe('DetailModalHost — captured clicks inside the modal map to the store'
     });
     api!.openDetail('kueche-wand');
     await flushPromises();
-    // LightDetail ships an "Aus" button → data-action=setDim data-value=0
-    const off = wrapper.find('[data-action="setDim"][data-value="0"]');
+    // LightDetail ships an "Aus" button → data-action=setDim data-arg=0
+    // (the skin emits the canonical `data-arg`; parseIntent reads data-value ?? data-arg).
+    const off = wrapper.find('[data-action="setDim"][data-arg="0"]');
     expect(off.exists()).toBe(true);
     await off.trigger('click');
     expect(spy).toHaveBeenCalledWith('kueche-wand', 0);
+  });
+
+  it('an Ionic range ionInput (custom event, detail.value) dispatches setDim', async () => {
+    await seed();
+    const store = useDeviceStore();
+    const spy = vi.spyOn(store, 'setDim');
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global,
+      props: { skin: 'ionic' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    api!.openDetail('kueche-pendel'); // a dimmable light → LightDetail ion-range
+    await flushPromises();
+
+    const range = wrapper.find('ion-range[data-action="setDim"]');
+    expect(range.exists()).toBe(true);
+    // ion-range emits bubbling ionInput carrying detail.value, not native input.
+    const ev = new CustomEvent('ionInput', { detail: { value: 42 }, bubbles: true });
+    range.element.dispatchEvent(ev);
+    await flushPromises();
+    expect(spy).toHaveBeenCalledWith('kueche-pendel', 42);
   });
 });

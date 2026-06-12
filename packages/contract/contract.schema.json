@@ -75,7 +75,7 @@
       "roles": { "allow": ["compact", "default", "wide", "tall"], "default": "default" },
       "dataSchema": {
         "type": "object",
-        "required": ["position", "locked", "room", "label"],
+        "required": ["position", "locked", "room", "label", "accent"],
         "additionalProperties": false,
         "properties": {
           "type": { "const": "blind" },
@@ -189,7 +189,13 @@
         "properties": {
           "type": { "const": "scene" },
           "id": { "type": "string" },
-          "icon": { "type": "string" },
+          "icon": {
+            "type": "string",
+            "enum": [
+              "bulb", "blind", "thermo", "wind", "sun", "cloud", "cam", "shield",
+              "bolt", "scene", "sparkle", "lock", "play", "pause", "skip"
+            ]
+          },
           "sub": { "type": "string" },
           "room": { "type": "string" },
           "label": { "type": "string" },

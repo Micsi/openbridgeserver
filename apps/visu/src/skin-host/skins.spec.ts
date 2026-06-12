@@ -44,7 +44,7 @@ describe('skins registry — present type renders through dispatch', () => {
     const sel = selectTile(skins.ionic.tiles, skins.ionic.manifest, 'light');
     expect(sel.renderer).not.toBeNull();
     // a representative light device from the model
-    const light = byId['kueche-wand'];
+    const light = byId['kueche-wand']!;
     expect(light.type).toBe('light');
     // the renderer is callable and returns a node (markup or VNode)
     const out = sel.renderer!(light, fakeTokens, fakeCtx);

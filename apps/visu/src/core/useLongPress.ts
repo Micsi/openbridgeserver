@@ -5,7 +5,7 @@
  * reference/vue-ionic/store.js (see MIGRATION.md §2 / §7):
  *  - fires after 420 ms of sustained press,
  *  - aborts when the pointer moves more than 10 px in either axis,
- *  - cancels on pointerup / pointerleave,
+ *  - cancels on pointerup / pointerleave / pointercancel,
  *  - suppresses the native context menu.
  *
  * The haptic feedback is encapsulated in {@link buzz} so the platform
@@ -25,6 +25,7 @@ export interface LongPressHandlers {
   onPointermove(e: PointerEvent): void;
   onPointerup(): void;
   onPointerleave(): void;
+  onPointercancel(): void;
   onContextmenu(e: Event): void;
   /** Whether the long-press fired for the current/last press cycle. */
   readonly fired: boolean;
@@ -88,6 +89,11 @@ export function useLongPress(
       clear();
     },
     onPointerleave(): void {
+      clear();
+    },
+    onPointercancel(): void {
+      // The browser took over the gesture (pan/zoom) or the contact was aborted;
+      // drop the pending timer so the long-press never fires after a cancel.
       clear();
     },
     onContextmenu(e: Event): void {

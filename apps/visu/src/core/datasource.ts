@@ -60,9 +60,13 @@ export interface DataSource {
 const clamp = (n: number, lo = 0, hi = 100): number => Math.max(lo, Math.min(hi, n));
 
 function numValue(payload: unknown): number {
-  const v = (payload as { value?: unknown } | undefined)?.value;
+  // Contract slider actions (setDim/setPosition/setSlat) carry the percentage as
+  // `{ pct }` (CONTRACT-v1 §6); the prototype/tests also use `{ value }`. Accept
+  // both so contract-compliant controls dispatch, preferring the contract `pct`.
+  const p = payload as { pct?: unknown; value?: unknown } | undefined;
+  const v = p?.pct ?? p?.value;
   if (typeof v !== 'number' || Number.isNaN(v)) {
-    throw new Error('datasource: action needs a numeric { value }');
+    throw new Error('datasource: action needs a numeric { pct } or { value }');
   }
   return v;
 }
@@ -79,6 +83,12 @@ function computeChanges(device: Device, action: WidgetAction, payload?: unknown)
     }
     case 'setDim': {
       if (device.type !== 'light') break;
+      // `dim === null` marks a non-dimmable (plain on/off) light; setting a
+      // numeric brightness would silently turn it into a dimmable device and
+      // change how later snapshots classify it. Reject instead.
+      if (device.dim === null) {
+        throw new Error('datasource: setDim is not valid for a non-dimmable light');
+      }
       const dim = clamp(numValue(payload));
       return { dim, on: dim > 0 } as Partial<Device>;
     }
@@ -110,8 +120,16 @@ function computeChanges(device: Device, action: WidgetAction, payload?: unknown)
 
 /* ------------------------------------------------------------- MockDataSource */
 
-/** A shallow clone of a device — enough to keep snapshots independent. */
+/**
+ * Clone a device so a returned snapshot shares no mutable state with the source.
+ * A shallow copy still shares nested objects — notably a jalousie's `statuses`
+ * array and its status objects — so a consumer mutating `list()[…].statuses[0]`
+ * would reach back into the source. Deep-clone the one nested field that exists.
+ */
 function clone(device: Device): Device {
+  if (device.type === 'jalousie') {
+    return { ...device, statuses: device.statuses.map((s) => ({ ...s })) };
+  }
   return { ...device } as Device;
 }
 
@@ -163,6 +181,15 @@ export class MockDataSource implements DataSource {
   }
 
   private emit(patch: DevicePatch): void {
-    for (const cb of this.listeners) cb(patch);
+    // One faulty listener must not block delivery to the rest (the interface
+    // documents callback errors as the subscriber's own concern) nor make
+    // dispatch() reject after it already applied the change. Isolate each.
+    for (const cb of this.listeners) {
+      try {
+        cb(patch);
+      } catch {
+        /* a subscriber's failure is its own concern — keep delivering */
+      }
+    }
   }
 }

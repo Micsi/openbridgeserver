@@ -137,4 +137,23 @@ describe('AppShell — must-keep behaviours', () => {
     expect(w.find('.room-divider-name').text()).toBe('Küche');
     expect(w.find('.room-divider-meta').text()).toBe('4');
   });
+
+  it('exposes markRead to a custom header slot so it can acknowledge unread', async () => {
+    const w = mountShell(
+      { state: { unread: true } },
+      {
+        header: `<template #header="{ unread, markRead }">
+          <button class="custom-pill" :class="{ unread }" @click="markRead()">pill</button>
+        </template>`,
+      },
+    );
+    expect(w.find('.custom-pill.unread').exists()).toBe(true);
+    await w.find('.custom-pill').trigger('click');
+    expect(w.find('.custom-pill.unread').exists()).toBe(false);
+  });
+
+  it('renders the page title override in the header when `title` is given', () => {
+    const w = mountShell({ title: 'Terminal' });
+    expect(w.text()).toContain('Terminal');
+  });
 });

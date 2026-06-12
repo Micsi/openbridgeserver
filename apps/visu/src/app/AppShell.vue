@@ -24,7 +24,9 @@
  * via CSS `env(safe-area-inset-*)` so notches/home-indicators are respected.
  *
  * Slot props let a skin reuse the host's data without owning it:
- *   - `header`      { title, withClock, unread }
+ *   - `header`      { title, withClock, unread, markRead } — `markRead` lets a
+ *                   custom header acknowledge the unread pulse without reaching
+ *                   outside the slot contract (the default header is wired to it).
  *   - `roomDivider` { room, count } — exposed per group via the default slot's
  *                   own iteration; here the slot is offered shell-wide so a skin
  *                   that draws its own grouping can pull the divider component.
@@ -58,6 +60,11 @@ const props = withDefaults(
   defineProps<{
     /** Seed the host shell state (active section · unread · showTitlebar). */
     state?: ShellStateOptions;
+    /** Override the header/section title (already localised). When omitted the
+     *  title is derived from the active nav key. A page whose id is not a nav key
+     *  (e.g. the terminal page) passes its own resolved title here so the chrome
+     *  shows the page, not a stale "Overview". */
+    title?: string;
     /** A hard error to surface in the `error` slot (unknown skin / render gap). */
     error?: string | null;
     /** Whether the page body is empty (drives the `empty` slot fallback). */
@@ -70,15 +77,16 @@ const props = withDefaults(
      *  gradient background spans behind the chrome. */
     rootBind?: RootTweakStyle;
   }>(),
-  { state: undefined, error: null, empty: false, withRouterOutlet: false, rootBind: undefined },
+  { state: undefined, title: undefined, error: null, empty: false, withRouterOutlet: false, rootBind: undefined },
 );
 
 const { t } = useI18n();
 
 const shell = useShellState(props.state);
 
-/** Active section title, localised — fed to the header slot. */
-const activeTitle = computed(() => t(`shell.nav.${shell.active.value}`));
+/** Active section title: the page's explicit override, else derived from the
+ *  active nav key. Fed to the header slot and the default ShellHeader. */
+const activeTitle = computed(() => props.title ?? t(`shell.nav.${shell.active.value}`));
 
 /** Clock pill lives inline in the header only when no brand titlebar is shown. */
 const headerWithClock = computed(() => !shell.showTitlebar.value);
@@ -138,6 +146,7 @@ defineExpose({ shell });
             :title="activeTitle"
             :with-clock="true"
             :unread="shell.unread.value"
+            :mark-read="shell.markRead"
           >
             <ShellHeader
               :title="activeTitle"
@@ -160,6 +169,7 @@ defineExpose({ shell });
             :title="activeTitle"
             :with-clock="headerWithClock"
             :unread="shell.unread.value"
+            :mark-read="shell.markRead"
           >
             <ShellHeader
               :title="activeTitle"
