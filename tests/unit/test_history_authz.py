@@ -150,6 +150,7 @@ def _principal(subject: str = "alice", *, is_admin: bool = False) -> Principal:
 async def test_invalid_auth_with_public_page_falls_back_to_page_access(monkeypatch, db: Database):
     dp_id = uuid.uuid4()
     await _insert_datapoint(db, dp_id)
+    await _insert_public_visu_page(db, "page-1", dp_id)
     monkeypatch.setattr(history_api, "get_registry", lambda: _RegistryStub(dp_id))
 
     async def _invalid_auth(*, credentials, api_key, db):
@@ -184,6 +185,38 @@ async def test_invalid_auth_with_public_page_falls_back_to_page_access(monkeypat
     assert principal is None
     assert result == []
     plugin.query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_anonymous_public_page_history_requires_datapoint_on_page(monkeypatch, db: Database):
+    page_dp_id = uuid.uuid4()
+    hidden_dp_id = uuid.uuid4()
+    await _insert_datapoint(db, page_dp_id)
+    await _insert_datapoint(db, hidden_dp_id)
+    await _insert_public_visu_page(db, "page-public-history", page_dp_id)
+    monkeypatch.setattr(history_api, "get_registry", lambda: _RegistryStub(hidden_dp_id))
+    monkeypatch.setattr("obs.api.v1.visu._resolve_access_with_node", AsyncMock(return_value=("public", None)))
+
+    plugin = MagicMock()
+    plugin.query = AsyncMock()
+    monkeypatch.setattr(history_api, "get_history_plugin", lambda: plugin)
+
+    request = MagicMock()
+    request.headers.get = lambda key, default=None: {"X-Page-Id": "page-public-history"}.get(key, default)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await history_api.query_history(
+            dp_id=hidden_dp_id,
+            from_ts=None,
+            to_ts=None,
+            limit=100,
+            request=request,
+            principal=None,
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 404
+    plugin.query.assert_not_called()
 
 
 @pytest.mark.asyncio

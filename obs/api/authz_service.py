@@ -179,6 +179,12 @@ async def filter_authorized_datapoints(
 
     resolved_grants = list(grants) if grants is not None else await load_role_grants(db, principal)
     targets_by_dp = await resolve_datapoint_targets(db, ordered_ids)
+    direct_grant_ids = {grant.node_id for grant in resolved_grants if grant.node_type == "datapoint" and grant.node_id in ordered_ids}
+    for dp_id in direct_grant_ids:
+        targets = targets_by_dp.setdefault(dp_id, [])
+        if not any(target.node_type == "datapoint" and target.node_id == dp_id for target in targets):
+            targets.append(AuthzTarget(node_type="datapoint", node_id=dp_id))
+
     allowed: list[str] = []
     for dp_id in ordered_ids:
         decision = authorize(

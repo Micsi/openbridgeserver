@@ -30,7 +30,11 @@ class _RingbufferStub:
 
     async def query(self, **kwargs):
         self.query_kwargs = kwargs
-        return self._filter(kwargs.get("dp_ids"))
+        q = (kwargs.get("q") or "").lower()
+        dp_ids_by_name = set(kwargs.get("dp_ids") or [])
+        if not q and not dp_ids_by_name:
+            return list(self.rows)
+        return [row for row in self.rows if q in row.datapoint_id.lower() or q in row.source_adapter.lower() or row.datapoint_id in dp_ids_by_name]
 
     async def query_v2(self, **kwargs):
         self.query_v2_kwargs = kwargs
@@ -211,7 +215,30 @@ async def test_legacy_query_scopes_name_matches_to_authorized_datapoints(monkeyp
     )
 
     assert [row.datapoint_id for row in rows] == [str(allowed.id)]
-    assert rb.query_kwargs["dp_ids"] == [str(allowed.id)]
+    assert rb.query_v2_kwargs["datapoint_ids"] == [str(allowed.id)]
+
+
+@pytest.mark.asyncio
+async def test_legacy_query_scopes_source_adapter_matches_to_authorized_datapoints(monkeypatch, db: Database):
+    allowed = _dp("00000000-0000-0000-0000-000000000627", "Allowed room")
+    hidden = _dp("00000000-0000-0000-0000-000000000628", "Hidden room")
+    await _prepare_authz(db, allowed, hidden)
+    rb = _RingbufferStub([_row(1, str(allowed.id)), _row(2, str(hidden.id))])
+
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([allowed, hidden]))
+    monkeypatch.setattr(rb_api, "get_ringbuffer", lambda: rb)
+
+    rows = await rb_api.query_ringbuffer(
+        q="api",
+        adapter="",
+        from_ts="",
+        limit=100,
+        _user=_principal(),
+        db=db,
+    )
+
+    assert [row.datapoint_id for row in rows] == [str(allowed.id)]
+    assert rb.query_v2_kwargs["datapoint_ids"] == [str(allowed.id)]
 
 
 @pytest.mark.asyncio

@@ -1055,12 +1055,16 @@ async def query_ringbuffer(
             return []
 
     rb = get_ringbuffer()
-    entries = await rb.query(
+    entries = await rb.query_v2(
         q=q,
-        adapter=adapter,
-        from_ts=from_ts,
+        adapter_any_of=[adapter] if adapter else None,
+        datapoint_ids=scoped_dp_ids or None,
+        from_ts=from_ts or None,
         limit=limit,
-        dp_ids=scoped_dp_ids or None,
+        offset=0,
+        sort_field="id",
+        sort_order="desc",
+        dp_ids_by_name=dp_ids_by_name or None,
     )
     return [
         RingBufferEntryOut(
