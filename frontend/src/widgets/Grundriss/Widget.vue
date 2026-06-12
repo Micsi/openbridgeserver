@@ -179,7 +179,7 @@ function handleAreaClick(area: GrundrissArea) {
       v-if="!image"
       class="absolute inset-0 flex items-center justify-center bg-gray-900/20"
     >
-      <span class="text-xs text-gray-500">Kein Bild konfiguriert</span>
+      <span class="text-xs text-gray-500">{{ $t('widgets.grundriss.noImageConfigured') }}</span>
     </div>
 
     <!-- Rotated layer: image + polygon SVG (no labels — they must not rotate) -->

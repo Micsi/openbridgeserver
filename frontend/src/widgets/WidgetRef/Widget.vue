@@ -88,9 +88,9 @@ const refStatusValue = computed(() => sourceWidget.value?.status_datapoint_id ? 
       {{ sourceWidgetName }}
     </span>
     <span v-if="sourceWidgetName && sourcePageId" class="text-xs text-gray-400 dark:text-gray-600 truncate max-w-full">
-      Referenz
+      {{ $t('widgets.widgetref.reference') }}
     </span>
-    <span v-else class="text-xs text-gray-300 dark:text-gray-700">Referenz wählen …</span>
+    <span v-else class="text-xs text-gray-300 dark:text-gray-700">{{ $t('widgets.widgetref.chooseReference') }}</span>
   </div>
 
   <!-- Viewer: Laden -->
