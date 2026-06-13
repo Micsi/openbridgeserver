@@ -24,7 +24,7 @@
  * host so skins stay stateless).
  */
 
-import type { Device, HostAction, WidgetAction } from '@obs/visu-contract';
+import type { Device, HostAction } from '@obs/visu-contract';
 
 /**
  * The canonical core actions plus the UI/host-level ones a skin may emit — the
