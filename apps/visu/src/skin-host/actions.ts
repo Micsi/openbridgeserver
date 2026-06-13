@@ -24,17 +24,20 @@
  * host so skins stay stateless).
  */
 
-import type { Device, WidgetAction } from '@obs/visu-contract';
+import type { Device, HostAction } from '@obs/visu-contract';
 
 /**
- * The canonical core actions plus the UI/host-level ones a skin may emit.
+ * The canonical core actions plus the UI/host-level ones a skin may emit — the
+ * contract's {@link HostAction} (= {@link WidgetAction} ∪ `openDetail`/`close`):
  *
  *  - canonical (forwarded to the store): the {@link WidgetAction} set.
  *  - `stop`        — a UI-only momentary control (no canonical core write in v1).
  *  - `close`       — close the detail surface (handled by the host shell).
  *  - `openDetail`  — open the detail surface (handled by the host shell).
+ *
+ * Re-exported so the other skin-host modules keep importing it from `./actions`.
  */
-export type HostAction = WidgetAction | 'stop' | 'close' | 'openDetail';
+export type { HostAction };
 
 /** Actions that carry no canonical core write — the host swallows them on the store. */
 const UI_ONLY: ReadonlySet<HostAction> = new Set(['stop', 'close', 'openDetail']);
