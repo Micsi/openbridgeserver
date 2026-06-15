@@ -1184,7 +1184,7 @@ class LogicManager:
                     password = _replace_api_client_placeholders(
                         node.data.get("auth_password") or "",
                         variable_resolver,
-                    ).strip()
+                    )
                     if username:
                         auth = httpx.BasicAuth(username, password) if auth_type == "basic" else httpx.DigestAuth(username, password)
                 elif auth_type == "bearer":
@@ -1289,7 +1289,10 @@ class LogicManager:
                     downstream_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs[e.source], src_handle)
             if downstream_overrides:
                 second_executor = GraphExecutor(flow, hyst, self._app_config)
-                second_outputs = second_executor.execute(downstream_overrides)
+                replay_overrides = {nid: dict(vals) for nid, vals in aug_overrides.items()}
+                for nid, vals in downstream_overrides.items():
+                    replay_overrides.setdefault(nid, {}).update(vals)
+                second_outputs = second_executor.execute(replay_overrides)
                 api_client_ids = {n.id for n in flow.nodes if n.type == "api_client"}
                 for nid, vals in second_outputs.items():
                     if nid not in api_client_ids:

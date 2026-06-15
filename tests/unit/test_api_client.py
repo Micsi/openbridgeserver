@@ -780,6 +780,54 @@ class TestApiClientAuthentication:
         )
         assert captured[0] is None
 
+    def test_basic_auth_variable_password_preserves_whitespace(self):
+        dp_id = uuid.uuid4()
+        state = ValueState()
+        state.value = "  secret  "
+        state.quality = "good"
+        captured_auth: list[tuple[str, str]] = []
+
+        class _FakeClient:
+            def __init__(self, auth=None, verify=True):
+                self._resp = _mock_response(200, {"ok": True})
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                pass
+
+            async def request(self, method, url, **kwargs):
+                return self._resp
+
+        def _capture_basic_auth(username, password):
+            captured_auth.append((username, password))
+            return ("basic", username, password)
+
+        manager = _make_manager()
+        manager._registry.get_value.return_value = state
+        data = {
+            "url": "http://93.184.216.34/",
+            "method": "GET",
+            "auth_type": "basic",
+            "auth_username": "alice",
+            "auth_password": "###OBS1###",
+            "variables": [{"datapoint_id": str(dp_id), "datapoint_name": "Password"}],
+        }
+        n = node("ac", "api_client", data)
+        flow = _flow([n])
+        graph_id = "test-basic-whitespace"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.logic.manager.httpx.AsyncClient", _FakeClient):
+            with patch("obs.logic.manager.httpx.BasicAuth", side_effect=_capture_basic_auth):
+                with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                    outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"ac": {"trigger": True}}))
+
+        assert outputs["ac"]["success"] is True
+        assert captured_auth == [("alice", "  secret  ")]
+
     @patch("obs.logic.manager.httpx.AsyncClient")
     def test_bearer_auth_sets_authorization_header(self, mock_client_cls):
         captured_headers: list[dict] = []
@@ -1234,6 +1282,51 @@ class TestApiClientDownstreamPropagation:
 
         assert outputs["ac"]["response"] == "API client variable OBS1 is not configured"
         assert outputs["concat"]["result"] == "API client variable OBS1 is not configured"
+
+    @patch("obs.logic.manager.httpx.AsyncClient")
+    def test_api_failure_replay_preserves_original_datapoint_inputs(self, mock_client_cls):
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(side_effect=httpx.ConnectError("connection failed"))
+
+        source_dp_id = uuid.uuid4()
+        target_dp_id = uuid.uuid4()
+        nodes = [
+            node("read", "datapoint_read", {"datapoint_id": str(source_dp_id), "datapoint_name": "Source"}),
+            node("write", "datapoint_write", {"datapoint_id": str(target_dp_id), "datapoint_name": "Target"}),
+            node("cv_trig", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34", "method": "GET"}),
+            node("concat", "string_concat", {"count": 2, "separator": "", "text_2": ""}),
+        ]
+        edges = [
+            edge("read", "write", "value", "value"),
+            edge("cv_trig", "ac", "value", "trigger"),
+            edge("ac", "concat", "response", "in_1"),
+        ]
+        flow = _flow(nodes, edges)
+
+        manager = _make_manager()
+        graph_id = "g-preserve-inputs"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(
+                manager._execute_graph(
+                    graph_id,
+                    "test",
+                    flow,
+                    {"read": {"value": 23.5, "changed": True}},
+                )
+            )
+
+        assert outputs["ac"]["success"] is False
+        assert outputs["concat"]["result"] == "connection failed"
+        assert outputs["write"]["_write_value"] == 23.5
+        published = manager._event_bus.publish.await_args.args[0]
+        assert published.datapoint_id == target_dp_id
+        assert published.value == 23.5
 
 
 # ===========================================================================
