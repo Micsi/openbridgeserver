@@ -146,6 +146,7 @@ def _replace_api_client_placeholders(
     transform: Any | None = None,
 ) -> Any:
     if isinstance(value, str):
+
         def _replace(match: re.Match[str]) -> str:
             replacement = resolver(int(match.group(1)))
             return transform(replacement) if transform is not None else replacement
@@ -799,10 +800,7 @@ class LogicManager:
                     for variable in variables:
                         if not isinstance(variable, dict):
                             continue
-                        if (
-                            variable.get("datapoint_id") == dp_id_str
-                            and variable.get("datapoint_name") != event.new_name
-                        ):
+                        if variable.get("datapoint_id") == dp_id_str and variable.get("datapoint_name") != event.new_name:
                             variable["datapoint_name"] = event.new_name
                             changed = True
             if changed:
@@ -1178,11 +1176,7 @@ class LogicManager:
                         variable_resolver,
                     ).strip()
                     if username:
-                        auth = (
-                            httpx.BasicAuth(username, password)
-                            if auth_type == "basic"
-                            else httpx.DigestAuth(username, password)
-                        )
+                        auth = httpx.BasicAuth(username, password) if auth_type == "basic" else httpx.DigestAuth(username, password)
                 elif auth_type == "bearer":
                     token = _replace_api_client_placeholders(
                         node.data.get("auth_token") or "",
