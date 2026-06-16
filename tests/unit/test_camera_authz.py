@@ -399,6 +399,32 @@ async def test_proxy_camera_requires_session_for_inherited_protected_page_scope(
 
 
 @pytest.mark.asyncio
+async def test_proxy_camera_checks_protected_access_before_url_membership(
+    monkeypatch: pytest.MonkeyPatch,
+    db: Database,
+):
+    await _insert_inherited_protected_camera_page(db, url="http://camera.local/other")
+    build_targets = AsyncMock()
+    monkeypatch.setattr(camera_api, "_build_fetch_targets", build_targets)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await camera_api.proxy_camera(
+            url=CAMERA_URL,
+            username="",
+            password="",
+            apikey_param="",
+            apikey_value="",
+            page_id="page-camera",
+            _user=None,
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Valid session token required"
+    build_targets.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_proxy_camera_accepts_session_for_inherited_protected_page_scope(
     monkeypatch: pytest.MonkeyPatch,
     db: Database,

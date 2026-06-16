@@ -70,6 +70,17 @@ describe('createWebSocketClient', () => {
     expect(mocks.sockets[0].protocols).toBeUndefined()
   })
 
+  it('keeps page scope when a page context is provided with a JWT', () => {
+    mocks.getJwt.mockReturnValue('jwt-token')
+
+    const client = createWebSocketClient()
+    client.connect({ pageId: 'viewer-page', sessionToken: 'session-1' })
+
+    expect(mocks.sockets).toHaveLength(1)
+    expect(mocks.sockets[0].url).toContain('/api/v1/ws?page_id=viewer-page&session_token=session-1')
+    expect(mocks.sockets[0].protocols).toBeUndefined()
+  })
+
   it('keeps JWT transport as the default authenticated path', () => {
     mocks.getJwt.mockReturnValue('jwt-token')
 

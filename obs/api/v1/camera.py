@@ -110,7 +110,7 @@ async def _ensure_camera_page_scope(db: Database, page_id: str, url: str, user: 
         "SELECT page_config FROM visu_nodes WHERE id = ? AND type = 'PAGE'",
         (page_id,),
     )
-    if row is None or not _page_config_contains_camera_url(row["page_config"], url):
+    if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kamera nicht gefunden")
 
     from obs.api.v1.visu import _check_user_access, _resolve_access_with_node
@@ -128,6 +128,8 @@ async def _ensure_camera_page_scope(db: Database, page_id: str, url: str, user: 
         )
     if access == "user" and not await _check_user_access(db, page_id, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
+    if not _page_config_contains_camera_url(row["page_config"], url):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kamera nicht gefunden")
 
 
 # ── Proxy-Endpunkt ─────────────────────────────────────────────────────────────

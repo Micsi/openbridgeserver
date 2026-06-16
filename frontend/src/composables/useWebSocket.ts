@@ -49,7 +49,7 @@ export function createWebSocketClient() {
     shouldReconnect = true
     const jwt = getJwt()
     let url = WS_URL()
-    if (jwt && !connectContext.preferPageScope) {
+    if (jwt && !connectContext.pageId && !connectContext.preferPageScope) {
       socket = new WebSocket(url, [`obs.jwt.${jwt}`])
     } else {
       if (!connectContext.pageId) return

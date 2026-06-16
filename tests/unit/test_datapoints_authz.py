@@ -334,6 +334,69 @@ async def test_get_value_authenticated_public_page_path_remains_compatible_witho
 
 
 @pytest.mark.asyncio
+async def test_get_value_authenticated_page_fallback_honors_explicit_deny(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000044", "Denied page value")
+    await _insert_tree(db)
+    await _insert_node(db, "denied")
+    await _insert_datapoint(db, datapoint)
+    await _link_datapoint(db, datapoint.id, "denied")
+    await db.execute_and_commit(
+        """
+        INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+        VALUES ('user', 'alice', 'hierarchy', 'denied', 'guest', 'deny')
+        """
+    )
+    page_config = f"""
+    {{
+      "grid_cols": 12,
+      "grid_row_height": 80,
+      "grid_cell_width": 120,
+      "background": null,
+      "widgets": [
+        {{
+          "id": "widget-1",
+          "name": "Widget",
+          "type": "value",
+          "datapoint_id": "{datapoint.id}",
+          "status_datapoint_id": null,
+          "x": 0,
+          "y": 0,
+          "w": 2,
+          "h": 1,
+          "config": {{}}
+        }}
+      ]
+    }}
+    """
+    await db.execute_and_commit(
+        """
+        INSERT INTO visu_nodes
+            (id, parent_id, name, type, node_order, icon, access, access_pin, page_config, created_at, updated_at)
+        VALUES ('page-public-deny', NULL, 'Page', 'PAGE', 0, NULL, 'public', NULL, ?, ?, ?)
+        """,
+        (page_config, NOW, NOW),
+    )
+    registry = _RegistryStub([datapoint])
+    state = ValueState()
+    state.update(20.0, "good")
+    registry._values[datapoint.id] = state
+    monkeypatch.setattr(dp_api, "get_registry", lambda: registry)
+    monkeypatch.setattr("obs.api.v1.visu._resolve_access_with_node", AsyncMock(return_value=("public", None)))
+
+    request = MagicMock()
+    request.headers.get = lambda key, default=None: {"X-Page-Id": "page-public-deny"}.get(key, default)
+    with pytest.raises(HTTPException) as exc_info:
+        await dp_api.get_value(
+            dp_id=datapoint.id,
+            request=request,
+            user=Principal(subject="alice", type="user", is_admin=False),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_get_value_authenticated_protected_source_page_remains_compatible_without_session(monkeypatch, db: Database):
     datapoint = _dp("00000000-0000-0000-0000-000000000043", "Authenticated protected source page value")
     await _insert_datapoint(db, datapoint)

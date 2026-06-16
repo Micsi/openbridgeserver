@@ -46,17 +46,25 @@ class _FakeWebSocket:
 
 
 class _DbStub:
-    def __init__(self, has_key: bool, page_type: str | None = None) -> None:
+    def __init__(self, has_key: bool, page_type: str | None = None, datapoint_ids: list[str] | None = None) -> None:
         self.has_key = has_key
         self.page_type = page_type
+        self.datapoint_ids = datapoint_ids or []
         self.updated = False
 
     async def fetchone(self, query: str, _params: tuple):
         if "FROM api_keys" in query and self.has_key:
+            if "SELECT id, owner" in query:
+                return {"id": "key-1", "owner": None}
             return {"name": "automation-client"}
         if "FROM visu_nodes" in query and self.page_type:
             return {"type": self.page_type}
         return None
+
+    async def fetchall(self, query: str, _params: tuple = ()):
+        if "FROM datapoints" in query:
+            return [{"id": dp_id} for dp_id in self.datapoint_ids]
+        return []
 
     async def execute_and_commit(self, _query: str, _params: tuple) -> None:
         self.updated = True
@@ -85,6 +93,23 @@ class _JwtScopeDbStub:
         if "FROM datapoints" in query:
             return [{"id": "allowed-dp"}, {"id": "blocked-dp"}]
         return []
+
+
+class _ApiKeyScopeDbStub:
+    async def fetchone(self, query: str, _params: tuple):
+        if "FROM api_keys" in query:
+            if "SELECT id, owner" in query:
+                return {"id": "key-1", "owner": None}
+            return {"name": "automation-client"}
+        return None
+
+    async def fetchall(self, query: str, _params: tuple = ()):
+        if "FROM datapoints" in query:
+            return [{"id": "allowed-dp"}, {"id": "blocked-dp"}]
+        return []
+
+    async def execute_and_commit(self, _query: str, _params: tuple) -> None:
+        pass
 
 
 @pytest.mark.asyncio
@@ -187,10 +212,43 @@ async def test_websocket_endpoint_accepts_api_key(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_websocket_endpoint_filters_api_key_subscriptions_by_datapoint_authz(monkeypatch):
+    monkeypatch.setattr(auth_api, "hash_api_key", lambda key: f"hash:{key}")
+
+    async def _filter_authorized_datapoints(_db, principal, ids, *, action):
+        assert principal.type == "api_key"
+        assert principal.subject == "api_key:key-1"
+        assert action is ws_api.AuthzAction.READ
+        assert ids == ["allowed-dp", "blocked-dp"]
+        return ["allowed-dp"]
+
+    monkeypatch.setattr(ws_api, "get_db", lambda: _ApiKeyScopeDbStub())
+    monkeypatch.setattr(ws_api, "filter_authorized_datapoints", _filter_authorized_datapoints)
+
+    ws = _FakeWebSocket(
+        headers={"x-api-key": "obs_valid"},
+        received=[{"action": "subscribe", "ids": ["allowed-dp", "blocked-dp"]}],
+    )
+    ws_api.init_ws_manager()
+    try:
+        await ws_api.websocket_endpoint(ws)
+    finally:
+        ws_api.reset_ws_manager()
+
+    assert ws.accepted is True
+    assert ws.sent == [{"action": "subscribed", "ids": ["allowed-dp"]}]
+
+
+@pytest.mark.asyncio
 async def test_websocket_endpoint_subscribe_sends_initial_registry_value(monkeypatch):
     dp_id = uuid4()
     monkeypatch.setattr(auth_api, "hash_api_key", lambda key: f"hash:{key}")
-    monkeypatch.setattr(ws_api, "get_db", lambda: _DbStub(has_key=True))
+    monkeypatch.setattr(ws_api, "get_db", lambda: _DbStub(has_key=True, datapoint_ids=[str(dp_id)]))
+
+    async def _filter_authorized_datapoints(_db, _principal, ids, *, action):
+        return ids
+
+    monkeypatch.setattr(ws_api, "filter_authorized_datapoints", _filter_authorized_datapoints)
 
     class _RegistryStub:
         def get(self, dp_uuid):

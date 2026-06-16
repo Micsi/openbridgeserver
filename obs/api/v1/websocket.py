@@ -24,7 +24,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from obs.api.auth import Principal
+from obs.api.auth import Principal, get_current_principal
 from obs.api.authz import AuthzAction
 from obs.api.authz_service import filter_authorized_datapoints
 from obs.api.v1 import sessions as sessions_api
@@ -583,7 +583,11 @@ async def websocket_endpoint(
 
     allowed_dp_ids: set[str] | None = None
     db: Database | None = None
-    if user is not None and user != "__api_key__":
+    if api_key:
+        db = get_db()
+        principal = await get_current_principal(credentials=None, api_key=api_key, db=db)
+        allowed_dp_ids = await _ws_authorized_datapoint_scope(db, principal)
+    elif user is not None:
         db = get_db()
         principal = await _jwt_principal(db, user)
         allowed_dp_ids = await _ws_authorized_datapoint_scope(db, principal)

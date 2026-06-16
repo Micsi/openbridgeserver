@@ -20,8 +20,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, field_serializer
 
 from obs.api.auth import Principal, get_admin_user, get_current_principal, optional_current_user
-from obs.api.authz import AuthzAction
-from obs.api.authz_service import filter_authorized_datapoints
+from obs.api.authz import AuthzAction, authorize
+from obs.api.authz_service import filter_authorized_datapoints, load_role_grants, resolve_datapoint_targets
 from obs.api.v1.datapoint_config import collect_datapoint_ids_from_config
 from obs.api.v1.sessions import validate_session
 from obs.core.event_bus import DataValueEvent, get_event_bus
@@ -227,6 +227,18 @@ async def _can_read_datapoint(db: Database, principal: Principal, dp_id: uuid.UU
         return True
     allowed = await filter_authorized_datapoints(db, principal, [str(dp_id)], action=AuthzAction.READ)
     return bool(allowed)
+
+
+async def _has_explicit_datapoint_read_deny(db: Database, principal: Principal, dp_id: uuid.UUID) -> bool:
+    grants = await load_role_grants(db, principal)
+    targets_by_dp = await resolve_datapoint_targets(db, [str(dp_id)])
+    decision = authorize(
+        principal=principal,
+        action=AuthzAction.READ,
+        targets=targets_by_dp.get(str(dp_id), []),
+        grants=grants,
+    )
+    return decision.reason == "explicit_deny"
 
 
 async def _user_visu_page_has_datapoint(db: Database, username: str, dp_id: uuid.UUID) -> bool:
@@ -452,6 +464,8 @@ async def get_value(
     else:
         principal = _principal_from_dependency(user)
         if not await _can_read_datapoint(db, principal, dp_id):
+            if await _has_explicit_datapoint_read_deny(db, principal, dp_id):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
             if not await _page_context_allows_datapoint_read(db, request, dp_id, principal) and (
                 principal.type != "user" or not await _user_visu_page_has_datapoint(db, principal.subject, dp_id)
             ):
