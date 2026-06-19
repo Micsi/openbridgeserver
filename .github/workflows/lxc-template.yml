@@ -194,7 +194,7 @@ jobs:
               if bundle:
                   print(bundle['browser_download_url'])
               body = r.get('body') or ''
-              m = re.search(r'App Bundle.*?\x60\x60\x60\s*\n([0-9a-f]{64})\s*\n\x60\x60\x60', body, re.DOTALL)
+              m = re.search(r'app-bundle[^\n]*\n\x60\x60\x60\s*\n([0-9a-f]{64})', body)
               print(m.group(1) if m else '')
           ")
 
@@ -600,35 +600,20 @@ jobs:
 
           body = read('/tmp/release_body.txt')
 
-          lxc_entries = []
-          bundle_checksum = None
+          entries = []
 
           for f in sorted(glob.glob('artifacts/**/*.sha256', recursive=True)):
               content = read(f).split()[0]
               name = os.path.basename(f).removesuffix('.sha256')
-              if 'app-bundle' in name:
-                  bundle_checksum = content
-              elif name.endswith('.tar.zst'):
-                  lxc_entries.append((name, content))
+              entries.append((name, content))
 
-          lxc_entries.sort(key=lambda x: x[0])
+          entries.sort(key=lambda x: x[0])
 
           marker = "<!-- LXC_INSERT -->"
 
           section = "### Checksums (SHA-256)\n\n"
-
-          if bundle_checksum:
-              section += (
-                  "**App Bundle** (`.tar.gz` — for in-place updates via `obs-update`):\n"
-                  f"```\n{bundle_checksum}\n```\n\n"
-              )
-
-          if lxc_entries:
-              section += "**LXC Templates** (`.tar.zst` — Proxmox CT template):\n"
-              for name, cs in lxc_entries:
-                  section += f"\n*{name}*:\n```\n{cs}\n```\n"
-              section += "\n"
-
+          for name, cs in entries:
+              section += f"*{name}*:\n```\n{cs}\n```\n\n"
           section += marker
 
           print(body.replace(marker, section), end='')
