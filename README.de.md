@@ -69,15 +69,21 @@ Das LXC-Template enthält ein vollständiges Ubuntu 26.04-System mit **open brid
 
 **Schritt 1 — Template herunterladen**
 
-1. Auf der [Release-Seite](../../releases/latest) die URL der `.tar.zst`-Datei sowie den SHA512-Hash aus dem Abschnitt **LXC Template** kopieren.
+1. Auf der [Release-Seite](../../releases/latest) die Assets aufklappen und via rechter Maustaste die URL der `.tar.zst`-Datei der gewünschten Architektur kopieren:
+   ![ProxmoxDownloadFromURL](docs/Release-Assets.png)
 2. In der Proxmox-Weboberfläche zu **Datacenter → Storage → local → CT Templates** navigieren.
 3. **Download from URL** klicken.
 4. Die kopierte URL einfügen und auf **Query URL** klicken.
-5. Als Hash-Algorithmus **SHA512** auswählen.
-6. Den kopierten Hash einfügen.
+5. Wenn nicht bereits aktiviert, im Popup unten rechts **Advanced** aktivieren.
+5. Als Hash-Algorithmus **SHA256** auswählen.
+1. Auf der [Release-Seite](../../releases/latest) im Abschnitt **Checksums** die via Copy-Button die Checksumme des gewünschten Templates kopieren:
+   ![ProxmoxDownloadFromURL](docs/Release-Asset-Checksums.png)
+   Achtung: Wenn die Checksummen direkt aus der Spalte neben des Assets kopiert werden, muss der Prefix `SHA256:` entfernt werden, da Proxmox diesen nicht erwartet!
+6. Zurück auf der Proxmox-Weboberfläche den kopierten Hash unter **Checksum** einfügen.
+7. Das sollte jetzt beispielsweise so aussehen:
+   ![ProxmoxDownloadFromURL](docs/ProxmoxDownloadFromURL.png)
 7. Auf **Download** klicken.
 
-![ProxmoxDownloadFromURL](docs/ProxmoxDownloadFromURL.png)
 
 **Schritt 2 — Container erstellen**
 
