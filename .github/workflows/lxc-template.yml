@@ -611,25 +611,26 @@ jobs:
               elif name.endswith('.tar.zst'):
                   lxc_entries.append((name, content))
 
+          lxc_entries.sort(key=lambda x: x[0])
+
           marker = "<!-- LXC_INSERT -->"
 
-          lxc_section = "**LXC Templates** (`.tar.zst` — Proxmox CT template, SHA-256):\n"
-          for name, cs in lxc_entries:
-              lxc_section += f"\n*{name}*:\n```\n{cs}\n```\n"
+          section = "### Checksums (SHA-256)\n\n"
 
-          bundle_section = ""
           if bundle_checksum:
-              bundle_section = (
-                  "\n**App Bundle** (`.tar.gz` — for in-place updates via `obs-update`, SHA-256):\n"
+              section += (
+                  "**App Bundle** (`.tar.gz` — for in-place updates via `obs-update`):\n"
                   f"```\n{bundle_checksum}\n```\n\n"
               )
 
-          section = (
-              "### Checksums\n\n"
-              + lxc_section
-              + bundle_section
-              + marker
-          )
+          if lxc_entries:
+              section += "**LXC Templates** (`.tar.zst` — Proxmox CT template):\n"
+              for name, cs in lxc_entries:
+                  section += f"\n*{name}*:\n```\n{cs}\n```\n"
+              section += "\n"
+
+          section += marker
+
           print(body.replace(marker, section), end='')
           PYEOF
 
