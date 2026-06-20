@@ -215,7 +215,7 @@ async def test_node_and_tree_filters_compose_with_authz_filtering(db: Database, 
 
 
 @pytest.mark.asyncio
-async def test_node_and_tree_filters_include_directly_granted_datapoints(db: Database, monkeypatch):
+async def test_node_and_tree_filters_do_not_reveal_directly_granted_datapoint_hierarchy(db: Database, monkeypatch):
     await _insert_tree(db, "building")
     await _insert_node(db, "root", tree_id="building")
     await _insert_node(db, "room", tree_id="building", parent_id="root")
@@ -234,10 +234,10 @@ async def test_node_and_tree_filters_include_directly_granted_datapoints(db: Dat
     node_result = await _call_search(db, principal, q="AuthZ Search", node_id="root")
     tree_result = await _call_search(db, principal, q="AuthZ Search", tree_id="building")
 
-    assert [item.id for item in node_result.items] == [direct.id]
-    assert node_result.total == 1
-    assert [item.id for item in tree_result.items] == [direct.id]
-    assert tree_result.total == 1
+    assert node_result.items == []
+    assert node_result.total == 0
+    assert tree_result.items == []
+    assert tree_result.total == 0
 
 
 @pytest.mark.asyncio

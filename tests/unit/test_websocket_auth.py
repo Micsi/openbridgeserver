@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -237,6 +238,35 @@ async def test_websocket_endpoint_filters_api_key_subscriptions_by_datapoint_aut
 
     assert ws.accepted is True
     assert ws.sent == [{"action": "subscribed", "ids": ["allowed-dp"]}]
+
+
+@pytest.mark.asyncio
+async def test_websocket_endpoint_preserves_api_key_log_access_with_datapoint_scope(monkeypatch):
+    monkeypatch.setattr(auth_api, "hash_api_key", lambda key: f"hash:{key}")
+    monkeypatch.setattr(ws_api, "get_db", lambda: _ApiKeyScopeDbStub())
+
+    async def _filter_authorized_datapoints(_db, _principal, _ids, *, action):
+        return ["allowed-dp"]
+
+    monkeypatch.setattr(ws_api, "filter_authorized_datapoints", _filter_authorized_datapoints)
+    monkeypatch.setattr(ws_api, "_ws_has_log_access", AsyncMock(return_value=True))
+
+    manager = ws_api.init_ws_manager()
+    captured: dict = {}
+    original_connect = manager.connect
+
+    async def _capture_connect(*args, **kwargs):
+        captured.update(kwargs)
+        return await original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "connect", _capture_connect)
+    try:
+        await ws_api.websocket_endpoint(_FakeWebSocket(headers={"x-api-key": "obs_valid"}))
+    finally:
+        ws_api.reset_ws_manager()
+
+    assert captured["allowed_dp_ids"] == {"allowed-dp"}
+    assert captured["log_access"] is True
 
 
 @pytest.mark.asyncio

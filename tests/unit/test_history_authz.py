@@ -88,6 +88,16 @@ async def _insert_read_grant(db: Database, *, principal_id: str, node_id: str) -
     )
 
 
+async def _insert_deny_grant(db: Database, *, principal_id: str, node_id: str) -> None:
+    await db.execute_and_commit(
+        """
+        INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+        VALUES ('user', ?, 'hierarchy', ?, 'guest', 'deny')
+        """,
+        (principal_id, node_id),
+    )
+
+
 async def _insert_public_visu_page(db: Database, page_id: str, dp_id: uuid.UUID, *, access: str = "public") -> None:
     page_config = f"""
     {{
@@ -372,6 +382,36 @@ async def test_query_history_authenticated_public_page_context_remains_compatibl
 
     assert result == []
     plugin.query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_query_history_page_fallback_honors_explicit_deny(monkeypatch, db: Database):
+    dp_id = uuid.uuid4()
+    await _seed_datapoint_scope(db, dp_id, node_id="denied")
+    await _insert_deny_grant(db, principal_id="alice", node_id="denied")
+    await _insert_public_visu_page(db, "page-public-deny", dp_id)
+    monkeypatch.setattr(history_api, "get_registry", lambda: _RegistryStub(dp_id))
+    monkeypatch.setattr("obs.api.v1.visu._resolve_access_with_node", AsyncMock(return_value=("public", None)))
+
+    plugin = MagicMock()
+    plugin.query = AsyncMock()
+    monkeypatch.setattr(history_api, "get_history_plugin", lambda: plugin)
+
+    request = MagicMock()
+    request.headers.get = lambda key, default=None: {"X-Page-Id": "page-public-deny"}.get(key, default)
+    with pytest.raises(HTTPException) as exc_info:
+        await history_api.query_history(
+            dp_id=dp_id,
+            from_ts=None,
+            to_ts=None,
+            limit=100,
+            request=request,
+            principal=_principal("alice"),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 404
+    plugin.query.assert_not_called()
 
 
 @pytest.mark.asyncio

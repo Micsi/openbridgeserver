@@ -20,7 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, field_serializer
 
 from obs.api.auth import Principal, get_admin_user, get_current_principal, optional_current_user
-from obs.api.authz import AuthzAction, authorize
+from obs.api.authz import AuthzAction, AuthzTarget, authorize
 from obs.api.authz_service import filter_authorized_datapoints, load_role_grants, resolve_datapoint_targets
 from obs.api.v1.datapoint_config import collect_datapoint_ids_from_config
 from obs.api.v1.sessions import validate_session
@@ -230,12 +230,18 @@ async def _can_read_datapoint(db: Database, principal: Principal, dp_id: uuid.UU
 
 
 async def _has_explicit_datapoint_read_deny(db: Database, principal: Principal, dp_id: uuid.UUID) -> bool:
+    dp_id_str = str(dp_id)
     grants = await load_role_grants(db, principal)
-    targets_by_dp = await resolve_datapoint_targets(db, [str(dp_id)])
+    targets_by_dp = await resolve_datapoint_targets(db, [dp_id_str])
+    direct_grant_ids = {grant.node_id for grant in grants if grant.node_type == "datapoint" and grant.node_id == dp_id_str}
+    for direct_dp_id in direct_grant_ids:
+        targets = targets_by_dp.setdefault(direct_dp_id, [])
+        if not any(target.node_type == "datapoint" and target.node_id == direct_dp_id for target in targets):
+            targets.append(AuthzTarget(node_type="datapoint", node_id=direct_dp_id))
     decision = authorize(
         principal=principal,
         action=AuthzAction.READ,
-        targets=targets_by_dp.get(str(dp_id), []),
+        targets=targets_by_dp.get(dp_id_str, []),
         grants=grants,
     )
     return decision.reason == "explicit_deny"
