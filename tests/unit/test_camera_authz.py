@@ -326,6 +326,35 @@ async def test_proxy_camera_rejects_unconfigured_api_key_target(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
+async def test_proxy_camera_rejects_basic_credentials_that_do_not_match_page_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    db: Database,
+):
+    await _insert_camera_page(
+        db,
+        access="public",
+        config_extra=', "authType": "basic", "username": "cam-user", "password": "secret"',
+    )
+    build_targets = AsyncMock()
+    monkeypatch.setattr(camera_api, "_build_fetch_targets", build_targets)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await camera_api.proxy_camera(
+            url=CAMERA_URL,
+            username="cam-user",
+            password="other",
+            apikey_param="",
+            apikey_value="",
+            page_id="page-camera",
+            _user=None,
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 404
+    build_targets.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_proxy_camera_blocks_unassigned_user_page_scope(monkeypatch: pytest.MonkeyPatch, db: Database):
     await _insert_user(db, "alice")
     await _insert_camera_page(db, access="user")

@@ -196,6 +196,39 @@ async def test_websocket_endpoint_filters_jwt_subscriptions_by_datapoint_authz(m
 
 
 @pytest.mark.asyncio
+async def test_websocket_endpoint_adds_page_scope_for_authenticated_page_context(monkeypatch):
+    def _decode_token(token: str, expected_type: str = "access") -> str:
+        if token == "valid.jwt.token" and expected_type == "access":
+            return "alice"
+        raise HTTPException(401, "invalid")
+
+    async def _filter_authorized_datapoints(_db, _principal, _ids, *, action):
+        return []
+
+    page_allowed = AsyncMock(return_value={"page-dp"})
+    monkeypatch.setattr(auth_api, "decode_token", _decode_token)
+    monkeypatch.setattr(ws_api, "get_db", lambda: _JwtScopeDbStub(is_admin=False))
+    monkeypatch.setattr(ws_api, "filter_authorized_datapoints", _filter_authorized_datapoints)
+    monkeypatch.setattr(ws_api, "_page_allowed_datapoints", page_allowed)
+    monkeypatch.setattr("obs.api.v1.visu._resolve_access_with_node", _resolve_public_access)
+
+    ws = _FakeWebSocket(
+        headers={"authorization": "Bearer valid.jwt.token"},
+        query_params={"page_id": "page-public"},
+        received=[{"action": "subscribe", "ids": ["page-dp", "blocked-dp"]}],
+    )
+    ws_api.init_ws_manager()
+    try:
+        await ws_api.websocket_endpoint(ws)
+    finally:
+        ws_api.reset_ws_manager()
+
+    assert ws.accepted is True
+    assert ws.sent == [{"action": "subscribed", "ids": ["page-dp"]}]
+    page_allowed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_websocket_endpoint_accepts_api_key(monkeypatch):
     monkeypatch.setattr(auth_api, "hash_api_key", lambda key: f"hash:{key}")
     db = _DbStub(has_key=True)

@@ -40,6 +40,10 @@ export function createWebSocketClient() {
     }
   }
 
+  function dispatch(data: Record<string, unknown>) {
+    for (const handler of handlers) handler(data)
+  }
+
   function connect(nextContext: ConnectContext = {}) {
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       return
@@ -91,7 +95,7 @@ export function createWebSocketClient() {
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as Record<string, unknown>
-        for (const handler of handlers) handler(data)
+        dispatch(data)
       } catch {
         // ungültige Nachricht ignorieren
       }
@@ -145,6 +149,8 @@ export function createWebSocketClient() {
       handlers.add(handler)
       return () => handlers.delete(handler)
     },
+
+    dispatch,
   }
 }
 

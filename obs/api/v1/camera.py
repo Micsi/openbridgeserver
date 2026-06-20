@@ -60,7 +60,7 @@ async def _camera_auth(
     return None
 
 
-def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
+def _page_config_contains_camera_url(page_config: Any, url: str, username: str = "", password: str = "") -> bool:
     if isinstance(page_config, str):
         try:
             page_config = json.loads(page_config)
@@ -74,6 +74,8 @@ def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
         return False
 
     expected_url = url.strip()
+    expected_username = username.strip()
+    expected_password = password
 
     def _camera_target(config: dict[str, Any]) -> str:
         target = str(config.get("url", "")).strip()
@@ -85,6 +87,12 @@ def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
                 target = f"{target}{sep}{api_key_param}={api_key_value}"
         return target
 
+    def _camera_credentials_match(config: dict[str, Any]) -> bool:
+        auth_type = str(config.get("authType", "none"))
+        if auth_type == "basic":
+            return str(config.get("username", "")).strip() == expected_username and str(config.get("password", "")) == expected_password
+        return not expected_username and not expected_password
+
     def _is_camera_widget(widget: dict[str, Any]) -> bool:
         widget_type = widget.get("type", widget.get("widgetType"))
         return str(widget_type or "").lower() in {"kamera", "camera"}
@@ -92,7 +100,7 @@ def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
     def _contains_camera(widget: dict[str, Any]) -> bool:
         config = widget.get("config")
         if isinstance(config, dict):
-            if _is_camera_widget(widget) and _camera_target(config) == expected_url:
+            if _is_camera_widget(widget) and _camera_target(config) == expected_url and _camera_credentials_match(config):
                 return True
             mini_widgets = config.get("miniWidgets")
             if isinstance(mini_widgets, list):
@@ -105,7 +113,15 @@ def _page_config_contains_camera_url(page_config: Any, url: str) -> bool:
     return False
 
 
-async def _ensure_camera_page_scope(db: Database, page_id: str, url: str, user: str | None, session_token: str = "") -> None:
+async def _ensure_camera_page_scope(
+    db: Database,
+    page_id: str,
+    url: str,
+    user: str | None,
+    session_token: str = "",
+    username: str = "",
+    password: str = "",
+) -> None:
     row = await db.fetchone(
         "SELECT page_config FROM visu_nodes WHERE id = ? AND type = 'PAGE'",
         (page_id,),
@@ -128,7 +144,7 @@ async def _ensure_camera_page_scope(db: Database, page_id: str, url: str, user: 
         )
     if access == "user" and not await _check_user_access(db, page_id, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
-    if not _page_config_contains_camera_url(row["page_config"], url):
+    if not _page_config_contains_camera_url(row["page_config"], url, username, password):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kamera nicht gefunden")
 
 
@@ -169,7 +185,7 @@ async def proxy_camera(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Kamera-Page-Scope erforderlich",
         )
-    await _ensure_camera_page_scope(db, page_id.strip(), target, _user, session_token)
+    await _ensure_camera_page_scope(db, page_id.strip(), target, _user, session_token, username, password)
 
     # 4. SSRF-Prüfung und DNS-Pinning auf validierte Ziel-IP
     request_urls, pinned_headers, request_extensions = await _build_fetch_targets(target)

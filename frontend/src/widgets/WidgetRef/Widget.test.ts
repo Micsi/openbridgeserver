@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   wsSubscribe: vi.fn(),
   wsUnsubscribe: vi.fn(),
   wsOnMessage: vi.fn(),
+  wsDispatch: vi.fn(),
   messageHandlers: [] as Array<(msg: Record<string, unknown>) => void>,
 }))
 
@@ -50,6 +51,9 @@ vi.mock('@/composables/useWebSocket', () => ({
     subscribe: mocks.wsSubscribe,
     unsubscribe: mocks.wsUnsubscribe,
     onMessage: mocks.wsOnMessage,
+  }),
+  useWebSocket: () => ({
+    dispatch: mocks.wsDispatch,
   }),
 }))
 
@@ -226,6 +230,43 @@ describe('WidgetRef source page context', () => {
     expect(wrapper.get('[data-testid="ref-target"]').attributes('data-session-token')).toBe('session-root')
   })
 
+  it('keeps JWT transport for protected source pages without a source session token', async () => {
+    mocks.getBreadcrumb.mockResolvedValue([
+      { id: 'protected-root', access: 'protected' },
+      { id: 'source-page', access: null },
+    ])
+    mocks.getWidgetRef.mockResolvedValue([
+      {
+        id: 'widget-1',
+        name: 'Protected Widget',
+        type: 'RefTarget',
+        datapoint_id: 'dp-1',
+        status_datapoint_id: null,
+        x: 0,
+        y: 0,
+        w: 2,
+        h: 2,
+        config: {},
+      },
+    ])
+
+    mount(WidgetRef, {
+      props: {
+        config: {
+          source_page_id: 'source-page',
+          source_widget_name: 'Protected Widget',
+        },
+        datapointId: null,
+        value: null,
+        statusValue: null,
+        editorMode: false,
+      },
+    })
+    await flushPromises()
+
+    expect(mocks.wsConnect).toHaveBeenCalledWith({ pageId: 'source-page' })
+  })
+
   it('renders live values received through the source-scoped websocket', async () => {
     mocks.getWidgetRef.mockResolvedValue([
       {
@@ -260,5 +301,41 @@ describe('WidgetRef source page context', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.get('[data-testid="ref-target"]').attributes('data-value')).toBe('42')
+  })
+
+  it('forwards source-scoped websocket messages to child widget listeners', async () => {
+    mocks.getWidgetRef.mockResolvedValue([
+      {
+        id: 'widget-1',
+        name: 'Referenced Chart',
+        type: 'RefTarget',
+        datapoint_id: 'dp-1',
+        status_datapoint_id: null,
+        x: 0,
+        y: 0,
+        w: 2,
+        h: 2,
+        config: {},
+      },
+    ])
+
+    mount(WidgetRef, {
+      props: {
+        config: {
+          source_page_id: 'source-page',
+          source_widget_name: 'Referenced Chart',
+        },
+        datapointId: null,
+        value: null,
+        statusValue: null,
+        editorMode: false,
+      },
+    })
+    await flushPromises()
+
+    const msg = { id: 'dp-1', v: 42, u: 'W', t: '2026-06-15T00:00:00.000Z', q: 'good' }
+    mocks.messageHandlers[0](msg)
+
+    expect(mocks.wsDispatch).toHaveBeenCalledWith(msg)
   })
 })

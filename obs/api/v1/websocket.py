@@ -506,6 +506,32 @@ async def _ws_authorized_datapoint_scope(db: Database, principal: Principal) -> 
     return set(allowed)
 
 
+async def _ws_authenticated_page_scope(
+    db: Database,
+    page_id: str,
+    principal: Principal,
+    session_token: str | None,
+) -> set[str] | None:
+    from obs.api.v1.visu import _check_user_access, _resolve_access_with_node
+
+    async def _can_access_page(candidate_page_id: str) -> bool:
+        access, defining_node_id = await _resolve_access_with_node(db, candidate_page_id)
+        if access in ("public", "readonly"):
+            return True
+        if access == "protected":
+            if principal.type == "user":
+                return True
+            validate_id = defining_node_id or candidate_page_id
+            return bool(session_token and sessions_api.validate_session(session_token, validate_id))
+        if access == "user" and principal.type == "user":
+            return await _check_user_access(db, candidate_page_id, principal.subject)
+        return False
+
+    if not await _can_access_page(page_id):
+        return None
+    return await _page_allowed_datapoints(db, page_id, widget_ref_access_check=_can_access_page)
+
+
 # ---------------------------------------------------------------------------
 # Singleton
 # ---------------------------------------------------------------------------
@@ -591,6 +617,10 @@ async def websocket_endpoint(
         db = get_db()
         principal = await _jwt_principal(db, user)
         allowed_dp_ids = await _ws_authorized_datapoint_scope(db, principal)
+        if page_id and allowed_dp_ids is not None:
+            page_scope_ids = await _ws_authenticated_page_scope(db, page_id, principal, subprotocol_session or ws.query_params.get("session_token"))
+            if page_scope_ids is not None:
+                allowed_dp_ids.update(page_scope_ids)
 
     if user is None:
         if not page_id:

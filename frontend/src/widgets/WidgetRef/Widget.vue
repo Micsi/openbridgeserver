@@ -8,7 +8,7 @@
  */
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { getSessionToken, visu } from '@/api/client'
-import { createWebSocketClient } from '@/composables/useWebSocket'
+import { createWebSocketClient, useWebSocket } from '@/composables/useWebSocket'
 import { useDatapointsStore } from '@/stores/datapoints'
 import { WidgetRegistry } from '@/widgets/registry'
 import type { DataPointValue, WidgetInstance } from '@/types'
@@ -29,6 +29,7 @@ const sourceSessionNodeId = ref('')
 const sourceAccess = ref('public')
 const sourceValues = ref<Record<string, DataPointValue>>({})
 const sourceWs = createWebSocketClient()
+const defaultWs = useWebSocket()
 
 const sourcePageId     = computed(() => (props.config.source_page_id     as string | undefined) ?? '')
 const sourceWidgetName = computed(() => (props.config.source_widget_name as string | undefined) ?? '')
@@ -48,6 +49,7 @@ sourceWs.onMessage((msg) => {
       t: (msg.t as string | undefined) ?? new Date().toISOString(),
       q: (msg.q as DataPointValue['q']) ?? 'good',
     }
+    defaultWs.dispatch(msg)
   }
 })
 
@@ -85,9 +87,10 @@ async function loadReference() {
     if (found) {
       const ids = [found.datapoint_id, found.status_datapoint_id].filter(Boolean) as string[]
       if (ids.length) {
+        const preferPageScope = sourceAccess.value !== 'user' && (sourceAccess.value !== 'protected' || !!sourceSessionToken.value)
         sourceWs.connect({
           ...sourceReadContext.value,
-          preferPageScope: sourceAccess.value !== 'user',
+          ...(preferPageScope ? { preferPageScope } : {}),
         })
         sourceWs.subscribe(ids)
         dpStore.fetchInitialValues(ids, sourceReadContext.value)
