@@ -50,6 +50,10 @@ const selectedNode = computed(() =>
   cfg.target_node_id ? store.getNode(cfg.target_node_id) : null,
 )
 
+const selectedNodeTitle = computed(() =>
+  selectedNode.value ? nodePath(selectedNode.value) : undefined,
+)
+
 const filteredNodes = computed(() => {
   const q = searchQuery.value.toLowerCase().trim()
   return store.nodes
@@ -95,7 +99,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onDocClick))
       <input
         v-model="cfg.label"
         type="text"
-        placeholder="z.B. Wohnzimmer"
+        :placeholder="$t('widgets.link.labelPlaceholder')"
         class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500"
       />
     </div>
@@ -109,7 +113,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onDocClick))
     <!-- Icon anzeigen -->
     <label class="flex items-center gap-2 cursor-pointer select-none">
       <input type="checkbox" v-model="cfg.show_icon" class="rounded" />
-      <span class="text-xs text-gray-500 dark:text-gray-400">Icon anzeigen</span>
+      <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('widgets.link.showIcon') }}</span>
     </label>
 
     <!-- Ziel-Seite (suchbarer Picker) -->
@@ -129,7 +133,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onDocClick))
           <span
             class="flex-1 text-sm truncate"
             :class="selectedNode ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'"
-            :title="selectedNode ? nodePath(selectedNode) : undefined"
+            :title="selectedNodeTitle"
           >
             {{ selectedNode ? nodePath(selectedNode) : $t('widgets.common.selectPage') }}
           </span>
