@@ -532,6 +532,32 @@ async def _ws_authenticated_page_scope(
     return await _page_allowed_datapoints(db, page_id, widget_ref_access_check=_can_access_page)
 
 
+async def _merge_authenticated_page_scope(
+    db: Database,
+    allowed_dp_ids: set[str],
+    page_id: str,
+    principal: Principal,
+    session_token: str | None,
+) -> None:
+    page_scope_ids = await _ws_authenticated_page_scope(db, page_id, principal, session_token)
+    if page_scope_ids is None:
+        return
+
+    from obs.api.v1.datapoints import _has_explicit_datapoint_read_deny
+
+    explicitly_denied: set[str] = set()
+    for dp_id in page_scope_ids:
+        try:
+            dp_uuid = uuid.UUID(dp_id)
+        except (TypeError, ValueError):
+            continue
+        if await _has_explicit_datapoint_read_deny(db, principal, dp_uuid):
+            explicitly_denied.add(dp_id)
+
+    allowed_dp_ids.difference_update(explicitly_denied)
+    allowed_dp_ids.update(page_scope_ids - explicitly_denied)
+
+
 # ---------------------------------------------------------------------------
 # Singleton
 # ---------------------------------------------------------------------------
@@ -614,17 +640,13 @@ async def websocket_endpoint(
         principal = await get_current_principal(credentials=None, api_key=api_key, db=db)
         allowed_dp_ids = await _ws_authorized_datapoint_scope(db, principal)
         if page_id and allowed_dp_ids is not None:
-            page_scope_ids = await _ws_authenticated_page_scope(db, page_id, principal, subprotocol_session or ws.query_params.get("session_token"))
-            if page_scope_ids is not None:
-                allowed_dp_ids.update(page_scope_ids)
+            await _merge_authenticated_page_scope(db, allowed_dp_ids, page_id, principal, subprotocol_session or ws.query_params.get("session_token"))
     elif user is not None:
         db = get_db()
         principal = await _jwt_principal(db, user)
         allowed_dp_ids = await _ws_authorized_datapoint_scope(db, principal)
         if page_id and allowed_dp_ids is not None:
-            page_scope_ids = await _ws_authenticated_page_scope(db, page_id, principal, subprotocol_session or ws.query_params.get("session_token"))
-            if page_scope_ids is not None:
-                allowed_dp_ids.update(page_scope_ids)
+            await _merge_authenticated_page_scope(db, allowed_dp_ids, page_id, principal, subprotocol_session or ws.query_params.get("session_token"))
 
     if user is None:
         if not page_id:

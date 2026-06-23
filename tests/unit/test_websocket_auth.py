@@ -304,6 +304,41 @@ async def test_websocket_endpoint_adds_page_scope_for_api_key_page_context(monke
 
 
 @pytest.mark.asyncio
+async def test_websocket_endpoint_api_key_page_scope_honors_explicit_deny(monkeypatch):
+    monkeypatch.setattr(auth_api, "hash_api_key", lambda key: f"hash:{key}")
+    allowed_dp = str(uuid4())
+    denied_dp = str(uuid4())
+
+    async def _filter_authorized_datapoints(_db, _principal, _ids, *, action):
+        assert action is ws_api.AuthzAction.READ
+        return []
+
+    async def _has_explicit_deny(_db, _principal, dp_id):
+        return str(dp_id) == denied_dp
+
+    page_allowed = AsyncMock(return_value={allowed_dp, denied_dp})
+    monkeypatch.setattr(ws_api, "get_db", lambda: _ApiKeyScopeDbStub())
+    monkeypatch.setattr(ws_api, "filter_authorized_datapoints", _filter_authorized_datapoints)
+    monkeypatch.setattr(ws_api, "_page_allowed_datapoints", page_allowed)
+    monkeypatch.setattr("obs.api.v1.datapoints._has_explicit_datapoint_read_deny", _has_explicit_deny)
+    monkeypatch.setattr("obs.api.v1.visu._resolve_access_with_node", _resolve_public_access)
+
+    ws = _FakeWebSocket(
+        headers={"x-api-key": "obs_valid"},
+        query_params={"page_id": "page-public"},
+        received=[{"action": "subscribe", "ids": [allowed_dp, denied_dp]}],
+    )
+    ws_api.init_ws_manager()
+    try:
+        await ws_api.websocket_endpoint(ws)
+    finally:
+        ws_api.reset_ws_manager()
+
+    assert ws.accepted is True
+    assert ws.sent == [{"action": "subscribed", "ids": [allowed_dp]}]
+
+
+@pytest.mark.asyncio
 async def test_websocket_endpoint_preserves_api_key_log_access_with_datapoint_scope(monkeypatch):
     monkeypatch.setattr(auth_api, "hash_api_key", lambda key: f"hash:{key}")
     monkeypatch.setattr(ws_api, "get_db", lambda: _ApiKeyScopeDbStub())
