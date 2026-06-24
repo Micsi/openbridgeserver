@@ -155,7 +155,7 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
 
     <!-- Status 1 -->
     <div>
-      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{ $t('widgets.rolladen.indicatorLabel', { n: 1 }) }</label>
+      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ $t('widgets.rolladen.indicatorLabel', { n: 1 }) }}</label>
       <input
         v-model="cfg.label_status_1"
         type="text"
@@ -171,7 +171,7 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
 
     <!-- Status 2 -->
     <div>
-      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{ $t('widgets.rolladen.indicatorLabel', { n: 2 }) }</label>
+      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ $t('widgets.rolladen.indicatorLabel', { n: 2 }) }}</label>
       <input
         v-model="cfg.label_status_2"
         type="text"
@@ -187,7 +187,7 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
 
     <!-- Status 3 -->
     <div>
-      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{ $t('widgets.rolladen.indicatorLabel', { n: 3 }) }</label>
+      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ $t('widgets.rolladen.indicatorLabel', { n: 3 }) }}</label>
       <input
         v-model="cfg.label_status_3"
         type="text"
@@ -203,7 +203,7 @@ watch(cfg, () => emit('update:modelValue', { ...cfg }), { deep: true })
 
     <!-- Status 4 -->
     <div>
-      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{ $t('widgets.rolladen.indicatorLabel', { n: 4 }) }</label>
+      <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ $t('widgets.rolladen.indicatorLabel', { n: 4 }) }}</label>
       <input
         v-model="cfg.label_status_4"
         type="text"
