@@ -570,10 +570,12 @@
       "dpWStatus": "Read white (status, optional)"
     },
     "link": {
-      "title": "Link",
-      "targetPage": "Target page",
       "defaultLabel": "Link",
-      "noTarget": "No target"
+      "labelPlaceholder": "e.g. Living room",
+      "noTarget": "No target",
+      "showIcon": "Show icon",
+      "targetPage": "Target page",
+      "title": "Link"
     },
     "qrcode": {
       "title": "QR code",
