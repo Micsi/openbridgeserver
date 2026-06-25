@@ -185,6 +185,9 @@ tar -xzf "$TMP/$BUNDLE_FILENAME" -C "$INSTALL_DIR"
 cp "$INSTALL_DIR/obs-update" /usr/local/bin/obs-update
 chmod +x /usr/local/bin/obs-update
 rm -f "$INSTALL_DIR/obs-update"
+cp "$INSTALL_DIR/obs-admin" /usr/local/bin/obs-admin
+chmod +x /usr/local/bin/obs-admin
+rm -f "$INSTALL_DIR/obs-admin"
 
 echo "$TARGET" > "$INSTALL_DIR/version"
 
@@ -198,7 +201,7 @@ cp /tmp/obs-update obs-update
 
 # ── App bundle ─────────────────────────────────────────────────────────────────
 echo "==> Creating app bundle..."
-tar -czf "/tmp/$APP_BUNDLE_FILE" obs/ gui_dist/ frontend_dist/ requirements.txt obs-update
+tar -czf "/tmp/$APP_BUNDLE_FILE" obs/ gui_dist/ frontend_dist/ requirements.txt obs-update obs-admin
 (cd /tmp && sha512sum "$APP_BUNDLE_FILE" > "$APP_BUNDLE_FILE.sha512")
 cp "/tmp/$APP_BUNDLE_FILE" "/tmp/$APP_BUNDLE_FILE.sha512" /output/
 
@@ -287,8 +290,11 @@ cp -r obs              "$ROOTFS/opt/obs/"
 cp -r gui_dist         "$ROOTFS/opt/obs/"
 cp -r frontend_dist    "$ROOTFS/opt/obs/"
 cp    requirements.txt "$ROOTFS/opt/obs/"
+cp    obs-admin        "$ROOTFS/opt/obs/"
 echo "$VERSION" | tee "$ROOTFS/opt/obs/version" > /dev/null
 cp /tmp/obs-update "$ROOTFS/usr/local/bin/obs-update"
+cp obs-admin "$ROOTFS/usr/local/bin/obs-admin"
+chmod +x "$ROOTFS/usr/local/bin/obs-admin"
 
 chroot "$ROOTFS" /bin/bash << 'INSTALL'
 set -euo pipefail

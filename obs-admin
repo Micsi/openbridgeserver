@@ -1,0 +1,13 @@
+#!/bin/sh
+if [ -d /opt/obs/obs ] && [ -x /opt/obs/venv/bin/python3 ]; then
+  cd /opt/obs || exit 1
+  exec /opt/obs/venv/bin/python3 -m obs.admin_cli "$@"
+fi
+if [ -d /app/obs ]; then
+  cd /app || exit 1
+  exec python3 -m obs.admin_cli "$@"
+fi
+if [ -x ./.venv/bin/python3 ]; then
+  exec ./.venv/bin/python3 -m obs.admin_cli "$@"
+fi
+exec python3 -m obs.admin_cli "$@"
