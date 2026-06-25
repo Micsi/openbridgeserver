@@ -83,10 +83,7 @@ def resolve_database_path(db_arg: str | None = None, *, require_exists: bool = T
     if use_legacy_fallback:
         path = _with_legacy_db_fallback(path)
     if require_exists and not path.exists():
-        raise AdminCliError(
-            f"Keine OBS-Konfigurationsdatenbank gefunden: {path}. "
-            "Nutze --db /pfad/zu/obs.db oder setze OBS_DATABASE__PATH."
-        )
+        raise AdminCliError(f"Keine OBS-Konfigurationsdatenbank gefunden: {path}. Nutze --db /pfad/zu/obs.db oder setze OBS_DATABASE__PATH.")
     return path
 
 
@@ -236,10 +233,14 @@ def list_adapters(db_path: Path) -> list[dict[str, Any]]:
     try:
         if not _table_exists(conn, "adapter_instances"):
             return []
-        binding_counts = {
-            row["adapter_instance_id"] or "": int(row["count"])
-            for row in conn.execute("SELECT adapter_instance_id, COUNT(*) AS count FROM adapter_bindings GROUP BY adapter_instance_id").fetchall()
-        } if _table_exists(conn, "adapter_bindings") else {}
+        binding_counts = (
+            {
+                row["adapter_instance_id"] or "": int(row["count"])
+                for row in conn.execute("SELECT adapter_instance_id, COUNT(*) AS count FROM adapter_bindings GROUP BY adapter_instance_id").fetchall()
+            }
+            if _table_exists(conn, "adapter_bindings")
+            else {}
+        )
         result = []
         for row in _rows(conn, "SELECT * FROM adapter_instances ORDER BY adapter_type, name"):
             result.append(
@@ -400,8 +401,7 @@ def set_loglevel(db_path: Path, level: str, *, backup: bool = True) -> dict[str,
             raise AdminCliError("Tabelle app_settings fehlt. Bitte Datenbankmigrationen ausfuehren.")
         _begin_immediate(conn)
         conn.execute(
-            "INSERT INTO app_settings (key, value) VALUES ('server.log_level', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            "INSERT INTO app_settings (key, value) VALUES ('server.log_level', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (normalized,),
         )
         conn.commit()
@@ -450,16 +450,24 @@ def _count(conn: sqlite3.Connection, table: str, where: str = "", params: tuple[
 def create_support_package(db_path: Path) -> dict[str, Any]:
     conn = connect_database(db_path)
     try:
-        binding_counts = {
-            row["adapter_instance_id"] or "": int(row["count"])
-            for row in conn.execute("SELECT adapter_instance_id, COUNT(*) AS count FROM adapter_bindings GROUP BY adapter_instance_id").fetchall()
-        } if _table_exists(conn, "adapter_bindings") else {}
-        object_counts = {
-            row["adapter_instance_id"] or "": int(row["count"])
-            for row in conn.execute(
-                "SELECT adapter_instance_id, COUNT(DISTINCT datapoint_id) AS count FROM adapter_bindings GROUP BY adapter_instance_id"
-            ).fetchall()
-        } if _table_exists(conn, "adapter_bindings") else {}
+        binding_counts = (
+            {
+                row["adapter_instance_id"] or "": int(row["count"])
+                for row in conn.execute("SELECT adapter_instance_id, COUNT(*) AS count FROM adapter_bindings GROUP BY adapter_instance_id").fetchall()
+            }
+            if _table_exists(conn, "adapter_bindings")
+            else {}
+        )
+        object_counts = (
+            {
+                row["adapter_instance_id"] or "": int(row["count"])
+                for row in conn.execute(
+                    "SELECT adapter_instance_id, COUNT(DISTINCT datapoint_id) AS count FROM adapter_bindings GROUP BY adapter_instance_id"
+                ).fetchall()
+            }
+            if _table_exists(conn, "adapter_bindings")
+            else {}
+        )
 
         adapters = []
         if _table_exists(conn, "adapter_instances"):
