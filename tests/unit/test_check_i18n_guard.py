@@ -198,6 +198,17 @@ def test_bound_mixed_translation_attribute_flags_literal_piece_only():
     assert violations[0].snippet == "Room"
 
 
+def test_bound_expression_technical_route_literals_are_allowed():
+    src = """<template>
+  <RouterLink :title="item.to === '/adapters' ? item.label : ''" />
+</template>
+"""
+
+    violations = gate.scan_vue("gui/src/components/layout/Sidebar.vue", src, EmptyAllowlist())
+
+    assert violations == []
+
+
 def test_bound_variable_attribute_is_allowed():
     src = """<template>
   <input :placeholder="placeholderText" />
@@ -205,6 +216,40 @@ def test_bound_variable_attribute_is_allowed():
 """
 
     violations = gate.scan_vue("frontend/src/widgets/Info/Config.vue", src, EmptyAllowlist())
+
+    assert violations == []
+
+
+def test_multiline_bound_attribute_translation_calls_are_allowed():
+    src = """<template>
+  <button
+    v-for="m in [
+      { value: 'full', label: $t('widgets.zeitschaltuhr.modeFull'), title: $t('widgets.zeitschaltuhr.modeFullTitle') },
+      { value: 'minimal', label: t('widgets.zeitschaltuhr.modeMinimal'), title: t('widgets.zeitschaltuhr.modeMinimalTitle') },
+    ]"
+    :key="m.value"
+  >{{ m.label }}</button>
+</template>
+"""
+
+    violations = gate.scan_vue("frontend/src/widgets/Zeitschaltuhr/Config.vue", src, EmptyAllowlist())
+
+    assert violations == []
+
+
+def test_nested_template_blocks_do_not_leak_into_script_scan():
+    src = """<script setup>
+const state = 'ready'
+</script>
+
+<template>
+  <template v-if="state === 'ready'">
+    <button :title="$t('auth.login')">{{ $t('auth.login') }}</button>
+  </template>
+</template>
+"""
+
+    violations = gate.scan_vue("frontend/src/components/AuthButton.vue", src, EmptyAllowlist())
 
     assert violations == []
 

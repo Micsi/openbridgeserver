@@ -19,14 +19,13 @@ from typing import Iterable
 
 TARGET_FILE_RE = re.compile(r"^(gui/src|frontend/src)/.+\.(vue|js|ts)$")
 LOCALE_FILE_RE = re.compile(r"^(gui|frontend)/src/locales/(de|en)\.json$")
-TEMPLATE_BLOCK_RE = re.compile(r"<template\b[^>]*>(.*?)</template>", re.IGNORECASE | re.DOTALL)
+TEMPLATE_TAG_RE = re.compile(r"</?template\b[^>]*>", re.IGNORECASE)
 ATTR_RE = re.compile(
     r"(?<![:\w-])\b(label|title|placeholder|alt|aria-label|helper-text|tooltip|caption|headline|confirm-text|cancel-text|no-data-text|loading-text)\s*=\s*(['\"])(.*?)\2"
 )
 BOUND_ATTR_RE = re.compile(
     r"(?:^|\s)(?::|v-bind:)(label|title|placeholder|alt|aria-label|helper-text|tooltip|caption|headline|confirm-text|cancel-text|no-data-text|loading-text)\s*=\s*(['\"])(.*?)\2"
 )
-STRING_TOKEN_RE = re.compile(r"(['\"`])((?:\\.|(?!\1).)*?)\1")
 HTML_TAG_RE = re.compile(r"</?[\w:-]+(?:\s+[^<>]*)?/?>")
 TEXT_NODE_RE = re.compile(r">([^<{][^<]*)<")
 RAW_TRANSLATION_TEXT_RE = re.compile(r"(?:\$t|(?<![\w$])t)\s*\(")
@@ -131,8 +130,6 @@ def should_flag(candidate: str, allowlist: Allowlist, *, allow_technical_tokens:
         return False
     if "{{" in text or "}}" in text:
         return False
-    if RAW_TRANSLATION_TEXT_RE.search(text):
-        return True
     if text.startswith(("$t(", "t(")):
         return False
     if allow_technical_tokens and is_technical_token(text):
@@ -163,6 +160,40 @@ def is_translation_key_argument(expression: str, start: int) -> bool:
     return re.search(r"(?:\$t|(?<![\w$])t)\s*\($", prefix) is not None
 
 
+def is_bound_literal_technical(text: str) -> bool:
+    compact = text.strip()
+    return compact.startswith(("http://", "https://", "/", "./", "../", "#"))
+
+
+def iter_string_literals(expression: str) -> Iterable[tuple[int, str]]:
+    idx = 0
+    quote_chars = {"'", '"', "`"}
+    while idx < len(expression):
+        quote = expression[idx]
+        if quote not in quote_chars:
+            idx += 1
+            continue
+
+        start = idx
+        idx += 1
+        chars: list[str] = []
+        escaped = False
+        while idx < len(expression):
+            char = expression[idx]
+            if escaped:
+                chars.append(char)
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                yield start, "".join(chars)
+                break
+            else:
+                chars.append(char)
+            idx += 1
+        idx += 1
+
+
 def add_violations_from_bound_attrs(
     *,
     path: str,
@@ -173,32 +204,64 @@ def add_violations_from_bound_attrs(
 ) -> None:
     for match in matches:
         expression = match.group(3).strip()
-        for literal in STRING_TOKEN_RE.finditer(expression):
-            if is_translation_key_argument(expression, literal.start()):
+        for start, literal in iter_string_literals(expression):
+            if is_translation_key_argument(expression, start):
                 continue
-            if should_flag(literal.group(2), allowlist, allow_technical_tokens=False):
-                sink.append(Violation(path=path, line=line, kind="template-bound-attr", snippet=normalize_text(literal.group(2))))
+            if is_bound_literal_technical(literal):
+                continue
+            if should_flag(literal, allowlist, allow_technical_tokens=False):
+                sink.append(Violation(path=path, line=line, kind="template-bound-attr", snippet=normalize_text(literal)))
 
 
-def raw_translation_text_violation(path: str, line_no: int, line: str, in_interpolation: bool) -> Violation | None:
+def raw_translation_text_violation(path: str, line_no: int, line: str, in_interpolation: bool, in_tag: bool) -> Violation | None:
     text = normalize_text(HTML_TAG_RE.sub(" ", line))
-    if RAW_TRANSLATION_TEXT_RE.search(text) and not in_interpolation and "{{" not in text and "<" not in text and ">" not in text and "=" not in text:
+    if RAW_TRANSLATION_TEXT_RE.search(text) and not in_interpolation and not in_tag and "{{" not in text and "=" not in text:
         return Violation(path=path, line=line_no, kind="template-text", snippet=text)
     return None
+
+
+def template_blocks(content: str) -> list[tuple[int, int, int, int, int]]:
+    blocks: list[tuple[int, int, int, int, int]] = []
+    stack: list[tuple[int, int]] = []
+    for match in TEMPLATE_TAG_RE.finditer(content):
+        tag = match.group(0)
+        if tag.startswith("</"):
+            if not stack:
+                continue
+            outer_start, body_start = stack.pop()
+            if not stack:
+                start_line = content.count("\n", 0, body_start) + 1
+                blocks.append((body_start, match.start(), start_line, outer_start, match.end()))
+        elif not tag.endswith("/>"):
+            stack.append((match.start(), match.end()))
+    return blocks
+
+
+def strip_template_blocks(content: str, blocks: list[tuple[int, int, int, int, int]]) -> str:
+    stripped = content
+    for _start, _end, _line, outer_start, outer_end in reversed(blocks):
+        stripped = stripped[:outer_start] + "\n" * stripped.count("\n", outer_start, outer_end) + stripped[outer_end:]
+    return stripped
+
+
+def update_tag_depth(depth: int, line: str) -> int:
+    cleaned = HTML_TAG_RE.sub("", line)
+    return max(0, depth + cleaned.count("<") - cleaned.count(">"))
 
 
 def scan_vue(path: str, content: str, allowlist: Allowlist) -> list[Violation]:
     violations: list[Violation] = []
 
-    for tpl_match in TEMPLATE_BLOCK_RE.finditer(content):
-        tpl = tpl_match.group(1)
-        start_line = content.count("\n", 0, tpl_match.start(1)) + 1
+    blocks = template_blocks(content)
+    for start, end, start_line, _outer_start, _outer_end in blocks:
+        tpl = content[start:end]
         interpolation_depth = 0
+        tag_depth = 0
         for idx, raw_line in enumerate(tpl.splitlines(), start=start_line):
             line = COMMENT_RE.sub("", raw_line)
             if not line.strip():
                 continue
-            if violation := raw_translation_text_violation(path, idx, line, interpolation_depth > 0):
+            if violation := raw_translation_text_violation(path, idx, line, interpolation_depth > 0, tag_depth > 0):
                 violations.append(violation)
             add_violations_from_matches(
                 path=path,
@@ -226,8 +289,9 @@ def scan_vue(path: str, content: str, allowlist: Allowlist) -> list[Violation]:
                 sink=violations,
             )
             interpolation_depth = max(0, interpolation_depth + line.count("{{") - line.count("}}"))
+            tag_depth = update_tag_depth(tag_depth, line)
 
-    stripped = TEMPLATE_BLOCK_RE.sub("\n", content)
+    stripped = strip_template_blocks(content, blocks)
     for line_no, raw_line in enumerate(stripped.splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("//"):
