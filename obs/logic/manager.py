@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import email.utils
 import http.cookies
 import ipaddress
@@ -1033,7 +1034,19 @@ class LogicManager:
         # Exception: cron-triggered executions are always treated as a fresh
         # rising edge, since each cron tick is an independent scheduled event.
         cron_node_ids = {n.id for n in flow.nodes if n.type == "timer_cron"}
-        is_cron_execution = bool(overrides.keys() & cron_node_ids)
+        # Forward-reachability from the cron nodes that actually fired this
+        # execution.  Used below to scope the cron-retrigger exception to WoL
+        # nodes that are driven by the firing cron, not every cron in the graph.
+        fired_crons = overrides.keys() & cron_node_ids
+        cron_reachable: set[str] = set(fired_crons)
+        if fired_crons:
+            _cq: list[str] = list(fired_crons)
+            while _cq:
+                _cn = _cq.pop()
+                for _ce in flow.edges:
+                    if _ce.source == _cn and _ce.target not in cron_reachable:
+                        cron_reachable.add(_ce.target)
+                        _cq.append(_ce.target)
         triggered_wol_nodes: set[str] = set()
         for node in flow.nodes:
             if node.type != "wake_on_lan":
@@ -1042,8 +1055,13 @@ class LogicManager:
             hyst_wol = hyst.setdefault(node.id, {})
             is_triggered = GraphExecutor._to_bool(out.get("_trigger"))
             was_triggered = hyst_wol.get("wol_prev_trigger", False)
-            hyst_wol["wol_prev_trigger"] = is_triggered
-            if not is_triggered or (was_triggered and not is_cron_execution):
+            # Cron-retrigger exception applies only when the firing cron node
+            # actually drives this specific WoL node (reachability check above).
+            is_cron_triggered = node.id in cron_reachable
+            if not is_triggered:
+                hyst_wol["wol_prev_trigger"] = False
+                continue
+            if was_triggered and not is_cron_triggered:
                 continue
             mac = (node.data.get("mac_address") or "").strip()
             if not mac:
@@ -1062,6 +1080,9 @@ class LogicManager:
                 except ValueError:
                     raise ValueError(f"invalid broadcast IP {broadcast!r}") from None
                 await asyncio.to_thread(_send_wol_packet, mac, broadcast, port)
+                # Record the consumed rising edge only after a successful send so
+                # that a transient failure does not silently suppress the next attempt.
+                hyst_wol["wol_prev_trigger"] = True
                 outputs[node.id]["sent"] = True
                 triggered_wol_nodes.add(node.id)
                 mac_oui = ":".join(mac.upper().split(":")[:3]) + ":??:??:??" if ":" in mac else "??:??:??:??:??:??"
@@ -1091,7 +1112,11 @@ class LogicManager:
                 wol_merged: dict[str, dict[str, Any]] = {nid: dict(vals) for nid, vals in aug_overrides.items()}
                 for nid, vals in wol_downstream_overrides.items():
                     wol_merged.setdefault(nid, {}).update(vals)
-                wol_second_executor = GraphExecutor(flow, hyst, self._app_config)
+                # Use a deep copy of hyst so that stateful nodes (statistics,
+                # avg_multi, …) don't accumulate a second sample just because
+                # a WoL edge is present — we only want their *outputs*, not
+                # a second mutation of their persisted state.
+                wol_second_executor = GraphExecutor(flow, copy.deepcopy(hyst), self._app_config)
                 wol_second_outputs = wol_second_executor.execute(wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
                 # their descendants are updated, leaving unrelated nodes intact.
@@ -1253,8 +1278,20 @@ class LogicManager:
                 second_executor = GraphExecutor(flow, hyst, self._app_config)
                 second_outputs = second_executor.execute(downstream_overrides)
                 api_client_ids = {n.id for n in flow.nodes if n.type == "api_client"}
+                # Compute transitive descendants of triggered api_clients so that
+                # only their subtree is updated.  This prevents the api_client
+                # second pass from overwriting WoL-propagated outputs that were
+                # already written to outputs[] by the WoL second pass above.
+                api_descendants: set[str] = set()
+                _aq: list[str] = list(triggered_api_clients)
+                while _aq:
+                    _an = _aq.pop()
+                    for _ae in flow.edges:
+                        if _ae.source == _an and _ae.target not in api_descendants:
+                            api_descendants.add(_ae.target)
+                            _aq.append(_ae.target)
                 for nid, vals in second_outputs.items():
-                    if nid not in api_client_ids:
+                    if nid not in api_client_ids and nid in api_descendants:
                         outputs[nid] = vals
 
         # ── Handle notify_pushover ────────────────────────────────────────
