@@ -198,6 +198,12 @@ else
     exit 1
 fi
 
+tar -tzf "$TMP/$BUNDLE_FILENAME" > "$TMP/bundle-files.txt"
+BUNDLE_HAS_OBS_ADMIN=false
+if grep -Eq '^(\./)?obs-admin$' "$TMP/bundle-files.txt"; then
+    BUNDLE_HAS_OBS_ADMIN=true
+fi
+
 systemctl stop "$SERVICE"
 
 tar -xzf "$TMP/$BUNDLE_FILENAME" -C "$INSTALL_DIR"
@@ -207,7 +213,7 @@ tar -xzf "$TMP/$BUNDLE_FILENAME" -C "$INSTALL_DIR"
 cp "$INSTALL_DIR/obs-update" /usr/local/bin/obs-update
 chmod +x /usr/local/bin/obs-update
 rm -f "$INSTALL_DIR/obs-update"
-if [[ -f "$INSTALL_DIR/obs-admin" ]]; then
+if [[ "$BUNDLE_HAS_OBS_ADMIN" == "true" ]]; then
     cp "$INSTALL_DIR/obs-admin" /usr/local/bin/obs-admin
     chmod +x /usr/local/bin/obs-admin
     rm -f "$INSTALL_DIR/obs-admin"
