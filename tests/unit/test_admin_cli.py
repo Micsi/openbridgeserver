@@ -360,6 +360,18 @@ def test_list_and_show_adapters_include_binding_counts(tmp_path: Path):
     assert shown["bindings"] == 1
 
 
+def test_list_and_show_adapters_tolerate_legacy_binding_schema(tmp_path: Path):
+    db_path = tmp_path / "legacy.db"
+    ids = _make_legacy_binding_db(db_path)
+
+    adapters = list_adapters(db_path)
+    shown = show_adapter(db_path, ids["instance_id"])
+
+    assert adapters[0]["id"] == ids["instance_id"]
+    assert adapters[0]["bindings"] == 0
+    assert shown["bindings"] == 0
+
+
 def test_show_adapter_rejects_ambiguous_names(tmp_path: Path):
     db_path = tmp_path / "obs.db"
     _make_db(db_path)

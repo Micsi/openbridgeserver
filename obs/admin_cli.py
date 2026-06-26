@@ -270,12 +270,13 @@ def list_adapters(db_path: Path) -> list[dict[str, Any]]:
     try:
         if not _table_exists(conn, "adapter_instances"):
             return []
+        binding_cols = _columns(conn, "adapter_bindings") if _table_exists(conn, "adapter_bindings") else set()
         binding_counts = (
             {
                 row["adapter_instance_id"] or "": int(row["count"])
                 for row in conn.execute("SELECT adapter_instance_id, COUNT(*) AS count FROM adapter_bindings GROUP BY adapter_instance_id").fetchall()
             }
-            if _table_exists(conn, "adapter_bindings")
+            if "adapter_instance_id" in binding_cols
             else {}
         )
         result = []
@@ -301,7 +302,8 @@ def show_adapter(db_path: Path, reference: str) -> dict[str, Any]:
     try:
         row = _resolve_adapter(conn, reference)
         count = 0
-        if _table_exists(conn, "adapter_bindings"):
+        binding_cols = _columns(conn, "adapter_bindings") if _table_exists(conn, "adapter_bindings") else set()
+        if "adapter_instance_id" in binding_cols:
             count_row = conn.execute("SELECT COUNT(*) AS count FROM adapter_bindings WHERE adapter_instance_id=?", (row["id"],)).fetchone()
             count = int(count_row["count"]) if count_row else 0
         return {
