@@ -237,7 +237,7 @@ jobs:
           sudo cp    requirements.txt "$ROOTFS/opt/obs/"
           sudo cp    scripts/obs-admin   "$ROOTFS/opt/obs/"
           echo "${{ steps.meta.outputs.version }}" | sudo tee "$ROOTFS/opt/obs/version" > /dev/null
-          sudo cp /tmp/obs-update "$ROOTFS/usr/local/bin/obs-update"
+          sudo cp obs-update "$ROOTFS/usr/local/bin/obs-update"
           sudo cp scripts/obs-admin "$ROOTFS/usr/local/bin/obs-admin"
           sudo chmod +x "$ROOTFS/usr/local/bin/obs-admin"
 

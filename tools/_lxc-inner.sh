@@ -148,7 +148,7 @@ cp -r frontend_dist    "$ROOTFS/opt/obs/"
 cp    requirements.txt "$ROOTFS/opt/obs/"
 cp    scripts/obs-admin   "$ROOTFS/opt/obs/"
 echo "$VERSION" | tee "$ROOTFS/opt/obs/version" > /dev/null
-cp /tmp/obs-update "$ROOTFS/usr/local/bin/obs-update"
+cp obs-update "$ROOTFS/usr/local/bin/obs-update"
 cp scripts/obs-admin "$ROOTFS/usr/local/bin/obs-admin"
 chmod +x "$ROOTFS/usr/local/bin/obs-admin"
 
