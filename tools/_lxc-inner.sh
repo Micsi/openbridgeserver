@@ -50,10 +50,8 @@ npm run build
 cd ..
 
 # ── Write obs-update ───────────────────────────────────────────────────────────
-cp scripts/obs-update /tmp/obs-update
-sed -i "s|__REPO__|$REPO|g" /tmp/obs-update
-chmod +x /tmp/obs-update
-cp /tmp/obs-update obs-update
+sed "s|__REPO__|$REPO|g" scripts/obs-update > obs-update
+chmod +x obs-update
 
 # ── App bundle ─────────────────────────────────────────────────────────────────
 echo "==> Creating app bundle..."
