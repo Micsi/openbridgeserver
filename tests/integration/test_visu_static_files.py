@@ -83,6 +83,73 @@ async def visu_dist_client(tmp_path):
         override_settings(saved_settings)
 
 
+@pytest_asyncio.fixture
+async def gui_dist_client(tmp_path):
+    """AsyncClient wired to a fresh app instance that has gui_dist in place."""
+    from obs.config import (
+        DatabaseSettings,
+        MosquittoSettings,
+        MqttSettings,
+        SecuritySettings,
+        Settings,
+        get_settings,
+        override_settings,
+    )
+    from obs.main import create_app
+
+    saved_settings = get_settings()
+    override_settings(
+        Settings(
+            database=DatabaseSettings(path=str(tmp_path / "test.db")),
+            mqtt=MqttSettings(host="localhost", port=11883, username=None, password=None),
+            security=SecuritySettings(
+                jwt_secret="test-secret-32-chars-xxxxxxxxxxxx",
+                jwt_expire_minutes=60,
+                url_target_allowlist_path=str(tmp_path / "allowlist.yaml"),
+            ),
+            mosquitto=MosquittoSettings(
+                passwd_file=str(tmp_path / "passwd"),
+                reload_pid=None,
+                reload_command=None,
+                service_username="obs",
+                service_password="test",
+            ),
+        )
+    )
+
+    gui_dist = _PROJECT_ROOT / "gui_dist"
+    created_dir = not gui_dist.exists()
+    created_files: list[Path] = []
+
+    try:
+        gui_dist.mkdir(exist_ok=True)
+        assets_dir = gui_dist / "assets"
+        assets_dir.mkdir(exist_ok=True)
+        for name, content in [
+            ("favicon.svg", b'<svg xmlns="http://www.w3.org/2000/svg"/>'),
+            ("manifest.webmanifest", b'{"name":"OBS Admin"}'),
+            ("index.html", b"<html/>"),
+        ]:
+            target = gui_dist / name
+            if not target.exists():
+                target.write_bytes(content)
+                created_files.append(target)
+
+        app = create_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            yield client
+
+    finally:
+        for f in created_files:
+            f.unlink(missing_ok=True)
+        if created_dir:
+            try:
+                gui_dist.rmdir()
+            except OSError:
+                pass
+        override_settings(saved_settings)
+
+
 @pytest.mark.asyncio
 async def test_visu_favicon_returns_svg(visu_dist_client):
     resp = await visu_dist_client.get("/visu/favicon.svg")
@@ -93,5 +160,19 @@ async def test_visu_favicon_returns_svg(visu_dist_client):
 @pytest.mark.asyncio
 async def test_visu_manifest_returns_json(visu_dist_client):
     resp = await visu_dist_client.get("/visu/manifest.webmanifest")
+    assert resp.status_code == 200
+    assert "name" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_admin_favicon_returns_svg(gui_dist_client):
+    resp = await gui_dist_client.get("/favicon.svg")
+    assert resp.status_code == 200
+    assert "svg" in resp.headers.get("content-type", "")
+
+
+@pytest.mark.asyncio
+async def test_admin_manifest_returns_json(gui_dist_client):
+    resp = await gui_dist_client.get("/manifest.webmanifest")
     assert resp.status_code == 200
     assert "name" in resp.json()

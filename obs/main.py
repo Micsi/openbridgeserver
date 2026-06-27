@@ -239,6 +239,10 @@ def create_app() -> FastAPI:
         async def favicon():
             return FileResponse(_gui_dist / "favicon.svg")
 
+        @app.get("/manifest.webmanifest", include_in_schema=False)
+        async def admin_manifest():
+            return FileResponse(_gui_dist / "manifest.webmanifest")
+
     # ── Serve Visu SPA (frontend_dist → /visu) ────────────────────────────
     _visu_dist = Path(__file__).parent.parent / "frontend_dist"
     if _visu_dist.is_dir():
