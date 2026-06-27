@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -534,6 +535,16 @@ class KnxAdapter(AdapterBase):
                     logger.warning("KNX DPT decode error for %s (%s): %s", ga, dpt.dpt_id, exc)
                     value = raw.hex() if isinstance(raw, (bytes, bytearray)) else raw
                     quality = "uncertain"
+
+                if isinstance(value, float) and not math.isfinite(value):
+                    logger.warning(
+                        "KNX DPT decoded non-finite float for GA=%s (%s): %s — quality=bad",
+                        ga,
+                        dpt.dpt_id,
+                        value,
+                    )
+                    quality = "bad"
+                    value = None
 
                 if binding.value_formula and quality == "good":
                     from obs.core.formula import apply_formula
