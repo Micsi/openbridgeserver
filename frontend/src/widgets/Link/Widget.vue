@@ -50,10 +50,12 @@ function navigate() {
   if (target?.type === 'LOCATION') {
     // Navigate to first child page of the location
     const firstPage = store.nodes.find(n => n.parent_id === targetId.value && n.type === 'PAGE')
-    if (firstPage) router.push({ name: 'viewer', params: { id: firstPage.id } })
-  } else {
-    router.push({ name: 'viewer', params: { id: targetId.value } })
+    if (firstPage) {
+      router.push({ name: 'viewer', params: { id: firstPage.id } })
+      return
+    }
   }
+  router.push({ name: 'viewer', params: { id: targetId.value } })
 }
 </script>
 
