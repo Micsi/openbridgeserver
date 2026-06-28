@@ -1156,9 +1156,11 @@ class LogicManager:
             except Exception as _hc_exc:
                 logger.debug("Graph %s: heating_circuit history pre-fill failed: %s", graph_id[:8], _hc_exc)
 
+        api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
+        needs_api_client_replay_snapshot = any(edge.source in api_client_ids for edge in flow.edges)
         executor = GraphExecutor(flow, hyst, self._app_config)
         try:
-            pre_execute_hyst = copy.deepcopy(hyst)
+            pre_execute_hyst = copy.deepcopy(hyst) if needs_api_client_replay_snapshot else None
             outputs = executor.execute(aug_overrides)
         except Exception as exc:
             logger.error("Graph %s (%s) execution error: %s", graph_id, name, exc)
@@ -1397,15 +1399,15 @@ class LogicManager:
                     src_handle = e.sourceHandle or "out"
                     tgt_handle = e.targetHandle or "in"
                     replay_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs.get(e.source, {}), src_handle)
-                replay_hyst = copy.deepcopy(pre_execute_hyst)
-                second_executor = GraphExecutor(flow, replay_hyst, self._app_config)
-                second_outputs = second_executor.execute(replay_overrides)
-                api_client_ids = {n.id for n in flow.nodes if n.type == "api_client"}
-                for nid, vals in second_outputs.items():
-                    if nid in downstream_node_ids and nid not in api_client_ids:
-                        outputs[nid] = vals
-                        if nid in replay_hyst:
-                            hyst[nid] = replay_hyst[nid]
+                if pre_execute_hyst is not None:
+                    replay_hyst = copy.deepcopy(pre_execute_hyst)
+                    second_executor = GraphExecutor(flow, replay_hyst, self._app_config)
+                    second_outputs = second_executor.execute(replay_overrides)
+                    for nid, vals in second_outputs.items():
+                        if nid in downstream_node_ids and nid not in api_client_ids:
+                            outputs[nid] = vals
+                            if nid in replay_hyst:
+                                hyst[nid] = replay_hyst[nid]
 
         # ── Handle notify_pushover ────────────────────────────────────────
         # Runs AFTER api_client second-pass so that graphs with api_client →

@@ -747,6 +747,22 @@ class TestApiClientManagerHttp:
         assert outputs["ac"]["success"] is False
         assert str(outputs["ac"]["response"]).startswith("Blocked URL target:")
 
+    def test_graph_without_api_client_does_not_snapshot_hysteresis(self):
+        manager = _make_manager()
+        n = node("cv", "const_value", {"value": "1", "data_type": "number"})
+        flow = _flow([n])
+        graph_id = "g-no-api-client"
+        manager._graphs[graph_id] = ("t", True, flow)
+        manager._hysteresis[graph_id] = {"avg": {"samples": [["2026-06-28T00:00:00Z", 1.0]]}}
+
+        with (
+            patch("obs.logic.manager.copy.deepcopy", side_effect=AssertionError("unexpected hysteresis snapshot")),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "t", flow, {}))
+
+        assert outputs["cv"]["value"] == 1.0
+
 
 # ===========================================================================
 # Manager: Authentication
