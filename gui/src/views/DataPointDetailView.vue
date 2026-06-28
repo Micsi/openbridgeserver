@@ -234,8 +234,9 @@ const displayVal = computed(() => {
   return dp.value?.unit ? `${v} ${dp.value.unit}` : String(v)
 })
 const activeBindings = computed(() => bindings.value.filter(b => b.enabled))
+const activeWritableBindings = computed(() => activeBindings.value.filter(b => b.adapter_type !== 'MESSAGE'))
 const canWriteValue = computed(() =>
-  bindingsLoaded.value && (activeBindings.value.length === 0 || activeBindings.value.some(b => b.adapter_type !== 'MESSAGE' && ['DEST', 'BOTH'].includes(b.direction)))
+  bindingsLoaded.value && (activeWritableBindings.value.length === 0 || activeWritableBindings.value.some(b => ['DEST', 'BOTH'].includes(b.direction)))
 )
 watch(currentRawValue, (value) => {
   if (!writeBusy.value && value !== undefined && value !== null) writeDraft.value = String(value)

@@ -90,7 +90,7 @@ describe('DataPointDetailView', () => {
     expect(wrapper.findAll('button').some(button => button.text() === 'Schreiben')).toBe(false)
   })
 
-  it('does not expose the write form for MESSAGE bindings even when direction is DEST', async () => {
+  it('allows writing when only MESSAGE bindings are attached', async () => {
     apiMocks.dpApi.listBindings.mockResolvedValue({
       data: [{ id: 'binding-message', enabled: true, direction: 'DEST', adapter_type: 'MESSAGE', config: {} }],
     })
@@ -98,8 +98,8 @@ describe('DataPointDetailView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Kein schreibbares Binding vorhanden.')
-    expect(wrapper.find('input[type="text"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Kein schreibbares Binding vorhanden.')
+    expect(wrapper.find('input[type="text"]').exists()).toBe(true)
   })
 
   it('does not expose the write form while bindings are still loading', async () => {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from enum import Enum
 from typing import Any
 
@@ -57,4 +58,56 @@ class SevenIoProvider:
             response = await client.post(f"https://gateway.seven.io/api/{endpoint}", data=payload, headers=headers)
         if response.status_code >= 400:
             return MessageSendResult("seven.io", target_name, False, f"HTTP {response.status_code}")
+        ok, detail = _sevenio_response_ok(response)
+        if not ok:
+            return MessageSendResult("seven.io", target_name, False, detail)
         return MessageSendResult("seven.io", target_name, True)
+
+
+def _sevenio_response_ok(response: httpx.Response) -> tuple[bool, str]:
+    try:
+        body = response.json()
+    except Exception:
+        body_text = (getattr(response, "text", "") or "").strip()
+        if not body_text:
+            return True, ""
+        try:
+            body = json.loads(body_text)
+        except json.JSONDecodeError:
+            code = body_text.split()[0].strip()
+            return (code == "100", f"seven.io code {code}" if code != "100" else "")
+
+    if not isinstance(body, dict | list):
+        code = str(body).strip()
+        return (code == "100", f"seven.io code {code}" if code != "100" else "")
+
+    success_values = _collect_success_values(body)
+    if success_values and not all(_is_success_value(value) for value in success_values):
+        return False, "seven.io response success=false"
+    return True, ""
+
+
+def _collect_success_values(value: Any) -> list[Any]:
+    if isinstance(value, dict):
+        values = []
+        if "success" in value:
+            values.append(value["success"])
+        for nested in value.values():
+            values.extend(_collect_success_values(nested))
+        return values
+    if isinstance(value, list):
+        values = []
+        for nested in value:
+            values.extend(_collect_success_values(nested))
+        return values
+    return []
+
+
+def _is_success_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "failed", "error"}
+    return bool(value)

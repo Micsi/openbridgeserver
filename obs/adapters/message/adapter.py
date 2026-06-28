@@ -6,6 +6,7 @@ plugins when a per-binding value condition is fulfilled.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -65,6 +66,7 @@ class _BindingState:
         self.last_condition: bool = False
         self.last_sent_monotonic: float | None = None
         self.last_value: Any = object()
+        self.in_flight: bool = False
 
 
 def _as_number(value: Any) -> float | None:
@@ -169,6 +171,7 @@ class MessageAdapter(AdapterBase):
         self._cfg = MessageAdapterConfig(**self._config)
         self._binding_map: dict[uuid.UUID, list[Any]] = {}
         self._states: dict[uuid.UUID, _BindingState] = {}
+        self._send_tasks: set[asyncio.Task] = set()
         self._subscribed = False
 
     async def connect(self) -> None:
@@ -181,6 +184,11 @@ class MessageAdapter(AdapterBase):
         if self._subscribed:
             self._bus.unsubscribe(DataValueEvent, self._on_value_event)
             self._subscribed = False
+        for task in self._send_tasks:
+            task.cancel()
+        if self._send_tasks:
+            await asyncio.gather(*self._send_tasks, return_exceptions=True)
+            self._send_tasks.clear()
         self._binding_map.clear()
         await self._publish_status(False, "Disconnected", code="disconnected")
 
@@ -252,11 +260,36 @@ class MessageAdapter(AdapterBase):
             datapoint_id=event.datapoint_id,
             ts=event.ts if event.ts.tzinfo else event.ts.replace(tzinfo=UTC),
         )
-        results = await self._send_to_targets(cfg, binding, event, rendered)
-        state.last_condition = True
-        state.last_value = event.value
-        if any(result.ok for result in results):
-            state.last_sent_monotonic = now
+        if state.in_flight and not ignore_repetition:
+            return
+        state.in_flight = True
+        task = asyncio.create_task(self._send_and_record(binding, event, cfg, rendered, state, now))
+        self._send_tasks.add(task)
+        task.add_done_callback(self._send_tasks.discard)
+
+    async def _send_and_record(
+        self,
+        binding: Any,
+        event: DataValueEvent,
+        cfg: MessageBindingConfig,
+        rendered: str,
+        state: _BindingState,
+        sent_monotonic: float,
+    ) -> None:
+        try:
+            results = await self._send_to_targets(cfg, binding, event, rendered)
+        except Exception as exc:  # pragma: no cover - defensive guard for unexpected task errors
+            logger.exception("MESSAGE send task failed unexpectedly")
+            results = [MessageSendResult("message", "internal", False, str(exc))]
+        finally:
+            state.in_flight = False
+
+        success = any(result.ok for result in results)
+        if success:
+            state.last_condition = True
+            state.last_value = event.value
+            state.last_sent_monotonic = sent_monotonic
+
         failures = [result for result in results if not result.ok]
         if failures:
             detail = f"MESSAGE provider failures: {len(failures)} target(s)"
