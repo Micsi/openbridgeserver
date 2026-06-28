@@ -1,0 +1,61 @@
+"""Pushover MESSAGE provider."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+from pydantic import BaseModel, Field
+
+from obs.adapters.message.providers.base import MessageSendResult
+
+
+class PushoverConfig(BaseModel):
+    enabled: bool = False
+    api_token: str = Field(default="", json_schema_extra={"format": "password"})
+    targets: dict[str, "PushoverTarget"] = Field(default_factory=dict)
+
+
+class PushoverTarget(BaseModel):
+    user_key: str = Field(default="", json_schema_extra={"format": "password"})
+    device: str | None = None
+    sound: str | None = None
+
+
+class PushoverProvider:
+    provider_type = "pushover"
+    config_schema = PushoverConfig
+    target_schema = PushoverTarget
+
+    async def send(
+        self,
+        *,
+        provider_config: dict[str, Any],
+        target_name: str,
+        target_config: dict[str, Any],
+        title: str | None,
+        message: str,
+        context: dict[str, Any],
+    ) -> MessageSendResult:
+        cfg = PushoverConfig(**provider_config)
+        target = PushoverTarget(**target_config)
+        payload: dict[str, Any] = {
+            "token": cfg.api_token,
+            "user": target.user_key,
+            "message": message,
+        }
+        if title:
+            payload["title"] = title
+        if target.device:
+            payload["device"] = target.device
+        if target.sound:
+            payload["sound"] = target.sound
+        priority = context.get("priority")
+        if priority is not None:
+            payload["priority"] = priority
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post("https://api.pushover.net/1/messages.json", data=payload)
+        if response.status_code >= 400:
+            return MessageSendResult("pushover", target_name, False, f"HTTP {response.status_code}")
+        return MessageSendResult("pushover", target_name, True)

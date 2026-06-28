@@ -58,6 +58,10 @@
               v-else-if="newForm.adapter_type === 'KNX'"
               v-model="newForm.config"
             />
+            <MessageConfigForm
+              v-else-if="newForm.adapter_type === 'MESSAGE'"
+              v-model="newForm.config"
+            />
             <template v-else>
               <SchemaForm
                 :schema="newSchema"
@@ -169,6 +173,10 @@
               />
               <KnxConfigForm
                 v-else-if="a.adapter_type === 'KNX'"
+                v-model="drafts[a.id].config"
+              />
+              <MessageConfigForm
+                v-else-if="a.adapter_type === 'MESSAGE'"
                 v-model="drafts[a.id].config"
               />
               <template v-else>
@@ -402,6 +410,7 @@ import ZeitschaltuhrCustomHolidaysEditor from '@/components/adapters/Zeitschaltu
 import AnwesenheitDatapointSelector from '@/components/adapters/AnwesenheitDatapointSelector.vue'
 import AnwesenheitConfigForm from '@/components/adapters/AnwesenheitConfigForm.vue'
 import KnxConfigForm        from '@/components/adapters/KnxConfigForm.vue'
+import MessageConfigForm    from '@/components/adapters/MessageConfigForm.vue'
 import Modal         from '@/components/ui/Modal.vue'
 import { adapterDotClass as dotClass, adapterBadgeVariant as statusBadgeVariant, adapterStatusLabel as statusLabel, adapterStatusDetailText } from '@/utils/adapterStatus'
 

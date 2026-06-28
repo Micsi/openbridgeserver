@@ -255,6 +255,11 @@
       "result": "{migrated} bindings migrated, {skipped} skipped.",
       "failed": "Migration failed"
     },
+    "message": {
+      "addTarget": "Add target",
+      "targetName": "Target name",
+      "channel": "Channel"
+    },
     "anwesenheit": {
       "modalTitle": "Presence simulation",
       "modalTitleFull": "Presence simulation — {name}",
@@ -552,6 +557,15 @@
       "anwSetValuePlaceholder": "e.g. 0 / 1 / false / true / 21.5",
       "anwOnPresenceHint": "Empty = use behavior from adapter configuration.",
       "snmpSection": "SNMP binding",
+      "messageSection": "MESSAGE binding",
+      "operatorLabel": "Operator",
+      "compareValueLabel": "Compare value",
+      "titleLabel": "Title",
+      "cooldownSecondsLabel": "Cooldown (seconds)",
+      "messageTemplateLabel": "Message template",
+      "targetsLabel": "Targets",
+      "addTarget": "Add target",
+      "messageSendOnChange": "Send only when the condition changes to fulfilled",
       "snmpHostLabel": "Device (IP/DNS) *",
       "snmpHostPlaceholder": "e.g. 192.168.1.100 or switch.local",
       "snmpPortLabel": "UDP port",

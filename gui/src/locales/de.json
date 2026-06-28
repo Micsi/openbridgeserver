@@ -255,6 +255,11 @@
       "result": "{migrated} Verknüpfungen migriert, {skipped} übersprungen.",
       "failed": "Migration fehlgeschlagen"
     },
+    "message": {
+      "addTarget": "Ziel hinzufügen",
+      "targetName": "Zielname",
+      "channel": "Kanal"
+    },
     "anwesenheit": {
       "modalTitle": "Anwesenheitssimulation",
       "modalTitleFull": "Anwesenheitssimulation — {name}",
@@ -552,6 +557,15 @@
       "anwSetValuePlaceholder": "z.B. 0 / 1 / false / true / 21.5",
       "anwOnPresenceHint": "Leer = Verhalten aus der Adapter-Konfiguration verwenden.",
       "snmpSection": "SNMP Binding",
+      "messageSection": "MESSAGE Binding",
+      "operatorLabel": "Operator",
+      "compareValueLabel": "Vergleichswert",
+      "titleLabel": "Titel",
+      "cooldownSecondsLabel": "Cooldown (Sekunden)",
+      "messageTemplateLabel": "Nachrichtenvorlage",
+      "targetsLabel": "Ziele",
+      "addTarget": "Ziel hinzufügen",
+      "messageSendOnChange": "Nur beim Wechsel in den erfüllten Zustand senden",
       "snmpHostLabel": "Gerät (IP/DNS) *",
       "snmpHostPlaceholder": "z.B. 192.168.1.100 oder switch.local",
       "snmpPortLabel": "UDP-Port",
