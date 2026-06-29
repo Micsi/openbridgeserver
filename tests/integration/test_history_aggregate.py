@@ -58,34 +58,32 @@ async def _create_page(client, auth_headers, name: str, access: str, *, access_p
     return resp.json()["id"]
 
 
-async def _assign_page_datapoint(page_id: str, dp_id: str) -> None:
-    from obs.db.database import get_db
-
-    db = get_db()
-    page_config = {
-        "grid_cols": 12,
-        "grid_row_height": 80,
-        "grid_cell_width": 120,
-        "background": None,
-        "widgets": [
-            {
-                "id": "history-widget",
-                "name": "History",
-                "type": "chart",
-                "datapoint_id": dp_id,
-                "status_datapoint_id": None,
-                "x": 0,
-                "y": 0,
-                "w": 4,
-                "h": 3,
-                "config": {},
-            }
-        ],
-    }
-    await db.execute_and_commit(
-        "UPDATE visu_nodes SET page_config = ? WHERE id = ?",
-        (json.dumps(page_config), page_id),
+async def _save_page_with_single_dp_widget(client, auth_headers, page_id: str, dp_id: str) -> None:
+    resp = await client.put(
+        f"/api/v1/visu/pages/{page_id}",
+        json={
+            "grid_cols": 12,
+            "grid_row_height": 80,
+            "grid_cell_width": 80,
+            "background": None,
+            "widgets": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": "History Test Widget",
+                    "type": "ValueDisplay",
+                    "datapoint_id": dp_id,
+                    "status_datapoint_id": None,
+                    "x": 0,
+                    "y": 0,
+                    "w": 3,
+                    "h": 2,
+                    "config": {},
+                },
+            ],
+        },
+        headers=auth_headers,
     )
+    assert resp.status_code in (200, 204), resp.text
 
 
 async def _seed_history_value(dp_id: str, ts: datetime.datetime, value: float) -> None:
@@ -282,8 +280,8 @@ async def test_aggregate_no_auth_no_page_id_returns_401(client):
 async def test_history_allows_public_page_without_jwt(client, auth_headers):
     dp = await _create_dp(client, auth_headers, name=f"HistPublic-{uuid.uuid4().hex[:8]}")
     page_id = await _create_page(client, auth_headers, f"hist-public-{uuid.uuid4().hex[:8]}", "public")
-    await _assign_page_datapoint(page_id, dp["id"])
     try:
+        await _save_page_with_single_dp_widget(client, auth_headers, page_id, dp["id"])
         resp = await client.get(f"/api/v1/history/{dp['id']}", headers={"X-Page-Id": page_id})
         assert resp.status_code == 200, resp.text
     finally:
@@ -301,8 +299,8 @@ async def test_history_protected_page_requires_valid_session_token(client, auth_
         "protected",
         access_pin=pin,
     )
-    await _assign_page_datapoint(page_id, dp["id"])
     try:
+        await _save_page_with_single_dp_widget(client, auth_headers, page_id, dp["id"])
         denied = await client.get(f"/api/v1/history/{dp['id']}", headers={"X-Page-Id": page_id})
         assert denied.status_code == 401, denied.text
 

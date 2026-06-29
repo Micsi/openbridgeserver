@@ -151,7 +151,8 @@ async def test_resolve_datapoint_targets_includes_all_linked_hierarchy_nodes(db:
 
     targets = targets_by_dp["dp-1"]
     assert {target.node_id for target in targets} == {"room-a", "room-b"}
-    assert {target.ancestors for target in targets} == {("wing-a",), ("wing-b",)}
+    hierarchy_targets = [target for target in targets if target.node_type == "hierarchy"]
+    assert {target.ancestors for target in hierarchy_targets} == {("wing-a",), ("wing-b",)}
 
 
 @pytest.mark.asyncio
@@ -214,6 +215,43 @@ async def test_filter_authorized_datapoints_evaluates_all_linked_targets(db: Dat
     await _link_datapoint(db, "dp-1", "room-b", "link-b")
     await _insert_grant(db, node_id="room-a", role="guest", effect="allow")
     await _insert_grant(db, node_id="room-b", role="guest", effect="deny")
+
+    allowed = await filter_authorized_datapoints(
+        db,
+        Principal(subject="alice", type="user", is_admin=False),
+        ["dp-1"],
+        action=AuthzAction.READ,
+    )
+
+    assert allowed == []
+
+
+@pytest.mark.asyncio
+async def test_linked_datapoints_keep_direct_datapoint_allow_grants(db: Database):
+    await _insert_tree(db)
+    await _insert_node(db, "room")
+    await _insert_datapoint(db, "dp-1")
+    await _link_datapoint(db, "dp-1", "room", "link-room")
+    await _insert_grant(db, node_type="datapoint", node_id="dp-1", role="guest", effect="allow")
+
+    allowed = await filter_authorized_datapoints(
+        db,
+        Principal(subject="alice", type="user", is_admin=False),
+        ["dp-1"],
+        action=AuthzAction.READ,
+    )
+
+    assert allowed == ["dp-1"]
+
+
+@pytest.mark.asyncio
+async def test_linked_datapoints_keep_direct_datapoint_deny_grants(db: Database):
+    await _insert_tree(db)
+    await _insert_node(db, "room")
+    await _insert_datapoint(db, "dp-1")
+    await _link_datapoint(db, "dp-1", "room", "link-room")
+    await _insert_grant(db, node_type="hierarchy", node_id="room", role="guest", effect="allow")
+    await _insert_grant(db, node_type="datapoint", node_id="dp-1", role="guest", effect="deny")
 
     allowed = await filter_authorized_datapoints(
         db,
