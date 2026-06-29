@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from obs.api.auth import get_admin_user
-from obs.api.v1.bindings import _validate_adapter_binding
+from obs.api.v1.bindings import _json_config, _validate_adapter_binding
 from obs.core.formula import validate_formula
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
@@ -636,7 +636,19 @@ async def import_config(
                 err = validate_formula(formula)
                 if err:
                     raise ValueError(f"Ungültige Formel: {err}")
-            _validate_adapter_binding(b_data.adapter_type, b_data.direction, b_data.config, enabled=b_data.enabled)
+            instance_config = None
+            if b_data.adapter_type == "MESSAGE" and b_data.adapter_instance_id:
+                instance_row = await db.fetchone("SELECT config FROM adapter_instances WHERE id=?", (b_data.adapter_instance_id,))
+                if instance_row is None:
+                    raise ValueError(f"MESSAGE adapter instance not found: {b_data.adapter_instance_id}")
+                instance_config = _json_config(instance_row["config"])
+            _validate_adapter_binding(
+                b_data.adapter_type,
+                b_data.direction,
+                b_data.config,
+                enabled=b_data.enabled,
+                instance_config=instance_config,
+            )
             row = await db.fetchone("SELECT id FROM adapter_bindings WHERE id=?", (b_id,))
             if row:
                 await db.execute_and_commit(

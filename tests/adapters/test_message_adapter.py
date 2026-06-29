@@ -158,6 +158,14 @@ def test_enabled_binding_requires_message_target():
     assert cfg.enabled is False
 
 
+def test_binding_rejects_blank_message_body():
+    with pytest.raises(ValueError, match="message must not be empty"):
+        MessageBindingConfig(
+            message="   ",
+            providers=[{"provider": "telegram", "target": "default"}],
+        )
+
+
 def test_binding_rejects_duplicate_message_targets():
     with pytest.raises(ValueError, match="Duplicate MESSAGE target"):
         MessageBindingConfig(

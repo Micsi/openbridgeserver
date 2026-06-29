@@ -67,6 +67,8 @@ class MessageBindingConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_targets(self) -> "MessageBindingConfig":
+        if not self.message.strip():
+            raise ValueError("MESSAGE binding message must not be empty")
         if self.enabled and not self.providers:
             raise ValueError("MESSAGE binding requires at least one target")
         seen_targets: set[tuple[str, str]] = set()

@@ -48,13 +48,25 @@ async def _create_instance(client, auth_headers, name: str = "") -> dict:
     return resp.json()
 
 
-async def _create_message_instance(client, auth_headers, name: str = "") -> dict:
+def _message_instance_config() -> dict:
+    return {
+        "providers": {
+            "pushover": {
+                "enabled": True,
+                "api_token": "app-token",
+                "targets": {"default": {"user_key": "user-key"}},
+            }
+        }
+    }
+
+
+async def _create_message_instance(client, auth_headers, name: str = "", config: dict | None = None) -> dict:
     resp = await client.post(
         "/api/v1/adapters/instances",
         json={
             "adapter_type": "MESSAGE",
             "name": name or f"MsgBindTest-{uuid.uuid4().hex[:6]}",
-            "config": {},
+            "config": config or {},
             "enabled": False,
         },
         headers=auth_headers,
@@ -228,6 +240,24 @@ async def test_create_disabled_message_binding_allows_no_targets(client, auth_he
     assert resp.json()["enabled"] is False
 
 
+async def test_create_message_binding_rejects_unknown_instance_target(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    inst = await _create_message_instance(client, auth_headers, config=_message_instance_config())
+
+    resp = await client.post(
+        f"/api/v1/datapoints/{dp['id']}/bindings",
+        json={
+            "adapter_instance_id": inst["id"],
+            "direction": "SOURCE",
+            "config": {"providers": [{"provider": "pushover", "target": "missing"}]},
+        },
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 422
+    assert "MESSAGE target not configured" in resp.text
+
+
 async def test_create_binding_invalid_formula_returns_422(client, auth_headers):
     dp = await _create_dp(client, auth_headers)
     inst = await _create_instance(client, auth_headers)
@@ -305,7 +335,7 @@ async def test_update_binding_success(client, auth_headers):
 
 async def test_update_disabled_message_binding_allows_no_targets(client, auth_headers):
     dp = await _create_dp(client, auth_headers)
-    inst = await _create_message_instance(client, auth_headers)
+    inst = await _create_message_instance(client, auth_headers, config=_message_instance_config())
     create_resp = await client.post(
         f"/api/v1/datapoints/{dp['id']}/bindings",
         json={
