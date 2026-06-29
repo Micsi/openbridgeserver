@@ -174,18 +174,42 @@ class WebSocketManager:
                 # Actual transport error — signal caller to close the connection.
                 return False
 
+    @staticmethod
+    def _message_datapoint_id(msg: dict) -> str | None:
+        """Return the datapoint ID referenced by a server-push message, if any."""
+        dp_id = msg.get("datapoint_id")
+        if isinstance(dp_id, str) and dp_id:
+            return dp_id
+
+        entry = msg.get("entry")
+        if isinstance(entry, dict):
+            entry_dp_id = entry.get("datapoint_id")
+            if isinstance(entry_dp_id, str) and entry_dp_id:
+                return entry_dp_id
+
+        # Legacy value pushes use an action-less payload with top-level "id".
+        if "action" not in msg:
+            legacy_id = msg.get("id")
+            if isinstance(legacy_id, str) and legacy_id:
+                return legacy_id
+
+        return None
+
     async def broadcast(self, msg: dict) -> None:
-        """Send a message to ALL connected clients (no subscription filter)."""
+        """Send a message to connected clients, applying per-message DP scope."""
         dead: list[str] = []
         log_only = msg.get("action") == "log_entry"
+        scoped_dp_id = self._message_datapoint_id(msg)
         for conn_id, entry in list(self._connections.items()):
-            _, _subs, _lock, _allowed_ids, log_access, log_access_check = entry
+            _, _subs, _lock, allowed_ids, log_access, log_access_check = entry
             if log_only:
                 if not log_access:
                     continue
                 if log_access_check is not None and not await log_access_check():
                     self._set_log_access(conn_id, False)
                     continue
+            if scoped_dp_id is not None and allowed_ids is not None and scoped_dp_id not in allowed_ids:
+                continue
             if not await self._send(conn_id, msg):
                 dead.append(conn_id)
         for conn_id in dead:

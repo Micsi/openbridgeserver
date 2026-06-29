@@ -189,6 +189,42 @@ async def test_log_broadcast_revalidates_existing_log_access_connections():
 
 
 @pytest.mark.asyncio
+async def test_broadcast_filters_top_level_datapoint_messages_for_scoped_connections():
+    manager = WebSocketManager()
+    unrestricted_ws = _FakeWebSocket()
+    scoped_ws = _FakeWebSocket()
+
+    await manager.connect(unrestricted_ws)
+    await manager.connect(scoped_ws, allowed_dp_ids={"allowed-dp"})
+
+    allowed_msg = {"id": "allowed-dp", "v": 1}
+    blocked_msg = {"id": "blocked-dp", "v": 2}
+    await manager.broadcast(allowed_msg)
+    await manager.broadcast(blocked_msg)
+
+    assert unrestricted_ws.messages == [allowed_msg, blocked_msg]
+    assert scoped_ws.messages == [allowed_msg]
+
+
+@pytest.mark.asyncio
+async def test_broadcast_filters_entry_datapoint_messages_for_scoped_connections():
+    manager = WebSocketManager()
+    unrestricted_ws = _FakeWebSocket()
+    scoped_ws = _FakeWebSocket()
+
+    await manager.connect(unrestricted_ws)
+    await manager.connect(scoped_ws, allowed_dp_ids={"allowed-dp"})
+
+    allowed_msg = {"action": "custom_event", "entry": {"datapoint_id": "allowed-dp", "value": 1}}
+    blocked_msg = {"action": "custom_event", "entry": {"datapoint_id": "blocked-dp", "value": 2}}
+    await manager.broadcast(allowed_msg)
+    await manager.broadcast(blocked_msg)
+
+    assert unrestricted_ws.messages == [allowed_msg, blocked_msg]
+    assert scoped_ws.messages == [allowed_msg]
+
+
+@pytest.mark.asyncio
 async def test_subscribe_filters_datapoints_for_page_scoped_connection():
     ws = _FakeWebSocket()
     manager = WebSocketManager()
