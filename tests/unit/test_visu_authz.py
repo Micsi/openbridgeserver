@@ -117,20 +117,45 @@ async def _insert_user(db: Database, username: str = "alice") -> None:
     )
 
 
+async def _assign_visu_user(db: Database, *, node_id: str, username: str = "alice") -> None:
+    await db.execute_and_commit(
+        "INSERT INTO visu_node_users (node_id, username) VALUES (?, ?)",
+        (node_id, username),
+    )
+
+
 async def _insert_visu_page(
     db: Database,
     page_id: str,
     *,
-    access: str,
+    access: str | None,
     config: PageConfig,
+    parent_id: str | None = None,
 ) -> None:
     await db.execute_and_commit(
         """
         INSERT INTO visu_nodes
             (id, parent_id, name, type, node_order, icon, access, access_pin, page_config, created_at, updated_at)
-        VALUES (?, NULL, ?, 'PAGE', 0, NULL, ?, NULL, ?, ?, ?)
+        VALUES (?, ?, ?, 'PAGE', 0, NULL, ?, NULL, ?, ?, ?)
         """,
-        (page_id, page_id, access, config.model_dump_json(), NOW, NOW),
+        (page_id, parent_id, page_id, access, config.model_dump_json(), NOW, NOW),
+    )
+
+
+async def _insert_visu_location(
+    db: Database,
+    node_id: str,
+    *,
+    access: str,
+    parent_id: str | None = None,
+) -> None:
+    await db.execute_and_commit(
+        """
+        INSERT INTO visu_nodes
+            (id, parent_id, name, type, node_order, icon, access, access_pin, page_config, created_at, updated_at)
+        VALUES (?, ?, ?, 'LOCATION', 0, NULL, ?, NULL, ?, ?, ?)
+        """,
+        (node_id, parent_id, node_id, access, PageConfig().model_dump_json(), NOW, NOW),
     )
 
 
@@ -258,6 +283,87 @@ async def test_save_page_without_hierarchy_target_denies_non_admin(db: Database)
         await visu_api.save_page("empty-page", PageConfig(), db=db, _user=_principal())
 
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_save_user_page_validates_target_users_can_read_referenced_datapoints(db: Database):
+    await _seed_scope(db)
+    await _insert_user(db)
+    await _insert_grant(db, node_id="allowed", role="guest")
+    await _insert_visu_page(db, "target-page", access="user", config=_page_config(ALLOWED_DP_ID))
+    await _assign_visu_user(db, node_id="target-page")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await visu_api.save_page("target-page", _page_config(BLOCKED_DP_ID), db=db, _user=_principal("admin", is_admin=True))
+
+    assert exc_info.value.status_code == 403
+    assert "Zielgruppe" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_save_user_page_allows_datapoints_readable_by_target_users(db: Database):
+    await _seed_scope(db)
+    await _insert_user(db)
+    await _insert_grant(db, node_id="allowed", role="guest")
+    await _insert_visu_page(db, "target-page", access="user", config=_page_config(ALLOWED_DP_ID))
+    await _assign_visu_user(db, node_id="target-page")
+
+    await visu_api.save_page("target-page", _page_config(ALLOWED_DP_ID), db=db, _user=_principal("admin", is_admin=True))
+
+    row = await db.fetchone("SELECT page_config FROM visu_nodes WHERE id = 'target-page'")
+    assert str(ALLOWED_DP_ID) in row["page_config"]
+
+
+@pytest.mark.asyncio
+async def test_set_node_users_validates_existing_page_datapoints_for_new_target_group(db: Database):
+    await _seed_scope(db)
+    await _insert_user(db)
+    await _insert_visu_page(db, "target-page", access="user", config=_page_config(BLOCKED_DP_ID))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await visu_api.set_node_users(
+            "target-page",
+            visu_api.VisuNodeUsersUpdate(usernames=["alice"]),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert await db.fetchall("SELECT username FROM visu_node_users WHERE node_id = 'target-page'") == []
+
+
+@pytest.mark.asyncio
+async def test_set_node_users_allows_target_group_with_datapoint_read_access(db: Database):
+    await _seed_scope(db)
+    await _insert_user(db)
+    await _insert_grant(db, node_id="allowed", role="guest")
+    await _insert_visu_page(db, "target-page", access="user", config=_page_config(ALLOWED_DP_ID))
+
+    await visu_api.set_node_users(
+        "target-page",
+        visu_api.VisuNodeUsersUpdate(usernames=["alice"]),
+        db=db,
+    )
+
+    rows = await db.fetchall("SELECT username FROM visu_node_users WHERE node_id = 'target-page'")
+    assert [row["username"] for row in rows] == ["alice"]
+
+
+@pytest.mark.asyncio
+async def test_set_node_users_validates_inherited_user_access_pages(db: Database):
+    await _seed_scope(db)
+    await _insert_user(db)
+    await _insert_visu_location(db, "secure-folder", access="user")
+    await _insert_visu_page(db, "child-page", access=None, config=_page_config(BLOCKED_DP_ID), parent_id="secure-folder")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await visu_api.set_node_users(
+            "secure-folder",
+            visu_api.VisuNodeUsersUpdate(usernames=["alice"]),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert await db.fetchall("SELECT username FROM visu_node_users WHERE node_id = 'secure-folder'") == []
 
 
 @pytest.mark.asyncio

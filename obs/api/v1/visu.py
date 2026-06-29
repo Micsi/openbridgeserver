@@ -190,6 +190,60 @@ async def _check_page_datapoint_policy(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
 
 
+async def _target_usernames_for_node(
+    db: Database,
+    defining_node_id: str,
+    *,
+    usernames: list[str] | None = None,
+) -> list[str]:
+    if usernames is not None:
+        return sorted(set(usernames))
+    rows = await db.fetchall(
+        "SELECT username FROM visu_node_users WHERE node_id = ? ORDER BY username",
+        (defining_node_id,),
+    )
+    return [row["username"] for row in rows]
+
+
+async def _check_user_page_target_datapoint_policy(
+    db: Database,
+    defining_node_id: str,
+    config: PageConfig,
+    *,
+    usernames: list[str] | None = None,
+) -> None:
+    datapoint_ids = _collect_page_datapoint_ids(config)
+    if not datapoint_ids:
+        return
+
+    for username in await _target_usernames_for_node(db, defining_node_id, usernames=usernames):
+        principal = Principal(subject=username, type="user", is_admin=False)
+        allowed_ids = set(await filter_authorized_datapoints(db, principal, datapoint_ids, action=AuthzAction.READ))
+        if not set(datapoint_ids).issubset(allowed_ids):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zielgruppe darf nicht alle Datenpunkte lesen")
+
+
+async def _check_user_target_pages_datapoint_policy(
+    db: Database,
+    defining_node_id: str,
+    *,
+    usernames: list[str],
+) -> None:
+    rows = await db.fetchall("SELECT * FROM visu_nodes WHERE type = 'PAGE'")
+    for row in rows:
+        page_id = row["id"]
+        access, access_node_id = await _resolve_access_with_node(db, page_id)
+        if access != "user" or access_node_id != defining_node_id:
+            continue
+        node = _row_to_node(row)
+        await _check_user_page_target_datapoint_policy(
+            db,
+            defining_node_id,
+            node.page_config or PageConfig(),
+            usernames=usernames,
+        )
+
+
 async def _check_page_write_access(db: Database, node_id: str, principal: Principal | None) -> None:
     if principal is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
@@ -653,6 +707,9 @@ async def save_page(
     await _check_page_write_access(db, node_id, principal)
     datapoint_ids = sorted(set(_collect_page_datapoint_ids(node.page_config or PageConfig())) | set(_collect_page_datapoint_ids(config)))
     await _check_page_datapoint_policy(db, principal, datapoint_ids, AuthzAction.WRITE, allow_empty=False)
+    access, defining_node_id = await _resolve_access_with_node(db, node_id)
+    if access == "user" and defining_node_id is not None:
+        await _check_user_page_target_datapoint_policy(db, defining_node_id, config)
 
     await db.conn.execute(
         "UPDATE visu_nodes SET page_config = ?, updated_at = ? WHERE id = ?",
@@ -699,6 +756,8 @@ async def set_node_users(
         row = await db.fetchone("SELECT is_admin FROM users WHERE username = ?", (username,))
         if row and not bool(row["is_admin"]):
             valid.append(username)
+
+    await _check_user_target_pages_datapoint_policy(db, node_id, usernames=valid)
 
     await db.conn.execute("DELETE FROM visu_node_users WHERE node_id = ?", (node_id,))
     if valid:
