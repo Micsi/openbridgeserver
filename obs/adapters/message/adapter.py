@@ -274,7 +274,7 @@ class MessageAdapter(AdapterBase):
             state.pending_events.append((binding, event))
             return
         state.in_flight = True
-        task = asyncio.create_task(self._send_and_record(binding, event, cfg, rendered, state, now, reset_version))
+        task = asyncio.create_task(self._send_and_record(binding, event, cfg, rendered, state, reset_version))
         self._send_tasks.add(task)
         task.add_done_callback(self._send_tasks.discard)
 
@@ -285,7 +285,6 @@ class MessageAdapter(AdapterBase):
         cfg: MessageBindingConfig,
         rendered: str,
         state: _BindingState,
-        sent_monotonic: float,
         reset_version: int,
     ) -> None:
         try:
@@ -295,10 +294,11 @@ class MessageAdapter(AdapterBase):
             results = [MessageSendResult("message", "internal", False, str(exc))]
 
         success = bool(results) and all(result.ok for result in results)
-        if success and state.reset_version == reset_version:
-            state.last_condition = True
-            state.last_value = event.value
-            state.last_sent_monotonic = sent_monotonic
+        if success:
+            state.last_sent_monotonic = time.monotonic()
+            if state.reset_version == reset_version:
+                state.last_condition = True
+                state.last_value = event.value
 
         failures = [result for result in results if not result.ok]
         if failures:
@@ -314,7 +314,8 @@ class MessageAdapter(AdapterBase):
             if not self._is_current_binding(pending_binding):
                 continue
             await self._handle_binding_event(pending_binding, pending_event)
-            break
+            if state.in_flight:
+                break
 
     def _is_current_binding(self, binding: Any) -> bool:
         return any(current is binding for current in self._binding_map.get(binding.datapoint_id, []))

@@ -50,11 +50,14 @@ describe('MessageConfigForm', () => {
     await targetInputs[1].setValue('home')
     await targetInputs[1].trigger('change')
     await flushPromises()
-    await wrapper.findAll('input[type="password"]')[1].setValue('user-key')
+    const passwordInputs = wrapper.findAll('input[type="password"]')
+    await passwordInputs[passwordInputs.length - 1].setValue('user-key')
 
     expect(getModel().providers.pushover.targets.home.user_key).toBe('user-key')
+    expect(getModel().providers.pushover.targets.default).toBeDefined()
 
-    await wrapper.findAll('button').find(button => button.text() === 'Löschen').trigger('click')
+    const deleteButtons = wrapper.findAll('button').filter(button => button.text() === 'Löschen')
+    await deleteButtons[deleteButtons.length - 1].trigger('click')
     await flushPromises()
     expect(getModel().providers.pushover.targets.home).toBeUndefined()
   })

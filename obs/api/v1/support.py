@@ -63,6 +63,7 @@ _SENSITIVE_KEYS = {
     "community",
     "knxkeys_file_path",
     "priv_key",
+    "user_key",
 }
 _PASSTHROUGH_KEYS = {
     "auth_protocol",

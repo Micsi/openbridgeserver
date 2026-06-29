@@ -51,6 +51,26 @@ describe('BindingFormMessage', () => {
     expect(cfg.providers).toEqual([])
   })
 
+  it('does not add duplicate provider target pairs', async () => {
+    const cfg = { providers: [] }
+    const wrapper = mk({
+      cfg,
+      selectedInstance: {
+        config: {
+          providers: {
+            pushover: { enabled: true, targets: { phone: {} } },
+          },
+        },
+      },
+    })
+    const addButton = () => wrapper.findAll('button').find(button => button.text() === 'Ziel hinzufügen')
+
+    await addButton().trigger('click')
+
+    expect(cfg.providers).toEqual([{ provider: 'pushover', target: 'phone' }])
+    expect(addButton().attributes('disabled')).toBeDefined()
+  })
+
   it('changes target when provider selection changes', async () => {
     const cfg = { providers: [{ provider: 'pushover', target: 'phone' }] }
     const wrapper = mk({ cfg })

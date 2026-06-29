@@ -314,6 +314,49 @@ async def test_any_operator_queues_each_changed_value_during_in_flight_send(bus,
 
 
 @pytest.mark.asyncio
+async def test_any_operator_continues_draining_after_suppressed_pending_duplicate(bus, monkeypatch):
+    dp_id = uuid.uuid4()
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _Registry(_Dp(dp_id, unit=None)))
+    release = asyncio.Event()
+    messages: list[str] = []
+
+    class _SlowProvider(_DummyProvider):
+        provider_type = "slow-any-duplicate"
+
+        def __init__(self) -> None:
+            pass
+
+        async def send(self, **kwargs):
+            messages.append(kwargs["message"])
+            await release.wait()
+            return MessageSendResult("slow-any-duplicate", "default", True)
+
+    provider = _SlowProvider()
+    register_provider(provider)
+    adapter = MessageAdapter(
+        event_bus=bus,
+        config={"providers": {"slow-any-duplicate": {"enabled": True, "targets": {"default": {}}}}},
+    )
+    binding = _message_binding(
+        dp_id,
+        operator="any",
+        compare_value=None,
+        message="###DP###",
+        providers=[{"provider": "slow-any-duplicate", "target": "default"}],
+    )
+    await adapter.reload_bindings([binding])
+
+    await adapter._on_value_event(DataValueEvent(datapoint_id=dp_id, value="A", quality="good", source_adapter="test"))
+    await adapter._on_value_event(DataValueEvent(datapoint_id=dp_id, value="A", quality="good", source_adapter="test"))
+    await adapter._on_value_event(DataValueEvent(datapoint_id=dp_id, value="B", quality="good", source_adapter="test"))
+
+    release.set()
+    await _drain_sends(adapter)
+
+    assert messages == ["A", "B"]
+
+
+@pytest.mark.asyncio
 async def test_write_path_sends_message_to_provider(bus, dummy_provider, monkeypatch):
     dp_id = uuid.uuid4()
     monkeypatch.setattr("obs.core.registry.get_registry", lambda: _Registry(_Dp(dp_id, unit=None)))
@@ -551,6 +594,48 @@ async def test_condition_reset_clears_pending_in_flight_send(bus, monkeypatch):
     await adapter._on_value_event(DataValueEvent(datapoint_id=dp_id, value=20, quality="good", source_adapter="test"))
 
     release.set()
+    await _drain_sends(adapter)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cooldown_is_recorded_when_condition_resets_during_in_flight_send(bus, monkeypatch):
+    dp_id = uuid.uuid4()
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _Registry(_Dp(dp_id)))
+    release = asyncio.Event()
+    calls = 0
+
+    class _SlowProvider(_DummyProvider):
+        provider_type = "slow-cooldown"
+
+        def __init__(self) -> None:
+            pass
+
+        async def send(self, **kwargs):
+            nonlocal calls
+            calls += 1
+            await release.wait()
+            return MessageSendResult("slow-cooldown", "default", True)
+
+    provider = _SlowProvider()
+    register_provider(provider)
+    adapter = MessageAdapter(
+        event_bus=bus,
+        config={"providers": {"slow-cooldown": {"enabled": True, "targets": {"default": {}}}}},
+    )
+    binding = _message_binding(
+        dp_id,
+        cooldown_seconds=300,
+        providers=[{"provider": "slow-cooldown", "target": "default"}],
+    )
+    await adapter.reload_bindings([binding])
+
+    await adapter._on_value_event(DataValueEvent(datapoint_id=dp_id, value=99, quality="good", source_adapter="test"))
+    await adapter._on_value_event(DataValueEvent(datapoint_id=dp_id, value=20, quality="good", source_adapter="test"))
+    release.set()
+    await _drain_sends(adapter)
+    await adapter._on_value_event(DataValueEvent(datapoint_id=dp_id, value=99, quality="good", source_adapter="test"))
     await _drain_sends(adapter)
 
     assert calls == 1

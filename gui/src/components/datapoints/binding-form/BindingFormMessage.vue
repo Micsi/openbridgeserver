@@ -43,7 +43,7 @@
         </select>
         <button type="button" class="btn-danger btn-sm" @click="cfg.providers.splice(idx, 1)">{{ $t('common.delete') }}</button>
       </div>
-      <button type="button" class="btn-secondary btn-sm self-start" :disabled="providerOptions.length === 0" @click="addProviderTarget">
+      <button type="button" class="btn-secondary btn-sm self-start" :disabled="unusedProviderTargets.length === 0" @click="addProviderTarget">
         {{ $t('adapters.bindingForm.addTarget') }}
       </button>
     </div>
@@ -73,6 +73,20 @@ const providerOptions = computed(() => {
     .filter((entry) => entry.targets.length > 0)
 })
 
+const selectedPairs = computed(() => new Set((props.cfg.providers ?? []).map((ref) => `${ref.provider}\u0000${ref.target}`)))
+
+const unusedProviderTargets = computed(() => {
+  const unused = []
+  for (const option of providerOptions.value) {
+    for (const target of option.targets) {
+      if (!selectedPairs.value.has(`${option.provider}\u0000${target}`)) {
+        unused.push({ provider: option.provider, target })
+      }
+    }
+  }
+  return unused
+})
+
 function targetsFor(provider) {
   return providerOptions.value.find((entry) => entry.provider === provider)?.targets ?? []
 }
@@ -82,8 +96,8 @@ function firstTarget(provider) {
 }
 
 function addProviderTarget() {
-  const first = providerOptions.value[0]
+  const first = unusedProviderTargets.value[0]
   if (!first) return
-  props.cfg.providers.push({ provider: first.provider, target: first.targets[0] })
+  props.cfg.providers.push({ provider: first.provider, target: first.target })
 }
 </script>
