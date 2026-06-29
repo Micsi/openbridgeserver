@@ -141,8 +141,6 @@ async def _validate_import_message_instance_configs(
         for binding in message_import_bindings:
             existing = existing_import_bindings.get(binding.id)
             effective_instance_id = existing["adapter_instance_id"] if existing is not None else binding.adapter_instance_id
-            if binding.id in proposed and effective_instance_id != instance_id:
-                proposed.pop(binding.id)
             if effective_instance_id == instance_id:
                 proposed[binding.id] = _message_binding_row(
                     binding_id=binding.id,
