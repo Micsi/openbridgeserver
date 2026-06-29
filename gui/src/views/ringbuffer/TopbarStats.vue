@@ -66,7 +66,8 @@ const maxEntries = computed(() => {
   const value = Number(raw)
   return Number.isFinite(value) ? value : null
 })
-const storage = computed(() => stats.value?.storage ?? '—')
+const enabled = computed(() => stats.value?.enabled !== false)
+const storage = computed(() => (enabled.value ? (stats.value?.storage ?? '—') : 'disabled'))
 
 function fmt(n) {
   if (!Number.isFinite(n)) return '—'
@@ -142,10 +143,28 @@ function hideTip() {
   stopAutoUpdateFn()
 }
 
+function startPolling() {
+  if (!pollTimer) {
+    pollTimer = setInterval(() => { void load() }, 10000)
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 async function load() {
   try {
     const { data } = await ringbufferApi.stats()
     stats.value = data
+    if (data?.enabled === false) {
+      stopPolling()
+    } else {
+      startPolling()
+    }
   } catch {
     stats.value = null
   }
@@ -153,7 +172,7 @@ async function load() {
 
 onMounted(() => {
   void load()
-  pollTimer = setInterval(() => { void load() }, 10000)
+  startPolling()
   wsUnsubscribe = wsStore.onRingbufferEntry(() => {
     clearTimeout(wsRefreshDebounce)
     wsRefreshDebounce = setTimeout(() => { void load() }, 250)
@@ -162,10 +181,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopAutoUpdateFn()
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
+  stopPolling()
   if (wsRefreshDebounce) {
     clearTimeout(wsRefreshDebounce)
     wsRefreshDebounce = null

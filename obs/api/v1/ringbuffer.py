@@ -30,8 +30,16 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from obs.api.auth import get_current_user
 from obs.db.database import Database, get_db
-from obs.ringbuffer.persisted_config import persist_ringbuffer_config
-from obs.ringbuffer.ringbuffer import get_ringbuffer
+from obs.ringbuffer.persisted_config import load_persisted_ringbuffer_config, persist_ringbuffer_config
+from obs.ringbuffer.ringbuffer import (
+    delete_ringbuffer_storage_files,
+    get_optional_ringbuffer,
+    get_ringbuffer,
+    init_ringbuffer,
+    is_ringbuffer_enabled,
+    reset_ringbuffer,
+    set_ringbuffer_enabled,
+)
 
 router = APIRouter(tags=["ringbuffer"])
 
@@ -61,6 +69,46 @@ _CSV_EXPORT_HEADERS = (
 
 _COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _DEFAULT_COLOR = "#3b82f6"
+
+
+def _ringbuffer_disk_path() -> str:
+    from obs.config import get_settings
+
+    return get_settings().database.path.replace(".db", "_ringbuffer.db")
+
+
+def _subscribe_ringbuffer(rb: Any) -> None:
+    from obs.core.event_bus import DataValueEvent, get_event_bus
+
+    try:
+        get_event_bus().subscribe(DataValueEvent, rb.handle_value_event)
+    except RuntimeError:
+        pass
+
+
+def _unsubscribe_ringbuffer(rb: Any) -> None:
+    from obs.core.event_bus import DataValueEvent, get_event_bus
+
+    try:
+        get_event_bus().unsubscribe(DataValueEvent, rb.handle_value_event)
+    except RuntimeError:
+        pass
+
+
+async def _disabled_stats(db: Database) -> RingBufferStats:
+    cfg = await load_persisted_ringbuffer_config(db)
+    return RingBufferStats(
+        enabled=False,
+        total=0,
+        oldest_ts=None,
+        newest_ts=None,
+        storage="file",
+        max_entries=cfg["max_entries"],
+        effective_retention_seconds=None,
+        max_file_size_bytes=cfg["max_file_size_bytes"],
+        max_age=cfg["max_age"],
+        file_size_bytes=0,
+    )
 
 
 def _now_iso() -> str:
@@ -102,6 +150,7 @@ class RingBufferMultiEntryOut(RingBufferEntryOut):
 
 
 class RingBufferStats(BaseModel):
+    enabled: bool = True
     total: int
     oldest_ts: str | None
     newest_ts: str | None
@@ -116,6 +165,7 @@ class RingBufferStats(BaseModel):
 
 
 class RingBufferConfig(BaseModel):
+    enabled: bool = True
     storage: str = "file"
     max_entries: int | None = Field(default=None, ge=1)
     max_file_size_bytes: int | None = Field(default=None, ge=1)
@@ -581,6 +631,9 @@ async def _query_v2_entries(
     limit_override: int | None = None,
     offset_override: int | None = None,
 ) -> list[RingBufferEntryOut]:
+    if not is_ringbuffer_enabled():
+        return []
+
     from obs.core.registry import get_registry
 
     registry = get_registry()
@@ -852,6 +905,9 @@ async def query_ringbuffer(
     limit: int = Query(100, ge=1, le=10000),
     _user: str = Depends(get_current_user),
 ) -> list[RingBufferEntryOut]:
+    if not is_ringbuffer_enabled():
+        return []
+
     from obs.core.registry import get_registry
 
     registry = get_registry()
@@ -1630,9 +1686,13 @@ async def put_ringbuffer_export_settings(
 @router.get("/stats", response_model=RingBufferStats)
 async def ringbuffer_stats(
     _user: str = Depends(get_current_user),
+    db: Database = Depends(get_db),
 ) -> RingBufferStats:
-    stats = await get_ringbuffer().stats()
-    return RingBufferStats(**stats)
+    rb = get_optional_ringbuffer()
+    if not is_ringbuffer_enabled() or rb is None:
+        return await _disabled_stats(db)
+    stats = await rb.stats()
+    return RingBufferStats(enabled=True, **stats)
 
 
 @router.post("/config", response_model=RingBufferStats)
@@ -1647,7 +1707,42 @@ async def configure_ringbuffer(
             "storage must be 'file' (memory and disk are no longer supported)",
         )
 
-    rb = get_ringbuffer()
+    persisted = await load_persisted_ringbuffer_config(db)
+    requested_enabled = body.enabled if "enabled" in body.model_fields_set else is_ringbuffer_enabled()
+    rb = get_optional_ringbuffer()
+    current_config = await rb.stats() if rb is not None else persisted
+
+    resolved_max_entries = body.max_entries if "max_entries" in body.model_fields_set else current_config["max_entries"]
+    resolved_max_file_size = body.max_file_size_bytes if "max_file_size_bytes" in body.model_fields_set else current_config["max_file_size_bytes"]
+    resolved_max_age = body.max_age if "max_age" in body.model_fields_set else current_config["max_age"]
+
+    if not requested_enabled:
+        set_ringbuffer_enabled(False)
+        if rb is not None:
+            _unsubscribe_ringbuffer(rb)
+            await rb.stop()
+            reset_ringbuffer()
+            set_ringbuffer_enabled(False)
+        delete_ringbuffer_storage_files(_ringbuffer_disk_path())
+        await persist_ringbuffer_config(
+            db,
+            enabled=False,
+            max_entries=resolved_max_entries,
+            max_file_size_bytes=resolved_max_file_size,
+            max_age=resolved_max_age,
+        )
+        return await _disabled_stats(db)
+
+    if rb is None:
+        rb = await init_ringbuffer(
+            storage="file",
+            max_entries=resolved_max_entries,
+            disk_path=_ringbuffer_disk_path(),
+            max_file_size_bytes=resolved_max_file_size,
+            max_age=resolved_max_age,
+        )
+        _subscribe_ringbuffer(rb)
+
     reconfigure_kwargs: dict[str, Any] = {}
     if "max_entries" in body.model_fields_set:
         reconfigure_kwargs["max_entries"] = body.max_entries
@@ -1659,8 +1754,9 @@ async def configure_ringbuffer(
     stats = await rb.stats()
     await persist_ringbuffer_config(
         db,
+        enabled=True,
         max_entries=stats["max_entries"],
         max_file_size_bytes=stats["max_file_size_bytes"],
         max_age=stats["max_age"],
     )
-    return RingBufferStats(**stats)
+    return RingBufferStats(enabled=True, **stats)

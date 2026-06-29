@@ -16,6 +16,8 @@ import pytest
 from fastapi import HTTPException
 
 from obs.api.v1 import ringbuffer as rb_api
+from obs.db.database import Database
+from obs.ringbuffer.ringbuffer import init_ringbuffer, reset_ringbuffer
 
 
 class _RegistryStub:
@@ -208,6 +210,47 @@ async def test_query_v2_entries_converts_value_error_to_http_422(monkeypatch):
 
     assert exc_info.value.status_code == 422
     assert "invalid filter window" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_query_v2_entries_returns_empty_when_monitor_disabled(monkeypatch):
+    monkeypatch.setattr(rb_api, "is_ringbuffer_enabled", lambda: False)
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: pytest.fail("registry should not be loaded"))
+
+    rows = await rb_api._query_v2_entries(rb_api.RingBufferQueryV2())
+
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_configure_disable_stops_ringbuffer_persists_flag_and_deletes_storage(tmp_path, monkeypatch):
+    db = Database(":memory:")
+    await db.connect()
+    rb_path = tmp_path / "obs_ringbuffer.db"
+    rb = await init_ringbuffer("file", max_entries=10, disk_path=str(rb_path), max_file_size_bytes=1024 * 1024)
+    await rb.record(
+        ts="2026-01-01T00:00:00.000Z",
+        datapoint_id="dp-api-disable",
+        topic="dp/dp-api-disable/value",
+        old_value=None,
+        new_value=1,
+        source_adapter="api",
+        quality="good",
+    )
+    assert rb_path.exists()
+    monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(rb_path))
+
+    try:
+        stats = await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=False), _user="admin", db=db)
+        cfg = await rb_api.load_persisted_ringbuffer_config(db)
+    finally:
+        reset_ringbuffer()
+        await db.disconnect()
+
+    assert stats.enabled is False
+    assert stats.total == 0
+    assert cfg["enabled"] is False
+    assert not rb_path.exists()
 
 
 # ---------------------------------------------------------------------------

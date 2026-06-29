@@ -17,6 +17,7 @@
 * Backend: Object hierarchy startpoint can be defined and the full path is displayed on mouseover https://github.com/abeggled/openbridgeserver/issues/443
 * Backend: Extension of the monitor with extremely extensive filtering options https://github.com/abeggled/openbridgeserver/issues/36
 * Backend: Monitor/Ringbuffer retention, storage model, query/filter semantics and filtersets API. https://github.com/abeggled/openbridgeserver/issues/384 https://github.com/abeggled/openbridgeserver/issues/385 https://github.com/abeggled/openbridgeserver/issues/386 https://github.com/abeggled/openbridgeserver/issues/387 https://github.com/abeggled/openbridgeserver/issues/388 https://github.com/abeggled/openbridgeserver/issues/389
+* Backend: The Monitor/RingBuffer can now be disabled to avoid runtime recording overhead; disabling it warns the user and deletes existing monitor entries to free storage. https://github.com/abeggled/openbridgeserver/issues/859
 * Backend: Monitor/Ringbuffer CSV export for complete filtered results. https://github.com/abeggled/openbridgeserver/issues/390
 * Backend: Possibility to migrate all objects of an adapter to a new one of the same type https://github.com/abeggled/openbridgeserver/issues/419
 * Backend: Log viewer with filtering options https://github.com/abeggled/openbridgeserver/issues/452

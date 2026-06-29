@@ -99,6 +99,28 @@ async def test_reconfigure_allows_disabling_count_limit_with_null_max_entries():
 
 
 @pytest.mark.asyncio
+async def test_disabled_ringbuffer_skips_records():
+    rb = RingBuffer(storage="memory", max_entries=5)
+    await rb.start()
+    rb_mod.set_ringbuffer_enabled(False)
+    try:
+        await rb.record(
+            ts="2026-01-01T00:00:00.000Z",
+            datapoint_id="dp-disabled",
+            topic="dp/dp-disabled/value",
+            old_value=None,
+            new_value=1,
+            source_adapter="api",
+            quality="good",
+        )
+        assert await rb.query(q="dp-disabled", limit=10) == []
+        assert (await rb.stats())["total"] == 0
+    finally:
+        rb_mod.set_ringbuffer_enabled(True)
+        await rb.stop()
+
+
+@pytest.mark.asyncio
 async def test_handle_value_event_falls_back_to_default_topic_when_registry_unavailable(monkeypatch):
     rb = RingBuffer(storage="memory", max_entries=5)
     await rb.start()
@@ -146,3 +168,15 @@ def test_sqlite_corruption_detector_only_matches_sqlite_corruption_errors():
     assert _is_sqlite_corruption(rb_mod.aiosqlite.DatabaseError("SQLite integrity_check failed: bad page")) is True
     assert _is_sqlite_corruption(rb_mod.aiosqlite.OperationalError("database is locked")) is False
     assert _is_sqlite_corruption(RuntimeError("database disk image is malformed")) is False
+
+
+def test_delete_ringbuffer_storage_files_removes_sqlite_sidecars(tmp_path):
+    db_path = tmp_path / "obs_ringbuffer.db"
+    for path in (db_path, tmp_path / "obs_ringbuffer.db-wal", tmp_path / "obs_ringbuffer.db-shm"):
+        path.write_text("x", encoding="utf-8")
+
+    rb_mod.delete_ringbuffer_storage_files(str(db_path))
+
+    assert not db_path.exists()
+    assert not (tmp_path / "obs_ringbuffer.db-wal").exists()
+    assert not (tmp_path / "obs_ringbuffer.db-shm").exists()

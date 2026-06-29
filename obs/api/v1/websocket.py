@@ -171,6 +171,11 @@ class WebSocketManager:
             await self.disconnect(conn_id)
 
         # ── 2. RingBuffer live-push — broadcast to ALL clients ────────────
+        from obs.ringbuffer.ringbuffer import is_ringbuffer_enabled
+
+        if not is_ringbuffer_enabled():
+            return
+
         rb_msg = {
             "action": "ringbuffer_entry",
             "entry": {

@@ -38,7 +38,7 @@
           <span :class="['w-1.5 h-1.5 rounded-full', statusDotClass]" />
           {{ statusBadgeText }}
         </span>
-        <TopbarStats />
+        <TopbarStats ref="topbarStatsRef" />
       </div>
     </div>
 
@@ -123,7 +123,7 @@
       </div>
     </div>
 
-    <MonitorConfigModal v-model="showConfig" />
+    <MonitorConfigModal v-model="showConfig" @saved="onMonitorConfigSaved" />
   </div>
 </template>
 
@@ -224,6 +224,11 @@ async function onTopbarChanged() {
   await load()
 }
 
+async function onMonitorConfigSaved() {
+  await topbarStatsRef.value?.reload?.()
+  await load()
+}
+
 // TimeFilterPopover state (#432). See useTimeFilterPayload for the shape.
 const timeFilter = ref(null)
 
@@ -233,6 +238,7 @@ async function onTimeFilterChanged() {
 }
 
 const tableWrapRef = ref(null)
+const topbarStatsRef = ref(null)
 const filtersets = ref([])
 let liveIngressSeq = 0
 
