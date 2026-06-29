@@ -127,6 +127,22 @@ def test_render_message_replaces_value_unit_and_metadata():
     assert rendered == f"Temperatur {dp_id} 29.4 °C 2026-06-28T12:00:00+00:00"
 
 
+def test_render_message_does_not_reprocess_inserted_placeholder_text():
+    dp_id = uuid.uuid4()
+    ts = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+
+    rendered = render_message(
+        "value=###DP### ts=###TS###",
+        value="###TS###",
+        unit=None,
+        name="Sensor",
+        datapoint_id=dp_id,
+        ts=ts,
+    )
+
+    assert rendered == "value=###TS### ts=2026-06-28T12:00:00+00:00"
+
+
 def test_disabled_provider_allows_incomplete_hidden_targets():
     cfg = MessageAdapterConfig(providers={"telegram": {"enabled": False, "targets": {"default": {}}}})
 
@@ -180,6 +196,14 @@ def test_binding_rejects_pushover_emergency_priority_without_required_fields():
     with pytest.raises(ValueError, match="Pushover emergency priority"):
         MessageBindingConfig(
             priority=2,
+            providers=[{"provider": "pushover", "target": "default"}],
+        )
+
+
+def test_binding_rejects_out_of_range_pushover_priority():
+    with pytest.raises(ValueError, match="Pushover priority"):
+        MessageBindingConfig(
+            priority=3,
             providers=[{"provider": "pushover", "target": "default"}],
         )
 

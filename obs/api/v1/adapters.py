@@ -483,6 +483,7 @@ async def migrate_instance_bindings(
     now = datetime.now(UTC).isoformat()
     target_message_config = _json_config(target_row["config"]) if target_row["adapter_type"] == "MESSAGE" else None
 
+    bindings_to_migrate = []
     for binding_row in source_bindings:
         if binding_row["datapoint_id"] in target_datapoint_ids:
             skipped += 1
@@ -495,6 +496,9 @@ async def migrate_instance_bindings(
                 enabled=bool(binding_row["enabled"]),
                 instance_config=target_message_config,
             )
+        bindings_to_migrate.append(binding_row)
+
+    for binding_row in bindings_to_migrate:
         await db.execute(
             "UPDATE adapter_bindings SET adapter_instance_id=?, updated_at=? WHERE id=?",
             (target_id, now, binding_row["id"]),

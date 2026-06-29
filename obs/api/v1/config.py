@@ -84,6 +84,76 @@ class ExportedAdapterConfig(BaseModel):
     enabled: bool
 
 
+def _message_binding_row(
+    *,
+    binding_id: str,
+    direction: str,
+    config: dict,
+    enabled: bool,
+    instance_id: str | None,
+) -> dict:
+    return {
+        "id": binding_id,
+        "direction": direction,
+        "config": config,
+        "enabled": enabled,
+        "adapter_instance_id": instance_id,
+    }
+
+
+async def _validate_import_message_instance_configs(
+    instances: list[ExportedAdapterInstance],
+    bindings: list[ExportedBinding],
+    db: Database,
+) -> dict[str, str]:
+    message_instances = {instance.id: instance for instance in instances if instance.adapter_type == "MESSAGE"}
+    if not message_instances:
+        return {}
+
+    message_import_bindings = [binding for binding in bindings if binding.adapter_type == "MESSAGE"]
+    invalid: dict[str, str] = {}
+    for instance_id, instance in message_instances.items():
+        rows = await db.fetchall(
+            """SELECT id, adapter_instance_id, direction, config, enabled
+               FROM adapter_bindings
+               WHERE adapter_instance_id=? AND adapter_type='MESSAGE'""",
+            (instance_id,),
+        )
+        proposed = {
+            row["id"]: _message_binding_row(
+                binding_id=row["id"],
+                direction=row["direction"],
+                config=_json_config(row["config"]),
+                enabled=bool(row["enabled"]),
+                instance_id=row["adapter_instance_id"],
+            )
+            for row in rows
+        }
+        for binding in message_import_bindings:
+            if binding.id in proposed and binding.adapter_instance_id != instance_id:
+                proposed.pop(binding.id)
+            if binding.adapter_instance_id == instance_id:
+                proposed[binding.id] = _message_binding_row(
+                    binding_id=binding.id,
+                    direction=binding.direction,
+                    config=binding.config,
+                    enabled=binding.enabled,
+                    instance_id=binding.adapter_instance_id,
+                )
+        try:
+            for binding in proposed.values():
+                _validate_adapter_binding(
+                    "MESSAGE",
+                    binding["direction"],
+                    binding["config"],
+                    enabled=binding["enabled"],
+                    instance_config=instance.config,
+                )
+        except Exception as exc:
+            invalid[instance_id] = str(exc)
+    return invalid
+
+
 class ExportedLogicGraph(BaseModel):
     id: str
     name: str
@@ -604,8 +674,12 @@ async def import_config(
                 ),
             )
 
+    invalid_message_instances = await _validate_import_message_instance_configs(instances_to_upsert, body.bindings, db)
+
     for ai in instances_to_upsert:
         try:
+            if ai.id in invalid_message_instances:
+                raise ValueError(invalid_message_instances[ai.id])
             await db.execute_and_commit(
                 """INSERT INTO adapter_instances
                    (id, adapter_type, name, config, enabled, created_at, updated_at)

@@ -49,6 +49,33 @@ async def _make_instance(client, auth_headers) -> dict:
     return resp.json()
 
 
+def _message_instance_config(target: str = "default") -> dict:
+    return {
+        "providers": {
+            "pushover": {
+                "enabled": True,
+                "api_token": "app-token",
+                "targets": {target: {"user_key": "user-key"}},
+            }
+        }
+    }
+
+
+async def _make_message_instance(client, auth_headers, config: dict | None = None) -> dict:
+    resp = await client.post(
+        "/api/v1/adapters/instances",
+        json={
+            "adapter_type": "MESSAGE",
+            "name": f"CfgMsgInst-{uuid.uuid4().hex[:6]}",
+            "config": config or _message_instance_config(),
+            "enabled": False,
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
 async def _make_graph(client, auth_headers) -> dict:
     resp = await client.post(
         "/api/v1/logic/graphs",
@@ -552,6 +579,45 @@ async def test_import_message_binding_rejects_blank_message_body(client, auth_he
     body = resp.json()
     assert body["bindings_created"] == 0
     assert any("message must not be empty" in error for error in body["errors"])
+
+
+async def test_import_message_instance_config_does_not_orphan_existing_binding(client, auth_headers):
+    dp = await _make_dp(client, auth_headers)
+    inst = await _make_message_instance(client, auth_headers, config=_message_instance_config(target="default"))
+    create_resp = await client.post(
+        f"/api/v1/datapoints/{dp['id']}/bindings",
+        json={
+            "adapter_instance_id": inst["id"],
+            "direction": "SOURCE",
+            "config": {"providers": [{"provider": "pushover", "target": "default"}]},
+        },
+        headers=auth_headers,
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    payload = {
+        "obs_version": "5",
+        "exported_at": "2024-01-01T00:00:00",
+        "datapoints": [],
+        "bindings": [],
+        "adapter_instances": [
+            {
+                "id": inst["id"],
+                "adapter_type": "MESSAGE",
+                "name": inst["name"],
+                "config": _message_instance_config(target="renamed"),
+                "enabled": False,
+            }
+        ],
+    }
+
+    resp = await client.post("/api/v1/config/import", json=payload, headers=auth_headers)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["adapter_instances_upserted"] == 0
+    assert any("MESSAGE target not configured" in error for error in body["errors"])
+    get_resp = await client.get(f"/api/v1/adapters/instances/{inst['id']}", headers=auth_headers)
+    assert set(get_resp.json()["config"]["providers"]["pushover"]["targets"]) == {"default"}
 
 
 # ---------------------------------------------------------------------------

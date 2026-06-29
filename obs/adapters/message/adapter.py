@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections import deque
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 MessageOperator = Literal["any", "=", "==", "<", "<=", ">", ">=", "!=", "contains", "contains not", "starts with", "ends with"]
 MAX_PENDING_EVENTS_PER_BINDING = 100
 _NO_PENDING_COALESCE = object()
+_PLACEHOLDER_PATTERN = re.compile("###(?:DP|DPU|DPN|DPI|TS)###")
 
 
 class ProviderTargetRef(BaseModel):
@@ -78,8 +80,11 @@ class MessageBindingConfig(BaseModel):
             if key in seen_targets:
                 raise ValueError(f"Duplicate MESSAGE target: {ref.provider}/{ref.target}")
             seen_targets.add(key)
-        if self.priority == 2 and any(ref.provider == "pushover" for ref in self.providers):
-            raise ValueError("Pushover emergency priority is not supported")
+        if self.priority is not None and any(ref.provider == "pushover" for ref in self.providers):
+            if self.priority == 2:
+                raise ValueError("Pushover emergency priority is not supported")
+            if self.priority not in {-2, -1, 0, 1}:
+                raise ValueError("Pushover priority must be one of -2, -1, 0 or 1")
         return self
 
 
@@ -208,10 +213,7 @@ def render_message(template: str, *, value: Any, unit: str | None, name: str, da
         "###DPI###": str(datapoint_id),
         "###TS###": ts.isoformat(),
     }
-    rendered = template
-    for placeholder, replacement in replacements.items():
-        rendered = rendered.replace(placeholder, replacement)
-    return rendered
+    return _PLACEHOLDER_PATTERN.sub(lambda match: replacements[match.group(0)], template)
 
 
 @register

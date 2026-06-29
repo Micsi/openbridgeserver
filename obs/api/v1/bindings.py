@@ -126,15 +126,20 @@ def _json_config(raw: Any) -> dict[str, Any]:
 
 def _validate_message_target_refs(binding_config: Any, instance_config: dict[str, Any]) -> None:
     from obs.adapters.message.adapter import MessageAdapterConfig
+    from obs.adapters.message.providers.registry import get_provider
 
     adapter_config = MessageAdapterConfig(**instance_config)
     for ref in binding_config.providers:
         provider_config = adapter_config.providers.get(ref.provider)
         if provider_config is None:
             raise ValueError(f"MESSAGE provider not configured: {ref.provider}")
-        if not provider_config.get("enabled", False):
+        provider = get_provider(ref.provider)
+        if provider is None:
+            raise ValueError(f"MESSAGE provider not registered: {ref.provider}")
+        parsed_provider_config = provider.config_schema(**provider_config)
+        if not getattr(parsed_provider_config, "enabled", False):
             raise ValueError(f"MESSAGE provider is disabled: {ref.provider}")
-        targets = provider_config.get("targets") or {}
+        targets = getattr(parsed_provider_config, "targets", {}) or {}
         if ref.target not in targets:
             raise ValueError(f"MESSAGE target not configured: {ref.provider}/{ref.target}")
 
