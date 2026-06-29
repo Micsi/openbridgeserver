@@ -194,3 +194,36 @@ async def filter_authorized_datapoints(
         if decision.allowed:
             allowed.append(dp_id)
     return allowed
+
+
+async def filter_authorized_hierarchy_nodes(
+    db: Database,
+    principal: Principal,
+    node_ids: Iterable[str],
+    *,
+    action: AuthzAction | str = AuthzAction.READ,
+    grants: Sequence[RoleGrant] | None = None,
+) -> list[str]:
+    """Return hierarchy node IDs from *node_ids* authorized for *principal*."""
+    ordered_ids = _unique(node_ids)
+    if not ordered_ids:
+        return []
+    if principal.type == "user" and principal.is_admin:
+        return ordered_ids
+
+    resolved_grants = list(grants) if grants is not None else await load_role_grants(db, principal, node_type="hierarchy")
+    targets_by_node = {target.node_id: target for target in await resolve_hierarchy_targets(db, ordered_ids)}
+    allowed: list[str] = []
+    for node_id in ordered_ids:
+        target = targets_by_node.get(node_id)
+        if target is None:
+            continue
+        decision = authorize(
+            principal=principal,
+            action=action,
+            targets=[target],
+            grants=resolved_grants,
+        )
+        if decision.allowed:
+            allowed.append(node_id)
+    return allowed
