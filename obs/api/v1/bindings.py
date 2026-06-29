@@ -81,12 +81,20 @@ async def _reload_adapter_instance(instance_id: str, db: Database) -> None:
     await adapter_registry.reload_instance_bindings(instance_id, db)
 
 
-def _validate_adapter_binding(adapter_type: str, direction: str, config: dict[str, Any]) -> None:
+def _validate_adapter_binding(
+    adapter_type: str,
+    direction: str,
+    config: dict[str, Any],
+    *,
+    validate_schema: bool = True,
+) -> None:
     if adapter_type == "MESSAGE" and direction != "SOURCE":
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "MESSAGE-Bindings unterstützen nur Richtung SOURCE",
         )
+    if adapter_type != "MESSAGE" and not validate_schema:
+        return
 
     from obs.adapters.registry import get_class
 
@@ -239,7 +247,7 @@ async def update_binding(
     value_map_new = updates.get("value_map", json.loads(row["value_map"]) if row["value_map"] else None)
     value_map_json = json.dumps(value_map_new) if value_map_new else None
 
-    _validate_adapter_binding(row["adapter_type"], direction, config)
+    _validate_adapter_binding(row["adapter_type"], direction, config, validate_schema="config" in updates)
 
     # Formel validieren
     if formula:
