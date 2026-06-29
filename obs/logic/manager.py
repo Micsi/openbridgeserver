@@ -570,9 +570,9 @@ async def _ping_host(host: str, count: int, timeout_s: float) -> tuple[bool, flo
     timeout_s, count = _normalise_host_check_ping_config(timeout_s, count)
     timeout_int = int(timeout_s)
     if sys.platform == "darwin":
-        cmd = ["ping", "-c", str(count), "-W", str(timeout_int * 1000), host]
+        cmd = ["ping", "-c", str(count), "-W", str(timeout_int * 1000), "--", host]
     else:
-        cmd = ["ping", "-c", str(count), "-W", str(timeout_int), host]
+        cmd = ["ping", "-c", str(count), "-W", str(timeout_int), "--", host]
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,

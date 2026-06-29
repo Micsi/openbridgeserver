@@ -165,8 +165,8 @@ fi
 
 if command -v apt-get >/dev/null 2>&1 && ! command -v ping >/dev/null 2>&1; then
     echo "Installing Host Check runtime dependency: iputils-ping ..."
-    apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y iputils-ping
+    apt-get update || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y iputils-ping || echo "Warning: could not install iputils-ping — Host Check will report hosts as unreachable until ping is available."
 fi
 
 systemctl stop "$SERVICE"
