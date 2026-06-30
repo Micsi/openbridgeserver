@@ -367,6 +367,47 @@ async def test_set_node_users_validates_inherited_user_access_pages(db: Database
 
 
 @pytest.mark.asyncio
+async def test_update_node_to_user_access_validates_existing_target_group(db: Database):
+    await _seed_scope(db)
+    await _insert_user(db)
+    await _insert_visu_location(db, "public-folder", access="public")
+    await _insert_visu_page(db, "child-page", access=None, config=_page_config(BLOCKED_DP_ID), parent_id="public-folder")
+    await _assign_visu_user(db, node_id="public-folder")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await visu_api.update_node(
+            "public-folder",
+            visu_api.VisuNodeUpdate(access="user"),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+    row = await db.fetchone("SELECT access FROM visu_nodes WHERE id = 'public-folder'")
+    assert row["access"] == "public"
+
+
+@pytest.mark.asyncio
+async def test_move_node_under_user_access_validates_inherited_target_group(db: Database):
+    await _seed_scope(db)
+    await _insert_user(db)
+    await _insert_visu_location(db, "secure-folder", access="user")
+    await _insert_visu_location(db, "public-folder", access=None)
+    await _insert_visu_page(db, "child-page", access=None, config=_page_config(BLOCKED_DP_ID), parent_id="public-folder")
+    await _assign_visu_user(db, node_id="secure-folder")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await visu_api.move_node(
+            "public-folder",
+            visu_api.MoveNodeRequest(new_parent_id="secure-folder", order=0),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+    row = await db.fetchone("SELECT parent_id FROM visu_nodes WHERE id = 'public-folder'")
+    assert row["parent_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_public_page_read_without_auth_remains_compatible(db: Database):
     await _seed_scope(db)
     await _insert_visu_page(db, "public-page", access="public", config=_page_config(BLOCKED_DP_ID))

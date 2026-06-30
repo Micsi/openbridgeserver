@@ -117,6 +117,28 @@ async def _resolve_access_with_node(db: Database, node_id: str) -> tuple[str, st
     return "public", None
 
 
+async def _resolve_access_with_node_overrides(
+    db: Database,
+    node_id: str,
+    *,
+    access_overrides: dict[str, str | None] | None = None,
+    parent_overrides: dict[str, str | None] | None = None,
+) -> tuple[str, str | None]:
+    current_id: str | None = node_id
+    seen: set[str] = set()
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        async with db.conn.execute("SELECT access, parent_id FROM visu_nodes WHERE id = ?", (current_id,)) as cur:
+            row = await cur.fetchone()
+        if not row:
+            break
+        access = access_overrides[current_id] if access_overrides and current_id in access_overrides else row["access"]
+        if access is not None:
+            return access, current_id
+        current_id = parent_overrides[current_id] if parent_overrides and current_id in parent_overrides else row["parent_id"]
+    return "public", None
+
+
 async def _check_user_access(db: Database, node_id: str, username: str) -> bool:
     """Gibt True zurück, wenn der Benutzer für den angegebenen 'user'-Knoten
     autorisiert ist (Admin oder explizit zugewiesen).
@@ -241,6 +263,34 @@ async def _check_user_target_pages_datapoint_policy(
             defining_node_id,
             node.page_config or PageConfig(),
             usernames=usernames,
+        )
+
+
+async def _check_user_target_pages_datapoint_policy_after_access_change(
+    db: Database,
+    *,
+    access_overrides: dict[str, str | None] | None = None,
+    parent_overrides: dict[str, str | None] | None = None,
+) -> None:
+    rows = await db.fetchall("SELECT * FROM visu_nodes WHERE type = 'PAGE'")
+    for row in rows:
+        page_id = row["id"]
+        current_access, current_access_node_id = await _resolve_access_with_node(db, page_id)
+        access, access_node_id = await _resolve_access_with_node_overrides(
+            db,
+            page_id,
+            access_overrides=access_overrides,
+            parent_overrides=parent_overrides,
+        )
+        if (access, access_node_id) == (current_access, current_access_node_id):
+            continue
+        if access != "user" or access_node_id is None:
+            continue
+        node = _row_to_node(row)
+        await _check_user_page_target_datapoint_policy(
+            db,
+            access_node_id,
+            node.page_config or PageConfig(),
         )
 
 
@@ -391,6 +441,12 @@ async def update_node(
     await _get_node_or_404(db, node_id)
     updates: list[str] = []
     values: list = []
+
+    if body.access == "user":
+        await _check_user_target_pages_datapoint_policy_after_access_change(
+            db,
+            access_overrides={node_id: body.access},
+        )
 
     if body.name is not None:
         updates.append("name = ?")
@@ -571,6 +627,10 @@ async def move_node(
     _user=Depends(get_admin_user),
 ):
     await _get_node_or_404(db, node_id)
+    await _check_user_target_pages_datapoint_policy_after_access_change(
+        db,
+        parent_overrides={node_id: body.new_parent_id},
+    )
     await db.conn.execute(
         "UPDATE visu_nodes SET parent_id = ?, node_order = ?, updated_at = ? WHERE id = ?",
         (body.new_parent_id, body.order, _now_iso(), node_id),
