@@ -94,11 +94,12 @@ async def test_init_persisted_ringbuffer_disables_without_initializing(monkeypat
         ),
     )
     monkeypatch.setattr("obs.ringbuffer.ringbuffer.set_ringbuffer_enabled", lambda enabled: events.append(("enabled", enabled)))
+    monkeypatch.setattr("obs.ringbuffer.ringbuffer.reset_ringbuffer", lambda: events.append(("reset", None)))
     monkeypatch.setattr("obs.ringbuffer.ringbuffer.init_ringbuffer", lambda **_kwargs: pytest.fail("ringbuffer should not start"))
 
     await _init_persisted_ringbuffer(object(), SimpleNamespace(subscribe=lambda *_args: None), "/tmp/obs.sqlite", object)
 
-    assert events == [("enabled", False)]
+    assert events == [("reset", None), ("enabled", False)]
 
 
 async def test_stop_optional_ringbuffer_stops_active_ringbuffer(monkeypatch):

@@ -60,6 +60,12 @@ describe('TopbarStats', () => {
     expect(api.stats).toHaveBeenCalledTimes(1)
   })
 
+  it('emits loaded stats so the parent view can react to disabled state', async () => {
+    const { wrapper } = await mountStats(makeApi({ enabled: false, total: 0 }))
+
+    expect(wrapper.emitted('stats')?.[0]?.[0]).toMatchObject({ enabled: false, total: 0 })
+  })
+
   it('renders total / max · storage in the compact format', async () => {
     const { wrapper } = await mountStats()
     const root = wrapper.find('[data-testid="topbar-stats"]')

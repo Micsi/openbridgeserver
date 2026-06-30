@@ -38,7 +38,7 @@
           <span :class="['w-1.5 h-1.5 rounded-full', statusDotClass]" />
           {{ statusBadgeText }}
         </span>
-        <TopbarStats ref="topbarStatsRef" />
+        <TopbarStats ref="topbarStatsRef" @stats="onMonitorStats" />
       </div>
     </div>
 
@@ -248,9 +248,20 @@ async function onTopbarChanged() {
 }
 
 async function onMonitorConfigSaved() {
-  await topbarStatsRef.value?.reload?.()
+  const stats = await topbarStatsRef.value?.reload?.()
   clearLiveQueue()
+  if (stats?.enabled === false || monitorDisabled.value) {
+    entries.value = []
+    return
+  }
   await load()
+}
+
+function onMonitorStats(stats) {
+  monitorDisabled.value = stats?.enabled === false
+  if (!monitorDisabled.value) return
+  clearLiveQueue()
+  entries.value = []
 }
 
 // TimeFilterPopover state (#432). See useTimeFilterPayload for the shape.
@@ -350,7 +361,7 @@ async function loadFiltersets() {
 async function loadRecoveryNotice() {
   try {
     const { data } = await ringbufferApi.stats()
-    monitorDisabled.value = data?.enabled === false
+    onMonitorStats(data)
     if (!data?.last_recovery_at) {
       recoveryNotice.value = ''
       return

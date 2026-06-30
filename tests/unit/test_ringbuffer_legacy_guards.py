@@ -238,3 +238,8 @@ def test_default_ringbuffer_disk_path_never_reuses_app_database_path():
     assert rb_mod.default_ringbuffer_disk_path("/data/obs.db") == "/data/obs_ringbuffer.db"
     assert rb_mod.default_ringbuffer_disk_path("/data/obs.sqlite") == "/data/obs_ringbuffer.db"
     assert rb_mod.default_ringbuffer_disk_path("/data/obs") == "/data/obs_ringbuffer.db"
+
+
+def test_default_ringbuffer_disk_path_preserves_in_memory_sqlite_paths():
+    assert rb_mod.default_ringbuffer_disk_path(":memory:") == ":memory:"
+    assert rb_mod.default_ringbuffer_disk_path("file::memory:?cache=shared") == "file::memory:?cache=shared"

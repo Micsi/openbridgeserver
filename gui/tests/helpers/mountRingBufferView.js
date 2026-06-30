@@ -145,7 +145,14 @@ export async function mountRingBufferView({
         }),
         // Stub the topbar components so RingBufferView characterization tests
         // don't see their independent API calls (stats, listFiltersets).
-        TopbarStats: { name: 'TopbarStats', template: '<span data-testid="stub-topbar-stats" />' },
+        TopbarStats: defineComponent({
+          name: 'TopbarStats',
+          emits: ['stats'],
+          setup(_, { expose }) {
+            expose({ reload: vi.fn().mockResolvedValue({ enabled: true }) })
+            return () => h('span', { 'data-testid': 'stub-topbar-stats' })
+          },
+        }),
         TopbarFilterChips: {
           name: 'TopbarFilterChips',
           props: ['data-testid'],

@@ -54,6 +54,7 @@ const helpIcon = ref(null)
 const tooltip = ref(null)
 const tipOpen = ref(false)
 const wsStore = useWebSocketStore()
+const emit = defineEmits(['stats'])
 let stopAutoUpdate = null
 let pollTimer = null
 let wsUnsubscribe = null
@@ -160,9 +161,12 @@ async function load() {
   try {
     const { data } = await ringbufferApi.stats()
     stats.value = data
+    emit('stats', data)
     startPolling()
+    return data
   } catch {
     stats.value = null
+    return null
   }
 }
 

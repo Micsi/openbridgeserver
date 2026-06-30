@@ -900,6 +900,8 @@ class RingBuffer:
 
 
 def default_ringbuffer_disk_path(database_path: str) -> str:
+    if database_path in {":memory:", "file::memory:?cache=shared"}:
+        return database_path
     path = Path(database_path)
     return str(path.with_name(f"{path.stem}_ringbuffer.db"))
 

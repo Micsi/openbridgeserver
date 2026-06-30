@@ -1852,20 +1852,30 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
     resolved_max_age = body.max_age if "max_age" in body.model_fields_set else current_config["max_age"]
 
     if not requested_enabled:
-        set_ringbuffer_enabled(False)
-        if rb is not None:
-            _unsubscribe_ringbuffer(rb)
-            await rb.stop()
+        previous_enabled = is_ringbuffer_enabled()
+        stopped_rb = rb
+        if stopped_rb is not None:
+            _unsubscribe_ringbuffer(stopped_rb)
+        try:
+            if stopped_rb is not None:
+                await stopped_rb.stop()
+            delete_ringbuffer_storage_files(_ringbuffer_disk_path())
+            await persist_ringbuffer_config(
+                db,
+                enabled=False,
+                max_entries=resolved_max_entries,
+                max_file_size_bytes=resolved_max_file_size,
+                max_age=resolved_max_age,
+            )
+        except Exception:
+            set_ringbuffer_enabled(previous_enabled)
+            if stopped_rb is not None:
+                await stopped_rb.start()
+                _subscribe_ringbuffer(stopped_rb)
+            raise
+        if stopped_rb is not None:
             reset_ringbuffer()
-            set_ringbuffer_enabled(False)
-        delete_ringbuffer_storage_files(_ringbuffer_disk_path())
-        await persist_ringbuffer_config(
-            db,
-            enabled=False,
-            max_entries=resolved_max_entries,
-            max_file_size_bytes=resolved_max_file_size,
-            max_age=resolved_max_age,
-        )
+        set_ringbuffer_enabled(False)
         return await _disabled_stats(db)
 
     if rb is None:

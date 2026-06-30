@@ -167,13 +167,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
 async def _init_persisted_ringbuffer(db, bus, database_path: str, data_value_event_type) -> None:
     from obs.ringbuffer.persisted_config import load_persisted_ringbuffer_config
-    from obs.ringbuffer.ringbuffer import default_ringbuffer_disk_path, init_ringbuffer, set_ringbuffer_enabled
+    from obs.ringbuffer.ringbuffer import default_ringbuffer_disk_path, init_ringbuffer, reset_ringbuffer, set_ringbuffer_enabled
 
     rb_path = default_ringbuffer_disk_path(database_path)
     rb_cfg = await load_persisted_ringbuffer_config(db)
-    set_ringbuffer_enabled(bool(rb_cfg["enabled"]))
     if not rb_cfg["enabled"]:
+        reset_ringbuffer()
+        set_ringbuffer_enabled(False)
         return
+    set_ringbuffer_enabled(True)
 
     rb = await init_ringbuffer(
         storage="file",
