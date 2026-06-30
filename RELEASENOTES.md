@@ -1,8 +1,68 @@
 # Changes
 
+## 2026.7.0
+### Breaking changes 🚨
+* Security: `GET /api/v1/weather/fetch` now requires authenticated access and no longer accepts tokens in the URL query string. Weather widgets on PIN-protected Visu pages continue to work with their page-scoped session token, but unauthenticated public weather proxy calls are rejected; private/local weather endpoints still require an explicit URL Target Allowlist entry. https://github.com/abeggled/openbridgeserver/issues/791
+
+### New features ✨
+* Adapter: New MESSAGE notification adapter sends messages on data point value changes with configurable conditions, `any` matching, cooldowns, templates, and targets. Supported providers are Pushover, Telegram, and seven.io SMS/Voice; Signal is intentionally not included for now because it would require a separate gateway service. https://github.com/abeggled/openbridgeserver/issues/882
+* Backend/Admin GUI: OBS internal datapoints without adapter bindings can now be written through MQTT `dp/{uuid}/set` or the object detail view; the write is stored as the current value and propagated through the normal registry, retained MQTT value, history/ringbuffer, WebSocket, and logic event path. https://github.com/abeggled/openbridgeserver/issues/715
+* Backend/Admin GUI: ETS hierarchy import logic is now available as a reusable backend service while keeping `POST /api/v1/hierarchy/import-from-ets` behavior unchanged. This prepares the KNX project import to create selected ETS hierarchies in the same import flow. https://github.com/abeggled/openbridgeserver/issues/727
+* Backend/Admin GUI: `.knxproj` imports can now create selected ETS hierarchies in the same backend request, reporting per-hierarchy node/link counts and non-fatal failures for unavailable ETS data. https://github.com/abeggled/openbridgeserver/issues/728
+* Backend/Admin GUI: Repeated `.knxproj` imports now replace automatically generated ETS hierarchies per selected mode by default, while manual hierarchy trees remain untouched; the import dialog also offers an opt-out to keep a separate tree for each import run. https://github.com/abeggled/openbridgeserver/issues/730
+* Backend/Admin GUI: Added offline `obs-admin` CLI for support scenarios without a running OBS HTTP server. It can resolve the configuration database path, list and enable/disable adapter instances and bindings, create SQLite backups, persist the next-start log level, validate JSON config fields, and create sanitized offline support packages. Docker and LXC builds install the command directly; existing LXC containers upgrading from a release without `obs-admin` can run `/opt/obs/obs-admin` or install it once into `/usr/local/bin`. https://github.com/abeggled/openbridgeserver/issues/863
+* Backend/Admin GUI: `.knxproj` imports now offer hierarchy creation for topology, buildings/rooms, and trades in the same import flow, including per-hierarchy result feedback and optional auto-linking to created objects. https://github.com/abeggled/openbridgeserver/issues/729
+* Backend/Admin GUI: Logic editor block palette — individual block sections (Logic, Objects, Math, …) can now be collapsed and expanded by clicking the section header; the entire palette column can also be collapsed to a slim rail and restored the same way. Both states persist across page reloads. https://github.com/abeggled/openbridgeserver/issues/875
+* Backend/Admin GUI: The minimap in the logic editor can now be dragged to any position within the canvas; the position is saved and restored across page reloads. https://github.com/abeggled/openbridgeserver/issues/879
+* Logic Engine/Admin GUI: New Wake-on-LAN node sends a UDP broadcast magic packet to wake a device when the trigger input is true; MAC address, broadcast IP, and port are configurable with inline format validation. https://github.com/abeggled/openbridgeserver/issues/825
+* Logic Engine/Admin GUI: New Host Check node pings a host on each trigger pulse (rising-edge, cron-friendly) and outputs reachability (true/false) and round-trip latency in milliseconds. https://github.com/abeggled/openbridgeserver/issues/872
+* Logic Engine/Admin GUI: New Memory node provides an explicit tick boundary for controlled feedback loops. Direct graph cycles are validated in the editor/API and blocked when connecting or saving, while feedback through Memory uses the previous run's stored value and persists state across restarts. https://github.com/abeggled/openbridgeserver/issues/789
+* Logic Engine/Admin GUI: New Decision and Mapping function blocks share a reusable condition engine. Decision evaluates independent boolean outputs in parallel; Mapping evaluates ordered rules and returns the first matching typed result with an optional default value. https://github.com/abeggled/openbridgeserver/issues/891
+* Logic: HTTP API nodes can now define object-backed variables (`OBS1`, `OBS2`, …) and use placeholders like `###OBS1###` in URLs, headers, authentication fields and request bodies. Values are read immediately before the request; missing variables or objects without values stop the request with an explicit error. https://github.com/abeggled/openbridgeserver/issues/817
+* Release: LXC template and app-bundle checksums now use SHA-256 instead of SHA-512; release notes include a `Checksums (SHA-256)` section and Proxmox download instructions are updated accordingly. Existing installations are unaffected — the new `obs-update` falls back to legacy SHA-512 assets for rollback targets, and a transitional SHA-512 asset is still published alongside SHA-256 so pre-migration updaters can bootstrap the switch. https://github.com/abeggled/openbridgeserver/issues/831
+* Visu: Licht widget: the EIN/AUS state label can now be hidden via "show_state_text". https://github.com/abeggled/openbridgeserver/issues/840
+* Visu: Link widget now supports hiding the icon via the "show_icon" option. https://github.com/abeggled/openbridgeserver/issues/839
+* Visu: Editor grid limits extended — columns up to 120, cell size down to 10 px, enabling fullscreen/dense layouts. https://github.com/abeggled/openbridgeserver/issues/842
+* Visu: Link and ButtonGroup widgets now support "preserve_icon_color" per widget/button — when enabled, SVG icons retain their original colors instead of being forced to black/white. https://github.com/abeggled/openbridgeserver/issues/845
+* Visu: Widget frames now support visual variants — "flat" (no background), "outline" (border only), or default (gray card). Configurable per widget in the Visu editor. https://github.com/abeggled/openbridgeserver/issues/844
+* Visu: Link and Toggle widgets: label font size is now configurable (xs/sm/md/lg/xl). https://github.com/abeggled/openbridgeserver/issues/841
+* Visu: Link widget: active page can now be highlighted automatically — choose between dot (●), bottom bar, or border indicator, with hierarchical ancestor matching. https://github.com/abeggled/openbridgeserver/issues/843
+* Visu: Link widget: the navigation arrow (→) can now be hidden independently of the icon via the "show_arrow" option (default: shown).
+
+### Fixes 🐞
+* Admin GUI/Visu: Missing translations no longer show `common.enabled` in the binding form, and the Info widget now renders the "additional values" heading instead of the raw `$t(...)` expression. The frontend i18n guard also catches raw translation calls left as template text. https://github.com/abeggled/openbridgeserver/issues/864
+* Backend: KNX adapter no longer forwards non-finite float values (`inf`, `-inf`, `nan`) produced by DPT decoders to the event bus. Such values are now published with `quality=bad` and `value=null` instead of propagating to the InfluxDB history plugin, which rejected them with HTTP 400 "invalid boolean". https://github.com/abeggled/openbridgeserver/issues/827
+* Backend/Frontend: `value_map` transformations now match string keys case-insensitively after exact lookup, so values such as `OFF`, `oN`, `TRUE`, and `FALSE` work with built-in presets and custom maps. https://github.com/abeggled/openbridgeserver/issues/834
+* Visu: Rolladen-Widget — Beschriftungen der Statusindikatoren 1–4 wurden als roher i18n-Key angezeigt statt als übersetzter Text (fehlende doppelte geschweifte Klammern in der Config-Komponente).
+* Backend: High-volume third-party DEBUG loggers (e.g. `aiosqlite`, which logs two lines per SQL operation) are now floored at INFO, so enabling DEBUG globally no longer floods the logs and saturates a CPU core. https://github.com/abeggled/openbridgeserver/issues/798
+* Backend: Logic-Executor verschluckt Node-Fehler still (result = {}) — kein sichtbares Feedback. https://github.com/abeggled/openbridgeserver/issues/788
+* Logic Engine/Admin GUI: Cyclic logic graph nodes are no longer silently skipped. Runs now return explicit node diagnostics and warnings for direct cycles or nodes blocked by a cycle; the editor surfaces those diagnostics on affected nodes. https://github.com/abeggled/openbridgeserver/issues/789
+* Visu: German string literals in backend adapter code reached the GUI untranslated, bypassing the i18n/Weblate pipeline. https://github.com/abeggled/openbridgeserver/issues/779
+* Visu: Zeitschaltuhr widgets now only show and manage Schaltpunkte for the configured scheduler instance, preventing unrelated KNX or other adapter bindings on the same object from being listed or deleted. https://github.com/abeggled/openbridgeserver/issues/782
+* Visu: Kamera widget — Basic Auth and API-Key credential fields are now always shown when the matching auth type is selected, including after loading a page saved with an older auth format. The config panel no longer renders blank when a widget with a null or missing config is selected. Legacy authType values stored as display text are normalised to canonical form on load. https://github.com/abeggled/openbridgeserver/issues/823
+* Visu/Admin GUI: The Visu browser-tab favicon was missing; a web app manifest with icon metadata has been added to both frontends so that "Add to Home Screen" shortcuts on mobile devices receive the OBS icon. https://github.com/abeggled/openbridgeserver/issues/884
+
+### Known Issues 🔔
+* none
+
+### Contributors ❤️
+* none
+
+
+
+## 2026.6.1
+### Fixes 🐞
+* Packaging: New LXC container based on release 2026.6.0 not starting. https://github.com/abeggled/openbridgeserver/issues/808
+
+
+
 ## 2026.6.0
 ### Breaking changes 🚨
 * Security: Backend URL fetches from logic API-client nodes, iCalendar nodes, Pushover `image_url` attachments, the camera proxy, and the weather API now block private/local network targets by default unless they are explicitly allowlisted. Migration: existing installations using LAN cameras such as `http://192.168.x.x/...`, local `.ics` calendars, local Pushover image sources, or a local weather endpoint must allowlist the target under Settings → Security → URL Target Allowlist, or in the YAML file configured by `security.url_target_allowlist_path` (default: `OBS_SECRET_FILE_DIR/url-target-allowlist.yaml` when `OBS_SECRET_FILE_DIR` is set, otherwise `secrets/url-target-allowlist.yaml` next to the configured database). Use an IP address or CIDR for private targets, for example `192.168.1.23/32` or `10.38.113.0/24`. If a hostname such as `internal.example` resolves to a private IP address, allowlist the resolved IP/CIDR; a hostname-only entry does not override private-IP blocking and does not bypass DNS validation. Until the target is allowlisted, affected camera widgets, weather widgets, iCalendar nodes, Pushover image attachments, or logic API-client calls are intentionally blocked. https://github.com/abeggled/openbridgeserver/pull/700
+* Security: Support-package creation and temporary debug-log controls are now admin-only. The regular in-memory log API remains available to authenticated users and API keys, and live `log_entry` WebSocket messages follow the same authenticated read access. Generated support packages sanitize credentials, endpoints, IPs/domains, paths, and log details before export. https://github.com/abeggled/openbridgeserver/pull/737
+
+### Known Issues 🔔
+* History DB with SQlite should only used for development environments. No testing, no production, we will remove this feature in the future.
 
 ### New features ✨
 * Adapter: The KNX adapter now also supports TCP tunneling mode and Secure support via import of the .knxkeys file. https://github.com/abeggled/openbridgeserver/issues/14
@@ -21,6 +81,7 @@
 * Backend: Monitor/Ringbuffer CSV export for complete filtered results. https://github.com/abeggled/openbridgeserver/issues/390
 * Backend: Possibility to migrate all objects of an adapter to a new one of the same type https://github.com/abeggled/openbridgeserver/issues/419
 * Backend: Log viewer with filtering options https://github.com/abeggled/openbridgeserver/issues/452
+* Backend: Settings → Support now provides an admin-only diagnostics package workflow. Admins can create sanitized `obs_support` JSON packages, inspect uploaded support files locally without storing them, temporarily enable debug logging, and review adapter TPS, active transformations/filters, ringbuffer/monitor, history, health, sanitized warning/error/debug logs, runtime CPU/memory/disk statistics, and separate top CPU/memory snapshots. https://github.com/abeggled/openbridgeserver/issues/733
 * Backend: Hierarchy Manager use current names as example to better understand the changes https://github.com/abeggled/openbridgeserver/issues/467
 * Backend: Full internationalization (i18n) of the gui and visu, currently supported languages are DE and EN https://github.com/abeggled/openbridgeserver/issues/351
 * Backend: Binding migration between adapter instances (bulk migration workflow). https://github.com/abeggled/openbridgeserver/pull/513
@@ -61,6 +122,7 @@
 * Backend: Validate `DataValueEvent` payloads before bridge propagation. https://github.com/abeggled/openbridgeserver/pull/519
 * Backend: Ringbuffer pause/resume race condition stabilized. https://github.com/abeggled/openbridgeserver/pull/509
 * Backend: Monitor/RingBuffer now recovers automatically from a malformed SQLite database by quarantining the corrupted monitor DB/WAL/SHM files and recreating an empty RingBuffer, preventing repeated EventBus errors and Monitor API failures. https://github.com/abeggled/openbridgeserver/issues/689
+* Backend: Monitor live updates now stay in sync when active filtersets are applied; WebSocket entries include RingBuffer metadata for tag matching and hierarchy-based filters trigger a server refresh instead of leaving the table stale. https://github.com/abeggled/openbridgeserver/issues/718
 * Backend: InfluxDB v3 writes now use correct `db` query parameter. https://github.com/abeggled/openbridgeserver/pull/511
 * Backend: The adapter page automatically reloaded every few seconds, making configuration difficult. https://github.com/abeggled/openbridgeserver/issues/394
 * Backend: Fix view permissions of Demo User https://github.com/abeggled/openbridgeserver/issues/471
@@ -74,7 +136,10 @@
 * Backend: Settings → History DB no longer opens as an empty tab when the TimescaleDB DSN placeholder is rendered; the `@` in the PostgreSQL example is escaped for vue-i18n. https://github.com/abeggled/openbridgeserver/issues/690
 * Backend: `PATCH /api/v1/datapoints/{id}` now correctly accepts a `value` field. The value is validated and coerced against the datapoint's `data_type` (incompatible types return 422); on success a `DataValueEvent` is published and the value is immediately readable. Explicit `"value": null` clears the stored value with `quality="uncertain"`. https://github.com/abeggled/openbridgeserver/pull/707
 * Frontend: Adapter config form field labels and descriptions (Modbus TCP, SNMP, Zeitschaltuhr) are now fully i18n-translated via `SchemaForm`; the `adapterType` prop triggers locale lookups with fallback to backend schema strings. Two hardcoded German strings in the binding-migration feedback path were also replaced with `t()` calls.
+* Frontend: Monitor filterset dialog now marks required fields and explains invalid value filters before saving. https://github.com/abeggled/openbridgeserver/issues/720 https://github.com/abeggled/openbridgeserver/pull/723
+* Logic engine: Fixed a threading race in `LogicManager` by iterating over stable snapshots of graph and cron-task caches while re-checking current graph state before execution or persistence, preventing repeated `dictionary changed size during iteration` errors and stale graph execution during concurrent updates. https://github.com/abeggled/openbridgeserver/issues/738
 * Logic engine: The object selector now uses the entire available window space. https://github.com/abeggled/openbridgeserver/issues/345
+* Logic engine: Compare nodes now honour UI-saved operator aliases (`gt`, `lt`, `eq`, `gte`, `lte`, `ne`), support the static `operand` value when the second input is not wired, and keep existing `result`/`out` edge handles compatible so downstream logic nodes receive compare results correctly. https://github.com/abeggled/openbridgeserver/issues/742
 * Logic engine: Sommer/Winter (DIN) block now fills T1/T2/T3 slots correctly when sensors report at intervals that do not hit hours 7, 12, or 22 exactly (e.g. every 2 or 4 hours). "First-crossing" semantics: each slot is captured on the first measurement at or after its target hour, so daily_avg is always computed and heating mode switches reliably. https://github.com/abeggled/openbridgeserver/issues/548
 * Logic engine: Functional Block "Sommer/Winter (DIN)" completely rewritten: measurement times corrected to DIN Mannheimer standard (T1 = 07:00, T2 = 14:00, T3 = 21:00); single configurable threshold temperature (default 14 °C) with hysteresis (default 2 °C) replaces separate summer/winter thresholds; heating decision based on daily average; debug ports T1/T2/T3 now persist their values after the daily average is computed; missing slots are automatically recovered from history after a server restart. https://github.com/abeggled/openbridgeserver/issues/665
 * Backend Security (Upstream PR #683): prevent Uvicorn access logs from being exposed through the in-memory log stream.
@@ -108,6 +173,7 @@
 * Test stability: Monitor/Ringbuffer E2E scenarios stabilized. https://github.com/abeggled/openbridgeserver/pull/494
 * Visu: Internal API base URL usage fixed for E2E/runtime alignment. https://github.com/abeggled/openbridgeserver/pull/484
 * Visu: History widget now updates automatically when new values arrive via WebSocket. https://github.com/abeggled/openbridgeserver/issues/408
+* Visu: WebSocket subscriptions now immediately receive the current registry values, so viewers show values again right after reconnects or page changes instead of waiting for the next adapter poll. https://github.com/abeggled/openbridgeserver/issues/749
 * Visu: History widget now uses aggregated history buckets for multi-day ranges, so periods up to "last 90 days" remain complete and render efficiently instead of only showing the newest 24 hours. https://github.com/abeggled/openbridgeserver/issues/692
 * Visu: RTR Widget now use correct values for room controller (heating) DPT 20.102 https://github.com/abeggled/openbridgeserver/issues/461
 * Visu: Floorplan Widget: positioning broken if floorplan is rotated https://github.com/abeggled/openbridgeserver/issues/440
@@ -115,11 +181,9 @@
 * Visu: History widget displays translated labels instead of variable name
 * Visu: Fixed-width Visu pages are now centered horizontally in the viewer. https://github.com/abeggled/openbridgeserver/pull/672
 * Visu: History (Chart) widget and Value Display widget time-range dropdowns now show translated labels instead of raw i18n key strings. https://github.com/abeggled/openbridgeserver/issues/662
+* Visu: Public/unauthenticated Info widgets now load values for `extra_datapoints` correctly. Nested datapoint references such as `extra_datapoints[].id` are included in the page-scoped datapoint allowlist instead of returning HTTP 403 and showing `...`. https://github.com/abeggled/openbridgeserver/issues/748
 * QA/CI #375: Proxmox LXC, confusing checksum field content within release notes. https://github.com/abeggled/openbridgeserver/issues/375
   
-### Known Issues 🔔
-* none
-
 ### Contributors ❤️
 * Daniel Abegglen ([@abeggled](https://github.com/abeggled)) [Founder]
 * Yves Schumann ([@starwarsfan](https://github.com/starwarsfan))

@@ -4,6 +4,7 @@ GET    /api/v1/logic/node-types               list all node type definitions
 GET    /api/v1/logic/graphs                   list all logic graphs
 POST   /api/v1/logic/graphs                   create a new graph
 POST   /api/v1/logic/graphs/import            import graph from JSON
+POST   /api/v1/logic/graphs/validate          validate flow topology
 GET    /api/v1/logic/graphs/{id}              get graph (with flow_data)
 PUT    /api/v1/logic/graphs/{id}              full update (save canvas)
 PATCH  /api/v1/logic/graphs/{id}             partial update (name/enabled)
@@ -22,8 +23,9 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 
-from obs.api.auth import get_current_user
+from obs.api.auth import get_admin_user, get_current_user
 from obs.db.database import Database, get_db
+from obs.logic.graph_analysis import topology_warnings
 from obs.logic.models import (
     FlowData,
     LogicEdge,
@@ -35,6 +37,7 @@ from obs.logic.models import (
     LogicUsageOut,
     NodeTypeDef,
 )
+from obs.logic.manager import _normalise_api_client_variables
 from obs.logic.node_types import list_node_types
 
 router = APIRouter(tags=["logic"])
@@ -53,9 +56,35 @@ def _row_to_out(row: dict) -> LogicGraphOut:
     )
 
 
+def _logic_run_warnings(outputs: dict) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    for node_id, node_out in outputs.items():
+        if not isinstance(node_out, dict):
+            continue
+        diagnostic = node_out.get("__diagnostic__")
+        if not isinstance(diagnostic, str) or not diagnostic.startswith("graph_cycle"):
+            continue
+        warnings.append(
+            {
+                "node_id": str(node_id),
+                "code": diagnostic,
+                "message": str(node_out.get("__error__") or "Logic graph cycle detected"),
+            },
+        )
+    return warnings
+
+
 @router.get("/node-types", response_model=list[NodeTypeDef])
 async def get_node_types(_user: str = Depends(get_current_user)) -> list[NodeTypeDef]:
     return list_node_types()
+
+
+@router.post("/graphs/validate")
+async def validate_graph(
+    body: FlowData,
+    _user: str = Depends(get_current_user),
+) -> dict:
+    return {"status": "ok", "warnings": topology_warnings(body)}
 
 
 @router.get("/graphs", response_model=list[LogicGraphOut])
@@ -70,7 +99,7 @@ async def list_graphs(
 @router.post("/graphs", response_model=LogicGraphOut, status_code=status.HTTP_201_CREATED)
 async def create_graph(
     body: LogicGraphCreate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     now = datetime.now(UTC).isoformat()
@@ -115,7 +144,7 @@ async def get_graph(
 async def update_graph_full(
     graph_id: str,
     body: LogicGraphCreate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     now = datetime.now(UTC).isoformat()
@@ -151,7 +180,7 @@ async def update_graph_full(
 async def update_graph_partial(
     graph_id: str,
     body: LogicGraphUpdate,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     now = datetime.now(UTC).isoformat()
@@ -185,7 +214,7 @@ async def update_graph_partial(
 @router.delete("/graphs/{graph_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_graph(
     graph_id: str,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> None:
     row = await db.fetchone("SELECT id FROM logic_graphs WHERE id=?", (graph_id,))
@@ -203,7 +232,7 @@ async def delete_graph(
 @router.post("/graphs/import", response_model=LogicGraphOut, status_code=status.HTTP_201_CREATED)
 async def import_graph(
     body: LogicGraphImport,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     if body.obs_export != "logic_graph":
@@ -277,7 +306,7 @@ async def import_graph(
 @router.post("/graphs/{graph_id}/run", status_code=status.HTTP_200_OK)
 async def run_graph(
     graph_id: str,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> dict:
     row = await db.fetchone("SELECT id, enabled FROM logic_graphs WHERE id=?", (graph_id,))
@@ -289,7 +318,7 @@ async def run_graph(
         from obs.logic.manager import get_logic_manager
 
         outputs = await get_logic_manager().execute_graph(graph_id)
-        return {"status": "ok", "outputs": outputs}
+        return {"status": "ok", "outputs": outputs, "warnings": _logic_run_warnings(outputs)}
     except Exception as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
 
@@ -301,7 +330,7 @@ async def run_graph(
 )
 async def duplicate_graph(
     graph_id: str,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> LogicGraphOut:
     row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
@@ -369,12 +398,19 @@ async def get_datapoint_logic_usages(
         raw = json.loads(row["flow_data"]) if row["flow_data"] else {}
         flow = FlowData.model_validate(raw)
         for node in flow.nodes:
-            if node.data.get("datapoint_id") != dp_id:
-                continue
             if node.type == "datapoint_read":
+                if node.data.get("datapoint_id") != dp_id:
+                    continue
                 direction = "SOURCE"
             elif node.type == "datapoint_write":
+                if node.data.get("datapoint_id") != dp_id:
+                    continue
                 direction = "DEST"
+            elif node.type == "api_client":
+                variables = _normalise_api_client_variables(node.data.get("variables"))
+                if not any(variable["datapoint_id"] == dp_id for variable in variables.values()):
+                    continue
+                direction = "SOURCE"
             else:
                 continue
             usages.append(

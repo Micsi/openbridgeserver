@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - '[0-9][0-9][0-9][0-9].*.x'  # release maintenance lines, e.g. 2026.6.x
       - bug/*
       - bugfix/*
       - feat/*
@@ -11,16 +12,18 @@ on:
   pull_request:
     branches:
       - main
+      - '[0-9][0-9][0-9][0-9].*.x'  # release maintenance lines, e.g. 2026.6.x
 
 jobs:
   test:
+    name: Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
@@ -38,8 +41,8 @@ jobs:
         run: pytest tests/ -v --cov=obs --cov-report=xml --cov-report=term --junitxml=junit.xml
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
-        if: matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v7
+        if: matrix.python-version == '3.14'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
@@ -48,8 +51,8 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload test results to Codecov
-        uses: codecov/codecov-action@v6
-        if: matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v7
+        if: matrix.python-version == '3.14'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./junit.xml
@@ -61,12 +64,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: gui/package-lock.json
 
@@ -79,7 +82,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Upload GUI coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./gui/coverage/lcov.info

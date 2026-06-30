@@ -32,13 +32,14 @@ logger = logging.getLogger(__name__)
 
 
 class ValueState:
-    __slots__ = ("old_value", "quality", "ts", "value")
+    __slots__ = ("diagnostics", "old_value", "quality", "ts", "value")
 
     def __init__(self) -> None:
         self.value: Any = None
         self.quality: str = "uncertain"
         self.ts: datetime = datetime.now(UTC)
         self.old_value: Any = None
+        self.diagnostics: dict[str, dict[str, Any]] = {}
 
     def update(self, value: Any, quality: str) -> bool:
         """Update state. Returns True if value actually changed."""
@@ -205,7 +206,10 @@ class DataPointRegistry:
 
     async def update(self, dp_id: uuid.UUID, payload: DataPointUpdate) -> DataPoint:
         dp = self.get_or_raise(dp_id)
-        updates = payload.model_dump(exclude_none=True)
+        updates = payload.model_dump(exclude_none=True, exclude={"value"})
+        for clearable_field in ("unit", "mqtt_alias"):
+            if clearable_field in payload.model_fields_set:
+                updates[clearable_field] = getattr(payload, clearable_field)
         now = datetime.now(UTC)
 
         old_name = dp.name
@@ -291,6 +295,36 @@ class DataPointRegistry:
             mqtt_alias_topic=alias_topic,
             ts=event.ts,
         )
+
+    async def report_type_mismatch(
+        self,
+        dp_id: uuid.UUID,
+        *,
+        expected: str,
+        got: str,
+        source_adapter: str,
+        value: Any,
+    ) -> None:
+        state = self._values.get(dp_id)
+        if state is None:
+            return
+        current = state.diagnostics.get("type_mismatch")
+        count = int(current.get("count", 0)) + 1 if current else 1
+        state.diagnostics["type_mismatch"] = {
+            "type": "type_mismatch",
+            "expected": expected,
+            "got": got,
+            "source_adapter": source_adapter,
+            "count": count,
+            "last_value": value,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+
+    async def clear_diagnostic(self, dp_id: uuid.UUID, diagnostic_type: str) -> None:
+        state = self._values.get(dp_id)
+        if state is None:
+            return
+        state.diagnostics.pop(diagnostic_type, None)
 
 
 # ---------------------------------------------------------------------------
