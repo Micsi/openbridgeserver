@@ -1,1 +1,8 @@
-{}
+{
+    "login": {
+        "submit": "Iniciar sesión",
+        "username": "Nombre de usuario",
+        "password": "Contraseña",
+        "submitting": "Iniciando sesión…"
+    }
+}
