@@ -15,6 +15,7 @@ while sort and pagination remain owned by the caller of the query endpoint.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import csv
 import json
 import re
@@ -1828,7 +1829,7 @@ async def ringbuffer_stats(
 @router.post("/config", response_model=RingBufferStats)
 async def configure_ringbuffer(
     body: RingBufferConfig,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_admin_user),
     db: Database = Depends(get_db),
 ) -> RingBufferStats:
     if body.storage != "file":
@@ -1854,12 +1855,10 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
     if not requested_enabled:
         previous_enabled = is_ringbuffer_enabled()
         stopped_rb = rb
-        if stopped_rb is not None:
-            _unsubscribe_ringbuffer(stopped_rb)
+        persisted_disabled = False
+        unsubscribed = False
+        stopped = False
         try:
-            if stopped_rb is not None:
-                await stopped_rb.stop()
-            delete_ringbuffer_storage_files(_ringbuffer_disk_path())
             await persist_ringbuffer_config(
                 db,
                 enabled=False,
@@ -1867,41 +1866,74 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
                 max_file_size_bytes=resolved_max_file_size,
                 max_age=resolved_max_age,
             )
+            persisted_disabled = True
+            if stopped_rb is not None:
+                _unsubscribe_ringbuffer(stopped_rb)
+                unsubscribed = True
+                await stopped_rb.stop()
+                stopped = True
+            delete_ringbuffer_storage_files(_ringbuffer_disk_path())
         except Exception:
             set_ringbuffer_enabled(previous_enabled)
             if stopped_rb is not None:
-                await stopped_rb.start()
-                _subscribe_ringbuffer(stopped_rb)
+                if stopped:
+                    await stopped_rb.start()
+                if unsubscribed:
+                    _subscribe_ringbuffer(stopped_rb)
+            if persisted_disabled and previous_enabled:
+                with suppress(Exception):
+                    await persist_ringbuffer_config(
+                        db,
+                        enabled=True,
+                        max_entries=resolved_max_entries,
+                        max_file_size_bytes=resolved_max_file_size,
+                        max_age=resolved_max_age,
+                    )
             raise
         if stopped_rb is not None:
             reset_ringbuffer()
         set_ringbuffer_enabled(False)
         return await _disabled_stats(db)
 
-    if rb is None:
-        rb = await init_ringbuffer(
-            storage="file",
-            max_entries=resolved_max_entries,
-            disk_path=_ringbuffer_disk_path(),
-            max_file_size_bytes=resolved_max_file_size,
-            max_age=resolved_max_age,
-        )
-        _subscribe_ringbuffer(rb)
+    created_rb = False
+    subscribed_new = False
+    try:
+        if rb is None:
+            rb = await init_ringbuffer(
+                storage="file",
+                max_entries=resolved_max_entries,
+                disk_path=_ringbuffer_disk_path(),
+                max_file_size_bytes=resolved_max_file_size,
+                max_age=resolved_max_age,
+            )
+            _subscribe_ringbuffer(rb)
+            subscribed_new = True
+            created_rb = True
 
-    reconfigure_kwargs: dict[str, Any] = {}
-    if "max_entries" in body.model_fields_set:
-        reconfigure_kwargs["max_entries"] = body.max_entries
-    if "max_file_size_bytes" in body.model_fields_set:
-        reconfigure_kwargs["max_file_size_bytes"] = body.max_file_size_bytes
-    if "max_age" in body.model_fields_set:
-        reconfigure_kwargs["max_age"] = body.max_age
-    await rb.reconfigure(body.storage, **reconfigure_kwargs)
-    stats = await rb.stats()
-    await persist_ringbuffer_config(
-        db,
-        enabled=True,
-        max_entries=stats["max_entries"],
-        max_file_size_bytes=stats["max_file_size_bytes"],
-        max_age=stats["max_age"],
-    )
+        reconfigure_kwargs: dict[str, Any] = {}
+        if "max_entries" in body.model_fields_set:
+            reconfigure_kwargs["max_entries"] = body.max_entries
+        if "max_file_size_bytes" in body.model_fields_set:
+            reconfigure_kwargs["max_file_size_bytes"] = body.max_file_size_bytes
+        if "max_age" in body.model_fields_set:
+            reconfigure_kwargs["max_age"] = body.max_age
+        await rb.reconfigure(body.storage, **reconfigure_kwargs)
+        stats = await rb.stats()
+        await persist_ringbuffer_config(
+            db,
+            enabled=True,
+            max_entries=stats["max_entries"],
+            max_file_size_bytes=stats["max_file_size_bytes"],
+            max_age=stats["max_age"],
+        )
+    except Exception:
+        if created_rb and rb is not None:
+            if subscribed_new:
+                _unsubscribe_ringbuffer(rb)
+            await rb.stop()
+            reset_ringbuffer()
+            set_ringbuffer_enabled(False)
+            with suppress(Exception):
+                delete_ringbuffer_storage_files(_ringbuffer_disk_path())
+        raise
     return RingBufferStats(enabled=True, **stats)
