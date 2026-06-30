@@ -4,6 +4,7 @@ import en from './locales/en.json'
 import es from './locales/es.json'
 import fr from './locales/fr.json'
 import it from './locales/it.json'
+import gsw from './locales/gsw.json'
 
 /**
  * Supported locales.
@@ -18,6 +19,7 @@ export const SUPPORTED_LOCALES = [
   { code: 'es', label: 'Español' },
   { code: 'fr', label: 'Français' },
   { code: 'it', label: 'Italiano' },
+  { code: 'gsw', label: 'Schweizerdeutsch' },
 ]
 
 function detectLocale() {
@@ -32,7 +34,7 @@ const i18n = createI18n({
   legacy: false,          // use Composition API mode
   locale: detectLocale(),
   fallbackLocale: 'en',  // en.json is the authoritative source; fall back to it for missing keys
-  messages: { de, en, es, fr, it },
+  messages: { de, en, es, fr, it, gsw },
 })
 
 export function setLocale(code) {
