@@ -160,11 +160,7 @@ async function load() {
   try {
     const { data } = await ringbufferApi.stats()
     stats.value = data
-    if (data?.enabled === false) {
-      stopPolling()
-    } else {
-      startPolling()
-    }
+    startPolling()
   } catch {
     stats.value = null
   }

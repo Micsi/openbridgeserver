@@ -1157,11 +1157,12 @@ async def init_ringbuffer(
     max_file_size_bytes: int | None = None,
     max_age: int | None = None,
 ) -> RingBuffer:
-    global _rb
-    set_ringbuffer_enabled(True)
-    _rb = RingBuffer(storage, max_entries, disk_path, max_file_size_bytes, max_age)
-    await _rb.start()
-    return _rb
+    global _rb, _enabled
+    rb = RingBuffer(storage, max_entries, disk_path, max_file_size_bytes, max_age)
+    await rb.start()
+    _rb = rb
+    _enabled = True
+    return rb
 
 
 _NUMERIC_TYPES = {"FLOAT", "INTEGER"}

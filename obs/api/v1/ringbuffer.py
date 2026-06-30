@@ -68,6 +68,8 @@ _CSV_EXPORT_HEADERS = (
     "metadata_json",
 )
 
+_CONFIGURE_LOCK = asyncio.Lock()
+
 _COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _DEFAULT_COLOR = "#3b82f6"
 
@@ -1835,6 +1837,11 @@ async def configure_ringbuffer(
             "storage must be 'file' (memory and disk are no longer supported)",
         )
 
+    async with _CONFIGURE_LOCK:
+        return await _configure_ringbuffer_locked(body, db)
+
+
+async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> RingBufferStats:
     persisted = await load_persisted_ringbuffer_config(db)
     requested_enabled = body.enabled if "enabled" in body.model_fields_set else is_ringbuffer_enabled()
     rb = get_optional_ringbuffer()

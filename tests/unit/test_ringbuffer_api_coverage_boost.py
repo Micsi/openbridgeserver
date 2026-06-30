@@ -10,6 +10,7 @@ with the same pure-function approach.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -388,6 +389,40 @@ async def test_configure_enable_initializes_ringbuffer_when_missing(tmp_path, mo
     assert stats.max_entries == 12
     assert cfg["enabled"] is True
     assert cfg["max_entries"] == 12
+
+
+@pytest.mark.asyncio
+async def test_configure_ringbuffer_serializes_concurrent_requests(monkeypatch):
+    active = 0
+    max_active = 0
+
+    async def _fake_locked_config(_body, _db):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return rb_api.RingBufferStats(
+            enabled=True,
+            total=0,
+            oldest_ts=None,
+            newest_ts=None,
+            storage="file",
+            max_entries=None,
+            effective_retention_seconds=None,
+            max_file_size_bytes=1024,
+            max_age=None,
+            file_size_bytes=0,
+        )
+
+    monkeypatch.setattr(rb_api, "_configure_ringbuffer_locked", _fake_locked_config)
+
+    await asyncio.gather(
+        rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=True), _user="admin", db=object()),
+        rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=True), _user="admin", db=object()),
+    )
+
+    assert max_active == 1
 
 
 # ---------------------------------------------------------------------------

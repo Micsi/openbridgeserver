@@ -198,6 +198,22 @@ def test_safe_loads_and_singleton_guard_paths():
         rb_mod.get_ringbuffer()
 
 
+@pytest.mark.asyncio
+async def test_init_ringbuffer_start_failure_keeps_disabled_state(monkeypatch, tmp_path):
+    rb_mod.set_ringbuffer_enabled(False)
+
+    async def _fail_start(self):  # noqa: ARG001
+        raise OSError("cannot open ringbuffer")
+
+    monkeypatch.setattr(rb_mod.RingBuffer, "start", _fail_start)
+
+    with pytest.raises(OSError, match="cannot open ringbuffer"):
+        await rb_mod.init_ringbuffer("file", 10, str(tmp_path / "obs_ringbuffer.db"))
+
+    assert rb_mod.is_ringbuffer_enabled() is False
+    assert rb_mod.get_optional_ringbuffer() is None
+
+
 def test_sqlite_corruption_detector_only_matches_sqlite_corruption_errors():
     assert _is_sqlite_corruption(rb_mod.aiosqlite.OperationalError("database disk image is malformed")) is True
     assert _is_sqlite_corruption(rb_mod.aiosqlite.DatabaseError("file is not a database")) is True

@@ -7,7 +7,7 @@
  * Plus a Floating-UI tooltip attached to a "ⓘ" help icon that explains
  * the storage behaviour.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
@@ -48,6 +48,10 @@ describe('TopbarStats', () => {
     vi.resetModules()
     setActivePinia(createPinia())
     document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('calls ringbufferApi.stats() once on mount', async () => {
@@ -99,5 +103,18 @@ describe('TopbarStats', () => {
     expect(root.exists()).toBe(true)
     // Either contains a dash or stays empty-ish; must not throw / not break.
     expect(root.text()).toBeDefined()
+  })
+
+  it('keeps polling while disabled so another tab can re-enable the monitor', async () => {
+    vi.useFakeTimers()
+    const api = makeApi({ enabled: false, total: 0 })
+    const { wrapper } = await mountStats(api)
+
+    expect(api.stats).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(10000)
+    await flushPromises()
+
+    expect(api.stats).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
   })
 })
