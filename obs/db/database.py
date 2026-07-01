@@ -713,6 +713,13 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.execute("PRAGMA synchronous=NORMAL")
+        # Bound the -wal sidecar: auto-checkpoint roughly every 1000 pages and, on each
+        # checkpoint, truncate the WAL file back down to 64 MiB instead of leaving it at
+        # its high-water mark. Combined with the periodic TRUNCATE checkpoint driven by
+        # obs/db/maintenance.py this prevents the unbounded WAL growth that could fill the
+        # disk under continuous history writes. See issue #908.
+        await self._conn.execute("PRAGMA wal_autocheckpoint=1000")
+        await self._conn.execute("PRAGMA journal_size_limit=67108864")
         await self._conn.commit()
 
         await self._run_migrations()
@@ -720,9 +727,32 @@ class Database:
 
     async def disconnect(self) -> None:
         if self._conn is not None:
+            # Leave the -wal sidecar bounded on graceful shutdown.
+            try:
+                await self.checkpoint()
+            except Exception:
+                logger.exception("WAL checkpoint on disconnect failed")
             await self._conn.close()
             self._conn = None
             logger.info("Database disconnected")
+
+    async def checkpoint(self) -> bool:
+        """Force a TRUNCATE WAL checkpoint to keep the ``-wal`` sidecar bounded.
+
+        Mirrors the ringbuffer maintenance (``obs/ringbuffer/ringbuffer.py``). The
+        default PASSIVE auto-checkpoint writes WAL pages back into the DB but never
+        shrinks the WAL file on disk, so under continuous history writes it can grow
+        without bound. A TRUNCATE checkpoint resets the file once no read snapshot is
+        pinning it. Returns ``True`` when a checkpoint ran, ``False`` for in-memory
+        databases (which have no WAL). See issue #908.
+        """
+        if self._conn is None or self._path in (":memory:", "file::memory:?cache=shared"):
+            return False
+        # Commit any pending implicit transaction first so the checkpoint can fully
+        # reset the WAL rather than being blocked by an open write snapshot.
+        await self._conn.commit()
+        await self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return True
 
     # ------------------------------------------------------------------
     # Migrations
