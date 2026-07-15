@@ -142,20 +142,21 @@
         </div>
         <div v-else class="divide-y divide-slate-200 dark:divide-slate-700/60" role="table" data-testid="owner-first-users">
           <div
-            class="hidden grid-cols-[minmax(16rem,1.6fr)_minmax(7rem,.65fr)_minmax(7rem,.65fr)_minmax(8rem,.65fr)_auto] gap-3 px-4 py-2 text-[10px] uppercase tracking-wide text-slate-400 lg:grid"
+            class="hidden gap-3 px-4 py-2 text-[10px] uppercase tracking-wide text-slate-400 xl:grid xl:grid-cols-[minmax(12rem,1fr)_minmax(10rem,1fr)_7rem_7rem_8rem_13rem]"
             role="row"
             data-testid="users-list-header"
           >
             <span role="columnheader">{{ $t('settings.users.colUsername') }}</span>
+            <span role="columnheader">{{ $t('settings.users.rights.steps.scopes') }}</span>
             <span role="columnheader">{{ $t('settings.users.status') }}</span>
             <span role="columnheader">{{ $t('settings.users.colMqtt') }}</span>
             <span role="columnheader">{{ $t('settings.users.colCreated') }}</span>
-            <span role="columnheader" class="sr-only">{{ $t('common.edit') }}</span>
+            <span role="columnheader">{{ $t('common.edit') }}</span>
           </div>
           <div
             v-for="u in ownerFirstUsers"
             :key="u.id"
-            class="grid gap-3 p-4 lg:grid-cols-[minmax(16rem,1.6fr)_minmax(7rem,.65fr)_minmax(7rem,.65fr)_minmax(8rem,.65fr)_auto] lg:items-center"
+            class="grid gap-3 p-4 xl:grid-cols-[minmax(12rem,1fr)_minmax(10rem,1fr)_7rem_7rem_8rem_13rem] xl:items-center"
             role="row"
             :data-testid="`user-card-${u.username}`"
           >
@@ -172,16 +173,19 @@
               <span class="truncate font-semibold text-slate-800 dark:text-slate-100">{{ u.username }}</span>
               <Badge v-if="u.username === auth.username" variant="info" size="xs">{{ $t('settings.users.currentAccount') }}</Badge>
               <Badge :variant="u.is_admin ? 'warning' : 'muted'" size="xs">{{ u.is_admin ? $t('settings.users.roleAdmin') : $t('settings.users.roleUser') }}</Badge>
+            </div>
+            <div class="min-w-0 text-xs text-slate-500" role="cell">
+              <span class="block uppercase tracking-wide text-[10px] text-slate-400 xl:hidden">{{ $t('settings.users.rights.steps.scopes') }}</span>
               <span class="text-xs text-slate-500" :data-testid="`user-rights-summary-${u.username}`">
                 {{ userRightsSummary(u) }}
               </span>
             </div>
             <div class="text-xs text-slate-500" role="cell">
-              <span class="block uppercase tracking-wide text-[10px] text-slate-400 lg:hidden">{{ $t('settings.users.status') }}</span>
+              <span class="block uppercase tracking-wide text-[10px] text-slate-400 xl:hidden">{{ $t('settings.users.status') }}</span>
               <span class="font-medium text-slate-700 dark:text-slate-300">{{ userStatus(u).label }}</span>
             </div>
             <div class="text-xs" role="cell">
-              <span class="block uppercase tracking-wide text-[10px] text-slate-400 lg:hidden">{{ $t('settings.users.colMqtt') }}</span>
+              <span class="block uppercase tracking-wide text-[10px] text-slate-400 xl:hidden">{{ $t('settings.users.colMqtt') }}</span>
               <span :class="u.mqtt_enabled ? 'text-green-600 dark:text-green-400' : 'text-slate-500'">
                 {{ u.mqtt_enabled ? $t('settings.users.mqttActive') : $t('settings.users.mqttOff') }}
               </span>
@@ -190,10 +194,10 @@
               </span>
             </div>
             <div class="text-xs text-slate-500" role="cell">
-              <span class="block uppercase tracking-wide text-[10px] text-slate-400 lg:hidden">{{ $t('settings.users.colCreated') }}</span>
+              <span class="block uppercase tracking-wide text-[10px] text-slate-400 xl:hidden">{{ $t('settings.users.colCreated') }}</span>
               <span>{{ fmtDate(u.created_at) }}</span>
             </div>
-            <div class="flex shrink-0 items-center gap-1 lg:justify-self-end" role="cell">
+            <div class="flex items-center gap-1 xl:w-full" role="cell">
               <button
                 v-if="users.length >= 2"
                 type="button"
