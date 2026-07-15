@@ -43,7 +43,6 @@ export function createWebSocketClient() {
   function dispatch(data: Record<string, unknown>) {
     for (const handler of handlers) handler(data)
   }
-  const activeSocket = socket
 
   function sameConnectContext(a: ConnectContext, b: ConnectContext) {
     return a.pageId === b.pageId && a.sessionToken === b.sessionToken && a.preferPageScope === b.preferPageScope

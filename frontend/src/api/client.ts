@@ -8,14 +8,6 @@
 
 const BASE = '/api/v1'
 
-/** Wird von request() geworfen — trägt den HTTP-Status, damit Aufrufer z.B. auf 403 reagieren können */
-export class ApiRequestError extends Error {
-  constructor(message: string, public readonly status: number) {
-    super(message)
-    this.name = 'ApiRequestError'
-  }
-}
-
 /** FastAPI gibt detail manchmal als Array zurück — immer zu String normalisieren */
 function extractDetail(body: unknown, fallback: string): string {
   if (!body || typeof body !== 'object') return fallback
@@ -31,13 +23,18 @@ function extractDetail(body: unknown, fallback: string): string {
 }
 
 export class ApiRequestError extends Error {
+  readonly status?: number
+  readonly code?: string
+
   constructor(
     message: string,
-    readonly code?: string,
+    statusOrCode?: number | string,
     readonly details?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'ApiRequestError'
+    if (typeof statusOrCode === 'number') this.status = statusOrCode
+    else this.code = statusOrCode
   }
 }
 
@@ -229,7 +226,7 @@ export const visu = {
 
   /** Lädt alle Widget-Instanzen einer Seite ohne Zugriffsprüfung — für WidgetRef. */
   getWidgetRef: (pageId: string, sessionNodeId = pageId) =>
-    request<import('@/types').WidgetInstance[]>(`/visu/widget-ref/${pageId}`, {
+    request<import('@/types').WidgetRefInstance[]>(`/visu/widget-ref/${pageId}`, {
       sessionToken: getSessionToken(sessionNodeId) ?? undefined,
       silent401: true,
     }),

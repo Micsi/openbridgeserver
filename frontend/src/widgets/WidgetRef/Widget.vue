@@ -7,11 +7,12 @@
  * konfiguriertes Widget auf beliebig vielen Seiten zu verwenden.
  */
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { getJwt, getSessionToken, visu } from '@/api/client'
 import { createWebSocketClient, useWebSocket } from '@/composables/useWebSocket'
 import { useDatapointsStore } from '@/stores/datapoints'
 import { WidgetRegistry } from '@/widgets/registry'
-import type { DataPointValue, WidgetInstance } from '@/types'
+import type { DataPointValue, WidgetRefInstance } from '@/types'
 
 const props = defineProps<{
   config: Record<string, unknown>
@@ -24,7 +25,7 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const dpStore = useDatapointsStore()
-const sourceWidget = ref<WidgetInstance | null>(null)
+const sourceWidget = ref<WidgetRefInstance | null>(null)
 const sourcePageReadonly = ref(false)
 const loading = ref(false)
 const errorMsg = ref('')
@@ -131,6 +132,7 @@ const refStatusValue = computed(() => {
   const id = sourceWidget.value?.status_datapoint_id
   return id ? (sourceValues.value[id] ?? dpStore.getValue(id)) : null
 })
+const refReadonly = computed(() => props.readonly || sourcePageReadonly.value)
 </script>
 
 <template>
@@ -173,7 +175,7 @@ const refStatusValue = computed(() => {
     :value="refValue"
     :status-value="refStatusValue"
     :editor-mode="false"
-    :readonly="props.readonly"
+    :readonly="refReadonly"
     :page-id="sourcePageId"
     :session-token="sourceSessionToken"
     :write-context="sourceWriteContext"
