@@ -91,7 +91,7 @@
               class="flex items-start justify-between gap-3 px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/40"
               :data-testid="`rights-node-${node.id}`"
             >
-              <label class="flex min-w-0 cursor-pointer items-start gap-3">
+              <label class="flex min-w-0 cursor-pointer items-start gap-3" :title="node.fullPathLabel">
                 <input v-model="selectedNodeIds" type="checkbox" :value="node.id" :disabled="node.blockedByDeny" class="mt-0.5" />
                 <span class="min-w-0">
                   <span class="block text-sm text-slate-800 dark:text-slate-100">{{ node.pathLabel }}</span>
@@ -301,6 +301,7 @@ import { hierarchyApi } from '@/api/client'
 import { authzApi } from '@/api/authz'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import { hierarchyDisplayPath, normalizeHierarchyDisplayDepth } from '@/utils/hierarchyDisplay'
 
 const props = defineProps({
   modelValue: Boolean,
@@ -446,7 +447,7 @@ function flattenNodes(nodes, parentId = null, target = []) {
 function nodesWithPaths(tree, rawNodes) {
   const flat = flattenNodes(rawNodes)
   const byId = new Map(flat.map((node) => [node.id, node]))
-  return flat.map((node) => {
+  const nodes = flat.map((node) => {
     const path = []
     let current = node
     let guard = 0
@@ -455,9 +456,25 @@ function nodesWithPaths(tree, rawNodes) {
       current = current.parent_id ? byId.get(current.parent_id) : null
       guard++
     }
+    return { id: String(node.id), path }
+  })
+  const displayDepth = normalizeHierarchyDisplayDepth(tree.display_depth)
+  const startIndex = displayDepth - 1
+  const treeHasDisplayDepth = displayDepth <= 0 || nodes.some((node) => node.path.length > startIndex)
+  return nodes.map((node) => {
+    const fullPath = [tree.name, ...node.path].filter(Boolean)
+    const displayPath = hierarchyDisplayPath({
+      treeName: tree.name,
+      path: node.path,
+      displayDepth,
+      treeHasDisplayDepth,
+      hideShallow: true,
+    })
     return {
-      id: String(node.id),
-      pathLabel: [tree.name, ...path].filter(Boolean).join(' › '),
+      id: node.id,
+      pathLabel: displayPath.join(' › '),
+      fullPathLabel: fullPath.join(' › '),
+      displayable: displayPath.length > 0,
       orphaned: false,
     }
   })
@@ -469,7 +486,7 @@ async function loadHierarchyNodes() {
     const { data } = await hierarchyApi.getTreeNodes(tree.id)
     return nodesWithPaths(tree, data)
   }))
-  return nodesByTree.flat().sort((a, b) => a.pathLabel.localeCompare(b.pathLabel))
+  return nodesByTree.flat().sort((a, b) => a.fullPathLabel.localeCompare(b.fullPathLabel))
 }
 
 async function initialize() {
@@ -518,14 +535,17 @@ async function initialize() {
     mixedRoles.value = roles.length > 1
     selectedRole.value = roles.length === 1 ? roles[0] : ''
     const knownIds = new Set(loadedNodes.map((node) => node.id))
-    const orphanedNodes = selectedNodeIds.value
-      .filter((nodeId) => !knownIds.has(nodeId))
-      .map((nodeId) => ({ id: nodeId, pathLabel: nodeId, orphaned: true }))
     const deniedHierarchyIds = new Set(advancedGrants.value
       .filter((grant) => grant.node_type === 'hierarchy' && grant.effect === 'deny')
       .map((grant) => String(grant.node_id)))
-    hierarchyNodes.value = [...loadedNodes, ...orphanedNodes].map((node) => ({
+    const retainedIds = new Set([...selectedNodeIds.value, ...deniedHierarchyIds])
+    const visibleNodes = loadedNodes.filter((node) => node.displayable || retainedIds.has(node.id))
+    const orphanedNodes = selectedNodeIds.value
+      .filter((nodeId) => !knownIds.has(nodeId))
+      .map((nodeId) => ({ id: nodeId, pathLabel: nodeId, fullPathLabel: nodeId, orphaned: true }))
+    hierarchyNodes.value = [...visibleNodes, ...orphanedNodes].map((node) => ({
       ...node,
+      pathLabel: node.pathLabel || node.fullPathLabel,
       blockedByDeny: deniedHierarchyIds.has(node.id),
     }))
   } catch (error) {

@@ -146,6 +146,36 @@ describe('UserRightsEditor', () => {
     expect(wrapper.emitted('update:modelValue')).toContainEqual([false])
   })
 
+  it('uses hierarchy display depth to shorten and filter selectable scopes', async () => {
+    hierarchyApi.listTrees.mockResolvedValue({ data: [{ id: 'tree-1', name: 'Haus', display_depth: 2 }] })
+    const wrapper = await mountEditor()
+    await next(wrapper)
+
+    expect(wrapper.find('[data-testid="rights-node-building"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="rights-node-ground-floor"]').text()).toContain('EG')
+    const kitchen = wrapper.get('[data-testid="rights-node-kitchen"]')
+    expect(kitchen.text()).toContain('EG › Küche')
+    expect(kitchen.text()).not.toContain('Gebäude')
+    expect(kitchen.get('label').attributes('title')).toBe('Haus › Gebäude › EG › Küche')
+  })
+
+  it('keeps a selected shallow scope visible above the configured display depth', async () => {
+    hierarchyApi.listTrees.mockResolvedValue({ data: [{ id: 'tree-1', name: 'Haus', display_depth: 2 }] })
+    authzApi.getUserGrants.mockResolvedValue({
+      headers: { etag: '"shallow-v1"' },
+      data: {
+        principal: { principal_type: 'user', principal_id: 'alice' },
+        grants: [grant('hierarchy', 'building', 'resident')],
+      },
+    })
+    const wrapper = await mountEditor()
+    await next(wrapper)
+
+    const building = wrapper.get('[data-testid="rights-node-building"]')
+    expect(building.text()).toContain('Haus › Gebäude')
+    expect(building.get('input').element.checked).toBe(true)
+  })
+
   it('edits central plant control independently per scope and shows its preview and confirmation effect', async () => {
     authzApi.getUserGrants.mockResolvedValue({
       headers: { etag: '"central-v1"' },

@@ -140,52 +140,60 @@
         <div v-else-if="!ownerFirstUsers.length" class="text-sm text-slate-500 text-center py-8" data-testid="users-empty">
           {{ $t('settings.users.empty') }}
         </div>
-        <div v-else class="divide-y divide-slate-200 dark:divide-slate-700/60" data-testid="owner-first-users">
+        <div v-else class="divide-y divide-slate-200 dark:divide-slate-700/60" role="table" data-testid="owner-first-users">
+          <div
+            class="hidden grid-cols-[minmax(16rem,1.6fr)_minmax(7rem,.65fr)_minmax(7rem,.65fr)_minmax(8rem,.65fr)_auto] gap-3 px-4 py-2 text-[10px] uppercase tracking-wide text-slate-400 lg:grid"
+            role="row"
+            data-testid="users-list-header"
+          >
+            <span role="columnheader">{{ $t('settings.users.colUsername') }}</span>
+            <span role="columnheader">{{ $t('settings.users.status') }}</span>
+            <span role="columnheader">{{ $t('settings.users.colMqtt') }}</span>
+            <span role="columnheader">{{ $t('settings.users.colCreated') }}</span>
+            <span role="columnheader" class="sr-only">{{ $t('common.edit') }}</span>
+          </div>
           <div
             v-for="u in ownerFirstUsers"
             :key="u.id"
-            class="p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+            class="grid gap-3 p-4 lg:grid-cols-[minmax(16rem,1.6fr)_minmax(7rem,.65fr)_minmax(7rem,.65fr)_minmax(8rem,.65fr)_auto] lg:items-center"
+            role="row"
             :data-testid="`user-card-${u.username}`"
           >
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <span
-                  :class="[
-                    'h-2.5 w-2.5 rounded-full shrink-0',
-                    userStatus(u).tone === 'warning' ? 'bg-amber-400' :
-                    userStatus(u).tone === 'success' ? 'bg-green-500' : 'bg-slate-400'
-                  ]"
-                >
-                  <span class="sr-only">{{ userStatus(u).label }}</span>
-                </span>
-                <span class="font-semibold text-slate-800 dark:text-slate-100 truncate">{{ u.username }}</span>
-                <Badge v-if="u.username === auth.username" variant="info" size="xs">{{ $t('settings.users.currentAccount') }}</Badge>
-                <Badge :variant="u.is_admin ? 'warning' : 'muted'" size="xs">{{ u.is_admin ? $t('settings.users.roleAdmin') : $t('settings.users.roleUser') }}</Badge>
-                <span class="text-xs text-slate-500" :data-testid="`user-rights-summary-${u.username}`">
-                  {{ userRightsSummary(u) }}
-                </span>
-              </div>
-              <div class="mt-2 grid gap-2 text-xs text-slate-500 sm:grid-cols-3">
-                <div>
-                  <span class="block uppercase tracking-wide text-[10px] text-slate-400">{{ $t('settings.users.status') }}</span>
-                  <span class="font-medium text-slate-700 dark:text-slate-300">{{ userStatus(u).label }}</span>
-                </div>
-                <div>
-                  <span class="block uppercase tracking-wide text-[10px] text-slate-400">{{ $t('settings.users.colMqtt') }}</span>
-                  <span :class="u.mqtt_enabled ? 'text-green-600 dark:text-green-400' : 'text-slate-500'">
-                    {{ u.mqtt_enabled ? $t('settings.users.mqttActive') : $t('settings.users.mqttOff') }}
-                  </span>
-                  <span v-if="u.mqtt_enabled" class="text-slate-400">
-                    · {{ u.mqtt_password_set ? $t('settings.users.mqttPasswordSetShort') : $t('settings.users.mqttPasswordMissing') }}
-                  </span>
-                </div>
-                <div>
-                  <span class="block uppercase tracking-wide text-[10px] text-slate-400">{{ $t('settings.users.colCreated') }}</span>
-                  <span>{{ fmtDate(u.created_at) }}</span>
-                </div>
-              </div>
+            <div class="flex min-w-0 flex-wrap items-center gap-2" role="cell">
+              <span
+                :class="[
+                  'h-2.5 w-2.5 rounded-full shrink-0',
+                  userStatus(u).tone === 'warning' ? 'bg-amber-400' :
+                  userStatus(u).tone === 'success' ? 'bg-green-500' : 'bg-slate-400'
+                ]"
+              >
+                <span class="sr-only">{{ userStatus(u).label }}</span>
+              </span>
+              <span class="truncate font-semibold text-slate-800 dark:text-slate-100">{{ u.username }}</span>
+              <Badge v-if="u.username === auth.username" variant="info" size="xs">{{ $t('settings.users.currentAccount') }}</Badge>
+              <Badge :variant="u.is_admin ? 'warning' : 'muted'" size="xs">{{ u.is_admin ? $t('settings.users.roleAdmin') : $t('settings.users.roleUser') }}</Badge>
+              <span class="text-xs text-slate-500" :data-testid="`user-rights-summary-${u.username}`">
+                {{ userRightsSummary(u) }}
+              </span>
             </div>
-            <div class="flex items-center gap-1 shrink-0">
+            <div class="text-xs text-slate-500" role="cell">
+              <span class="block uppercase tracking-wide text-[10px] text-slate-400 lg:hidden">{{ $t('settings.users.status') }}</span>
+              <span class="font-medium text-slate-700 dark:text-slate-300">{{ userStatus(u).label }}</span>
+            </div>
+            <div class="text-xs" role="cell">
+              <span class="block uppercase tracking-wide text-[10px] text-slate-400 lg:hidden">{{ $t('settings.users.colMqtt') }}</span>
+              <span :class="u.mqtt_enabled ? 'text-green-600 dark:text-green-400' : 'text-slate-500'">
+                {{ u.mqtt_enabled ? $t('settings.users.mqttActive') : $t('settings.users.mqttOff') }}
+              </span>
+              <span v-if="u.mqtt_enabled" class="text-slate-400">
+                · {{ u.mqtt_password_set ? $t('settings.users.mqttPasswordSetShort') : $t('settings.users.mqttPasswordMissing') }}
+              </span>
+            </div>
+            <div class="text-xs text-slate-500" role="cell">
+              <span class="block uppercase tracking-wide text-[10px] text-slate-400 lg:hidden">{{ $t('settings.users.colCreated') }}</span>
+              <span>{{ fmtDate(u.created_at) }}</span>
+            </div>
+            <div class="flex shrink-0 items-center gap-1 lg:justify-self-end" role="cell">
               <button
                 v-if="users.length >= 2"
                 type="button"
