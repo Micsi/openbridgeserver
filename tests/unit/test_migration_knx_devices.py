@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import aiosqlite
 
-from obs.db.database import Database, _MIGRATION_V34, _migration_v36
+from obs.db.database import Database, _MIGRATION_V34, _MIGRATION_V35, _migration_v36
 
 
 async def _table_names(db: Database) -> set[str]:
@@ -96,12 +96,7 @@ async def test_v39_repairs_existing_v38_without_device_hierarchy_links(tmp_path)
         await conn.executemany("INSERT INTO schema_version (version) VALUES (?)", [(version,) for version in range(1, 30)])
         await conn.executemany("INSERT INTO schema_version (version) VALUES (?)", [(32,), (33,), (34,), (35,), (36,), (37,), (38,)])
         await conn.executescript(_MIGRATION_V34)
-        # V40 (#935) legt einen Index auf adapter_bindings(adapter_instance_id, enabled)
-        # an. Diese synthetische V38-DB fuehrt nur V34 aus (kein Basis-Schema), daher
-        # muss adapter_bindings bereitstehen, damit die Migrationskette bis V40 laeuft.
-        await conn.execute(
-            "CREATE TABLE IF NOT EXISTS adapter_bindings (id TEXT PRIMARY KEY, adapter_instance_id TEXT, enabled INTEGER NOT NULL DEFAULT 1)"
-        )
+        await conn.executescript(_MIGRATION_V35)
         await conn.commit()
 
     db = Database(str(db_path))
@@ -115,7 +110,7 @@ async def test_v39_repairs_existing_v38_without_device_hierarchy_links(tmp_path)
         # V40 (adapter_bindings index, #935) wurde beim Merge von issue-919 auf main
         # als naechste freie Migration ergaenzt -> neueste Version ist jetzt 40.
         version = await db.fetchone("SELECT MAX(version) AS version FROM schema_version")
-        assert version["version"] == 40
+        assert version["version"] == 47
     finally:
         await db.disconnect()
 

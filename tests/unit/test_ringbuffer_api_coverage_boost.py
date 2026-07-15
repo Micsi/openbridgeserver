@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -350,7 +351,7 @@ async def test_configure_disable_stops_ringbuffer_persists_flag_and_deletes_stor
     monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(rb_path))
 
     try:
-        stats = await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=False), _user="admin", db=db)
+        stats = await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=False), request=None, _user="admin", db=db)
         cfg = await rb_api.load_persisted_ringbuffer_config(db)
     finally:
         reset_ringbuffer()
@@ -390,7 +391,7 @@ async def test_configure_disable_restores_running_ringbuffer_when_disable_fails(
 
     try:
         with pytest.raises((PermissionError, RuntimeError)):
-            await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=False), _user="admin", db=db)
+            await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=False), request=None, _user="admin", db=db)
 
         cfg = await rb_api.load_persisted_ringbuffer_config(db)
         assert rb_api.is_ringbuffer_enabled() is True
@@ -425,7 +426,7 @@ async def test_configure_disable_does_not_restart_after_partial_storage_delete(t
 
     try:
         with pytest.raises(RingBufferStorageDeleteIncompleteError, match="locked db"):
-            await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=False), _user="admin", db=db)
+            await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=False), request=None, _user="admin", db=db)
 
         cfg = await rb_api.load_persisted_ringbuffer_config(db)
         assert rb_api.is_ringbuffer_enabled() is False
@@ -464,6 +465,7 @@ async def test_configure_enable_initializes_ringbuffer_when_missing(tmp_path, mo
                 # an explicit compatible value for this default-flip world (#919).
                 segment_max_age=1200,
             ),
+            request=None,
             _user="admin",
             db=db,
         )
@@ -503,7 +505,7 @@ async def test_configure_enable_rolls_back_runtime_when_persist_fails(tmp_path, 
 
     try:
         with pytest.raises(RuntimeError, match="db locked"):
-            await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=True), _user="admin", db=db)
+            await rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=True), request=None, _user="admin", db=db)
 
         assert subscribed
         assert unsubscribed == subscribed
@@ -542,10 +544,11 @@ async def test_configure_ringbuffer_serializes_concurrent_requests(monkeypatch):
         )
 
     monkeypatch.setattr(rb_api, "_configure_ringbuffer_locked", _fake_locked_config)
+    monkeypatch.setattr(rb_api, "write_application_success", AsyncMock())
 
     await asyncio.gather(
-        rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=True), _user="admin", db=object()),
-        rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=True), _user="admin", db=object()),
+        rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=True), request=None, _user="admin", db=object()),
+        rb_api.configure_ringbuffer(rb_api.RingBufferConfig(enabled=True), request=None, _user="admin", db=object()),
     )
 
     assert max_active == 1
@@ -640,7 +643,7 @@ async def test_multi_query_rejects_too_many_set_ids():
 async def test_multi_query_empty_set_ids_invokes_underlying_query(monkeypatch):
     captured: list[rb_api.RingBufferQueryV2] = []
 
-    async def _fake_query(query, *, limit_override=None, offset_override=None):  # noqa: ARG001
+    async def _fake_query(query, *, limit_override=None, offset_override=None, db=None, principal=None):  # noqa: ARG001
         captured.append(query)
         return []
 
