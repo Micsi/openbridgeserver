@@ -309,6 +309,85 @@ describe('UserRightsEditor', () => {
     ], '"grants-v1"')
   })
 
+  it('reloads a saved standalone create-graph capability with both switches enabled', async () => {
+    let persistedGrants = []
+    let etag = '"logic-roundtrip-0"'
+    authzApi.getUserGrants.mockImplementation(() => Promise.resolve({
+      headers: { etag },
+      data: {
+        principal: { principal_type: 'user', principal_id: 'alice' },
+        grants: persistedGrants.map((item) => ({ ...item })),
+      },
+    }))
+    authzApi.updateUserGrants.mockImplementation((_username, grants) => {
+      persistedGrants = grants.map((item) => ({ ...item }))
+      etag = '"logic-roundtrip-1"'
+      return Promise.resolve({
+        headers: { etag },
+        data: {
+          principal: { principal_type: 'user', principal_id: 'alice' },
+          grants: persistedGrants.map((item) => ({ ...item })),
+        },
+      })
+    })
+
+    const wrapper = await mountEditor()
+    await wrapper.get('input[value="operator"]').setValue(true)
+    await next(wrapper)
+    await wrapper.get('[data-testid="logic-create-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="logic-create-central-control"]').setValue(true)
+    await next(wrapper)
+    await next(wrapper)
+    await wrapper.get('[data-testid="rights-save"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    expect(wrapper.get('input[value="operator"]').element.checked).toBe(true)
+    await next(wrapper)
+    expect(wrapper.get('[data-testid="logic-create-enabled"]').element.checked).toBe(true)
+    expect(wrapper.get('[data-testid="logic-create-central-control"]').element.checked).toBe(true)
+
+    await wrapper.get('[data-testid="logic-create-enabled"]').setValue(false)
+    await next(wrapper)
+    await next(wrapper)
+    await wrapper.get('[data-testid="rights-save"]').trigger('click')
+    await flushPromises()
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    expect(wrapper.findAll('input[type="radio"]').every((input) => !input.element.checked)).toBe(true)
+    await wrapper.get('input[value="operator"]').setValue(true)
+    await next(wrapper)
+    expect(wrapper.get('[data-testid="logic-create-enabled"]').element.checked).toBe(false)
+    expect(authzApi.getUserGrants).toHaveBeenCalledTimes(3)
+  })
+
+  it('preselects the logic role when it differs from the hierarchy role', async () => {
+    authzApi.getUserGrants.mockResolvedValue({
+      headers: { etag: '"mixed-logic-v1"' },
+      data: {
+        principal: { principal_type: 'user', principal_id: 'alice' },
+        grants: [
+          grant('hierarchy', 'kitchen', 'resident'),
+          grant('logic_capability', 'create_graph', 'operator', 'allow', true),
+        ],
+      },
+    })
+
+    const wrapper = await mountEditor()
+
+    expect(wrapper.get('[data-testid="mixed-role-warning"]').text()).toContain('unterschiedliche Rollen')
+    expect(wrapper.get('input[value="operator"]').element.checked).toBe(true)
+    await next(wrapper)
+    expect(wrapper.get('[data-testid="scope-state-kitchen-inherit"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="logic-create-enabled"]').element.checked).toBe(true)
+    expect(wrapper.get('[data-testid="logic-create-central-control"]').element.checked).toBe(true)
+  })
+
   it('preserves per-node roles while adding and removing scopes in a mixed assignment', async () => {
     authzApi.getUserGrants.mockResolvedValue({
       headers: { etag: '"mixed-v1"' },

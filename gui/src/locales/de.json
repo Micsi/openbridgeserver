@@ -2425,7 +2425,7 @@
         },
         "roleTitle": "Rolle auswählen",
         "roleHint": "Jede Rolle startet mit ihren gespeicherten direkten Zuweisungen; neue Rollen beginnen ohne Bereiche oder Zusatzrechte.",
-        "mixedRoleWarning": "Dieser Benutzer hat derzeit unterschiedliche Rollen in verschiedenen Bereichen. Beim Hinzufügen oder Entfernen von Bereichen bleiben diese Rollen unverändert.",
+        "mixedRoleWarning": "Dieser Benutzer hat derzeit unterschiedliche Rollen in seinen Zuweisungen. Beim Hinzufügen oder Entfernen von Bereichen bleiben fremde Rollen unverändert.",
         "bulkRoleTitle": "Alle beibehaltenen bestehenden Bereiche neu zuweisen",
         "bulkRoleHint": "Die ausgewählte Rolle ausdrücklich auf jeden bestehenden Bereich anwenden, der ausgewählt bleibt.",
         "roles": {

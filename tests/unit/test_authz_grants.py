@@ -18,6 +18,7 @@ from starlette.requests import Request
 from obs.api.auth import get_admin_user
 from obs.api.v1 import authz as authz_api
 from obs.db.database import Database, get_db
+from obs.logic.capabilities import LOGIC_CREATE_CAPABILITY
 from obs.models.authz import AuthzPrincipalGrant, AuthzPrincipalGrantsReplace, AuthzPrincipalGrantsResponse
 
 NOW = "2026-07-10T00:00:00+00:00"
@@ -164,6 +165,59 @@ async def test_central_control_scope_switch_roundtrips_through_grant_api(db: Dat
     assert response.grants[0].central_control is True
     row = await db.fetchone("SELECT central_control FROM authz_node_roles WHERE node_id='plant'")
     assert row["central_control"] == 1
+
+
+@pytest.mark.asyncio
+async def test_logic_create_capability_roundtrips_through_http_grant_api(db: Database) -> None:
+    await _insert_user(db)
+    app = _api(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        initial = await client.get("/api/v1/authz/principals/user/alice/grants")
+        replaced = await client.put(
+            "/api/v1/authz/principals/user/alice/grants",
+            json={
+                "grants": [
+                    {
+                        "node_type": "logic_capability",
+                        "node_id": LOGIC_CREATE_CAPABILITY,
+                        "role": "operator",
+                        "effect": "allow",
+                        "central_control": True,
+                    }
+                ]
+            },
+            headers={"If-Match": initial.headers["etag"]},
+        )
+        loaded = await client.get("/api/v1/authz/principals/user/alice/grants")
+
+    expected = {
+        "principal": {"principal_type": "user", "principal_id": "alice"},
+        "grants": [
+            {
+                "node_type": "logic_capability",
+                "node_id": LOGIC_CREATE_CAPABILITY,
+                "role": "operator",
+                "effect": "allow",
+                "central_control": True,
+            }
+        ],
+    }
+    assert replaced.status_code == status.HTTP_200_OK
+    assert loaded.status_code == status.HTTP_200_OK
+    assert replaced.json() == expected
+    assert loaded.json() == expected
+    assert loaded.headers["etag"] == replaced.headers["etag"]
+    row = await db.fetchone(
+        """
+        SELECT role, effect, central_control
+        FROM authz_node_roles
+        WHERE principal_type='user' AND principal_id='alice'
+          AND node_type='logic_capability' AND node_id=?
+        """,
+        (LOGIC_CREATE_CAPABILITY,),
+    )
+    assert dict(row) == {"role": "operator", "effect": "allow", "central_control": 1}
 
 
 async def _get_grants(

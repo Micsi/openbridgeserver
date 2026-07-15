@@ -2425,7 +2425,7 @@
         },
         "roleTitle": "Select role",
         "roleHint": "Each role starts with its saved direct assignments; new roles begin without areas or additional capabilities.",
-        "mixedRoleWarning": "This user currently has different roles in different areas. Those roles remain unchanged when areas are added or removed.",
+        "mixedRoleWarning": "This user currently has different roles across assignments. Other roles remain unchanged when areas are added or removed.",
         "bulkRoleTitle": "Reassign all retained existing areas",
         "bulkRoleHint": "Explicitly apply the selected role to every existing area that remains selected.",
         "roles": {

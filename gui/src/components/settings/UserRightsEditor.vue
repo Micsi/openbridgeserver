@@ -611,9 +611,12 @@ async function initialize() {
     originalAdvancedTargets.value = advancedGrants.value.map(({ node_type, node_id }) => ({ node_type, node_id: String(node_id) }))
     originalNodeIds.value = [...new Set(editable.map((grant) => String(grant.node_id)))]
     originalRolesByNode.value = Object.fromEntries(editable.map((grant) => [String(grant.node_id), grant.role]))
-    const roles = [...new Set(editable.map((grant) => grant.role))]
+    const roles = [...new Set([
+      ...editable.map((grant) => grant.role),
+      ...(logicCreateGrant ? [logicCreateGrant.role] : []),
+    ])]
     mixedRoles.value = roles.length > 1
-    selectedRole.value = roles.length === 1 ? roles[0] : ''
+    selectedRole.value = logicCreateGrant?.role ?? (roles.length === 1 ? roles[0] : '')
     applyRoleDefaults()
     const knownIds = new Set(loadedNodes.map((node) => node.id))
     const retainedIds = new Set(originalNodeIds.value)
