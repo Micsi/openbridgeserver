@@ -234,11 +234,11 @@ describe('TopbarFilterChips', () => {
     await flushPromises()
     // All three visible initially
     expect(bodyFindAll('[data-testid^="topbar-add-filter-item-"]').length).toBe(3)
-    // Typing "hei" narrows to Heizung
-    await bodyFind('[data-testid="topbar-add-filter-search"]').setValue('hei')
+    // Diacritics do not have to be typed exactly.
+    await bodyFind('[data-testid="topbar-add-filter-search"]').setValue('luft')
     const items = bodyFindAll('[data-testid^="topbar-add-filter-item-"]')
     expect(items.length).toBe(1)
-    expect(items[0].text()).toContain('Heizung')
+    expect(items[0].text()).toContain('Lüftung')
   })
 
   it('shows "Keine Treffer" when search yields no results', async () => {

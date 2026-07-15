@@ -105,7 +105,7 @@ describe('UserRightsEditor', () => {
 
     await next(wrapper)
     expect(wrapper.get('[data-testid="rights-node-kitchen"]').text()).toContain('Haus › Gebäude › EG › Küche')
-    expect(wrapper.get('[data-testid="rights-node-kitchen"] input').element.checked).toBe(true)
+    expect(wrapper.get('[data-testid="scope-state-kitchen-allow"]').attributes('aria-pressed')).toBe('true')
 
     await next(wrapper)
     expect(authzApi.preview).toHaveBeenCalledWith({
@@ -132,7 +132,8 @@ describe('UserRightsEditor', () => {
     expect(wrapper.get('[data-testid="preview-kitchen-generate"]').text()).toContain('Verboten')
 
     await next(wrapper)
-    expect(wrapper.get('[data-testid="rights-role-summary"]').text()).toContain('Bestehende Rollen bleiben erhalten')
+    expect(wrapper.get('[data-testid="rights-role-summary"]').text()).toContain('Rolle Bewohner')
+    expect(wrapper.get('[data-testid="rights-role-summary"]').text()).toContain('andere Rollen bleiben erhalten')
     expect(wrapper.get('[data-testid="advanced-grants-preserved"]').text()).toContain('2')
     await wrapper.get('[data-testid="rights-save"]').trigger('click')
     await flushPromises()
@@ -156,7 +157,26 @@ describe('UserRightsEditor', () => {
     const kitchen = wrapper.get('[data-testid="rights-node-kitchen"]')
     expect(kitchen.text()).toContain('EG › Küche')
     expect(kitchen.text()).not.toContain('Gebäude')
-    expect(kitchen.get('label').attributes('title')).toBe('Haus › Gebäude › EG › Küche')
+    expect(kitchen.get('[title]').attributes('title')).toBe('Haus › Gebäude › EG › Küche')
+  })
+
+  it('live-filters short and full hierarchy paths without losing scope state', async () => {
+    hierarchyApi.listTrees.mockResolvedValue({ data: [{ id: 'tree-1', name: 'Haus', display_depth: 2 }] })
+    const wrapper = await mountEditor()
+    await next(wrapper)
+
+    const search = wrapper.get('[data-testid="rights-scope-search"]')
+    await search.setValue('gebaude kuche')
+    expect(wrapper.find('[data-testid="rights-node-kitchen"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="rights-node-upper-floor"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="scope-state-kitchen-allow"]').attributes('aria-pressed')).toBe('true')
+
+    await search.setValue('Dachboden')
+    expect(wrapper.find('[data-testid="rights-scope-search-empty"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="rights-scope-search-clear"]').trigger('click')
+    expect(wrapper.find('[data-testid="rights-node-kitchen"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="scope-state-kitchen-allow"]').attributes('aria-pressed')).toBe('true')
   })
 
   it('keeps a selected shallow scope visible above the configured display depth', async () => {
@@ -173,7 +193,7 @@ describe('UserRightsEditor', () => {
 
     const building = wrapper.get('[data-testid="rights-node-building"]')
     expect(building.text()).toContain('Haus › Gebäude')
-    expect(building.get('input').element.checked).toBe(true)
+    expect(wrapper.get('[data-testid="scope-state-building-allow"]').attributes('aria-pressed')).toBe('true')
   })
 
   it('edits central plant control independently per scope and shows its preview and confirmation effect', async () => {
@@ -255,6 +275,7 @@ describe('UserRightsEditor', () => {
 
   it('adds the closed create-graph capability and its central-plant authority', async () => {
     const wrapper = await mountEditor()
+    await wrapper.get('input[value="operator"]').setValue(true)
     await next(wrapper)
 
     expect(wrapper.get('[data-testid="logic-create-enabled"]').element.checked).toBe(false)
@@ -302,14 +323,14 @@ describe('UserRightsEditor', () => {
     const wrapper = await mountEditor()
 
     expect(wrapper.get('[data-testid="mixed-role-warning"]').text()).toContain('unterschiedliche Rollen')
-    expect(wrapper.get('[data-testid="rights-next"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="rights-next"]').attributes('disabled')).toBeDefined()
     expect(wrapper.findAll('input[type="radio"]').every((input) => !input.element.checked)).toBe(true)
-    expect(wrapper.get('[data-testid="bulk-role-reassign"]').attributes('disabled')).toBeDefined()
 
     await wrapper.get('input[value="resident"]').setValue(true)
     await next(wrapper)
-    await wrapper.get('[data-testid="rights-node-upper-floor"] input').setValue(false)
-    await wrapper.get('[data-testid="rights-node-building"] input').setValue(true)
+    expect(wrapper.get('[data-testid="scope-state-kitchen-inherit"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="scope-state-upper-floor-inherit"]').attributes('aria-pressed')).toBe('true')
+    await wrapper.get('[data-testid="scope-state-building-allow"]').trigger('click')
     await next(wrapper)
     await next(wrapper)
     expect(wrapper.get('[data-testid="rights-role-summary"]').text()).toContain('neue Bereiche verwenden Bewohner')
@@ -319,34 +340,67 @@ describe('UserRightsEditor', () => {
     expect(authzApi.updateUserGrants).toHaveBeenCalledWith('alice', [
       grant('hierarchy', 'building', 'resident'),
       grant('hierarchy', 'kitchen', 'guest'),
+      grant('hierarchy', 'upper-floor', 'operator'),
     ], '"mixed-v1"')
   })
 
-  it('bulk-reassigns retained existing scopes only after explicit confirmation', async () => {
+  it('starts a newly selected guest role from safe defaults and preserves other role settings', async () => {
     authzApi.getUserGrants.mockResolvedValue({
       headers: { etag: '"mixed-v2"' },
       data: {
         principal: { principal_type: 'user', principal_id: 'alice' },
         grants: [
-          grant('hierarchy', 'kitchen', 'guest'),
-          grant('hierarchy', 'upper-floor', 'operator'),
+          grant('hierarchy', 'kitchen', 'resident', 'allow', true),
+          grant('logic_capability', 'create_graph', 'operator', 'allow', true),
         ],
       },
     })
     const wrapper = await mountEditor()
-    await wrapper.get('input[value="owner"]').setValue(true)
-    await wrapper.get('[data-testid="bulk-role-reassign"]').setValue(true)
+    await wrapper.get('input[value="guest"]').setValue(true)
+    await next(wrapper)
+
+    expect(wrapper.get('[data-testid="scope-state-kitchen-inherit"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="logic-create-enabled"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="logic-create-capability"]').text()).toContain('Für die Rolle Gast nicht verfügbar')
+    await wrapper.get('[data-testid="scope-state-building-allow"]').trigger('click')
+    expect(wrapper.find('[data-testid="central-control-building"]').exists()).toBe(false)
+
     await next(wrapper)
     await next(wrapper)
-    await next(wrapper)
-    expect(wrapper.get('[data-testid="rights-role-summary"]').text()).toContain('Rolle Eigentümer neu zugewiesen')
     await wrapper.get('[data-testid="rights-save"]').trigger('click')
     await flushPromises()
 
     expect(authzApi.updateUserGrants).toHaveBeenCalledWith('alice', [
-      grant('hierarchy', 'kitchen', 'owner'),
-      grant('hierarchy', 'upper-floor', 'owner'),
+      grant('hierarchy', 'building', 'guest'),
+      grant('hierarchy', 'kitchen', 'resident', 'allow', true),
+      grant('logic_capability', 'create_graph', 'operator', 'allow', true),
     ], '"mixed-v2"')
+  })
+
+  it('keeps a pre-existing non-standard guest logic grant read-only', async () => {
+    authzApi.getUserGrants.mockResolvedValue({
+      headers: { etag: '"legacy-logic-v1"' },
+      data: {
+        principal: { principal_type: 'user', principal_id: 'alice' },
+        grants: [grant('logic_capability', 'create_graph', 'guest', 'allow', true)],
+      },
+    })
+    const wrapper = await mountEditor()
+    await wrapper.get('input[value="guest"]').setValue(true)
+    await next(wrapper)
+
+    expect(wrapper.get('[data-testid="logic-create-enabled"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="logic-create-enabled"]').element.checked).toBe(false)
+    expect(wrapper.get('[data-testid="logic-create-capability"]').text()).toContain('nicht standardmäßige Zuweisung')
+
+    await next(wrapper)
+    await next(wrapper)
+    await wrapper.get('[data-testid="rights-save"]').trigger('click')
+    await flushPromises()
+
+    expect(authzApi.updateUserGrants).toHaveBeenCalledWith('alice', [
+      grant('logic_capability', 'create_graph', 'guest', 'allow', true),
+    ], '"legacy-logic-v1"')
   })
 
   it('keeps an orphaned saved hierarchy assignment visible and selected', async () => {
@@ -361,13 +415,14 @@ describe('UserRightsEditor', () => {
 
     const orphan = wrapper.get('[data-testid="rights-node-missing-room"]')
     expect(orphan.text()).toContain('nicht mehr')
-    expect(orphan.get('input').element.checked).toBe(true)
+    expect(wrapper.get('[data-testid="scope-state-missing-room-allow"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.get('[data-testid="orphaned-scope-block"]').text()).toContain('Speichern gesperrt')
     expect(wrapper.get('[data-testid="rights-next"]').attributes('disabled')).toBeDefined()
   })
 
-  it('shows hierarchy deny assignments and prevents a colliding allow selection', async () => {
+  it('loads and persists an explicit hierarchy deny state', async () => {
     authzApi.getUserGrants.mockResolvedValue({
+      headers: { etag: '"deny-v1"' },
       data: {
         principal: { principal_type: 'user', principal_id: 'alice' },
         grants: [grant('hierarchy', 'kitchen', 'guest', 'deny')],
@@ -377,10 +432,15 @@ describe('UserRightsEditor', () => {
     await wrapper.get('input[value="guest"]').setValue(true)
     await next(wrapper)
 
-    const deniedScope = wrapper.get('[data-testid="rights-node-kitchen"]')
-    expect(deniedScope.text()).toContain('Verbots-Zuweisung')
-    expect(deniedScope.get('input').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="rights-next"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="scope-state-kitchen-deny"]').attributes('aria-pressed')).toBe('true')
+    await next(wrapper)
+    await next(wrapper)
+    await wrapper.get('[data-testid="rights-save"]').trigger('click')
+    await flushPromises()
+
+    expect(authzApi.updateUserGrants).toHaveBeenCalledWith('alice', [
+      grant('hierarchy', 'kitchen', 'guest', 'deny'),
+    ], '"deny-v1"')
   })
 
   it('previews removed scopes as targets and preserves advanced grants when clearing editable scopes', async () => {
@@ -398,7 +458,7 @@ describe('UserRightsEditor', () => {
     })
     const wrapper = await mountEditor()
     await next(wrapper)
-    await wrapper.get('[data-testid="rights-node-kitchen"] input').setValue(false)
+    await wrapper.get('[data-testid="scope-state-kitchen-inherit"]').trigger('click')
     await next(wrapper)
 
     expect(wrapper.find('[data-testid="rights-preview-empty"]').exists()).toBe(false)
@@ -434,7 +494,7 @@ describe('UserRightsEditor', () => {
     })
     const wrapper = await mountEditor()
     await next(wrapper)
-    await wrapper.get('[data-testid="rights-node-kitchen"] input').setValue(false)
+    await wrapper.get('[data-testid="scope-state-kitchen-inherit"]').trigger('click')
     await next(wrapper)
     await next(wrapper)
     await wrapper.get('[data-testid="rights-save"]').trigger('click')
@@ -456,6 +516,7 @@ describe('UserRightsEditor', () => {
       },
     })
     const wrapper = await mountEditor()
+    await wrapper.get('input[value="guest"]').setValue(true)
     await next(wrapper)
     await next(wrapper)
 
@@ -488,6 +549,7 @@ describe('UserRightsEditor', () => {
       },
     }))
     const wrapper = await mountEditor()
+    await wrapper.get('input[value="guest"]').setValue(true)
     await next(wrapper)
     await next(wrapper)
     await next(wrapper)
