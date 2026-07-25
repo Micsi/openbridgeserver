@@ -1227,6 +1227,111 @@ The binding form's **Scan** button browses the connected owserver instance for a
 
 > **Note:** This replaces the legacy sysfs-based adapter (`w1_path`, `/sys/bus/w1/devices`), which required OBS to run on the same host as the Linux kernel's `w1` driver. Via `owserver`, OBS can talk to any 1-Wire busmaster — including on a different host or inside its own container — and also supports the ElabNET PBM (ProfessionalBusMaster), not just the plain kernel driver.
 
+#### USB/serial passthrough: stable device paths (udev rule)
+
+A 1-Wire busmaster's device node isn't guaranteed to stay the same across reboots or when other USB/serial devices are attached:
+
+- A plain USB busmaster (e.g. DS9490) enumerates as `/dev/bus/usb/<bus>/<device>` — bus/device numbers can shift.
+- The ElabNET PBM enumerates as an FTDI serial device (`/dev/ttyUSB0`, `/dev/ttyUSB1`, …) — the trailing number depends on plug-in order.
+
+For the PBM, `/dev/serial/by-id/usb-FTDI_...` is usually already a stable path that udev creates automatically for any serial device exposing a serial number, without a custom rule. Plain USB busmasters don't get an equivalent automatic alias, so a custom udev rule is the reliable fix there — and it also works for the PBM if you'd rather have a short, self-chosen name than the long `by-id` path.
+
+**1. Identify the device**
+
+First check with `lsusb` what hardware is actually attached — not every host has both types at once. A plain USB busmaster (DS9490R, DS1490F, …) reports the fixed VID:PID `04fa:2490`; the ElabNET PBM shows up as an FTDI chip under vendor `0403` (the exact product ID depends on the specific FTDI chip variant):
+
+```bash
+lsusb
+```
+
+Example output for a host with both device types attached:
+
+```
+$ lsusb
+Bus 001 Device 004: ID 04fa:2490 Dallas Semiconductor DS1490F 2-in-1 Fob, 1-Wire adapter
+Bus 002 Device 004: ID 0403:6015 Future Technology Devices International, Ltd Bridge(I2C/SPI/UART/FIFO)
+```
+
+Then read vendor/product/serial attributes for whichever device is actually present — for the busmaster via the `/dev/bus/usb/<bus>/<device>` path from `lsusb` (here `001`/`004`), for the PBM either directly via the `/dev/serial/by-id/...` entry udev already created (`ls /dev/serial/by-id/`) or via the assigned `/dev/ttyUSB*`:
+
+```bash
+# plain USB busmaster (only if lsusb listed a 04fa:2490 device above)
+udevadm info -a -n /dev/bus/usb/001/004 | grep -E 'idVendor|idProduct|serial' | head -5
+
+# PBM / serial device (only if lsusb listed a 0403:xxxx device above)
+udevadm info -a -n /dev/serial/by-id/usb-ElabNET_PBM01-USB_BM_00000401-if00-port0 | grep -E 'idVendor|idProduct|serial' | head -5
+```
+
+Example output for the devices above:
+
+```
+$ udevadm info -a -n /dev/bus/usb/001/004 | grep -E 'idVendor|idProduct|serial' | head -5
+    ATTR{idProduct}=="2490"
+    ATTR{idVendor}=="04fa"
+    ATTRS{idProduct}=="0024"
+    ATTRS{idVendor}=="8087"
+
+$ ls /dev/serial/by-id/
+usb-ElabNET_PBM01-USB_BM_00000401-if00-port0
+
+$ udevadm info -a -n /dev/serial/by-id/usb-ElabNET_PBM01-USB_BM_00000401-if00-port0 | grep -E 'idVendor|idProduct|serial' | head -5
+    SUBSYSTEMS=="usb-serial"
+    ATTRS{idProduct}=="6015"
+    ATTRS{idVendor}=="0403"
+    ATTRS{serial}=="BM_00000401"
+    ATTRS{idProduct}=="0024"
+```
+
+Two things stand out here:
+
+- The busmaster reports **no** `serial` attribute at all — this fob-style device simply doesn't expose a serial number. The rule can therefore only key on `idVendor`/`idProduct`; with more than one identical busmaster on the same host that's not enough to tell them apart (match on the fixed `KERNELS`/bus path instead in that case).
+- For the PBM, `udevadm info -a` shows the plural `ATTRS{...}`, not `ATTR{...}` — `idVendor`/`idProduct`/`serial` sit on the parent USB device in the sysfs chain, not on the `tty` device itself. The udev rule must therefore also use `ATTRS{}` (a parent device's attribute) rather than `ATTR{}` (the matched device's own attribute) — otherwise the rule never fires, since the `tty` device doesn't carry those attributes at all. For the plain USB busmaster (`SUBSYSTEM=="usb"` matches the busmaster device itself), `ATTR{}` is correct.
+
+Prefer `serial` when the device reports one — unlike `idVendor`/`idProduct`, it's unique per physical unit, so the rule still matches the right device if you ever plug in a second one of the same model.
+
+> **Note:** The ElabNET PBM already gets a stable `/dev/serial/by-id/...` symlink out of the box (see the `ls /dev/serial/by-id/` output above) — for this device, a custom udev rule usually isn't needed at all; pointing `OBS_ONEWIRE__PBM_DEVICES` at that path directly is enough. A custom rule only pays off here for a shorter, self-chosen name.
+
+**2. Write the rule**
+
+Create the rule on the **Proxmox host** (not inside the container — Proxmox resolves the LXC passthrough mount against the host's device tree before the container starts, so the symlink must already exist there), e.g. `/etc/udev/rules.d/99-onewire.rules`:
+
+```
+# DS9490/DS1490F plain USB busmaster — idVendor/idProduct are fixed for this device family
+# (04fa:2490). No serial condition, since this device reports no serial number (see step 1) —
+# with more than one identical busmaster, this match alone won't tell them apart.
+SUBSYSTEM=="usb", ATTR{idVendor}=="04fa", ATTR{idProduct}=="2490", SYMLINK+="onewire-busmaster"
+
+# ElabNET PBM (FTDI) — ATTRS{} rather than ATTR{}, since idVendor/idProduct/serial sit
+# on the parent USB device, not on the tty device itself (see note above). idProduct varies
+# by FTDI chip variant (6015 here) — check your own variant and serial with lsusb/udevadm.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", ATTRS{serial}=="BM_00000401", SYMLINK+="onewire-pbm"
+```
+
+Only carry over the block(s) for hardware that's actually attached (see the `lsusb` output from step 1) — a rule for hardware that isn't present is harmless but obviously creates no symlink.
+
+Apply it without rebooting, then confirm the symlink appeared:
+
+```bash
+udevadm control --reload-rules && udevadm trigger
+ls -l /dev/onewire-busmaster /dev/onewire-pbm
+```
+
+**3. Point the passthrough at the stable path**
+
+- **Proxmox LXC** (`/etc/pve/lxc/<CTID>.conf`) — both lines are required, the mount entry alone is not sufficient (see AGENTS.MD's "owserver (1-Wire) in the LXC template" section):
+  ```
+  lxc.mount.entry: /dev/onewire-busmaster dev/onewire-busmaster none bind,optional,create=file
+  lxc.cgroup2.devices.allow: c 189:* rwm
+  ```
+  The major number (`189` for USB device nodes) can vary — check the real one with `ls -l /dev/onewire-busmaster`. Then set the LXC's `OBS_ONEWIRE__*` variables in `/etc/obs.env` to the symlinked name instead of the raw device path.
+
+- **Docker Compose** (`docker-compose.yml`):
+  ```yaml
+  devices:
+    - "/dev/onewire-busmaster:/dev/onewire-busmaster"
+    - "/dev/onewire-pbm:/dev/ttyUSB0"
+  ```
+
 ---
 
 ### MQTT adapter (external broker)
