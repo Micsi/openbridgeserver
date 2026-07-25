@@ -1202,23 +1202,30 @@ Same binding configuration as TCP. Additional instance fields: `port` (e.g. `/de
 
 ### 1-Wire adapter
 
-Reads temperature sensors via the Linux system folder (`/sys/bus/w1/…`). The adapter does not work on Windows but starts without an error message.
+Connects to an **external** `owserver` process (the [OWFS](https://owfs.org) 1-Wire bus server) via the `pyownet` TCP protocol — the same "OBS is a client of an external service" relationship the MQTT adapter has with Mosquitto. `owserver` abstracts USB busmasters (plain USB sticks such as the DS9490, the ElabNET PBM's multiple channels) and the native kernel 1-Wire bus behind one uniform device tree, so this adapter never needs to know which hardware is actually behind it.
+
+`owserver` itself is **not started by OBS** — it ships as an opt-in Docker Compose sidecar (`owserver` service, `COMPOSE_PROFILES=onewire`, see `.env.example`) or, on the Proxmox LXC template, as a systemd service gated behind the `OBS_ONEWIRE__USB_ALL` / `OBS_ONEWIRE__PBM_DEVICES` variables in `/etc/obs.env`.
 
 **Instance configuration:**
 
 | Field | Default | Description |
 |---|---|---|
+| `host` | `localhost` | Hostname or IP address of the owserver process |
+| `port` | `4304` | owserver TCP port |
 | `poll_interval` | `30.0` | Poll interval in seconds |
-| `w1_path` | `/sys/bus/w1/devices` | Path to the 1-Wire system folder |
+| `request_timeout` | `10.0` | Timeout in seconds per owserver call |
+| `aliases` | — | ROM-ID → label map; not edited here — maintained via the binding form's sensor scan (see below) |
 
 **Binding configuration:**
 
-| Field | Description |
-|---|---|
-| `sensor_id` | Sensor ID, e.g. `28-0000012345ab` |
-| `sensor_type` | Sensor type, e.g. `DS18B20` (default) |
+| Field | Default | Description |
+|---|---|---|
+| `sensor_id` | — | ROM-ID, e.g. `28.4B057F0A1C10` |
+| `property` | `temperature` | OWFS property ("file"), e.g. `temperature`, `humidity`, `PIO.0` |
 
-Available sensor IDs can be retrieved via the connection test.
+The binding form's **Scan** button browses the connected owserver instance for attached sensors and their available properties, and lets you assign a persistent alias label per ROM-ID.
+
+> **Note:** This replaces the legacy sysfs-based adapter (`w1_path`, `/sys/bus/w1/devices`), which required OBS to run on the same host as the Linux kernel's `w1` driver. Via `owserver`, OBS can talk to any 1-Wire busmaster — including on a different host or inside its own container — and also supports the ElabNET PBM (ProfessionalBusMaster), not just the plain kernel driver.
 
 ---
 

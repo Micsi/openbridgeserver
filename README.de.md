@@ -1197,23 +1197,30 @@ Gleiche Verknüpfungs-Konfiguration wie TCP. Zusätzliche Instanz-Felder: `port`
 
 ### 1-Wire-Adapter
 
-Liest Temperatursensoren über den Linux-Systemordner (`/sys/bus/w1/…`). Auf Windows funktioniert der Adapter nicht, startet aber ohne Fehlermeldung.
+Verbindet sich mit einem **externen** `owserver`-Prozess (dem [OWFS](https://owfs.org)-1-Wire-Bus-Server) über das `pyownet`-TCP-Protokoll — dieselbe "OBS ist Client eines externen Diensts"-Beziehung, die der MQTT-Adapter zu Mosquitto hat. `owserver` abstrahiert USB-Busmaster (einfache USB-Sticks wie den DS9490, die mehrfachen Kanäle des ElabNET PBM) und den nativen Kernel-1-Wire-Bus hinter einem einheitlichen Gerätebaum — der Adapter selbst muss nie wissen, welche Hardware tatsächlich dahintersteckt.
+
+`owserver` wird **nicht von OBS selbst gestartet** — in Docker-Setups kann er als optionaler Docker-Compose-Sidecar gestartet (`COMPOSE_PROFILES=onewire`, siehe `.env.example`) oder im Proxmox-LXC-Template als systemd-Dienst verwendet werden, wobei der `owserver`-Service über die Variablen `OBS_ONEWIRE__USB_ALL` / `OBS_ONEWIRE__PBM_DEVICES` in `/etc/obs.env` freigeschaltet wird.
 
 **Instanz-Konfiguration:**
 
 | Feld | Standard | Beschreibung |
 |---|---|---|
+| `host` | `localhost` | Hostname oder IP-Adresse des owserver-Prozesses |
+| `port` | `4304` | owserver-TCP-Port |
 | `poll_interval` | `30.0` | Abfrageintervall in Sekunden |
-| `w1_path` | `/sys/bus/w1/devices` | Pfad zum 1-Wire-Systemordner |
+| `request_timeout` | `10.0` | Timeout in Sekunden pro owserver-Aufruf |
+| `aliases` | — | ROM-ID → Label-Zuordnung; wird nicht hier bearbeitet, sondern über den Sensor-Scan im Verknüpfungsformular gepflegt (siehe unten) |
 
 **Verknüpfungs-Konfiguration:**
 
-| Feld | Beschreibung |
-|---|---|
-| `sensor_id` | Sensor-ID, z. B. `28-0000012345ab` |
-| `sensor_type` | Sensortyp, z. B. `DS18B20` (Standard) |
+| Feld | Standard | Beschreibung |
+|---|---|---|
+| `sensor_id` | — | ROM-ID, z. B. `28.4B057F0A1C10` |
+| `property` | `temperature` | OWFS-Property ("Datei"), z. B. `temperature`, `humidity`, `PIO.0` |
 
-Verfügbare Sensor-IDs können über den Verbindungstest abgerufen werden.
+Der **Scan**-Button im Verknüpfungsformular durchsucht die verbundene owserver-Instanz nach angeschlossenen Sensoren und deren verfügbaren Properties und erlaubt das Vergeben eines dauerhaften Alias-Labels je ROM-ID.
+
+> **Hinweis:** Dies ersetzt den bisherigen sysfs-basierten Adapter (`w1_path`, `/sys/bus/w1/devices`), der voraussetzte, dass OBS auf demselben Host wie der Linux-Kernel-`w1`-Treiber läuft. Über `owserver` kann OBS mit jedem 1-Wire-Busmaster sprechen — auch auf einem anderen Host oder in einem eigenen Container — und unterstützt zusätzlich das ElabNET PBM (ProfessionalBusMaster), nicht nur den reinen Kerneltreiber.
 
 ---
 
