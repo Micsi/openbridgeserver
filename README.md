@@ -618,6 +618,8 @@ The graph can also be started manually via the **▶ Run** button.
 
 Direct feedback loops are validated in the editor and blocked when saving or connecting nodes. Use a **Memory** block as an explicit tick boundary for controlled feedback: it outputs the value stored from the previous graph run and stores the current input for the next run.
 
+Select one or more blocks (Shift-drag a box, or Ctrl/Cmd-click to add individual blocks) and use **Copy** / **Paste** (or Ctrl/Cmd+C / Ctrl/Cmd+V) to duplicate them with their configuration intact — including across a switch to a different logic sheet, so a block group can be copied from one sheet to another. Pasted blocks are placed with a slight offset and come in pre-selected, ready to be dragged to their new position.
+
 ---
 
 ### Block types

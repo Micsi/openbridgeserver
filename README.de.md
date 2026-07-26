@@ -613,6 +613,8 @@ Der Graph kann auch manuell über den **▶ Ausführen**-Button gestartet werden
 
 Direkte Rückkopplungen werden im Editor validiert und beim Verbinden oder Speichern blockiert. Für kontrollierte Rückkopplungen wird ein **Speicher**-Block als explizite Tick-Grenze verwendet: Er gibt den Wert aus dem vorherigen Graph-Lauf aus und speichert den aktuellen Eingang für den nächsten Lauf.
 
+Ein oder mehrere Blöcke lassen sich markieren (Shift + Rahmen aufziehen, oder Strg/Cmd-Klick für einzelne Blöcke) und per **Kopieren** / **Einfügen** (bzw. Strg/Cmd+C / Strg/Cmd+V) inklusive ihrer Einstellungen vervielfältigen — auch seitenübergreifend, indem man vor dem Einfügen auf ein anderes Logikblatt wechselt. Eingefügte Blöcke erscheinen leicht versetzt und bereits markiert, sodass sie sich sofort an die gewünschte Stelle verschieben lassen.
+
 ---
 
 ### Blocktypen

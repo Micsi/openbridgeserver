@@ -11,7 +11,7 @@
         <option v-for="g in store.graphs" :key="g.id" :value="g.id">{{ g.name }}{{ g.enabled ? '' : $t('logic.graphDisabledSuffix') }}</option>
       </select>
       <button v-if="auth.isAdmin" @click="newGraph" class="btn-primary btn-sm">{{ $t('logic.newGraphBtn') }}</button>
-      <button v-if="auth.isAdmin && activeGraphId" @click="saveGraph" class="btn-secondary btn-sm" :disabled="saving">
+      <button v-if="auth.isAdmin && activeGraphId" @click="saveGraph" class="btn-secondary btn-sm" :disabled="saving" data-testid="btn-save">
         <Spinner v-if="saving" size="sm" color="white" />
         {{ $t('common.save') }}
       </button>
@@ -63,6 +63,14 @@
       </button>
       <button v-if="auth.isAdmin && activeGraphId" @click="doDuplicateGraph" class="btn-secondary btn-sm" :title="$t('logic.duplicateGraph')" data-testid="btn-duplicate">
         ⧉ {{ $t('logic.duplicate') }}
+      </button>
+      <button v-if="auth.isAdmin && activeGraphId" @click="copySelection" class="btn-secondary btn-sm" :disabled="!hasSelection"
+        :title="$t('logic.copySelectionTitle')" data-testid="btn-copy-nodes">
+        ⧉ {{ $t('logic.copySelection') }}
+      </button>
+      <button v-if="auth.isAdmin && activeGraphId" @click="pasteClipboard" class="btn-secondary btn-sm" :disabled="!clipboard"
+        :title="$t('logic.pasteSelectionTitle')" data-testid="btn-paste-nodes">
+        📋 {{ $t('logic.pasteSelection') }}
       </button>
       <button v-if="activeGraphId" @click="doExportGraph" class="btn-secondary btn-sm" :title="$t('logic.exportJson')" data-testid="btn-export">
         ↓ {{ $t('logic.export') }}
@@ -209,6 +217,7 @@ import { useLogicStore }    from '@/stores/logic'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore }     from '@/stores/auth'
 import { logicApi }        from '@/api/client'
+import { cloneSelectionForClipboard, remapClipboardForPaste } from '@/utils/logicClipboard'
 import NodePalette         from '@/components/logic/NodePalette.vue'
 import NodeConfigPanel     from '@/components/logic/NodeConfigPanel.vue'
 import Modal               from '@/components/ui/Modal.vue'
@@ -790,6 +799,51 @@ function onNodeClick({ node }) {
   selectedNode.value = { ...node }
 }
 
+// ── Copy/Paste selected nodes (issue #1084) ────────────────────────────────
+const clipboard  = ref(null)
+const hasSelection = computed(() => nodes.value.some(n => n.selected))
+let pasteCount = 0
+
+function copySelection() {
+  if (!auth.isAdmin) return
+  const copied = cloneSelectionForClipboard(nodes.value, edges.value)
+  if (!copied) {
+    showStatus(false, t('logic.copySelectionEmpty'))
+    return
+  }
+  clipboard.value = copied
+  pasteCount = 0
+  showStatus(true, t('logic.copiedNodes', { count: copied.nodes.length }))
+}
+
+function pasteClipboard() {
+  if (!auth.isAdmin || !clipboard.value || !activeGraphId.value) return
+  const pasted = remapClipboardForPaste(clipboard.value, pasteCount)
+  pasteCount += 1
+  // Only the freshly pasted nodes should stay selected, so they can be dragged
+  // as a group right away instead of also moving the still-selected originals.
+  nodes.value = [...nodes.value.map(n => ({ ...n, selected: false })), ...pasted.nodes]
+  edges.value = [...edges.value, ...pasted.edges]
+  showStatus(true, t('logic.pastedNodes', { count: pasted.nodes.length }))
+}
+
+function _isEditableTarget(el) {
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+}
+
+function _onClipboardKeydown(event) {
+  if (!auth.isAdmin || !activeGraphId.value) return
+  if (!(event.ctrlKey || event.metaKey)) return
+  if (_isEditableTarget(document.activeElement)) return
+  if (event.key === 'c' || event.key === 'C') {
+    copySelection()
+  } else if (event.key === 'v' || event.key === 'V') {
+    pasteClipboard()
+  }
+}
+
 let _autoSaveTimer = null
 function onNodeDataUpdate(newData) {
   if (!auth.isAdmin || !selectedNode.value) return
@@ -854,6 +908,7 @@ watch(activeGraphId, (id) => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 onMounted(async () => {
+  window.addEventListener('keydown', _onClipboardKeydown)
   await store.fetchNodeTypes()
   await store.fetchGraphs()
   _wsConnect()
@@ -869,6 +924,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   _wsDisconnect()
+  window.removeEventListener('keydown', _onClipboardKeydown)
   window.removeEventListener('mousemove', _onMinimapMouseMove, { capture: true })
   window.removeEventListener('mouseup',   _onMinimapMouseUp,   { capture: true })
 })
