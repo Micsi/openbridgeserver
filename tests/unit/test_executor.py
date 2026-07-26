@@ -838,6 +838,57 @@ class TestHysteresisNode:
 
 
 # ===========================================================================
+# change_filter node
+# ===========================================================================
+
+
+class TestChangeFilterNode:
+    def test_first_value_is_always_reported_as_changed(self):
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        out = exc.execute({"cf": {"in": "foo"}})
+        assert out["cf"] == {"out": "foo", "changed": True}
+
+    def test_repeated_identical_value_is_suppressed(self):
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": "foo"}})
+        out = exc.execute({"cf": {"in": "foo"}})
+        assert out["cf"] == {"out": "foo", "changed": False}
+
+    def test_differing_value_is_reported_as_changed(self):
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": "foo"}})
+        out = exc.execute({"cf": {"in": "bar"}})
+        assert out["cf"] == {"out": "bar", "changed": True}
+
+    def test_type_tolerant_equality_does_not_count_as_changed(self):
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": 1}})
+        out = exc.execute({"cf": {"in": "1"}})
+        assert out["cf"] == {"out": 1, "changed": False}
+
+    def test_state_persists_across_executions(self):
+        """Regression: state must survive across separate execute() calls on the same dict."""
+        state = {}
+        n1 = node("cf", "change_filter")
+
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": "foo"}})
+        assert "cf" in state
+
+        exc2 = make_executor([n1], hysteresis_state=state)
+        out = exc2.execute({"cf": {"in": "foo"}})
+        assert out["cf"] == {"out": "foo", "changed": False}
+
+
+# ===========================================================================
 # math_formula node
 # ===========================================================================
 

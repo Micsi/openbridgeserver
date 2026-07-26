@@ -163,6 +163,25 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         },
         color="#1d4ed8",
     ),
+    NodeTypeDef(
+        type="change_filter",
+        label="Änderungsfilter",
+        category="logic",
+        description=(
+            "Gibt den Eingangswert aus und setzt den changed-Trigger nur dann, wenn er sich vom zuletzt "
+            "empfangenen Wert unterscheidet. Wiederholt gleiche Werte werden unterdrückt (Edomi-artiges SendByChange)."
+        ),
+        inputs=[_port("in", "Eingang")],
+        outputs=[_port("out", "Ausgang"), _port("changed", "Geändert", "trigger")],
+        config_schema={
+            "persist_state": {
+                "type": "boolean",
+                "default": True,
+                "label": "Zustand nach Neustart wiederherstellen",
+            },
+        },
+        color="#1d4ed8",
+    ),
     # ── Comparison ────────────────────────────────────────────────────────
     NodeTypeDef(
         type="compare",

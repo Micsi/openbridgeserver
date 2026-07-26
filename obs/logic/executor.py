@@ -449,6 +449,16 @@ class GraphExecutor:
             case "memory":
                 return {"out": self._memory_value(node)}
 
+            case "change_filter":
+                value = inputs.get("in")
+                state = self.hysteresis_state.get(node.id)
+                has_prev = isinstance(state, dict) and "value" in state
+                changed = not has_prev or not self._values_equal(value, state["value"])
+                if changed:
+                    self.hysteresis_state[node.id] = {"value": value}
+                    return {"out": value, "changed": True}
+                return {"out": state["value"], "changed": False}
+
             case "compare":
                 operator_key = str(d.get("operator", ">")).strip().lower()
                 op = _COMPARE_OPS.get(operator_key, operator.gt)
