@@ -3,7 +3,10 @@
     <!-- Toolbar -->
     <div class="flex items-center gap-3 px-4 py-2 bg-surface-800 border-b border-slate-200 dark:border-slate-700/60 flex-shrink-0">
       <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">{{ $t('logic.title') }}</h2>
-      <div class="flex-1" />
+      <span v-if="statusMsg" :class="['text-xs px-2 py-0.5 rounded truncate max-w-xs', statusMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']"
+        :title="statusMsg.text" data-testid="status-msg">
+        {{ statusMsg.text }}
+      </span>
       <!-- Logikblatt selector -->
       <select v-model="activeGraphId" @change="loadGraph"
         class="input text-xs py-1 px-2 max-w-[200px]" data-testid="select-graph">
@@ -11,6 +14,7 @@
         <option v-for="g in store.graphs" :key="g.id" :value="g.id">{{ g.name }}{{ g.enabled ? '' : $t('logic.graphDisabledSuffix') }}</option>
       </select>
       <button v-if="auth.isAdmin" @click="newGraph" class="btn-primary btn-sm">{{ $t('logic.newGraphBtn') }}</button>
+      <div class="flex-1" />
       <button v-if="auth.isAdmin && activeGraphId" @click="saveGraph" class="btn-secondary btn-sm" :disabled="saving" data-testid="btn-save">
         <Spinner v-if="saving" size="sm" color="white" />
         {{ $t('common.save') }}
@@ -86,11 +90,8 @@
       </button>
     </div>
 
-    <!-- Status bar -->
-    <div v-if="statusMsg" :class="['px-4 py-1.5 text-xs flex-shrink-0', statusMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']">
-      {{ statusMsg.text }}
-    </div>
-    <div v-else-if="validationWarnings.length" class="px-4 py-1.5 text-xs flex-shrink-0 bg-amber-500/10 text-amber-500">
+    <!-- Graph-Zyklus-Warnung — bleibt bestehen, solange die Struktur ungültig ist -->
+    <div v-if="validationWarnings.length" class="px-4 py-1.5 text-xs flex-shrink-0 bg-amber-500/10 text-amber-500">
       {{ $t('logic.graphValidationCycle', { count: validationWarnings.length }) }}
     </div>
 
