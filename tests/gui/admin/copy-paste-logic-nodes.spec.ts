@@ -33,6 +33,30 @@ async function gotoLogicWithGraph(page: any, graphId: string) {
   await expect(page.locator('[data-testid="btn-copy-nodes"]')).toBeVisible({ timeout: 5_000 })
 }
 
+// Vue Flow's own click-vs-drag threshold makes a synthetic Ctrl/Cmd-click an
+// unreliable way to multi-select in Playwright (a stationary click with a
+// multi-select key held is not guaranteed to register as a click at all —
+// see the d3-drag "eventEnd" threshold logic in @vue-flow/core). A real
+// Shift-drag box-select is the mechanism users actually rely on and involves
+// genuine pointer movement, so it reliably crosses those thresholds.
+async function selectAllNodesViaBoxSelect(page: any) {
+  const canvasBox = await page.locator('.logic-canvas').boundingBox()
+  const nodeBoxes = await page.locator('.vue-flow__node').all()
+  const rects = await Promise.all(nodeBoxes.map((n: any) => n.boundingBox()))
+
+  const minX = Math.max(canvasBox.x + 5, Math.min(...rects.map((r: any) => r.x)) - 40)
+  const minY = Math.max(canvasBox.y + 5, Math.min(...rects.map((r: any) => r.y)) - 40)
+  const maxX = Math.min(canvasBox.x + canvasBox.width - 5, Math.max(...rects.map((r: any) => r.x + r.width)) + 40)
+  const maxY = Math.min(canvasBox.y + canvasBox.height - 5, Math.max(...rects.map((r: any) => r.y + r.height)) + 40)
+
+  await page.keyboard.down('Shift')
+  await page.mouse.move(minX, minY)
+  await page.mouse.down()
+  await page.mouse.move(maxX, maxY, { steps: 10 })
+  await page.mouse.up()
+  await page.keyboard.up('Shift')
+}
+
 test('Logic: markierte Blöcke kopieren und auf einer anderen Seite einfügen', async ({ page }) => {
   const suffix = Date.now()
   const sourceName = `E2E-CopySrc-${suffix}`
@@ -48,10 +72,10 @@ test('Logic: markierte Blöcke kopieren und auf einer anderen Seite einfügen', 
 
   try {
     await gotoLogicWithGraph(page, sourceId)
+    await expect(page.locator('.vue-flow__node')).toHaveCount(2, { timeout: 5_000 })
 
-    // Beide Blöcke markieren: Klick auf n1, Strg-Klick auf n2 (Vue Flows multiSelectionKeyCode)
-    await page.locator('.vue-flow__node[data-id="n1"]').click({ force: true })
-    await page.locator('.vue-flow__node[data-id="n2"]').click({ force: true, modifiers: ['Control'] })
+    // Beide Blöcke per Shift-Rahmen markieren (wie im echten Editor)
+    await selectAllNodesViaBoxSelect(page)
 
     await page.click('[data-testid="btn-copy-nodes"]')
     await expect(page.locator('.bg-green-500\\/10')).toBeVisible({ timeout: 8_000 })
