@@ -2,11 +2,9 @@
   <div class="flex flex-col h-full" style="height: calc(100vh - 4rem)">
     <!-- Toolbar -->
     <div class="flex items-center gap-3 px-4 py-2 bg-surface-800 border-b border-slate-200 dark:border-slate-700/60 flex-shrink-0">
-      <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">{{ $t('logic.title') }}</h2>
-      <span v-if="statusMsg" :class="['text-xs px-2 py-0.5 rounded truncate max-w-xs', statusMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']"
-        :title="statusMsg.text" data-testid="status-msg">
-        {{ statusMsg.text }}
-      </span>
+      <!-- Reserved to the width of the NodePalette column below (w-56 minus the toolbar's own px-4),
+           so the dropdown lines up with the canvas instead of crowding the title. -->
+      <h2 class="w-52 flex-shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100">{{ $t('logic.title') }}</h2>
       <!-- Logikblatt selector -->
       <select v-model="activeGraphId" @change="loadGraph"
         class="input text-xs py-1 px-2 max-w-[200px]" data-testid="select-graph">
@@ -14,7 +12,6 @@
         <option v-for="g in store.graphs" :key="g.id" :value="g.id">{{ g.name }}{{ g.enabled ? '' : $t('logic.graphDisabledSuffix') }}</option>
       </select>
       <button v-if="auth.isAdmin" @click="newGraph" class="btn-primary btn-sm">{{ $t('logic.newGraphBtn') }}</button>
-      <div class="flex-1" />
       <button v-if="auth.isAdmin && activeGraphId" @click="saveGraph" class="btn-secondary btn-sm" :disabled="saving" data-testid="btn-save">
         <Spinner v-if="saving" size="sm" color="white" />
         {{ $t('common.save') }}
@@ -88,6 +85,10 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
         </svg>
       </button>
+      <span v-if="statusMsg" :class="['text-xs px-2 py-0.5 rounded truncate max-w-xs', statusMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']"
+        :title="statusMsg.text" data-testid="status-msg">
+        {{ statusMsg.text }}
+      </span>
     </div>
 
     <!-- Graph-Zyklus-Warnung — bleibt bestehen, solange die Struktur ungültig ist -->
