@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-col h-full" style="height: calc(100vh - 4rem)">
     <!-- Toolbar -->
-    <div class="flex items-center gap-3 px-4 py-2 bg-surface-800 border-b border-slate-200 dark:border-slate-700/60 flex-shrink-0">
+    <div class="flex items-center gap-3 px-4 py-2 bg-surface-800 border-b border-slate-200 dark:border-slate-700/60 flex-shrink-0 overflow-x-auto">
       <!-- Reserved to the width of the NodePalette column below (w-56 minus the toolbar's own px-4),
            so the dropdown lines up with the canvas instead of crowding the title. -->
       <h2 class="w-52 flex-shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100">{{ $t('logic.title') }}</h2>
@@ -358,6 +358,7 @@ const paletteCollapsed = ref(localStorage.getItem('logic_palette_collapsed') ===
 watch(paletteCollapsed, v => localStorage.setItem('logic_palette_collapsed', v ? '1' : '0'))
 
 const saving        = ref(false)
+const graphLoading  = ref(false)
 const statusMsg     = ref(null)
 const canvasWrapper = ref(null)
 
@@ -464,14 +465,19 @@ function findCyclicNodeIds(adj, candidates) {
 
 async function loadGraph() {
   if (!activeGraphId.value) { nodes.value = []; edges.value = []; return }
-  const { data } = await logicApi.getGraph(activeGraphId.value)
-  nodes.value = (data.flow_data.nodes || []).map(n => {
-    // eslint-disable-next-line no-unused-vars
-    const { _dbg, _dbg_title, ...nodeData } = n.data ?? {}
-    return { ...n, position: n.position || { x: 100, y: 100 }, data: nodeData }
-  })
-  edges.value = data.flow_data.edges || []
-  selectedNode.value = null
+  graphLoading.value = true
+  try {
+    const { data } = await logicApi.getGraph(activeGraphId.value)
+    nodes.value = (data.flow_data.nodes || []).map(n => {
+      // eslint-disable-next-line no-unused-vars
+      const { _dbg, _dbg_title, ...nodeData } = n.data ?? {}
+      return { ...n, position: n.position || { x: 100, y: 100 }, data: nodeData }
+    })
+    edges.value = data.flow_data.edges || []
+    selectedNode.value = null
+  } finally {
+    graphLoading.value = false
+  }
 }
 
 async function saveGraph() {
@@ -820,25 +826,36 @@ function copySelection() {
 }
 
 function pasteClipboard() {
-  if (!auth.isAdmin || !clipboard.value || !activeGraphId.value) return
+  // graphLoading guards against a slow getGraph() from an earlier sheet
+  // switch resolving after this paste and overwriting nodes/edges with the
+  // just-loaded (pre-paste) sheet, silently dropping the pasted blocks.
+  if (!auth.isAdmin || !clipboard.value || !activeGraphId.value || graphLoading.value) return
   const pasted = remapClipboardForPaste(clipboard.value, pasteCount)
   pasteCount += 1
   // Only the freshly pasted nodes should stay selected, so they can be dragged
   // as a group right away instead of also moving the still-selected originals.
   nodes.value = [...nodes.value.map(n => ({ ...n, selected: false })), ...pasted.nodes]
   edges.value = [...edges.value, ...pasted.edges]
+  // Clear any single-node config-panel target — it may point at a node that
+  // was just deselected (or isn't part of the new paste), so editing it now
+  // would silently update the wrong node instead of the pasted selection.
+  selectedNode.value = null
   showStatus(true, t('logic.pastedNodes', { count: pasted.nodes.length }))
 }
 
 function _isEditableTarget(el) {
   if (!el) return false
   const tag = el.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+  // SELECT is intentionally excluded: it doesn't accept free-text paste, and
+  // the graph-select dropdown is the documented way to switch sheets before
+  // pasting — blocking the shortcut there defeats that workflow.
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable
 }
 
 function _onClipboardKeydown(event) {
   if (!auth.isAdmin || !activeGraphId.value) return
   if (!(event.ctrlKey || event.metaKey)) return
+  if (showNewGraph.value || showRenameGraph.value || showDeleteConfirm.value) return
   if (_isEditableTarget(document.activeElement)) return
   if (event.key === 'c' || event.key === 'C') {
     copySelection()

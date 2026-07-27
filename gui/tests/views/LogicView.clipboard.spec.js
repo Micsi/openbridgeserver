@@ -28,7 +28,13 @@ beforeEach(() => {
   vi.doMock('@vue-flow/minimap', () => ({ MiniMap: { template: '<div />' } }))
 })
 
+const mountedWrappers = []
+
 afterEach(() => {
+  // LogicView registers a window-level keydown listener in onMounted; without
+  // unmounting, it leaks across tests and every leftover instance also reacts
+  // to keydown events dispatched by later tests in this file.
+  while (mountedWrappers.length) mountedWrappers.pop().unmount()
   vi.doUnmock('@/api/client')
   vi.doUnmock('vue-router')
   vi.doUnmock('@vue-flow/core')
@@ -87,6 +93,7 @@ async function mountLogicView({ isAdmin = true, graph = makeGraph() } = {}) {
   await flushPromises()
   wrapper.vm.activeGraphId = graph.id
   await wrapper.vm.loadGraph()
+  mountedWrappers.push(wrapper)
   return { wrapper, logicApi }
 }
 
@@ -198,5 +205,65 @@ describe('LogicView node copy/paste', () => {
     expect(wrapper.vm.clipboard).toBeNull()
 
     document.body.removeChild(input)
+  })
+
+  it('Ctrl+V still works right after focusing the graph-select dropdown', async () => {
+    // Regression: SELECT must not count as an "editable" target — the
+    // graph-select dropdown is the documented way to switch sheets before
+    // pasting, and it retains focus after the change event fires.
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+
+    const select = wrapper.find('[data-testid="select-graph"]').element
+    select.focus()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }))
+    expect(wrapper.vm.nodes).toHaveLength(3)
+  })
+
+  it('clears the config-panel selection after paste so it cannot silently edit the wrong node', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+    wrapper.vm.selectedNode = { id: 'n1', type: 'and', data: {} }
+
+    wrapper.vm.pasteClipboard()
+
+    expect(wrapper.vm.selectedNode).toBeNull()
+  })
+
+  it('ignores Ctrl+C / Ctrl+V while a modal is open', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+    wrapper.vm.showNewGraph = true
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }))
+
+    expect(wrapper.vm.nodes).toHaveLength(2)
+  })
+
+  it('does not paste while the target sheet is still loading', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+
+    let resolveGetGraph
+    logicApi.getGraph.mockReturnValueOnce(new Promise(resolve => { resolveGetGraph = resolve }))
+    wrapper.vm.activeGraphId = 'graph-1'
+    const loadPromise = wrapper.vm.loadGraph()
+
+    wrapper.vm.pasteClipboard()
+    expect(wrapper.vm.graphLoading).toBe(true)
+
+    resolveGetGraph({ data: { flow_data: { nodes: [], edges: [] } } })
+    await loadPromise
+
+    // The still-in-flight load must not have been clobbered by a paste that
+    // ran while it was pending, and pasting is possible again once it settles.
+    expect(wrapper.vm.nodes).toHaveLength(0)
+    wrapper.vm.pasteClipboard()
+    expect(wrapper.vm.nodes).toHaveLength(1)
   })
 })

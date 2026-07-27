@@ -88,7 +88,11 @@ test('Logic: markierte Blöcke kopieren und auf einer anderen Seite einfügen', 
     await expect(page.locator('.vue-flow__node')).toHaveCount(2, { timeout: 5_000 })
 
     await page.click('[data-testid="btn-save"]')
-    await expect(page.locator('.bg-green-500\\/10')).toBeVisible({ timeout: 8_000 })
+    // A generic ".bg-green-500/10" check can pass on the still-visible
+    // paste-success toast from the earlier step, before the save request
+    // actually completes — wait for the save-specific status text instead,
+    // which only appears once saveGraph()'s await resolves.
+    await expect(page.locator('[data-testid="status-msg"]')).toHaveText('Graph gespeichert', { timeout: 8_000 })
 
     const savedTarget = await apiGet(`/api/v1/logic/graphs/${targetId}`) as Graph
     expect(savedTarget.flow_data.nodes).toHaveLength(2)

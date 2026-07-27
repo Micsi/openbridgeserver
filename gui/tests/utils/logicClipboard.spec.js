@@ -1,12 +1,14 @@
 /**
  * Tests for the logic-editor node copy/paste helpers (#1084).
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { cloneSelectionForClipboard, remapClipboardForPaste } from '@/utils/logicClipboard'
 
 function makeNode(id, overrides = {}) {
   return { id, type: 'and', position: { x: 10, y: 20 }, data: { input_count: 2 }, ...overrides }
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 describe('cloneSelectionForClipboard', () => {
   it('returns null when nothing is selected', () => {
@@ -91,5 +93,42 @@ describe('remapClipboardForPaste', () => {
     const clipboard = { nodes: [makeNode('n1'), makeNode('n2')], edges: [] }
     const result = remapClipboardForPaste(clipboard, 0)
     expect(result.nodes.every(n => n.selected === true)).toBe(true)
+  })
+})
+
+describe('remapClipboardForPaste — id generation outside a secure context', () => {
+  // crypto.randomUUID() is unavailable (or throws) when OBS is opened over
+  // plain http:// from another machine — a normal LAN deployment. These
+  // exercise the crypto.getRandomValues()/Math.random() fallback paths.
+  const realGetRandomValues = crypto.getRandomValues.bind(crypto)
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('falls back to crypto.getRandomValues when randomUUID is missing', () => {
+    vi.stubGlobal('crypto', { getRandomValues: realGetRandomValues })
+    const clipboard = { nodes: [makeNode('n1'), makeNode('n2')], edges: [] }
+    const result = remapClipboardForPaste(clipboard, 0)
+    expect(result.nodes[0].id).toMatch(UUID_RE)
+    expect(result.nodes[0].id).not.toBe(result.nodes[1].id)
+  })
+
+  it('falls back when randomUUID throws instead of being missing', () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: () => { throw new DOMException('not allowed outside a secure context') },
+      getRandomValues: realGetRandomValues,
+    })
+    const clipboard = { nodes: [makeNode('n1')], edges: [] }
+    const result = remapClipboardForPaste(clipboard, 0)
+    expect(result.nodes[0].id).toMatch(UUID_RE)
+  })
+
+  it('falls back to Math.random when crypto is entirely unavailable', () => {
+    vi.stubGlobal('crypto', undefined)
+    const clipboard = { nodes: [makeNode('n1'), makeNode('n2')], edges: [] }
+    const result = remapClipboardForPaste(clipboard, 0)
+    expect(result.nodes[0].id).toMatch(UUID_RE)
+    expect(result.nodes[0].id).not.toBe(result.nodes[1].id)
   })
 })

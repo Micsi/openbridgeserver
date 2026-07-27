@@ -1,5 +1,37 @@
 const PASTE_OFFSET_STEP = 40
 
+/**
+ * crypto.randomUUID() throws/is undefined outside secure contexts (e.g. OBS
+ * opened over plain http:// from another machine, which is a normal LAN
+ * deployment for this app) — fall back to crypto.getRandomValues(), which
+ * has no such restriction, and finally to Math.random() for environments
+ * without a crypto object at all. Not security-sensitive: these ids only
+ * need to be unique within a single graph.
+ */
+function generateId() {
+  if (typeof crypto !== 'undefined') {
+    if (typeof crypto.randomUUID === 'function') {
+      try {
+        return crypto.randomUUID()
+      } catch {
+        // Some browsers expose randomUUID but throw outside a secure context
+        // instead of omitting it — fall through to getRandomValues().
+      }
+    }
+    if (typeof crypto.getRandomValues === 'function') {
+      const bytes = crypto.getRandomValues(new Uint8Array(16))
+      bytes[6] = (bytes[6] & 0x0f) | 0x40
+      bytes[8] = (bytes[8] & 0x3f) | 0x80
+      const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0'))
+      return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`
+    }
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
+}
+
 function stripDebugFields(data) {
   // eslint-disable-next-line no-unused-vars
   const { _dbg, _dbg_title, ...rest } = data ?? {}
@@ -38,7 +70,7 @@ export function cloneSelectionForClipboard(nodes, edges) {
 export function remapClipboardForPaste(clipboard, pasteIndex = 0) {
   if (!clipboard) return null
 
-  const idMap = new Map(clipboard.nodes.map(n => [n.id, crypto.randomUUID()]))
+  const idMap = new Map(clipboard.nodes.map(n => [n.id, generateId()]))
   const offset = PASTE_OFFSET_STEP * (pasteIndex + 1)
 
   const nodes = clipboard.nodes.map(n => ({
@@ -49,7 +81,7 @@ export function remapClipboardForPaste(clipboard, pasteIndex = 0) {
     selected: true,
   }))
   const edges = clipboard.edges.map(e => ({
-    id: crypto.randomUUID(),
+    id: generateId(),
     source: idMap.get(e.source),
     target: idMap.get(e.target),
     sourceHandle: e.sourceHandle,
