@@ -266,4 +266,87 @@ describe('LogicView node copy/paste', () => {
     wrapper.vm.pasteClipboard()
     expect(wrapper.vm.nodes).toHaveLength(1)
   })
+
+  it('loadGraph falls back to an empty edges array when the response omits it', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+    logicApi.getGraph.mockResolvedValueOnce({
+      data: { flow_data: { nodes: [{ id: 'bare' }] } }, // no edges, no data on the node
+    })
+
+    await wrapper.vm.loadGraph()
+
+    expect(wrapper.vm.nodes).toEqual([{ id: 'bare', position: { x: 100, y: 100 }, data: {} }])
+    expect(wrapper.vm.edges).toEqual([])
+  })
+
+  it('loadGraph falls back to an empty nodes array when the response omits it entirely', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+    logicApi.getGraph.mockResolvedValueOnce({ data: { flow_data: {} } })
+
+    await wrapper.vm.loadGraph()
+
+    expect(wrapper.vm.nodes).toEqual([])
+    expect(wrapper.vm.edges).toEqual([])
+  })
+
+  it('copySelection is a no-op for non-admin users', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: false })
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+
+    wrapper.vm.copySelection()
+
+    expect(wrapper.vm.clipboard).toBeNull()
+  })
+
+  it('_isEditableTarget returns false for a null element', async () => {
+    const { wrapper } = await mountLogicView()
+    expect(wrapper.vm._isEditableTarget(null)).toBe(false)
+  })
+
+  it('_onClipboardKeydown does nothing for non-admin users', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: false })
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }))
+
+    expect(wrapper.vm.clipboard).toBeNull()
+  })
+
+  it('_onClipboardKeydown does nothing without an active graph', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+    wrapper.vm.activeGraphId = ''
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }))
+
+    expect(wrapper.vm.clipboard).toBeNull()
+  })
+
+  it('_onClipboardKeydown ignores keydown without Ctrl/Cmd held', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }))
+
+    expect(wrapper.vm.clipboard).toBeNull()
+  })
+
+  it('Ctrl+Shift+V (uppercase V) also pastes', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'V', ctrlKey: true }))
+
+    expect(wrapper.vm.nodes).toHaveLength(3)
+  })
+
+  it('_onClipboardKeydown ignores Ctrl-held keys other than C/V', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', ctrlKey: true }))
+
+    expect(wrapper.vm.clipboard).toBeNull()
+  })
 })
