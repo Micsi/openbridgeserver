@@ -774,6 +774,25 @@ async def test_persist_node_state_without_state_is_noop():
     await mgr._persist_node_state("g1")
 
 
+@pytest.mark.asyncio
+async def test_persist_node_state_serializes_non_json_native_values():
+    """Regression: a change_filter holding a datetime.time/date value (e.g.
+    from a KNX DPT10/11 decode) must not raise inside json.dumps and poison
+    persistence for the whole graph — this is a single dumps() call for
+    every node's state, so one unserializable value would otherwise stop
+    all of it from being saved."""
+    import datetime as dt_module
+    import json
+
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {"cf": {"value": dt_module.time(14, 30)}, "other": {"value": 1}}
+
+    await mgr._persist_node_state("g1")
+
+    saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
+    assert saved == {"cf": {"value": "14:30:00"}, "other": {"value": 1}}
+
+
 # ---------------------------------------------------------------------------
 # reinitialize_graph
 # ---------------------------------------------------------------------------

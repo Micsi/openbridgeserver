@@ -254,6 +254,11 @@ class GraphExecutor:
                 return True
             if s in {"false", "0", "no", "off"}:
                 return False
+            return None
+        # Numeric 0/1 are recognized too, so equality stays transitive across
+        # adapter representations: 1 == "1" == "true" must all agree.
+        if isinstance(v, (int, float)) and v in (0, 1):
+            return bool(v)
         return None
 
     @staticmethod

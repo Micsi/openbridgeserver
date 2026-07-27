@@ -922,6 +922,22 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": [1, 3]}})
         assert out["cf"]["changed"] is True
 
+    def test_numeric_and_boolean_string_aliases_stay_transitive(self):
+        """Regression: 1 == "1" and "1" == "true", so 1 must also equal
+        "true" — otherwise a source alternating between equivalent adapter
+        representations (numeric 1/0 vs boolean strings) emits a redundant
+        changed pulse."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": 1}})
+        out = exc.execute({"cf": {"in": "true"}})
+        assert out["cf"] == {"out": 1, "changed": False}
+
+        exc.execute({"cf": {"in": 0}})
+        out = exc.execute({"cf": {"in": "false"}})
+        assert out["cf"]["changed"] is False
+
 
 # ===========================================================================
 # math_formula node

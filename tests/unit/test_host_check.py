@@ -402,6 +402,78 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 1
 
+    def test_change_filter_out_handle_does_not_bypass_rising_edge_dedup(self):
+        """Regression: only change_filter's "changed" handle is a discrete
+        pulse. Wiring "out" into host_check's trigger must fall back to
+        normal rising-edge dedup — repeated truthy values must not re-ping,
+        since the trigger itself never fell back to False in between."""
+        nodes = [
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(nodes, [edge("cf", "hc", "out", "trigger")])
+
+        manager = _make_manager()
+        graph_id = "g-cf-out-no-bypass"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_ping.await_count == 1
+
+    def test_unresolved_api_client_placeholder_does_not_fire_premature_ping(self):
+        """Regression: change_filter commits its comparison inline (unlike
+        memory's deferred commit), so on the first synchronous pass an
+        unresolved api_client output (response=None placeholder) must not
+        look like a change against the already-stored real value — that
+        would fire an unrecoverable ping before the async replay ever sees
+        the real (here: unchanged) response."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET", "response_type": "text/plain"}),
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "cf", "response", "in"),
+                edge("cf", "hc", "changed", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-async-placeholder"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        # Simulate a prior execution that already stored the real response.
+        manager._hysteresis[graph_id] = {"cf": {"value": "OK"}}
+
+        patcher = patch("obs.logic.manager.httpx.AsyncClient")
+        mock_client_cls = patcher.start()
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(return_value=_MockResponse(200, text="OK"))
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
+
+        assert outputs["ac"]["response"] == "OK"
+        mock_ping.assert_not_awaited()
+
 
 # ===========================================================================
 # Manager: downstream re-propagation

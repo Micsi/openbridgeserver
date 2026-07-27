@@ -2029,6 +2029,35 @@ class LogicManager:
             except Exception:
                 logger.exception("Graph %s: heating_circuit history pre-fill failed", graph_id[:8])
 
+        # ── Change Filter: hold state while an upstream async node hasn't
+        # resolved on this pass ────────────────────────────────────────────
+        # api_client/host_check/message_archive/notify outputs start this
+        # pass as unresolved placeholders (real values arrive via the async
+        # replay below). change_filter commits its comparison inline, unlike
+        # memory's deferred commit_memory_inputs — so without this guard, a
+        # placeholder input looks like a real change and can fire an
+        # unrecoverable host_check ping / WoL packet before the replay ever
+        # sees the real value, or permanently corrupt persisted state with
+        # the placeholder. Force the pass to compare the input against
+        # itself (a no-op) for any change_filter downstream of an unresolved
+        # async source; the replay passes re-run with the real value using a
+        # pre-execute state snapshot and produce the correct pulse.
+        if needs_async_replay_snapshot:
+            _async_reachable: set[str] = set(async_replay_source_ids)
+            _aq: list[str] = list(_async_reachable)
+            while _aq:
+                _an = _aq.pop()
+                for _ae in flow.edges:
+                    if _ae.source == _an and _ae.target not in _async_reachable:
+                        _async_reachable.add(_ae.target)
+                        _aq.append(_ae.target)
+            for _cf_node in flow.nodes:
+                if _cf_node.type != "change_filter" or _cf_node.id not in _async_reachable:
+                    continue
+                _cf_state = hyst.get(_cf_node.id)
+                if isinstance(_cf_state, dict) and "value" in _cf_state:
+                    aug_overrides[_cf_node.id] = {**aug_overrides.get(_cf_node.id, {}), "in": _cf_state["value"]}
+
         executor = GraphExecutor(flow, hyst, self._app_config)
         try:
             pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
@@ -2078,7 +2107,13 @@ class LogicManager:
         # exception to only those async nodes driven by the firing pulse
         # source, not every cron/change_filter in the graph.
         fired_crons = overrides.keys() & cron_node_ids
-        cron_reachable: set[str] = set(fired_crons) | change_filter_pulse_ids
+        cron_reachable: set[str] = set(fired_crons)
+        # Seed only the targets reached via each pulsing change_filter's
+        # "changed" handle — its "out" handle carries the held/passthrough
+        # value, not a discrete pulse, and must not bypass rising-edge dedup.
+        for _cfe in flow.edges:
+            if _cfe.source in change_filter_pulse_ids and (_cfe.sourceHandle or "out") == "changed":
+                cron_reachable.add(_cfe.target)
         if cron_reachable:
             _cq: list[str] = list(cron_reachable)
             while _cq:
@@ -3657,6 +3692,12 @@ class LogicManager:
                 for edge in flow.edges:
                     if edge.target != target_id:
                         continue
+                    # At the sequence node itself, only its "trigger" handle
+                    # carries a pulse — a change_filter wired into "condition"
+                    # (or any other handle) must not retrigger a separately
+                    # sustained trigger.
+                    if target_id == node.id and (edge.targetHandle or "in") != "trigger":
+                        continue
                     source = node_by_id.get(edge.source)
                     if (
                         source
@@ -3735,9 +3776,14 @@ class LogicManager:
                 state_to_save = {nid: s for nid, s in hyst.items() if nid not in no_persist}
             else:
                 state_to_save = hyst
+            # default=str covers values json can't natively encode (e.g. a
+            # change_filter holding a datetime.time/date from a KNX DPT10/11
+            # object) — without it, one such node poisons persistence for
+            # every node in the graph, since this dumps the whole snapshot
+            # in one call.
             await self._db.execute_and_commit(
                 "UPDATE logic_graphs SET node_state = ? WHERE id = ?",
-                (json.dumps(state_to_save), graph_id),
+                (json.dumps(state_to_save, default=str), graph_id),
             )
         except Exception:
             logger.exception("Graph %s: failed to persist node_state", graph_id[:8])

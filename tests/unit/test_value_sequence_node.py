@@ -557,6 +557,47 @@ def test_change_filter_pulses_retrigger_a_sequence() -> None:
     asyncio.run(exercise())
 
 
+def test_change_filter_wired_to_condition_does_not_retrigger_sequence() -> None:
+    """Regression: a change_filter's changed pulse must only retrigger a
+    sequence when wired into the trigger handle. Wired into condition
+    instead, it must not restart an already-running, separately sustained
+    trigger — the backward pulse-walk must start from the sequence's
+    trigger edge only, not from every incoming edge."""
+
+    async def exercise() -> None:
+        manager = _manager()
+        target = uuid.uuid4()
+        flow = FlowData.model_validate(
+            {
+                "nodes": [
+                    node("const", "const_value", {"value": "1", "data_type": "number"}),
+                    node("cf", "change_filter"),
+                    node("sequence", "value_sequence", {"restart_policy": "queue", "steps": [{"datapoint_id": str(target), "value": 1}]}),
+                ],
+                "edges": [
+                    edge("const", "sequence", "value", "trigger"),
+                    edge("cf", "sequence", "changed", "condition"),
+                ],
+            },
+        )
+        manager._graphs["graph"] = ("Graph", True, flow)
+
+        await manager._execute_graph("graph", "Graph", flow, {"cf": {"in": 1}})
+        first_task = manager._sequence_tasks.get(("graph", "sequence"))
+        if first_task is not None:
+            await first_task
+        first_count = manager._event_bus.publish.await_count
+
+        await manager._execute_graph("graph", "Graph", flow, {"cf": {"in": 2}})
+        retrigger_task = manager._sequence_tasks.get(("graph", "sequence"))
+        if retrigger_task is not None and not retrigger_task.done():
+            await retrigger_task
+
+        assert manager._event_bus.publish.await_count == first_count
+
+    asyncio.run(exercise())
+
+
 def test_cancelling_a_restart_also_cancels_its_original_sequence() -> None:
     async def exercise() -> None:
         manager = _manager()
