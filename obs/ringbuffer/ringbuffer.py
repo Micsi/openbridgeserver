@@ -1054,7 +1054,7 @@ class RingBuffer:
         to_ts: str | None = None
         try:
             conn = await self._store._connection_for_read(segment)
-        except Exception:
+        except aiosqlite.Error:
             conn = None
         if conn is not None:
             try:
@@ -1067,7 +1067,7 @@ class RingBuffer:
                 async with conn.execute("SELECT ts FROM ringbuffer ORDER BY id DESC LIMIT 1") as cur:
                     row = await cur.fetchone()
                 to_ts = row[0] if row else None
-            except Exception:
+            except (aiosqlite.Error, ValueError, TypeError):
                 logger.warning("RingBuffer: Legacy-Analyse unlesbar (%s) – Overview liefert nur Manifest-Daten", segment.filename)
             finally:
                 await conn.close()
@@ -1200,6 +1200,55 @@ class RingBuffer:
         if not self._segmented or self._store is None:
             return 0
         return sum(s.size_bytes for s in await self._store.manifest.list_schema_legacy_segments())
+
+    async def reclaimable_migrating_bytes(self) -> tuple[int, int]:
+        """Manifest- und Disk-Bytes, die ein neuer Copy-Lauf sicher verwirft (#1009).
+
+        Fehlt die Datei einer Legacy-Manifest-Zeile, liegt ein recoverbares Commit-Fenster
+        vor. Der nächste Start beendet dann nur diesen Commit und führt den normalen Cleanup
+        nicht aus; deshalb ist in diesem Zustand noch kein ``migrating``-Segment reclaimable.
+
+        Der erste Rückgabewert entspricht den Manifest-Größen, die nach dem Cleanup aus
+        ``stats.file_size_bytes`` verschwinden. Der zweite zählt ausschließlich tatsächlich
+        vorhandene Hauptdateien, deren Unlink bei einem erfolgreichen Cleanup garantiert ist.
+        """
+        if not self._segmented or self._store is None:
+            return 0, 0
+        # Während eines aktiven Jobs sind die neu entstehenden ``migrating``-Chunks
+        # keine stale Reste: ein paralleler Start wird abgelehnt und führt den Cleanup
+        # daher nicht aus. Status-Schätzungen dürfen diese Bytes nicht vorweg freigeben.
+        if self.legacy_migration_in_progress():
+            return 0, 0
+        from obs.ringbuffer.store.manifest import SEGMENT_STATUS_LEGACY
+
+        legacy_segments = await self._store.manifest.list_schema_legacy_segments()
+        # Der Manifest-Read ist ein Context-Switch: Ein Start kann sich inzwischen
+        # reserviert haben. Ebenso führt ein Start ohne migrierbare älteste Quelle
+        # (keine Quelle, quarantänierte Quelle oder Commit-Recovery) den Cleanup nicht aus.
+        if self.legacy_migration_in_progress():
+            return 0, 0
+        if (
+            not legacy_segments
+            or legacy_segments[0].status != SEGMENT_STATUS_LEGACY
+            or any(not Path(segment.filename).exists() for segment in legacy_segments)
+        ):
+            return 0, 0
+
+        segments = await self._store.manifest.list_migrating_segments()
+        # Auch dieser Read kann mit ``start_legacy_migration()`` racen. Nach dem
+        # Snapshot folgt kein weiteres await, sodass der zweite Guard das verbleibende
+        # Reservierungsfenster schließt.
+        if self.legacy_migration_in_progress():
+            return 0, 0
+        manifest_bytes = sum(max(0, int(segment.size_bytes or 0)) for segment in segments)
+        disk_bytes = 0
+        for segment in segments:
+            base = self._store._segments_dir / segment.filename
+            try:
+                disk_bytes += max(0, base.stat().st_size)
+            except OSError:
+                pass
+        return manifest_bytes, disk_bytes
 
     async def has_missing_file_legacy(self) -> bool:
         """True, wenn eine schema-legacy Manifest-Row eine FEHLENDE Datei hat (#968, Codex :2110).
@@ -1926,8 +1975,8 @@ class RingBuffer:
                 new_value=_safe_loads(r["new_value"]),
                 source_adapter=r["source_adapter"],
                 quality=r["quality"],
-                metadata_version=int(r["metadata_version"]) if "metadata_version" in r.keys() else 1,
-                metadata=_safe_loads_dict(r["metadata"]) if "metadata" in r.keys() else {},
+                metadata_version=int(r["metadata_version"]) if "metadata_version" in r.keys() else 1,  # noqa: SIM118 -- Row.__contains__ checks values, not keys
+                metadata=_safe_loads_dict(r["metadata"]) if "metadata" in r.keys() else {},  # noqa: SIM118 -- Row.__contains__ checks values, not keys
             )
             for r in rows
         ]
@@ -2331,7 +2380,9 @@ class RingBuffer:
     # Internal
     # ------------------------------------------------------------------
 
-    async def _fetchall(self, sql: str, params: list = []) -> list:
+    async def _fetchall(self, sql: str, params: list | None = None) -> list:
+        if params is None:
+            params = []
         async with self._conn.execute(sql, params) as cur:
             return await cur.fetchall()
 
@@ -2538,7 +2589,7 @@ def _safe_loads(s: str | None) -> Any:
         return None
     try:
         return json.loads(s)
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return s
 
 
@@ -2948,7 +2999,7 @@ def _is_boolean_type(data_type: str, value: Any) -> bool:
 
 def _to_number(value: Any, *, field: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{field} must be numeric")
+        raise ValueError(f"{field} must be numeric")  # noqa: TRY004 -- must stay ValueError to hit the API's 422-conversion path (see obs/ringbuffer/store/sqlite_backend.py)
     return float(value)
 
 
@@ -2993,7 +3044,7 @@ def _match_numeric_operator(value: Any, vf: dict[str, Any]) -> bool:
 async def _match_string_operator(value: Any, vf: dict[str, Any]) -> bool:
     operator = vf["operator"]
     if not isinstance(value, str):
-        raise ValueError("row value must be string")
+        raise ValueError("row value must be string")  # noqa: TRY004 -- must stay ValueError to hit the API's 422-conversion path
 
     if operator == "contains":
         needle = vf["value"]
