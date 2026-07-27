@@ -1,4 +1,11 @@
 {
+  "datetimeNames": {
+    "weekdays": "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday",
+    "weekdaysShort": "Mon|Tue|Wed|Thu|Fri|Sat|Sun",
+    "weekdaysTwo": "Mo|Tu|We|Th|Fr|Sa|Su",
+    "months": "January|February|March|April|May|June|July|August|September|October|November|December",
+    "monthsShort": "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+  },
   "nav": {
     "dashboard": "Overview",
     "datapoints": "Data Points",
@@ -801,6 +808,27 @@
         },
         "priv_key": {
           "title": "Privacy key (v3)"
+        },
+        "host": {
+          "title": "Host (IP/DNS)"
+        },
+        "port": {
+          "title": "UDP port"
+        },
+        "oid": {
+          "title": "OID"
+        },
+        "data_type": {
+          "title": "Data type"
+        },
+        "poll_interval": {
+          "title": "Poll interval (s)"
+        },
+        "timeout": {
+          "title": "Timeout (s)"
+        },
+        "retries": {
+          "title": "Retries"
         }
       },
       "ZEITSCHALTUHR": {
@@ -883,6 +911,66 @@
         "custom_holidays": {
           "title": "Custom holidays",
           "description": "User-defined holidays as a list of expressions. Formats: 'MM-DD[:Name]' (fixed date), 'easter+N[:Name]' / 'easter-N[:Name]' (relative to Easter Sunday), 'advent+N[:Name]' / 'advent-N[:Name]' (relative to the 1st Advent), 'last_WD_MON[:Name]' (last weekday of the month), 'N_WD_MON[:Name]' (n-th weekday). Weekday codes: MO TU WE TH FR SA SU. Month codes: JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC. Separate multiple entries with a comma or newline."
+        },
+        "timer_type": {
+          "description": "Timer type"
+        },
+        "meta_type": {
+          "description": "Metadata type (only for timer_type=meta)"
+        },
+        "weekdays": {
+          "description": "Active weekdays (0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun)"
+        },
+        "months": {
+          "description": "Active months 1-12 (empty = all; annual timer only)"
+        },
+        "day_of_month": {
+          "description": "Day of month (0 = all; annual timer only)"
+        },
+        "time_ref": {
+          "description": "Time reference"
+        },
+        "hour": {
+          "description": "Hour (only for time_ref=absolute)"
+        },
+        "minute": {
+          "description": "Minute"
+        },
+        "offset_minutes": {
+          "description": "Offset in minutes (positive/negative) relative to the time reference"
+        },
+        "solar_altitude_deg": {
+          "description": "Sun elevation angle in degrees (−18 … 90) — only for time_ref=solar_altitude. Examples: 0° = horizon, −6° = civil twilight, 30° = mid-morning"
+        },
+        "sun_direction": {
+          "description": "Direction of the sun's movement — only for time_ref=solar_altitude. rising = sun ascending (morning), setting = sun descending (afternoon/evening)"
+        },
+        "every_hour": {
+          "description": "Switch every hour at the given minute"
+        },
+        "every_minute": {
+          "description": "Switch every minute"
+        },
+        "holiday_mode": {
+          "description": "Holiday handling"
+        },
+        "vacation_mode": {
+          "description": "Vacation handling"
+        },
+        "selected_holidays": {
+          "description": "Selected holidays for timer_type=holiday (empty = all holidays)"
+        },
+        "date_window_enabled": {
+          "description": "Date window: only switch within a date range"
+        },
+        "date_window_from": {
+          "description": "Window start (MM-DD | easter±N | advent±N | holiday:Name±N)"
+        },
+        "date_window_to": {
+          "description": "Window end (MM-DD | easter±N | advent±N | holiday:Name±N)"
+        },
+        "value": {
+          "description": "Output value when switching. Allowed: 0/1, true/false, on/off, ein/aus, integer, decimal, or string"
         }
       },
       "HOME_ASSISTANT": {
@@ -1012,7 +1100,7 @@
       "ONEWIRE": {
         "host": {
           "title": "Host",
-          "description": "Hostname or IP address of the owserver process"
+          "description": "Hostname or IP address of a running owserver process (local sidecar/service or external — this adapter doesn't start it)"
         },
         "port": {
           "title": "Port",
@@ -1499,6 +1587,9 @@
     "searchNodesPalette": "Search nodes …",
     "negateOutput": "Negate output",
     "debugMode": "Debug mode: shows values after execution",
+    "snapToGrid": "Grid",
+    "snapToGridTitle": "Snap function blocks to the grid",
+    "gridSize": "Grid size",
     "deleteBlock": "Delete block",
     "deleteNode": "Delete branch",
     "init": "Init",
@@ -1532,12 +1623,14 @@
       "timer_pulse": "Pulse",
       "value_sequence": "Sequence",
       "timer_cron": "Trigger",
+      "datetime": "Date/Time",
       "operating_hours": "Op. Hours",
       "python_script": "Python Script",
       "ai_logic": "AI Logic",
       "astro_sun": "Astro Sun",
       "notify_pushover": "Pushover",
       "notify_sms": "SMS (seven.io)",
+      "notify_message": "Notification",
       "message_archive": "Message Archive",
       "wake_on_lan": "Wake on LAN",
       "host_check": "Host Check",
@@ -1640,7 +1733,10 @@
       "count": "N",
       "min": "Min",
       "max": "Max",
-      "avg": "∅"
+      "avg": "∅",
+      "date": "Date",
+      "time": "Time",
+      "custom": "Custom"
     },
     "summary": {
       "inputs": "{n} Inputs",
@@ -1663,6 +1759,10 @@
       "ariaLabel": "Unknown block type"
     },
     "nodeConfig": {
+      "datetime": {
+        "custom_format": "Custom format",
+        "tokens": "Tokens: H/HH hour, m/mm minute, s/ss second, d/dd day, EE = Mo, EEE = Mon, EEEE = Monday, M/MM/MMM/MMMM month, yy/yyyy year. Names follow the selected language."
+      },
       "comment": {
         "text": "Text",
         "textPlaceholder": "Note text…",
@@ -2050,7 +2150,26 @@
         "duration_s": "Duration (s)"
       },
       "value_sequence": {
-        "run_mode": "Run mode", "repeat_count": "Repeat count", "restart_policy": "On new trigger", "cancel_when_condition_false": "Cancel when condition becomes false", "add": "Add step", "blink": "Blink preset", "step": "Step {n}", "duplicate": "Duplicate", "object": "Object (empty = pause)", "value": "Value", "modes": { "once": "Once", "repeat_count": "Repeat a fixed count", "while_condition": "Repeat while condition is true" }, "policies": { "ignore": "Ignore", "restart": "Restart", "queue": "Queue" }
+        "run_mode": "Run mode",
+        "repeat_count": "Repeat count",
+        "restart_policy": "On new trigger",
+        "cancel_when_condition_false": "Cancel when condition becomes false",
+        "add": "Add step",
+        "blink": "Blink preset",
+        "step": "Step {n}",
+        "duplicate": "Duplicate",
+        "object": "Object (empty = pause)",
+        "value": "Value",
+        "modes": {
+          "once": "Once",
+          "repeat_count": "Repeat a fixed count",
+          "while_condition": "Repeat while condition is true"
+        },
+        "policies": {
+          "ignore": "Ignore",
+          "restart": "Restart",
+          "queue": "Queue"
+        }
       },
       "timer_cron": {
         "cron": "Cron expression"
@@ -2080,6 +2199,17 @@
         "to": "Recipient (+41…)",
         "sender": "Sender (max 11 chars)",
         "message": "Message (fallback)"
+      },
+      "notification": {
+        "adapter": "Message/notification adapter",
+        "selectAdapter": "Select adapter",
+        "targets": "Targets",
+        "noTargets": "No active, configured targets available.",
+        "title": "Title",
+        "fallback": "Message (fallback)",
+        "placeholders": "The logic block has no datapoint context; MESSAGE placeholders are sent unchanged.",
+        "priority": "Priority",
+        "legacy": "Legacy block. Please use the Notification block for new notifications."
       },
       "messageArchive": {
         "archive": "Message archive",
@@ -2202,6 +2332,7 @@
       "latencyMs": "Latency (ms)"
     },
     "nodeDescriptions": {
+      "datetime": "Outputs the current date and time in the configured timezone and format.",
       "const_value": "Outputs a fixed value — number, bool or text. Useful as threshold or reference.",
       "comment": "Free-form multi-line note placed directly on the canvas for documentation. Purely visual — has no effect on execution.",
       "and": "Output is true when ALL inputs are true. Inputs (2–30) and output can be individually negated.",
@@ -2233,6 +2364,7 @@
       "operating_hours": "Counts operating hours while 'Active' is true. Reset clears the counter.",
       "python_script": "Executes a Python script. Available: inputs dict → return value",
       "astro_sun": "Calculates sunrise and sunset based on latitude/longitude. Requires: pip install astral",
+      "notify_message": "Sends a notification through the configured targets of a Message/notification adapter.",
       "notify_pushover": "Sends a push notification via the Pushover API (api.pushover.net). Triggered automatically when a message arrives at the input.",
       "notify_sms": "Sends an SMS via the seven.io gateway (gateway.seven.io). Triggered automatically when a message arrives at the input.",
       "message_archive": "Writes a message to a message archive. Triggered automatically when a message arrives at the input or when the trigger is true.",
@@ -2267,6 +2399,9 @@
       "title": "General settings",
       "timezone": "Timezone",
       "timezoneHint": "All timestamps in the system are shown in this timezone.",
+      "dateFormat": "Default date format",
+      "timeFormat": "Default time format",
+      "formatHint": "Tokens: d/dd, EE/EEE/EEEE, M/MM/MMM/MMMM, yy/yyyy; time uses H/HH, m/mm, s/ss.",
       "timezonePlaceholder": "Search … e.g. Zurich, Berlin, UTC",
       "noResults": "No results",
       "save": "Save",

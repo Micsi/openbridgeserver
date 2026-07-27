@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from obs.adapters.message.providers.base import MessageSendResult
 from obs.logic.manager import LogicManager
 from obs.logic.models import FlowData
 from obs.logic.node_types import get_node_type
@@ -85,9 +86,11 @@ def test_message_archive_node_records_entry() -> None:
     service = MagicMock()
     service.record = AsyncMock(return_value={"id": "entry-1"})
 
-    with patch("obs.message_archive.get_message_archive_service", return_value=service):
-        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = _run(manager, flow, {"ma": {"trigger": True, "message": "Input message", "title": "Input title"}})
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"ma": {"trigger": True, "message": "Input message", "title": "Input title"}})
 
     assert outputs["ma"]["stored"] is True
     service.record.assert_awaited_once_with(
@@ -122,9 +125,11 @@ def test_message_archive_stored_output_replays_downstream_nodes() -> None:
     service = MagicMock()
     service.record = AsyncMock(return_value={"id": "entry-1"})
 
-    with patch("obs.message_archive.get_message_archive_service", return_value=service):
-        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = _run(manager, flow, {"ma": {"trigger": True}})
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"ma": {"trigger": True}})
 
     assert outputs["ma"]["stored"] is True
     assert outputs["gate"]["out"] is True
@@ -144,9 +149,11 @@ def test_message_archive_replay_runs_downstream_api_client() -> None:
     patcher, mock_client = _patch_api_success()
 
     try:
-        with patch("obs.message_archive.get_message_archive_service", return_value=service):
-            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-                outputs = _run(manager, flow, {"ma": {"trigger": True}})
+        with (
+            patch("obs.message_archive.get_message_archive_service", return_value=service),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(manager, flow, {"ma": {"trigger": True}})
     finally:
         patcher.stop()
 
@@ -172,11 +179,13 @@ def test_message_archive_replay_runs_downstream_host_check_and_wol() -> None:
     service = MagicMock()
     service.record = AsyncMock(return_value={"id": "entry-1"})
 
-    with patch("obs.message_archive.get_message_archive_service", return_value=service):
-        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            with patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping:
-                with patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
-                    outputs = _run(manager, flow, {"ma": {"trigger": True}})
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
+    ):
+        outputs = _run(manager, flow, {"ma": {"trigger": True}})
 
     service.record.assert_awaited_once()
     mock_ping.assert_awaited_once()
@@ -197,9 +206,11 @@ def test_message_archive_replay_runs_downstream_message_archive() -> None:
     service = MagicMock()
     service.record = AsyncMock(return_value={"id": "entry-1"})
 
-    with patch("obs.message_archive.get_message_archive_service", return_value=service):
-        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = _run(manager, flow, {"ma1": {"trigger": True}})
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"ma1": {"trigger": True}})
 
     assert service.record.await_count == 2
     assert service.record.await_args_list[0].args[0] == "alerts"
@@ -230,9 +241,11 @@ def test_notify_sent_output_replays_downstream_message_archive() -> None:
     mock_client.post = AsyncMock(return_value=response)
 
     try:
-        with patch("obs.message_archive.get_message_archive_service", return_value=service):
-            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-                outputs = _run(manager, flow, {"notify": {"trigger": True}})
+        with (
+            patch("obs.message_archive.get_message_archive_service", return_value=service),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(manager, flow, {"notify": {"trigger": True}})
     finally:
         patcher.stop()
 
@@ -240,6 +253,164 @@ def test_notify_sent_output_replays_downstream_message_archive() -> None:
     service.record.assert_awaited_once()
     assert outputs["notify"]["sent"] is True
     assert outputs["ma"]["stored"] is True
+
+
+def test_generic_notification_uses_message_adapter_and_requires_all_targets() -> None:
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [
+                        {"provider": "pushover", "target": "default"},
+                        {"provider": "seven.io", "target": "admin"},
+                    ],
+                    "title": "Alarm",
+                    "message": "Fallback",
+                },
+            )
+        ]
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(
+        return_value=[
+            MessageSendResult("pushover", "default", True),
+            MessageSendResult("seven.io", "admin", True),
+        ]
+    )
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"notify": {"trigger": True, "message": "Dynamic"}})
+
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once_with(
+        message="Dynamic",
+        providers=flow.nodes[0].data["providers"],
+        title="Alarm",
+        priority=0,
+    )
+
+
+def test_generic_notification_reports_target_failure() -> None:
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "family"}],
+                    "message": "Alarm",
+                },
+            )
+        ]
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(
+        return_value=[
+            MessageSendResult("telegram", "family", False, "provider disabled"),
+        ]
+    )
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"notify": {"trigger": True}})
+
+    assert outputs["notify"]["sent"] is False
+    assert "provider disabled" in outputs["notify"]["__error__"]
+
+
+def test_generic_notification_defaults_blank_priority_and_clamps_range() -> None:
+    manager = _make_manager()
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("dummy", "target", True)])
+
+    for priority, expected in [("", 0), (None, 0), ("invalid", 0), (99, 1), (-99, -2)]:
+        flow = _flow(
+            [
+                node(
+                    "notify",
+                    "notify_message",
+                    {
+                        "adapter_instance_id": "message-1",
+                        "providers": [{"provider": "dummy", "target": "target"}],
+                        "priority": priority,
+                    },
+                )
+            ]
+        )
+        with (
+            patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(manager, flow, {"notify": {"trigger": True}})
+
+        assert outputs["notify"]["sent"] is True
+        assert adapter.send_notification.await_args.kwargs["priority"] == expected
+
+
+def test_generic_notification_rejects_missing_configuration() -> None:
+    manager = _make_manager()
+    flow = _flow([node("notify", "notify_message", {})])
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        outputs = _run(manager, flow, {"notify": {"trigger": True}})
+
+    assert outputs["notify"]["sent"] is False
+    assert "at least one target" in outputs["notify"]["__error__"]
+
+
+def test_generic_notification_rejects_unavailable_or_wrong_adapter() -> None:
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "missing", "providers": [{"provider": "dummy", "target": "target"}]},
+            )
+        ]
+    )
+
+    for adapter in (None, MagicMock(adapter_type="MQTT")):
+        with (
+            patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(manager, flow, {"notify": {"trigger": True}})
+        assert "unavailable" in outputs["notify"]["__error__"]
+
+
+def test_generic_notification_reports_no_results_and_adapter_exception() -> None:
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "dummy", "target": "target"}]},
+            )
+        ]
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+
+    for result, message in [([], "did not process"), (RuntimeError("boom"), "boom")]:
+        adapter.send_notification = AsyncMock(side_effect=result if isinstance(result, Exception) else None, return_value=result)
+        with (
+            patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(manager, flow, {"notify": {"trigger": True}})
+        assert message in outputs["notify"]["__error__"]
 
 
 def test_notify_sent_output_replays_downstream_notify() -> None:
@@ -293,9 +464,11 @@ def test_message_archive_replayed_notify_is_not_sent_again_in_main_pass() -> Non
     mock_client.post = AsyncMock(return_value=response)
 
     try:
-        with patch("obs.message_archive.get_message_archive_service", return_value=service):
-            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-                outputs = _run(manager, flow, {"ma": {"trigger": True}})
+        with (
+            patch("obs.message_archive.get_message_archive_service", return_value=service),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(manager, flow, {"ma": {"trigger": True}})
     finally:
         patcher.stop()
 
@@ -325,9 +498,11 @@ def test_message_archive_replayed_failed_notify_is_not_sent_again_in_main_pass()
     mock_client.post = AsyncMock(return_value=response)
 
     try:
-        with patch("obs.message_archive.get_message_archive_service", return_value=service):
-            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-                outputs = _run(manager, flow, {"ma": {"trigger": True}})
+        with (
+            patch("obs.message_archive.get_message_archive_service", return_value=service),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(manager, flow, {"ma": {"trigger": True}})
     finally:
         patcher.stop()
 
@@ -372,9 +547,11 @@ def test_message_archive_node_does_not_record_without_trigger() -> None:
     service = MagicMock()
     service.record = AsyncMock()
 
-    with patch("obs.message_archive.get_message_archive_service", return_value=service):
-        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = _run(manager, flow, {"ma": {"trigger": False}})
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"ma": {"trigger": False}})
 
     assert outputs["ma"]["stored"] is False
     service.record.assert_not_awaited()
@@ -386,9 +563,11 @@ def test_message_archive_node_keeps_stored_false_when_record_fails() -> None:
     service = MagicMock()
     service.record = AsyncMock(side_effect=RuntimeError("archive unavailable"))
 
-    with patch("obs.message_archive.get_message_archive_service", return_value=service):
-        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = _run(manager, flow, {"ma": {"trigger": True}})
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"ma": {"trigger": True}})
 
     assert outputs["ma"]["stored"] is False
     service.record.assert_awaited_once()
@@ -400,9 +579,11 @@ def test_message_archive_node_does_not_record_without_archive() -> None:
     service = MagicMock()
     service.record = AsyncMock()
 
-    with patch("obs.message_archive.get_message_archive_service", return_value=service):
-        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = _run(manager, flow)
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow)
 
     assert outputs["ma"]["stored"] is False
     service.record.assert_not_awaited()
