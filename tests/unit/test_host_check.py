@@ -343,6 +343,32 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 3
 
+    def test_change_filter_pulse_retriggers_on_each_execution(self):
+        """Regression: change_filter.changed must be a discrete retriggerable
+        pulse like a cron tick — consecutive real changes must each ping,
+        not be swallowed by the rising-edge dedup that treats a sustained
+        True trigger as already handled."""
+        nodes = [
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(nodes, [edge("cf", "hc", "changed", "trigger")])
+
+        manager = _make_manager()
+        graph_id = "g"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_ping.await_count == 3
+
     def test_async_driven_sustained_trigger_pings_only_once(self):
         """api_client→hc: HC with async trigger doesn't re-ping when trigger stays True (rising-edge deferred clear)."""
         nodes = [

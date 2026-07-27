@@ -887,6 +887,41 @@ class TestChangeFilterNode:
         out = exc2.execute({"cf": {"in": "foo"}})
         assert out["cf"] == {"out": "foo", "changed": False}
 
+    def test_unwired_input_does_not_report_changed(self):
+        """Regression: an unwired 'in' handle must not read as a first value."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        out = exc.execute({})
+        assert out["cf"] == {"out": None, "changed": False}
+        assert state == {}
+
+    def test_large_integers_compared_without_precision_loss(self):
+        """Regression: float round-trip must not equate distinct 64-bit values."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": 9007199254740992}})
+        out = exc.execute({"cf": {"in": 9007199254740993}})
+        assert out["cf"] == {"out": 9007199254740993, "changed": True}
+
+    def test_dict_key_order_does_not_count_as_changed(self):
+        """Regression: structurally equal dicts must not differ by key insertion order."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": {"a": 1, "b": 2}}})
+        out = exc.execute({"cf": {"in": {"b": 2, "a": 1}}})
+        assert out["cf"] == {"out": {"a": 1, "b": 2}, "changed": False}
+
+    def test_differing_list_is_reported_as_changed(self):
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": [1, 2]}})
+        out = exc.execute({"cf": {"in": [1, 3]}})
+        assert out["cf"]["changed"] is True
+
 
 # ===========================================================================
 # math_formula node

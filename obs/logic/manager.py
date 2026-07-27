@@ -96,8 +96,11 @@ _INIT_EXCLUDED_NODE_TYPES = frozenset(
 # Deterministic two-state nodes whose init-pass state IS committed when they
 # sit on a clean seeded path: their output is published, so the persisted
 # state must switch with it or the next real value inside the dead band would
-# flip the output back to the stale pre-save state.
-_INIT_COMMIT_STATE_NODE_TYPES = frozenset({"gate", "hysteresis"})
+# flip the output back to the stale pre-save state. change_filter is included
+# for the same reason: if the seeded value triggered a publish, the filter
+# must remember it, or the next real event carrying the same value would
+# report changed=True again and re-fire the write it just suppressed for.
+_INIT_COMMIT_STATE_NODE_TYPES = frozenset({"gate", "hysteresis", "change_filter"})
 
 # Input handles that control WHEN a node's output fires/passes but do not
 # deliver the value itself. Seeded eligibility must not propagate through
@@ -1726,6 +1729,14 @@ class LogicManager:
             if kept:
                 self._node_state[graph_id] = kept
         await self.initialize_graph(graph_id)
+        # Re-persist immediately: a save may flip a node's persist_state to
+        # False without itself producing a state-committing init write (see
+        # _INIT_COMMIT_STATE_NODE_TYPES), which would otherwise leave the old
+        # value in the DB until the next real execution. Without this, a
+        # restart between the save and that next execution would restore the
+        # stale snapshot via _load_graphs() despite persist_state now being
+        # disabled.
+        await self._persist_node_state(graph_id)
 
     async def initialize_graphs(self, graph_ids: list[str]) -> None:
         """Initialize several restored graphs exactly once each (issue #1031).
@@ -2056,13 +2067,20 @@ class LogicManager:
         # fresh rising edge, so nodes that fire on sustained truthy inputs from
         # cron are not suppressed by the rising-edge deduplication below.
         cron_node_ids = {n.id for n in flow.nodes if n.type == "timer_cron"}
+        # A change_filter's "changed" pulse is a discrete edge just like a
+        # cron tick: consecutive real changes must each retrigger host_check /
+        # wake_on_lan instead of being deduplicated as a "sustained" trigger.
+        change_filter_pulse_ids = {
+            n.id for n in flow.nodes if n.type == "change_filter" and GraphExecutor._to_bool(outputs.get(n.id, {}).get("changed"))
+        }
         # Forward-reachability from the cron nodes that actually fired this
-        # execution — scopes the cron-retrigger exception to only those async
-        # nodes driven by the firing cron, not every cron in the graph.
+        # execution, plus any change_filter pulses — scopes the retrigger
+        # exception to only those async nodes driven by the firing pulse
+        # source, not every cron/change_filter in the graph.
         fired_crons = overrides.keys() & cron_node_ids
-        cron_reachable: set[str] = set(fired_crons)
-        if fired_crons:
-            _cq: list[str] = list(fired_crons)
+        cron_reachable: set[str] = set(fired_crons) | change_filter_pulse_ids
+        if cron_reachable:
+            _cq: list[str] = list(cron_reachable)
             while _cq:
                 _cn = _cq.pop()
                 for _ce in flow.edges:
@@ -3630,7 +3648,7 @@ class LogicManager:
             )
             pulse_sources = [node.id]
             pulse_seen: set[str] = set()
-            datapoint_change_triggered = False
+            change_pulse_triggered = False
             while pulse_sources:
                 target_id = pulse_sources.pop()
                 if target_id in pulse_seen:
@@ -3642,16 +3660,16 @@ class LogicManager:
                     source = node_by_id.get(edge.source)
                     if (
                         source
-                        and source.type == "datapoint_read"
+                        and source.type in ("datapoint_read", "change_filter")
                         and (edge.sourceHandle or "out") == "changed"
                         and GraphExecutor._to_bool(outputs.get(source.id, {}).get("changed"))
                     ):
-                        datapoint_change_triggered = True
+                        change_pulse_triggered = True
                         break
                     pulse_sources.append(edge.source)
-                if datapoint_change_triggered:
+                if change_pulse_triggered:
                     break
-            if triggered and (not was_triggered or cron_triggered or datapoint_change_triggered):
+            if triggered and (not was_triggered or cron_triggered or change_pulse_triggered):
                 # Defer creating the task until ordinary datapoint writes have
                 # been published below.  A task created here can otherwise run
                 # at the write loop's first await and invert graph-local order.

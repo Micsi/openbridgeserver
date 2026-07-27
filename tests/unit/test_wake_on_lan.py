@@ -408,6 +408,33 @@ class TestWakeOnLanRisingEdge:
 
         assert mock_to_thread.await_count == 3
 
+    def test_change_filter_pulse_retriggers_on_each_execution(self):
+        """Regression: change_filter.changed must be a discrete retriggerable
+        pulse like a cron tick — consecutive real changes must each send a
+        packet, not be swallowed by the rising-edge dedup."""
+        from tests.unit.conftest import edge
+
+        nodes = [
+            node("cf", "change_filter"),
+            node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+        ]
+        flow = _flow(nodes, [edge("cf", "wol", "changed", "trigger")])
+
+        manager = _make_manager()
+        graph_id = "g"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_to_thread.await_count == 3
+
 
 # ===========================================================================
 # Manager: wake_on_lan downstream re-propagation

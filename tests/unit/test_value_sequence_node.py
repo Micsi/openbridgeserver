@@ -527,6 +527,36 @@ def test_datapoint_change_pulses_retrigger_a_sequence() -> None:
     asyncio.run(exercise())
 
 
+def test_change_filter_pulses_retrigger_a_sequence() -> None:
+    """Regression: a change_filter's changed=True pulse must retrigger a
+    running sequence on consecutive real changes, exactly like a
+    datapoint_read.changed pulse — otherwise the second change is silently
+    absorbed by the sequence's rising-edge dedup."""
+
+    async def exercise() -> None:
+        manager = _manager()
+        target = uuid.uuid4()
+        flow = FlowData.model_validate(
+            {
+                "nodes": [
+                    node("cf", "change_filter"),
+                    node("sequence", "value_sequence", {"restart_policy": "queue", "steps": [{"datapoint_id": str(target), "value": 1}]}),
+                ],
+                "edges": [edge("cf", "sequence", "changed", "trigger")],
+            },
+        )
+        manager._graphs["graph"] = ("Graph", True, flow)
+
+        await manager._execute_graph("graph", "Graph", flow, {"cf": {"in": 1}})
+        await manager._sequence_tasks[("graph", "sequence")]
+        await manager._execute_graph("graph", "Graph", flow, {"cf": {"in": 2}})
+        await manager._sequence_tasks[("graph", "sequence")]
+
+        assert manager._event_bus.publish.await_count == 2
+
+    asyncio.run(exercise())
+
+
 def test_cancelling_a_restart_also_cancels_its_original_sequence() -> None:
     async def exercise() -> None:
         manager = _manager()

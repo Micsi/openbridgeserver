@@ -256,14 +256,35 @@ class GraphExecutor:
                 return False
         return None
 
+    @staticmethod
+    def _try_exact_int(v: Any) -> int | None:
+        """Return an int only when it can be represented without a float round-trip."""
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            try:
+                return int(v.strip())
+            except ValueError:
+                return None
+        return None
+
     @classmethod
     def _values_equal(cls, left: Any, right: Any) -> bool:
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
             return bool_left == bool_right
+        # Compare integral values exactly first — round-tripping through
+        # float() loses precision beyond 2**53 (e.g. 64-bit counters/IDs).
+        int_left, int_right = cls._try_exact_int(left), cls._try_exact_int(right)
+        if int_left is not None and int_right is not None:
+            return int_left == int_right
         num_left, num_right = cls._try_num(left), cls._try_num(right)
         if num_left is not None and num_right is not None:
             return num_left == num_right
+        if isinstance(left, (dict, list)) and isinstance(right, (dict, list)):
+            return left == right
         return str(left) == str(right)
 
     @staticmethod
@@ -450,7 +471,14 @@ class GraphExecutor:
                 return {"out": self._memory_value(node)}
 
             case "change_filter":
-                value = inputs.get("in")
+                if "in" not in inputs:
+                    # Unwired input: this graph execution was not driven by
+                    # this node's source, so an absent value must not look
+                    # like "first value received" and fire a spurious pulse.
+                    state = self.hysteresis_state.get(node.id)
+                    prev_value = state["value"] if isinstance(state, dict) and "value" in state else None
+                    return {"out": prev_value, "changed": False}
+                value = inputs["in"]
                 state = self.hysteresis_state.get(node.id)
                 has_prev = isinstance(state, dict) and "value" in state
                 changed = not has_prev or not self._values_equal(value, state["value"])

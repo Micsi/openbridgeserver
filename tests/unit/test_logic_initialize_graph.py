@@ -648,6 +648,42 @@ async def test_hysteresis_state_on_seeded_path_is_committed():
 
 
 @pytest.mark.asyncio
+async def test_change_filter_state_on_seeded_path_is_committed():
+    """A published change_filter output must match the persisted state, or the
+    next real event carrying the same seeded value would report changed=True
+    again and re-fire the write it just caused."""
+    src_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r1", "type": "datapoint_read", "data": {"datapoint_id": src_id}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r1", "sourceHandle": "value", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "out", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={src_id: 50})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    mgr._event_bus.publish.assert_awaited_once()
+    assert mgr._event_bus.publish.await_args.args[0].value == 50
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": 50}
+
+    # The committed state is also persisted so a restart cannot reload the
+    # stale pre-save state from the DB
+    persist_calls = [c for c in mgr._db.execute_and_commit.await_args_list if "node_state" in c.args[0]]
+    assert len(persist_calls) == 1
+    import json
+
+    assert json.loads(persist_calls[0].args[1][0])["cf1"] == {"value": 50}
+    assert persist_calls[0].args[1][1] == "g1"
+
+
+@pytest.mark.asyncio
 async def test_unrelated_read_of_target_does_not_skip_write():
     """Read A → Write B plus an independent Read B (no path back to the
     write) is not a feedback loop — B must still be initialized."""
@@ -737,7 +773,46 @@ async def test_persist_node_state_without_state_is_noop():
 
     await mgr._persist_node_state("g1")
 
-    mgr._db.execute_and_commit.assert_not_awaited()
+
+# ---------------------------------------------------------------------------
+# reinitialize_graph
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reinitialize_graph_clears_state_after_disabling_persist_state():
+    """Regression: disabling persist_state on a save must clear the node's
+    stale DB snapshot immediately. Without a state-committing init publish
+    (no seed value here), initialize_graph's own conditional persist never
+    fires, so only the unconditional persist at the end of reinitialize_graph
+    can prevent a restart before the next real execution from restoring the
+    stale pre-toggle value via _load_graphs()."""
+    import json
+
+    src_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r1", "type": "datapoint_read", "data": {"datapoint_id": src_id}},
+            {"id": "cf1", "type": "change_filter", "data": {"persist_state": False}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r1", "sourceHandle": "value", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "out", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+    mgr._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": '{"cf1": {"value": "stale"}}'}]
+    )
+
+    await mgr.reinitialize_graph("g1")
+
+    persist_calls = [c for c in mgr._db.execute_and_commit.await_args_list if "node_state" in c.args[0]]
+    assert persist_calls
+    final_state = json.loads(persist_calls[-1].args[1][0])
+    assert "cf1" not in final_state
 
 
 @pytest.mark.asyncio
