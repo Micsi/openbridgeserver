@@ -206,6 +206,78 @@ async def test_mid_mode_deduplicates_same_datapoint_reached_through_multiple_add
         assert [row["datapoint_id"] for row in links] == ["dp-1"]
 
 
+async def _insert_binding_with_raw_config(
+    db: Database,
+    datapoint_id: str,
+    binding_id: str,
+    config: dict,
+) -> None:
+    now = "2026-07-22T00:00:00+00:00"
+    await db.execute_and_commit(
+        """INSERT INTO adapter_bindings
+           (id, datapoint_id, adapter_type, direction, config, enabled, created_at, updated_at)
+           VALUES (?, ?, 'KNX', 'BOTH', ?, 1, ?, ?)""",
+        (binding_id, datapoint_id, json.dumps(config), now, now),
+    )
+
+
+@pytest.mark.asyncio
+async def test_group_mode_auto_links_despite_padded_group_address(tmp_path):
+    """Binding with whitespace-padded group_address must still link (#1060 normalization)."""
+    async with _database(tmp_path / "padded-ga.db") as db:
+        await _insert_group_address(db, "1/2/3")
+        datapoint_id, binding_id = "dp-pad", "binding-pad"
+        now = "2026-07-22T00:00:00+00:00"
+        await db.execute_and_commit(
+            """INSERT INTO datapoints
+               (id, name, data_type, unit, tags, mqtt_topic, created_at, updated_at)
+               VALUES (?, ?, 'BOOL', NULL, '[]', ?, ?, ?)""",
+            (datapoint_id, datapoint_id, f"obs/test/{datapoint_id}", now, now),
+        )
+        # Store the address with surrounding whitespace in the JSON config
+        await _insert_binding_with_raw_config(db, datapoint_id, binding_id, {"group_address": " 1/2/3 "})
+
+        result = await create_ets_hierarchy(
+            db,
+            EtsImportRequest(tree_name="ETS groups", mode="groups", auto_link=True),
+        )
+
+        links = await db.fetchall("SELECT datapoint_id FROM hierarchy_datapoint_links")
+        assert result.links_created == 1
+        assert [row["datapoint_id"] for row in links] == [datapoint_id]
+
+
+@pytest.mark.asyncio
+async def test_group_mode_auto_links_despite_padded_state_group_address(tmp_path):
+    """Binding with whitespace-padded state_group_address must still link (#1060 normalization)."""
+    async with _database(tmp_path / "padded-sga.db") as db:
+        await _insert_group_address(db, "1/2/4", name="Feedback")
+        datapoint_id, binding_id = "dp-spad", "binding-spad"
+        now = "2026-07-22T00:00:00+00:00"
+        await db.execute_and_commit(
+            """INSERT INTO datapoints
+               (id, name, data_type, unit, tags, mqtt_topic, created_at, updated_at)
+               VALUES (?, ?, 'BOOL', NULL, '[]', ?, ?, ?)""",
+            (datapoint_id, datapoint_id, f"obs/test/{datapoint_id}", now, now),
+        )
+        # state_group_address with whitespace; group_address points elsewhere
+        await _insert_binding_with_raw_config(
+            db,
+            datapoint_id,
+            binding_id,
+            {"group_address": "1/2/3", "state_group_address": " 1/2/4 "},
+        )
+
+        result = await create_ets_hierarchy(
+            db,
+            EtsImportRequest(tree_name="ETS groups", mode="groups", auto_link=True),
+        )
+
+        links = await db.fetchall("SELECT datapoint_id FROM hierarchy_datapoint_links")
+        assert result.links_created == 1
+        assert [row["datapoint_id"] for row in links] == [datapoint_id]
+
+
 @pytest.mark.asyncio
 async def test_group_mode_replacement_recreates_single_link(tmp_path):
     async with _database(tmp_path / "replace.db") as db:

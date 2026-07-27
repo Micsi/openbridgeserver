@@ -188,14 +188,14 @@ async def create_ets_hierarchy(db: Database, request: EtsImportRequest) -> Impor
             for chunk in _chunks(list(address_nodes), _GA_SCOPE_CHUNK_SIZE):
                 placeholders = ",".join("?" * len(chunk))
                 binding_rows = await db.fetchall(
-                    f"""SELECT JSON_EXTRACT(ab.config, '$.group_address') AS group_address,
-                               JSON_EXTRACT(ab.config, '$.state_group_address') AS state_group_address,
+                    f"""SELECT TRIM(JSON_EXTRACT(ab.config, '$.group_address')) AS group_address,
+                               TRIM(JSON_EXTRACT(ab.config, '$.state_group_address')) AS state_group_address,
                                ab.datapoint_id
                         FROM adapter_bindings ab
                         JOIN datapoints dp ON dp.id = ab.datapoint_id
                         WHERE UPPER(ab.adapter_type) = 'KNX'
-                          AND (JSON_EXTRACT(ab.config, '$.group_address') IN ({placeholders})
-                               OR JSON_EXTRACT(ab.config, '$.state_group_address') IN ({placeholders}))
+                          AND (TRIM(JSON_EXTRACT(ab.config, '$.group_address')) IN ({placeholders})
+                               OR TRIM(JSON_EXTRACT(ab.config, '$.state_group_address')) IN ({placeholders}))
                         GROUP BY group_address, state_group_address, ab.datapoint_id""",
                     [*chunk, *chunk],
                 )
