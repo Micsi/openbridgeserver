@@ -1197,23 +1197,136 @@ Gleiche Verknüpfungs-Konfiguration wie TCP. Zusätzliche Instanz-Felder: `port`
 
 ### 1-Wire-Adapter
 
-Liest Temperatursensoren über den Linux-Systemordner (`/sys/bus/w1/…`). Auf Windows funktioniert der Adapter nicht, startet aber ohne Fehlermeldung.
+Verbindet sich mit einem **externen** `owserver`-Prozess (dem [OWFS](https://owfs.org)-1-Wire-Bus-Server) über das `pyownet`-TCP-Protokoll — dieselbe "OBS ist Client eines externen Diensts"-Beziehung, die der MQTT-Adapter zu Mosquitto hat. `owserver` abstrahiert USB-Busmaster (einfache USB-Sticks wie den DS9490, die mehrfachen Kanäle des ElabNET PBM) und den nativen Kernel-1-Wire-Bus hinter einem einheitlichen Gerätebaum — der Adapter selbst muss nie wissen, welche Hardware tatsächlich dahintersteckt.
+
+`owserver` wird **nicht von OBS selbst gestartet** — in Docker-Setups kann er als optionaler Docker-Compose-Sidecar gestartet (`COMPOSE_PROFILES=onewire`, siehe `.env.example`) oder im Proxmox-LXC-Template als systemd-Dienst verwendet werden, wobei der `owserver`-Service über die Variablen `OBS_ONEWIRE__USB_ALL` / `OBS_ONEWIRE__PBM_DEVICES` in `/etc/obs.env` freigeschaltet wird.
 
 **Instanz-Konfiguration:**
 
 | Feld | Standard | Beschreibung |
 |---|---|---|
+| `host` | `localhost` | Hostname oder IP-Adresse des owserver-Prozesses |
+| `port` | `4304` | owserver-TCP-Port |
 | `poll_interval` | `30.0` | Abfrageintervall in Sekunden |
-| `w1_path` | `/sys/bus/w1/devices` | Pfad zum 1-Wire-Systemordner |
+| `request_timeout` | `10.0` | Timeout in Sekunden pro owserver-Aufruf |
+| `aliases` | — | ROM-ID → Label-Zuordnung; wird nicht hier bearbeitet, sondern über den Sensor-Scan im Verknüpfungsformular gepflegt (siehe unten) |
 
 **Verknüpfungs-Konfiguration:**
 
-| Feld | Beschreibung |
-|---|---|
-| `sensor_id` | Sensor-ID, z. B. `28-0000012345ab` |
-| `sensor_type` | Sensortyp, z. B. `DS18B20` (Standard) |
+| Feld | Standard | Beschreibung |
+|---|---|---|
+| `sensor_id` | — | ROM-ID, z. B. `28.4B057F0A1C10` |
+| `property` | `temperature` | OWFS-Property ("Datei"), z. B. `temperature`, `humidity`, `PIO.0` |
 
-Verfügbare Sensor-IDs können über den Verbindungstest abgerufen werden.
+Der **Scan**-Button im Verknüpfungsformular durchsucht die verbundene owserver-Instanz nach angeschlossenen Sensoren und deren verfügbaren Properties und erlaubt das Vergeben eines dauerhaften Alias-Labels je ROM-ID.
+
+> **Hinweis:** Dies ersetzt den bisherigen sysfs-basierten Adapter (`w1_path`, `/sys/bus/w1/devices`), der voraussetzte, dass OBS auf demselben Host wie der Linux-Kernel-`w1`-Treiber läuft. Über `owserver` kann OBS mit jedem 1-Wire-Busmaster sprechen — auch auf einem anderen Host oder in einem eigenen Container — und unterstützt zusätzlich das ElabNET PBM (ProfessionalBusMaster), nicht nur den reinen Kerneltreiber.
+
+#### USB-/Serial-Passthrough: stabile Gerätepfade (udev-Regel)
+
+Der Gerätepfad eines 1-Wire-Busmasters ist über Reboots hinweg oder beim Anschließen weiterer USB-/Serial-Geräte nicht garantiert stabil:
+
+- Ein einfacher USB-Busmaster (z. B. DS9490) meldet sich als `/dev/bus/usb/<bus>/<device>` — Bus-/Device-Nummern können sich verschieben.
+- Das ElabNET PBM meldet sich als FTDI-Serial-Gerät (`/dev/ttyUSB0`, `/dev/ttyUSB1`, …) — die laufende Nummer hängt von der Anschlussreihenfolge ab.
+
+Für das PBM ist `/dev/serial/by-id/usb-FTDI_...` in der Regel bereits ein stabiler Pfad, den udev automatisch für jedes Serial-Gerät mit Seriennummer anlegt — ohne eigene Regel. Einfache USB-Busmaster bekommen kein vergleichbares automatisches Alias, hier ist eine eigene udev-Regel der zuverlässige Weg — sie funktioniert genauso für das PBM, falls ein kurzer, selbst gewählter Name statt des langen `by-id`-Pfads gewünscht ist.
+
+**1. Gerät identifizieren**
+
+Zuerst mit `lsusb` prüfen, welche Hardware überhaupt angeschlossen ist — nicht jeder Host hat beide Typen gleichzeitig. Ein einfacher USB-Busmaster (DS9490R, DS1490F, …) meldet sich mit der festen VID:PID `04fa:2490`, das ElabNET PBM als FTDI-Chip mit Vendor `0403` (die genaue Produkt-ID hängt von der jeweiligen FTDI-Chip-Variante ab):
+
+```bash
+lsusb
+```
+
+Beispielhafte Ausgabe für einen Host mit beiden Gerätetypen:
+
+```
+$ lsusb
+Bus 001 Device 004: ID 04fa:2490 Dallas Semiconductor DS1490F 2-in-1 Fob, 1-Wire adapter
+Bus 002 Device 004: ID 0403:6015 Future Technology Devices International, Ltd Bridge(I2C/SPI/UART/FIFO)
+```
+
+Anschließend für das tatsächlich vorhandene Gerät Vendor-/Produkt-/Seriennummer auslesen — beim Busmaster über den `/dev/bus/usb/<bus>/<device>`-Pfad aus `lsusb` (hier `001`/`004`), beim PBM entweder direkt über den von udev bereits angelegten `/dev/serial/by-id/...`-Eintrag (`ls /dev/serial/by-id/`) oder über den zugewiesenen `/dev/ttyUSB*`:
+
+```bash
+# einfacher USB-Busmaster (nur falls oben mit 04fa:2490 in lsusb gelistet)
+udevadm info -a -n /dev/bus/usb/001/004 | grep -E 'idVendor|idProduct|serial' | head -5
+
+# PBM / Serial-Gerät (nur falls oben mit 0403:xxxx in lsusb gelistet)
+udevadm info -a -n /dev/serial/by-id/usb-ElabNET_PBM01-USB_BM_00000401-if00-port0 | grep -E 'idVendor|idProduct|serial' | head -5
+```
+
+Beispielhafte Ausgabe für obige Geräte:
+
+```
+$ udevadm info -a -n /dev/bus/usb/001/004 | grep -E 'idVendor|idProduct|serial' | head -5
+    ATTR{idProduct}=="2490"
+    ATTR{idVendor}=="04fa"
+    ATTRS{idProduct}=="0024"
+    ATTRS{idVendor}=="8087"
+
+$ ls /dev/serial/by-id/
+usb-ElabNET_PBM01-USB_BM_00000401-if00-port0
+
+$ udevadm info -a -n /dev/serial/by-id/usb-ElabNET_PBM01-USB_BM_00000401-if00-port0 | grep -E 'idVendor|idProduct|serial' | head -5
+    SUBSYSTEMS=="usb-serial"
+    ATTRS{idProduct}=="6015"
+    ATTRS{idVendor}=="0403"
+    ATTRS{serial}=="BM_00000401"
+    ATTRS{idProduct}=="0024"
+```
+
+Zwei Dinge fallen dabei auf:
+
+- Beim Busmaster taucht **kein** `serial`-Attribut auf — dieses Fob-Gerät meldet schlicht keine Seriennummer. Die Regel kann sich hier also nur auf `idVendor`/`idProduct` stützen; bei mehreren identischen Busmastern am selben Host reicht das allein nicht zur Unterscheidung (dann stattdessen z. B. über den festen `KERNELS`/Bus-Pfad matchen).
+- Beim PBM zeigt `udevadm info -a` `ATTRS{...}` (Plural), nicht `ATTR{...}` — `idVendor`/`idProduct`/`serial` sitzen auf dem übergeordneten USB-Gerät in der sysfs-Kette, nicht auf dem `tty`-Gerät selbst. In der udev-Regel muss deshalb ebenfalls `ATTRS{}` (Attribut eines Parent-Geräts) statt `ATTR{}` (Attribut des Geräts selbst) verwendet werden — sonst matcht die Regel nie, weil das `tty`-Gerät diese Attribute gar nicht besitzt. Beim einfachen USB-Busmaster (`SUBSYSTEM=="usb"` matcht direkt das Busmaster-Gerät selbst) ist dagegen `ATTR{}` richtig.
+
+`serial` bevorzugen, wenn das Gerät eine Seriennummer meldet — anders als `idVendor`/`idProduct` ist sie pro physischem Gerät eindeutig, sodass die Regel auch bei einem zweiten Gerät desselben Modells noch das richtige trifft.
+
+> **Hinweis:** Das ElabNET PBM legt bereits von Haus aus einen stabilen `/dev/serial/by-id/...`-Symlink an (siehe `ls /dev/serial/by-id/` oben) — für dieses Gerät ist meist gar keine eigene udev-Regel nötig, `OBS_ONEWIRE__PBM_DEVICES` direkt auf diesen Pfad zu setzen reicht aus. Eine eigene Regel lohnt sich hier nur für einen kürzeren, selbst gewählten Namen.
+
+**2. Regel schreiben**
+
+Die Regel auf dem **Proxmox-Host** anlegen (nicht im Container — Proxmox löst den LXC-Passthrough-Mount gegen den Gerätebaum des Hosts auf, bevor der Container startet, der Symlink muss dort also schon existieren), z. B. `/etc/udev/rules.d/99-onewire.rules`:
+
+```
+# DS9490/DS1490F einfacher USB-Busmaster — idVendor/idProduct sind für diese Gerätefamilie
+# fix (04fa:2490). Keine serial-Bedingung, da dieses Gerät keine Seriennummer meldet (siehe
+# Schritt 1) — bei mehreren identischen Busmastern reicht dieses Match nicht zur Unterscheidung.
+SUBSYSTEM=="usb", ATTR{idVendor}=="04fa", ATTR{idProduct}=="2490", SYMLINK+="onewire-busmaster"
+
+# ElabNET PBM (FTDI) — ATTRS{} statt ATTR{}, da idVendor/idProduct/serial auf dem
+# übergeordneten USB-Gerät sitzen, nicht auf dem tty-Gerät selbst (siehe Hinweis oben).
+# idProduct ist je nach FTDI-Chip-Variante unterschiedlich (hier 6015) — mit lsusb/udevadm
+# die eigene Variante und Seriennummer prüfen.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", ATTRS{serial}=="BM_00000401", SYMLINK+="onewire-pbm"
+```
+
+Nur die Blöcke übernehmen, deren Hardware auch tatsächlich vorhanden ist (siehe `lsusb`-Ausgabe in Schritt 1) — eine Regel für nicht angeschlossene Hardware ist harmlos, erzeugt aber logischerweise auch keinen Symlink.
+
+Ohne Neustart anwenden und den entstandenen Symlink prüfen:
+
+```bash
+udevadm control --reload-rules && udevadm trigger
+ls -l /dev/onewire-busmaster /dev/onewire-pbm
+```
+
+**3. Passthrough auf den stabilen Pfad umstellen**
+
+- **Proxmox-LXC** (`/etc/pve/lxc/<CTID>.conf`) — beide Zeilen sind nötig, der Mount-Eintrag allein reicht nicht (siehe Abschnitt „owserver (1-Wire) in the LXC template" in AGENTS.MD):
+  ```
+  lxc.mount.entry: /dev/onewire-busmaster dev/onewire-busmaster none bind,optional,create=file
+  lxc.cgroup2.devices.allow: c 189:* rwm
+  ```
+  Die Major-Nummer (`189` für USB-Gerätedateien) kann abweichen — die tatsächliche mit `ls -l /dev/onewire-busmaster` prüfen. Anschließend in `/etc/obs.env` des LXC die `OBS_ONEWIRE__*`-Variablen auf den symlinkten Namen statt den rohen Gerätepfad setzen.
+
+- **Docker Compose** (`docker-compose.yml`):
+  ```yaml
+  devices:
+    - "/dev/onewire-busmaster:/dev/onewire-busmaster"
+    - "/dev/onewire-pbm:/dev/ttyUSB0"
+  ```
 
 ---
 
