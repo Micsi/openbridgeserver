@@ -59,12 +59,6 @@
         data-testid="btn-toggle-enabled">
         {{ activeGraph?.enabled ? $t('logic.toggleActive') : $t('logic.toggleDisabled') }}
       </button>
-      <button v-if="auth.isAdmin && activeGraphId" @click="openRenameGraph" class="btn-secondary btn-sm" :title="$t('logic.renameGraph')" data-testid="btn-rename">
-        ✏ {{ $t('logic.rename') }}
-      </button>
-      <button v-if="auth.isAdmin && activeGraphId" @click="doDuplicateGraph" class="btn-secondary btn-sm" :title="$t('logic.duplicateGraph')" data-testid="btn-duplicate">
-        ⧉ {{ $t('logic.duplicate') }}
-      </button>
       <button v-if="auth.isAdmin && activeGraphId" @click="copySelection" class="btn-secondary btn-sm" :disabled="!hasSelection"
         :title="$t('logic.copySelectionTitle')" data-testid="btn-copy-nodes">
         ⧉ {{ $t('logic.copySelection') }}
@@ -72,6 +66,12 @@
       <button v-if="auth.isAdmin && activeGraphId" @click="pasteClipboard" class="btn-secondary btn-sm" :disabled="!clipboard"
         :title="$t('logic.pasteSelectionTitle')" data-testid="btn-paste-nodes">
         📋 {{ $t('logic.pasteSelection') }}
+      </button>
+      <button v-if="auth.isAdmin && activeGraphId" @click="openRenameGraph" class="btn-secondary btn-sm" :title="$t('logic.renameGraph')" data-testid="btn-rename">
+        ✏ {{ $t('logic.rename') }}
+      </button>
+      <button v-if="auth.isAdmin && activeGraphId" @click="doDuplicateGraph" class="btn-secondary btn-sm" :title="$t('logic.duplicateGraph')" data-testid="btn-duplicate">
+        ⧉ {{ $t('logic.duplicate') }}
       </button>
       <button v-if="activeGraphId" @click="doExportGraph" class="btn-secondary btn-sm" :title="$t('logic.exportJson')" data-testid="btn-export">
         ↓ {{ $t('logic.export') }}
