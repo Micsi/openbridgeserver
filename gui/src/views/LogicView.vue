@@ -480,9 +480,9 @@ async function saveGraph() {
   const graphWarnings = analyzeFlowWarnings(nodes.value, edges.value)
   if (graphWarnings.length) {
     showStatus(false, t('logic.graphValidationSaveBlocked', { count: graphWarnings.length }), 6000)
-    lastRunOutputs.value = Object.fromEntries(
+    applyDebugValues(Object.fromEntries(
       graphWarnings.map(w => [w.node_id, { __error__: t('logic.graphValidationNodeError'), __diagnostic__: w.code }])
-    )
+    ))
     return
   }
   saving.value = true

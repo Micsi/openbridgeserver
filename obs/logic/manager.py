@@ -1823,6 +1823,18 @@ class LogicManager:
                 merged.setdefault(node_id, {}).update(values)
             return merged
 
+        def _execute_pass(
+            executor: GraphExecutor,
+            candidate: dict[str, dict[str, Any]],
+            *,
+            commit_memory: bool = False,
+        ) -> dict[str, dict[str, Any]]:
+            return executor.execute(
+                _debug_run_overrides(candidate),
+                commit_memory=commit_memory,
+                capture_incoming_overrides=candidate,
+            )
+
         def _executor(state: dict[str, Any]) -> GraphExecutor:
             if not capture_debug_inputs:
                 return GraphExecutor(flow, state, self._app_config)
@@ -1862,7 +1874,6 @@ class LogicManager:
                 pass
         # Event / manual overrides take priority over registry seed
         aug_overrides.update(overrides)
-        aug_overrides = _debug_run_overrides(aug_overrides)
 
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
@@ -2092,7 +2103,7 @@ class LogicManager:
         try:
             pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
             pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
-            outputs = executor.execute(_debug_run_overrides(aug_overrides), commit_memory=False)
+            outputs = _execute_pass(executor, aug_overrides)
         except Exception:
             logger.exception("Graph %s (%s) execution error", graph_id, name)
             return {}
@@ -2246,7 +2257,7 @@ class LogicManager:
 
             replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             replay_executor = _executor(replay_hyst)
-            replay_outputs = replay_executor.execute(_debug_run_overrides(replay_overrides), commit_memory=False)
+            replay_outputs = _execute_pass(replay_executor, replay_overrides)
             blocked_ids = skip_node_ids or set()
             for nid, vals in replay_outputs.items():
                 if nid in descendants and nid not in blocked_ids:
@@ -2286,7 +2297,7 @@ class LogicManager:
                 hc_merged.setdefault(nid, {}).update(vals)
             hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             hc_second_executor = _executor(hc_hyst_snapshot)
-            hc_second_outputs = hc_second_executor.execute(_debug_run_overrides(hc_merged), commit_memory=False)
+            hc_second_outputs = _execute_pass(hc_second_executor, hc_merged)
             hc_descendants: set[str] = set()
             hc_queue: list[str] = list(replay_sources)
             while hc_queue:
@@ -2391,7 +2402,7 @@ class LogicManager:
                 # a WoL edge is present — we only want their *outputs*, not
                 # a second mutation of their persisted state.
                 wol_second_executor = _executor(copy.deepcopy(hyst))
-                wol_second_outputs = wol_second_executor.execute(_debug_run_overrides(wol_merged), commit_memory=False)
+                wol_second_outputs = _execute_pass(wol_second_executor, wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
                 # their descendants are updated, leaving unrelated nodes intact.
                 wol_descendants: set[str] = set()
@@ -2448,7 +2459,7 @@ class LogicManager:
                         _pwol_merged.setdefault(nid, {}).update(vals)
                     _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                     _pwol_exec = _executor(_pwol_hyst)
-                    _pwol_out = _pwol_exec.execute(_debug_run_overrides(_pwol_merged), commit_memory=False)
+                    _pwol_out = _execute_pass(_pwol_exec, _pwol_merged)
                     _pwol_desc: set[str] = set()
                     _pwol_dq: list[str] = list(_pwol_src)
                     while _pwol_dq:
@@ -2699,7 +2710,7 @@ class LogicManager:
                 if pre_execute_hyst is not None:
                     replay_hyst = copy.deepcopy(pre_execute_hyst)
                     second_executor = _executor(replay_hyst)
-                    second_outputs = second_executor.execute(_debug_run_overrides(replay_overrides), commit_memory=False)
+                    second_outputs = _execute_pass(second_executor, replay_overrides)
                     # Compute transitive descendants of triggered api_clients so that
                     # only their subtree is updated. This prevents the api_client
                     # second pass from overwriting WoL-propagated outputs that were
@@ -2755,7 +2766,7 @@ class LogicManager:
                 pat_merged.setdefault(nid, {}).update(vals)
             pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             pat_executor = _executor(pat_hyst_snapshot)
-            pat_outputs = pat_executor.execute(_debug_run_overrides(pat_merged), commit_memory=False)
+            pat_outputs = _execute_pass(pat_executor, pat_merged)
             pat_descendants: set[str] = set()
             pat_queue: list[str] = list(replay_sources)
             while pat_queue:
@@ -2841,7 +2852,7 @@ class LogicManager:
                     post_api_wol_merged.setdefault(nid, {}).update(vals)
                 _pawol_hyst_snap = copy.deepcopy(hyst)
                 post_api_wol_executor = _executor(_pawol_hyst_snap)
-                post_api_wol_outputs = post_api_wol_executor.execute(_debug_run_overrides(post_api_wol_merged), commit_memory=False)
+                post_api_wol_outputs = _execute_pass(post_api_wol_executor, post_api_wol_merged)
                 post_api_wol_descendants: set[str] = set()
                 post_api_wol_queue = list(post_api_wol_nodes)
                 while post_api_wol_queue:
@@ -2888,7 +2899,7 @@ class LogicManager:
                             _pawol_merged.setdefault(nid, {}).update(vals)
                         _pawol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         _pawol_exec = _executor(_pawol_hyst)
-                        _pawol_out = _pawol_exec.execute(_debug_run_overrides(_pawol_merged), commit_memory=False)
+                        _pawol_out = _execute_pass(_pawol_exec, _pawol_merged)
                         _pawol_desc: set[str] = set()
                         _pawol_dq: list[str] = list(_pawol_replay_src)
                         while _pawol_dq:
@@ -3114,7 +3125,7 @@ class LogicManager:
                     replay_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs.get(e.source, {}), src_handle)
                 replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 api_executor = _executor(replay_hyst)
-                api_outputs = api_executor.execute(_debug_run_overrides(replay_overrides), commit_memory=False)
+                api_outputs = _execute_pass(api_executor, replay_overrides)
                 for nid, vals in api_outputs.items():
                     if nid not in api_client_ids and nid in api_descendants:
                         outputs[nid] = vals
@@ -3170,7 +3181,7 @@ class LogicManager:
                             )
                         final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         final_hc_executor = _executor(final_hc_hyst)
-                        final_hc_outputs = final_hc_executor.execute(_debug_run_overrides(final_hc_merged), commit_memory=False)
+                        final_hc_outputs = _execute_pass(final_hc_executor, final_hc_merged)
                         for nid, vals in final_hc_outputs.items():
                             if nid in final_hc_descendants and nid not in triggered_api_clients:
                                 outputs[nid] = vals
@@ -3242,7 +3253,7 @@ class LogicManager:
                     _fwol_merged.setdefault(nid, {}).update(vals)
                 _fwol_hyst_snap = copy.deepcopy(hyst)
                 _fwol_exec = _executor(_fwol_hyst_snap)
-                _fwol_out = _fwol_exec.execute(_debug_run_overrides(_fwol_merged), commit_memory=False)
+                _fwol_out = _execute_pass(_fwol_exec, _fwol_merged)
                 _fwol_desc: set[str] = set()
                 _fwol_q: list[str] = list(_final_wol_candidates)
                 while _fwol_q:
@@ -3287,7 +3298,7 @@ class LogicManager:
                             _fwolhc_mrgd.setdefault(nid, {}).update(vals)
                         _fwolhc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         _fwolhc_exec = _executor(_fwolhc_hyst)
-                        _fwolhc_out = _fwolhc_exec.execute(_debug_run_overrides(_fwolhc_mrgd), commit_memory=False)
+                        _fwolhc_out = _execute_pass(_fwolhc_exec, _fwolhc_mrgd)
                         _fwolhc_desc: set[str] = set()
                         _fwolhc_dq: list[str] = list(_fwolhc_srcs)
                         while _fwolhc_dq:

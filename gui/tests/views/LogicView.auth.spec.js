@@ -670,6 +670,8 @@ describe('LogicView graph cycle validation', () => {
     expect(wrapper.vm.validationWarnings).toHaveLength(2)
     expect(wrapper.vm.lastRunOutputs.a.__diagnostic__).toBe('graph_cycle')
     expect(wrapper.vm.lastRunOutputs.b.__diagnostic__).toBe('graph_cycle')
+    expect(wrapper.vm.nodes.find(node => node.id === 'a').data._dbg).toContain(wrapper.vm.lastRunOutputs.a.__error__.slice(0, 20))
+    expect(wrapper.vm.nodes.find(node => node.id === 'b').data._dbg).toContain(wrapper.vm.lastRunOutputs.b.__error__.slice(0, 20))
   })
 
   it('uses API warning counts from runGraph responses', async () => {

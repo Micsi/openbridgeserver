@@ -213,6 +213,7 @@ def _run_manager(host: str, trigger: bool, ping_return: tuple = (True, 5.0)):
 class TestHostCheckManager:
     def test_debug_override_wins_after_async_replay(self):
         manager = _make_manager()
+        captured = {}
         flow = _flow(
             [
                 node("hc", "host_check", {"host": "192.168.1.1"}),
@@ -233,10 +234,12 @@ class TestHostCheckManager:
                     flow,
                     {"hc": {"trigger": True}},
                     debug_overrides={"formula": {"in1": 9}},
+                    debug_input_capture=captured,
                 )
             )
 
         assert outputs["formula"]["result"] == 18
+        assert captured["formula"]["in1"] == {"incoming": True, "effective": 9, "overridden": True}
 
     def test_ping_called_when_triggered(self):
         _, mock_ping = _run_manager("192.168.1.1", trigger=True)

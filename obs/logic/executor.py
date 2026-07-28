@@ -79,9 +79,11 @@ class GraphExecutor:
         input_overrides: dict[str, dict[str, Any]] | None = None,
         *,
         commit_memory: bool = True,
+        capture_incoming_overrides: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Run the graph. Returns output values for every node."""
         input_overrides = input_overrides or {}
+        capture_incoming_overrides = capture_incoming_overrides or {}
 
         # Build adjacency: edge target_node.handle ← source_node.handle value
         # edge_map[target_node_id][target_handle] = (source_node_id, source_handle)
@@ -103,6 +105,7 @@ class GraphExecutor:
                 inputs[handle] = self._get_output_value(src_out, src_handle)
 
             incoming_inputs = inputs.copy()
+            incoming_inputs.update(capture_incoming_overrides.get(node.id, {}))
             node_overrides = input_overrides.get(node.id, {})
             inputs.update(node_overrides)
 
