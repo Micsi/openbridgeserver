@@ -25,7 +25,7 @@
       <button v-if="auth.isAdmin && activeGraphId" @click="toggleDebug"
         :class="['btn-secondary btn-sm', debugMode ? 'text-amber-400 ring-1 ring-amber-400/50' : 'text-slate-400']"
         :title="$t('logic.debugMode')" data-testid="btn-debug">
-        &#128270; {{ $t('logic.debugBtn') }}
+        <span aria-hidden="true">🐞</span> {{ $t('logic.debugBtn') }}
       </button>
       <div v-if="auth.isAdmin && activeGraphId" class="flex items-center gap-1">
         <button

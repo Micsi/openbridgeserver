@@ -180,6 +180,18 @@ describe('LogicView auth gates', () => {
     expect(logicApi.deleteGraph).not.toHaveBeenCalled()
   })
 
+  it('uses a bug symbol for the debug control', async () => {
+    const graph = makeGraph('graph-1')
+    const { wrapper } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+
+    expect(wrapper.find('[data-testid="btn-debug"]').text()).toContain('🐞')
+  })
+
   it('lets admins create a graph', async () => {
     const { wrapper, logicApi } = await mountLogicView({ isAdmin: true })
 
