@@ -6,9 +6,10 @@
            message below lives outside this container so it stays visible
            instead of scrolling off with whichever action produced it. -->
       <div class="flex items-center gap-3 overflow-x-auto min-w-0">
-        <!-- Reserved to the width of the NodePalette column below (w-56 minus the toolbar's own px-4),
-             so the dropdown lines up with the canvas instead of crowding the title. -->
-        <h2 class="w-52 flex-shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100">{{ $t('logic.title') }}</h2>
+        <!-- Reserved to the NodePalette column's current width below (see
+             titleSpacerClass), so the dropdown lines up with the canvas
+             instead of crowding the title. -->
+        <h2 :class="[titleSpacerClass, 'flex-shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100']">{{ $t('logic.title') }}</h2>
         <!-- Logikblatt selector -->
         <select v-model="activeGraphId" @change="loadGraph"
           class="input text-xs py-1 px-2 max-w-[200px]" data-testid="select-graph">
@@ -361,6 +362,13 @@ watch(() => activeGraph.value?.enabled, (enabled) => {
 })
 const paletteCollapsed = ref(localStorage.getItem('logic_palette_collapsed') === '1')
 watch(paletteCollapsed, v => localStorage.setItem('logic_palette_collapsed', v ? '1' : '0'))
+// Matches the NodePalette column's actual current width (w-56/w-8, or absent
+// entirely for non-admins) minus the toolbar's own px-4 — a fixed w-52 only
+// lined up the dropdown while the palette was expanded and visible.
+const titleSpacerClass = computed(() => {
+  if (!auth.isAdmin) return 'w-0'
+  return paletteCollapsed.value ? 'w-4' : 'w-52'
+})
 
 const saving        = ref(false)
 const graphLoading  = ref(false)
@@ -841,7 +849,7 @@ function copySelection() {
     showStatus(false, t('logic.copySelectionEmpty'))
     return
   }
-  clipboard.value = copied
+  clipboard.value = { ...copied, sourceGraphId: activeGraphId.value }
   pasteCount = 0
   showStatus(true, t('logic.copiedNodes', { count: copied.nodes.length }))
 }
@@ -852,16 +860,21 @@ function pasteClipboard() {
   // just-loaded (pre-paste) sheet, silently dropping the pasted blocks.
   if (!auth.isAdmin || !clipboard.value || !activeGraphId.value || graphLoading.value) return
   // Anchor the pasted group at the center of the currently visible canvas
-  // (converted to flow coordinates, same technique as onDrop) instead of
-  // the source sheet's raw coordinates — otherwise pasting into a sheet
-  // whose viewport is fitted around a different graph-coordinate region
-  // than the source leaves the pasted blocks outside the destination's
-  // visible viewport.
+  // (converted to flow coordinates, same technique as onDrop) only when
+  // pasting into a *different* sheet than the one it was copied from —
+  // otherwise pasting into a sheet whose viewport is fitted around a
+  // different graph-coordinate region than the source would leave the
+  // pasted blocks outside the destination's visible viewport. A same-sheet
+  // paste instead keeps remapClipboardForPaste's small relative offset, so
+  // the copy lands right next to its source instead of jumping to wherever
+  // the canvas happens to be centered.
   let targetCenter = null
-  const rect = canvasWrapper.value?.getBoundingClientRect()
-  if (rect && rect.width && rect.height) {
-    const { project } = useVueFlow('logic-canvas')
-    targetCenter = project({ x: rect.width / 2, y: rect.height / 2 })
+  if (clipboard.value.sourceGraphId !== activeGraphId.value) {
+    const rect = canvasWrapper.value?.getBoundingClientRect()
+    if (rect && rect.width && rect.height) {
+      const { project } = useVueFlow('logic-canvas')
+      targetCenter = project({ x: rect.width / 2, y: rect.height / 2 })
+    }
   }
   const pasted = remapClipboardForPaste(clipboard.value, pasteCount, targetCenter)
   pasteCount += 1

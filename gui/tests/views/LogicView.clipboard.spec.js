@@ -161,10 +161,15 @@ describe('LogicView node copy/paste', () => {
     expect(second.position.x).toBeGreaterThan(first.position.x)
   })
 
-  it('anchors the pasted group at the visible canvas center when the canvas has real layout dimensions', async () => {
-    const { wrapper } = await mountLogicView()
+  it('anchors a cross-sheet paste at the visible canvas center when the canvas has real layout dimensions', async () => {
+    const otherGraph = makeGraph('graph-2', { name: 'Other Graph', flow_data: { nodes: [], edges: [] } })
+    const { wrapper, logicApi } = await mountLogicView()
     wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
     wrapper.vm.copySelection()
+
+    logicApi.getGraph.mockResolvedValueOnce({ data: otherGraph })
+    wrapper.vm.activeGraphId = 'graph-2'
+    await wrapper.vm.loadGraph()
 
     // JSDOM's getBoundingClientRect() is all-zero by default (no real
     // layout); stub it with real dimensions so pasteClipboard's viewport
@@ -183,6 +188,26 @@ describe('LogicView node copy/paste', () => {
     // equivalent.
     const pasted = wrapper.vm.nodes.at(-1)
     expect(pasted.position).toEqual({ x: 440, y: 340 })
+  })
+
+  it('keeps a same-sheet paste near its source instead of jumping to the canvas center', async () => {
+    // Regression: pasting back into the sheet the copy came from must
+    // preserve the small relative offset, even when the canvas reports real
+    // layout dimensions (which would otherwise make cross-sheet-style
+    // viewport centering kick in, jumping the copy hundreds of pixels away
+    // from the original it was copied from).
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+
+    wrapper.vm.canvasWrapper.getBoundingClientRect = () => ({
+      width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600, x: 0, y: 0, toJSON() {},
+    })
+
+    wrapper.vm.pasteClipboard()
+
+    const pasted = wrapper.vm.nodes.at(-1)
+    expect(pasted.position).toEqual({ x: 40, y: 40 })
   })
 
   it('survives switching to a different logic page — clipboard is not tied to the loaded graph', async () => {
@@ -458,6 +483,55 @@ describe('LogicView node copy/paste', () => {
   it('_isEditableTarget returns false for a null element', async () => {
     const { wrapper } = await mountLogicView()
     expect(wrapper.vm._isEditableTarget(null)).toBe(false)
+  })
+
+  it('_isEditableTarget returns true for a textarea', async () => {
+    const { wrapper } = await mountLogicView()
+    const textarea = document.createElement('textarea')
+    expect(wrapper.vm._isEditableTarget(textarea)).toBe(true)
+  })
+
+  it('_isEditableTarget returns true for a contenteditable element', async () => {
+    const { wrapper } = await mountLogicView()
+    const div = document.createElement('div')
+    div.contentEditable = 'true'
+    expect(wrapper.vm._isEditableTarget(div)).toBe(true)
+  })
+
+  it('_isEditableTarget returns false for a plain, non-editable div', async () => {
+    const { wrapper } = await mountLogicView()
+    const div = document.createElement('div')
+    expect(wrapper.vm._isEditableTarget(div)).toBe(false)
+  })
+
+  it('ignores Ctrl+C while a textarea is focused', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+
+    const textarea = document.createElement('textarea')
+    document.body.appendChild(textarea)
+    textarea.focus()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }))
+    expect(wrapper.vm.clipboard).toBeNull()
+
+    document.body.removeChild(textarea)
+  })
+
+  it('ignores Ctrl+C while a contenteditable element is focused', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+
+    const div = document.createElement('div')
+    div.contentEditable = 'true'
+    div.tabIndex = 0
+    document.body.appendChild(div)
+    div.focus()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }))
+    expect(wrapper.vm.clipboard).toBeNull()
+
+    document.body.removeChild(div)
   })
 
   it('_onClipboardKeydown does nothing for non-admin users', async () => {

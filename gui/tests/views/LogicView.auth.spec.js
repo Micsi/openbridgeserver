@@ -792,6 +792,25 @@ describe('LogicView palette collapse', () => {
     await flushPromises()
     expect(storage.setItem).toHaveBeenCalledWith('logic_palette_collapsed', '0')
   })
+
+  it('titleSpacerClass matches the expanded NodePalette width for admins', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    wrapper.vm.paletteCollapsed = false
+    await flushPromises()
+    expect(wrapper.vm.titleSpacerClass).toBe('w-52')
+  })
+
+  it('titleSpacerClass shrinks to the collapsed NodePalette width for admins', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    wrapper.vm.paletteCollapsed = true
+    await flushPromises()
+    expect(wrapper.vm.titleSpacerClass).toBe('w-4')
+  })
+
+  it('titleSpacerClass reserves no space for non-admins, who have no NodePalette', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: false })
+    expect(wrapper.vm.titleSpacerClass).toBe('w-0')
+  })
 })
 
 describe('LogicView import edge cases', () => {
