@@ -992,14 +992,9 @@ class Database:
     @asynccontextmanager
     async def isolated_transaction(self) -> AsyncIterator[_DatabaseTransaction]:
         """Yield a private connection so a multi-statement transaction cannot interleave."""
-        async with self._transaction_lifecycle_lock, self._ordinary_operation():
+        async with self._transaction_lifecycle_lock, self._isolated_operation():
             if self._conn is None:
                 raise RuntimeError("Database.connect() has not been called")
-            # An ordinary multi-call transaction may have started just before
-            # the memory-operation lock was acquired. Its commit/rollback does
-            # not need that lock, so let it finish before opening another writer.
-            while self._is_memory and self.conn.in_transaction:
-                await asyncio.sleep(0)
             isolated = await aiosqlite.connect(
                 self._connection_path,
                 uri=self._connection_path.startswith("file:"),
@@ -1012,6 +1007,27 @@ class Database:
                 if isolated.in_transaction:
                     await isolated.rollback()
                 await isolated.close()
+
+    @asynccontextmanager
+    async def _isolated_operation(self) -> AsyncIterator[None]:
+        if not self._is_memory:
+            yield
+            return
+
+        while True:
+            # Do not retain the lock while waiting: the existing ordinary
+            # transaction may need another helper call before it can commit.
+            while self.conn.in_transaction:
+                await asyncio.sleep(0)
+            await self._memory_operation_lock.acquire()
+            if not self.conn.in_transaction:
+                break
+            self._memory_operation_lock.release()
+
+        try:
+            yield
+        finally:
+            self._memory_operation_lock.release()
 
     @asynccontextmanager
     async def _ordinary_operation(self) -> AsyncIterator[None]:

@@ -289,6 +289,7 @@ async def duplicate_datapoint(
     )
 
     now = datetime.datetime.now(datetime.UTC).isoformat()
+    cancelled_after_commit: asyncio.CancelledError | None = None
     async with db.isolated_transaction() as transaction:
         try:
             # Acquire the SQLite write reservation before taking the binding
@@ -345,25 +346,25 @@ async def duplicate_datapoint(
         try:
             await asyncio.shield(commit_task)
             registry.publish(duplicate)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             try:
                 await commit_task
             except Exception:
                 await asyncio.shield(transaction.rollback())
                 raise
             registry.publish(duplicate)
-            instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["enabled"] and row["adapter_instance_id"]})
-            if instance_ids:
-                await asyncio.shield(_reload_duplicate_bindings(duplicate.id, instance_ids, db))
-            raise
+            cancelled_after_commit = exc
         except Exception:
             await transaction.rollback()
             raise
 
-    if binding_rows:
-        instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["enabled"] and row["adapter_instance_id"]})
+    instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["enabled"] and row["adapter_instance_id"]})
+    if cancelled_after_commit is not None:
         if instance_ids:
-            background_tasks.add_task(_reload_duplicate_bindings, duplicate.id, instance_ids, db)
+            await asyncio.shield(_reload_duplicate_bindings(duplicate.id, instance_ids, db))
+        raise cancelled_after_commit
+    if instance_ids:
+        background_tasks.add_task(_reload_duplicate_bindings, duplicate.id, instance_ids, db)
 
     return _enrich(duplicate)
 

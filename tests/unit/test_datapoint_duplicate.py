@@ -297,6 +297,7 @@ async def test_duplicate_datapoint_publishes_if_cancelled_commit_completes(monke
     reloaded = asyncio.Event()
 
     async def _record_reload(_dp_id, _instance_ids, _db):
+        assert not db.in_transaction
         reloaded.set()
 
     monkeypatch.setattr(datapoints_api, "_reload_duplicate_bindings", _record_reload)
@@ -426,10 +427,64 @@ async def test_memory_database_isolated_transaction_waits_for_ordinary_transacti
         await asyncio.sleep(0)
         assert not transaction_entered.is_set()
 
+        row = await asyncio.wait_for(
+            db.fetchone("SELECT COUNT(*) AS count FROM ordinary_write"),
+            timeout=1,
+        )
+        assert row["count"] == 1
         await db.commit()
         await transaction_task
         assert transaction_entered.is_set()
     finally:
+        await db.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_memory_database_isolated_transaction_rechecks_after_acquiring_lock():
+    db = Database(":memory:")
+    await db.connect()
+    original_lock = db._memory_operation_lock
+    acquisition_started = asyncio.Event()
+
+    class _ObservedLock:
+        async def acquire(self):
+            acquisition_started.set()
+            return await original_lock.acquire()
+
+        def release(self):
+            original_lock.release()
+
+        async def __aenter__(self):
+            await self.acquire()
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _traceback):
+            self.release()
+
+    try:
+        await original_lock.acquire()
+        db._memory_operation_lock = _ObservedLock()
+        transaction_entered = asyncio.Event()
+
+        async def _enter_transaction() -> None:
+            async with db.isolated_transaction():
+                transaction_entered.set()
+
+        transaction_task = asyncio.create_task(_enter_transaction())
+        await acquisition_started.wait()
+        await db.conn.execute("BEGIN")
+        original_lock.release()
+        await asyncio.sleep(0)
+        assert not transaction_entered.is_set()
+
+        await asyncio.wait_for(db.fetchone("SELECT 1"), timeout=1)
+        await db.commit()
+        await transaction_task
+        assert transaction_entered.is_set()
+    finally:
+        if original_lock.locked():
+            original_lock.release()
+        db._memory_operation_lock = original_lock
         await db.disconnect()
 
 
