@@ -137,12 +137,16 @@ describe('LogicView auth gates', () => {
 
     expect(logicApi.getGraph).toHaveBeenCalledWith('graph-1')
     expect(wrapper.find('[data-testid="btn-run"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="btn-debug"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="btn-toggle-enabled"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="btn-rename"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="btn-duplicate"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="btn-import"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="btn-delete"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="btn-export"]').exists()).toBe(true)
+
+    wrapper.vm.toggleDebug()
+    expect(wrapper.vm.debugMode).toBe(false)
 
     wrapper.vm.onConnect({ source: 'n1', target: 'n3', sourceHandle: 'out', targetHandle: 'in' })
     expect(wrapper.vm.edges).toEqual(graph.flow_data.edges)
@@ -569,6 +573,7 @@ describe('LogicView inspector inputs', () => {
       input_overrides: { n1: { value: { nested: true }, label: 'plain text' } },
     })
     expect(wrapper.vm.lastRunInputs.n1.value.incoming).toBe(null)
+    expect(wrapper.vm.lastRunDebugOutputs.n1.value).toBe(7)
 
     wrapper.vm.clearDebugOverride('value')
     expect(wrapper.vm.debugOverrides.n1.value).toBeUndefined()
@@ -577,6 +582,13 @@ describe('LogicView inspector inputs', () => {
     wrapper.vm.toggleDebug()
     expect(wrapper.vm.debugNode).toBe(null)
     expect(wrapper.vm.lastRunMetadata).toBe(null)
+    expect(wrapper.vm.lastRunDebugOutputs).toEqual({})
+    expect(wrapper.vm.lastRunOutputs.n1.value).toBe(7)
+
+    wrapper.vm.toggleDebug()
+    wrapper.vm.onNodeClick({ node: wrapper.vm.nodes[0] })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findComponent({ name: 'DebugInspector' }).props('outputs')).toEqual({})
   })
 })
 

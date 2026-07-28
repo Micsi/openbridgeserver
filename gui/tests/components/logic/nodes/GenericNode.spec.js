@@ -120,6 +120,7 @@ describe('GenericNode — summary', () => {
     const w = await mountGN('math_formula', { formula: 'a * 2' })
     await flushPromises()
     expect(w.find('.gn-summary').text()).toContain('a * 2')
+    expect(w.find('.gn-summary').attributes('title')).toBe('a * 2')
   })
 
   it('shows compare summary: A > B by default', async () => {

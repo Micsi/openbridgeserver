@@ -22,7 +22,7 @@
         data-testid="btn-run">
         &#9654; {{ $t('logic.run') }}
       </button>
-      <button v-if="activeGraphId" @click="toggleDebug"
+      <button v-if="auth.isAdmin && activeGraphId" @click="toggleDebug"
         :class="['btn-secondary btn-sm', debugMode ? 'text-amber-400 ring-1 ring-amber-400/50' : 'text-slate-400']"
         :title="$t('logic.debugMode')" data-testid="btn-debug">
         &#128270; {{ $t('logic.debugBtn') }}
@@ -146,10 +146,10 @@
         @close="selectedNode = null"
       />
       <DebugInspector
-        v-if="debugNode"
+        v-if="auth.isAdmin && debugNode"
         :node="debugNode"
         :inputs="debugInputs"
-        :outputs="lastRunOutputs[debugNode.id] || {}"
+        :outputs="lastRunDebugOutputs[debugNode.id] || {}"
         :metadata="lastRunMetadata"
         :has-overrides="hasDebugOverrides"
         @close="debugNode = null"
@@ -503,6 +503,7 @@ const debugNode = ref(null)
 const debugOverrides = ref({})
 const lastRunMetadata = ref(null)
 const lastRunInputs = ref({})
+const lastRunDebugOutputs = ref({})
 const DEBUG_TOOLTIP_MAX_CHARS = 1000
 
 function fmtDebugVal(nodeOut, { full = false, maxChars = null } = {}) {
@@ -552,6 +553,7 @@ const lastRunOutputs = ref({})
 
 function applyDebugValues(outputs) {
   lastRunOutputs.value = outputs
+  if (debugMode.value) lastRunDebugOutputs.value = outputs
   nodes.value = nodes.value.map(node => ({
     ...node,
     data: {
@@ -580,6 +582,7 @@ function countGraphDiagnostics(outputs) {
 }
 
 function toggleDebug() {
+  if (!auth.isAdmin) return
   debugMode.value = !debugMode.value
   sendDebugSubscription(activeGraphId.value, debugMode.value)
   if (!debugMode.value) {
@@ -588,6 +591,7 @@ function toggleDebug() {
     debugNode.value = null
     lastRunMetadata.value = null
     lastRunInputs.value = {}
+    lastRunDebugOutputs.value = {}
   }
 }
 
@@ -867,7 +871,7 @@ function onDrop(event) {
 const selectedNode = ref(null)
 
 function onNodeClick({ node }) {
-  if (debugMode.value) {
+  if (auth.isAdmin && debugMode.value) {
     debugNode.value = { ...node }
     selectedNode.value = null
     return
@@ -950,6 +954,7 @@ watch(activeGraphId, (id, previousId) => {
     debugOverrides.value = {}
     lastRunOutputs.value = {}
     lastRunInputs.value = {}
+    lastRunDebugOutputs.value = {}
     lastRunMetadata.value = null
   }
   if (id) localStorage.setItem('logic_active_graph', id)

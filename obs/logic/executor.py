@@ -102,21 +102,20 @@ class GraphExecutor:
                 src_out = outputs.get(src_id, {})
                 inputs[handle] = self._get_output_value(src_out, src_handle)
 
+            incoming_inputs = inputs.copy()
+            node_overrides = input_overrides.get(node.id, {})
+            inputs.update(node_overrides)
+            inputs = self._resolve_effective_inputs(node, inputs)
+
             if self.input_capture is not None:
-                node_overrides = input_overrides.get(node.id, {})
-                ports = inputs.keys() | node_overrides.keys()
                 self.input_capture[node.id] = {
                     port: {
-                        "incoming": inputs.get(port),
-                        "effective": node_overrides.get(port, inputs.get(port)),
+                        "incoming": incoming_inputs.get(port),
+                        "effective": inputs.get(port),
                         "overridden": port in node_overrides,
                     }
-                    for port in ports
+                    for port in inputs
                 }
-
-            # Apply overrides (for datapoint_read triggers)
-            if node.id in input_overrides:
-                inputs.update(input_overrides[node.id])
 
             try:
                 result = self._eval_node(node, inputs)
@@ -154,6 +153,26 @@ class GraphExecutor:
         if commit_memory:
             self._commit_memory_inputs(outputs, input_overrides, edge_map)
         return outputs
+
+    @staticmethod
+    def _resolve_effective_inputs(node: LogicNode, inputs: dict[str, Any]) -> dict[str, Any]:
+        """Include configured input fallbacks in the values used and captured."""
+        effective = inputs.copy()
+        data = node.data
+
+        if node.type == "compare" and "in2" not in effective:
+            operand = data.get("operand")
+            if not (isinstance(operand, str) and operand.strip() == ""):
+                effective["in2"] = operand
+        elif node.type == "string_concat":
+            count = max(2, min(20, int(data.get("count", 2))))
+            for index in range(1, count + 1):
+                port = f"in_{index}"
+                if effective.get(port) is None:
+                    static = data.get(f"text_{index}")
+                    effective[port] = static if static is not None else ""
+
+        return effective
 
     # ── Topological Sort ──────────────────────────────────────────────────
 
@@ -467,10 +486,6 @@ class GraphExecutor:
                 operator_key = str(d.get("operator", ">")).strip().lower()
                 op = _COMPARE_OPS.get(operator_key, operator.gt)
                 a, b = inputs.get("in1"), inputs.get("in2")
-                if "in2" not in inputs:
-                    operand = d.get("operand")
-                    if not (isinstance(operand, str) and operand.strip() == ""):
-                        b = operand
                 if a is None or b is None:
                     return {"out": False}
                 # Auto-coerce to number when both values look numeric
@@ -615,11 +630,7 @@ class GraphExecutor:
                 parts: list[str] = []
                 for i in range(1, count + 1):
                     val = inputs.get(f"in_{i}")
-                    if val is not None:
-                        parts.append(str(val))
-                    else:
-                        static = d.get(f"text_{i}")
-                        parts.append(str(static) if static is not None else "")
+                    parts.append(str(val) if val is not None else "")
                 return {"result": sep.join(parts)}
 
             case "statistics":

@@ -38,6 +38,37 @@ def test_execute_captures_incoming_and_effective_inputs_without_mutating_values(
     assert captured["target"]["in1"] == {"incoming": 3.0, "effective": 7, "overridden": True}
 
 
+def test_execute_captures_configured_compare_operand_as_effective_input():
+    base = make_executor(
+        [node("source", "const_value", {"value": 3}), node("target", "compare", {"operator": ">", "operand": 2})],
+        [edge("source", "target", "value", "in1")],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute()
+
+    assert outputs["target"]["out"] is True
+    assert captured["target"]["in2"] == {"incoming": None, "effective": 2, "overridden": False}
+
+
+def test_execute_captures_configured_string_values_and_override_precedence():
+    base = make_executor(
+        [node("target", "string_concat", {"count": 3, "separator": "-", "text_1": "A", "text_2": "B"})],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute({"target": {"in_2": "override"}})
+
+    assert outputs["target"]["result"] == "A-override-"
+    assert captured["target"] == {
+        "in_1": {"incoming": None, "effective": "A", "overridden": False},
+        "in_2": {"incoming": None, "effective": "override", "overridden": True},
+        "in_3": {"incoming": None, "effective": "", "overridden": False},
+    }
+
+
 def test_datetime_node_uses_application_formats():
     executor = make_executor(
         [node("clock", "datetime", {"custom_format": "yyyy-MM-dd HH:mm:ss"})],

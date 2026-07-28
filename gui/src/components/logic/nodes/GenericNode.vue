@@ -18,7 +18,7 @@
       </div>
 
       <div class="gn-body">
-        <div v-if="summary" class="gn-summary">{{ summary }}</div>
+        <div v-if="summary" class="gn-summary" :title="summary">{{ summary }}</div>
 
         <!-- Port rows — height matches handle spacing -->
         <div class="gn-ports-rows">
@@ -411,11 +411,16 @@ function remove() { removeNodes([props.id]) }
 .gn-body  { padding: 0; }
 
 .gn-summary {
+  box-sizing: border-box;
+  width: 100%;
   font-size: 10px;
   color: var(--node-summary-color);
   padding: 2px 10px;
   font-family: ui-monospace, monospace;
   border-bottom: 1px solid var(--node-card-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gn-ports-rows { padding: 0 10px; }
