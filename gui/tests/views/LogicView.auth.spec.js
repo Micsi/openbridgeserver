@@ -811,6 +811,19 @@ describe('LogicView palette collapse', () => {
     const { wrapper } = await mountLogicView({ isAdmin: false })
     expect(wrapper.vm.titleSpacerClass).toBe('w-0')
   })
+
+  it('clips the title text instead of letting it overflow the narrowed spacer', async () => {
+    // Regression: shrinking titleSpacerClass to w-4/w-0 only narrows the
+    // box — without overflow-hidden the title text still paints its full
+    // width by default and visually overlaps the graph-select dropdown
+    // laid out right after it.
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    wrapper.vm.paletteCollapsed = true
+    await flushPromises()
+    const classes = wrapper.find('h2').classes()
+    expect(classes).toContain('overflow-hidden')
+    expect(classes).toContain('whitespace-nowrap')
+  })
 })
 
 describe('LogicView import edge cases', () => {

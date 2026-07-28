@@ -52,6 +52,17 @@ describe('cloneSelectionForClipboard', () => {
     source.data.nested.value = 99
     expect(result.nodes[0].data.nested.value).toBe(1)
   })
+
+  it('returns null instead of throwing when nodes is null or undefined', () => {
+    expect(cloneSelectionForClipboard(null, [])).toBeNull()
+    expect(cloneSelectionForClipboard(undefined, [])).toBeNull()
+  })
+
+  it('treats a null/undefined edges argument as no internal edges', () => {
+    const nodes = [makeNode('n1', { selected: true })]
+    expect(cloneSelectionForClipboard(nodes, null).edges).toEqual([])
+    expect(cloneSelectionForClipboard(nodes, undefined).edges).toEqual([])
+  })
 })
 
 describe('remapClipboardForPaste', () => {

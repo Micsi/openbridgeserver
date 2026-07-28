@@ -9,7 +9,7 @@
         <!-- Reserved to the NodePalette column's current width below (see
              titleSpacerClass), so the dropdown lines up with the canvas
              instead of crowding the title. -->
-        <h2 :class="[titleSpacerClass, 'flex-shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100']">{{ $t('logic.title') }}</h2>
+        <h2 :class="[titleSpacerClass, 'flex-shrink-0 overflow-hidden whitespace-nowrap text-sm font-bold text-slate-800 dark:text-slate-100']">{{ $t('logic.title') }}</h2>
         <!-- Logikblatt selector -->
         <select v-model="activeGraphId" @change="loadGraph"
           class="input text-xs py-1 px-2 max-w-[200px]" data-testid="select-graph">
