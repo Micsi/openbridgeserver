@@ -11,6 +11,8 @@
 
 <script setup>
 import { computed, ref, onUnmounted } from 'vue'
+import { copyText } from '@/utils/clipboard'
+
 const props = defineProps({ value: { default: null }, label: { type: String, required: true } })
 const type = computed(() => Array.isArray(props.value) ? 'array' : props.value === null ? 'null' : typeof props.value)
 const formatted = computed(() => typeof props.value === 'string' ? props.value : JSON.stringify(props.value, null, 2) ?? String(props.value))
@@ -18,7 +20,7 @@ const size = computed(() => `${new Blob([formatted.value]).size} B`)
 const copied = ref(false)
 let copiedTimer = null
 async function copy() {
-  await navigator.clipboard.writeText(formatted.value)
+  await copyText(formatted.value)
   copied.value = true
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { copied.value = false }, 1600)

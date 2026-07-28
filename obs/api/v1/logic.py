@@ -16,8 +16,8 @@ GET    /api/v1/logic/graphs/{id}/export       export graph as JSON download
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import time
 import uuid
 from datetime import UTC, datetime

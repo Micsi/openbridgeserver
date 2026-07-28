@@ -1660,6 +1660,7 @@
       "inputs": "Inputs",
       "outputs": "Outputs",
       "incoming": "Incoming value",
+      "effective": "Effective value",
       "override": "Temporary override",
       "overridePlaceholder": "JSON or text; empty means no override",
       "overridden": "Overridden",

@@ -1660,6 +1660,7 @@
       "inputs": "Eingänge",
       "outputs": "Ausgänge",
       "incoming": "Eingehender Wert",
+      "effective": "Effektiver Wert",
       "override": "Temporäre Überschreibung",
       "overridePlaceholder": "JSON oder Text; leer bedeutet keine Überschreibung",
       "overridden": "Überschrieben",

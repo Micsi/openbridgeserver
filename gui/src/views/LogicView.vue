@@ -643,7 +643,18 @@ const debugInputs = computed(() => {
     const hasCapturedInput = captured && Object.prototype.hasOwnProperty.call(captured, 'incoming')
     const incoming = hasCapturedInput ? captured.incoming : (edge ? lastRunOutputs.value[edge.source]?.[edge.sourceHandle || 'out'] : undefined)
     const overrideText = debugOverrides.value[debugNode.value.id]?.[port.id]
-    return { id: port.id, label: port.label || port.id, incoming, overridden: overrideText !== undefined, overrideText: overrideText ?? '' }
+    const locallyOverridden = overrideText !== undefined
+    const capturedOverridden = captured?.overridden === true
+    return {
+      id: port.id,
+      label: port.label || port.id,
+      incoming,
+      effective: captured?.effective,
+      locallyOverridden,
+      capturedOverridden,
+      overridden: locallyOverridden || capturedOverridden,
+      overrideText: overrideText ?? '',
+    }
   })
 })
 

@@ -1388,7 +1388,7 @@ class LogicManager:
         entry = self._graphs.get(graph_id)
         if not entry:
             raise KeyError(f"Graph {graph_id} not in cache")
-        name, enabled, flow = entry
+        name, _enabled, flow = entry
         input_capture: dict[str, dict[str, dict[str, Any]]] = {}
         outputs = await self._execute_graph(
             graph_id,
@@ -1813,7 +1813,7 @@ class LogicManager:
                 if get_ws_manager().has_logic_debug_subscribers(graph_id):
                     capture_debug_inputs = True
             except Exception:
-                pass
+                logger.debug("WebSocket debug subscriber lookup unavailable", exc_info=True)
         debug_inputs: dict[str, dict[str, dict[str, Any]]] = {}
         debug_input_runs: list[tuple[dict[str, Any], dict[str, dict[str, dict[str, Any]]]]] = []
 

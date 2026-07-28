@@ -504,10 +504,17 @@ describe('LogicView inspector inputs', () => {
     wrapper.vm.debugNode = { id: 'source', type: 'datapoint_read', data: {} }
     wrapper.vm.edges = []
     wrapper.vm.lastRunInputs = {
-      source: { value: { incoming: 23, effective: 23, overridden: false } },
+      source: { value: { incoming: 23, effective: 99, overridden: true } },
     }
     expect(wrapper.vm.debugInputs).toEqual([
-      expect.objectContaining({ id: 'value', incoming: 23 }),
+      expect.objectContaining({
+        id: 'value',
+        incoming: 23,
+        effective: 99,
+        capturedOverridden: true,
+        locallyOverridden: false,
+        overridden: true,
+      }),
     ])
 
     wrapper.vm.debugNode = { id: 'script', type: 'python_script', data: {} }

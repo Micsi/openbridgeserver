@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -840,7 +841,7 @@ async def _ws_has_logic_debug_access(user: str | None) -> bool:
         return False
     try:
         row = await get_db().fetchone("SELECT is_admin FROM users WHERE username=?", (user,))
-    except Exception:
+    except (RuntimeError, sqlite3.Error):
         return False
     return bool(row and row["is_admin"])
 

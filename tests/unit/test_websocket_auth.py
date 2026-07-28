@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -366,6 +367,32 @@ async def test_ws_log_access_ignores_stray_api_key_for_jwt_identity(monkeypatch)
     monkeypatch.setattr(ws_api, "get_db", fail_get_db)
 
     assert await ws_api._ws_has_log_access("alice", "stray-invalid-key", identity_from_jwt=True) is True
+
+
+@pytest.mark.asyncio
+async def test_ws_logic_debug_access_requires_current_admin_identity(monkeypatch):
+    class _AdminDb:
+        async def fetchone(self, _query, params):
+            return {"is_admin": params[0] == "admin"}
+
+    monkeypatch.setattr(ws_api, "get_db", _AdminDb)
+
+    assert await ws_api._ws_has_logic_debug_access("admin") is True
+    assert await ws_api._ws_has_logic_debug_access("alice") is False
+    assert await ws_api._ws_has_logic_debug_access(None) is False
+    assert await ws_api._ws_has_logic_debug_access("__api_key__") is False
+    assert await ws_api._ws_has_logic_debug_access("api_key:automation") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("database unavailable"), sqlite3.OperationalError("database locked")])
+async def test_ws_logic_debug_access_fails_closed_on_database_errors(monkeypatch, error):
+    def _fail_get_db():
+        raise error
+
+    monkeypatch.setattr(ws_api, "get_db", _fail_get_db)
+
+    assert await ws_api._ws_has_logic_debug_access("admin") is False
 
 
 @pytest.mark.asyncio

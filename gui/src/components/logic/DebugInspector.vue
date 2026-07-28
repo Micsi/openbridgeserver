@@ -19,9 +19,10 @@
           <div class="flex items-center gap-2 mb-2">
             <span class="text-sm font-medium">{{ input.label }}</span>
             <span v-if="input.overridden" class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500">{{ $t('logic.debugInspector.overridden') }}</span>
-            <button v-if="input.overridden" class="ml-auto text-xs text-red-400" @click="$emit('clear-override', input.id)">{{ $t('common.delete') }}</button>
+            <button v-if="input.locallyOverridden" class="ml-auto text-xs text-red-400" @click="$emit('clear-override', input.id)">{{ $t('common.delete') }}</button>
           </div>
           <ValueView :value="input.incoming" :label="$t('logic.debugInspector.incoming')" />
+          <ValueView v-if="input.capturedOverridden" :value="input.effective" :label="$t('logic.debugInspector.effective')" class="mt-2" />
           <label class="block text-[11px] text-slate-500 mt-2 mb-1">{{ $t('logic.debugInspector.override') }}</label>
           <textarea :value="input.overrideText" class="input w-full min-h-20 font-mono text-xs" :placeholder="$t('logic.debugInspector.overridePlaceholder')" @input="$emit('set-override', input.id, $event.target.value)" />
         </div>
@@ -47,6 +48,7 @@
 
 <script setup>
 import { computed, ref, onUnmounted } from 'vue'
+import { copyText } from '@/utils/clipboard'
 import ValueView from './DebugValueView.vue'
 
 const props = defineProps({ node: { type: Object, required: true }, inputs: { type: Array, default: () => [] }, outputs: { type: Object, default: () => ({}) }, metadata: { type: Object, default: null }, hasOverrides: { type: Boolean, default: false } })
@@ -56,7 +58,7 @@ const payloadCopied = ref(false)
 let copiedTimer = null
 
 async function copyPayload() {
-  await navigator.clipboard.writeText(JSON.stringify({ inputs: props.inputs, outputs: props.outputs, metadata: props.metadata }, null, 2))
+  await copyText(JSON.stringify({ inputs: props.inputs, outputs: props.outputs, metadata: props.metadata }, null, 2))
   payloadCopied.value = true
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { payloadCopied.value = false }, 1600)
