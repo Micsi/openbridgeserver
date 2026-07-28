@@ -2028,6 +2028,8 @@
         "urlLabel": "iCal URL",
         "refreshLabel": "Refresh interval (minutes)",
         "refreshHint": "Calendar is reloaded at most every N minutes.",
+        "maxPayloadSizeLabel": "Maximum calendar size (MiB)",
+        "maxPayloadSizeHint": "Downloads exceeding this value are aborted (1–50 MiB).",
         "rawInfo": "The RAW output always delivers the raw iCal text. Filters can be added for extended analysis.",
         "filtersSection": "Filters / Instances",
         "addFilter": "+ Add filter",
@@ -2051,6 +2053,7 @@
         "descriptionPlaceholder": "e.g. organic bin",
         "url": "iCal URL",
         "refresh_interval_min": "Refresh interval (minutes)",
+        "max_payload_size_mb": "Maximum calendar size (MiB)",
         "filter_count": "Filter count",
         "filters": "Filters (JSON)"
       },

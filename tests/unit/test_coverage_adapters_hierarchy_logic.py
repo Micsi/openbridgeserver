@@ -4141,6 +4141,65 @@ class TestLogicManagerExecuteGraph:
         assert mgr._hysteresis["g1"]["i1"].get("raw") is None
 
     @pytest.mark.asyncio
+    async def test_execute_graph_ical_uses_configured_payload_limit(self):
+        class _Headers(dict):
+            def get_list(self, _key):
+                return []
+
+        class _Response:
+            status_code = 200
+            headers = _Headers({"content-type": "text/calendar"})
+
+            def raise_for_status(self):
+                return None
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Response()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class _Client:
+            def stream(self, *_args, **_kwargs):
+                return _Stream()
+
+            async def aclose(self):
+                return None
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {
+                        "url": "https://example.com/cal.ics",
+                        "max_payload_size_mb": 8,
+                    },
+                },
+            ],
+        )
+        mgr, db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        read_body = AsyncMock(return_value=b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n")
+
+        with (
+            patch(
+                "obs.logic.manager._build_ical_fetch_targets",
+                return_value=(["https://93.184.216.34/cal.ics"], {"Host": "example.com"}, {}),
+            ),
+            patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
+            patch("obs.logic.manager._read_limited_response_body", read_body),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            result = await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert isinstance(result, dict)
+        assert read_body.await_args.args[1] == 8 * 1_048_576
+
+    @pytest.mark.asyncio
     async def test_execute_graph_executor_error_returns_empty_dict(self):
         """If GraphExecutor.execute() itself raises, _execute_graph logs the
         failure and returns an empty dict rather than propagating."""

@@ -123,7 +123,9 @@ def _downstream_closure(start: set[str], edges: list[Any]) -> set[str]:
     return reached
 
 
-_ICAL_MAX_BYTES = 1_048_576
+_ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB = 2
+_ICAL_MAX_PAYLOAD_SIZE_MB = 50
+_MIB_BYTES = 1_048_576
 _ICAL_MAX_REDIRECTS = 5
 _ICAL_ALLOWED_CONTENT_TYPES = ("text/calendar", "application/ics", "application/octet-stream", "text/plain")
 _PUSHOVER_ATTACHMENT_MAX_BYTES = 5_000_000
@@ -752,6 +754,17 @@ async def _read_limited_response_body(resp: httpx.Response, max_bytes: int) -> b
         if len(body) > max_bytes:
             raise ValueError(f"iCal response too large: {len(body)} bytes")
     return bytes(body)
+
+
+def _ical_payload_limit_bytes(node_data: dict[str, Any]) -> int:
+    raw_limit = node_data.get("max_payload_size_mb", _ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB)
+    if isinstance(raw_limit, bool):
+        raw_limit = _ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB
+    try:
+        limit_mb = int(raw_limit)
+    except (TypeError, ValueError):
+        limit_mb = _ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB
+    return min(max(limit_mb, 1), _ICAL_MAX_PAYLOAD_SIZE_MB) * _MIB_BYTES
 
 
 _manager: LogicManager | None = None
@@ -1868,7 +1881,10 @@ class LogicManager:
                                     _resp.raise_for_status()
                                     _store_response_cookies(logical_cookie_store, _resp.headers.get_list("set-cookie"), current_url)
                                     _ct = _resp.headers.get("content-type", "").lower()
-                                    _resp_bytes = await _read_limited_response_body(_resp, _ICAL_MAX_BYTES)
+                                    _resp_bytes = await _read_limited_response_body(
+                                        _resp,
+                                        _ical_payload_limit_bytes(node.data),
+                                    )
                                     break
                             except httpx.RequestError as req_exc:
                                 last_transport_error = req_exc

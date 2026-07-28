@@ -980,6 +980,16 @@
           <p class="text-xs text-slate-500 mt-1">{{ $t('logic.nodeConfig.ical.refreshHint') }}</p>
         </div>
 
+        <!-- Maximum payload size -->
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.ical.maxPayloadSizeLabel') }}</label>
+          <input v-model.number="localData.max_payload_size_mb" type="number" min="1" max="50" step="1"
+            class="input text-sm"
+            @change="emitBoundedUpdate('max_payload_size_mb', ICAL_PAYLOAD_SIZE_SCHEMA)"
+            data-testid="ical-max-payload-size" />
+          <p class="text-xs text-slate-500 mt-1">{{ $t('logic.nodeConfig.ical.maxPayloadSizeHint') }}</p>
+        </div>
+
         <!-- RAW output info -->
         <p class="text-xs text-slate-400">
           {{ $t('logic.nodeConfig.ical.rawInfo') }}
@@ -1343,6 +1353,7 @@ const messageArchives = ref([])
 const messageAdapters = ref([])
 const MESSAGE_TYPE_OPTIONS = ['automation', 'notification', 'system', 'security', 'adapter', 'diagnostic']
 const MESSAGE_SEVERITY_OPTIONS = ['info', 'success', 'warning', 'error', 'critical']
+const ICAL_PAYLOAD_SIZE_SCHEMA = { type: 'integer', min: 1, max: 50 }
 
 const CONDITION_OPERATOR_OPTIONS = computed(() => [
   { value: 'eq',          label: t('logic.nodeConfig.rules.operators.eq') },
@@ -2132,6 +2143,9 @@ watch(() => props.node, (n) => {
     }
     if (n.type === 'api_client' && !localData.value.auth_type) {
       localData.value.auth_type = 'none'
+    }
+    if (n.type === 'ical' && localData.value.max_payload_size_mb == null) {
+      localData.value.max_payload_size_mb = 2
     }
     if (n.type === 'api_client') {
       localData.value.variables = normaliseApiVariables(localData.value.variables)
