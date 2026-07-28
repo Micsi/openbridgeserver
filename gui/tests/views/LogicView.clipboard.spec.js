@@ -330,6 +330,76 @@ describe('LogicView node copy/paste', () => {
     expect(wrapper.find('[data-testid="btn-paste-nodes"]').attributes('disabled')).toBeUndefined()
   })
 
+  it('does not copy while the target sheet is still loading', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+    // Select in the predecessor sheet first, so a wrongly-succeeding copy
+    // during the load below is observable (an empty selection would make
+    // clipboard stay null regardless of the loading guard being tested).
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+
+    let resolveGetGraph
+    logicApi.getGraph.mockReturnValueOnce(new Promise(resolve => { resolveGetGraph = resolve }))
+    wrapper.vm.activeGraphId = 'graph-1'
+    const loadPromise = wrapper.vm.loadGraph()
+
+    // The selector already names graph-1, but `nodes` still holds graph-1's
+    // predecessor (mountLogicView's own graph) with its selection — copying
+    // now would silently put those stale blocks in the clipboard.
+    wrapper.vm.copySelection()
+    expect(wrapper.vm.clipboard).toBeNull()
+
+    resolveGetGraph({ data: { flow_data: { nodes: [{ id: 'n1', position: { x: 0, y: 0 }, data: {} }], edges: [] } } })
+    await loadPromise
+
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+    wrapper.vm.copySelection()
+    expect(wrapper.vm.clipboard).not.toBeNull()
+  })
+
+  it('disables the copy button while the target sheet is still loading', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="btn-copy-nodes"]').attributes('disabled')).toBeUndefined()
+
+    let resolveGetGraph
+    logicApi.getGraph.mockReturnValueOnce(new Promise(resolve => { resolveGetGraph = resolve }))
+    wrapper.vm.activeGraphId = 'graph-1'
+    const loadPromise = wrapper.vm.loadGraph()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="btn-copy-nodes"]').attributes('disabled')).toBeDefined()
+
+    resolveGetGraph({ data: { flow_data: { nodes: [{ id: 'n1', position: { x: 0, y: 0 }, data: {} }], edges: [] } } })
+    await loadPromise
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="btn-copy-nodes"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('cancels a still-pending status timeout when a new status is shown, so an earlier one cannot clear a later result', async () => {
+    vi.useFakeTimers()
+    try {
+      const { wrapper } = await mountLogicView()
+      wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+
+      wrapper.vm.copySelection()
+      vi.advanceTimersByTime(2000)
+      wrapper.vm.pasteClipboard()
+      const pastedText = wrapper.vm.statusMsg.text
+
+      // Copy's 3s timeout (now at 2000ms elapsed, 1000ms left) must not
+      // survive to null out Paste's own, later-started status.
+      vi.advanceTimersByTime(1000)
+      expect(wrapper.vm.statusMsg).not.toBeNull()
+      expect(wrapper.vm.statusMsg.ok).toBe(true)
+      expect(wrapper.vm.statusMsg.text).toBe(pastedText)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('loadGraph falls back to an empty edges array when the response omits it', async () => {
     const { wrapper, logicApi } = await mountLogicView()
     logicApi.getGraph.mockResolvedValueOnce({

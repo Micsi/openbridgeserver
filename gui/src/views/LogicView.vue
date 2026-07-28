@@ -63,7 +63,7 @@
           data-testid="btn-toggle-enabled">
           {{ activeGraph?.enabled ? $t('logic.toggleActive') : $t('logic.toggleDisabled') }}
         </button>
-        <button v-if="auth.isAdmin && activeGraphId" @click="copySelection" class="btn-secondary btn-sm" :disabled="!hasSelection"
+        <button v-if="auth.isAdmin && activeGraphId" @click="copySelection" class="btn-secondary btn-sm" :disabled="!hasSelection || graphLoading"
           :title="$t('logic.copySelectionTitle')" data-testid="btn-copy-nodes">
           ⧉ {{ $t('logic.copySelection') }}
         </button>
@@ -368,9 +368,15 @@ let _loadGraphRequestId = 0
 const statusMsg     = ref(null)
 const canvasWrapper = ref(null)
 
+let _statusTimer = null
 function showStatus(ok, text, ms = 3000) {
+  // Without cancelling the previous timer, a quick Copy → Paste → Save
+  // sequence leaves multiple independent timeouts running; the earliest one
+  // (e.g. from Copy) can then null out a later, still-relevant status (e.g.
+  // Save's result) almost immediately instead of after its own `ms`.
+  clearTimeout(_statusTimer)
   statusMsg.value = { ok, text }
-  setTimeout(() => { statusMsg.value = null }, ms)
+  _statusTimer = setTimeout(() => { statusMsg.value = null }, ms)
 }
 
 const validationWarnings = computed(() => analyzeFlowWarnings(nodes.value, edges.value))
@@ -825,7 +831,11 @@ const hasSelection = computed(() => nodes.value.some(n => n.selected))
 let pasteCount = 0
 
 function copySelection() {
-  if (!auth.isAdmin) return
+  // graphLoading guards against a slow getGraph() from an earlier sheet
+  // switch resolving after this copy — the selector may already name the
+  // target sheet while `nodes` still holds the previous sheet's blocks and
+  // selection, which would silently overwrite the clipboard with stale data.
+  if (!auth.isAdmin || graphLoading.value) return
   const copied = cloneSelectionForClipboard(nodes.value, edges.value)
   if (!copied) {
     showStatus(false, t('logic.copySelectionEmpty'))
