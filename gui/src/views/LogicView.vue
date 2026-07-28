@@ -679,7 +679,7 @@ async function runGraph() {
       diagnosticCount > 0 ? 6000 : 3000
     )
     // Always update lastRunOutputs (needed for extractor config panels)
-    if (debugMode.value) applyDebugValues(outputs)
+    if (debugMode.value || diagnosticCount > 0) applyDebugValues(outputs)
     else {
       lastRunOutputs.value = outputs
       clearDebugValues()

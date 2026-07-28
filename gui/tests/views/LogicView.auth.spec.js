@@ -685,6 +685,7 @@ describe('LogicView graph cycle validation', () => {
     expect(wrapper.vm.statusMsg.ok).toBe(false)
     expect(wrapper.vm.statusMsg.text).toContain('Warnungen')
     expect(wrapper.vm.lastRunOutputs.n1.__diagnostic__).toBe('graph_cycle')
+    expect(wrapper.vm.nodes[0].data._dbg).toContain('Graph cycle detected')
   })
 })
 
