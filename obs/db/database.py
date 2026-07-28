@@ -793,7 +793,10 @@ class Database:
     """Async SQLite database wrapper with built-in migration support."""
 
     def __init__(self, path: str) -> None:
+        from obs.ringbuffer.ringbuffer import _is_sqlite_memory_path
+
         self._path = path
+        self._is_memory = _is_sqlite_memory_path(path)
         # Plain ``:memory:`` databases only exist inside one SQLite connection.
         # Give each Database instance a private named shared-memory URI so an
         # isolated transaction can use its own connection without seeing a
@@ -995,7 +998,7 @@ class Database:
             # An ordinary multi-call transaction may have started just before
             # the memory-operation lock was acquired. Its commit/rollback does
             # not need that lock, so let it finish before opening another writer.
-            while self._path == ":memory:" and self.conn.in_transaction:
+            while self._is_memory and self.conn.in_transaction:
                 await asyncio.sleep(0)
             isolated = await aiosqlite.connect(
                 self._connection_path,
@@ -1012,7 +1015,7 @@ class Database:
 
     @asynccontextmanager
     async def _ordinary_operation(self) -> AsyncIterator[None]:
-        if self._path == ":memory:":
+        if self._is_memory:
             async with self._memory_operation_lock:
                 yield
         else:

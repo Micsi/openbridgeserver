@@ -344,6 +344,7 @@ async def duplicate_datapoint(
         commit_task = asyncio.create_task(transaction.commit())
         try:
             await asyncio.shield(commit_task)
+            registry.publish(duplicate)
         except asyncio.CancelledError:
             try:
                 await commit_task
@@ -358,8 +359,6 @@ async def duplicate_datapoint(
         except Exception:
             await transaction.rollback()
             raise
-
-    registry.publish(duplicate)
 
     if binding_rows:
         instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["enabled"] and row["adapter_instance_id"]})

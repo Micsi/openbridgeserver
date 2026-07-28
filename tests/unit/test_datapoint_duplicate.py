@@ -123,6 +123,21 @@ class _SlowCommitDb(_SuccessfulDb):
         self.committed = True
 
 
+class _SlowExitDb(_SuccessfulDb):
+    def __init__(self, binding: dict) -> None:
+        super().__init__(binding)
+        self.exit_started = asyncio.Event()
+
+    @asynccontextmanager
+    async def isolated_transaction(self):
+        self.in_transaction = True
+        try:
+            yield self
+        finally:
+            self.exit_started.set()
+            await asyncio.Future()
+
+
 def _binding_row() -> dict:
     return {
         "adapter_type": "MQTT",
@@ -308,6 +323,33 @@ async def test_duplicate_datapoint_publishes_if_cancelled_commit_completes(monke
 
 
 @pytest.mark.asyncio
+async def test_duplicate_datapoint_publishes_before_transaction_cleanup(monkeypatch):
+    source = DataPoint(name="Source", data_type="FLOAT")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    registry = _RegistryStub(source, duplicate)
+    db = _SlowExitDb(_binding_row())
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+
+    request_task = asyncio.create_task(
+        datapoints_api.duplicate_datapoint(
+            source.id,
+            datapoints_api.DataPointDuplicateIn(name="Copy"),
+            BackgroundTasks(),
+            _user="admin",
+            db=db,
+        )
+    )
+    await db.exit_started.wait()
+
+    assert db.committed is True
+    assert registry.published == [duplicate.id]
+
+    request_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+
+
+@pytest.mark.asyncio
 async def test_database_transaction_uses_an_isolated_connection(tmp_path):
     db = Database(str(tmp_path / "isolated.db"))
     await db.connect()
@@ -340,8 +382,12 @@ async def test_memory_database_transaction_uses_private_connection_and_rolls_bac
 
 
 @pytest.mark.asyncio
-async def test_memory_database_ordinary_write_waits_for_isolated_transaction():
-    db = Database(":memory:")
+@pytest.mark.parametrize(
+    "database_path",
+    [":memory:", "file:duplicate-lock?mode=memory&cache=shared"],
+)
+async def test_memory_database_ordinary_write_waits_for_isolated_transaction(database_path):
+    db = Database(database_path)
     await db.connect()
     try:
         await db.execute_and_commit("CREATE TABLE serialized_write (id INTEGER PRIMARY KEY)")
@@ -360,8 +406,12 @@ async def test_memory_database_ordinary_write_waits_for_isolated_transaction():
 
 
 @pytest.mark.asyncio
-async def test_memory_database_isolated_transaction_waits_for_ordinary_transaction():
-    db = Database(":memory:")
+@pytest.mark.parametrize(
+    "database_path",
+    [":memory:", "file:duplicate-wait?mode=memory&cache=shared"],
+)
+async def test_memory_database_isolated_transaction_waits_for_ordinary_transaction(database_path):
+    db = Database(database_path)
     await db.connect()
     try:
         await db.execute_and_commit("CREATE TABLE ordinary_write (id INTEGER PRIMARY KEY)")
