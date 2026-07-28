@@ -1770,6 +1770,13 @@ class LogicManager:
     ) -> dict[str, Any]:
         execute_now = datetime.now(UTC)
         graph_state = self._node_state.setdefault(graph_id, {})
+        # Event-driven executions still evaluate the full graph so unrelated
+        # datapoint_read nodes can contribute their latest registry values.
+        # Those seeded values are context, not fresh triggers: side-effect
+        # nodes on disconnected branches must not act on them (issue #1090).
+        # An execution without explicit overrides is a manual/full-sheet run
+        # and intentionally keeps the existing all-branches behaviour.
+        triggered_node_closure = _downstream_closure(set(overrides), flow.edges) if overrides else None
 
         # ── Seed all datapoint_read nodes from registry ───────────────────
         # In event-driven execution only the triggered node(s) have overrides.
@@ -3284,6 +3291,8 @@ class LogicManager:
         triggered_notify_nodes: set[str] = set()
 
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
+            if triggered_node_closure is not None and node.id not in triggered_node_closure:
+                return False
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
                 return False

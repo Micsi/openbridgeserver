@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from obs.adapters.message.providers.base import MessageSendResult
@@ -295,6 +296,54 @@ def test_generic_notification_uses_message_adapter_and_requires_all_targets() ->
         title="Alarm",
         priority=0,
     )
+
+
+def test_datapoint_event_only_sends_notification_on_its_own_branch() -> None:
+    manager = _make_manager()
+    datapoint_ids = [str(uuid.uuid4()) for _ in range(3)]
+    flow_nodes = []
+    flow_edges = []
+    for index, datapoint_id in enumerate(datapoint_ids, start=1):
+        read_id = f"read{index}"
+        notify_id = f"notify{index}"
+        flow_nodes.extend(
+            [
+                node(read_id, "datapoint_read", {"datapoint_id": datapoint_id}),
+                node(
+                    notify_id,
+                    "notify_message",
+                    {
+                        "adapter_instance_id": "message-1",
+                        "providers": [{"provider": "telegram", "target": f"target{index}"}],
+                    },
+                ),
+            ]
+        )
+        flow_edges.append(edge(read_id, notify_id, "value", "message"))
+    flow = _flow(flow_nodes, flow_edges)
+
+    registry_values = {
+        uuid.UUID(datapoint_id): MagicMock(value=f"cached message {index}") for index, datapoint_id in enumerate(datapoint_ids, start=1)
+    }
+    manager._registry.get_value.side_effect = registry_values.get
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "target1", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"read1": {"value": "fresh message", "changed": True}})
+
+    adapter.send_notification.assert_awaited_once_with(
+        message="fresh message",
+        providers=[{"provider": "telegram", "target": "target1"}],
+        title=None,
+        priority=0,
+    )
+    assert outputs["notify1"]["sent"] is True
+    assert outputs["notify2"]["sent"] is False
+    assert outputs["notify3"]["sent"] is False
 
 
 def test_generic_notification_reports_target_failure() -> None:
