@@ -7,9 +7,9 @@ Anti-drift tests compare it against the live FastAPI router so new
 
 from __future__ import annotations
 
-from typing import Final, Literal, TypeAlias
+from typing import Final, Literal
 
-RouteCategory: TypeAlias = Literal[
+type RouteCategory = Literal[
     "config_mutation",
     "data_mutation",
     "read_live",
@@ -17,7 +17,7 @@ RouteCategory: TypeAlias = Literal[
     "public",
 ]
 
-RouteSignature: TypeAlias = tuple[str, str]
+type RouteSignature = tuple[str, str]
 
 PUBLIC_ROUTE_ALLOWLIST: Final[frozenset[RouteSignature]] = frozenset(
     {
@@ -64,6 +64,8 @@ ROUTE_CLASSIFICATIONS: Final[dict[RouteSignature, RouteCategory]] = {
     ("GET", "/api/v1/adapters/instances/{instance_id}/iobroker/states"): "read_live",
     ("GET", "/api/v1/adapters/instances/{instance_id}/mqtt/browse"): "read_live",
     ("GET", "/api/v1/adapters/instances/{instance_id}/mqtt/sample"): "read_live",
+    ("GET", "/api/v1/adapters/instances/{instance_id}/onewire/browse"): "read_live",
+    ("PATCH", "/api/v1/adapters/instances/{instance_id}/onewire/aliases"): "config_mutation",
     ("GET", "/api/v1/adapters/instances/{instance_id}/snmp/walk"): "read_live",
     ("GET", "/api/v1/adapters/knx/dpts"): "read_live",
     ("GET", "/api/v1/adapters/{adapter_type}/binding-schema"): "read_live",

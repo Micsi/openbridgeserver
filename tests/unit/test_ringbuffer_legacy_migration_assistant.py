@@ -24,6 +24,7 @@ from obs.db.database import Database
 from obs.ringbuffer.persisted_config import (
     LEGACY_DECISION_DISCARDED,
     LEGACY_DECISION_KEEP,
+    LEGACY_DECISION_MIGRATED,
     LEGACY_DECISION_PENDING,
     LEGACY_DECISION_SKIPPED,
     LEGACY_DECISIONS_PROTECTED,
@@ -34,10 +35,9 @@ from obs.ringbuffer.persisted_config import (
 )
 from obs.ringbuffer.ringbuffer import RingBuffer
 from obs.ringbuffer.store.config import StoreRetentionConfig
+from obs.ringbuffer.store.interface import StoreEvent, StoreQuery
 from obs.ringbuffer.store.migration import LegacyMigrator
 from obs.ringbuffer.store.sqlite_backend import SqliteSegmentStore
-from obs.ringbuffer.store.interface import StoreEvent, StoreQuery
-
 
 # ---------------------------------------------------------------------------
 # Decision-Persistenz
@@ -78,6 +78,31 @@ async def test_ensure_sets_pending_only_with_legacy_file(tmp_path: Path):
         # Bereits entschieden → ensure überschreibt NICHT.
         await persist_legacy_migration_decision(db, LEGACY_DECISION_KEEP)
         assert await ensure_legacy_migration_decision(db, legacy_db_path=str(missing)) == LEGACY_DECISION_KEEP
+    finally:
+        await db.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_decision", [LEGACY_DECISION_MIGRATED, LEGACY_DECISION_DISCARDED])
+async def test_ensure_reopens_terminal_decision_when_legacy_file_is_present(
+    tmp_path: Path,
+    terminal_decision: str,
+):
+    """Eine kopierte app-DB darf eine vorhandene Legacy-Quelle nicht verstecken.
+
+    Reproduziert den Demo-Zustand: ``obs.db`` bringt einen terminalen Marker mit,
+    neben ihr liegt aber weiterhin eine andere ``obs_ringbuffer.db``. Terminal
+    bedeutet, dass die damalige Quelle entfernt wurde; eine jetzt vorhandene
+    Datei muss deshalb erneut als ausstehende Quelle behandelt werden.
+    """
+    db = await _memory_db()
+    try:
+        legacy = tmp_path / "obs_ringbuffer.db"
+        legacy.write_bytes(b"legacy source exists")
+        await persist_legacy_migration_decision(db, terminal_decision)
+
+        assert await ensure_legacy_migration_decision(db, legacy_db_path=str(legacy)) == LEGACY_DECISION_PENDING
+        assert await load_legacy_migration_decision(db) == LEGACY_DECISION_PENDING
     finally:
         await db.disconnect()
 
@@ -207,10 +232,33 @@ async def test_stats_estimate_attached_legacy_rows_and_span(tmp_path: Path):
         assert stats.common["total"] == 5, "4 Legacy-Events (geschaetzt) + 1 Live-Event"
         assert stats.common["oldest_ts"] == _iso(0), "aelteste ts kommt aus der Legacy-Historie"
         assert stats.common["newest_ts"] == _iso(50)
+        legacy_stat = next(segment for segment in stats.backend_extra["segments"] if segment["status"] == "legacy")
+        assert legacy_stat["row_count"] == 4
+        assert legacy_stat["row_count_accuracy"] == "estimated"
 
         # Cache greift: zweiter Aufruf identisch (und guenstig).
         stats2 = await store.stats()
         assert stats2.common["total"] == 5
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_stats_marks_unreadable_legacy_row_count_unknown_instead_of_empty(tmp_path: Path):
+    """Ein fehlgeschlagener Lazy-Lookup darf nicht als echte 0 erscheinen."""
+    store = SqliteSegmentStore(tmp_path / "root")
+    await store.open()
+    try:
+        legacy = tmp_path / "obs_ringbuffer.db"
+        await _seed_legacy_db(legacy, [10, 11])
+        migrator = LegacyMigrator(store, legacy)
+        await migrator.attach_readonly(migrator.classify())
+        legacy.unlink()
+
+        stats = await store.stats()
+        legacy_stat = next(segment for segment in stats.backend_extra["segments"] if segment["status"] == "legacy")
+        assert legacy_stat["row_count"] is None
+        assert legacy_stat["row_count_accuracy"] == "unknown"
     finally:
         await store.close()
 
@@ -263,6 +311,7 @@ async def test_protected_legacy_does_not_sacrifice_live_segments(tmp_path: Path)
 
 
 def _segmented_rb(tmp_path: Path, **kwargs) -> RingBuffer:
+    kwargs.setdefault("segment_max_age", 24 * 60 * 60)
     return RingBuffer(
         storage="file",
         disk_path=str(tmp_path / "obs_ringbuffer.db"),
@@ -287,6 +336,29 @@ async def test_overview_reports_attached_legacy_cheaply(tmp_path: Path):
         assert overview["from_ts"] == _iso(0)
         assert overview["to_ts"] == _iso(2)
         assert overview["retention_protected"] is True
+    finally:
+        await rb.stop()
+
+
+@pytest.mark.asyncio
+async def test_overview_reports_valid_empty_legacy_as_exact_zero(tmp_path: Path):
+    """Eine lesbare Alt-DB ohne Events ist leer, nicht unbekannt oder verschwunden."""
+    legacy = tmp_path / "obs_ringbuffer.db"
+    await _seed_legacy_db(legacy, [])
+
+    rb = _segmented_rb(tmp_path, legacy_retention_protected=True)
+    await rb.start()
+    try:
+        overview = await rb.legacy_migration_overview()
+        assert overview is not None
+        assert overview["row_estimate"] == 0
+        assert overview["from_ts"] is None
+        assert overview["to_ts"] is None
+
+        stats = await rb.stats()
+        legacy_stat = next(segment for segment in stats["store"]["backend_extra"]["segments"] if segment["status"] == "legacy")
+        assert legacy_stat["row_count"] == 0
+        assert legacy_stat["row_count_accuracy"] == "exact"
     finally:
         await rb.stop()
 

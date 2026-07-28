@@ -15,7 +15,6 @@ while sort and pagination remain owned by the caller of the query endpoint.
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 import csv
 import json
 import logging
@@ -24,6 +23,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -39,6 +39,7 @@ from obs.ringbuffer.persisted_config import (
     LEGACY_DECISION_DISCARDED,
     LEGACY_DECISION_KEEP,
     LEGACY_DECISION_MIGRATED,
+    LEGACY_DECISION_PENDING,
     LEGACY_DECISION_SKIPPED,
     LEGACY_DECISIONS_PROTECTED,
     LEGACY_DECISIONS_TERMINAL,
@@ -48,13 +49,7 @@ from obs.ringbuffer.persisted_config import (
     load_persisted_ringbuffer_config,
     persist_legacy_migration_decision,
     persist_ringbuffer_config,
-)
-from obs.ringbuffer.store.config import (
-    SEGMENT_MAX_AGE_MIN,
-    SegmentConfig,
-    StoreRetentionConfig,
-    validate_explicit_segment_bounds,
-    validate_store_config,
+    repair_pending_keep_migration_decision,
 )
 from obs.ringbuffer.ringbuffer import (
     RingBufferStorageDeleteIncompleteError,
@@ -62,12 +57,22 @@ from obs.ringbuffer.ringbuffer import (
     _is_sqlite_memory_path,
     default_ringbuffer_disk_path,
     delete_ringbuffer_storage_files,
+    derive_segment_max_age,
+    derive_segment_max_bytes,
+    derive_segment_max_rows,
     get_optional_ringbuffer,
     get_ringbuffer,
     init_ringbuffer,
     is_ringbuffer_enabled,
     reset_ringbuffer,
     set_ringbuffer_enabled,
+)
+from obs.ringbuffer.store.config import (
+    SEGMENT_MAX_AGE_MIN,
+    SegmentConfig,
+    StoreRetentionConfig,
+    validate_explicit_segment_bounds,
+    validate_store_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -133,6 +138,37 @@ def _unsubscribe_ringbuffer(rb: Any) -> None:
         pass
 
 
+def _segment_limit_source(configured: int | None, effective: int | None) -> Literal["explicit", "derived", "disabled"]:
+    if configured is not None:
+        return "explicit"
+    if effective is not None:
+        return "derived"
+    return "disabled"
+
+
+def _segment_contract_stats(
+    *,
+    max_entries: int | None,
+    max_file_size_bytes: int | None,
+    max_age: int | None,
+    segment_max_bytes: int | None,
+    segment_max_rows: int | None,
+    segment_max_age: int | None,
+) -> dict[str, Any]:
+    effective_segment_max_bytes = segment_max_bytes if segment_max_bytes is not None else derive_segment_max_bytes(max_file_size_bytes)
+    effective_segment_max_rows = segment_max_rows if segment_max_rows is not None else derive_segment_max_rows(max_entries)
+    effective_segment_max_age = segment_max_age if segment_max_age is not None else derive_segment_max_age(max_age)
+    return {
+        "effective_segment_max_bytes": effective_segment_max_bytes,
+        "effective_segment_max_rows": effective_segment_max_rows,
+        "effective_segment_max_age": effective_segment_max_age,
+        "segment_max_bytes_source": _segment_limit_source(segment_max_bytes, effective_segment_max_bytes),
+        "segment_max_rows_source": _segment_limit_source(segment_max_rows, effective_segment_max_rows),
+        "segment_max_age_source": _segment_limit_source(segment_max_age, effective_segment_max_age),
+        "retention_unbounded": max_entries is None and max_file_size_bytes is None and max_age is None,
+    }
+
+
 async def _disabled_stats(db: Database) -> RingBufferStats:
     cfg = await load_persisted_ringbuffer_config(db, storage_path=_ringbuffer_disk_path())
     return RingBufferStats(
@@ -149,6 +185,14 @@ async def _disabled_stats(db: Database) -> RingBufferStats:
         segment_max_rows=cfg.get("segment_max_rows"),
         segment_max_age=cfg.get("segment_max_age"),
         file_size_bytes=0,
+        **_segment_contract_stats(
+            max_entries=cfg["max_entries"],
+            max_file_size_bytes=cfg["max_file_size_bytes"],
+            max_age=cfg["max_age"],
+            segment_max_bytes=cfg.get("segment_max_bytes"),
+            segment_max_rows=cfg.get("segment_max_rows"),
+            segment_max_age=cfg.get("segment_max_age"),
+        ),
     )
 
 
@@ -193,16 +237,23 @@ class RingBufferMultiEntryOut(RingBufferEntryOut):
 class RingBufferPrognosis(BaseModel):
     """Datengetriebene Wachstums-/Retention-Prognose (#919).
 
-    Reine Momentaufnahme aus den geschlossenen v2-Segmenten. Alle Raten-Felder
-    sind ``None``, wenn zu wenig Daten vorliegen (< 1 geschlossenes v2-Segment).
+    Bis zum ersten verwertbaren geschlossenen v2-Segment stammt sie aus einer
+    vorläufigen, mindestens fünf Sekunden langen Live-Stichprobe des aktiven
+    Segments; danach aus den stabileren geschlossenen Segmenten.
     """
 
     sample_segment_count: int = 0
+    source: Literal["active", "closed"] | None = None
+    provisional: bool = False
     bytes_per_hour: float | None = None
     rows_per_hour: float | None = None
     avg_segment_seconds: float | None = None
     estimated_retention_seconds: float | None = None
     effective_segment_max_bytes: float | None = None
+    observed_seconds: float | None = None
+    observed_rows: int | None = None
+    ready_after_seconds: float | None = None
+    idle_seconds: float | None = None
 
 
 class RingBufferStats(BaseModel):
@@ -221,6 +272,13 @@ class RingBufferStats(BaseModel):
     segment_max_bytes: int | None = None
     segment_max_rows: int | None = None
     segment_max_age: int | None = None
+    effective_segment_max_bytes: int | None = None
+    effective_segment_max_rows: int | None = None
+    effective_segment_max_age: int | None = None
+    segment_max_bytes_source: Literal["explicit", "derived", "disabled"] = "disabled"
+    segment_max_rows_source: Literal["explicit", "derived", "disabled"] = "disabled"
+    segment_max_age_source: Literal["explicit", "derived", "disabled"] = "disabled"
+    retention_unbounded: bool = False
     last_recovery_at: str | None = None
     last_recovery_file_count: int = 0
     # Segmentierter Store (#919) — nur im segmentierten Modus befüllt (``common``
@@ -382,9 +440,7 @@ def _is_empty_criteria(c: FilterCriteria | None) -> bool:
         return False
     if c.q and c.q.strip():
         return False
-    if c.value_filter and c.value_filter.operator:
-        return False
-    return True
+    return not (c.value_filter and c.value_filter.operator)
 
 
 def _color_must_be_hex(value: str) -> str:
@@ -707,9 +763,10 @@ async def _build_query_from_filter_criteria(
     effective_filter = filter_
     if filter_.hierarchy_nodes:
         resolved_dps = await _resolve_hierarchy_to_datapoints(filter_.hierarchy_nodes, db)
-        if resolved_dps:
-            merged = list({*filter_.datapoints, *resolved_dps})
-            effective_filter = filter_.model_copy(update={"datapoints": merged})
+        merged = _normalize_nonempty([*filter_.datapoints, *resolved_dps])
+        if not merged:
+            return None
+        effective_filter = filter_.model_copy(update={"datapoints": merged})
 
     query = _filter_to_query_v2(effective_filter, time_filter)
 
@@ -942,17 +999,17 @@ def _row_to_filterset(row: Any, *, user_state: tuple[bool, bool, int] | None = N
         is_active, topbar_active, topbar_order = user_state
     else:
         is_active, topbar_active, topbar_order = True, False, 0
-    created_by = row["created_by"] if "created_by" in row.keys() else None
+    created_by = row["created_by"] if "created_by" in row.keys() else None  # noqa: SIM118 -- Row.__contains__ checks values, not keys
     return RingBufferFiltersetOut(
         id=row["id"],
         name=row["name"],
         description=row["description"],
         dsl_version=int(row["dsl_version"]),
         is_active=is_active,
-        color=_normalize_color(row["color"] if "color" in row.keys() else None),
+        color=_normalize_color(row["color"] if "color" in row.keys() else None),  # noqa: SIM118 -- Row.__contains__ checks values, not keys
         topbar_active=topbar_active,
         topbar_order=topbar_order,
-        filter=_decode_filter(row["filter_json"] if "filter_json" in row.keys() else None),
+        filter=_decode_filter(row["filter_json"] if "filter_json" in row.keys() else None),  # noqa: SIM118 -- Row.__contains__ checks values, not keys
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         created_by=created_by,
@@ -1148,7 +1205,7 @@ async def export_ringbuffer_csv(
     # /Nicht-row-lazy-Pfade bleibt der Cursor ungenutzt und aendert nichts.
     export_store_cursor = RowLazyExportCursor()
 
-    spool = tempfile.SpooledTemporaryFile(
+    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 -- closed later via background_tasks, must outlive this function
         mode="w+",
         encoding="utf-8",
         newline="",
@@ -1824,7 +1881,7 @@ async def export_ringbuffer_filtersets_csv(
     if body.include_matched_set_ids:
         fieldnames.append("matched_set_ids")
 
-    spool = tempfile.SpooledTemporaryFile(
+    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 -- closed later via background_tasks, must outlive this function
         mode="w+",
         encoding="utf-8",
         newline="",
@@ -1949,6 +2006,8 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
     budget: int | None = None
     eta: float | None = None
     estimated_copy: int | None = None
+    reclaimable_migrating_manifest_bytes = 0
+    reclaimable_migrating_disk_bytes = 0
     protected = decision in LEGACY_DECISIONS_PROTECTED
     job: dict[str, Any] | None = None
     if rb is not None and is_ringbuffer_enabled():
@@ -1956,6 +2015,8 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
         legacy = await rb.legacy_migration_overview()
         stats = await rb.stats()
         budget = stats.get("max_file_size_bytes")
+        if legacy is not None:
+            reclaimable_migrating_manifest_bytes, reclaimable_migrating_disk_bytes = await rb.reclaimable_migrating_bytes()
         # ``retention_over_budget`` liegt unter ``store.backend_extra`` und die Gesamt-
         # Nutzung als Top-Level ``file_size_bytes`` (#968, Codex :1999) – nicht als
         # Top-Level ``retention_over_budget``/``size_bytes``. Ohne die korrekten Pfade
@@ -1988,7 +2049,11 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
                 # Live-Bestand, senkten ``target_volume``/``estimated_copy`` und ließen eine
                 # Migration zu, die der Backend-Precheck dann ablehnt.
                 total_legacy_bytes = await rb.attached_legacy_total_bytes()
-                live_bytes = max(0, total_size - total_legacy_bytes)
+                # Der nächste ``/migration/start`` verwirft Copy-Phase-Reste VOR seiner
+                # Planung. Dieselben sicher reclaimable ``migrating``-Bytes deshalb hier
+                # ebenfalls nicht als Live-Bestand zählen (#1009). Recoverbare Kopien aus
+                # einem unterbrochenen Commit-Fenster sind ausdrücklich ausgeschlossen.
+                live_bytes = max(0, total_size - total_legacy_bytes - reclaimable_migrating_manifest_bytes)
                 target_volume = max(0, budget - headroom - live_bytes)
                 estimated_copy = min(v2_estimate, target_volume)
             else:
@@ -1996,6 +2061,9 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
     disk_free: int | None = None
     try:
         disk_free = shutil.disk_usage(str(Path(_ringbuffer_disk_path()).parent)).free
+        # Effektiv verfügbarer Platz nach demselben Cleanup, das ``/migration/start``
+        # vor dem Disk-Precheck ausführt (#1009).
+        disk_free += reclaimable_migrating_disk_bytes
     except OSError:
         disk_free = None
     return LegacyMigrationStatus(
@@ -2012,13 +2080,32 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
 
 
 async def _finalize_decision_under_lock(db: Database, rb) -> None:
-    """Serialisiert das state-basierte Nachziehen der terminalen ``migrated``-Entscheidung mit dem
-    Decision-Endpoint (#968, Q10j0). Ohne diese Serialisierung könnte ein Status-Poll die alte
-    non-terminale Entscheidung laden und – nachdem ein paralleler ``discard`` die letzte Quelle
-    entfernt und ``discarded`` persistiert hat – ``migrated`` darüberschreiben. Best-effort:
-    schlägt die Persistenz transient fehl (app-DB locked/voll), darf der Aufrufer NICHT mit 500
-    antworten – der Frontend-Poller stoppt sonst bei Refresh-Fehlern; der nächste Poll retryt."""
+    """Gleicht Decision-State und Legacy-Quelle unter dem Decision-Lock ab.
+
+    Zwei entgegengesetzte Crash-/Kopierzustände werden serialisiert mit Admin-
+    Entscheidungen repariert:
+
+    * terminal + Legacy attached → Quelle wieder ``pending`` und geschützt,
+    * non-terminal + Migration committed + keine Legacy → ``migrated``.
+
+    Der zweite, rein nachziehende Finalizer bleibt best-effort. Beim ersten Pfad
+    darf der Status dagegen keinen scheinbar reparierten Zustand liefern, wenn
+    Schutz oder Persistenz fehlschlagen; der Fehler wird für einen späteren Poll
+    weitergereicht.
+    """
     async with _LEGACY_DECISION_LOCK:
+        decision = await load_legacy_migration_decision(db)
+        if decision in LEGACY_DECISIONS_TERMINAL and await rb.has_attached_legacy():
+            # Schutz zuerst aktivieren: zwischen Decision-Write und Live-Reconfigure
+            # darf die FIFO-Retention die gerade wiederentdeckte Quelle nicht reclaimen.
+            await rb.set_legacy_retention_protected(True)
+            # Kein Rollback bei Fehlschlag: Protection bleibt in jedem Fehlerfall aktiv,
+            # die Legacy-Quelle ist noch angehängt; ein Rollback auf False wäre
+            # datenunsicher, weil die FIFO-Retention die Quelle vor dem nächsten
+            # Poll-Retry zurückgewinnen könnte. Der Fehler propagiert unverändert;
+            # der nächste Poll wiederholt.
+            await persist_legacy_migration_decision(db, LEGACY_DECISION_PENDING)
+            return
         try:
             await finalize_committed_migration_decision(db, rb)
         except Exception:
@@ -2061,10 +2148,12 @@ async def legacy_migration_decision(
 
 
 async def _legacy_migration_decision_locked(body: LegacyMigrationDecisionIn, db: Database) -> LegacyMigrationStatus:
+    rb = get_optional_ringbuffer()
+    if rb is not None:
+        await repair_pending_keep_migration_decision(db, rb)
     current = await load_legacy_migration_decision(db)
     if current in LEGACY_DECISIONS_TERMINAL:
         raise HTTPException(status.HTTP_409_CONFLICT, f"legacy migration already finalized ({current})")
-    rb = get_optional_ringbuffer()
     # Keine Entscheidung, solange ein Migrationsjob laeuft (#968, Codex :2047/:2078): ein
     # ``discard`` waehrend ``starting``/``copying``/``committing`` koennte die Legacy-
     # Quelle entfernen, waehrend die Copy-Task noch laeuft und danach ``migrated``
@@ -2158,40 +2247,30 @@ async def legacy_migration_start(
 async def _legacy_migration_start_locked(db: Database) -> LegacyMigrationStatus:
     from obs.ringbuffer.store.offline_migration import OfflineMigrationError
 
-    current = await load_legacy_migration_decision(db)
-    if current in LEGACY_DECISIONS_TERMINAL:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"legacy migration already finalized ({current})")
     rb = get_optional_ringbuffer()
     if rb is None or not is_ringbuffer_enabled():
         raise HTTPException(status.HTTP_409_CONFLICT, "ringbuffer is not running")
+    await repair_pending_keep_migration_decision(db, rb)
+    current = await load_legacy_migration_decision(db)
+    if current in LEGACY_DECISIONS_TERMINAL:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"legacy migration already finalized ({current})")
 
     async def _persist_migrated() -> None:
-        # Nur terminal ``migrated``, wenn KEINE Legacy-Quelle mehr attached ist (#968,
-        # Codex :441/:2142): bei mehreren attachten Legacy-DBs behandelt EIN Lauf nur die
-        # erste Quelle. Würde die Entscheidung sofort terminal, versteckte sie den Assistenten
-        # und weitere ``/migration/start``/``/decision`` würden als finalisiert abgelehnt –
-        # die restliche Alt-Historie könnte dann nur von der Retention verworfen werden. Der
-        # Check ist schema-basiert (``has_attached_legacy``), sodass auch ein quarantäniertes
-        # (nicht migrierbares, nur verwerfbares) Legacy den Abschluss verhindert – der Admin
-        # muss es über den weiterhin sichtbaren Assistenten discarden können.
-        if await rb.has_attached_legacy():
-            # Verbleibende Quelle(n) nach einem Multi-Quellen-Lauf: eine PROTECTED non-terminale
-            # Entscheidung persistieren (#968, Codex :2184), analog zum partial-discard-Pfad. War die
-            # Start-Entscheidung ``keep`` (Schutz aus der Persistenz), bliebe die verbleibende Quelle
-            # nach einem Restart/Status-Reload ungeschützt (``legacy_retention_protected = decision in
-            # LEGACY_DECISIONS_PROTECTED``) und die FIFO-Retention könnte sie zurückgewinnen, bevor
-            # der Admin über sie entscheidet. ``skipped`` ist protected + non-terminal. Dieser
-            # keep→skipped-Übergang läuft POST-Commit (crash-sicher: erst nach dem durablen Commit
-            # wird die Decision berührt). Schlägt er transient fehl (app-DB locked/voll), bleibt es bei
-            # ``keep`` – der Retention-Schutz der verbleibenden Quelle wird bis zum Restart weiterhin
-            # in-memory gehalten; der durable Repair dafür ist als Follow-up ausgegliedert (#1010, Q10kE).
-            if await load_legacy_migration_decision(db) == LEGACY_DECISION_KEEP:
-                await persist_legacy_migration_decision(db, LEGACY_DECISION_SKIPPED)
-            return
-        await persist_legacy_migration_decision(db, LEGACY_DECISION_MIGRATED)
+        async with _LEGACY_DECISION_LOCK:
+            # Nur terminal ``migrated``, wenn KEINE Legacy-Quelle mehr attached ist
+            # (#968, Codex :441/:2142). Bei einem partial keep-Commit zieht der
+            # atomare Store-Beleg stattdessen ``skipped`` + Schutz nach und wird erst
+            # nach erfolgreicher App-DB-Persistenz quittiert (#1013).
+            if await rb.has_attached_legacy():
+                await repair_pending_keep_migration_decision(db, rb)
+                return
+            await persist_legacy_migration_decision(db, LEGACY_DECISION_MIGRATED)
 
     try:
-        await rb.start_legacy_migration(on_success=_persist_migrated)
+        await rb.start_legacy_migration(
+            on_success=_persist_migrated,
+            started_from_keep=current == LEGACY_DECISION_KEEP,
+        )
     except OfflineMigrationError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return await _legacy_migration_status(db)
@@ -2214,6 +2293,14 @@ async def ringbuffer_stats(
         segment_max_bytes=persisted.get("segment_max_bytes"),
         segment_max_rows=persisted.get("segment_max_rows"),
         segment_max_age=persisted.get("segment_max_age"),
+        **_segment_contract_stats(
+            max_entries=stats["max_entries"],
+            max_file_size_bytes=stats["max_file_size_bytes"],
+            max_age=stats["max_age"],
+            segment_max_bytes=persisted.get("segment_max_bytes"),
+            segment_max_rows=persisted.get("segment_max_rows"),
+            segment_max_age=persisted.get("segment_max_age"),
+        ),
         **stats,
     )
 
@@ -2296,6 +2383,11 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
     resolved_segment_max_bytes = body.segment_max_bytes if "segment_max_bytes" in body.model_fields_set else persisted.get("segment_max_bytes")
     resolved_segment_max_rows = body.segment_max_rows if "segment_max_rows" in body.model_fields_set else persisted.get("segment_max_rows")
     resolved_segment_max_age = body.segment_max_age if "segment_max_age" in body.model_fields_set else persisted.get("segment_max_age")
+    effective_segment_max_bytes = (
+        resolved_segment_max_bytes if resolved_segment_max_bytes is not None else derive_segment_max_bytes(resolved_max_file_size)
+    )
+    effective_segment_max_rows = resolved_segment_max_rows if resolved_segment_max_rows is not None else derive_segment_max_rows(resolved_max_entries)
+    effective_segment_max_age = resolved_segment_max_age if resolved_segment_max_age is not None else derive_segment_max_age(resolved_max_age)
 
     # Technische Grenzen NUR für EXPLIZIT gesetzte Segment-Werte durchsetzen (#919):
     # 4 MiB…1 GiB / 300 s…30 d / >= 1000. Nicht gesetzte Felder (Auto-Ableitung)
@@ -2332,12 +2424,17 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
     # Legacy-Store mit kurzer ``max_age`` behalten will, darf hier kein 422 gegen
     # den (ungenutzten) Default-``segment_max_age`` bekommen.
     if resolved_segmented:
+        if effective_segment_max_bytes is None and effective_segment_max_rows is None and effective_segment_max_age is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "At least one effective segment rotation limit is required; configure a segment limit or a matching total retention limit",
+            )
         try:
             validate_store_config(
                 SegmentConfig(
-                    segment_max_bytes=resolved_segment_max_bytes,
-                    segment_max_rows=resolved_segment_max_rows,
-                    segment_max_age=resolved_segment_max_age,
+                    segment_max_bytes=effective_segment_max_bytes,
+                    segment_max_rows=effective_segment_max_rows,
+                    segment_max_age=effective_segment_max_age,
                 ),
                 StoreRetentionConfig(
                     max_file_size_bytes=resolved_max_file_size,
@@ -2426,8 +2523,8 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
             "max_age": rb._max_age,
             "segmented": rb.segmented,
             "segment_max_bytes": rb._segment_max_bytes_config,
-            "segment_max_rows": rb._segment_max_rows,
-            "segment_max_age": rb._segment_max_age,
+            "segment_max_rows": rb._segment_max_rows_config,
+            "segment_max_age": rb._segment_max_age_config,
             # Retention-Schutz des Legacy-Segments mitsichern (#968, Codex :2443),
             # damit ein Rollback nach fehlgeschlagenem Rebuild den Schutz nicht verliert.
             "legacy_retention_protected": rb._legacy_retention_protected,
@@ -2467,7 +2564,17 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
             # zur Laufzeit aktiviert wird, die Entscheidung ``None`` (Banner versteckt) und
             # die ersten non-legacy-Daten könnten die FIFO-Retention das Legacy-Segment
             # zurückgewinnen lassen, bevor der Assistent den pending/skipped-Schutz greift.
-            decision = await ensure_legacy_migration_decision(db, legacy_db_path=_ringbuffer_disk_path() if resolved_segmented else None)
+            try:
+                decision = await ensure_legacy_migration_decision(
+                    db,
+                    legacy_db_path=_ringbuffer_disk_path() if resolved_segmented else None,
+                )
+            except Exception:
+                # Ein transient gesperrtes app-DB-Setting darf den gesunden
+                # Runtime-Buffer nicht verhindern. Konservativ geschützt starten;
+                # der Finalizer unten und spätere Status-Polls wiederholen den Write.
+                logger.exception("RingBuffer: Runtime-Abgleich der Legacy-Entscheidung fehlgeschlagen (Buffer startet retention-geschützt)")
+                decision = LEGACY_DECISION_PENDING
             rb = await init_ringbuffer(
                 storage="file",
                 max_entries=resolved_max_entries,
@@ -2498,7 +2605,13 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
             # behandelt), darf das den bereits laufenden Buffer NICHT abbauen (created_rb/
             # subscribed_new sind gesetzt, der except-Cleanup risse ihn sonst nieder). Der nächste
             # Status-Poll zieht die Entscheidung nach.
-            await _finalize_decision_under_lock(db, rb)
+            try:
+                await _finalize_decision_under_lock(db, rb)
+            except Exception:
+                logger.exception(
+                    "RingBuffer: Runtime-Finalisierung der Migrations-Entscheidung fehlgeschlagen "
+                    "(Buffer bleibt aktiv, Retry beim nächsten Status-Poll)"
+                )
 
         reconfigure_kwargs: dict[str, Any] = {}
         if "max_entries" in body.model_fields_set:
@@ -2615,5 +2728,13 @@ async def _configure_ringbuffer_locked(body: RingBufferConfig, db: Database) -> 
         segment_max_bytes=resolved_segment_max_bytes,
         segment_max_rows=resolved_segment_max_rows,
         segment_max_age=resolved_segment_max_age,
+        **_segment_contract_stats(
+            max_entries=stats["max_entries"],
+            max_file_size_bytes=stats["max_file_size_bytes"],
+            max_age=stats["max_age"],
+            segment_max_bytes=resolved_segment_max_bytes,
+            segment_max_rows=resolved_segment_max_rows,
+            segment_max_age=resolved_segment_max_age,
+        ),
         **stats,
     )

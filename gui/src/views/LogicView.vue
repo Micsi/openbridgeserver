@@ -27,6 +27,31 @@
         :title="$t('logic.debugMode')" data-testid="btn-debug">
         &#128270; {{ $t('logic.debugBtn') }}
       </button>
+      <div v-if="auth.isAdmin && activeGraphId" class="flex items-center gap-1">
+        <button
+          type="button"
+          :class="['btn-secondary btn-sm', snapToGrid ? 'text-blue-400 ring-1 ring-blue-400/50' : 'text-slate-400']"
+          :title="$t('logic.snapToGridTitle')"
+          data-testid="btn-snap-to-grid"
+          @click="snapToGrid = !snapToGrid"
+        >
+          # {{ $t('logic.snapToGrid') }}
+        </button>
+        <label v-if="snapToGrid" class="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+          <span class="sr-only">{{ $t('logic.gridSize') }}</span>
+          <input
+            :value="snapGridSize"
+            type="number"
+            min="5"
+            max="100"
+            step="5"
+            class="input w-16 px-2 py-1 text-xs"
+            data-testid="input-snap-grid-size"
+            @change="updateSnapGridSize"
+          />
+          px
+        </label>
+      </div>
       <button v-if="auth.isAdmin && activeGraphId" @click="doToggleEnabled"
         :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-orange-400 ring-1 ring-orange-400/50']"
         :title="activeGraph?.enabled ? $t('logic.toggleActiveTitle') : $t('logic.toggleDisabledTitle')"
@@ -85,12 +110,14 @@
           :nodes-draggable="auth.isAdmin"
           :nodes-connectable="auth.isAdmin"
           :edges-updatable="auth.isAdmin"
+          :snap-to-grid="snapToGrid"
+          :snap-grid="snapGrid"
           fit-view-on-init
           class="logic-canvas"
           @connect="onConnect"
           @node-click="onNodeClick"
         >
-          <Background :pattern-color="bgPatternColor" :gap="20" />
+          <Background :pattern-color="bgPatternColor" :gap="snapGridSize" :offset="0.5" />
           <Controls class="logic-controls" />
           <MiniMap
             ref="minimapRef"
@@ -176,6 +203,7 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
+import '@vue-flow/node-resizer/dist/style.css'
 
 import { useLogicStore }    from '@/stores/logic'
 import { useSettingsStore } from '@/stores/settings'
@@ -192,6 +220,7 @@ import GenericNode      from '@/components/logic/nodes/GenericNode.vue'
 import DatapointNode    from '@/components/logic/nodes/DatapointNode.vue'
 import PythonScriptNode from '@/components/logic/nodes/PythonScriptNode.vue'
 import MissingNode      from '@/components/logic/nodes/MissingNode.vue'
+import CommentNode      from '@/components/logic/nodes/CommentNode.vue'
 
 // ── Store ──────────────────────────────────────────────────────────────────
 const { t }    = useI18n()
@@ -209,23 +238,56 @@ const bgPatternColor = computed(() => {
 const nodes = ref([])
 const edges = ref([])
 
+// ── Grid snapping ─────────────────────────────────────────────────────────
+const SNAP_ENABLED_KEY = 'obs-logic-snap-to-grid'
+const SNAP_SIZE_KEY = 'obs-logic-snap-grid-size'
+const DEFAULT_SNAP_GRID_SIZE = 20
+const MIN_SNAP_GRID_SIZE = 5
+const MAX_SNAP_GRID_SIZE = 100
+const savedSnapGridSize = Number(localStorage.getItem(SNAP_SIZE_KEY))
+const snapToGrid = ref(localStorage.getItem(SNAP_ENABLED_KEY) === '1')
+const snapGridSize = ref(
+  savedSnapGridSize >= MIN_SNAP_GRID_SIZE && savedSnapGridSize <= MAX_SNAP_GRID_SIZE
+    ? savedSnapGridSize
+    : DEFAULT_SNAP_GRID_SIZE
+)
+const snapGrid = computed(() => [snapGridSize.value, snapGridSize.value])
+
+watch(snapToGrid, enabled => {
+  localStorage.setItem(SNAP_ENABLED_KEY, enabled ? '1' : '0')
+})
+
+function updateSnapGridSize(event) {
+  const requestedSize = Number(event.target.value)
+  snapGridSize.value = Math.min(
+    MAX_SNAP_GRID_SIZE,
+    Math.max(MIN_SNAP_GRID_SIZE, Number.isFinite(requestedSize) ? requestedSize : DEFAULT_SNAP_GRID_SIZE)
+  )
+  event.target.value = String(snapGridSize.value)
+  localStorage.setItem(SNAP_SIZE_KEY, String(snapGridSize.value))
+}
+
 // ── Node type → component mapping ─────────────────────────────────────────
 const _generic      = markRaw(GenericNode)
 const _datapoint    = markRaw(DatapointNode)
 const _pythonScript = markRaw(PythonScriptNode)
 const _missing      = markRaw(MissingNode)
+const _comment      = markRaw(CommentNode)
 
 const nodeTypeComponents = {
   missing_node: _missing,
   // Constant
   const_value: _generic,
+  // Comment (issue #1043)
+  comment: _comment,
   // Logic
   and: _generic, or: _generic, not: _generic, xor: _generic, gate: _generic, memory: _generic,
   compare: _generic, hysteresis: _generic, decision: _generic, value_mapping: _generic,
   // Math
   math_formula: _generic, math_map: _generic,
   // Timer
-  timer_delay: _generic, timer_pulse: _generic, timer_cron: _generic,
+  timer_delay: _generic, timer_pulse: _generic, timer_cron: _generic, datetime: _generic,
+  value_sequence: _generic,
   // AI
   ai_logic: _generic,
   // Astro
@@ -238,7 +300,7 @@ const nodeTypeComponents = {
   // String
   string_concat: _generic,
   // Notification
-  notify_pushover: _generic, notify_sms: _generic, message_archive: _generic, wake_on_lan: _generic, host_check: _generic,
+  notify_message: _generic, notify_pushover: _generic, notify_sms: _generic, message_archive: _generic, wake_on_lan: _generic, host_check: _generic,
   // Integration
   api_client: _generic, json_extractor: _generic, xml_extractor: _generic, substring_extractor: _generic,
   ical: _generic,

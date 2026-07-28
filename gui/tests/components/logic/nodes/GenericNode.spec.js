@@ -134,6 +134,20 @@ describe('GenericNode — summary', () => {
     expect(w.find('.gn-summary').text()).toContain('5')
   })
 
+  it('shows value-sequence step summary and its control handles', async () => {
+    const w = await mountGN('value_sequence', { run_mode: 'repeat_count', steps: [{}, {}] })
+    await flushPromises()
+    expect(w.find('.gn-summary').text()).toContain('2')
+    expect(w.findAll('.handle').filter(h => h.attributes('data-type') === 'target')).toHaveLength(2)
+    expect(w.findAll('.handle').filter(h => h.attributes('data-type') === 'source')).toHaveLength(0)
+  })
+
+  it('falls back to the configured value-sequence mode when it is not translated', async () => {
+    const w = await mountGN('value_sequence', { run_mode: 'custom', steps: JSON.stringify([{}]) })
+    await flushPromises()
+    expect(w.find('.gn-summary').text()).toContain('custom')
+  })
+
   it('shows decision rule count summary', async () => {
     const w = await mountGN('decision', {
       conditions: JSON.stringify([
@@ -184,6 +198,18 @@ describe('GenericNode — summary', () => {
     const w = await mountGN('host_check', {})
     await flushPromises()
     expect(w.find('.gn-summary').text()).toBe('—')
+  })
+
+  it('shows datetime outputs and configured or default format summaries', async () => {
+    const configured = await mountGN('datetime', { custom_format: 'yyyy/MM/dd' })
+    await flushPromises()
+    expect(configured.find('.gn-title').text()).toBe('Datum/Zeit')
+    expect(configured.find('.gn-summary').text()).toBe('yyyy/MM/dd')
+    expect(configured.findAll('.handle').map(handle => handle.attributes('data-id'))).toEqual(['date', 'time', 'custom'])
+
+    const defaults = await mountGN('datetime')
+    await flushPromises()
+    expect(defaults.find('.gn-summary').text()).toBe('EEEE, MMMM d, yyyy HH:mm:ss')
   })
 })
 

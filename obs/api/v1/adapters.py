@@ -9,6 +9,8 @@ Instanz-Routen (NEU):
   POST   /api/v1/adapters/instances/{id}/test      test connection (ephemeral)
   POST   /api/v1/adapters/instances/{id}/restart   stop + reconnect
   GET    /api/v1/adapters/instances/{id}/mqtt/browse  MQTT topic browser (scan broker)
+  GET    /api/v1/adapters/instances/{id}/onewire/browse    1-Wire sensor/property browser (scan owserver)
+  PATCH  /api/v1/adapters/instances/{id}/onewire/aliases   persist a ROM-ID → label alias
 
 Typ-Routen (unverändert):
   GET    /api/v1/adapters                          list registered types
@@ -22,12 +24,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from obs.adapters import registry as adapter_registry
 from obs.adapters.knx.dpt_registry import DPTRegistry
@@ -35,6 +38,8 @@ from obs.api.auth import get_admin_user, get_current_user
 from obs.api.v1.bindings import _json_config, _validate_adapter_binding
 from obs.api.v1.redaction import REDACTED
 from obs.db.database import Database, get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["adapters"])
 
@@ -130,6 +135,18 @@ class IoBrokerStateOut(BaseModel):
     write: bool = False
     value: Any = None
     unit: str | None = None
+
+
+class OneWireSensorOut(BaseModel):
+    rom_id: str
+    family: str
+    properties: list[str]
+    alias: str | None = None
+
+
+class OneWireAliasRequest(BaseModel):
+    rom_id: str
+    label: str
 
 
 class IoBrokerImportRequest(BaseModel):
@@ -445,7 +462,8 @@ async def create_instance(
         try:
             await adapter_registry.start_instance(instance_id, get_event_bus(), db)
         except Exception:
-            pass  # Verbindungsfehler → Instanz existiert, aber running=False
+            # Verbindungsfehler → Instanz existiert, aber running=False
+            logger.exception("Start der neu angelegten Adapter-Instanz %s fehlgeschlagen", instance_id)
 
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (instance_id,))
     instance = adapter_registry.get_instance_by_id(instance_id)
@@ -465,6 +483,17 @@ async def get_instance(
     return _instance_out(row, instance)
 
 
+# Serializes the read-modify-write of a ONEWIRE instance's config JSON per
+# instance_id, shared between update_instance() and onewire_set_alias(). Without
+# this, an alias save (binding-form sensor scan) racing the general instance
+# settings form's save both read the same pre-update config, and whichever
+# UPDATE commits last silently overwrites the other's change — e.g. the
+# settings form's own (already-fetched, now stale) copy of `aliases` clobbering
+# an alias just persisted by onewire_set_alias(), or two overlapping alias
+# saves each merging in only their own rom_id.
+_ONEWIRE_CONFIG_LOCKS: dict[str, asyncio.Lock] = {}
+
+
 @router.patch("/instances/{instance_id}", response_model=AdapterInstanceOut)
 async def update_instance(
     instance_id: uuid.UUID,
@@ -472,54 +501,68 @@ async def update_instance(
     _user: str = Depends(get_admin_user),
     db: Database = Depends(lambda: get_db()),
 ) -> AdapterInstanceOut:
-    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
+    lock = _ONEWIRE_CONFIG_LOCKS.setdefault(str(instance_id), asyncio.Lock())
+    async with lock:
+        row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
 
-    # Neue Werte bestimmen
-    name_new = body.name if body.name is not None else row["name"]
-    enabled_new = body.enabled if body.enabled is not None else bool(row["enabled"])
-    config_raw = row["config"]
-    if body.config is not None:
-        config_new = body.config
-        if row["adapter_type"] == "MESSAGE":
-            stored_config = json.loads(config_raw) if config_raw else {}
-            try:
-                config_new = _preserve_redacted_message_config_secrets(stored_config, body.config)
-                _reject_unresolved_redacted_message_config(config_new)
-            except ValueError as exc:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
-        cls = adapter_registry.get_class(row["adapter_type"])
-        if cls:
-            try:
-                cls.config_schema(**config_new)
-            except Exception as exc:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    f"Config-Validierungsfehler: {exc}",
-                ) from exc
-        if row["adapter_type"] == "MESSAGE":
-            await _validate_message_config_preserves_binding_targets(str(instance_id), config_new, db)
-        config_raw = json.dumps(config_new)
+        # Neue Werte bestimmen
+        name_new = body.name if body.name is not None else row["name"]
+        enabled_new = body.enabled if body.enabled is not None else bool(row["enabled"])
+        config_raw = row["config"]
+        if body.config is not None:
+            config_new = body.config
+            if row["adapter_type"] == "MESSAGE":
+                stored_config = json.loads(config_raw) if config_raw else {}
+                try:
+                    config_new = _preserve_redacted_message_config_secrets(stored_config, body.config)
+                    _reject_unresolved_redacted_message_config(config_new)
+                except ValueError as exc:
+                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+            if row["adapter_type"] == "ONEWIRE":
+                # `aliases` is maintained exclusively by onewire_set_alias() (the
+                # binding-form sensor scan), never by this form — always keep the
+                # currently-persisted value instead of the client's copy (which
+                # may be stale, e.g. an alias was saved elsewhere after this form
+                # was loaded), sharing _ONEWIRE_CONFIG_LOCKS so this can't race a
+                # concurrent onewire_set_alias() either.
+                stored_config = json.loads(config_raw) if config_raw else {}
+                if "aliases" in stored_config:
+                    config_new["aliases"] = stored_config["aliases"]
+                else:
+                    config_new.pop("aliases", None)
+            cls = adapter_registry.get_class(row["adapter_type"])
+            if cls:
+                try:
+                    cls.config_schema(**config_new)
+                except Exception as exc:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        f"Config-Validierungsfehler: {exc}",
+                    ) from exc
+            if row["adapter_type"] == "MESSAGE":
+                await _validate_message_config_preserves_binding_targets(str(instance_id), config_new, db)
+            config_raw = json.dumps(config_new)
 
-    now = datetime.now(UTC).isoformat()
-    await db.execute_and_commit(
-        """UPDATE adapter_instances
-           SET name=?, config=?, enabled=?, updated_at=?
-           WHERE id=?""",
-        (name_new, config_raw, int(enabled_new), now, str(instance_id)),
-    )
+        now = datetime.now(UTC).isoformat()
+        await db.execute_and_commit(
+            """UPDATE adapter_instances
+               SET name=?, config=?, enabled=?, updated_at=?
+               WHERE id=?""",
+            (name_new, config_raw, int(enabled_new), now, str(instance_id)),
+        )
 
-    # Hot-reload: Instanz neu starten
-    from obs.core.event_bus import get_event_bus
+        # Hot-reload: Instanz neu starten
+        from obs.core.event_bus import get_event_bus
 
-    if enabled_new:
-        await adapter_registry.restart_instance(str(instance_id), get_event_bus(), db)
-    else:
-        await adapter_registry.stop_instance(str(instance_id))
+        if enabled_new:
+            await adapter_registry.restart_instance(str(instance_id), get_event_bus(), db)
+        else:
+            await adapter_registry.stop_instance(str(instance_id))
 
-    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
-    instance = adapter_registry.get_instance_by_id(str(instance_id))
+        row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
+        instance = adapter_registry.get_instance_by_id(str(instance_id))
     return _instance_out(row, instance)
 
 
@@ -569,6 +612,7 @@ async def test_instance(
     try:
         cls.config_schema(**config_dict)
     except Exception as exc:
+        logger.exception("Adapter config validation failed for instance %s", instance_id)
         return TestResult(success=False, detail=f"Config-Fehler: {exc}", detail_code="configError", detail_params={"error": str(exc)})
 
     from obs.core.event_bus import EventBus
@@ -593,6 +637,7 @@ async def test_instance(
             )
         return TestResult(success=False, detail="Verbindungsversuch fehlgeschlagen", detail_code="connectFailed")
     except Exception as exc:
+        logger.exception("Verbindungstest für Instanz %s fehlgeschlagen", instance_id)
         return TestResult(success=False, detail=str(exc))
 
 
@@ -743,7 +788,7 @@ async def list_instance_holidays(
     if row["adapter_type"] != "ZEITSCHALTUHR":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nur für Zeitschaltuhr-Instanzen verfügbar")
 
-    target_year = year if year > 0 else _dt.now().year
+    target_year = year if year > 0 else _dt.now().year  # noqa: DTZ005 -- default "current year" convenience only; explicit `year` always overrides
 
     instance = adapter_registry.get_instance_by_id(str(instance_id))
     if instance is not None and hasattr(instance, "get_holidays_for_year"):
@@ -828,7 +873,7 @@ async def mqtt_browse_topics(
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"MQTT-Verbindung fehlgeschlagen: {exc}",
-        )
+        ) from exc
 
     return sorted(topics)
 
@@ -889,7 +934,7 @@ async def mqtt_sample_payload(
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"MQTT-Verbindung fehlgeschlagen: {exc}",
-        )
+        ) from exc
 
     raise HTTPException(
         status.HTTP_404_NOT_FOUND,
@@ -925,6 +970,92 @@ async def iobroker_browse_states(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"ioBroker-State-Suche fehlgeschlagen: {exc}",
         ) from exc
+
+
+@router.get("/instances/{instance_id}/onewire/browse", response_model=list[OneWireSensorOut])
+async def onewire_browse_sensors(
+    instance_id: uuid.UUID,
+    _user: str = Depends(get_current_user),
+    db: Database = Depends(lambda: get_db()),
+) -> list[OneWireSensorOut]:
+    """Live-Scan des owserver-Gerätebaums für die Binding-Sensor/Property-Auswahl (issue #6)."""
+    row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
+    if row["adapter_type"] != "ONEWIRE":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nur für ONEWIRE-Instanzen verfügbar")
+
+    instance = adapter_registry.get_instance_by_id(str(instance_id))
+    if instance is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "1-Wire-Instanz ist nicht verbunden")
+    if not hasattr(instance, "browse_sensors"):
+        raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "1-Wire-Sensor-Browser nicht verfügbar")
+    if not getattr(instance, "has_proxy", instance.connected):
+        # No proxy was ever obtained (e.g. owserver was unreachable at startup,
+        # or pyownet isn't installed) — browse_sensors() would otherwise just
+        # return [], which looks identical to "connected, zero devices" instead
+        # of surfacing the actual connectivity problem.
+        #
+        # Deliberately not `instance.connected`: that flag can go stale (e.g. a
+        # DEST-only binding's write failed and there's no poll loop to notice
+        # owserver coming back since), which would permanently 503 an instance
+        # that could otherwise scan successfully right now. `has_proxy` only
+        # reflects whether connect() ever produced a live proxy object; a
+        # scan attempt with a stale/broken proxy still fails via the except
+        # block below.
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "1-Wire-Instanz ist nicht verbunden")
+
+    try:
+        return [OneWireSensorOut(**item) for item in await instance.browse_sensors()]
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"1-Wire-Sensor-Scan fehlgeschlagen: {exc}",
+        ) from exc
+
+
+@router.patch("/instances/{instance_id}/onewire/aliases", response_model=OneWireAliasRequest)
+async def onewire_set_alias(
+    instance_id: uuid.UUID,
+    body: OneWireAliasRequest,
+    _user: str = Depends(get_admin_user),
+    db: Database = Depends(lambda: get_db()),
+) -> OneWireAliasRequest:
+    """Persistiert einen ROM-ID → Klartext-Label Alias, gepflegt aus der Binding-Scan-UI (issue #6)."""
+    lock = _ONEWIRE_CONFIG_LOCKS.setdefault(str(instance_id), asyncio.Lock())
+    async with lock:
+        row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
+        if row["adapter_type"] != "ONEWIRE":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nur für ONEWIRE-Instanzen verfügbar")
+
+        config = json.loads(row["config"]) if row["config"] else {}
+        aliases = dict(config.get("aliases") or {})
+        aliases[body.rom_id] = body.label
+        config["aliases"] = aliases
+
+        cls = adapter_registry.get_class(row["adapter_type"])
+        if cls:
+            try:
+                cls.config_schema(**config)
+            except Exception as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"Config-Validierungsfehler: {exc}",
+                ) from exc
+
+        now = datetime.now(UTC).isoformat()
+        await db.execute_and_commit(
+            "UPDATE adapter_instances SET config=?, updated_at=? WHERE id=?",
+            (json.dumps(config), now, str(instance_id)),
+        )
+
+        from obs.core.event_bus import get_event_bus
+
+        await adapter_registry.restart_instance(str(instance_id), get_event_bus(), db)
+
+    return body
 
 
 def _iobroker_obs_type(state_type: str | None) -> tuple[str, str | None]:
@@ -996,7 +1127,7 @@ async def _iobroker_candidates(
             cfg = json.loads(row["config"] or "{}")
             if cfg.get("state_id"):
                 existing_states.add(str(cfg["state_id"]))
-        except Exception:
+        except (json.JSONDecodeError, AttributeError):
             pass
 
     result: list[IoBrokerImportItem] = []
@@ -1091,6 +1222,7 @@ async def iobroker_import_states(
             )
             result.created_bindings += 1
         except Exception as exc:
+            logger.exception("ioBroker-Import fehlgeschlagen für State %s", item.state_id)
             result.errors.append(f"{item.state_id}: {exc}")
     return result
 
@@ -1114,8 +1246,8 @@ async def anwesenheit_health(
     db: Database = Depends(lambda: get_db()),
 ) -> AnwesenheitHealthResult:
     """Check whether history data is available for the configured offset window."""
-    from datetime import timedelta, timezone
     from datetime import datetime as _dt
+    from datetime import timedelta
 
     row = await db.fetchone("SELECT * FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
@@ -1130,7 +1262,7 @@ async def anwesenheit_health(
 
     try:
         cfg = AnwesenheitssimulationConfig(**config_dict)
-    except Exception as exc:
+    except (ValidationError, TypeError) as exc:
         return AnwesenheitHealthResult(healthy=False, message=f"Config-Fehler: {exc}")
 
     try:
@@ -1155,7 +1287,7 @@ async def anwesenheit_health(
             bindings_with_data=0,
         )
 
-    now = _dt.now(tz=timezone.utc)
+    now = _dt.now(tz=UTC)
     delta = timedelta(days=cfg.offset_days)
     hist_from = now - delta - timedelta(hours=12)
     hist_to = now - delta + timedelta(hours=12)
@@ -1168,7 +1300,7 @@ async def anwesenheit_health(
             if records:
                 with_data += 1
         except Exception:
-            pass
+            logger.exception("Anwesenheit-Health-Check: Historienabfrage für Binding %s fehlgeschlagen", b_row["id"])
 
     healthy = with_data > 0
     if healthy:
@@ -1303,6 +1435,7 @@ async def anwesenheit_sync_bindings(
             )
             result.created += 1
         except Exception as exc:
+            logger.exception("Anwesenheit-Sync: Anlegen der Bindung für DataPoint %s fehlgeschlagen", dp_id_str)
             result.errors.append(f"{dp_id_str}: {exc}")
 
     # Remove bindings for deselected DataPoints
@@ -1313,6 +1446,7 @@ async def anwesenheit_sync_bindings(
             await delete_binding(dp_uuid, binding_uuid, _user, db)
             result.removed += 1
         except Exception as exc:
+            logger.exception("Anwesenheit-Sync: Entfernen der Bindung für DataPoint %s fehlgeschlagen", dp_id_str)
             result.errors.append(f"{dp_id_str}: {exc}")
 
     # Reload adapter bindings if the instance is running
@@ -1321,7 +1455,8 @@ async def anwesenheit_sync_bindings(
         if inst is not None:
             await adapter_registry.reload_instance_bindings(instance_id, db)
     except Exception:
-        pass  # non-critical — bindings take effect on next restart
+        # non-critical — bindings take effect on next restart
+        logger.exception("Anwesenheit-Sync: Reload der Bindings für Instanz %s fehlgeschlagen", instance_id)
 
     return result
 
@@ -1361,9 +1496,10 @@ async def snmp_walk(
 
     instance = adapter_registry.get_instance_by_id(str(instance_id))
     if instance is None or not instance.connected:
+        import json as _json
+
         from obs.adapters.snmp.adapter import SnmpAdapter
         from obs.core.event_bus import EventBus
-        import json as _json
 
         raw_config = row["config"] or "{}"
         config_dict = _json.loads(raw_config) if isinstance(raw_config, str) else raw_config
@@ -1464,7 +1600,7 @@ async def test_adapter(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Adapter '{adapter_type}' nicht registriert")
     try:
         cls.config_schema(**body.config)
-    except Exception as exc:
+    except ValidationError as exc:
         return TestResult(
             success=False,
             detail=f"Config-Validierungsfehler: {exc}",
@@ -1494,6 +1630,7 @@ async def test_adapter(
             )
         return TestResult(success=False, detail="Verbindungsversuch fehlgeschlagen", detail_code="connectFailed")
     except Exception as exc:
+        logger.exception("Verbindungstest für Adapter-Typ %s fehlgeschlagen", adapter_type)
         return TestResult(success=False, detail=str(exc))
 
 

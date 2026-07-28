@@ -640,7 +640,7 @@ async def test_multi_query_rejects_too_many_set_ids():
 async def test_multi_query_empty_set_ids_invokes_underlying_query(monkeypatch):
     captured: list[rb_api.RingBufferQueryV2] = []
 
-    async def _fake_query(query, *, limit_override=None, offset_override=None):  # noqa: ARG001
+    async def _fake_query(query, *, limit_override=None, offset_override=None):
         captured.append(query)
         return []
 
@@ -701,6 +701,76 @@ async def test_runtime_enable_with_legacy_sets_pending_protection(tmp_path, monk
         rb = rb_api.get_optional_ringbuffer()
         assert rb is not None
         assert rb._legacy_retention_protected is True, "Legacy muss beim Runtime-Enable retention-geschützt starten"
+    finally:
+        rb = rb_api.get_optional_ringbuffer()
+        if rb is not None:
+            await rb.stop()
+        reset_ringbuffer()
+        await db.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_runtime_enable_keeps_buffer_when_stale_marker_repair_fails(tmp_path, monkeypatch):
+    """Runtime init stays online and protected while a stale terminal marker is retried."""
+    from obs.ringbuffer.persisted_config import (
+        LEGACY_DECISION_MIGRATED,
+        load_legacy_migration_decision,
+        persist_legacy_migration_decision,
+    )
+    from obs.ringbuffer.ringbuffer import RingBuffer as _RB
+
+    db = Database(":memory:")
+    await db.connect()
+    await persist_legacy_migration_decision(db, LEGACY_DECISION_MIGRATED)
+    rb_path = tmp_path / "obs_ringbuffer.db"
+    leg = _RB(storage="disk", disk_path=str(rb_path), max_entries=None)
+    await leg.start()
+    await leg.record(
+        ts="2026-01-01T00:00:00.000Z",
+        datapoint_id="dp-leg",
+        topic="dp/dp-leg/value",
+        old_value=None,
+        new_value=1,
+        source_adapter="api",
+        quality="good",
+    )
+    await leg.stop()
+
+    reset_ringbuffer()
+    rb_api.set_ringbuffer_enabled(False)
+    subscribed: list[object] = []
+    unsubscribed: list[object] = []
+    monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(rb_path))
+    monkeypatch.setattr(rb_api, "_subscribe_ringbuffer", lambda rb: subscribed.append(rb))
+    monkeypatch.setattr(rb_api, "_unsubscribe_ringbuffer", lambda rb: unsubscribed.append(rb))
+
+    async def _fail_repair(*_args, **_kwargs):
+        raise RuntimeError("app db is locked")
+
+    monkeypatch.setattr(rb_api, "ensure_legacy_migration_decision", _fail_repair)
+    monkeypatch.setattr(rb_api, "persist_legacy_migration_decision", _fail_repair)
+
+    try:
+        stats = await rb_api.configure_ringbuffer(
+            rb_api.RingBufferConfig(
+                enabled=True,
+                segmented=True,
+                max_entries=100,
+                max_file_size_bytes=1024 * 1024,
+                max_age=3600,
+                segment_max_age=1200,
+            ),
+            _user="admin",
+            db=db,
+        )
+
+        rb = rb_api.get_optional_ringbuffer()
+        assert stats.enabled is True
+        assert rb is not None
+        assert rb._legacy_retention_protected is True
+        assert subscribed == [rb]
+        assert unsubscribed == []
+        assert await load_legacy_migration_decision(db) == LEGACY_DECISION_MIGRATED
     finally:
         rb = rb_api.get_optional_ringbuffer()
         if rb is not None:
@@ -874,6 +944,46 @@ async def test_estimated_copy_bytes_accounts_for_live_bytes(tmp_path, monkeypatc
         if active is not None:
             await active.stop()
         reset_ringbuffer()
+        await db.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_migration_status_reclaims_stale_copy_bytes_from_estimate_and_free_space(tmp_path, monkeypatch):
+    """Der Wizard muss denselben stale-Copy-Cleanup wie ``/migration/start`` vorwegnehmen (#1009)."""
+
+    class _MigrationStatusStub:
+        def legacy_migration_progress(self):
+            return {"phase": "idle"}
+
+        async def legacy_migration_overview(self):
+            return {"size_bytes": 300}
+
+        async def stats(self):
+            return {
+                "max_file_size_bytes": 1000,
+                "file_size_bytes": 800,
+                "prognosis": {"effective_segment_max_bytes": 100},
+                "store": {"backend_extra": {"retention_over_budget": False}},
+            }
+
+        async def attached_legacy_total_bytes(self):
+            return 300
+
+        async def reclaimable_migrating_bytes(self):
+            return 200, 150
+
+    db = Database(":memory:")
+    await db.connect()
+    monkeypatch.setattr(rb_api, "get_optional_ringbuffer", lambda: _MigrationStatusStub())
+    monkeypatch.setattr(rb_api, "is_ringbuffer_enabled", lambda: True)
+    monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(tmp_path / "obs_ringbuffer.db"))
+    monkeypatch.setattr(rb_api.shutil, "disk_usage", lambda _path: SimpleNamespace(free=50))
+    try:
+        status = await rb_api._legacy_migration_status(db)
+        # live = 800 total - 300 legacy - 200 stale; target = 1000 - 100 headroom - 300 live
+        assert status.estimated_copy_bytes == 600
+        assert status.disk_free_bytes == 200
+    finally:
         await db.disconnect()
 
 
