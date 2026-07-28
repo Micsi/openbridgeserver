@@ -236,6 +236,37 @@ describe('DataPointsView hierarchy rendering', () => {
     await wrapper.vm.store.loadMore()
     expect(searchApi.search).not.toHaveBeenCalled()
 
+    let rejectOldRefresh
+    searchApi.search.mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectOldRefresh = reject
+    }))
+    dpApi.duplicate.mockResolvedValueOnce({
+      data: { ...item, id: 'dp-old-refresh', name: 'Copy with superseded refresh' },
+    })
+    wrapper.vm.openDuplicate(item)
+    wrapper.vm.duplicateName = 'Copy with superseded refresh'
+    const duplicateWithOldRefresh = wrapper.vm.doDuplicate()
+    await flushPromises()
+
+    wrapper.vm.filters.q = 'Newer filter'
+    searchApi.search.mockResolvedValueOnce({
+      data: { items: [item], total: 2, pages: 2 },
+    })
+    await wrapper.vm.store.search(wrapper.vm.apiFilters(), false)
+    rejectOldRefresh(new Error('Superseded refresh failed'))
+    await duplicateWithOldRefresh
+    expect(wrapper.vm.store.hasMore).toBe(true)
+
+    searchApi.search.mockClear()
+    searchApi.search.mockResolvedValueOnce({
+      data: { items: [], total: 2, pages: 2 },
+    })
+    await wrapper.vm.store.loadMore()
+    expect(searchApi.search).toHaveBeenCalledWith(expect.objectContaining({
+      q: 'Newer filter',
+      page: 1,
+    }))
+
     dpApi.duplicate.mockRejectedValueOnce({ response: { data: { detail: 'Copy failed' } } })
     wrapper.vm.openDuplicate(item)
     await wrapper.vm.doDuplicate()

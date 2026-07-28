@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC
@@ -760,6 +761,10 @@ class _DatabaseTransaction:
     async def executemany(self, sql: str, params: Any) -> aiosqlite.Cursor:
         return await self._conn.executemany(sql, params)
 
+    async def fetchall(self, sql: str, params: Any = ()) -> list[aiosqlite.Row]:
+        async with self._conn.execute(sql, params) as cur:
+            return await cur.fetchall()
+
     async def commit(self) -> None:
         await self._conn.commit()
 
@@ -772,13 +777,21 @@ class Database:
 
     def __init__(self, path: str) -> None:
         self._path = path
+        # Plain ``:memory:`` databases only exist inside one SQLite connection.
+        # Give each Database instance a private named shared-memory URI so an
+        # isolated transaction can use its own connection without seeing a
+        # different database.
+        self._connection_path = f"file:obs-{uuid.uuid4().hex}?mode=memory&cache=shared" if path == ":memory:" else path
         self._conn: aiosqlite.Connection | None = None
         # Serializes WAL checkpoints and pairs them with disconnect: a restore
         # (POST /config/import/db) disconnects the DB and rewrites the file, and
         # cancelling asyncio.to_thread does not stop the worker thread — so disconnect
         # must wait for any in-flight checkpoint to finish before returning. See #908.
         self._checkpoint_lock = asyncio.Lock()
-        self._memory_transaction_lock = asyncio.Lock()
+        # A config restore may replace the database file after disconnect. Keep
+        # disconnect from returning while a private transaction still owns the
+        # old file.
+        self._transaction_lifecycle_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -788,7 +801,10 @@ class Database:
         if self._path not in (":memory:", "file::memory:?cache=shared"):
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
 
-        self._conn = await aiosqlite.connect(self._path)
+        self._conn = await aiosqlite.connect(
+            self._connection_path,
+            uri=self._connection_path.startswith("file:"),
+        )
         self._conn.row_factory = aiosqlite.Row
 
         await self._conn.execute("PRAGMA journal_mode=WAL")
@@ -820,16 +836,17 @@ class Database:
         # in-flight maintenance checkpoint to finish (its worker thread cannot be
         # cancelled) before closing, so a restore that rewrites the file right after
         # disconnect never races a checkpoint still holding locks on it. See #908.
-        async with self._checkpoint_lock:
-            if self._conn is not None:
-                # Leave the -wal sidecar bounded on graceful shutdown.
-                try:
-                    await self._run_checkpoint()
-                except Exception:
-                    logger.exception("WAL checkpoint on disconnect failed")
-                await self._conn.close()
-                self._conn = None
-                logger.info("Database disconnected")
+        async with self._transaction_lifecycle_lock:
+            async with self._checkpoint_lock:
+                if self._conn is not None:
+                    # Leave the -wal sidecar bounded on graceful shutdown.
+                    try:
+                        await self._run_checkpoint()
+                    except Exception:
+                        logger.exception("WAL checkpoint on disconnect failed")
+                    await self._conn.close()
+                    self._conn = None
+                    logger.info("Database disconnected")
 
     async def checkpoint(self) -> bool:
         """Force a TRUNCATE WAL checkpoint to keep the ``-wal`` sidecar bounded.
@@ -938,24 +955,19 @@ class Database:
     @asynccontextmanager
     async def isolated_transaction(self) -> AsyncIterator[_DatabaseTransaction]:
         """Yield a private connection so a multi-statement transaction cannot interleave."""
-        if self._path == ":memory:":
-            async with self._memory_transaction_lock:
-                try:
-                    yield _DatabaseTransaction(self.conn)
-                finally:
-                    if self.conn.in_transaction:
-                        await self.conn.rollback()
-            return
-
-        isolated = await aiosqlite.connect(self._path, uri=self._path.startswith("file:"))
-        isolated.row_factory = aiosqlite.Row
-        await isolated.execute("PRAGMA foreign_keys=ON")
-        try:
-            yield _DatabaseTransaction(isolated)
-        finally:
-            if isolated.in_transaction:
-                await isolated.rollback()
-            await isolated.close()
+        async with self._transaction_lifecycle_lock:
+            isolated = await aiosqlite.connect(
+                self._connection_path,
+                uri=self._connection_path.startswith("file:"),
+            )
+            isolated.row_factory = aiosqlite.Row
+            await isolated.execute("PRAGMA foreign_keys=ON")
+            try:
+                yield _DatabaseTransaction(isolated)
+            finally:
+                if isolated.in_transaction:
+                    await isolated.rollback()
+                await isolated.close()
 
     async def execute(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
         return await self.conn.execute(sql, params)

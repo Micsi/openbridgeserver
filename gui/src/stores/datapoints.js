@@ -95,9 +95,11 @@ export const useDatapointStore = defineStore('datapoints', () => {
     const refreshState = {
       lastParams: { ..._lastParams.value },
     }
+    const refreshGeneration = _searchGeneration + 1
     try {
       await search(_lastParams.value, false)
     } catch {
+      if (_searchGeneration !== refreshGeneration) return data
       // The mutation already succeeded. Keep the previous visible list, but
       // invalidate its cursor because server-side page boundaries have shifted.
       _nextPage.value = 0

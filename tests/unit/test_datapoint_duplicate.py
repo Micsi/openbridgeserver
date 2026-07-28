@@ -36,13 +36,22 @@ class _FailingDb:
     def __init__(self, binding: dict) -> None:
         self.binding = binding
         self.rolled_back = False
+        self.in_transaction = False
 
     async def fetchall(self, _sql: str, _params: tuple[str]) -> list[dict]:
+        assert self.in_transaction
         return [self.binding]
 
     @asynccontextmanager
     async def isolated_transaction(self):
-        yield self
+        self.in_transaction = True
+        try:
+            yield self
+        finally:
+            self.in_transaction = False
+
+    async def execute(self, sql: str, _params=()) -> None:
+        assert sql == "BEGIN IMMEDIATE"
 
     async def executemany(self, _sql: str, _params: list[tuple]) -> None:
         raise RuntimeError("copy failed")
@@ -55,13 +64,22 @@ class _SuccessfulDb:
     def __init__(self, binding: dict) -> None:
         self.binding = binding
         self.committed = False
+        self.in_transaction = False
 
     async def fetchall(self, _sql: str, _params: tuple[str]) -> list[dict]:
+        assert self.in_transaction
         return [self.binding]
 
     @asynccontextmanager
     async def isolated_transaction(self):
-        yield self
+        self.in_transaction = True
+        try:
+            yield self
+        finally:
+            self.in_transaction = False
+
+    async def execute(self, sql: str, _params=()) -> None:
+        assert sql == "BEGIN IMMEDIATE"
 
     async def executemany(self, _sql: str, _params: list[tuple]) -> None:
         return None
@@ -225,6 +243,12 @@ async def test_duplicate_datapoint_publishes_if_cancelled_commit_completes(monke
     registry = _RegistryStub(source, duplicate)
     db = _SlowCommitDb(_binding_row())
     monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+    reloaded = asyncio.Event()
+
+    async def _record_reload(_dp_id, _instance_ids, _db):
+        reloaded.set()
+
+    monkeypatch.setattr(datapoints_api, "_reload_duplicate_bindings", _record_reload)
 
     request_task = asyncio.create_task(
         datapoints_api.duplicate_datapoint(
@@ -244,6 +268,7 @@ async def test_duplicate_datapoint_publishes_if_cancelled_commit_completes(monke
 
     assert db.committed is True
     assert registry.published == [duplicate.id]
+    assert reloaded.is_set()
 
 
 @pytest.mark.asyncio
@@ -263,16 +288,60 @@ async def test_database_transaction_uses_an_isolated_connection(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_memory_database_transaction_uses_shared_connection_and_rolls_back():
+async def test_memory_database_transaction_uses_private_connection_and_rolls_back():
     db = Database(":memory:")
     await db.connect()
     try:
         await db.execute_and_commit("CREATE TABLE rolled_back_write (id INTEGER PRIMARY KEY)")
         async with db.isolated_transaction() as transaction:
-            assert transaction._conn is db.conn
+            assert transaction._conn is not db.conn
             await transaction.execute("INSERT INTO rolled_back_write (id) VALUES (1)")
 
         row = await db.fetchone("SELECT COUNT(*) AS count FROM rolled_back_write")
         assert row["count"] == 0
     finally:
         await db.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_memory_database_ordinary_write_waits_for_isolated_transaction():
+    db = Database(":memory:")
+    await db.connect()
+    try:
+        await db.execute_and_commit("CREATE TABLE serialized_write (id INTEGER PRIMARY KEY)")
+        async with db.isolated_transaction() as transaction:
+            await transaction.execute("INSERT INTO serialized_write (id) VALUES (1)")
+            ordinary_write = asyncio.create_task(db.execute_and_commit("INSERT INTO serialized_write (id) VALUES (2)"))
+            await asyncio.sleep(0)
+            assert not ordinary_write.done()
+            await transaction.commit()
+
+        await ordinary_write
+        row = await db.fetchone("SELECT COUNT(*) AS count FROM serialized_write")
+        assert row["count"] == 2
+    finally:
+        await db.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_waits_for_isolated_transaction(tmp_path):
+    db = Database(str(tmp_path / "disconnect.db"))
+    await db.connect()
+    transaction_entered = asyncio.Event()
+    release_transaction = asyncio.Event()
+
+    async def _hold_transaction() -> None:
+        async with db.isolated_transaction():
+            transaction_entered.set()
+            await release_transaction.wait()
+
+    transaction_task = asyncio.create_task(_hold_transaction())
+    await transaction_entered.wait()
+    disconnect_task = asyncio.create_task(db.disconnect())
+    await asyncio.sleep(0)
+    assert not disconnect_task.done()
+
+    release_transaction.set()
+    await transaction_task
+    await disconnect_task
+    assert db._conn is None

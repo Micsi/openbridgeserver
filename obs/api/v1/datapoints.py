@@ -276,10 +276,6 @@ async def duplicate_datapoint(
     if source is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
 
-    binding_rows = await db.fetchall(
-        "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
-        (str(dp_id),),
-    )
     duplicate = registry.prepare_create(
         DataPointCreate(
             name=body.name,
@@ -295,6 +291,14 @@ async def duplicate_datapoint(
     now = datetime.datetime.now(datetime.UTC).isoformat()
     async with db.isolated_transaction() as transaction:
         try:
+            # Acquire the SQLite write reservation before taking the binding
+            # snapshot, so deleting an adapter instance cannot interleave and
+            # leave copied bindings pointing at an instance that no longer exists.
+            await transaction.execute("BEGIN IMMEDIATE")
+            binding_rows = await transaction.fetchall(
+                "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
+                (str(dp_id),),
+            )
             await registry.insert(duplicate, connection=transaction)
             if binding_rows:
                 await transaction.executemany(
@@ -341,6 +345,9 @@ async def duplicate_datapoint(
                 await asyncio.shield(transaction.rollback())
                 raise
             registry.publish(duplicate)
+            instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["enabled"] and row["adapter_instance_id"]})
+            if instance_ids:
+                await asyncio.shield(_reload_duplicate_bindings(duplicate.id, instance_ids, db))
             raise
         except Exception:
             await transaction.rollback()
