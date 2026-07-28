@@ -851,7 +851,19 @@ function pasteClipboard() {
   // switch resolving after this paste and overwriting nodes/edges with the
   // just-loaded (pre-paste) sheet, silently dropping the pasted blocks.
   if (!auth.isAdmin || !clipboard.value || !activeGraphId.value || graphLoading.value) return
-  const pasted = remapClipboardForPaste(clipboard.value, pasteCount)
+  // Anchor the pasted group at the center of the currently visible canvas
+  // (converted to flow coordinates, same technique as onDrop) instead of
+  // the source sheet's raw coordinates — otherwise pasting into a sheet
+  // whose viewport is fitted around a different graph-coordinate region
+  // than the source leaves the pasted blocks outside the destination's
+  // visible viewport.
+  let targetCenter = null
+  const rect = canvasWrapper.value?.getBoundingClientRect()
+  if (rect && rect.width && rect.height) {
+    const { project } = useVueFlow('logic-canvas')
+    targetCenter = project({ x: rect.width / 2, y: rect.height / 2 })
+  }
+  const pasted = remapClipboardForPaste(clipboard.value, pasteCount, targetCenter)
   pasteCount += 1
   // Only the freshly pasted nodes/edges should stay selected, so they can be
   // dragged as a group right away instead of also moving (or deleting) the

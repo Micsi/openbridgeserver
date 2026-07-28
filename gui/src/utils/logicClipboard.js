@@ -34,7 +34,7 @@ function generateId() {
 
 function stripDebugFields(data) {
   // eslint-disable-next-line no-unused-vars
-  const { _dbg, _dbg_title, ...rest } = data ?? {}
+  const { _dbg, _dbg_title, ...rest } = data
   return rest
 }
 
@@ -66,17 +66,37 @@ export function cloneSelectionForClipboard(nodes, edges) {
  * edges rewired through the id map, node positions offset so repeated pastes of
  * the same clipboard don't stack exactly on top of each other, and the pasted
  * nodes marked `selected` so they can be dragged as a group right away.
+ *
+ * `targetCenter` (flow-space {x, y}) anchors the pasted group's bounding-box
+ * center there while preserving the group's relative layout — without it,
+ * pasting into a sheet whose viewport is fitted around a different
+ * graph-coordinate region than the source (e.g. copy near (0, 0), paste into
+ * a sheet fitted around (10000, 10000)) would place the pasted nodes outside
+ * the destination's visible viewport.
  */
-export function remapClipboardForPaste(clipboard, pasteIndex = 0) {
+export function remapClipboardForPaste(clipboard, pasteIndex = 0, targetCenter = null) {
   if (!clipboard) return null
 
   const idMap = new Map(clipboard.nodes.map(n => [n.id, generateId()]))
-  const offset = PASTE_OFFSET_STEP * (pasteIndex + 1)
+  // Small per-repeat-paste stagger so identical clipboards pasted several
+  // times in a row don't stack exactly on top of each other.
+  const stackOffset = PASTE_OFFSET_STEP * (pasteIndex + 1)
+
+  let dx = stackOffset
+  let dy = stackOffset
+  if (targetCenter && clipboard.nodes.length) {
+    const xs = clipboard.nodes.map(n => n.position.x)
+    const ys = clipboard.nodes.map(n => n.position.y)
+    const groupCenterX = (Math.min(...xs) + Math.max(...xs)) / 2
+    const groupCenterY = (Math.min(...ys) + Math.max(...ys)) / 2
+    dx = targetCenter.x - groupCenterX + stackOffset
+    dy = targetCenter.y - groupCenterY + stackOffset
+  }
 
   const nodes = clipboard.nodes.map(n => ({
     id: idMap.get(n.id),
     type: n.type,
-    position: { x: n.position.x + offset, y: n.position.y + offset },
+    position: { x: n.position.x + dx, y: n.position.y + dy },
     data: JSON.parse(JSON.stringify(n.data ?? {})),
     selected: true,
   }))

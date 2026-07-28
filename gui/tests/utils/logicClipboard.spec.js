@@ -89,6 +89,35 @@ describe('remapClipboardForPaste', () => {
     expect(second.nodes[0].position.y).toBeGreaterThan(first.nodes[0].position.y)
   })
 
+  it('anchors the pasted group at targetCenter while preserving relative layout', () => {
+    // Regression: pasting into a sheet whose viewport is fitted around a
+    // different graph-coordinate region than the source must not leave the
+    // pasted blocks outside the destination's visible viewport.
+    const clipboard = {
+      nodes: [
+        makeNode('n1', { position: { x: 0, y: 0 } }),
+        makeNode('n2', { position: { x: 100, y: 0 } }),
+      ],
+      edges: [],
+    }
+    const result = remapClipboardForPaste(clipboard, 0, { x: 10000, y: 10000 })
+    const [p1, p2] = result.nodes
+    // Bounding-box center (0,0)-(100,0) is (50, 0); it must land at (10000,
+    // 10000) plus the usual pasteIndex=0 stack offset (40) on top.
+    expect(p1.position.x + (p2.position.x - p1.position.x) / 2).toBe(10040)
+    expect(p1.position.y + (p2.position.y - p1.position.y) / 2).toBe(10040)
+    // Relative layout between the two nodes is unchanged.
+    expect(p2.position.x - p1.position.x).toBe(100)
+    expect(p2.position.y - p1.position.y).toBe(0)
+  })
+
+  it('ignores targetCenter when it is not provided, keeping the plain stack offset', () => {
+    const clipboard = { nodes: [makeNode('n1', { position: { x: 0, y: 0 } })], edges: [] }
+    const withoutTarget = remapClipboardForPaste(clipboard, 0)
+    const withNullTarget = remapClipboardForPaste(clipboard, 0, null)
+    expect(withoutTarget.nodes[0].position).toEqual(withNullTarget.nodes[0].position)
+  })
+
   it('marks pasted nodes as selected so they can be dragged as a group', () => {
     const clipboard = { nodes: [makeNode('n1'), makeNode('n2')], edges: [] }
     const result = remapClipboardForPaste(clipboard, 0)
@@ -126,6 +155,18 @@ describe('remapClipboardForPaste — id generation outside a secure context', ()
 
   it('falls back to Math.random when crypto is entirely unavailable', () => {
     vi.stubGlobal('crypto', undefined)
+    const clipboard = { nodes: [makeNode('n1'), makeNode('n2')], edges: [] }
+    const result = remapClipboardForPaste(clipboard, 0)
+    expect(result.nodes[0].id).toMatch(UUID_RE)
+    expect(result.nodes[0].id).not.toBe(result.nodes[1].id)
+  })
+
+  it('falls back to Math.random when crypto exists but getRandomValues is also unavailable', () => {
+    // Distinct from the "crypto entirely unavailable" case above: here the
+    // `typeof crypto !== 'undefined'` branch is entered, but neither
+    // randomUUID nor getRandomValues exist on it — a real gap that a
+    // missing-crypto-object test alone would never reach.
+    vi.stubGlobal('crypto', {})
     const clipboard = { nodes: [makeNode('n1'), makeNode('n2')], edges: [] }
     const result = remapClipboardForPaste(clipboard, 0)
     expect(result.nodes[0].id).toMatch(UUID_RE)

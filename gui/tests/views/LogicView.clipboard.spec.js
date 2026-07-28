@@ -161,6 +161,30 @@ describe('LogicView node copy/paste', () => {
     expect(second.position.x).toBeGreaterThan(first.position.x)
   })
 
+  it('anchors the pasted group at the visible canvas center when the canvas has real layout dimensions', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+
+    // JSDOM's getBoundingClientRect() is all-zero by default (no real
+    // layout); stub it with real dimensions so pasteClipboard's viewport
+    // centering (otherwise silently skipped in every other test here) is
+    // actually exercised.
+    wrapper.vm.canvasWrapper.getBoundingClientRect = () => ({
+      width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600, x: 0, y: 0, toJSON() {},
+    })
+
+    wrapper.vm.pasteClipboard()
+
+    // The mocked project() is an identity function, so targetCenter is
+    // (width/2, height/2) = (400, 300); n1's own position (0,0) is the
+    // single-node group's bounding-box center, plus the usual pasteIndex=0
+    // stack offset (40) on top, same as logicClipboard.spec.js's pure-utility
+    // equivalent.
+    const pasted = wrapper.vm.nodes.at(-1)
+    expect(pasted.position).toEqual({ x: 440, y: 340 })
+  })
+
   it('survives switching to a different logic page — clipboard is not tied to the loaded graph', async () => {
     const otherGraph = makeGraph('graph-2', { name: 'Other Graph', flow_data: { nodes: [], edges: [] } })
     const { wrapper, logicApi } = await mountLogicView()
@@ -481,5 +505,72 @@ describe('LogicView node copy/paste', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', ctrlKey: true }))
 
     expect(wrapper.vm.clipboard).toBeNull()
+  })
+
+  it('Cmd (metaKey) alone also triggers the copy/paste shortcuts', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', metaKey: true }))
+    expect(wrapper.vm.clipboard).not.toBeNull()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', metaKey: true }))
+    expect(wrapper.vm.nodes).toHaveLength(3)
+  })
+
+  it('uppercase C also copies', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'C', ctrlKey: true }))
+
+    expect(wrapper.vm.clipboard).not.toBeNull()
+  })
+
+  it('ignores Ctrl+C / Ctrl+V while the rename-graph modal is open', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+    wrapper.vm.showRenameGraph = true
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }))
+
+    expect(wrapper.vm.nodes).toHaveLength(2)
+  })
+
+  it('ignores Ctrl+C / Ctrl+V while the delete-confirm modal is open', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+    wrapper.vm.showDeleteConfirm = true
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }))
+
+    expect(wrapper.vm.nodes).toHaveLength(2)
+  })
+
+  it('pasteClipboard is a no-op for non-admin users even with a populated clipboard', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: false })
+    // Assigned directly (bypassing copySelection, itself already guarded
+    // for non-admin elsewhere) so this test isolates pasteClipboard's own
+    // admin guard.
+    wrapper.vm.clipboard = { nodes: [{ id: 'copied', type: 'and', position: { x: 0, y: 0 }, data: {} }], edges: [] }
+
+    wrapper.vm.pasteClipboard()
+
+    expect(wrapper.vm.nodes).toHaveLength(2)
+  })
+
+  it('pasteClipboard is a no-op with a populated clipboard but no active graph', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+    expect(wrapper.vm.clipboard).not.toBeNull()
+
+    wrapper.vm.activeGraphId = ''
+
+    wrapper.vm.pasteClipboard()
+
+    expect(wrapper.vm.nodes).toHaveLength(2)
   })
 })
