@@ -12,12 +12,13 @@ POST   /api/v1/datapoints/{id}/value write value (fires DataValueEvent)
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_serializer
 
 from obs.api.auth import get_admin_user, get_current_user, optional_current_user
@@ -191,6 +192,27 @@ def _enrich(dp: Any) -> DataPointOut:
     )
 
 
+async def _cleanup_failed_duplicate(db: Database, duplicate_id: uuid.UUID) -> None:
+    try:
+        await db.rollback()
+    finally:
+        await get_registry().delete(duplicate_id)
+
+
+async def _reload_duplicate_bindings(duplicate_id: uuid.UUID, instance_ids: list[str], db: Database) -> None:
+    from obs.api.v1.bindings import _reload_adapter_instance
+
+    for instance_id in instance_ids:
+        try:
+            await _reload_adapter_instance(instance_id, db)
+        except Exception:
+            logger.exception(
+                "DataPoint %s duplicated successfully, but adapter instance %s failed to reload bindings",
+                duplicate_id,
+                instance_id,
+            )
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -252,6 +274,7 @@ async def create_datapoint(
 async def duplicate_datapoint(
     dp_id: uuid.UUID,
     body: DataPointDuplicateIn,
+    background_tasks: BackgroundTasks,
     _user: str = Depends(get_admin_user),
     db: Database = Depends(get_db),
 ) -> DataPointOut:
@@ -306,23 +329,16 @@ async def duplicate_datapoint(
                 ],
             )
             await db.commit()
+        except asyncio.CancelledError:
+            await asyncio.shield(_cleanup_failed_duplicate(db, duplicate.id))
+            raise
         except Exception:
-            await db.rollback()
-            await get_registry().delete(duplicate.id)
+            await _cleanup_failed_duplicate(db, duplicate.id)
             raise
 
-        from obs.api.v1.bindings import _reload_adapter_instance
-
-        instance_ids = {row["adapter_instance_id"] for row in binding_rows if row["adapter_instance_id"]}
-        for instance_id in instance_ids:
-            try:
-                await _reload_adapter_instance(instance_id, db)
-            except Exception:
-                logger.exception(
-                    "DataPoint %s duplicated successfully, but adapter instance %s failed to reload bindings",
-                    duplicate.id,
-                    instance_id,
-                )
+        instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["adapter_instance_id"]})
+        if instance_ids:
+            background_tasks.add_task(_reload_duplicate_bindings, duplicate.id, instance_ids, db)
 
     return _enrich(duplicate)
 

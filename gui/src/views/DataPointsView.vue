@@ -799,7 +799,7 @@ function openEdit(dp) {
 function openDuplicate(dp) {
   if (!auth.isAdmin) return
   duplicateTarget.value = dp
-  duplicateName.value = t('datapoints.duplicate.defaultName', { name: dp.name }).slice(0, 255)
+  duplicateName.value = Array.from(t('datapoints.duplicate.defaultName', { name: dp.name })).slice(0, 255).join('')
   duplicateError.value = ''
   showDuplicate.value = true
 }

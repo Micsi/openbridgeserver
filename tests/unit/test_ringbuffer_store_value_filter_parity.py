@@ -166,7 +166,7 @@ async def test_eq_bool_int_equivalence(store: SqliteSegmentStore, tmp_path: Path
     assert len(eq_zero) == 2
 
     # Legacy-Referenz-Parität (Anzahl, da Set 1/True kollabiert).
-    ref_true = [v for v in values if v == True]
+    ref_true = [v for v in values if v in (True,)]
     assert len(ref_true) == 2
 
 

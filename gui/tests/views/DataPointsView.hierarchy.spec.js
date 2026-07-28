@@ -147,6 +147,9 @@ describe('DataPointsView hierarchy rendering', () => {
     wrapper.vm.openDuplicate({ ...item, name: 'A'.repeat(255) })
     expect(wrapper.vm.duplicateName).toHaveLength(255)
     expect(wrapper.vm.duplicateName).toBe(`Kopie von ${'A'.repeat(245)}`)
+    wrapper.vm.openDuplicate({ ...item, name: '😀'.repeat(255) })
+    expect(Array.from(wrapper.vm.duplicateName)).toHaveLength(255)
+    expect(wrapper.vm.duplicateName).toBe(`Kopie von ${'😀'.repeat(245)}`)
     wrapper.vm.openDuplicate(item)
     wrapper.vm.filters.q = 'Admin'
     wrapper.vm.store.sortCol = 'name'

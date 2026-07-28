@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
+from fastapi import BackgroundTasks
 
 import obs.api.v1.datapoints as datapoints_api
 from obs.models.datapoint import DataPoint
@@ -54,6 +56,16 @@ class _SuccessfulDb:
         self.committed = True
 
 
+class _CancelledDb(_FailingDb):
+    def __init__(self, binding: dict) -> None:
+        super().__init__(binding)
+        self.copy_started = asyncio.Event()
+
+    async def executemany(self, _sql: str, _params: list[tuple]) -> None:
+        self.copy_started.set()
+        await asyncio.Future()
+
+
 def _binding_row() -> dict:
     return {
         "adapter_type": "MQTT",
@@ -82,6 +94,7 @@ async def test_duplicate_datapoint_removes_created_datapoint_when_binding_copy_f
         await datapoints_api.duplicate_datapoint(
             source.id,
             datapoints_api.DataPointDuplicateIn(name="Copy"),
+            BackgroundTasks(),
             _user="admin",
             db=db,
         )
@@ -91,7 +104,34 @@ async def test_duplicate_datapoint_removes_created_datapoint_when_binding_copy_f
 
 
 @pytest.mark.asyncio
-async def test_duplicate_datapoint_returns_success_when_post_commit_adapter_reload_fails(monkeypatch, caplog):
+async def test_duplicate_datapoint_cleans_up_when_binding_copy_is_cancelled(monkeypatch):
+    source = DataPoint(name="Source", data_type="FLOAT")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    registry = _RegistryStub(source, duplicate)
+    db = _CancelledDb(_binding_row())
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+
+    request_task = asyncio.create_task(
+        datapoints_api.duplicate_datapoint(
+            source.id,
+            datapoints_api.DataPointDuplicateIn(name="Copy"),
+            BackgroundTasks(),
+            _user="admin",
+            db=db,
+        ),
+    )
+    await db.copy_started.wait()
+    request_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+
+    assert db.rolled_back is True
+    assert registry.deleted == [duplicate.id]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_datapoint_defers_post_commit_adapter_reload_failures(monkeypatch, caplog):
     source = DataPoint(name="Source", data_type="FLOAT")
     duplicate = DataPoint(name="Copy", data_type="FLOAT")
     registry = _RegistryStub(source, duplicate)
@@ -106,9 +146,11 @@ async def test_duplicate_datapoint_returns_success_when_post_commit_adapter_relo
 
     monkeypatch.setattr(bindings_api, "_reload_adapter_instance", _reload_failure)
 
+    background_tasks = BackgroundTasks()
     result = await datapoints_api.duplicate_datapoint(
         source.id,
         datapoints_api.DataPointDuplicateIn(name="Copy"),
+        background_tasks,
         _user="admin",
         db=db,
     )
@@ -116,5 +158,9 @@ async def test_duplicate_datapoint_returns_success_when_post_commit_adapter_relo
     assert result is duplicate
     assert db.committed is True
     assert registry.deleted == []
+    assert "reload failed" not in caplog.text
+
+    await background_tasks()
+
     assert "duplicated successfully" in caplog.text
     assert "reload failed" in caplog.text
