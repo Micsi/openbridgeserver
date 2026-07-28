@@ -503,10 +503,72 @@ const debugNode = ref(null)
 const debugOverrides = ref({})
 const lastRunMetadata = ref(null)
 const lastRunInputs = ref({})
+const DEBUG_TOOLTIP_MAX_CHARS = 1000
+
+function fmtDebugVal(nodeOut, { full = false, maxChars = null } = {}) {
+  if (!nodeOut || typeof nodeOut !== 'object') return null
+
+  function maybeClip(text) {
+    return maxChars !== null && text.length > maxChars ? `${text.slice(0, maxChars)}…` : text
+  }
+
+  function fv(value) {
+    if (value === null || value === undefined) return '—'
+    if (typeof value === 'boolean') return value ? '✓' : '✗'
+    if (typeof value === 'number') return String(parseFloat(value.toPrecision(5)))
+    const text = String(value)
+    return full ? maybeClip(text) : text.slice(0, 18)
+  }
+
+  function clipped(value, limit) {
+    if (value === null || value === undefined) return '—'
+    const text = String(value)
+    if (full) return maybeClip(text)
+    return text.length <= limit ? text : `${text.slice(0, limit)}…`
+  }
+
+  if ('__error__' in nodeOut) return `${t('logic.nodeError')}: ${clipped(nodeOut.__error__, 50)}`
+  if ('_message' in nodeOut) {
+    const message = nodeOut._message !== null && nodeOut._message !== undefined
+      ? `"${String(nodeOut._message).slice(0, 24)}"`
+      : '—'
+    const sent = 'sent' in nodeOut ? `  sent=${fv(nodeOut.sent)}` : ''
+    return message + sent
+  }
+  if ('value' in nodeOut && 'changed' in nodeOut) return `= ${fv(nodeOut.value)}`
+  if ('_write_value' in nodeOut) return `→ ${fv(nodeOut._write_value)}`
+  if ('response' in nodeOut && 'status' in nodeOut && 'success' in nodeOut) {
+    return `response=${clipped(nodeOut.response, 80)}   status=${fv(nodeOut.status)}   success=${fv(nodeOut.success)}`
+  }
+  const pairs = Object.entries(nodeOut)
+    .filter(([key]) => !key.startsWith('_'))
+    .map(([key, value]) => `${key}=${fv(value)}`)
+  return pairs.length ? pairs.join('   ') : null
+}
 
 // Last run outputs — always kept (not just in debug mode) so that
 // json_extractor / xml_extractor config panels can read _preview data.
 const lastRunOutputs = ref({})
+
+function applyDebugValues(outputs) {
+  lastRunOutputs.value = outputs
+  nodes.value = nodes.value.map(node => ({
+    ...node,
+    data: {
+      ...node.data,
+      _dbg: fmtDebugVal(outputs[node.id]) ?? undefined,
+      _dbg_title: fmtDebugVal(outputs[node.id], { full: true, maxChars: DEBUG_TOOLTIP_MAX_CHARS }) ?? undefined,
+    },
+  }))
+}
+
+function clearDebugValues() {
+  nodes.value = nodes.value.map(node => {
+    // eslint-disable-next-line no-unused-vars
+    const { _dbg, _dbg_title, ...data } = node.data
+    return { ...node, data }
+  })
+}
 
 function countGraphDiagnostics(outputs) {
   return Object.values(outputs || {}).filter(out =>
@@ -522,6 +584,7 @@ function toggleDebug() {
   sendDebugSubscription(activeGraphId.value, debugMode.value)
   if (!debugMode.value) {
     clearAllDebugOverrides()
+    clearDebugValues()
     debugNode.value = null
     lastRunMetadata.value = null
     lastRunInputs.value = {}
@@ -557,6 +620,8 @@ const debugInputs = computed(() => {
   } else if (debugNode.value.type === 'string_concat') {
     const stringCount = Number(debugNode.value.data?.count) || 2
     ports = Array.from({ length: Math.max(2, Math.min(20, stringCount)) }, (_, i) => ({ id: `in_${i + 1}`, label: `${i + 1}` }))
+  } else if (debugNode.value.type === 'python_script') {
+    ports = ['a', 'b', 'c'].map(id => ({ id, label: id }))
   }
   const known = new Set(ports.map(port => port.id))
   for (const edge of edges.value.filter(item => item.target === debugNode.value.id)) {
@@ -603,7 +668,11 @@ async function runGraph() {
       diagnosticCount > 0 ? 6000 : 3000
     )
     // Always update lastRunOutputs (needed for extractor config panels)
-    lastRunOutputs.value = outputs
+    if (debugMode.value) applyDebugValues(outputs)
+    else {
+      lastRunOutputs.value = outputs
+      clearDebugValues()
+    }
     lastRunMetadata.value = data.debug || { timestamp: new Date().toISOString(), used_overrides: false }
     lastRunInputs.value = data.debug?.inputs || {}
   } catch (err) {
@@ -833,7 +902,7 @@ function _wsConnect() {
         msg.graph_id === activeGraphId.value &&
         debugMode.value
       ) {
-        lastRunOutputs.value = msg.outputs || {}
+        applyDebugValues(msg.outputs || {})
         lastRunInputs.value = msg.inputs || {}
         lastRunMetadata.value = msg.debug || { timestamp: new Date().toISOString(), used_overrides: false }
       }

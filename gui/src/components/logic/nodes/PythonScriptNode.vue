@@ -21,6 +21,7 @@
         </div>
         <span class="gn-port-label" style="margin-left:auto;align-self:center;">{{ $t('logic.ports.result') }}</span>
       </div>
+      <div v-if="data._dbg" class="gn-debug" :title="data._dbg_title || data._dbg" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <Handle type="source" id="result" :position="Position.Right" class="gn-handle-out" :style="{ top: '52%' }" />
@@ -69,7 +70,7 @@ function remove() { removeNodes([props.id]) }
 }
 
 .gn-card {
-  min-width: 180px;
+  width: 180px;
   background: #1e293b;
   border: 1px solid #334155;
   border-top: 3px solid #be185d;
@@ -87,4 +88,19 @@ function remove() { removeNodes([props.id]) }
 .gn-ports   { padding: 2px 10px 6px; display:flex; align-items:center; }
 .gn-port-col { display:flex; flex-direction:column; gap:2px; }
 .gn-port-label { font-size:9px; color:#64748b; }
+.gn-debug {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  font-size: 9px;
+  color: var(--node-debug-color);
+  font-family: ui-monospace, monospace;
+  padding: 2px 10px 5px;
+  border-top: 1px solid var(--node-card-border);
+  background: var(--node-debug-bg);
+  border-radius: 0 0 6px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 </style>

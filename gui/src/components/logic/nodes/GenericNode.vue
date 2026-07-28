@@ -49,6 +49,7 @@
           </div>
         </div>
       </div>
+      <div v-if="data._dbg" class="gn-debug" :title="data._dbg_title || data._dbg" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <!-- Output handles (RIGHT) -->
@@ -348,10 +349,12 @@ const summary = computed(() => {
 const HEADER_H = 28   // px  header height
 const SUMMARY_H = 20  // px  summary line height (only when present)
 const PORT_H   = 22   // px  per port row height
+const DEBUG_H  = 18   // px  debug value strip height (only when present)
 
 const rowCount  = computed(() => Math.max(def.value.inputs.length, def.value.outputs.length, 1))
 const summaryPx = computed(() => summary.value ? SUMMARY_H : 0)
-const cardH     = computed(() => HEADER_H + summaryPx.value + rowCount.value * PORT_H + 8)
+const debugPx   = computed(() => props.data._dbg ? DEBUG_H : 0)
+const cardH     = computed(() => HEADER_H + summaryPx.value + rowCount.value * PORT_H + debugPx.value + 8)
 
 // port row indices (0..rowCount-1)
 const portRows  = computed(() => Array.from({ length: rowCount.value }, (_, i) => i))
@@ -385,7 +388,7 @@ function remove() { removeNodes([props.id]) }
 .gn-root  { position: relative; }
 
 .gn-card  {
-  min-width: 130px;
+  width: 130px;
   border: 1px solid var(--node-card-border);
   border-top: 3px solid #475569;
   border-radius: 8px;
@@ -440,6 +443,23 @@ function remove() { removeNodes([props.id]) }
 .gn-port-negate:hover          { background: rgba(255,255,255,.10); color: #7dd3fc; }
 .gn-port-negate--active        { color: #f87171; font-weight: 700; }
 .gn-port-negate--right         { margin-left: auto; }
+
+.gn-debug {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  font-size: 9px;
+  color: var(--node-debug-color);
+  font-family: ui-monospace, monospace;
+  padding: 2px 10px 4px;
+  border-top: 1px solid var(--node-card-border);
+  background: var(--node-debug-bg);
+  border-radius: 0 0 6px 6px;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Handles */
 .gn-root :deep(.vue-flow__handle) {

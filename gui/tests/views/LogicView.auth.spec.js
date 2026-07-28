@@ -243,6 +243,7 @@ describe('LogicView auth gates', () => {
     wrapper.vm.toggleDebug()
     await wrapper.vm.runGraph()
     expect(wrapper.vm.lastRunOutputs.n1.value).toBe(42)
+    expect(wrapper.vm.nodes[0].data._dbg).toBe('= 42')
 
     await wrapper.vm.saveGraph()
     const savedPayload = logicApi.saveGraph.mock.calls.at(-1)[1]
@@ -378,6 +379,7 @@ describe('LogicView WebSocket', () => {
     }) })
     expect(wrapper.vm.lastRunOutputs.n1.value).toEqual({ nested: true })
     expect(wrapper.vm.lastRunInputs.n1.value.incoming).toBe(12)
+    expect(wrapper.vm.nodes[0].data._dbg).toContain('[object Object]')
   })
 
   it('ignores logic_run message for a different graph_id', async () => {
@@ -507,6 +509,10 @@ describe('LogicView inspector inputs', () => {
     expect(wrapper.vm.debugInputs).toEqual([
       expect.objectContaining({ id: 'value', incoming: 23 }),
     ])
+
+    wrapper.vm.debugNode = { id: 'script', type: 'python_script', data: {} }
+    wrapper.vm.lastRunInputs = {}
+    expect(wrapper.vm.debugInputs.map(input => input.id)).toEqual(['a', 'b', 'c'])
   })
 
   it('edits, parses, runs, and clears temporary input overrides', async () => {

@@ -214,11 +214,12 @@ describe('GenericNode — summary', () => {
 })
 
 describe('GenericNode — debug band', () => {
-  it('does not show the legacy debug band when data._dbg is set', async () => {
-    const w = await mountGN('and', { _dbg: 'true' })
+  it('shows the compact debug band when data._dbg is set', async () => {
+    const w = await mountGN('and', { _dbg: 'true', _dbg_title: 'out=true' })
     await flushPromises()
-    expect(w.find('[data-testid="debug-band"]').exists()).toBe(false)
-    expect(w.text()).not.toContain('true')
+    const band = w.find('[data-testid="debug-band"]')
+    expect(band.text()).toBe('true')
+    expect(band.attributes('title')).toBe('out=true')
   })
 
   it('hides debug band when no _dbg', async () => {

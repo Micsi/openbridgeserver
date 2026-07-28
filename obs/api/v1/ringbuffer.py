@@ -15,7 +15,6 @@ while sort and pagination remain owned by the caller of the query endpoint.
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 import csv
 import json
 import logging
@@ -24,6 +23,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -51,13 +51,6 @@ from obs.ringbuffer.persisted_config import (
     persist_ringbuffer_config,
     repair_pending_keep_migration_decision,
 )
-from obs.ringbuffer.store.config import (
-    SEGMENT_MAX_AGE_MIN,
-    SegmentConfig,
-    StoreRetentionConfig,
-    validate_explicit_segment_bounds,
-    validate_store_config,
-)
 from obs.ringbuffer.ringbuffer import (
     RingBufferStorageDeleteIncompleteError,
     RowLazyExportCursor,
@@ -73,6 +66,13 @@ from obs.ringbuffer.ringbuffer import (
     is_ringbuffer_enabled,
     reset_ringbuffer,
     set_ringbuffer_enabled,
+)
+from obs.ringbuffer.store.config import (
+    SEGMENT_MAX_AGE_MIN,
+    SegmentConfig,
+    StoreRetentionConfig,
+    validate_explicit_segment_bounds,
+    validate_store_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -440,9 +440,7 @@ def _is_empty_criteria(c: FilterCriteria | None) -> bool:
         return False
     if c.q and c.q.strip():
         return False
-    if c.value_filter and c.value_filter.operator:
-        return False
-    return True
+    return not (c.value_filter and c.value_filter.operator)
 
 
 def _color_must_be_hex(value: str) -> str:
@@ -765,9 +763,10 @@ async def _build_query_from_filter_criteria(
     effective_filter = filter_
     if filter_.hierarchy_nodes:
         resolved_dps = await _resolve_hierarchy_to_datapoints(filter_.hierarchy_nodes, db)
-        if resolved_dps:
-            merged = list({*filter_.datapoints, *resolved_dps})
-            effective_filter = filter_.model_copy(update={"datapoints": merged})
+        merged = _normalize_nonempty([*filter_.datapoints, *resolved_dps])
+        if not merged:
+            return None
+        effective_filter = filter_.model_copy(update={"datapoints": merged})
 
     query = _filter_to_query_v2(effective_filter, time_filter)
 
@@ -1000,17 +999,17 @@ def _row_to_filterset(row: Any, *, user_state: tuple[bool, bool, int] | None = N
         is_active, topbar_active, topbar_order = user_state
     else:
         is_active, topbar_active, topbar_order = True, False, 0
-    created_by = row["created_by"] if "created_by" in row.keys() else None
+    created_by = row["created_by"] if "created_by" in row.keys() else None  # noqa: SIM118 -- Row.__contains__ checks values, not keys
     return RingBufferFiltersetOut(
         id=row["id"],
         name=row["name"],
         description=row["description"],
         dsl_version=int(row["dsl_version"]),
         is_active=is_active,
-        color=_normalize_color(row["color"] if "color" in row.keys() else None),
+        color=_normalize_color(row["color"] if "color" in row.keys() else None),  # noqa: SIM118 -- Row.__contains__ checks values, not keys
         topbar_active=topbar_active,
         topbar_order=topbar_order,
-        filter=_decode_filter(row["filter_json"] if "filter_json" in row.keys() else None),
+        filter=_decode_filter(row["filter_json"] if "filter_json" in row.keys() else None),  # noqa: SIM118 -- Row.__contains__ checks values, not keys
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         created_by=created_by,
@@ -1206,7 +1205,7 @@ async def export_ringbuffer_csv(
     # /Nicht-row-lazy-Pfade bleibt der Cursor ungenutzt und aendert nichts.
     export_store_cursor = RowLazyExportCursor()
 
-    spool = tempfile.SpooledTemporaryFile(
+    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 -- closed later via background_tasks, must outlive this function
         mode="w+",
         encoding="utf-8",
         newline="",
@@ -1882,7 +1881,7 @@ async def export_ringbuffer_filtersets_csv(
     if body.include_matched_set_ids:
         fieldnames.append("matched_set_ids")
 
-    spool = tempfile.SpooledTemporaryFile(
+    spool = tempfile.SpooledTemporaryFile(  # noqa: SIM115 -- closed later via background_tasks, must outlive this function
         mode="w+",
         encoding="utf-8",
         newline="",
@@ -2007,6 +2006,8 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
     budget: int | None = None
     eta: float | None = None
     estimated_copy: int | None = None
+    reclaimable_migrating_manifest_bytes = 0
+    reclaimable_migrating_disk_bytes = 0
     protected = decision in LEGACY_DECISIONS_PROTECTED
     job: dict[str, Any] | None = None
     if rb is not None and is_ringbuffer_enabled():
@@ -2014,6 +2015,8 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
         legacy = await rb.legacy_migration_overview()
         stats = await rb.stats()
         budget = stats.get("max_file_size_bytes")
+        if legacy is not None:
+            reclaimable_migrating_manifest_bytes, reclaimable_migrating_disk_bytes = await rb.reclaimable_migrating_bytes()
         # ``retention_over_budget`` liegt unter ``store.backend_extra`` und die Gesamt-
         # Nutzung als Top-Level ``file_size_bytes`` (#968, Codex :1999) – nicht als
         # Top-Level ``retention_over_budget``/``size_bytes``. Ohne die korrekten Pfade
@@ -2046,7 +2049,11 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
                 # Live-Bestand, senkten ``target_volume``/``estimated_copy`` und ließen eine
                 # Migration zu, die der Backend-Precheck dann ablehnt.
                 total_legacy_bytes = await rb.attached_legacy_total_bytes()
-                live_bytes = max(0, total_size - total_legacy_bytes)
+                # Der nächste ``/migration/start`` verwirft Copy-Phase-Reste VOR seiner
+                # Planung. Dieselben sicher reclaimable ``migrating``-Bytes deshalb hier
+                # ebenfalls nicht als Live-Bestand zählen (#1009). Recoverbare Kopien aus
+                # einem unterbrochenen Commit-Fenster sind ausdrücklich ausgeschlossen.
+                live_bytes = max(0, total_size - total_legacy_bytes - reclaimable_migrating_manifest_bytes)
                 target_volume = max(0, budget - headroom - live_bytes)
                 estimated_copy = min(v2_estimate, target_volume)
             else:
@@ -2054,6 +2061,9 @@ async def _legacy_migration_status(db: Database) -> LegacyMigrationStatus:
     disk_free: int | None = None
     try:
         disk_free = shutil.disk_usage(str(Path(_ringbuffer_disk_path()).parent)).free
+        # Effektiv verfügbarer Platz nach demselben Cleanup, das ``/migration/start``
+        # vor dem Disk-Precheck ausführt (#1009).
+        disk_free += reclaimable_migrating_disk_bytes
     except OSError:
         disk_free = None
     return LegacyMigrationStatus(
@@ -2089,14 +2099,12 @@ async def _finalize_decision_under_lock(db: Database, rb) -> None:
             # Schutz zuerst aktivieren: zwischen Decision-Write und Live-Reconfigure
             # darf die FIFO-Retention die gerade wiederentdeckte Quelle nicht reclaimen.
             await rb.set_legacy_retention_protected(True)
-            try:
-                await persist_legacy_migration_decision(db, LEGACY_DECISION_PENDING)
-            except BaseException:
-                # Protection bleibt in jedem Fehlerfall aktiv: die Legacy-Quelle ist
-                # noch angehängt; ein Rollback auf False wäre datenunsicher, weil die
-                # FIFO-Retention die Quelle vor dem nächsten Poll-Retry zurückgewinnen
-                # könnte. Der Fehler wird weitergeleitet; der nächste Poll wiederholt.
-                raise
+            # Kein Rollback bei Fehlschlag: Protection bleibt in jedem Fehlerfall aktiv,
+            # die Legacy-Quelle ist noch angehängt; ein Rollback auf False wäre
+            # datenunsicher, weil die FIFO-Retention die Quelle vor dem nächsten
+            # Poll-Retry zurückgewinnen könnte. Der Fehler propagiert unverändert;
+            # der nächste Poll wiederholt.
+            await persist_legacy_migration_decision(db, LEGACY_DECISION_PENDING)
             return
         try:
             await finalize_committed_migration_decision(db, rb)
