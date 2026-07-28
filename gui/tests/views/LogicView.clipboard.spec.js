@@ -267,6 +267,69 @@ describe('LogicView node copy/paste', () => {
     expect(wrapper.vm.nodes).toHaveLength(1)
   })
 
+  it('ignores a stale loadGraph response when a newer sheet switch is already in flight', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+
+    let resolveStale, resolveFresh
+    logicApi.getGraph
+      .mockReturnValueOnce(new Promise(resolve => { resolveStale = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { resolveFresh = resolve }))
+
+    wrapper.vm.activeGraphId = 'graph-1'
+    const stalePromise = wrapper.vm.loadGraph()
+    wrapper.vm.activeGraphId = 'graph-2'
+    const freshPromise = wrapper.vm.loadGraph()
+
+    // The older request resolves last-in-first-served, but it must not apply
+    // its (now stale) data or clear graphLoading — the newer request for
+    // graph-2 is still pending, so the nodes loaded for graph-1 by
+    // mountLogicView() must be left untouched.
+    resolveStale({ data: { flow_data: { nodes: [{ id: 'stale' }], edges: [] } } })
+    await stalePromise
+    expect(wrapper.vm.graphLoading).toBe(true)
+    expect(wrapper.vm.nodes.map(n => n.id)).toEqual(['n1', 'n2'])
+
+    resolveFresh({ data: { flow_data: { nodes: [{ id: 'fresh' }], edges: [] } } })
+    await freshPromise
+    expect(wrapper.vm.graphLoading).toBe(false)
+    expect(wrapper.vm.nodes).toEqual([{ id: 'fresh', position: { x: 100, y: 100 }, data: {} }])
+  })
+
+  it('clears any pre-existing edge selection when pasting so an unrelated edge is not also selected', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
+    wrapper.vm.copySelection()
+    wrapper.vm.edges = wrapper.vm.edges.map(e => ({ ...e, selected: true }))
+
+    wrapper.vm.pasteClipboard()
+
+    const sourceEdge = wrapper.vm.edges.find(e => e.id === 'e1')
+    const pastedEdge = wrapper.vm.edges.find(e => e.id !== 'e1')
+    expect(sourceEdge.selected).toBe(false)
+    expect(pastedEdge).toBeDefined()
+    expect(pastedEdge.selected).not.toBe(true)
+  })
+
+  it('disables the paste button while the target sheet is still loading', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+
+    let resolveGetGraph
+    logicApi.getGraph.mockReturnValueOnce(new Promise(resolve => { resolveGetGraph = resolve }))
+    wrapper.vm.activeGraphId = 'graph-1'
+    const loadPromise = wrapper.vm.loadGraph()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="btn-paste-nodes"]').attributes('disabled')).toBeDefined()
+
+    resolveGetGraph({ data: { flow_data: { nodes: [], edges: [] } } })
+    await loadPromise
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-testid="btn-paste-nodes"]').attributes('disabled')).toBeUndefined()
+  })
+
   it('loadGraph falls back to an empty edges array when the response omits it', async () => {
     const { wrapper, logicApi } = await mountLogicView()
     logicApi.getGraph.mockResolvedValueOnce({
