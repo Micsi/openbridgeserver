@@ -314,6 +314,10 @@ class KnxAdapter(AdapterBase):
             connection_config=conn_cfg,
             connection_state_changed_cb=self._on_xknx_connection_state,
         )
+        self._xknx.telegram_queue.register_telegram_received_cb(
+            self._on_telegram_transmitted,
+            match_for_outgoing=True,
+        )
 
         try:
             await self._xknx.start()
@@ -560,8 +564,6 @@ class KnxAdapter(AdapterBase):
                 return
 
             raw = _telegram_to_bytes(telegram)
-            if getattr(getattr(telegram, "direction", None), "name", None) == "OUTGOING":
-                self._activate_outbound_write(telegram, ga, raw)
             for binding, dpt in entries:
                 is_outbound_confirmation, logical_value = self._consume_outbound_confirmation(
                     binding,
@@ -713,6 +715,16 @@ class KnxAdapter(AdapterBase):
                 logical_value,
                 written_at=written_at,
             )
+
+    def _on_telegram_transmitted(self, telegram: Any) -> None:
+        """Activate confirmation expectations after XKNX successfully sends a telegram."""
+        if getattr(getattr(telegram, "direction", None), "name", None) != "OUTGOING":
+            return
+        self._activate_outbound_write(
+            telegram,
+            str(telegram.destination_address),
+            _telegram_to_bytes(telegram),
+        )
 
     def _prune_recent_writes(self, now: float | None = None) -> None:
         """Remove expired sent-write expectations across all bindings and addresses."""
@@ -892,6 +904,8 @@ def _build_sniffer(xknx_instance: Any, ga_source_map: dict, adapter: KnxAdapter)
             # so this must be synchronous. Schedule the async handler as a task.
             import asyncio
 
+            if getattr(getattr(telegram, "direction", None), "name", None) == "OUTGOING":
+                return False
             ga = str(telegram.destination_address)
             logger.info("KNX sniffer.process: GA=%s", ga)
             asyncio.ensure_future(adapter._on_telegram(telegram))
