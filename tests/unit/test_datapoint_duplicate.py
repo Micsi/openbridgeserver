@@ -109,7 +109,6 @@ class _CancelledDb(_FailingDb):
 class _MissingSourceDb(_FailingDb):
     async def fetchone(self, _sql: str, _params: tuple[str]) -> None:
         assert self.in_transaction
-        return None
 
 
 class _SlowCommitDb(_SuccessfulDb):

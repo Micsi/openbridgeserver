@@ -1033,14 +1033,12 @@ class Database:
         await self.conn.rollback()
 
     async def fetchall(self, sql: str, params: Any = ()) -> list[aiosqlite.Row]:
-        async with self._ordinary_operation():
-            async with self.conn.execute(sql, params) as cur:
-                return await cur.fetchall()
+        async with self._ordinary_operation(), self.conn.execute(sql, params) as cur:
+            return await cur.fetchall()
 
     async def fetchone(self, sql: str, params: Any = ()) -> aiosqlite.Row | None:
-        async with self._ordinary_operation():
-            async with self.conn.execute(sql, params) as cur:
-                return await cur.fetchone()
+        async with self._ordinary_operation(), self.conn.execute(sql, params) as cur:
+            return await cur.fetchone()
 
     async def execute_and_commit(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
         async with self._ordinary_operation():
