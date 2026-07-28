@@ -482,6 +482,22 @@ describe('LogicView WebSocket', () => {
 })
 
 describe('LogicView inspector inputs', () => {
+  it('formats compact and full debug values across output types', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    const longError = 'x'.repeat(60)
+
+    expect(wrapper.vm.fmtDebugVal({ __error__: null })).toContain('—')
+    expect(wrapper.vm.fmtDebugVal({ __error__: 'short' })).toContain('short')
+    expect(wrapper.vm.fmtDebugVal({ __error__: longError })).toContain('…')
+    expect(wrapper.vm.fmtDebugVal({ __error__: longError }, { full: true, maxChars: 20 })).toContain(`${'x'.repeat(20)}…`)
+    expect(wrapper.vm.fmtDebugVal({ value: null, changed: true })).toBe('= —')
+    expect(wrapper.vm.fmtDebugVal({ value: true, changed: true })).toBe('= ✓')
+    expect(wrapper.vm.fmtDebugVal({ value: false, changed: true })).toBe('= ✗')
+    expect(wrapper.vm.fmtDebugVal({ _message: null })).toBe('—')
+    expect(wrapper.vm.fmtDebugVal({ _message: 'sent', sent: true })).toBe('"sent"  sent=✓')
+    expect(wrapper.vm.fmtDebugVal({ _write_value: 12 })).toBe('→ 12')
+  })
+
   it('expands dynamic ports and keeps connected custom handles', async () => {
     const graph = makeGraph('graph-1')
     const { wrapper } = await mountLogicView({
@@ -520,6 +536,9 @@ describe('LogicView inspector inputs', () => {
     wrapper.vm.debugNode = { id: 'script', type: 'python_script', data: {} }
     wrapper.vm.lastRunInputs = {}
     expect(wrapper.vm.debugInputs.map(input => input.id)).toEqual(['a', 'b', 'c'])
+
+    wrapper.vm.debugNode = null
+    expect(wrapper.vm.debugInputs).toEqual([])
   })
 
   it('edits, parses, runs, and clears temporary input overrides', async () => {
