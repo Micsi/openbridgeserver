@@ -762,7 +762,7 @@ def _ical_payload_limit_bytes(node_data: dict[str, Any]) -> int:
         raw_limit = _ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB
     try:
         limit_mb = int(raw_limit)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         limit_mb = _ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB
     return min(max(limit_mb, 1), _ICAL_MAX_PAYLOAD_SIZE_MB) * _MIB_BYTES
 

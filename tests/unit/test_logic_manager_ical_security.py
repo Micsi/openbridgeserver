@@ -228,6 +228,8 @@ def test_read_limited_response_body_raises_on_large_response() -> None:
         ({"max_payload_size_mb": "invalid"}, 2),
         ({"max_payload_size_mb": None}, 2),
         ({"max_payload_size_mb": True}, 2),
+        ({"max_payload_size_mb": float("inf")}, 2),
+        ({"max_payload_size_mb": float("-inf")}, 2),
     ],
 )
 def test_ical_payload_limit_bytes_is_configurable_and_bounded(node_data, expected_mb) -> None:
