@@ -69,6 +69,14 @@ def test_execute_captures_configured_string_values_and_override_precedence():
     }
 
 
+def test_invalid_configured_string_input_count_is_isolated_to_its_node():
+    executor = make_executor([node("target", "string_concat", {"count": "invalid"})])
+
+    outputs = executor.execute()
+
+    assert "invalid literal" in outputs["target"]["__error__"]
+
+
 def test_datetime_node_uses_application_formats():
     executor = make_executor(
         [node("clock", "datetime", {"custom_format": "yyyy-MM-dd HH:mm:ss"})],

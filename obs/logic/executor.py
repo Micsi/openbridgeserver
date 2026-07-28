@@ -105,19 +105,20 @@ class GraphExecutor:
             incoming_inputs = inputs.copy()
             node_overrides = input_overrides.get(node.id, {})
             inputs.update(node_overrides)
-            inputs = self._resolve_effective_inputs(node, inputs)
-
-            if self.input_capture is not None:
-                self.input_capture[node.id] = {
-                    port: {
-                        "incoming": incoming_inputs.get(port),
-                        "effective": inputs.get(port),
-                        "overridden": port in node_overrides,
-                    }
-                    for port in inputs
-                }
 
             try:
+                inputs = self._resolve_effective_inputs(node, inputs)
+
+                if self.input_capture is not None:
+                    self.input_capture[node.id] = {
+                        port: {
+                            "incoming": incoming_inputs.get(port),
+                            "effective": inputs.get(port),
+                            "overridden": port in node_overrides,
+                        }
+                        for port in inputs
+                    }
+
                 result = self._eval_node(node, inputs)
             except Exception as exc:
                 logger.exception("Node %s (%s) error", node.id, node.type)
