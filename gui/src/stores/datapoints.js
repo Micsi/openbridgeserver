@@ -86,6 +86,25 @@ export const useDatapointStore = defineStore('datapoints', () => {
     return data
   }
 
+  async function duplicate(id, name) {
+    const { data } = await dpApi.duplicate(id, name)
+    const refreshState = {
+      nextPage: _nextPage.value,
+      lastParams: { ..._lastParams.value },
+      hasMore: hasMore.value,
+    }
+    try {
+      await search(_lastParams.value, false)
+    } catch {
+      // The mutation already succeeded. Keep the previous list/cursor intact so
+      // a transient refresh failure cannot be mistaken for a failed duplicate.
+      _nextPage.value = refreshState.nextPage
+      _lastParams.value = refreshState.lastParams
+      hasMore.value = refreshState.hasMore
+    }
+    return data
+  }
+
   async function update(id, payload) {
     const { data } = await dpApi.update(id, payload)
     const idx = items.value.findIndex(d => d.id === id)
@@ -149,7 +168,7 @@ export const useDatapointStore = defineStore('datapoints', () => {
   return {
     items, total, loading, datatypes, allTags, sortCol, sortDir, hasMore,
     search, loadMore, setSort,
-    create, update, remove, loadDatatypes, loadTags, patchValue, writeValue,
+    create, duplicate, update, remove, loadDatatypes, loadTags, patchValue, writeValue,
     saveScrollState, restoreScrollState, clearScrollState,
   }
 })

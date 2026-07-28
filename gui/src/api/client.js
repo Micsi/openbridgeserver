@@ -79,6 +79,7 @@ export const dpApi = {
   },
   get:           (id)                           => api.get(`/datapoints/${id}`),
   create:        (data)                         => api.post('/datapoints/', data),
+  duplicate:     (id, name)                     => api.post(`/datapoints/${id}/duplicate`, { name }),
   update:        (id, data)                     => api.patch(`/datapoints/${id}`, data),
   delete:        (id)                           => api.delete(`/datapoints/${id}`),
   value:         (id)                           => api.get(`/datapoints/${id}/value`),

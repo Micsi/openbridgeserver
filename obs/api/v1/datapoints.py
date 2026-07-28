@@ -2,6 +2,7 @@
 
 GET    /api/v1/datapoints            paginated list
 POST   /api/v1/datapoints            create
+POST   /api/v1/datapoints/{id}/duplicate duplicate (+ adapter bindings)
 GET    /api/v1/datapoints/{id}       get one (+ current value)
 PATCH  /api/v1/datapoints/{id}       update
 DELETE /api/v1/datapoints/{id}       delete
@@ -12,11 +13,12 @@ POST   /api/v1/datapoints/{id}/value write value (fires DataValueEvent)
 from __future__ import annotations
 
 import datetime
+import logging
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, Field, field_serializer
 
 from obs.api.auth import get_admin_user, get_current_user, optional_current_user
 from obs.api.v1.datapoint_config import collect_datapoint_ids_from_config
@@ -29,6 +31,7 @@ from obs.models.datapoint import DataPointCreate, DataPointUpdate
 from obs.models.visu import PageConfig
 
 router = APIRouter(tags=["datapoints"])
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +114,12 @@ class ValueOut(BaseModel):
 
 class WriteValueIn(BaseModel):
     value: Any
+
+
+class DataPointDuplicateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+    model_config = {"str_strip_whitespace": True}
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +246,85 @@ async def create_datapoint(
     reg = get_registry()
     dp = await reg.create(body)
     return _enrich(dp)
+
+
+@router.post("/{dp_id}/duplicate", response_model=DataPointOut, status_code=status.HTTP_201_CREATED)
+async def duplicate_datapoint(
+    dp_id: uuid.UUID,
+    body: DataPointDuplicateIn,
+    _user: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
+) -> DataPointOut:
+    source = get_registry().get(dp_id)
+    if source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+
+    binding_rows = await db.fetchall(
+        "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
+        (str(dp_id),),
+    )
+    duplicate = await get_registry().create(
+        DataPointCreate(
+            name=body.name,
+            data_type=source.data_type,
+            unit=source.unit,
+            tags=list(source.tags),
+            mqtt_alias=source.mqtt_alias,
+            persist_value=source.persist_value,
+            record_history=source.record_history,
+        )
+    )
+
+    if binding_rows:
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        try:
+            await db.executemany(
+                """INSERT INTO adapter_bindings
+                   (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled,
+                    send_throttle_ms, send_on_change, send_min_delta, send_min_delta_pct,
+                    value_formula, value_map, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [
+                    (
+                        str(uuid.uuid4()),
+                        str(duplicate.id),
+                        row["adapter_type"],
+                        row["adapter_instance_id"],
+                        row["direction"],
+                        row["config"],
+                        row["enabled"],
+                        row["send_throttle_ms"],
+                        row["send_on_change"],
+                        row["send_min_delta"],
+                        row["send_min_delta_pct"],
+                        row["value_formula"],
+                        row["value_map"],
+                        now,
+                        now,
+                    )
+                    for row in binding_rows
+                ],
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            await get_registry().delete(duplicate.id)
+            raise
+
+        from obs.api.v1.bindings import _reload_adapter_instance
+
+        instance_ids = {row["adapter_instance_id"] for row in binding_rows if row["adapter_instance_id"]}
+        for instance_id in instance_ids:
+            try:
+                await _reload_adapter_instance(instance_id, db)
+            except Exception:
+                logger.exception(
+                    "DataPoint %s duplicated successfully, but adapter instance %s failed to reload bindings",
+                    duplicate.id,
+                    instance_id,
+                )
+
+    return _enrich(duplicate)
 
 
 @router.get("/{dp_id}", response_model=DataPointOut)

@@ -46,6 +46,9 @@ async function mountDataPointsView({ items = [], nodeResults = [], isAdmin = tru
   const dpApi = {
     tags: vi.fn().mockResolvedValue({ data: [] }),
     create: vi.fn().mockImplementation(payload => Promise.resolve({ data: { id: 'dp-created', ...payload } })),
+    duplicate: vi.fn().mockImplementation((id, name) => Promise.resolve({
+      data: { ...items.find(item => item.id === id), id: 'dp-duplicate', name },
+    })),
     update: vi.fn().mockImplementation((id, payload) => Promise.resolve({ data: { id, ...payload } })),
     delete: vi.fn().mockResolvedValue({}),
   }
@@ -66,6 +69,9 @@ async function mountDataPointsView({ items = [], nodeResults = [], isAdmin = tru
   setActivePinia(pinia)
   const { useAuthStore } = await import('@/stores/auth')
   useAuthStore().user = { id: 'u1', username: 'tester', is_admin: isAdmin }
+  const { useWebSocketStore } = await import('@/stores/websocket')
+  const websocketStore = useWebSocketStore()
+  const subscribeSpy = vi.spyOn(websocketStore, 'subscribe')
   const mod = await import('@/views/DataPointsView.vue')
   const wrapper = mount(mod.default, {
     global: {
@@ -84,7 +90,7 @@ async function mountDataPointsView({ items = [], nodeResults = [], isAdmin = tru
   })
   await flushPromises()
   await flushPromises()
-  return { wrapper, dpApi, hierarchyApi, searchApi }
+  return { wrapper, dpApi, hierarchyApi, searchApi, subscribeSpy }
 }
 
 describe('DataPointsView hierarchy rendering', () => {
@@ -119,7 +125,7 @@ describe('DataPointsView hierarchy rendering', () => {
       quality: 'good',
       hierarchy_nodes: [],
     }
-    const { wrapper, dpApi } = await mountDataPointsView({ items: [item] })
+    const { wrapper, dpApi, searchApi, subscribeSpy } = await mountDataPointsView({ items: [item], pages: 2 })
 
     expect(wrapper.find('[data-testid="btn-new-datapoint"]').exists()).toBe(true)
 
@@ -133,6 +139,72 @@ describe('DataPointsView hierarchy rendering', () => {
     expect(wrapper.vm.editTarget.id).toBe('dp-admin')
     await wrapper.vm.onSave({ name: 'Updated DP', data_type: 'FLOAT', tags: [] })
     expect(dpApi.update).toHaveBeenCalledWith('dp-admin', { name: 'Updated DP', data_type: 'FLOAT', tags: [] })
+
+    wrapper.vm.openDuplicate(item)
+    expect(wrapper.vm.showDuplicate).toBe(true)
+    expect(wrapper.vm.duplicateName).toBe('Kopie von Admin DP')
+    expect(wrapper.find('[data-testid="btn-duplicate-dp-admin"]').exists()).toBe(true)
+    wrapper.vm.openDuplicate({ ...item, name: 'A'.repeat(255) })
+    expect(wrapper.vm.duplicateName).toHaveLength(255)
+    expect(wrapper.vm.duplicateName).toBe(`Kopie von ${'A'.repeat(245)}`)
+    wrapper.vm.openDuplicate(item)
+    wrapper.vm.filters.q = 'Admin'
+    wrapper.vm.store.sortCol = 'name'
+    wrapper.vm.store.sortDir = 'desc'
+    await wrapper.vm.store.search(wrapper.vm.apiFilters(), false)
+    const duplicatedItem = { ...item, id: 'dp-duplicate', name: 'Copied Admin DP' }
+    searchApi.search.mockResolvedValueOnce({
+      data: { items: [duplicatedItem, item], total: 2, pages: 1 },
+    })
+    searchApi.search.mockClear()
+    subscribeSpy.mockClear()
+    wrapper.vm.duplicateName = 'Copied Admin DP'
+    await wrapper.vm.doDuplicate()
+    await flushPromises()
+    expect(dpApi.duplicate).toHaveBeenCalledWith('dp-admin', 'Copied Admin DP')
+    expect(searchApi.search).toHaveBeenCalledWith({
+      q: 'Admin',
+      tag: '',
+      adapter: '',
+      quality: '',
+      type: '',
+      node_id: '',
+      tree_id: '',
+      sort: 'name',
+      order: 'desc',
+      page: 0,
+      size: 50,
+    })
+    expect(wrapper.vm.store.items.map(dp => dp.id)).toEqual(['dp-duplicate', 'dp-admin'])
+    expect(wrapper.vm.store.hasMore).toBe(false)
+    expect(subscribeSpy).toHaveBeenCalledWith(['dp-duplicate', 'dp-admin'])
+    expect(wrapper.vm.showDuplicate).toBe(false)
+
+    searchApi.search.mockResolvedValueOnce({
+      data: { items: [duplicatedItem, item], total: 2, pages: 2 },
+    })
+    await wrapper.vm.store.search(wrapper.vm.apiFilters(), false)
+    expect(wrapper.vm.store.hasMore).toBe(true)
+    searchApi.search.mockRejectedValueOnce(new Error('Refresh failed'))
+    dpApi.duplicate.mockResolvedValueOnce({
+      data: { ...item, id: 'dp-refresh-failed', name: 'Copy despite refresh failure' },
+    })
+    wrapper.vm.openDuplicate(item)
+    wrapper.vm.duplicateName = 'Copy despite refresh failure'
+    await wrapper.vm.doDuplicate()
+    expect(wrapper.vm.showDuplicate).toBe(false)
+    expect(wrapper.vm.duplicateError).toBe('')
+    expect(wrapper.vm.store.hasMore).toBe(true)
+    searchApi.search.mockClear()
+    await wrapper.vm.store.loadMore()
+    expect(searchApi.search).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }))
+
+    dpApi.duplicate.mockRejectedValueOnce({ response: { data: { detail: 'Copy failed' } } })
+    wrapper.vm.openDuplicate(item)
+    await wrapper.vm.doDuplicate()
+    expect(wrapper.vm.duplicateError).toBe('Copy failed')
+    expect(wrapper.vm.duplicateSaving).toBe(false)
+    expect(wrapper.vm.showDuplicate).toBe(true)
 
     wrapper.vm.confirmDelete(item)
     expect(wrapper.vm.deleteTarget.id).toBe('dp-admin')
