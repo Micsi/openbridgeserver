@@ -180,7 +180,7 @@ describe('LogicView auth gates', () => {
     expect(logicApi.deleteGraph).not.toHaveBeenCalled()
   })
 
-  it('uses a bug symbol for the debug control', async () => {
+  it('uses a monochrome bug symbol for the debug control', async () => {
     const graph = makeGraph('graph-1')
     const { wrapper } = await mountLogicView({
       isAdmin: true,
@@ -189,7 +189,10 @@ describe('LogicView auth gates', () => {
       graphDetails: { 'graph-1': graph },
     })
 
-    expect(wrapper.find('[data-testid="btn-debug"]').text()).toContain('🐞')
+    const icon = wrapper.find('[data-testid="icon-debug-bug"]')
+    expect(icon.exists()).toBe(true)
+    expect(icon.attributes('stroke')).toBe('currentColor')
+    expect(wrapper.find('[data-testid="btn-debug"]').text()).not.toContain('🐞')
   })
 
   it('lets admins create a graph', async () => {

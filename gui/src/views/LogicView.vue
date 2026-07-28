@@ -25,7 +25,24 @@
       <button v-if="auth.isAdmin && activeGraphId" @click="toggleDebug"
         :class="['btn-secondary btn-sm', debugMode ? 'text-amber-400 ring-1 ring-amber-400/50' : 'text-slate-400']"
         :title="$t('logic.debugMode')" data-testid="btn-debug">
-        <span aria-hidden="true">🐞</span> {{ $t('logic.debugBtn') }}
+        <svg
+          aria-hidden="true"
+          class="inline-block h-4 w-4 align-[-0.125em]"
+          data-testid="icon-debug-bug"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="m8 2 2 2" />
+          <path d="m14 4 2-2" />
+          <path d="M9 7V6a3 3 0 0 1 6 0v1" />
+          <rect x="6" y="7" width="12" height="13" rx="6" />
+          <path d="M12 11v9M6 10 3 8M6 14H2M7 18l-3 3M18 10l3-2M18 14h4M17 18l3 3" />
+        </svg>
+        {{ $t('logic.debugBtn') }}
       </button>
       <div v-if="auth.isAdmin && activeGraphId" class="flex items-center gap-1">
         <button
