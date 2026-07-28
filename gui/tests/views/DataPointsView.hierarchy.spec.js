@@ -81,7 +81,11 @@ async function mountDataPointsView({ items = [], nodeResults = [], isAdmin = tru
         Badge: { template: '<span><slot /></span>' },
         ConfirmDialog: true,
         DataPointForm: true,
-        Modal: { template: '<div><slot /></div>' },
+        Modal: {
+          name: 'Modal',
+          props: ['modelValue', 'title', 'dismissible'],
+          template: '<div><slot /></div>',
+        },
         RouterLink: { props: ['to'], template: '<a><slot /></a>' },
         Spinner: { template: '<span />' },
       },
@@ -197,10 +201,10 @@ describe('DataPointsView hierarchy rendering', () => {
     await wrapper.vm.doDuplicate()
     expect(wrapper.vm.showDuplicate).toBe(false)
     expect(wrapper.vm.duplicateError).toBe('')
-    expect(wrapper.vm.store.hasMore).toBe(true)
+    expect(wrapper.vm.store.hasMore).toBe(false)
     searchApi.search.mockClear()
     await wrapper.vm.store.loadMore()
-    expect(searchApi.search).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }))
+    expect(searchApi.search).not.toHaveBeenCalled()
 
     dpApi.duplicate.mockRejectedValueOnce({ response: { data: { detail: 'Copy failed' } } })
     wrapper.vm.openDuplicate(item)
@@ -208,6 +212,21 @@ describe('DataPointsView hierarchy rendering', () => {
     expect(wrapper.vm.duplicateError).toBe('Copy failed')
     expect(wrapper.vm.duplicateSaving).toBe(false)
     expect(wrapper.vm.showDuplicate).toBe(true)
+
+    let finishDuplicate
+    dpApi.duplicate.mockReturnValueOnce(new Promise(resolve => {
+      finishDuplicate = resolve
+    }))
+    wrapper.vm.openDuplicate(item)
+    const pendingDuplicate = wrapper.vm.doDuplicate()
+    await flushPromises()
+    const duplicateModal = wrapper.findAllComponents({ name: 'Modal' })
+      .find(modal => modal.props('title') === 'Objekt duplizieren')
+    expect(wrapper.vm.duplicateSaving).toBe(true)
+    expect(duplicateModal.props('dismissible')).toBe(false)
+    finishDuplicate({ data: { ...item, id: 'dp-pending-copy' } })
+    await pendingDuplicate
+    expect(wrapper.vm.duplicateSaving).toBe(false)
 
     wrapper.vm.confirmDelete(item)
     expect(wrapper.vm.deleteTarget.id).toBe('dp-admin')

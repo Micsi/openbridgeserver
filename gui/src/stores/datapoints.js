@@ -89,18 +89,16 @@ export const useDatapointStore = defineStore('datapoints', () => {
   async function duplicate(id, name) {
     const { data } = await dpApi.duplicate(id, name)
     const refreshState = {
-      nextPage: _nextPage.value,
       lastParams: { ..._lastParams.value },
-      hasMore: hasMore.value,
     }
     try {
       await search(_lastParams.value, false)
     } catch {
-      // The mutation already succeeded. Keep the previous list/cursor intact so
-      // a transient refresh failure cannot be mistaken for a failed duplicate.
-      _nextPage.value = refreshState.nextPage
+      // The mutation already succeeded. Keep the previous visible list, but
+      // invalidate its cursor because server-side page boundaries have shifted.
+      _nextPage.value = 0
       _lastParams.value = refreshState.lastParams
-      hasMore.value = refreshState.hasMore
+      hasMore.value = false
     }
     return data
   }

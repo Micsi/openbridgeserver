@@ -412,7 +412,7 @@
     </Modal>
 
     <!-- Duplicate modal -->
-    <Modal v-model="showDuplicate" :title="$t('datapoints.duplicate.title')">
+    <Modal v-model="showDuplicate" :title="$t('datapoints.duplicate.title')" :dismissible="!duplicateSaving">
       <form class="space-y-4" @submit.prevent="doDuplicate">
         <p class="text-sm text-slate-500 dark:text-slate-400">
           {{ $t('datapoints.duplicate.hint') }}

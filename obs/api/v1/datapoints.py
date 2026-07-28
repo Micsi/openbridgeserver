@@ -192,13 +192,6 @@ def _enrich(dp: Any) -> DataPointOut:
     )
 
 
-async def _cleanup_failed_duplicate(db: Database, duplicate_id: uuid.UUID) -> None:
-    try:
-        await db.rollback()
-    finally:
-        await get_registry().delete(duplicate_id)
-
-
 async def _reload_duplicate_bindings(duplicate_id: uuid.UUID, instance_ids: list[str], db: Database) -> None:
     from obs.api.v1.bindings import _reload_adapter_instance
 
@@ -278,7 +271,8 @@ async def duplicate_datapoint(
     _user: str = Depends(get_admin_user),
     db: Database = Depends(get_db),
 ) -> DataPointOut:
-    source = get_registry().get(dp_id)
+    registry = get_registry()
+    source = registry.get(dp_id)
     if source is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
 
@@ -286,7 +280,7 @@ async def duplicate_datapoint(
         "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
         (str(dp_id),),
     )
-    duplicate = await get_registry().create(
+    duplicate = registry.prepare_create(
         DataPointCreate(
             name=body.name,
             data_type=source.data_type,
@@ -298,9 +292,10 @@ async def duplicate_datapoint(
         )
     )
 
-    if binding_rows:
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        try:
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    try:
+        await registry.insert(duplicate)
+        if binding_rows:
             await db.executemany(
                 """INSERT INTO adapter_bindings
                    (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled,
@@ -328,15 +323,18 @@ async def duplicate_datapoint(
                     for row in binding_rows
                 ],
             )
-            await db.commit()
-        except asyncio.CancelledError:
-            await asyncio.shield(_cleanup_failed_duplicate(db, duplicate.id))
-            raise
-        except Exception:
-            await _cleanup_failed_duplicate(db, duplicate.id)
-            raise
+        await db.commit()
+    except asyncio.CancelledError:
+        await asyncio.shield(db.rollback())
+        raise
+    except Exception:
+        await db.rollback()
+        raise
 
-        instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["adapter_instance_id"]})
+    registry.publish(duplicate)
+
+    if binding_rows:
+        instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["enabled"] and row["adapter_instance_id"]})
         if instance_ids:
             background_tasks.add_task(_reload_duplicate_bindings, duplicate.id, instance_ids, db)
 

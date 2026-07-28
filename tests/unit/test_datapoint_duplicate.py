@@ -14,16 +14,20 @@ class _RegistryStub:
     def __init__(self, source: DataPoint, duplicate: DataPoint) -> None:
         self.source = source
         self.duplicate = duplicate
-        self.deleted: list[uuid.UUID] = []
+        self.inserted: list[uuid.UUID] = []
+        self.published: list[uuid.UUID] = []
 
     def get(self, dp_id: uuid.UUID) -> DataPoint | None:
         return self.source if dp_id == self.source.id else None
 
-    async def create(self, _payload) -> DataPoint:
+    def prepare_create(self, _payload) -> DataPoint:
         return self.duplicate
 
-    async def delete(self, dp_id: uuid.UUID) -> None:
-        self.deleted.append(dp_id)
+    async def insert(self, dp: DataPoint) -> None:
+        self.inserted.append(dp.id)
+
+    def publish(self, dp: DataPoint) -> None:
+        self.published.append(dp.id)
 
 
 class _FailingDb:
@@ -100,7 +104,8 @@ async def test_duplicate_datapoint_removes_created_datapoint_when_binding_copy_f
         )
 
     assert db.rolled_back is True
-    assert registry.deleted == [duplicate.id]
+    assert registry.inserted == [duplicate.id]
+    assert registry.published == []
 
 
 @pytest.mark.asyncio
@@ -127,7 +132,8 @@ async def test_duplicate_datapoint_cleans_up_when_binding_copy_is_cancelled(monk
         await request_task
 
     assert db.rolled_back is True
-    assert registry.deleted == [duplicate.id]
+    assert registry.inserted == [duplicate.id]
+    assert registry.published == []
 
 
 @pytest.mark.asyncio
@@ -157,10 +163,34 @@ async def test_duplicate_datapoint_defers_post_commit_adapter_reload_failures(mo
 
     assert result is duplicate
     assert db.committed is True
-    assert registry.deleted == []
+    assert registry.published == [duplicate.id]
     assert "reload failed" not in caplog.text
 
     await background_tasks()
 
     assert "duplicated successfully" in caplog.text
     assert "reload failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_duplicate_datapoint_does_not_reload_disabled_bindings(monkeypatch):
+    source = DataPoint(name="Source", data_type="FLOAT")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    disabled_binding = {**_binding_row(), "enabled": 0}
+    registry = _RegistryStub(source, duplicate)
+    db = _SuccessfulDb(disabled_binding)
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+    monkeypatch.setattr(datapoints_api, "_enrich", lambda dp: dp)
+
+    background_tasks = BackgroundTasks()
+    result = await datapoints_api.duplicate_datapoint(
+        source.id,
+        datapoints_api.DataPointDuplicateIn(name="Copy"),
+        background_tasks,
+        _user="admin",
+        db=db,
+    )
+
+    assert result is duplicate
+    assert registry.published == [duplicate.id]
+    assert background_tasks.tasks == []
