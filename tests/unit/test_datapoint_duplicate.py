@@ -42,6 +42,10 @@ class _FailingDb:
         assert self.in_transaction
         return [self.binding]
 
+    async def fetchone(self, _sql: str, _params: tuple[str]) -> dict:
+        assert self.in_transaction
+        return {"exists": 1}
+
     @asynccontextmanager
     async def isolated_transaction(self):
         self.in_transaction = True
@@ -70,6 +74,10 @@ class _SuccessfulDb:
         assert self.in_transaction
         return [self.binding]
 
+    async def fetchone(self, _sql: str, _params: tuple[str]) -> dict:
+        assert self.in_transaction
+        return {"exists": 1}
+
     @asynccontextmanager
     async def isolated_transaction(self):
         self.in_transaction = True
@@ -96,6 +104,12 @@ class _CancelledDb(_FailingDb):
     async def executemany(self, _sql: str, _params: list[tuple]) -> None:
         self.copy_started.set()
         await asyncio.Future()
+
+
+class _MissingSourceDb(_FailingDb):
+    async def fetchone(self, _sql: str, _params: tuple[str]) -> None:
+        assert self.in_transaction
+        return None
 
 
 class _SlowCommitDb(_SuccessfulDb):
@@ -145,6 +159,29 @@ async def test_duplicate_datapoint_removes_created_datapoint_when_binding_copy_f
 
     assert db.rolled_back is True
     assert registry.inserted == [duplicate.id]
+    assert registry.published == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_datapoint_rechecks_source_inside_transaction(monkeypatch):
+    source = DataPoint(name="Source", data_type="FLOAT")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    registry = _RegistryStub(source, duplicate)
+    db = _MissingSourceDb(_binding_row())
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+
+    with pytest.raises(datapoints_api.HTTPException) as exc_info:
+        await datapoints_api.duplicate_datapoint(
+            source.id,
+            datapoints_api.DataPointDuplicateIn(name="Copy"),
+            BackgroundTasks(),
+            _user="admin",
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 404
+    assert db.rolled_back is True
+    assert registry.inserted == []
     assert registry.published == []
 
 
@@ -324,6 +361,30 @@ async def test_memory_database_ordinary_write_waits_for_isolated_transaction():
 
 
 @pytest.mark.asyncio
+async def test_memory_database_isolated_transaction_waits_for_ordinary_transaction():
+    db = Database(":memory:")
+    await db.connect()
+    try:
+        await db.execute_and_commit("CREATE TABLE ordinary_write (id INTEGER PRIMARY KEY)")
+        await db.execute("INSERT INTO ordinary_write (id) VALUES (1)")
+        transaction_entered = asyncio.Event()
+
+        async def _enter_transaction() -> None:
+            async with db.isolated_transaction():
+                transaction_entered.set()
+
+        transaction_task = asyncio.create_task(_enter_transaction())
+        await asyncio.sleep(0)
+        assert not transaction_entered.is_set()
+
+        await db.commit()
+        await transaction_task
+        assert transaction_entered.is_set()
+    finally:
+        await db.disconnect()
+
+
+@pytest.mark.asyncio
 async def test_disconnect_waits_for_isolated_transaction(tmp_path):
     db = Database(str(tmp_path / "disconnect.db"))
     await db.connect()
@@ -345,3 +406,36 @@ async def test_disconnect_waits_for_isolated_transaction(tmp_path):
     await transaction_task
     await disconnect_task
     assert db._conn is None
+
+
+@pytest.mark.asyncio
+async def test_exclusive_lifecycle_blocks_transactions_until_reconnect(tmp_path):
+    db = Database(str(tmp_path / "replacement.db"))
+    await db.connect()
+    transaction_entered = asyncio.Event()
+
+    async def _enter_transaction() -> None:
+        async with db.isolated_transaction():
+            transaction_entered.set()
+
+    async with db.exclusive_lifecycle() as lifecycle:
+        await lifecycle.disconnect()
+        transaction_task = asyncio.create_task(_enter_transaction())
+        await asyncio.sleep(0)
+        assert not transaction_entered.is_set()
+        await lifecycle.connect()
+
+    await transaction_task
+    assert transaction_entered.is_set()
+    await db.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_isolated_transaction_rejects_disconnected_database(tmp_path):
+    db = Database(str(tmp_path / "disconnected.db"))
+    await db.connect()
+    await db.disconnect()
+
+    with pytest.raises(RuntimeError, match=r"Database\.connect"):
+        async with db.isolated_transaction():
+            pytest.fail("disconnected transaction unexpectedly opened")

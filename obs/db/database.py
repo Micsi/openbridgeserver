@@ -765,11 +765,28 @@ class _DatabaseTransaction:
         async with self._conn.execute(sql, params) as cur:
             return await cur.fetchall()
 
+    async def fetchone(self, sql: str, params: Any = ()) -> aiosqlite.Row | None:
+        async with self._conn.execute(sql, params) as cur:
+            return await cur.fetchone()
+
     async def commit(self) -> None:
         await self._conn.commit()
 
     async def rollback(self) -> None:
         await self._conn.rollback()
+
+
+class _DatabaseLifecycle:
+    """Connection lifecycle operations under the database's exclusive lock."""
+
+    def __init__(self, database: Database) -> None:
+        self._database = database
+
+    async def connect(self) -> None:
+        await self._database._connect()
+
+    async def disconnect(self) -> None:
+        await self._database._disconnect()
 
 
 class Database:
@@ -792,12 +809,20 @@ class Database:
         # disconnect from returning while a private transaction still owns the
         # old file.
         self._transaction_lifecycle_lock = asyncio.Lock()
+        # SQLite shared-cache memory databases return SQLITE_LOCKED immediately
+        # instead of honoring busy_timeout. Serialize their ordinary operations
+        # with private transactions so callers retain normal wait semantics.
+        self._memory_operation_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def connect(self) -> None:
+        async with self._transaction_lifecycle_lock:
+            await self._connect()
+
+    async def _connect(self) -> None:
         if self._path not in (":memory:", "file::memory:?cache=shared"):
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -837,16 +862,25 @@ class Database:
         # cancelled) before closing, so a restore that rewrites the file right after
         # disconnect never races a checkpoint still holding locks on it. See #908.
         async with self._transaction_lifecycle_lock:
-            async with self._checkpoint_lock:
-                if self._conn is not None:
-                    # Leave the -wal sidecar bounded on graceful shutdown.
-                    try:
-                        await self._run_checkpoint()
-                    except Exception:
-                        logger.exception("WAL checkpoint on disconnect failed")
-                    await self._conn.close()
-                    self._conn = None
-                    logger.info("Database disconnected")
+            await self._disconnect()
+
+    async def _disconnect(self) -> None:
+        async with self._checkpoint_lock:
+            if self._conn is not None:
+                # Leave the -wal sidecar bounded on graceful shutdown.
+                try:
+                    await self._run_checkpoint()
+                except Exception:
+                    logger.exception("WAL checkpoint on disconnect failed")
+                await self._conn.close()
+                self._conn = None
+                logger.info("Database disconnected")
+
+    @asynccontextmanager
+    async def exclusive_lifecycle(self) -> AsyncIterator[_DatabaseLifecycle]:
+        """Block transactions throughout a disconnect/replace/reconnect sequence."""
+        async with self._transaction_lifecycle_lock:
+            yield _DatabaseLifecycle(self)
 
     async def checkpoint(self) -> bool:
         """Force a TRUNCATE WAL checkpoint to keep the ``-wal`` sidecar bounded.
@@ -955,7 +989,14 @@ class Database:
     @asynccontextmanager
     async def isolated_transaction(self) -> AsyncIterator[_DatabaseTransaction]:
         """Yield a private connection so a multi-statement transaction cannot interleave."""
-        async with self._transaction_lifecycle_lock:
+        async with self._transaction_lifecycle_lock, self._ordinary_operation():
+            if self._conn is None:
+                raise RuntimeError("Database.connect() has not been called")
+            # An ordinary multi-call transaction may have started just before
+            # the memory-operation lock was acquired. Its commit/rollback does
+            # not need that lock, so let it finish before opening another writer.
+            while self._path == ":memory:" and self.conn.in_transaction:
+                await asyncio.sleep(0)
             isolated = await aiosqlite.connect(
                 self._connection_path,
                 uri=self._connection_path.startswith("file:"),
@@ -969,11 +1010,21 @@ class Database:
                     await isolated.rollback()
                 await isolated.close()
 
+    @asynccontextmanager
+    async def _ordinary_operation(self) -> AsyncIterator[None]:
+        if self._path == ":memory:":
+            async with self._memory_operation_lock:
+                yield
+        else:
+            yield
+
     async def execute(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
-        return await self.conn.execute(sql, params)
+        async with self._ordinary_operation():
+            return await self.conn.execute(sql, params)
 
     async def executemany(self, sql: str, params: Any) -> aiosqlite.Cursor:
-        return await self.conn.executemany(sql, params)
+        async with self._ordinary_operation():
+            return await self.conn.executemany(sql, params)
 
     async def commit(self) -> None:
         await self.conn.commit()
@@ -982,17 +1033,20 @@ class Database:
         await self.conn.rollback()
 
     async def fetchall(self, sql: str, params: Any = ()) -> list[aiosqlite.Row]:
-        async with self.conn.execute(sql, params) as cur:
-            return await cur.fetchall()
+        async with self._ordinary_operation():
+            async with self.conn.execute(sql, params) as cur:
+                return await cur.fetchall()
 
     async def fetchone(self, sql: str, params: Any = ()) -> aiosqlite.Row | None:
-        async with self.conn.execute(sql, params) as cur:
-            return await cur.fetchone()
+        async with self._ordinary_operation():
+            async with self.conn.execute(sql, params) as cur:
+                return await cur.fetchone()
 
     async def execute_and_commit(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
-        cur = await self.conn.execute(sql, params)
-        await self.conn.commit()
-        return cur
+        async with self._ordinary_operation():
+            cur = await self.conn.execute(sql, params)
+            await self.conn.commit()
+            return cur
 
 
 # ---------------------------------------------------------------------------

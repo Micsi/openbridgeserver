@@ -295,6 +295,12 @@ async def duplicate_datapoint(
             # snapshot, so deleting an adapter instance cannot interleave and
             # leave copied bindings pointing at an instance that no longer exists.
             await transaction.execute("BEGIN IMMEDIATE")
+            source_row = await transaction.fetchone(
+                "SELECT 1 FROM datapoints WHERE id=?",
+                (str(dp_id),),
+            )
+            if source_row is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
             binding_rows = await transaction.fetchall(
                 "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
                 (str(dp_id),),
