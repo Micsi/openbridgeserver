@@ -480,7 +480,7 @@ class KnxAdapter(AdapterBase):
             dpt = DPTRegistry.get(bc.dpt_id)
             entry = (binding, dpt)
             self._ga_source_map.setdefault(bc.group_address, []).append(entry)
-            if bc.state_group_address:
+            if bc.state_group_address and bc.state_group_address != bc.group_address:
                 self._ga_source_map.setdefault(bc.state_group_address, []).append(entry)
 
             if bc.respond_to_read:

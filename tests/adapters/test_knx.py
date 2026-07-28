@@ -964,6 +964,20 @@ class TestOnBindingsReloaded:
         assert "1/2/4" in adapter._ga_source_map
 
     @pytest.mark.asyncio
+    async def test_identical_state_group_address_is_not_registered_twice(self, mock_bus):
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001", "state_group_address": "1/2/3"},
+            direction="BOTH",
+        )
+        adapter = self._make_adapter(mock_bus, [binding])
+
+        await adapter._on_bindings_reloaded()
+
+        assert adapter._ga_source_map["1/2/3"] == [
+            (binding, DPTRegistry.get("DPT9.001")),
+        ]
+
+    @pytest.mark.asyncio
     async def test_respond_to_read_adds_to_respond_map(self, mock_bus):
         binding = make_binding(
             {"group_address": "5/6/7", "dpt_id": "DPT1.001", "respond_to_read": True},
