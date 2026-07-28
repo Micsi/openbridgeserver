@@ -8,6 +8,7 @@ without the optional dependency.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -573,6 +574,26 @@ class TestTunnelOverloadDetection:
         assert len(adapter._disconnect_times) == 1
 
     @pytest.mark.asyncio
+    async def test_xknx_disconnected_callback_preserves_pending_transmissions(
+        self,
+        mock_bus,
+    ):
+        adapter = self._make_adapter(mock_bus, threshold=3, window_s=300)
+        adapter._pending_transmissions[123] = (
+            100.0,
+            object(),
+            "1/2/3",
+            None,
+            b"\x01",
+            True,
+        )
+
+        adapter._on_xknx_connection_state(XknxConnectionState.DISCONNECTED)
+        await asyncio.sleep(0)
+
+        assert 123 in adapter._pending_transmissions
+
+    @pytest.mark.asyncio
     async def test_xknx_connected_callback_runs_reconnect_handler(self, mock_bus, monkeypatch):
         adapter = self._make_adapter(mock_bus, threshold=3, window_s=300)
         t0 = datetime(2026, 5, 15, 12, 0, 0, tzinfo=UTC)
@@ -616,7 +637,10 @@ class TestKnxAdapterMiscSetters:
 
     def test_set_value_getter(self, mock_bus):
         adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
-        getter = lambda dp_id: None
+
+        def getter(dp_id):
+            return None
+
         adapter.set_value_getter(getter)
         assert adapter._value_getter is getter
 
@@ -835,6 +859,15 @@ class TestKnxAdapterConnectDisconnect:
         assert adapter._reconnect_task is None
 
     @pytest.mark.asyncio
+    async def test_disconnect_cancels_echo_cleanup_task(self, mock_bus):
+        adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
+        adapter._echo_cleanup_task = asyncio.ensure_future(asyncio.sleep(1000))
+
+        await adapter.disconnect()
+
+        assert adapter._echo_cleanup_task is None
+
+    @pytest.mark.asyncio
     async def test_disconnect_without_xknx_is_safe(self, mock_bus):
         adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
         # _xknx is None — should not raise
@@ -853,12 +886,9 @@ class TestKnxAdapterConnectDisconnect:
 
         assert adapter._reconnect_task is not None
         assert not adapter._reconnect_task.done()
-        # cleanup
-        adapter._reconnect_task.cancel()
-        try:
-            await adapter._reconnect_task
-        except asyncio.CancelledError:
-            pass
+        assert adapter._echo_cleanup_task is not None
+        assert not adapter._echo_cleanup_task.done()
+        await adapter.disconnect()
 
 
 # ---------------------------------------------------------------------------
@@ -879,6 +909,27 @@ class TestOnBindingsReloaded:
         # _xknx is None → builds map but returns early
         await adapter._on_bindings_reloaded()
         assert "1/2/3" in adapter._ga_source_map
+
+    @pytest.mark.asyncio
+    async def test_reload_clears_confirmation_state(self, mock_bus):
+        binding = make_binding({"group_address": "1/2/3", "dpt_id": "DPT9.001"}, direction="BOTH")
+        adapter = self._make_adapter(mock_bus, [binding])
+        adapter._recent_writes[(str(binding.id), "1/2/3")] = deque(
+            [(100.0, b"\x01", True)],
+        )
+        adapter._pending_transmissions[123] = (
+            100.0,
+            binding,
+            "1/2/3",
+            None,
+            b"\x01",
+            True,
+        )
+
+        await adapter._on_bindings_reloaded()
+
+        assert adapter._recent_writes == {}
+        assert adapter._pending_transmissions == {}
 
     @pytest.mark.asyncio
     async def test_source_binding_added_to_source_map(self, mock_bus):
@@ -1051,6 +1102,470 @@ class TestKnxReadWrite:
         assert isinstance(telegram.payload.value, DPTArray)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("value_formula", "value_map"),
+        [
+            ("x * 0.1", None),
+            (None, {"50.0": "5.0"}),
+        ],
+    )
+    async def test_both_binding_publishes_state_only_untransformed_confirmations(
+        self,
+        mock_bus,
+        value_formula,
+        value_map,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula=value_formula,
+            value_map=value_map,
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map = {
+            "1/2/3": [(binding, dpt)],
+            "1/2/4": [(binding, dpt)],
+        }
+
+        await adapter.write_with_context(
+            binding,
+            5.0,
+            logical_value=50.0,
+        )
+        command_echo = mock_xknx.telegrams.put.call_args[0][0]
+        state_echo = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            payload=command_echo.payload,
+        )
+
+        await adapter._on_telegram(command_echo)
+        await adapter._on_telegram(state_echo)
+
+        assert mock_bus.publish.call_count == 2
+        events = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert all(abs(event.value - 50.0) < 0.1 for event in events)
+        assert all(event.suppress_write_propagation is True for event in events)
+
+    @pytest.mark.asyncio
+    async def test_matching_confirmation_is_consumed_only_once(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+
+        await adapter.write_with_context(
+            binding,
+            5.0,
+            logical_value=50.0,
+        )
+        telegram = mock_xknx.telegrams.put.call_args[0][0]
+        await adapter._on_telegram(telegram)
+        await adapter._on_telegram(telegram)
+
+        first_event, second_event = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert first_event.value == 50.0
+        assert first_event.suppress_write_propagation is True
+        assert abs(second_event.value - 0.5) < 0.1
+        assert second_event.suppress_write_propagation is False
+
+    @pytest.mark.asyncio
+    async def test_rapid_writes_preserve_each_pending_confirmation(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+
+        await adapter.write_with_context(
+            binding,
+            20.0,
+            logical_value=200.0,
+        )
+        older_telegram = mock_xknx.telegrams.put.call_args[0][0]
+        await adapter.write_with_context(
+            binding,
+            21.0,
+            logical_value=210.0,
+        )
+        latest_telegram = mock_xknx.telegrams.put.call_args[0][0]
+
+        await adapter._on_telegram(older_telegram)
+        await adapter._on_telegram(latest_telegram)
+
+        older_event, latest_event = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert older_event.value == 200.0
+        assert older_event.suppress_write_propagation is True
+        assert latest_event.value == 210.0
+        assert latest_event.suppress_write_propagation is True
+        assert adapter._recent_writes == {}
+
+    @pytest.mark.asyncio
+    async def test_rapid_write_confirmations_can_arrive_out_of_order(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+
+        await adapter.write_with_context(
+            binding,
+            20.0,
+            logical_value=200.0,
+        )
+        older_telegram = mock_xknx.telegrams.put.call_args[0][0]
+        await adapter.write_with_context(
+            binding,
+            21.0,
+            logical_value=210.0,
+        )
+        latest_telegram = mock_xknx.telegrams.put.call_args[0][0]
+
+        await adapter._on_telegram(latest_telegram)
+        await adapter._on_telegram(older_telegram)
+        await adapter._on_telegram(older_telegram)
+
+        latest_event, older_event, repeated_event = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert latest_event.value == 210.0
+        assert latest_event.suppress_write_propagation is True
+        assert older_event.value == 200.0
+        assert older_event.suppress_write_propagation is True
+        assert abs(repeated_event.value - 2.0) < 0.1
+        assert repeated_event.suppress_write_propagation is False
+
+    @pytest.mark.asyncio
+    async def test_coalesced_state_confirmation_uses_latest_same_raw_write(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map = {
+            "1/2/3": [(binding, dpt)],
+            "1/2/4": [(binding, dpt)],
+        }
+
+        await adapter.write_with_context(binding, 5.0, logical_value=50.0)
+        older_command = mock_xknx.telegrams.put.call_args[0][0]
+        await adapter.write_with_context(binding, 5.0, logical_value=60.0)
+        latest_command = mock_xknx.telegrams.put.call_args[0][0]
+
+        await adapter._on_telegram(older_command)
+        await adapter._on_telegram(latest_command)
+        state_confirmation = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            payload=latest_command.payload,
+        )
+        await adapter._on_telegram(state_confirmation)
+        await adapter._on_telegram(state_confirmation)
+
+        older_event, latest_event, state_event, repeated_state_event = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert older_event.value == 50.0
+        assert latest_event.value == 60.0
+        assert state_event.value == 60.0
+        assert state_event.suppress_write_propagation is True
+        assert abs(repeated_state_event.value - 0.5) < 0.1
+        assert repeated_state_event.suppress_write_propagation is False
+
+    def test_state_confirmation_keeps_expectations_for_other_raw_values(
+        self,
+        mock_bus,
+    ):
+        adapter, _ = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        raw_five = dpt.encoder(5.0)
+        raw_six = dpt.encoder(6.0)
+        adapter._remember_outbound_write(binding, "1/2/4", raw_five, 50.0)
+        adapter._remember_outbound_write(binding, "1/2/4", raw_six, 60.0)
+        adapter._remember_outbound_write(binding, "1/2/4", raw_five, 55.0)
+
+        matched, logical_value = adapter._consume_outbound_confirmation(
+            binding,
+            "1/2/4",
+            raw_five,
+        )
+
+        assert matched is True
+        assert logical_value == 55.0
+        remaining = adapter._recent_writes[(str(binding.id), "1/2/4")]
+        assert [(raw, value) for _, raw, value in remaining] == [(raw_six, 60.0)]
+
+    def test_command_address_mismatch_remains_pending(self, mock_bus):
+        adapter, _ = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._remember_outbound_write(
+            binding,
+            "1/2/3",
+            dpt.encoder(5.0),
+            50.0,
+        )
+
+        matched, logical_value = adapter._consume_outbound_confirmation(
+            binding,
+            "1/2/3",
+            dpt.encoder(6.0),
+        )
+
+        assert matched is False
+        assert logical_value is None
+        assert len(adapter._recent_writes[(str(binding.id), "1/2/3")]) == 1
+
+    @pytest.mark.asyncio
+    async def test_queued_write_starts_confirmation_window_when_transmitted(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+
+        await adapter.write_with_context(binding, 5.0, logical_value=50.0)
+        transmitted_telegram = mock_xknx.telegrams.put.call_args[0][0]
+        now[0] += 3.0
+        await adapter._on_telegram(transmitted_telegram)
+
+        event = mock_bus.publish.call_args[0][0]
+        assert event.value == 50.0
+        assert event.suppress_write_propagation is True
+        assert adapter._pending_transmissions == {}
+
+    @pytest.mark.asyncio
+    async def test_retried_write_keeps_confirmation_context_across_disconnect(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+
+        await adapter.write_with_context(binding, 5.0, logical_value=50.0)
+        retried_telegram = mock_xknx.telegrams.put.call_args[0][0]
+        adapter._on_xknx_connection_state(XknxConnectionState.DISCONNECTED)
+        await asyncio.sleep(0)
+
+        assert id(retried_telegram) in adapter._pending_transmissions
+        await adapter._on_telegram(retried_telegram)
+
+        event = mock_bus.publish.call_args[0][0]
+        assert event.value == 50.0
+        assert event.suppress_write_propagation is True
+        assert adapter._pending_transmissions == {}
+
+    @pytest.mark.asyncio
+    async def test_cleanup_loop_prunes_expired_confirmations_without_traffic(
+        self,
+        mock_bus,
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        adapter, _ = self._make_adapter_with_xknx(mock_bus)
+        adapter._recent_writes[("binding", "1/2/3")] = deque(
+            [(100.0, b"\x01", True)],
+        )
+        adapter._pending_transmissions[123] = (
+            100.0,
+            object(),
+            "1/2/3",
+            None,
+            b"\x01",
+            True,
+        )
+        adapter._monotonic = lambda: 131.0
+
+        async def finish_sleep(_delay):
+            adapter._stopped = True
+
+        with patch(
+            "obs.adapters.knx.adapter.asyncio.sleep",
+            new=AsyncMock(side_effect=finish_sleep),
+        ):
+            await adapter._echo_cleanup_loop()
+
+        assert adapter._recent_writes == {}
+        assert adapter._pending_transmissions == {}
+
+    @pytest.mark.asyncio
+    async def test_async_send_failure_pending_write_expires(self, mock_bus):
+        adapter, _ = self._make_adapter_with_xknx(mock_bus)
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+
+        await adapter.write_with_context(binding, 5.0, logical_value=50.0)
+        assert len(adapter._pending_transmissions) == 1
+
+        # XKNX accepted the queue item but neither emitted its outgoing callback
+        # nor raised from Queue.put(), as happens when the later transport send fails.
+        now[0] += 31.0
+        adapter._prune_pending_transmissions()
+
+        assert adapter._pending_transmissions == {}
+
+    @pytest.mark.asyncio
+    async def test_mutated_transmitted_telegram_does_not_activate_confirmation(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+
+        await adapter.write_with_context(binding, 5.0, logical_value=50.0)
+        telegram = mock_xknx.telegrams.put.call_args[0][0]
+        adapter._activate_outbound_write(
+            telegram,
+            "1/2/4",
+            dpt.encoder(5.0),
+        )
+
+        assert adapter._pending_transmissions == {}
+        assert adapter._recent_writes == {}
+
+    @pytest.mark.asyncio
+    async def test_both_binding_still_accepts_different_inbound_value(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map = {
+            "1/2/3": [(binding, dpt)],
+            "1/2/4": [(binding, dpt)],
+        }
+
+        await adapter.write(binding, 50.0)
+        await adapter._on_telegram(mock_xknx.telegrams.put.call_args[0][0])
+        external_telegram = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            payload=GroupValueWrite(DPTArray(list(dpt.encoder(60.0)))),
+        )
+        await adapter._on_telegram(external_telegram)
+
+        event = mock_bus.publish.call_args_list[-1].args[0]
+        assert abs(event.value - 6.0) < 0.1
+        assert event.suppress_write_propagation is False
+
+    @pytest.mark.asyncio
+    async def test_echo_suppression_does_not_hide_shared_ga_from_other_binding(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        both_binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        source_binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="SOURCE",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [
+            (both_binding, dpt),
+            (source_binding, dpt),
+        ]
+
+        await adapter.write(both_binding, 50.0)
+        await adapter._on_telegram(mock_xknx.telegrams.put.call_args[0][0])
+
+        assert mock_bus.publish.call_count == 2
+        events = [call.args[0] for call in mock_bus.publish.call_args_list]
+        confirmation = next(event for event in events if event.binding_id == both_binding.id)
+        source_event = next(event for event in events if event.binding_id == source_binding.id)
+        assert confirmation.suppress_write_propagation is True
+        assert source_event.suppress_write_propagation is False
+        assert abs(source_event.value - 50.0) < 0.1
+
+    @pytest.mark.asyncio
+    async def test_both_binding_accepts_matching_value_after_echo_window(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map = {
+            "1/2/3": [(binding, dpt)],
+            "1/2/4": [(binding, dpt)],
+        }
+
+        await adapter.write(binding, 50.0)
+        transmitted_telegram = mock_xknx.telegrams.put.call_args[0][0]
+        await adapter._on_telegram(transmitted_telegram)
+        now[0] += 3.0
+        delayed_state_telegram = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            payload=transmitted_telegram.payload,
+        )
+        await adapter._on_telegram(delayed_state_telegram)
+
+        event = mock_bus.publish.call_args_list[-1].args[0]
+        assert abs(event.value - 5.0) < 0.1
+        assert event.suppress_write_propagation is False
+        assert adapter._recent_writes == {}
+
+    @pytest.mark.asyncio
     async def test_write_without_xknx_is_noop(self, mock_bus):
         adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
         binding = make_binding({"group_address": "1/2/3", "dpt_id": "DPT9.001"})
@@ -1077,8 +1592,12 @@ class TestKnxReadWrite:
         mock_xknx = MagicMock()
         mock_xknx.telegrams.put = AsyncMock(side_effect=RuntimeError("oops"))
         adapter._xknx = mock_xknx
-        binding = make_binding({"group_address": "1/2/3", "dpt_id": "DPT9.001"})
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
         await adapter.write(binding, 10.0)
+        assert adapter._pending_transmissions == {}
 
 
 # ---------------------------------------------------------------------------

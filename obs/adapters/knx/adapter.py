@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -47,6 +48,8 @@ from obs.adapters.registry import register
 from obs.core.event_bus import DataValueEvent
 
 TUNNEL_OVERLOAD_DETAIL = "KNX-Tunnel-Slot wahrscheinlich von anderem Client belegt — Gateway-Pool überlastet."
+ECHO_SUPPRESSION_WINDOW_S = 2.0
+PENDING_TRANSMISSION_TIMEOUT_S = 30.0
 
 # Import APCI classes at module level so missing symbols fail loudly at startup
 try:
@@ -140,8 +143,17 @@ class KnxAdapter(AdapterBase):
         self._sniffer: Any = None
         self._ga_source_map: dict[str, list[tuple[Any, Any]]] = {}
         self._ga_respond_map: dict[str, list[tuple[Any, Any]]] = {}
+        self._recent_writes: dict[
+            tuple[str, str],
+            deque[tuple[float, bytes, Any]],
+        ] = {}
+        self._pending_transmissions: dict[
+            int,
+            tuple[float, Any, str, str | None, bytes, Any],
+        ] = {}
         self._value_getter: Any = None
         self._reconnect_task: asyncio.Task | None = None
+        self._echo_cleanup_task: asyncio.Task | None = None
         self._stopped: bool = False
         # Tunnel-overload detection (issue #466)
         self._disconnect_times: deque[datetime] = deque()
@@ -151,6 +163,11 @@ class KnxAdapter(AdapterBase):
     def _now() -> datetime:
         """Monkeypatch-able clock seam for deterministic tests."""
         return datetime.now(UTC)
+
+    @staticmethod
+    def _monotonic() -> float:
+        """Monkeypatch-able monotonic clock seam for echo suppression tests."""
+        return time.monotonic()
 
     def set_value_getter(self, getter: Any) -> None:
         """Set a callable that returns ValueState | None for a datapoint UUID."""
@@ -165,6 +182,8 @@ class KnxAdapter(AdapterBase):
         await self._do_connect()
         if self._reconnect_task is None or self._reconnect_task.done():
             self._reconnect_task = asyncio.ensure_future(self._reconnect_loop())
+        if self._echo_cleanup_task is None or self._echo_cleanup_task.done():
+            self._echo_cleanup_task = asyncio.ensure_future(self._echo_cleanup_loop())
 
     async def _do_connect(self) -> None:
         """Internal connect attempt — creates a fresh xknx instance and starts it."""
@@ -336,6 +355,13 @@ class KnxAdapter(AdapterBase):
                 logger.info("KNX: not connected — attempting reconnect …")
                 await self._do_connect()
 
+    async def _echo_cleanup_loop(self) -> None:
+        """Remove expired queued and sent confirmation expectations."""
+        while not self._stopped:
+            await asyncio.sleep(ECHO_SUPPRESSION_WINDOW_S)
+            self._prune_recent_writes()
+            self._prune_pending_transmissions()
+
     # ------------------------------------------------------------------
     # Tunnel-pool overload detection — issue #466
     # ------------------------------------------------------------------
@@ -413,7 +439,16 @@ class KnxAdapter(AdapterBase):
             except asyncio.CancelledError:
                 pass
         self._reconnect_task = None
+        if self._echo_cleanup_task and not self._echo_cleanup_task.done():
+            self._echo_cleanup_task.cancel()
+            try:
+                await self._echo_cleanup_task
+            except asyncio.CancelledError:
+                pass
+        self._echo_cleanup_task = None
         self._sniffer = None
+        self._recent_writes.clear()
+        self._pending_transmissions.clear()
         if self._xknx:
             try:
                 await self._xknx.stop()
@@ -429,6 +464,8 @@ class KnxAdapter(AdapterBase):
 
     async def _on_bindings_reloaded(self) -> None:
         """Rebuild GA→binding map and re-register the sniffer Device."""
+        self._recent_writes.clear()
+        self._pending_transmissions.clear()
         self._ga_source_map.clear()
         self._ga_respond_map.clear()
         for binding in self._bindings:
@@ -523,16 +560,33 @@ class KnxAdapter(AdapterBase):
                 return
 
             raw = _telegram_to_bytes(telegram)
+            if getattr(getattr(telegram, "direction", None), "name", None) == "OUTGOING":
+                self._activate_outbound_write(telegram, ga, raw)
             for binding, dpt in entries:
-                try:
-                    value = dpt.decoder(raw)
+                is_outbound_confirmation, logical_value = self._consume_outbound_confirmation(
+                    binding,
+                    ga,
+                    raw,
+                )
+                if is_outbound_confirmation:
+                    logger.debug(
+                        "KNX outbound confirmation: GA=%s binding=%s raw=%s",
+                        ga,
+                        binding.id,
+                        raw.hex(),
+                    )
+                    value = logical_value
                     quality = "good"
-                except Exception:
-                    logger.exception("KNX DPT decode error for %s (%s)", ga, dpt.dpt_id)
-                    value = raw.hex() if isinstance(raw, (bytes, bytearray)) else raw
-                    quality = "uncertain"
+                else:
+                    try:
+                        value = dpt.decoder(raw)
+                        quality = "good"
+                    except Exception:
+                        logger.exception("KNX DPT decode error for %s (%s)", ga, dpt.dpt_id)
+                        value = raw.hex() if isinstance(raw, (bytes, bytearray)) else raw
+                        quality = "uncertain"
 
-                if isinstance(value, float) and not math.isfinite(value):
+                if not is_outbound_confirmation and isinstance(value, float) and not math.isfinite(value):
                     logger.warning(
                         "KNX DPT decoded non-finite float for GA=%s (%s): %s — quality=bad",
                         ga,
@@ -542,11 +596,11 @@ class KnxAdapter(AdapterBase):
                     quality = "bad"
                     value = None
 
-                if binding.value_formula and quality == "good":
+                if not is_outbound_confirmation and binding.value_formula and quality == "good":
                     from obs.core.formula import apply_formula
 
                     value = apply_formula(binding.value_formula, value)
-                if binding.value_map and quality != "bad":
+                if not is_outbound_confirmation and binding.value_map and quality != "bad":
                     from obs.core.transformation import apply_value_map
 
                     value = apply_value_map(value, binding.value_map)
@@ -558,6 +612,7 @@ class KnxAdapter(AdapterBase):
                         quality=quality,
                         source_adapter=self.adapter_type,
                         binding_id=binding.id,
+                        suppress_write_propagation=is_outbound_confirmation,
                     ),
                 )
         except Exception:
@@ -611,6 +666,107 @@ class KnxAdapter(AdapterBase):
     # Read / Write
     # ------------------------------------------------------------------
 
+    def _remember_outbound_write(
+        self,
+        binding: Any,
+        ga: str,
+        raw: bytes,
+        logical_value: Any,
+        *,
+        written_at: float | None = None,
+    ) -> None:
+        """Remember a BOTH-binding write so its immediate confirmation can be recognized."""
+        key = (str(binding.id), ga)
+        now = self._monotonic() if written_at is None else written_at
+        self._prune_recent_writes(now)
+        recent_writes = self._recent_writes.setdefault(key, deque())
+        recent_writes.append((now, bytes(raw), logical_value))
+
+    def _activate_outbound_write(self, telegram: Any, ga: str, raw: bytes) -> None:
+        """Start confirmation windows after XKNX has transmitted a queued telegram."""
+        pending = self._pending_transmissions.pop(id(telegram), None)
+        if pending is None:
+            return
+
+        _, binding, command_ga, state_ga, written_raw, logical_value = pending
+        if ga != command_ga or written_raw != bytes(raw):
+            logger.warning(
+                "KNX transmitted telegram differs from queued write: GA=%s expected_GA=%s",
+                ga,
+                command_ga,
+            )
+            return
+
+        written_at = self._monotonic()
+        self._remember_outbound_write(
+            binding,
+            command_ga,
+            written_raw,
+            logical_value,
+            written_at=written_at,
+        )
+        if state_ga and state_ga != command_ga:
+            self._remember_outbound_write(
+                binding,
+                state_ga,
+                written_raw,
+                logical_value,
+                written_at=written_at,
+            )
+
+    def _prune_recent_writes(self, now: float | None = None) -> None:
+        """Remove expired sent-write expectations across all bindings and addresses."""
+        cutoff = (self._monotonic() if now is None else now) - ECHO_SUPPRESSION_WINDOW_S
+        for key, recent_writes in list(self._recent_writes.items()):
+            while recent_writes and recent_writes[0][0] < cutoff:
+                recent_writes.popleft()
+            if not recent_writes:
+                self._recent_writes.pop(key, None)
+
+    def _prune_pending_transmissions(self, now: float | None = None) -> None:
+        """Remove writes XKNX did not report as transmitted within a bounded wait."""
+        cutoff = (self._monotonic() if now is None else now) - PENDING_TRANSMISSION_TIMEOUT_S
+        for telegram_id, pending in list(self._pending_transmissions.items()):
+            if pending[0] < cutoff:
+                self._pending_transmissions.pop(telegram_id, None)
+
+    def _consume_outbound_confirmation(
+        self,
+        binding: Any,
+        ga: str,
+        raw: bytes,
+    ) -> tuple[bool, Any]:
+        """Consume and return the logical value for one matching recent write."""
+        self._prune_recent_writes()
+        key = (str(binding.id), ga)
+        recent_writes = self._recent_writes.get(key)
+        if recent_writes is None:
+            return False, None
+
+        state_ga = binding.config.get("state_group_address")
+        is_distinct_state_ga = state_ga == ga and state_ga != binding.config.get("group_address")
+        if is_distinct_state_ga:
+            matching_writes = [recent_write for recent_write in recent_writes if recent_write[1] == raw]
+            if not matching_writes:
+                return False, None
+
+            remaining_writes = deque(recent_write for recent_write in recent_writes if recent_write[1] != raw)
+            if remaining_writes:
+                self._recent_writes[key] = remaining_writes
+            else:
+                self._recent_writes.pop(key, None)
+            return True, matching_writes[-1][2]
+
+        for index, (_, written_raw, logical_value) in enumerate(recent_writes):
+            if written_raw != raw:
+                continue
+            del recent_writes[index]
+            if not recent_writes:
+                self._recent_writes.pop(key, None)
+            return True, logical_value
+
+        return False, None
+
     async def read(self, binding: Any) -> Any:
         if not self._xknx:
             return None
@@ -631,6 +787,15 @@ class KnxAdapter(AdapterBase):
         return None
 
     async def write(self, binding: Any, value: Any) -> None:
+        await self.write_with_context(binding, value, logical_value=value)
+
+    async def write_with_context(
+        self,
+        binding: Any,
+        value: Any,
+        *,
+        logical_value: Any,
+    ) -> None:
         if not self._xknx:
             return
         try:
@@ -653,7 +818,20 @@ class KnxAdapter(AdapterBase):
                 destination_address=GroupAddress(bc.group_address),
                 payload=_GVW(payload_value),
             )
-            await self._xknx.telegrams.put(telegram)
+            if binding.direction == "BOTH":
+                self._pending_transmissions[id(telegram)] = (
+                    self._monotonic(),
+                    binding,
+                    bc.group_address,
+                    bc.state_group_address,
+                    bytes(raw),
+                    logical_value,
+                )
+            try:
+                await self._xknx.telegrams.put(telegram)
+            except Exception:
+                self._pending_transmissions.pop(id(telegram), None)
+                raise
             logger.info("KNX write: GA=%s value=%s raw=%s", bc.group_address, value, raw.hex())
         except Exception:
             logger.exception("KNX write failed for binding %s", binding.id)

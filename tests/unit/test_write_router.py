@@ -31,6 +31,14 @@ class _FakeInstance:
         self.writes.append(value)
 
 
+class _ContextInstance:
+    def __init__(self):
+        self.writes: list[tuple[object, object]] = []
+
+    async def write_with_context(self, _binding, value, *, logical_value):
+        self.writes.append((value, logical_value))
+
+
 def _row(**overrides):
     now = datetime.datetime.now(datetime.UTC).isoformat()
     row = {
@@ -203,6 +211,25 @@ async def test_send_throttle_skips_second_write_within_interval(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_router_passes_pre_transform_logical_value_to_context_writer(monkeypatch):
+    binding = _binding(
+        adapter_type="KNX",
+        value_formula="x * 0.1",
+    )
+    instance = _ContextInstance()
+    router = _make_router([{"id": str(binding.id)}])
+    _patch_registry(monkeypatch, binding, instance)
+
+    await router._write_to_dest_bindings(
+        uuid.uuid4(),
+        50.0,
+        skip_binding_id=None,
+    )
+
+    assert instance.writes == [(pytest.approx(5.0), 50.0)]
+
+
+@pytest.mark.asyncio
 async def test_handle_value_event_forwards_skip_binding_id(monkeypatch):
     router = _make_router([])
     router._registry = SimpleNamespace(get=lambda _: SimpleNamespace(name="dp", data_type="UNKNOWN"))
@@ -221,6 +248,24 @@ async def test_handle_value_event_forwards_skip_binding_id(monkeypatch):
         event.value,
         skip_binding_id=event.binding_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_handle_value_event_does_not_propagate_state_only_confirmation():
+    router = _make_router([])
+    router._write_to_dest_bindings = AsyncMock()
+    event = DataValueEvent(
+        datapoint_id=uuid.uuid4(),
+        value=21.5,
+        quality="good",
+        source_adapter="KNX",
+        binding_id=uuid.uuid4(),
+        suppress_write_propagation=True,
+    )
+
+    await router.handle_value_event(event)
+
+    router._write_to_dest_bindings.assert_not_awaited()
 
 
 @pytest.mark.asyncio

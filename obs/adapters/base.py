@@ -101,6 +101,16 @@ class AdapterBase(ABC):
         """Write *value* to the protocol endpoint for *binding*."""
         ...
 
+    async def write_with_context(
+        self,
+        binding: Any,
+        value: Any,
+        *,
+        logical_value: Any,
+    ) -> None:
+        """Write a transformed value while retaining its pre-transform logical value."""
+        await self.write(binding, value)
+
     # ------------------------------------------------------------------
     # Status helpers
     # ------------------------------------------------------------------

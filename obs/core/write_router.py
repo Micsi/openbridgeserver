@@ -209,6 +209,14 @@ class WriteRouter:
             event.binding_id,
         )
 
+        if getattr(event, "suppress_write_propagation", False):
+            logger.debug(
+                "WriteRouter: state-only confirmation for dp=%s binding=%s — propagation skipped",
+                event.datapoint_id,
+                event.binding_id,
+            )
+            return
+
         if event.quality != "good" or event.value is None:
             logger.warning(
                 "WriteRouter: skip DataValueEvent propagation for dp=%s due to quality=%s value=%r",
@@ -375,7 +383,16 @@ class WriteRouter:
                 )
 
             try:
-                await instance.write(binding, write_value)
+                context_writer = getattr(type(instance), "write_with_context", None)
+                if callable(context_writer):
+                    await context_writer(
+                        instance,
+                        binding,
+                        write_value,
+                        logical_value=value,
+                    )
+                else:
+                    await instance.write(binding, write_value)
                 self._last_sent[binding.id] = time.monotonic()
 
                 needs_value_cache = binding.send_on_change or binding.send_min_delta is not None or binding.send_min_delta_pct is not None
