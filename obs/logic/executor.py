@@ -12,6 +12,7 @@ import logging
 import math
 import operator
 import re
+import sys
 from datetime import datetime as _datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
@@ -287,6 +288,17 @@ class GraphExecutor:
             try:
                 dec = Decimal(s)
                 if dec != dec.to_integral_value():
+                    return None
+                # A compact literal like "1e10000000000" parses instantly
+                # (Decimal stores it as a coefficient+exponent pair, not the
+                # expanded digit string) but int() on it would materialize
+                # an actual multi-gigabyte integer — unlike plain digit
+                # strings, which int(s) above already rejects past Python's
+                # own conversion-length guard, this scientific-notation path
+                # never touches that guard until it's too late. adjusted()
+                # gives the result's digit count via the stored exponent,
+                # without expanding it, so the bound check itself stays cheap.
+                if dec != 0 and dec.adjusted() >= sys.get_int_max_str_digits():
                     return None
                 return int(dec)
             except (InvalidOperation, OverflowError):

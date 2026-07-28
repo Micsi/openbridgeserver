@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime
 from typing import ClassVar
 from zoneinfo import ZoneInfo
@@ -977,6 +978,37 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": "-Infinity"}})
         assert out["cf"]["changed"] is True
         assert out["cf"]["out"] == "-Infinity"
+
+    def test_huge_scientific_exponent_does_not_materialize_giant_int(self):
+        """Regression: a compact literal like "1e10000000000" parses as a
+        Decimal instantly (stored as coefficient+exponent, not expanded),
+        but int() on it would try to materialize an actual multi-gigabyte
+        integer — a single adapter-supplied string could exhaust memory/CPU.
+        Must be rejected as "not an exact int" before ever calling int()
+        (the comparison then falls through to the numeric path, where
+        float() overflows both operands to the same inf — "equal", but the
+        important thing here is that evaluation completes at all)."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        start = time.monotonic()
+        exc.execute({"cf": {"in": "1e10000000000"}})
+        out = exc.execute({"cf": {"in": "2e10000000000"}})
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0
+        assert out["cf"]["changed"] is False
+
+    def test_huge_scientific_exponent_compares_as_different_from_finite_value(self):
+        """A huge scientific-notation string must not be treated as an exact
+        int, but must still compare as genuinely different from an ordinary
+        finite value (via the numeric-overflow-to-inf fallback), not get
+        stuck or silently equated to it."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": 42}})
+        out = exc.execute({"cf": {"in": "1e10000000000"}})
+        assert out["cf"]["changed"] is True
 
     def test_scientific_notation_string_compared_as_exact_int(self):
         """Regression: "1e2" isn't parseable by int() directly but is an
