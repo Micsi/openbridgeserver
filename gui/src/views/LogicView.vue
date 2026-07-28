@@ -645,7 +645,7 @@ const debugInputs = computed(() => {
     const edge = edges.value.find(item => item.target === debugNode.value.id && (item.targetHandle || 'in') === port.id)
     const captured = lastRunInputs.value[debugNode.value.id]?.[port.id]
     const hasCapturedInput = captured && Object.prototype.hasOwnProperty.call(captured, 'incoming')
-    const incoming = hasCapturedInput ? captured.incoming : (edge ? lastRunOutputs.value[edge.source]?.[edge.sourceHandle || 'out'] : undefined)
+    const incoming = hasCapturedInput ? captured.incoming : (edge ? lastRunDebugOutputs.value[edge.source]?.[edge.sourceHandle || 'out'] : undefined)
     const overrideText = debugOverrides.value[debugNode.value.id]?.[port.id]
     const locallyOverridden = overrideText !== undefined
     const capturedOverridden = captured?.overridden === true

@@ -541,6 +541,14 @@ describe('LogicView inspector inputs', () => {
     wrapper.vm.lastRunInputs = {}
     expect(wrapper.vm.debugInputs.map(input => input.id)).toEqual(['a', 'b', 'c'])
 
+    wrapper.vm.debugNode = { id: 'gate', type: 'and', data: { input_count: 2 } }
+    wrapper.vm.edges = [{ id: 'stale', source: 'source', target: 'gate', sourceHandle: 'out', targetHandle: 'in1' }]
+    wrapper.vm.lastRunOutputs = { source: { out: 'ordinary-run' } }
+    wrapper.vm.lastRunDebugOutputs = {}
+    expect(wrapper.vm.debugInputs.find(input => input.id === 'in1').incoming).toBeUndefined()
+    wrapper.vm.lastRunDebugOutputs = { source: { out: 'debug-run' } }
+    expect(wrapper.vm.debugInputs.find(input => input.id === 'in1').incoming).toBe('debug-run')
+
     wrapper.vm.debugNode = null
     expect(wrapper.vm.debugInputs).toEqual([])
   })

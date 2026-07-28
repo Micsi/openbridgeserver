@@ -3674,7 +3674,7 @@ class LogicManager:
         # Memory is the explicit tick boundary for feedback loops. Commit it
         # after all async node re-propagation so the stored value always reflects
         # the final graph outputs, not executor placeholders from an earlier pass.
-        executor.commit_memory_inputs(outputs, aug_overrides)
+        executor.commit_memory_inputs(outputs, _debug_run_overrides(aug_overrides))
 
         # ── Start/cancel value sequences ──────────────────────────────────
         wired_inputs: set[tuple[str, str]] = {(e.target, e.targetHandle or "in") for e in flow.edges}

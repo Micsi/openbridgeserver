@@ -835,10 +835,18 @@ async def _ws_has_log_access(user: str | None, api_key: str | None, *, identity_
     return bool(user and user != "__api_key__")
 
 
-async def _ws_has_logic_debug_access(user: str | None) -> bool:
+async def _ws_has_logic_debug_access(user: str | None, token: str | None = None) -> bool:
     """Only administrator JWT identities may inspect live logic values."""
     if not user or user == "__api_key__" or user.startswith("api_key:"):
         return False
+    if token is not None:
+        from obs.api.auth import decode_token
+
+        try:
+            if decode_token(token) != user:
+                return False
+        except HTTPException:
+            return False
     try:
         row = await get_db().fetchone("SELECT is_admin FROM users WHERE username=?", (user,))
     except (RuntimeError, sqlite3.Error):
@@ -995,7 +1003,7 @@ async def websocket_endpoint(
         )
 
     log_access = await _ws_has_log_access(user, api_key, identity_from_jwt=identity_from_jwt) if allowed_dp_ids is None else False
-    logic_debug_access = await _ws_has_logic_debug_access(user) if identity_from_jwt and allowed_dp_ids is None else False
+    logic_debug_access = await _ws_has_logic_debug_access(user, resolved_token) if identity_from_jwt and allowed_dp_ids is None else False
 
     manager = get_ws_manager()
     conn_id = await manager.connect(
@@ -1005,7 +1013,7 @@ async def websocket_endpoint(
         log_access=log_access,
         log_access_check=(lambda: _ws_has_log_access(user, api_key, identity_from_jwt=identity_from_jwt)) if log_access else None,
         logic_debug_access=logic_debug_access,
-        logic_debug_access_check=(lambda: _ws_has_logic_debug_access(user)) if logic_debug_access else None,
+        logic_debug_access_check=(lambda: _ws_has_logic_debug_access(user, resolved_token)) if logic_debug_access else None,
         subprotocol=selected_subprotocol,
     )
 

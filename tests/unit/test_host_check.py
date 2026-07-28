@@ -211,6 +211,25 @@ def _run_manager(host: str, trigger: bool, ping_return: tuple = (True, 5.0)):
 
 
 class TestHostCheckManager:
+    def test_debug_override_is_used_for_deferred_memory_commit(self):
+        manager = _make_manager()
+        flow = _flow([node("mem", "memory", {"initial_value": "2", "data_type": "number"})])
+        manager._node_state["g"] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(
+                manager._execute_graph(
+                    "g",
+                    "test",
+                    flow,
+                    {},
+                    debug_overrides={"mem": {"in": 41}},
+                )
+            )
+
+        assert outputs["mem"]["out"] == pytest.approx(2.0)
+        assert manager._hysteresis["g"]["mem"]["value"] == pytest.approx(41.0)
+
     def test_debug_override_wins_after_async_replay(self):
         manager = _make_manager()
         captured = {}
