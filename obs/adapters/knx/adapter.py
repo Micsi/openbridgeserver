@@ -564,11 +564,13 @@ class KnxAdapter(AdapterBase):
                 return
 
             raw = _telegram_to_bytes(telegram)
+            is_outgoing = getattr(getattr(telegram, "direction", None), "name", None) == "OUTGOING"
             for binding, dpt in entries:
                 is_outbound_confirmation, logical_value = self._consume_outbound_confirmation(
                     binding,
                     ga,
                     raw,
+                    is_outgoing=is_outgoing,
                 )
                 if is_outbound_confirmation:
                     logger.debug(
@@ -747,6 +749,8 @@ class KnxAdapter(AdapterBase):
         binding: Any,
         ga: str,
         raw: bytes,
+        *,
+        is_outgoing: bool,
     ) -> tuple[bool, Any]:
         """Consume and return the logical value for one matching recent write."""
         self._prune_recent_writes()
@@ -758,6 +762,8 @@ class KnxAdapter(AdapterBase):
         state_ga = binding.config.get("state_group_address")
         is_distinct_state_ga = state_ga == ga and state_ga != binding.config.get("group_address")
         if is_distinct_state_ga:
+            if is_outgoing:
+                return False, None
             matching_writes = [recent_write for recent_write in recent_writes if recent_write[1] == raw]
             if not matching_writes:
                 return False, None
@@ -769,6 +775,8 @@ class KnxAdapter(AdapterBase):
                 self._recent_writes.pop(key, None)
             return True, matching_writes[-1][2]
 
+        if not is_outgoing:
+            return False, None
         for index, (_, written_raw, logical_value) in enumerate(recent_writes):
             if written_raw != raw:
                 continue
@@ -904,8 +912,6 @@ def _build_sniffer(xknx_instance: Any, ga_source_map: dict, adapter: KnxAdapter)
             # so this must be synchronous. Schedule the async handler as a task.
             import asyncio
 
-            if getattr(getattr(telegram, "direction", None), "name", None) == "OUTGOING":
-                return False
             ga = str(telegram.destination_address)
             logger.info("KNX sniffer.process: GA=%s", ga)
             asyncio.ensure_future(adapter._on_telegram(telegram))

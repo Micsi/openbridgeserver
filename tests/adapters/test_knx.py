@@ -1159,14 +1159,9 @@ class TestKnxReadWrite:
             direction=TelegramDirection.INCOMING,
             payload=command_echo.payload,
         )
-        incoming_command_echo = Telegram(
-            destination_address=command_echo.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=command_echo.payload,
-        )
 
         adapter._on_telegram_transmitted(command_echo)
-        await adapter._on_telegram(incoming_command_echo)
+        await adapter._on_telegram(command_echo)
         await adapter._on_telegram(state_echo)
 
         assert mock_bus.publish.call_count == 2
@@ -1197,7 +1192,7 @@ class TestKnxReadWrite:
             payload=telegram.payload,
         )
         adapter._on_telegram_transmitted(telegram)
-        await adapter._on_telegram(incoming_confirmation)
+        await adapter._on_telegram(telegram)
         await adapter._on_telegram(incoming_confirmation)
 
         first_event, second_event = [call.args[0] for call in mock_bus.publish.call_args_list]
@@ -1232,18 +1227,8 @@ class TestKnxReadWrite:
 
         adapter._on_telegram_transmitted(older_telegram)
         adapter._on_telegram_transmitted(latest_telegram)
-        older_confirmation = Telegram(
-            destination_address=older_telegram.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=older_telegram.payload,
-        )
-        latest_confirmation = Telegram(
-            destination_address=latest_telegram.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=latest_telegram.payload,
-        )
-        await adapter._on_telegram(older_confirmation)
-        await adapter._on_telegram(latest_confirmation)
+        await adapter._on_telegram(older_telegram)
+        await adapter._on_telegram(latest_telegram)
 
         older_event, latest_event = [call.args[0] for call in mock_bus.publish.call_args_list]
         assert older_event.value == 200.0
@@ -1278,18 +1263,13 @@ class TestKnxReadWrite:
 
         adapter._on_telegram_transmitted(older_telegram)
         adapter._on_telegram_transmitted(latest_telegram)
-        latest_confirmation = Telegram(
-            destination_address=latest_telegram.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=latest_telegram.payload,
-        )
         older_confirmation = Telegram(
             destination_address=older_telegram.destination_address,
             direction=TelegramDirection.INCOMING,
             payload=older_telegram.payload,
         )
-        await adapter._on_telegram(latest_confirmation)
-        await adapter._on_telegram(older_confirmation)
+        await adapter._on_telegram(latest_telegram)
+        await adapter._on_telegram(older_telegram)
         await adapter._on_telegram(older_confirmation)
 
         latest_event, older_event, repeated_event = [call.args[0] for call in mock_bus.publish.call_args_list]
@@ -1328,18 +1308,8 @@ class TestKnxReadWrite:
 
         adapter._on_telegram_transmitted(older_command)
         adapter._on_telegram_transmitted(latest_command)
-        older_command_confirmation = Telegram(
-            destination_address=older_command.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=older_command.payload,
-        )
-        latest_command_confirmation = Telegram(
-            destination_address=latest_command.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=latest_command.payload,
-        )
-        await adapter._on_telegram(older_command_confirmation)
-        await adapter._on_telegram(latest_command_confirmation)
+        await adapter._on_telegram(older_command)
+        await adapter._on_telegram(latest_command)
         state_confirmation = Telegram(
             destination_address=GroupAddress("1/2/4"),
             direction=TelegramDirection.INCOMING,
@@ -1380,6 +1350,7 @@ class TestKnxReadWrite:
             binding,
             "1/2/4",
             raw_five,
+            is_outgoing=False,
         )
 
         assert matched is True
@@ -1405,11 +1376,43 @@ class TestKnxReadWrite:
             binding,
             "1/2/3",
             dpt.encoder(6.0),
+            is_outgoing=True,
         )
 
         assert matched is False
         assert logical_value is None
         assert len(adapter._recent_writes[(str(binding.id), "1/2/3")]) == 1
+
+    def test_confirmation_matching_rejects_wrong_telegram_direction(self, mock_bus):
+        adapter, _ = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        raw = DPTRegistry.get("DPT9.001").encoder(5.0)
+        adapter._remember_outbound_write(binding, "1/2/3", raw, 50.0)
+        adapter._remember_outbound_write(binding, "1/2/4", raw, 50.0)
+
+        incoming_command = adapter._consume_outbound_confirmation(
+            binding,
+            "1/2/3",
+            raw,
+            is_outgoing=False,
+        )
+        outgoing_state = adapter._consume_outbound_confirmation(
+            binding,
+            "1/2/4",
+            raw,
+            is_outgoing=True,
+        )
+
+        assert incoming_command == (False, None)
+        assert outgoing_state == (False, None)
+        assert len(adapter._recent_writes) == 2
 
     @pytest.mark.asyncio
     async def test_queued_write_starts_confirmation_window_when_transmitted(self, mock_bus):
@@ -1428,12 +1431,7 @@ class TestKnxReadWrite:
         transmitted_telegram = mock_xknx.telegrams.put.call_args[0][0]
         now[0] += 3.0
         adapter._on_telegram_transmitted(transmitted_telegram)
-        incoming_confirmation = Telegram(
-            destination_address=transmitted_telegram.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=transmitted_telegram.payload,
-        )
-        await adapter._on_telegram(incoming_confirmation)
+        await adapter._on_telegram(transmitted_telegram)
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value == 50.0
@@ -1441,7 +1439,7 @@ class TestKnxReadWrite:
         assert adapter._pending_transmissions == {}
 
     @pytest.mark.asyncio
-    async def test_real_xknx_send_callback_activates_separate_incoming_confirmation(self, mock_bus):
+    async def test_real_xknx_dispatch_publishes_outgoing_and_preserves_external_incoming(self, mock_bus):
         from unittest.mock import AsyncMock, patch
 
         from xknx import XKNX
@@ -1472,22 +1470,25 @@ class TestKnxReadWrite:
         ):
             await real_xknx.telegram_queue.process_telegram_outgoing(outgoing_telegram)
         real_xknx.telegrams.task_done()
+        await asyncio.sleep(0)
 
         assert adapter._pending_transmissions == {}
-        assert len(adapter._recent_writes[(str(binding.id), "1/2/3")]) == 1
-        mock_bus.publish.assert_not_called()
+        assert adapter._recent_writes == {}
+        outgoing_event = mock_bus.publish.call_args_list[0].args[0]
+        assert outgoing_event.value == 50.0
+        assert outgoing_event.suppress_write_propagation is True
 
-        incoming_confirmation = Telegram(
+        external_incoming = Telegram(
             destination_address=outgoing_telegram.destination_address,
             direction=TelegramDirection.INCOMING,
             payload=outgoing_telegram.payload,
         )
-        await real_xknx.telegram_queue.process_telegram_incoming(incoming_confirmation)
+        await real_xknx.telegram_queue.process_telegram_incoming(external_incoming)
         await asyncio.sleep(0)
 
-        event = mock_bus.publish.call_args[0][0]
-        assert event.value == 50.0
-        assert event.suppress_write_propagation is True
+        incoming_event = mock_bus.publish.call_args_list[1].args[0]
+        assert abs(incoming_event.value - 0.5) < 0.1
+        assert incoming_event.suppress_write_propagation is False
 
     @pytest.mark.asyncio
     async def test_retried_write_keeps_confirmation_context_across_disconnect(
@@ -1510,12 +1511,7 @@ class TestKnxReadWrite:
 
         assert id(retried_telegram) in adapter._pending_transmissions
         adapter._on_telegram_transmitted(retried_telegram)
-        incoming_confirmation = Telegram(
-            destination_address=retried_telegram.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=retried_telegram.payload,
-        )
-        await adapter._on_telegram(incoming_confirmation)
+        await adapter._on_telegram(retried_telegram)
 
         event = mock_bus.publish.call_args[0][0]
         assert event.value == 50.0
@@ -1651,12 +1647,7 @@ class TestKnxReadWrite:
         await adapter.write(both_binding, 50.0)
         transmitted_telegram = mock_xknx.telegrams.put.call_args[0][0]
         adapter._on_telegram_transmitted(transmitted_telegram)
-        incoming_confirmation = Telegram(
-            destination_address=transmitted_telegram.destination_address,
-            direction=TelegramDirection.INCOMING,
-            payload=transmitted_telegram.payload,
-        )
-        await adapter._on_telegram(incoming_confirmation)
+        await adapter._on_telegram(transmitted_telegram)
 
         assert mock_bus.publish.call_count == 2
         events = [call.args[0] for call in mock_bus.publish.call_args_list]
@@ -2046,7 +2037,8 @@ class TestBuildSniffer:
         await asyncio.sleep(0)  # let ensure_future task run
         adapter._on_telegram.assert_awaited_once_with(telegram)
 
-    def test_sniffer_ignores_outgoing_telegram(self):
+    @pytest.mark.asyncio
+    async def test_sniffer_schedules_outgoing_telegram(self):
         from unittest.mock import AsyncMock, MagicMock
 
         mock_xknx = MagicMock()
@@ -2061,8 +2053,9 @@ class TestBuildSniffer:
 
         result = sniffer.process(telegram)
 
-        assert result is False
-        adapter._on_telegram.assert_not_called()
+        assert result is True
+        await asyncio.sleep(0)
+        adapter._on_telegram.assert_awaited_once_with(telegram)
 
     def test_sniffer_iter_remote_values_returns_all_gas(self):
         from unittest.mock import MagicMock
