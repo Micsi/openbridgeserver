@@ -1804,7 +1804,12 @@ class LogicManager:
             try:
                 dp_id = uuid.UUID(dp_id_str)
                 vs = self._registry.get_value(dp_id)
-                if vs is not None:
+                # The registry creates an empty ValueState (value=None) as soon
+                # as a DataPoint is registered, well before any adapter writes
+                # a real value — `vs is not None` alone is therefore true for
+                # every configured DataPoint and never actually detects "never
+                # received a value". Match initialize_graph's seeded check.
+                if vs is not None and vs.value is not None:
                     aug_overrides[node.id] = {"value": vs.value, "changed": False}
                 else:
                     unseeded_read_ids.add(node.id)
@@ -1820,10 +1825,15 @@ class LogicManager:
 
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
+        wake_on_lan_ids = {node.id for node in flow.nodes if node.type == "wake_on_lan"}
         message_archive_ids = {node.id for node in flow.nodes if node.type == "message_archive"}
         notify_ids = {node.id for node in flow.nodes if node.type in {"notify_message", "notify_pushover", "notify_sms"}}
         operating_hour_ids = {node.id for node in flow.nodes if node.type == "operating_hours"}
-        async_replay_source_ids = api_client_ids | host_check_ids | message_archive_ids | notify_ids
+        # wake_on_lan.sent is the same kind of placeholder-then-replayed
+        # output as host_check.reachable/api_client.success/etc. — a
+        # change_filter fed by it needs the same suppress-until-resolved
+        # treatment, not just api_client/host_check/message_archive/notify.
+        async_replay_source_ids = api_client_ids | host_check_ids | wake_on_lan_ids | message_archive_ids | notify_ids
         needs_async_replay_snapshot = any(edge.source in async_replay_source_ids for edge in flow.edges)
 
         # ── Pre-compute operating_hours values to inject as overrides ─────
@@ -3833,11 +3843,14 @@ class LogicManager:
                 for edge in flow.edges:
                     if edge.target != target_id:
                         continue
-                    # At the sequence node itself, only its "trigger" handle
-                    # carries a pulse — a change_filter wired into "condition"
-                    # (or any other handle) must not retrigger a separately
-                    # sustained trigger.
-                    if target_id == node.id and (edge.targetHandle or "in") != "trigger":
+                    # Same trigger-aware filtering as _edge_carries_pulse: at
+                    # the sequence node itself, only its "trigger" handle
+                    # carries a pulse (a change_filter wired into "condition"
+                    # must not retrigger a separately sustained trigger) — and
+                    # the same applies at every intermediate hop, e.g. a pulse
+                    # entering an api_client's "body" data port must not be
+                    # traced onward as if it drove that node's own trigger.
+                    if not _edge_carries_pulse(edge):
                         continue
                     source = node_by_id.get(edge.source)
                     if (

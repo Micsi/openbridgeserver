@@ -555,6 +555,115 @@ class TestHostCheckRisingEdge:
 
         assert outputs["cf"]["changed"] is False
 
+    def test_change_filter_ignores_never_populated_datapoint_value_state(self):
+        """Regression: DataPointRegistry.get_value() returns a real,
+        non-None ValueState the moment a DataPoint is registered, with
+        .value=None until an adapter writes to it — `vs is not None` alone
+        therefore never actually detects "never received a value"; only
+        checking vs.value too does."""
+        nodes = [
+            node("read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("cf", "change_filter"),
+            node("other_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+        ]
+        flow = _flow(nodes, [edge("read", "cf", "value", "in")])
+        manager = _make_manager()
+        manager._registry.get_value = MagicMock(return_value=MagicMock(value=None))
+        graph_id = "g-cf-empty-valuestate"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"other_read": {"value": 1, "changed": True}}))
+
+        assert outputs["cf"]["changed"] is False
+
+    def test_change_filter_holds_behind_unresolved_wake_on_lan(self):
+        """Regression: wake_on_lan.sent is a placeholder-then-replayed
+        output just like api_client/host_check, but async_replay_source_ids
+        previously omitted wake_on_lan entirely — a change_filter fed by it
+        could adopt the first-pass sent=False placeholder as a real change
+        and fire a downstream host_check before the real packet-send result
+        (via replay) was known."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "wol", "value", "trigger"),
+                edge("wol", "cf", "sent", "in"),
+                edge("cf", "hc", "changed", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-wol-placeholder"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        # Prior stored value already matches the real, eventual "sent" result
+        # (True) — if the filter adopted the tainted first-pass placeholder
+        # (False) instead, it would incorrectly see True->False->changed.
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        mock_ping.assert_not_awaited()
+
+    def test_change_filter_pulse_via_data_port_does_not_retrigger_sequence(self):
+        """Regression: the value_sequence backward pulse-walk only applied
+        its trigger-handle filtering to the edge directly into the sequence
+        node, not to intermediate hops — a change_filter pulse entering an
+        intermediate api_client's DATA port (not its trigger) was still
+        traced onward as if it drove that node's own, separately sustained
+        trigger."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("cf", "change_filter"),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("sequence", "value_sequence", {"restart_policy": "queue", "steps": [{"delay_ms": 1}]}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("cf", "ac", "changed", "body"),
+                edge("ac", "sequence", "success", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-seq-data-port-no-bypass"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        async def _exercise():
+            await manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}})
+            first_task = manager._sequence_tasks.get((graph_id, "sequence"))
+            if first_task is not None:
+                await first_task
+            first_count = manager._event_bus.publish.await_count
+
+            await manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}})
+            retrigger_task = manager._sequence_tasks.get((graph_id, "sequence"))
+            if retrigger_task is not None and not retrigger_task.done():
+                await retrigger_task
+
+            assert manager._event_bus.publish.await_count == first_count
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                asyncio.run(_exercise())
+        finally:
+            mock_client_cls.stop()
+
     def test_inactive_async_branch_does_not_hold_a_real_change(self):
         """Regression: change_filter must not be held behind an async source
         (api_client) that is never triggered — its untriggered success=False

@@ -964,6 +964,28 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": 5.5}})
         assert out["cf"] == {"out": 5.5, "changed": False}
 
+    def test_scientific_notation_string_compared_as_exact_int(self):
+        """Regression: "1e2" isn't parseable by int() directly but is an
+        exact whole number via Decimal — it must compare equal to the
+        equivalent plain int, not fall back to a redundant str/float path."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": 100}})
+        out = exc.execute({"cf": {"in": "1e2"}})
+        assert out["cf"]["changed"] is False
+
+    def test_non_integral_decimal_string_does_not_short_circuit_exact_int(self):
+        """Regression: "1.5" parses as a valid Decimal but isn't a whole
+        number — it must not be treated as an exact-int candidate, so a
+        genuinely different value ("1.6") is still reported as changed."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": "1.5"}})
+        out = exc.execute({"cf": {"in": "1.6"}})
+        assert out["cf"]["changed"] is True
+
     def test_equal_via_str_fallback_emits_current_input_not_persisted_value(self):
         """Regression: after a restart, persisted non-JSON-native values
         (e.g. a KNX DPT10/11 datetime.time/date) are stored as a lossy

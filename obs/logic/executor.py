@@ -275,9 +275,21 @@ class GraphExecutor:
             # which is exactly the precision loss this method exists to avoid.
             return int(v) if v.is_integer() else None
         if isinstance(v, str):
+            s = v.strip()
             try:
-                return int(v.strip())
+                return int(s)
             except ValueError:
+                pass
+            # Decimal-form ("9007199254740993.0") or scientific-notation
+            # strings aren't accepted by int() directly but may still be an
+            # exact whole number — Decimal parses the literal digits without
+            # any binary-float rounding, unlike float().
+            try:
+                dec = Decimal(s)
+                if dec != dec.to_integral_value():
+                    return None
+                return int(dec)
+            except InvalidOperation:
                 return None
         return None
 
