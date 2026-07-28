@@ -1594,6 +1594,7 @@ class TestKnxReadWrite:
             "1/2/4",
             dpt.encoder(5.0),
         )
+        adapter._on_telegram_transmitted(telegram)
 
         assert adapter._pending_transmissions == {}
         assert adapter._recent_writes == {}
