@@ -30,6 +30,7 @@ import httpx
 
 from obs.logic.executor import GraphExecutor
 from obs.logic.models import FlowData
+from obs.logic.node_types import get_node_type
 from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
@@ -1789,21 +1790,33 @@ class LogicManager:
         # every DP-LESEN node has the latest known value. Caller overrides
         # (event value + changed=True) are applied on top and take priority.
         aug_overrides: dict[str, dict[str, Any]] = {}
+        # Read Object nodes whose DataPoint has never received a value (or is
+        # unconfigured / has an invalid id) — tracked so a change_filter fed by
+        # one of these can't mistake the resulting None for a real first value.
+        unseeded_read_ids: set[str] = set()
         for node in flow.nodes:
             if node.type != "datapoint_read":
                 continue
             dp_id_str = node.data.get("datapoint_id")
             if not dp_id_str:
+                unseeded_read_ids.add(node.id)
                 continue
             try:
                 dp_id = uuid.UUID(dp_id_str)
                 vs = self._registry.get_value(dp_id)
                 if vs is not None:
                     aug_overrides[node.id] = {"value": vs.value, "changed": False}
+                else:
+                    unseeded_read_ids.add(node.id)
             except (ValueError, TypeError, AttributeError):
-                pass
+                unseeded_read_ids.add(node.id)
         # Event / manual overrides take priority over registry seed
         aug_overrides.update(overrides)
+        # A node in `overrides` is the actual triggering event for this
+        # execution and therefore genuinely delivers a value now, even if the
+        # registry lookup above found nothing yet (e.g. this is the DataPoint's
+        # very first value).
+        unseeded_read_ids -= overrides.keys()
 
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
@@ -2097,6 +2110,29 @@ class LogicManager:
                 for _cf_id in _held_cf_ids:
                     initial_pass_overrides[_cf_id] = {**initial_pass_overrides.get(_cf_id, {}), "_suppress_change_filter": True}
 
+        # A change_filter downstream of a Read Object that has never received
+        # a value gets the same None every unrelated execution — unlike the
+        # async case there's no future "replay" that resolves it (the read
+        # only ever becomes seeded via its own real DataValueEvent, which is
+        # exactly the `overrides`-driven execution that already excludes it
+        # from unseeded_read_ids above), so this suppression is unconditional
+        # rather than dry-run-gated.
+        if unseeded_read_ids:
+            _unseeded_reachable: set[str] = set(unseeded_read_ids)
+            _urq: list[str] = list(_unseeded_reachable)
+            while _urq:
+                _urn = _urq.pop()
+                for _ure in flow.edges:
+                    if _ure.source == _urn and _ure.target not in _unseeded_reachable:
+                        _unseeded_reachable.add(_ure.target)
+                        _urq.append(_ure.target)
+            _held_cf_ids_unseeded = {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _unseeded_reachable}
+            if _held_cf_ids_unseeded:
+                if initial_pass_overrides is aug_overrides:
+                    initial_pass_overrides = {nid: dict(vals) for nid, vals in aug_overrides.items()}
+                for _cf_id in _held_cf_ids_unseeded:
+                    initial_pass_overrides[_cf_id] = {**initial_pass_overrides.get(_cf_id, {}), "_suppress_change_filter": True}
+
         executor = GraphExecutor(flow, hyst, self._app_config)
         try:
             pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
@@ -2134,6 +2170,25 @@ class LogicManager:
         # Shared by host_check and wake_on_lan: each cron tick is treated as a
         # fresh rising edge, so nodes that fire on sustained truthy inputs from
         # cron are not suppressed by the rising-edge deduplication below.
+        _node_type_by_id = {n.id: n.type for n in flow.nodes}
+
+        def _edge_carries_pulse(edge: Any) -> bool:
+            # A pulse only continues through an edge if its target either has
+            # no dedicated "trigger" input at all (a pure logic/relay node —
+            # NOT/AND/OR/Decision/etc. — where any input legitimately means
+            # the computed output is pulse-derived, however many hops deep),
+            # or the edge specifically targets that trigger port. This stops
+            # a pulse from leaking through a data port into an action node
+            # (api_client/host_check/notify_*/message_archive/wake_on_lan)
+            # whose own separate trigger is unrelated and sustained — e.g.
+            # change_filter.changed → api_client.body must not exempt
+            # whatever api_client.success drives from rising-edge dedup.
+            target_type = get_node_type(_node_type_by_id.get(edge.target))
+            has_trigger_input = bool(target_type) and any(p.type == "trigger" for p in target_type.inputs)
+            if not has_trigger_input:
+                return True
+            return (edge.targetHandle or "in") == "trigger"
+
         cron_node_ids = {n.id for n in flow.nodes if n.type == "timer_cron"}
         # A change_filter's "changed" pulse is a discrete edge just like a
         # cron tick: consecutive real changes must each retrigger host_check /
@@ -2151,14 +2206,14 @@ class LogicManager:
         # "changed" handle — its "out" handle carries the held/passthrough
         # value, not a discrete pulse, and must not bypass rising-edge dedup.
         for _cfe in flow.edges:
-            if _cfe.source in change_filter_pulse_ids and (_cfe.sourceHandle or "out") == "changed":
+            if _cfe.source in change_filter_pulse_ids and (_cfe.sourceHandle or "out") == "changed" and _edge_carries_pulse(_cfe):
                 cron_reachable.add(_cfe.target)
         if cron_reachable:
             _cq: list[str] = list(cron_reachable)
             while _cq:
                 _cn = _cq.pop()
                 for _ce in flow.edges:
-                    if _ce.source == _cn and _ce.target not in cron_reachable:
+                    if _ce.source == _cn and _ce.target not in cron_reachable and _edge_carries_pulse(_ce):
                         cron_reachable.add(_ce.target)
                         _cq.append(_ce.target)
 
@@ -2183,13 +2238,18 @@ class LogicManager:
                 return
             _pq: list[str] = []
             for _pe in flow.edges:
-                if _pe.source in _new_pulses and (_pe.sourceHandle or "out") == "changed" and _pe.target not in cron_reachable:
+                if (
+                    _pe.source in _new_pulses
+                    and (_pe.sourceHandle or "out") == "changed"
+                    and _pe.target not in cron_reachable
+                    and _edge_carries_pulse(_pe)
+                ):
                     cron_reachable.add(_pe.target)
                     _pq.append(_pe.target)
             while _pq:
                 _pn = _pq.pop()
                 for _pe2 in flow.edges:
-                    if _pe2.source == _pn and _pe2.target not in cron_reachable:
+                    if _pe2.source == _pn and _pe2.target not in cron_reachable and _edge_carries_pulse(_pe2):
                         cron_reachable.add(_pe2.target)
                         _pq.append(_pe2.target)
 

@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -473,6 +474,86 @@ class TestHostCheckRisingEdge:
 
         assert outputs["ac"]["response"] == "OK"
         mock_ping.assert_not_awaited()
+
+    def test_change_filter_pulse_via_data_port_does_not_bypass_dedup(self):
+        """Regression: change_filter.changed feeding a pure data port (e.g.
+        api_client.body) must not exempt whatever that node's own, separately
+        sustained trigger drives from rising-edge dedup — the pulse only
+        grants the discrete-edge exception when it actually reaches a
+        trigger input, directly or via pure relay nodes (NOT/AND/OR/...)."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("cf", "ac", "changed", "body"),
+                edge("ac", "hc", "success", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-data-port-no-bypass"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            ):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+        finally:
+            mock_client_cls.stop()
+
+        assert mock_ping.await_count == 1
+
+    def test_change_filter_ignores_none_from_unseeded_read_object(self):
+        """Regression: a change_filter fed by a Read Object whose DataPoint
+        has never received a value must not treat that None as a first value
+        when an unrelated event executes the same graph — there's no future
+        replay to correct a spurious pulse fired here, unlike the async case."""
+        nodes = [
+            node("read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("cf", "change_filter"),
+            node("other_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+        ]
+        flow = _flow(nodes, [edge("read", "cf", "value", "in")])
+        manager = _make_manager()  # registry.get_value already defaults to None (unseeded)
+        graph_id = "g-cf-unseeded-read"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"other_read": {"value": 1, "changed": True}}))
+
+        assert outputs["cf"]["changed"] is False
+
+    def test_change_filter_ignores_none_from_unconfigured_read_object(self):
+        """Same as the unseeded case, but for a Read Object node that has no
+        datapoint_id configured at all — evaluates to None just like an
+        unseeded one and must be treated the same way."""
+        nodes = [
+            node("read", "datapoint_read", {}),  # no datapoint_id
+            node("cf", "change_filter"),
+            node("other_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+        ]
+        flow = _flow(nodes, [edge("read", "cf", "value", "in")])
+        manager = _make_manager()
+        graph_id = "g-cf-unconfigured-read"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"other_read": {"value": 1, "changed": True}}))
+
+        assert outputs["cf"]["changed"] is False
 
     def test_inactive_async_branch_does_not_hold_a_real_change(self):
         """Regression: change_filter must not be held behind an async source
