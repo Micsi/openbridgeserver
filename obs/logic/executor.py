@@ -289,7 +289,11 @@ class GraphExecutor:
                 if dec != dec.to_integral_value():
                     return None
                 return int(dec)
-            except InvalidOperation:
+            except (InvalidOperation, OverflowError):
+                # OverflowError: int() rejects a finite-looking but infinite
+                # Decimal ("Infinity"/"-Infinity" are valid Decimal literals
+                # and compare equal to their own to_integral_value(), so they
+                # reach int() rather than being caught by the check above).
                 return None
         return None
 

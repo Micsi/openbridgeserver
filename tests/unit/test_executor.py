@@ -964,6 +964,20 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": 5.5}})
         assert out["cf"] == {"out": 5.5, "changed": False}
 
+    def test_infinity_string_does_not_crash_exact_int_comparison(self):
+        """Regression: "Infinity"/"-Infinity" are valid Decimal literals that
+        pass the to_integral_value() equality check (Infinity == Infinity),
+        so they reach int(Decimal(...)), which raises OverflowError. That
+        must be caught and treated as "not an exact int", not propagate as
+        an uncaught node execution error."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": "Infinity"}})
+        out = exc.execute({"cf": {"in": "-Infinity"}})
+        assert out["cf"]["changed"] is True
+        assert out["cf"]["out"] == "-Infinity"
+
     def test_scientific_notation_string_compared_as_exact_int(self):
         """Regression: "1e2" isn't parseable by int() directly but is an
         exact whole number via Decimal — it must compare equal to the

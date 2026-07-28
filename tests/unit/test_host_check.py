@@ -617,6 +617,42 @@ class TestHostCheckRisingEdge:
 
         mock_ping.assert_not_awaited()
 
+    def test_change_filter_commits_new_state_from_wake_on_lan_replay(self):
+        """Regression: the WoL replay pass ran change_filter against a
+        deep-copied hyst snapshot (deliberately, so non-idempotent nodes
+        don't accumulate a second sample) but never copied the change_filter
+        entry back into the real hyst afterward — unlike every other replay
+        site in this module. The filter's *output* for this tick was still
+        correct (real wol.sent value), but its *persisted* comparison
+        baseline silently reverted to the pre-replay value, so the very next
+        tick would compare against a stale baseline and could drop a real
+        change."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "wol", "value", "trigger"),
+                edge("wol", "cf", "sent", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-wol-state-commit"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": False}}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock),
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert manager._hysteresis[graph_id]["cf"]["value"] is True
+
     def test_change_filter_pulse_via_data_port_does_not_retrigger_sequence(self):
         """Regression: the value_sequence backward pulse-walk only applied
         its trigger-handle filtering to the edge directly into the sequence

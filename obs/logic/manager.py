@@ -2514,8 +2514,14 @@ class LogicManager:
                 # Use a deep copy of hyst so that stateful nodes (statistics,
                 # avg_multi, …) don't accumulate a second sample just because
                 # a WoL edge is present — we only want their *outputs*, not
-                # a second mutation of their persisted state.
-                wol_second_executor = GraphExecutor(flow, copy.deepcopy(hyst), self._app_config)
+                # a second mutation of their persisted state. change_filter is
+                # the one exception: its "state" *is* its output-determining
+                # comparison baseline, so its new value must be copied back
+                # into the real hyst below (like every other replay site
+                # here), or the next tick compares against a stale baseline
+                # and silently drops the following real change.
+                wol_second_hyst = copy.deepcopy(hyst)
+                wol_second_executor = GraphExecutor(flow, wol_second_hyst, self._app_config)
                 wol_second_outputs = wol_second_executor.execute(wol_merged, commit_memory=False)
                 # Compute transitive closure of WoL-triggered nodes so that only
                 # their descendants are updated, leaving unrelated nodes intact.
@@ -2531,6 +2537,8 @@ class LogicManager:
                 for nid, vals in wol_second_outputs.items():
                     if nid not in wol_node_ids and nid in wol_descendants:
                         outputs[nid] = vals
+                        if nid not in host_check_ids and nid in wol_second_hyst:
+                            hyst[nid] = wol_second_hyst[nid]
                 _register_change_filter_pulses(wol_descendants)
 
         # ── Post-WoL host_check pass ──────────────────────────────────────
