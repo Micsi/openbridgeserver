@@ -938,6 +938,50 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": "false"}})
         assert out["cf"]["changed"] is False
 
+    def test_large_integer_not_equated_to_rounded_float(self):
+        """Regression: 9007199254740993 (2**53 + 1) cannot be represented
+        exactly as a float — round-tripping it through float() rounds it
+        down to 9007199254740992.0, which must not falsely equal an actual
+        float carrying that rounded value (a real change in a 64-bit
+        counter/ID must not be suppressed just because one side is already
+        a float)."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": 9007199254740993}})
+        out = exc.execute({"cf": {"in": 9007199254740992.0}})
+        assert out["cf"]["changed"] is True
+
+    def test_non_integral_float_falls_back_to_numeric_comparison(self):
+        """Regression: a float with a fractional part is not an "exact int"
+        candidate on either side — it must still compare via the ordinary
+        numeric path instead of being silently dropped by the exact-integer
+        branch just because it's a float."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": 5.5}})
+        out = exc.execute({"cf": {"in": 5.5}})
+        assert out["cf"] == {"out": 5.5, "changed": False}
+
+    def test_equal_via_str_fallback_emits_current_input_not_persisted_value(self):
+        """Regression: after a restart, persisted non-JSON-native values
+        (e.g. a KNX DPT10/11 datetime.time/date) are stored as a lossy
+        string via `default=str`. When the next real value round-trips to
+        the same string via the str() equality fallback, the "unchanged"
+        branch must emit the current (typed) input, not the persisted
+        string — otherwise `out`'s type silently degrades after every
+        restart even though nothing about the underlying value changed."""
+        from datetime import time
+
+        state = {"cf": {"value": "10:30:00"}}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        out = exc.execute({"cf": {"in": time(10, 30, 0)}})
+        assert out["cf"]["changed"] is False
+        assert out["cf"]["out"] == time(10, 30, 0)
+        assert isinstance(out["cf"]["out"], time)
+
 
 # ===========================================================================
 # math_formula node

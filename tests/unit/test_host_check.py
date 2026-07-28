@@ -474,6 +474,210 @@ class TestHostCheckRisingEdge:
         assert outputs["ac"]["response"] == "OK"
         mock_ping.assert_not_awaited()
 
+    def test_inactive_async_branch_does_not_hold_a_real_change(self):
+        """Regression: change_filter must not be held behind an async source
+        (api_client) that is never triggered — its untriggered success=False
+        output is a genuine, final value (not a placeholder pending
+        replay), so a real change on a separate synchronous branch feeding
+        the same OR gate must reach the filter immediately instead of being
+        discarded in favor of the filter's old (stale) value."""
+        nodes = [
+            node("cv", "const_value", {"value": "false", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("or_gate", "or", {"input_count": 2}),
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        edges_list = [
+            edge("cv", "or_gate", "value", "in1"),
+            edge("ac", "or_gate", "success", "in2"),
+            edge("or_gate", "cf", "out", "in"),
+            edge("cf", "hc", "changed", "trigger"),
+        ]
+        # api_client.trigger is left unwired on purpose — it must never fire.
+        flow_false = _flow(nodes, edges_list)
+        flow_true = _flow(
+            [node("cv", "const_value", {"value": "true", "data_type": "bool"}), *nodes[1:]],
+            edges_list,
+        )
+
+        manager = _make_manager()
+        graph_id = "g-inactive-async-branch"
+        manager._graphs[graph_id] = ("test", True, flow_false)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow_false, {}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow_false, {}))
+            # The only real change in the graph: cv flips to true. api_client
+            # is never triggered throughout the whole test.
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow_true, {}))
+
+        assert outputs["cf"]["changed"] is True
+        assert mock_ping.await_count == 2
+
+    def test_fresh_change_filter_does_not_ping_before_async_source_resolves(self):
+        """Regression: a change_filter with NO prior state must not adopt an
+        async source's still-unresolved placeholder as its "first value" —
+        that must not reach host_check until api_client's REAL result is
+        known, otherwise the ping fires (using a trigger derived from the
+        placeholder) before the HTTP call it depends on has even been made."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "cf", "success", "in"),
+                edge("cf", "hc", "changed", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-fresh-cf-async"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        # No prior state at all for "cf" — a brand-new/just-reset filter.
+
+        call_order: list[str] = []
+
+        async def _record_http(*args, **kwargs):
+            call_order.append("http")
+            return _MockResponse(200)
+
+        async def _record_ping(*args, **kwargs):
+            call_order.append("ping")
+            return True, 1.0
+
+        patcher = patch("obs.logic.manager.httpx.AsyncClient")
+        mock_client_cls = patcher.start()
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(side_effect=_record_http)
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, side_effect=_record_ping) as mock_ping,
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
+
+        assert mock_ping.await_count == 1
+        assert call_order == ["http", "ping"]
+        assert outputs["cf"]["changed"] is True
+
+    def test_change_filter_pulse_via_async_replay_retriggers_host_check(self):
+        """Regression: a change_filter downstream of api_client only learns
+        its real "changed" value via the async replay (the initial pass sees
+        the still-unresolved placeholder), so that pulse must still register
+        as a discrete retriggerable edge — like a cron tick — instead of
+        consecutive real changes having their second ping deduplicated as a
+        "sustained" trigger just because cron_reachable was never told about
+        a pulse that only appeared after replay."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET", "response_type": "text/plain"}),
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "cf", "response", "in"),
+                edge("cf", "hc", "changed", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-async-retrigger"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        responses = iter(["A", "B", "C"])
+
+        async def _next_response(*args, **kwargs):
+            return _MockResponse(200, text=next(responses))
+
+        patcher = patch("obs.logic.manager.httpx.AsyncClient")
+        mock_client_cls = patcher.start()
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(side_effect=_next_response)
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            ):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
+
+        assert mock_ping.await_count == 3
+
+    def test_change_filter_pulse_retrigger_reaches_host_check_through_intermediate_node(self):
+        """Regression: cron_reachable's forward closure for a change_filter
+        pulse discovered via async replay must extend through intermediate
+        nodes, not just the pulse's immediate edge target — otherwise a
+        host_check two hops downstream of change_filter.changed still gets
+        deduplicated as a sustained trigger."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET", "response_type": "text/plain"}),
+            node("cf", "change_filter"),
+            node("not1", "not"),
+            node("not2", "not"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "cf", "response", "in"),
+                edge("cf", "not1", "changed", "in1"),
+                edge("not1", "not2", "out", "in1"),
+                edge("not2", "hc", "out", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-async-retrigger-2hop"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        responses = iter(["A", "B", "C"])
+
+        async def _next_response(*args, **kwargs):
+            return _MockResponse(200, text=next(responses))
+
+        patcher = patch("obs.logic.manager.httpx.AsyncClient")
+        mock_client_cls = patcher.start()
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(side_effect=_next_response)
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            ):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
+
+        assert mock_ping.await_count == 3
+
 
 # ===========================================================================
 # Manager: downstream re-propagation

@@ -268,6 +268,12 @@ class GraphExecutor:
             return None
         if isinstance(v, int):
             return v
+        if isinstance(v, float):
+            # A float that already holds a whole number carries no more
+            # precision than its int() conversion — unlike converting the
+            # *other* operand (an arbitrary-precision int) through float(),
+            # which is exactly the precision loss this method exists to avoid.
+            return int(v) if v.is_integer() else None
         if isinstance(v, str):
             try:
                 return int(v.strip())
@@ -276,21 +282,37 @@ class GraphExecutor:
         return None
 
     @classmethod
-    def _values_equal(cls, left: Any, right: Any) -> bool:
+    def _compare_values(cls, left: Any, right: Any) -> tuple[bool, bool]:
+        """Return (are_equal, via_normalizing_path).
+
+        via_normalizing_path is True when equality was decided by a
+        normalizing equivalence — boolean/int/num aliasing, or structural
+        dict/list `==` — and False when it fell through to the final
+        str(left) == str(right) comparison. That fallback can equate values
+        whose types genuinely differ (e.g. a live datetime.time vs. a
+        persisted, JSON-lossy string left over from `default=str`), so a
+        caller that wants to keep emitting one side's own representation on
+        an "equal" result needs to know whether doing so is safe.
+        """
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
-            return bool_left == bool_right
+            return bool_left == bool_right, True
         # Compare integral values exactly first — round-tripping through
         # float() loses precision beyond 2**53 (e.g. 64-bit counters/IDs).
         int_left, int_right = cls._try_exact_int(left), cls._try_exact_int(right)
         if int_left is not None and int_right is not None:
-            return int_left == int_right
+            return int_left == int_right, True
         num_left, num_right = cls._try_num(left), cls._try_num(right)
         if num_left is not None and num_right is not None:
-            return num_left == num_right
+            return num_left == num_right, True
         if isinstance(left, (dict, list)) and isinstance(right, (dict, list)):
-            return left == right
-        return str(left) == str(right)
+            return left == right, True
+        return str(left) == str(right), False
+
+    @classmethod
+    def _values_equal(cls, left: Any, right: Any) -> bool:
+        equal, _ = cls._compare_values(left, right)
+        return equal
 
     @staticmethod
     def _to_bool(v: Any) -> bool:
@@ -476,21 +498,41 @@ class GraphExecutor:
                 return {"out": self._memory_value(node)}
 
             case "change_filter":
+                state = self.hysteresis_state.get(node.id)
+                prev_value = state["value"] if isinstance(state, dict) and "value" in state else None
+                if inputs.get("_suppress_change_filter"):
+                    # Held by LogicManager: an upstream async node (api_client/
+                    # host_check/message_archive/notify) hasn't resolved on
+                    # this pass, so its output feeding "in" is a placeholder,
+                    # not a real value. Treat this exactly like an absent
+                    # input — no state write, no pulse — whether or not prior
+                    # state already exists; the manager re-runs this node with
+                    # the real value once the async result is known.
+                    return {"out": prev_value, "changed": False}
                 if "in" not in inputs:
                     # Unwired input: this graph execution was not driven by
                     # this node's source, so an absent value must not look
                     # like "first value received" and fire a spurious pulse.
-                    state = self.hysteresis_state.get(node.id)
-                    prev_value = state["value"] if isinstance(state, dict) and "value" in state else None
                     return {"out": prev_value, "changed": False}
                 value = inputs["in"]
-                state = self.hysteresis_state.get(node.id)
                 has_prev = isinstance(state, dict) and "value" in state
-                changed = not has_prev or not self._values_equal(value, state["value"])
-                if changed:
+                if not has_prev:
                     self.hysteresis_state[node.id] = {"value": value}
                     return {"out": value, "changed": True}
-                return {"out": state["value"], "changed": False}
+                equal, via_normalizing_path = self._compare_values(value, state["value"])
+                if not equal:
+                    self.hysteresis_state[node.id] = {"value": value}
+                    return {"out": value, "changed": True}
+                # On an "equal" result, normally keep emitting the persisted
+                # representation (matches existing numeric/boolean-alias and
+                # dict/list-key-order normalization). But when equality only
+                # held via the str() fallback, the two sides can be
+                # genuinely different types (e.g. a live datetime.time vs. a
+                # persisted, JSON-lossy string left over from a restart's
+                # `default=str` encoding) — emit the current input there
+                # instead, so `out`'s type doesn't silently degrade to
+                # whatever survived persistence.
+                return {"out": state["value"] if via_normalizing_path else value, "changed": False}
 
             case "compare":
                 operator_key = str(d.get("operator", ">")).strip().lower()

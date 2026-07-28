@@ -2031,19 +2031,54 @@ class LogicManager:
 
         # ── Change Filter: hold state while an upstream async node hasn't
         # resolved on this pass ────────────────────────────────────────────
-        # api_client/host_check/message_archive/notify outputs start this
-        # pass as unresolved placeholders (real values arrive via the async
-        # replay below). change_filter commits its comparison inline, unlike
-        # memory's deferred commit_memory_inputs — so without this guard, a
-        # placeholder input looks like a real change and can fire an
-        # unrecoverable host_check ping / WoL packet before the replay ever
-        # sees the real value, or permanently corrupt persisted state with
-        # the placeholder. Force the pass to compare the input against
-        # itself (a no-op) for any change_filter downstream of an unresolved
-        # async source; the replay passes re-run with the real value using a
-        # pre-execute state snapshot and produce the correct pulse.
-        if needs_async_replay_snapshot:
-            _async_reachable: set[str] = set(async_replay_source_ids)
+        # api_client/host_check/message_archive/notify outputs are only
+        # unresolved placeholders on the pass(es) where that specific node
+        # instance is actually triggered — an async source that isn't
+        # triggered this pass reports its genuine "not active" output (e.g.
+        # host_check.reachable=False when untriggered), which is final, not a
+        # placeholder, and must NOT be held (otherwise a real change on a
+        # separate synchronous branch feeding the same downstream node, e.g.
+        # an OR gate, would be discarded in favor of the filter's old value,
+        # permanently losing that change since an inactive async source never
+        # triggers a replay to restore it). change_filter commits its
+        # comparison inline, unlike memory's deferred commit_memory_inputs —
+        # so without a guard, a placeholder input looks like a real change
+        # and can fire an unrecoverable host_check ping / WoL packet before
+        # the replay ever sees the real value.
+        #
+        # Only bother with any of this when a change_filter is actually
+        # structurally downstream of an async source at all — the check
+        # below needs a disposable dry run of the *whole* graph to learn
+        # which async sources fire this pass, which would otherwise also
+        # double-evaluate unrelated non-idempotent nodes elsewhere in the
+        # same graph (e.g. random_value) for every graph that merely
+        # contains an api_client/host_check/message_archive/notify node,
+        # whether or not change_filter is anywhere near it.
+        _static_async_reachable: set[str] = set(async_replay_source_ids)
+        _saq: list[str] = list(_static_async_reachable)
+        while _saq:
+            _san = _saq.pop()
+            for _sae in flow.edges:
+                if _sae.source == _san and _sae.target not in _static_async_reachable:
+                    _static_async_reachable.add(_sae.target)
+                    _saq.append(_sae.target)
+        _change_filters_possibly_held = {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _static_async_reachable}
+
+        # Overrides for the initial pass only — every replay pass further
+        # below rebuilds its own overrides from `aug_overrides` (never from
+        # this dict), so the suppression flag injected here cannot leak into
+        # a replay and permanently block it from ever computing the real
+        # comparison once the async result resolves.
+        initial_pass_overrides = aug_overrides
+        if _change_filters_possibly_held:
+            # Disposable dry run — its own hyst copy, discarded afterwards —
+            # determines which async sources actually fire this pass without
+            # perturbing real state or persisting any placeholder-derived
+            # value.
+            _dry_hyst = copy.deepcopy(hyst)
+            _dry_outputs = GraphExecutor(flow, _dry_hyst, self._app_config).execute(aug_overrides, commit_memory=False)
+            _triggered_async_ids = {_nid for _nid in async_replay_source_ids if GraphExecutor._to_bool(_dry_outputs.get(_nid, {}).get("_trigger"))}
+            _async_reachable: set[str] = set(_triggered_async_ids)
             _aq: list[str] = list(_async_reachable)
             while _aq:
                 _an = _aq.pop()
@@ -2051,18 +2086,22 @@ class LogicManager:
                     if _ae.source == _an and _ae.target not in _async_reachable:
                         _async_reachable.add(_ae.target)
                         _aq.append(_ae.target)
-            for _cf_node in flow.nodes:
-                if _cf_node.type != "change_filter" or _cf_node.id not in _async_reachable:
-                    continue
-                _cf_state = hyst.get(_cf_node.id)
-                if isinstance(_cf_state, dict) and "value" in _cf_state:
-                    aug_overrides[_cf_node.id] = {**aug_overrides.get(_cf_node.id, {}), "in": _cf_state["value"]}
+            # Suppress unconditionally (whether or not the filter already
+            # holds prior state), so a new/reset filter can't adopt a
+            # placeholder as its first value either; the replay passes
+            # re-run with the real value using a pre-execute state snapshot
+            # and produce the correct pulse.
+            _held_cf_ids = _change_filters_possibly_held & _async_reachable
+            if _held_cf_ids:
+                initial_pass_overrides = {nid: dict(vals) for nid, vals in aug_overrides.items()}
+                for _cf_id in _held_cf_ids:
+                    initial_pass_overrides[_cf_id] = {**initial_pass_overrides.get(_cf_id, {}), "_suppress_change_filter": True}
 
         executor = GraphExecutor(flow, hyst, self._app_config)
         try:
             pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
             pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
-            outputs = executor.execute(aug_overrides, commit_memory=False)
+            outputs = executor.execute(initial_pass_overrides, commit_memory=False)
         except Exception:
             logger.exception("Graph %s (%s) execution error", graph_id, name)
             return {}
@@ -2122,6 +2161,37 @@ class LogicManager:
                     if _ce.source == _cn and _ce.target not in cron_reachable:
                         cron_reachable.add(_ce.target)
                         _cq.append(_ce.target)
+
+        def _register_change_filter_pulses(node_ids: set[str]) -> None:
+            # change_filter_pulse_ids/cron_reachable above only see pulses
+            # already visible in the *first* pass — a change_filter held
+            # behind an unresolved async source (see the suppression above)
+            # still reports changed=False there, and only turns changed=True
+            # once one of the replay passes below re-runs it with the real
+            # value. Without folding that pulse into cron_reachable too, a
+            # downstream host_check/wake_on_lan fed by "changed" would treat
+            # two consecutive real changes as one "sustained" trigger and
+            # dedupe the second — silently dropping a real retrigger. Call
+            # this right after any replay pass updates `outputs` for
+            # `node_ids`, before anything downstream reads cron_reachable.
+            _new_pulses = {
+                n.id
+                for n in flow.nodes
+                if n.type == "change_filter" and n.id in node_ids and GraphExecutor._to_bool(outputs.get(n.id, {}).get("changed"))
+            }
+            if not _new_pulses:
+                return
+            _pq: list[str] = []
+            for _pe in flow.edges:
+                if _pe.source in _new_pulses and (_pe.sourceHandle or "out") == "changed" and _pe.target not in cron_reachable:
+                    cron_reachable.add(_pe.target)
+                    _pq.append(_pe.target)
+            while _pq:
+                _pn = _pq.pop()
+                for _pe2 in flow.edges:
+                    if _pe2.source == _pn and _pe2.target not in cron_reachable:
+                        cron_reachable.add(_pe2.target)
+                        _pq.append(_pe2.target)
 
         async def _run_host_check_node(node: Any, target_set: set[str], log_suffix: str = "") -> bool:
             out = outputs.get(node.id, {})
@@ -2237,6 +2307,7 @@ class LogicManager:
                     if nid in replay_hyst:
                         hyst[nid] = replay_hyst[nid]
             _apply_operating_hours_state(descendants, pre_execute_node_state)
+            _register_change_filter_pulses(descendants)
             return descendants
 
         triggered_host_check_nodes: set[str] = set()
@@ -2284,6 +2355,7 @@ class LogicManager:
                     if nid not in host_check_ids and nid in hc_hyst_snapshot:
                         hyst[nid] = hc_hyst_snapshot[nid]
             _apply_operating_hours_state(hc_descendants, pre_execute_node_state)
+            _register_change_filter_pulses(hc_descendants)
             newly_triggered_hc: set[str] = set()
             for node in flow.nodes:
                 if node.type == "host_check" and node.id in hc_descendants and node.id not in triggered_host_check_nodes:
@@ -2389,6 +2461,7 @@ class LogicManager:
                 for nid, vals in wol_second_outputs.items():
                     if nid not in wol_node_ids and nid in wol_descendants:
                         outputs[nid] = vals
+                _register_change_filter_pulses(wol_descendants)
 
         # ── Post-WoL host_check pass ──────────────────────────────────────
         # WoL.sent may drive host_check._trigger via downstream edges. Run
@@ -2446,6 +2519,7 @@ class LogicManager:
                             if nid not in host_check_ids and nid in _pwol_hyst:
                                 hyst[nid] = _pwol_hyst[nid]
                     _apply_operating_hours_state(_pwol_desc, pre_execute_node_state)
+                    _register_change_filter_pulses(_pwol_desc)
                     _chained_pwol: set[str] = set()
                     for node in flow.nodes:
                         if node.type == "host_check" and node.id in _pwol_desc and node.id not in triggered_host_check_nodes:
@@ -2700,6 +2774,7 @@ class LogicManager:
                             outputs[nid] = vals
                             if nid in replay_hyst:
                                 hyst[nid] = replay_hyst[nid]
+                    _register_change_filter_pulses(api_descendants)
 
         # ── Post-api-replay host_check pass ───────────────────────────────
         # api_client outputs (via the second executor pass above) may have
@@ -2754,6 +2829,7 @@ class LogicManager:
                     if nid not in host_check_ids and nid in pat_hyst_snapshot:
                         hyst[nid] = pat_hyst_snapshot[nid]
             _apply_operating_hours_state(pat_descendants, pre_execute_node_state)
+            _register_change_filter_pulses(pat_descendants)
             newly_triggered_hc: set[str] = set()
             for node in flow.nodes:
                 if node.type == "host_check" and node.id in pat_descendants and node.id not in triggered_host_check_nodes:
@@ -2839,6 +2915,7 @@ class LogicManager:
                         outputs[nid] = vals
                         if nid not in host_check_ids and nid in _pawol_hyst_snap:
                             hyst[nid] = _pawol_hyst_snap[nid]
+                _register_change_filter_pulses(post_api_wol_descendants)
 
                 # HC nodes driven by post-api WoL output
                 _pawol_hc: set[str] = set()
@@ -3104,6 +3181,7 @@ class LogicManager:
                         if nid in replay_hyst:
                             hyst[nid] = replay_hyst[nid]
                 _apply_operating_hours_state(api_descendants, pre_execute_node_state)
+                _register_change_filter_pulses(api_descendants)
                 final_api_triggered_hc: set[str] = set()
                 for node in flow.nodes:
                     if node.type == "host_check" and node.id in api_descendants and node.id not in triggered_host_check_nodes:
@@ -3160,6 +3238,7 @@ class LogicManager:
                                 if nid not in host_check_ids and nid in final_hc_hyst:
                                     hyst[nid] = final_hc_hyst[nid]
                         _apply_operating_hours_state(final_hc_descendants, pre_execute_node_state)
+                        _register_change_filter_pulses(final_hc_descendants)
                         chained_final_hc: set[str] = set()
                         for node in flow.nodes:
                             if node.type == "host_check" and node.id in final_hc_descendants and node.id not in triggered_host_check_nodes:
@@ -3240,6 +3319,7 @@ class LogicManager:
                         outputs[nid] = vals
                         if nid not in host_check_ids and nid in _fwol_hyst_snap:
                             hyst[nid] = _fwol_hyst_snap[nid]
+                _register_change_filter_pulses(_fwol_desc)
                 _fwol_hc: set[str] = set()
                 for node in flow.nodes:
                     if node.type == "host_check" and node.id in _fwol_desc and node.id not in triggered_host_check_nodes:
@@ -3285,6 +3365,7 @@ class LogicManager:
                                 if nid not in host_check_ids and nid in _fwolhc_hyst:
                                     hyst[nid] = _fwolhc_hyst[nid]
                         _apply_operating_hours_state(_fwolhc_desc, pre_execute_node_state)
+                        _register_change_filter_pulses(_fwolhc_desc)
                         _fwolhc_chained: set[str] = set()
                         for node in flow.nodes:
                             if node.type == "host_check" and node.id in _fwolhc_desc and node.id not in triggered_host_check_nodes:
