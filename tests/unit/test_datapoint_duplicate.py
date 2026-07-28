@@ -5,7 +5,6 @@ import uuid
 from contextlib import asynccontextmanager
 
 import pytest
-from fastapi import BackgroundTasks
 
 import obs.api.v1.datapoints as datapoints_api
 from obs.db.database import Database
@@ -123,10 +122,35 @@ class _SlowCommitDb(_SuccessfulDb):
         self.committed = True
 
 
+class _FailingCommitDb(_SuccessfulDb):
+    def __init__(self, binding: dict) -> None:
+        super().__init__(binding)
+        self.rolled_back = False
+
+    async def commit(self) -> None:
+        raise RuntimeError("commit failed")
+
+    async def rollback(self) -> None:
+        self.rolled_back = True
+
+
+class _SlowFailingCommitDb(_FailingCommitDb):
+    def __init__(self, binding: dict) -> None:
+        super().__init__(binding)
+        self.commit_started = asyncio.Event()
+        self.finish_commit = asyncio.Event()
+
+    async def commit(self) -> None:
+        self.commit_started.set()
+        await self.finish_commit.wait()
+        raise RuntimeError("commit failed")
+
+
 class _SlowExitDb(_SuccessfulDb):
     def __init__(self, binding: dict) -> None:
         super().__init__(binding)
         self.exit_started = asyncio.Event()
+        self.finish_exit = asyncio.Event()
 
     @asynccontextmanager
     async def isolated_transaction(self):
@@ -135,7 +159,14 @@ class _SlowExitDb(_SuccessfulDb):
             yield self
         finally:
             self.exit_started.set()
-            await asyncio.Future()
+            exit_task = asyncio.create_task(self.finish_exit.wait())
+            try:
+                await asyncio.shield(exit_task)
+            except asyncio.CancelledError:
+                await exit_task
+                raise
+            finally:
+                self.in_transaction = False
 
 
 def _binding_row() -> dict:
@@ -166,7 +197,6 @@ async def test_duplicate_datapoint_removes_created_datapoint_when_binding_copy_f
         await datapoints_api.duplicate_datapoint(
             source.id,
             datapoints_api.DataPointDuplicateIn(name="Copy"),
-            BackgroundTasks(),
             _user="admin",
             db=db,
         )
@@ -188,7 +218,6 @@ async def test_duplicate_datapoint_rechecks_source_inside_transaction(monkeypatc
         await datapoints_api.duplicate_datapoint(
             source.id,
             datapoints_api.DataPointDuplicateIn(name="Copy"),
-            BackgroundTasks(),
             _user="admin",
             db=db,
         )
@@ -211,7 +240,6 @@ async def test_duplicate_datapoint_cleans_up_when_binding_copy_is_cancelled(monk
         datapoints_api.duplicate_datapoint(
             source.id,
             datapoints_api.DataPointDuplicateIn(name="Copy"),
-            BackgroundTasks(),
             _user="admin",
             db=db,
         ),
@@ -228,7 +256,7 @@ async def test_duplicate_datapoint_cleans_up_when_binding_copy_is_cancelled(monk
 
 
 @pytest.mark.asyncio
-async def test_duplicate_datapoint_defers_post_commit_adapter_reload_failures(monkeypatch, caplog):
+async def test_duplicate_datapoint_ignores_post_commit_adapter_reload_failures(monkeypatch, caplog):
     source = DataPoint(name="Source", data_type="FLOAT")
     duplicate = DataPoint(name="Copy", data_type="FLOAT")
     registry = _RegistryStub(source, duplicate)
@@ -243,11 +271,9 @@ async def test_duplicate_datapoint_defers_post_commit_adapter_reload_failures(mo
 
     monkeypatch.setattr(bindings_api, "_reload_adapter_instance", _reload_failure)
 
-    background_tasks = BackgroundTasks()
     result = await datapoints_api.duplicate_datapoint(
         source.id,
         datapoints_api.DataPointDuplicateIn(name="Copy"),
-        background_tasks,
         _user="admin",
         db=db,
     )
@@ -255,12 +281,40 @@ async def test_duplicate_datapoint_defers_post_commit_adapter_reload_failures(mo
     assert result is duplicate
     assert db.committed is True
     assert registry.published == [duplicate.id]
-    assert "reload failed" not in caplog.text
-
-    await background_tasks()
-
     assert "duplicated successfully" in caplog.text
     assert "reload failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_duplicate_datapoint_waits_for_adapter_reload(monkeypatch):
+    source = DataPoint(name="Source", data_type="FLOAT")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    registry = _RegistryStub(source, duplicate)
+    db = _SuccessfulDb(_binding_row())
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+    monkeypatch.setattr(datapoints_api, "_enrich", lambda dp: dp)
+    reload_started = asyncio.Event()
+    finish_reload = asyncio.Event()
+
+    async def _slow_reload(_dp_id, _instance_ids, _db):
+        assert not db.in_transaction
+        reload_started.set()
+        await finish_reload.wait()
+
+    monkeypatch.setattr(datapoints_api, "_reload_duplicate_bindings", _slow_reload)
+    request_task = asyncio.create_task(
+        datapoints_api.duplicate_datapoint(
+            source.id,
+            datapoints_api.DataPointDuplicateIn(name="Copy"),
+            _user="admin",
+            db=db,
+        )
+    )
+    await reload_started.wait()
+    assert not request_task.done()
+
+    finish_reload.set()
+    assert await request_task is duplicate
 
 
 @pytest.mark.asyncio
@@ -273,18 +327,15 @@ async def test_duplicate_datapoint_does_not_reload_disabled_bindings(monkeypatch
     monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
     monkeypatch.setattr(datapoints_api, "_enrich", lambda dp: dp)
 
-    background_tasks = BackgroundTasks()
     result = await datapoints_api.duplicate_datapoint(
         source.id,
         datapoints_api.DataPointDuplicateIn(name="Copy"),
-        background_tasks,
         _user="admin",
         db=db,
     )
 
     assert result is duplicate
     assert registry.published == [duplicate.id]
-    assert background_tasks.tasks == []
 
 
 @pytest.mark.asyncio
@@ -306,7 +357,6 @@ async def test_duplicate_datapoint_publishes_if_cancelled_commit_completes(monke
         datapoints_api.duplicate_datapoint(
             source.id,
             datapoints_api.DataPointDuplicateIn(name="Copy"),
-            BackgroundTasks(),
             _user="admin",
             db=db,
         )
@@ -324,18 +374,70 @@ async def test_duplicate_datapoint_publishes_if_cancelled_commit_completes(monke
 
 
 @pytest.mark.asyncio
-async def test_duplicate_datapoint_publishes_before_transaction_cleanup(monkeypatch):
+async def test_duplicate_datapoint_rolls_back_when_commit_fails(monkeypatch):
     source = DataPoint(name="Source", data_type="FLOAT")
     duplicate = DataPoint(name="Copy", data_type="FLOAT")
     registry = _RegistryStub(source, duplicate)
-    db = _SlowExitDb(_binding_row())
+    db = _FailingCommitDb(_binding_row())
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await datapoints_api.duplicate_datapoint(
+            source.id,
+            datapoints_api.DataPointDuplicateIn(name="Copy"),
+            _user="admin",
+            db=db,
+        )
+
+    assert db.rolled_back is True
+    assert registry.published == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_datapoint_rolls_back_when_cancelled_commit_fails(monkeypatch):
+    source = DataPoint(name="Source", data_type="FLOAT")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    registry = _RegistryStub(source, duplicate)
+    db = _SlowFailingCommitDb(_binding_row())
     monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
 
     request_task = asyncio.create_task(
         datapoints_api.duplicate_datapoint(
             source.id,
             datapoints_api.DataPointDuplicateIn(name="Copy"),
-            BackgroundTasks(),
+            _user="admin",
+            db=db,
+        )
+    )
+    await db.commit_started.wait()
+    request_task.cancel()
+    db.finish_commit.set()
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await request_task
+    assert db.rolled_back is True
+    assert registry.published == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_datapoint_reloads_if_cancelled_during_transaction_cleanup(monkeypatch):
+    source = DataPoint(name="Source", data_type="FLOAT")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    registry = _RegistryStub(source, duplicate)
+    db = _SlowExitDb(_binding_row())
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+    reloaded = asyncio.Event()
+
+    async def _record_reload(_dp_id, _instance_ids, _db):
+        assert not db.in_transaction
+        reloaded.set()
+
+    monkeypatch.setattr(datapoints_api, "_reload_duplicate_bindings", _record_reload)
+
+    request_task = asyncio.create_task(
+        datapoints_api.duplicate_datapoint(
+            source.id,
+            datapoints_api.DataPointDuplicateIn(name="Copy"),
             _user="admin",
             db=db,
         )
@@ -346,8 +448,48 @@ async def test_duplicate_datapoint_publishes_before_transaction_cleanup(monkeypa
     assert registry.published == [duplicate.id]
 
     request_task.cancel()
+    await asyncio.sleep(0)
+    assert not request_task.done()
+    db.finish_exit.set()
     with pytest.raises(asyncio.CancelledError):
         await request_task
+    assert reloaded.is_set()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_datapoint_finishes_reload_when_cancelled(monkeypatch):
+    source = DataPoint(name="Source", data_type="FLOAT")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    registry = _RegistryStub(source, duplicate)
+    db = _SuccessfulDb(_binding_row())
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+    reload_started = asyncio.Event()
+    finish_reload = asyncio.Event()
+    reload_finished = asyncio.Event()
+
+    async def _slow_reload(_dp_id, _instance_ids, _db):
+        reload_started.set()
+        await finish_reload.wait()
+        reload_finished.set()
+
+    monkeypatch.setattr(datapoints_api, "_reload_duplicate_bindings", _slow_reload)
+    request_task = asyncio.create_task(
+        datapoints_api.duplicate_datapoint(
+            source.id,
+            datapoints_api.DataPointDuplicateIn(name="Copy"),
+            _user="admin",
+            db=db,
+        )
+    )
+    await reload_started.wait()
+    request_task.cancel()
+    await asyncio.sleep(0)
+    assert not request_task.done()
+
+    finish_reload.set()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+    assert reload_finished.is_set()
 
 
 @pytest.mark.asyncio
@@ -362,6 +504,47 @@ async def test_database_transaction_uses_an_isolated_connection(tmp_path):
 
         row = await db.fetchone("SELECT name FROM sqlite_master WHERE name='isolated_write'")
         assert row["name"] == "isolated_write"
+    finally:
+        await db.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_database_transaction_finishes_cleanup_when_cancelled(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "cancelled-cleanup.db"))
+    await db.connect()
+    cleanup_started = asyncio.Event()
+    finish_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def _use_transaction() -> None:
+        async with db.isolated_transaction() as transaction:
+            original_close = transaction._conn.close
+
+            async def _slow_close() -> None:
+                cleanup_started.set()
+                await finish_cleanup.wait()
+                await original_close()
+                cleanup_finished.set()
+
+            monkeypatch.setattr(transaction._conn, "close", _slow_close)
+            await transaction.execute("CREATE TABLE cleanup_write (id INTEGER PRIMARY KEY)")
+            await transaction.commit()
+
+    try:
+        transaction_task = asyncio.create_task(_use_transaction())
+        await cleanup_started.wait()
+        transaction_task.cancel()
+        await asyncio.sleep(0)
+        assert not transaction_task.done()
+
+        finish_cleanup.set()
+        with pytest.raises(asyncio.CancelledError):
+            await transaction_task
+        assert cleanup_finished.is_set()
+
+        async with db.isolated_transaction() as transaction:
+            row = await transaction.fetchone("SELECT name FROM sqlite_master WHERE name='cleanup_write'")
+            assert row["name"] == "cleanup_write"
     finally:
         await db.disconnect()
 

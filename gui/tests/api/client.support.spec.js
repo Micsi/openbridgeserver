@@ -51,7 +51,7 @@ describe('dpApi client', () => {
 
     await dpApi.duplicate('dp-1', 'Copy')
 
-    expect(api.post).toHaveBeenCalledWith('/datapoints/dp-1/duplicate', { name: 'Copy' })
+    expect(api.post).toHaveBeenCalledWith('/datapoints/dp-1/duplicate', { name: 'Copy' }, { timeout: 0 })
   })
 })
 

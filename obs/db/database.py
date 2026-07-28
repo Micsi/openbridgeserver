@@ -1004,9 +1004,18 @@ class Database:
             try:
                 yield _DatabaseTransaction(isolated)
             finally:
-                if isolated.in_transaction:
-                    await isolated.rollback()
-                await isolated.close()
+
+                async def _cleanup() -> None:
+                    if isolated.in_transaction:
+                        await isolated.rollback()
+                    await isolated.close()
+
+                cleanup_task = asyncio.create_task(_cleanup())
+                try:
+                    await asyncio.shield(cleanup_task)
+                except asyncio.CancelledError:
+                    await cleanup_task
+                    raise
 
     @asynccontextmanager
     async def _isolated_operation(self) -> AsyncIterator[None]:

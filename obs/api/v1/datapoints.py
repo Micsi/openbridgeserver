@@ -18,7 +18,7 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_serializer
 
 from obs.api.auth import get_admin_user, get_current_user, optional_current_user
@@ -267,7 +267,6 @@ async def create_datapoint(
 async def duplicate_datapoint(
     dp_id: uuid.UUID,
     body: DataPointDuplicateIn,
-    background_tasks: BackgroundTasks,
     _user: str = Depends(get_admin_user),
     db: Database = Depends(get_db),
 ) -> DataPointOut:
@@ -290,81 +289,90 @@ async def duplicate_datapoint(
 
     now = datetime.datetime.now(datetime.UTC).isoformat()
     cancelled_after_commit: asyncio.CancelledError | None = None
-    async with db.isolated_transaction() as transaction:
-        try:
-            # Acquire the SQLite write reservation before taking the binding
-            # snapshot, so deleting an adapter instance cannot interleave and
-            # leave copied bindings pointing at an instance that no longer exists.
-            await transaction.execute("BEGIN IMMEDIATE")
-            source_row = await transaction.fetchone(
-                "SELECT 1 FROM datapoints WHERE id=?",
-                (str(dp_id),),
-            )
-            if source_row is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
-            binding_rows = await transaction.fetchall(
-                "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
-                (str(dp_id),),
-            )
-            await registry.insert(duplicate, connection=transaction)
-            if binding_rows:
-                await transaction.executemany(
-                    """INSERT INTO adapter_bindings
-                       (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled,
-                        send_throttle_ms, send_on_change, send_min_delta, send_min_delta_pct,
-                        value_formula, value_map, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    [
-                        (
-                            str(uuid.uuid4()),
-                            str(duplicate.id),
-                            row["adapter_type"],
-                            row["adapter_instance_id"],
-                            row["direction"],
-                            row["config"],
-                            row["enabled"],
-                            row["send_throttle_ms"],
-                            row["send_on_change"],
-                            row["send_min_delta"],
-                            row["send_min_delta_pct"],
-                            row["value_formula"],
-                            row["value_map"],
-                            now,
-                            now,
-                        )
-                        for row in binding_rows
-                    ],
-                )
-        except asyncio.CancelledError:
-            await asyncio.shield(transaction.rollback())
-            raise
-        except Exception:
-            await transaction.rollback()
-            raise
-
-        commit_task = asyncio.create_task(transaction.commit())
-        try:
-            await asyncio.shield(commit_task)
-            registry.publish(duplicate)
-        except asyncio.CancelledError as exc:
+    committed = False
+    try:
+        async with db.isolated_transaction() as transaction:
             try:
-                await commit_task
-            except Exception:
+                # Acquire the SQLite write reservation before taking the binding
+                # snapshot, so deleting an adapter instance cannot interleave and
+                # leave copied bindings pointing at an instance that no longer exists.
+                await transaction.execute("BEGIN IMMEDIATE")
+                source_row = await transaction.fetchone(
+                    "SELECT 1 FROM datapoints WHERE id=?",
+                    (str(dp_id),),
+                )
+                if source_row is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+                binding_rows = await transaction.fetchall(
+                    "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
+                    (str(dp_id),),
+                )
+                await registry.insert(duplicate, connection=transaction)
+                if binding_rows:
+                    await transaction.executemany(
+                        """INSERT INTO adapter_bindings
+                           (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled,
+                            send_throttle_ms, send_on_change, send_min_delta, send_min_delta_pct,
+                            value_formula, value_map, created_at, updated_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        [
+                            (
+                                str(uuid.uuid4()),
+                                str(duplicate.id),
+                                row["adapter_type"],
+                                row["adapter_instance_id"],
+                                row["direction"],
+                                row["config"],
+                                row["enabled"],
+                                row["send_throttle_ms"],
+                                row["send_on_change"],
+                                row["send_min_delta"],
+                                row["send_min_delta_pct"],
+                                row["value_formula"],
+                                row["value_map"],
+                                now,
+                                now,
+                            )
+                            for row in binding_rows
+                        ],
+                    )
+            except asyncio.CancelledError:
                 await asyncio.shield(transaction.rollback())
                 raise
+            except Exception:
+                await transaction.rollback()
+                raise
+
+            commit_task = asyncio.create_task(transaction.commit())
+            try:
+                await asyncio.shield(commit_task)
+            except asyncio.CancelledError as exc:
+                try:
+                    await commit_task
+                except Exception:
+                    await asyncio.shield(transaction.rollback())
+                    raise
+                cancelled_after_commit = exc
+            except Exception:
+                await transaction.rollback()
+                raise
+            committed = True
             registry.publish(duplicate)
-            cancelled_after_commit = exc
-        except Exception:
-            await transaction.rollback()
+    except asyncio.CancelledError as exc:
+        if not committed:
             raise
+        cancelled_after_commit = cancelled_after_commit or exc
 
     instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["enabled"] and row["adapter_instance_id"]})
-    if cancelled_after_commit is not None:
-        if instance_ids:
-            await asyncio.shield(_reload_duplicate_bindings(duplicate.id, instance_ids, db))
-        raise cancelled_after_commit
     if instance_ids:
-        background_tasks.add_task(_reload_duplicate_bindings, duplicate.id, instance_ids, db)
+        reload_task = asyncio.create_task(_reload_duplicate_bindings(duplicate.id, instance_ids, db))
+        try:
+            await asyncio.shield(reload_task)
+        except asyncio.CancelledError as exc:
+            await reload_task
+            cancelled_after_commit = cancelled_after_commit or exc
+    if cancelled_after_commit is not None:
+        raise cancelled_after_commit
 
     return _enrich(duplicate)
 
