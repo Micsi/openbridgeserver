@@ -184,6 +184,7 @@ describe('Modal — dismissible=false', () => {
     outer.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
     closeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    wrapper.vm.dismiss()
     await nextTick()
 
     expect(closeBtn.disabled).toBe(true)

@@ -45,6 +45,16 @@ describe('supportApi client', () => {
   })
 })
 
+describe('dpApi client', () => {
+  it('calls the datapoint duplication endpoint with the requested name', async () => {
+    const { dpApi } = await import('@/api/client')
+
+    await dpApi.duplicate('dp-1', 'Copy')
+
+    expect(api.post).toHaveBeenCalledWith('/datapoints/dp-1/duplicate', { name: 'Copy' })
+  })
+})
+
 describe('adapterApi onewire client', () => {
   it('calls the onewire browse and alias endpoints', async () => {
     const { adapterApi } = await import('@/api/client')

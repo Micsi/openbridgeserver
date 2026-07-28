@@ -99,7 +99,7 @@ async function mountDataPointsView({ items = [], nodeResults = [], isAdmin = tru
 
 describe('DataPointsView hierarchy rendering', () => {
   it('hides datapoint CRUD controls for non-admin users', async () => {
-    const { wrapper } = await mountDataPointsView({
+    const { wrapper, dpApi } = await mountDataPointsView({
       isAdmin: false,
       items: [
         {
@@ -117,6 +117,13 @@ describe('DataPointsView hierarchy rendering', () => {
     expect(wrapper.find('[data-testid="btn-new-datapoint"]').exists()).toBe(false)
     expect(wrapper.find('[title="Bearbeiten"]').exists()).toBe(false)
     expect(wrapper.find('[title="Löschen"]').exists()).toBe(false)
+
+    wrapper.vm.openDuplicate(wrapper.vm.store.items[0])
+    wrapper.vm.duplicateTarget = wrapper.vm.store.items[0]
+    wrapper.vm.duplicateName = 'Forbidden copy'
+    await wrapper.vm.doDuplicate()
+    expect(wrapper.vm.showDuplicate).toBe(false)
+    expect(dpApi.duplicate).not.toHaveBeenCalled()
   })
 
   it('lets admins create, update and delete datapoints', async () => {
@@ -273,6 +280,10 @@ describe('DataPointsView hierarchy rendering', () => {
     expect(wrapper.vm.duplicateError).toBe('Copy failed')
     expect(wrapper.vm.duplicateSaving).toBe(false)
     expect(wrapper.vm.showDuplicate).toBe(true)
+
+    dpApi.duplicate.mockRejectedValueOnce(new Error('Copy failed without detail'))
+    await wrapper.vm.doDuplicate()
+    expect(wrapper.vm.duplicateError).toBe('Das Objekt konnte nicht dupliziert werden.')
 
     let finishDuplicate
     dpApi.duplicate.mockReturnValueOnce(new Promise(resolve => {
