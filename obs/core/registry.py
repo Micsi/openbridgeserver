@@ -203,9 +203,9 @@ class DataPointRegistry:
             dp.updated_at.isoformat(),
         )
 
-    async def insert(self, dp: DataPoint) -> None:
+    async def insert(self, dp: DataPoint, *, connection: Any | None = None) -> None:
         """Insert a datapoint into the current database transaction."""
-        await self._db.execute(_INSERT_DATAPOINT_SQL, self._insert_params(dp))
+        await (connection or self._db).execute(_INSERT_DATAPOINT_SQL, self._insert_params(dp))
 
     def publish(self, dp: DataPoint) -> None:
         """Publish a committed datapoint to the in-memory registry."""

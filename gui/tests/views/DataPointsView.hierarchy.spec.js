@@ -188,6 +188,36 @@ describe('DataPointsView hierarchy rendering', () => {
     expect(wrapper.vm.showDuplicate).toBe(false)
 
     searchApi.search.mockResolvedValueOnce({
+      data: { items: [duplicatedItem, item], total: 3, pages: 2 },
+    })
+    await wrapper.vm.store.search(wrapper.vm.apiFilters(), false)
+    let finishStaleLoadMore
+    searchApi.search.mockReturnValueOnce(new Promise(resolve => {
+      finishStaleLoadMore = resolve
+    }))
+    const staleLoadMore = wrapper.vm.store.loadMore()
+    await flushPromises()
+    const freshItem = { ...item, id: 'dp-fresh-copy', name: 'Fresh copy' }
+    searchApi.search.mockResolvedValueOnce({
+      data: { items: [freshItem, duplicatedItem, item], total: 3, pages: 1 },
+    })
+    dpApi.duplicate.mockResolvedValueOnce({ data: freshItem })
+    wrapper.vm.openDuplicate(item)
+    wrapper.vm.duplicateName = freshItem.name
+    await wrapper.vm.doDuplicate()
+    finishStaleLoadMore({
+      data: {
+        items: [{ ...item, id: 'dp-stale-page', name: 'Stale page item' }],
+        total: 4,
+        pages: 2,
+      },
+    })
+    await staleLoadMore
+    expect(wrapper.vm.store.items.map(dp => dp.id)).toEqual(['dp-fresh-copy', 'dp-duplicate', 'dp-admin'])
+    expect(wrapper.vm.store.total).toBe(3)
+    expect(wrapper.vm.store.hasMore).toBe(false)
+
+    searchApi.search.mockResolvedValueOnce({
       data: { items: [duplicatedItem, item], total: 2, pages: 2 },
     })
     await wrapper.vm.store.search(wrapper.vm.apiFilters(), false)

@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -747,6 +748,25 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
 # ---------------------------------------------------------------------------
 
 
+class _DatabaseTransaction:
+    """Connection handle for a multi-statement transaction."""
+
+    def __init__(self, conn: aiosqlite.Connection) -> None:
+        self._conn = conn
+
+    async def execute(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
+        return await self._conn.execute(sql, params)
+
+    async def executemany(self, sql: str, params: Any) -> aiosqlite.Cursor:
+        return await self._conn.executemany(sql, params)
+
+    async def commit(self) -> None:
+        await self._conn.commit()
+
+    async def rollback(self) -> None:
+        await self._conn.rollback()
+
+
 class Database:
     """Async SQLite database wrapper with built-in migration support."""
 
@@ -758,6 +778,7 @@ class Database:
         # cancelling asyncio.to_thread does not stop the worker thread — so disconnect
         # must wait for any in-flight checkpoint to finish before returning. See #908.
         self._checkpoint_lock = asyncio.Lock()
+        self._memory_transaction_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -913,6 +934,28 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database.connect() has not been called")
         return self._conn
+
+    @asynccontextmanager
+    async def isolated_transaction(self) -> AsyncIterator[_DatabaseTransaction]:
+        """Yield a private connection so a multi-statement transaction cannot interleave."""
+        if self._path == ":memory:":
+            async with self._memory_transaction_lock:
+                try:
+                    yield _DatabaseTransaction(self.conn)
+                finally:
+                    if self.conn.in_transaction:
+                        await self.conn.rollback()
+            return
+
+        isolated = await aiosqlite.connect(self._path, uri=self._path.startswith("file:"))
+        isolated.row_factory = aiosqlite.Row
+        await isolated.execute("PRAGMA foreign_keys=ON")
+        try:
+            yield _DatabaseTransaction(isolated)
+        finally:
+            if isolated.in_transaction:
+                await isolated.rollback()
+            await isolated.close()
 
     async def execute(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
         return await self.conn.execute(sql, params)

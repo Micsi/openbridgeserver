@@ -293,43 +293,58 @@ async def duplicate_datapoint(
     )
 
     now = datetime.datetime.now(datetime.UTC).isoformat()
-    try:
-        await registry.insert(duplicate)
-        if binding_rows:
-            await db.executemany(
-                """INSERT INTO adapter_bindings
-                   (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled,
-                    send_throttle_ms, send_on_change, send_min_delta, send_min_delta_pct,
-                    value_formula, value_map, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                [
-                    (
-                        str(uuid.uuid4()),
-                        str(duplicate.id),
-                        row["adapter_type"],
-                        row["adapter_instance_id"],
-                        row["direction"],
-                        row["config"],
-                        row["enabled"],
-                        row["send_throttle_ms"],
-                        row["send_on_change"],
-                        row["send_min_delta"],
-                        row["send_min_delta_pct"],
-                        row["value_formula"],
-                        row["value_map"],
-                        now,
-                        now,
-                    )
-                    for row in binding_rows
-                ],
-            )
-        await db.commit()
-    except asyncio.CancelledError:
-        await asyncio.shield(db.rollback())
-        raise
-    except Exception:
-        await db.rollback()
-        raise
+    async with db.isolated_transaction() as transaction:
+        try:
+            await registry.insert(duplicate, connection=transaction)
+            if binding_rows:
+                await transaction.executemany(
+                    """INSERT INTO adapter_bindings
+                       (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled,
+                        send_throttle_ms, send_on_change, send_min_delta, send_min_delta_pct,
+                        value_formula, value_map, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    [
+                        (
+                            str(uuid.uuid4()),
+                            str(duplicate.id),
+                            row["adapter_type"],
+                            row["adapter_instance_id"],
+                            row["direction"],
+                            row["config"],
+                            row["enabled"],
+                            row["send_throttle_ms"],
+                            row["send_on_change"],
+                            row["send_min_delta"],
+                            row["send_min_delta_pct"],
+                            row["value_formula"],
+                            row["value_map"],
+                            now,
+                            now,
+                        )
+                        for row in binding_rows
+                    ],
+                )
+        except asyncio.CancelledError:
+            await asyncio.shield(transaction.rollback())
+            raise
+        except Exception:
+            await transaction.rollback()
+            raise
+
+        commit_task = asyncio.create_task(transaction.commit())
+        try:
+            await asyncio.shield(commit_task)
+        except asyncio.CancelledError:
+            try:
+                await commit_task
+            except Exception:
+                await asyncio.shield(transaction.rollback())
+                raise
+            registry.publish(duplicate)
+            raise
+        except Exception:
+            await transaction.rollback()
+            raise
 
     registry.publish(duplicate)
 

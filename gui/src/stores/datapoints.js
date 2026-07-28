@@ -17,6 +17,7 @@ export const useDatapointStore = defineStore('datapoints', () => {
   // Internal cursor — tracks the next page to load in infinite-scroll mode.
   const _nextPage    = ref(0)
   const _lastParams  = ref({})
+  let _searchGeneration = 0
 
   // --------------------------------------------------------------------------
   // Core search (replaces the old fetchPage + search pair)
@@ -28,6 +29,7 @@ export const useDatapointStore = defineStore('datapoints', () => {
   async function search(params = {}, append = false) {
     if (loading.value && append) return   // debounce concurrent scroll triggers
 
+    const generation = ++_searchGeneration
     loading.value = true
 
     const page = append ? _nextPage.value : 0
@@ -45,6 +47,8 @@ export const useDatapointStore = defineStore('datapoints', () => {
         size:  50,
       })
 
+      if (generation !== _searchGeneration) return
+
       if (append) {
         items.value = [...items.value, ...data.items]
       } else {
@@ -55,7 +59,7 @@ export const useDatapointStore = defineStore('datapoints', () => {
       _nextPage.value = page + 1
       hasMore.value   = _nextPage.value < data.pages
     } finally {
-      loading.value = false
+      if (generation === _searchGeneration) loading.value = false
     }
   }
 
