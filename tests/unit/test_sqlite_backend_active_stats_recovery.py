@@ -5,17 +5,17 @@ NACH dem Segment-Commit, aber BEVOR die inkrementelle Statistik in die
 separate Manifest-DB committet, behält das aktive Segment über den Restart STALE
 ``from_ts``/``to_ts``-Metadaten. Zeitfenster-Queries wählen Segmente anhand dieser
 Manifest-Grenzen (``list_segments_for_query``) → ein Query-Fenster kann das aktive
-Segment ausschließen, obwohl es committete Zeilen in diesem Fenster enthält, bis ein
-weiterer Append die Stats auffrischt.
+Segment ausschließen, obwohl es committete Zeilen in diesem Fenster enthält, bis der
+Store neu geöffnet wird.
 
-Fix: die aktive-Segment-Stats bei ``open()``/Recovery aus dem tatsächlichen
-Segment-Inhalt (``MIN(ts)``/``MAX(ts)``/``row_count``/``size``) neu berechnen und
-ins Manifest schreiben – so verschwinden keine committeten Zeilen hinter stale
-Grenzen.
+Fix: den Commit samt inkrementeller Statistik cancellation-safe abschließen und die
+aktive-Segment-Stats bei ``open()``/Recovery aus dem tatsächlichen Segment-Inhalt
+(``MIN(ts)``/``MAX(ts)``/``row_count``/``size``) neu berechnen.
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +61,45 @@ async def test_append_updates_active_stats_without_full_segment_scan(tmp_path: P
         assert active.to_ts == "2026-03-01T10:00:09.000Z"
         assert not any("SELECT COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx FROM ringbuffer" in sql for sql in statements)
     finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_append_finishes_stats_after_segment_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "root"
+    store = SqliteSegmentStore(root)
+    await store.open()
+    original_commit = store._active_conn.commit
+    segment_committed = asyncio.Event()
+    release_commit = asyncio.Event()
+
+    async def commit_then_pause() -> None:
+        await original_commit()
+        segment_committed.set()
+        await release_commit.wait()
+
+    monkeypatch.setattr(store._active_conn, "commit", commit_then_pause)
+    append_task = asyncio.create_task(store.append([_event(1, "2026-03-01T10:00:05.000Z")]))
+
+    try:
+        await segment_committed.wait()
+        append_task.cancel()
+        await asyncio.sleep(0)
+        assert not append_task.done()
+
+        release_commit.set()
+        with pytest.raises(asyncio.CancelledError):
+            await append_task
+
+        active = await store.manifest.get_active_segment()
+        assert active is not None
+        assert active.row_count == 1
+        assert active.from_ts == "2026-03-01T10:00:05.000Z"
+        assert active.to_ts == "2026-03-01T10:00:05.000Z"
+    finally:
+        release_commit.set()
+        if not append_task.done():
+            append_task.cancel()
         await store.close()
 
 

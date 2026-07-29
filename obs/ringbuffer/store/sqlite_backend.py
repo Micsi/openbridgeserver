@@ -40,6 +40,7 @@ kontrolliert auf das v1-Schema.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -1215,18 +1216,27 @@ class SqliteSegmentStore(RingBufferStore):
     async def append(self, events: list[StoreEvent]) -> None:
         if not events or self._active_conn is None or self._active_segment is None:
             return
+        active_conn = self._active_conn
         # Zusammenhängenden Block globaler IDs reservieren → stabile Ordnung.
         start_id = await self.manifest.reserve_global_event_ids(len(events))
         try:
             for offset, event in enumerate(events):
-                await self._insert_event(self._active_conn, start_id + offset, event)
+                await self._insert_event(active_conn, start_id + offset, event)
             # commit() MIT im rollback-geschützten Block (#951, Codex :1013): meldet
             # SQLite einen Fehler WÄHREND des commit selbst (volle Disk / I/O-Fehler
             # nach eingereihten Inserts), bliebe die Transaktion sonst offen und ihre
             # Zeilen würden vom nächsten erfolgreichen append() auf derselben Connection
             # MIT-committet, obwohl der Aufrufer einen Fehler sah. Insert(s) UND commit
             # daher gemeinsam absichern.
-            await self._active_conn.commit()
+            finalize_task = asyncio.create_task(self._commit_and_advance_active_stats(active_conn, events))
+            try:
+                await asyncio.shield(finalize_task)
+            except asyncio.CancelledError:
+                # aiosqlite kann den Worker-Commit nach Task-Cancellation noch
+                # abschließen. Dann muss auch das Post-Commit-Bookkeeping fertig
+                # werden, bevor die Cancellation weiterpropagiert.
+                await asyncio.shield(finalize_task)
+                raise
         except BaseException:
             # Scheitert ein Insert mitten im Batch (z.B. nicht serialisierbare Metadaten
             # oder ein fehlgeschlagener Metadaten-Index-Insert) ODER das commit selbst,
@@ -1234,11 +1244,14 @@ class SqliteSegmentStore(RingBufferStore):
             # nächsten erfolgreichen append() auf derselben Connection MIT-committet,
             # obwohl der Aufrufer einen Fehler sah (#951, Codex :584/:1013). Aktive
             # Transaktion daher zurückrollen – kein partieller Batch committet später.
-            await self._active_conn.rollback()
+            await active_conn.rollback()
             raise
-        await self._advance_active_segment_stats(events)
         # TODO(#932/#936): hier greift später Rotation nach segment_max_* und
         # anschließend enforce_retention() auf geschlossene Segmente.
+
+    async def _commit_and_advance_active_stats(self, conn: aiosqlite.Connection, events: list[StoreEvent]) -> None:
+        await conn.commit()
+        await self._advance_active_segment_stats(events)
 
     async def _insert_event(self, conn: aiosqlite.Connection, global_event_id: int, event: StoreEvent) -> None:
         # JSON-Spalten bleiben (API-Kompat); typisierte Spalten für Pushdown (#933).
