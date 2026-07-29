@@ -1710,6 +1710,7 @@ class TestKnxReadWrite:
             {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
             direction="SOURCE",
         )
+        source_binding.datapoint_id = both_binding.datapoint_id
         dpt = DPTRegistry.get("DPT9.001")
         adapter._ga_source_map["1/2/3"] = [
             (both_binding, dpt),
@@ -1771,7 +1772,46 @@ class TestKnxReadWrite:
         assert peer.suppress_action_triggers is True
 
     @pytest.mark.asyncio
-    async def test_both_binding_accepts_matching_value_after_echo_window(self, mock_bus):
+    async def test_state_confirmation_does_not_suppress_different_datapoint_peer(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        both_binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        other_datapoint_binding = make_binding(
+            {"group_address": "1/2/4", "dpt_id": "DPT9.001"},
+            direction="SOURCE",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map = {
+            "1/2/3": [(both_binding, dpt)],
+            "1/2/4": [(both_binding, dpt), (other_datapoint_binding, dpt)],
+        }
+
+        await adapter.write(both_binding, 50.0)
+        command = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(command)
+        state_confirmation = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=command.payload,
+        )
+        await adapter._on_telegram(state_confirmation)
+
+        confirmation, peer = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert confirmation.suppress_write_propagation is True
+        assert confirmation.suppress_action_triggers is True
+        assert peer.datapoint_id == other_datapoint_binding.datapoint_id
+        assert peer.suppress_write_propagation is False
+        assert peer.suppress_action_triggers is False
+
+    @pytest.mark.asyncio
+    async def test_distinct_state_confirmation_remains_pending_after_echo_window(self, mock_bus):
         adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
         now = [100.0]
         adapter._monotonic = lambda: now[0]
@@ -1802,8 +1842,8 @@ class TestKnxReadWrite:
         await adapter._on_telegram(delayed_state_telegram)
 
         event = mock_bus.publish.call_args_list[-1].args[0]
-        assert abs(event.value - 5.0) < 0.1
-        assert event.suppress_write_propagation is False
+        assert event.value == 50.0
+        assert event.suppress_write_propagation is True
         assert adapter._recent_writes == {}
 
     @pytest.mark.asyncio
@@ -1949,6 +1989,31 @@ class TestHandleReadRequest:
         await adapter._on_telegram(response)
 
         mock_bus.publish.assert_not_awaited()
+        assert adapter._local_read_responses == {}
+
+    @pytest.mark.asyncio
+    async def test_outgoing_read_request_does_not_trigger_local_response(self, mock_bus):
+        from unittest.mock import MagicMock
+
+        adapter, mock_xknx = self._make_adapter(mock_bus)
+        dpt = DPTRegistry.get("DPT9.001")
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "dpt_id": "DPT9.001",
+                "respond_to_read": True,
+            },
+            direction="BOTH",
+        )
+        adapter._ga_respond_map["1/2/3"] = [(binding, dpt)]
+        adapter.set_value_getter(lambda _: MagicMock(quality="good", value=21.5))
+
+        await adapter.read(binding)
+        request = mock_xknx.telegrams.put.call_args.args[0]
+        mock_xknx.telegrams.put.reset_mock()
+        await adapter._on_telegram(request)
+
+        mock_xknx.telegrams.put.assert_not_awaited()
         assert adapter._local_read_responses == {}
 
     @pytest.mark.asyncio
@@ -2153,6 +2218,7 @@ class TestOnTelegramEdgeCases:
 
         telegram = Telegram(
             destination_address=GroupAddress("1/2/3"),
+            direction=TelegramDirection.INCOMING,
             payload=GroupValueRead(),
         )
         with patch.object(adapter, "_handle_read_request", new_callable=AsyncMock) as mock_hrr:

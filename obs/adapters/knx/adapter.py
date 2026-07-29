@@ -576,16 +576,17 @@ class KnxAdapter(AdapterBase):
                 return
 
             ga = str(telegram.destination_address)
+            is_outgoing = getattr(getattr(telegram, "direction", None), "name", None) == "OUTGOING"
 
             # Handle incoming read requests: respond with current persisted value
             if isinstance(telegram.payload, GroupValueRead):
-                await self._handle_read_request(ga)
+                if not is_outgoing:
+                    await self._handle_read_request(ga)
                 return
 
             if not isinstance(telegram.payload, (GroupValueWrite, GroupValueResponse)):
                 return
 
-            is_outgoing = getattr(getattr(telegram, "direction", None), "name", None) == "OUTGOING"
             if is_outgoing and isinstance(telegram.payload, GroupValueResponse) and id(telegram) in self._local_read_responses:
                 self._local_read_responses.pop(id(telegram), None)
                 logger.debug("KNX local read response ignored: GA=%s", ga)
@@ -596,12 +597,13 @@ class KnxAdapter(AdapterBase):
                 return
 
             raw = _telegram_to_bytes(telegram)
-            suppress_address_propagation = self._is_local_confirmation(
+            confirmation_datapoint_ids = self._local_confirmation_datapoint_ids(
                 ga,
                 raw,
                 is_outgoing=is_outgoing,
             )
             for binding, dpt in entries:
+                suppress_peer_confirmation = str(binding.datapoint_id) in confirmation_datapoint_ids
                 is_outbound_confirmation, logical_value, suppress_action_triggers = self._consume_outbound_confirmation(
                     binding,
                     ga,
@@ -652,8 +654,8 @@ class KnxAdapter(AdapterBase):
                         quality=quality,
                         source_adapter=self.adapter_type,
                         binding_id=binding.id,
-                        suppress_write_propagation=is_outbound_confirmation or suppress_address_propagation,
-                        suppress_action_triggers=suppress_action_triggers or (suppress_address_propagation and not is_outbound_confirmation),
+                        suppress_write_propagation=is_outbound_confirmation or suppress_peer_confirmation,
+                        suppress_action_triggers=suppress_action_triggers or (suppress_peer_confirmation and not is_outbound_confirmation),
                     ),
                 )
         except Exception:
@@ -797,12 +799,19 @@ class KnxAdapter(AdapterBase):
         )
 
     def _prune_recent_writes(self, now: float | None = None) -> None:
-        """Remove expired sent-write expectations across all bindings and addresses."""
+        """Remove expired command echoes while retaining outstanding state feedback."""
         cutoff = (self._monotonic() if now is None else now) - ECHO_SUPPRESSION_WINDOW_S
         for key, recent_writes in list(self._recent_writes.items()):
-            while recent_writes and recent_writes[0][0] < cutoff:
-                recent_writes.popleft()
-            if not recent_writes:
+            key_ga = key[1]
+            retained = deque(
+                recent_write
+                for recent_write in recent_writes
+                if recent_write[0] >= cutoff
+                or (recent_write[4][3].get("state_group_address") == key_ga and recent_write[4][3].get("group_address") != key_ga)
+            )
+            if retained:
+                self._recent_writes[key] = retained
+            else:
                 self._recent_writes.pop(key, None)
 
     def _prune_local_read_responses(self, now: float | None = None) -> None:
@@ -812,15 +821,16 @@ class KnxAdapter(AdapterBase):
             if tracked_at < cutoff:
                 self._local_read_responses.pop(telegram_id, None)
 
-    def _is_local_confirmation(
+    def _local_confirmation_datapoint_ids(
         self,
         ga: str,
         raw: bytes,
         *,
         is_outgoing: bool,
-    ) -> bool:
-        """Return whether a telegram matches any local confirmation on this address."""
+    ) -> set[str]:
+        """Return datapoints with a matching local confirmation on this address."""
         self._prune_recent_writes()
+        datapoint_ids: set[str] = set()
         for (_, key_ga), recent_writes in self._recent_writes.items():
             if key_ga != ga:
                 continue
@@ -831,10 +841,10 @@ class KnxAdapter(AdapterBase):
                 command_ga = config.get("group_address")
                 state_ga = config.get("state_group_address")
                 if is_outgoing and ga == command_ga:
-                    return True
+                    datapoint_ids.add(str(signature[0]))
                 if not is_outgoing and ga == state_ga and state_ga != command_ga:
-                    return True
-        return False
+                    datapoint_ids.add(str(signature[0]))
+        return datapoint_ids
 
     def _consume_outbound_confirmation(
         self,
@@ -858,6 +868,7 @@ class KnxAdapter(AdapterBase):
                 return False, None, False
             matching_writes = [recent_write for recent_write in recent_writes if recent_write[1] == raw]
             if not matching_writes:
+                self._recent_writes.pop(key, None)
                 return False, None, False
 
             newest_logical_value = matching_writes[-1][2]
