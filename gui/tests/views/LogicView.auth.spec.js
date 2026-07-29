@@ -263,7 +263,9 @@ describe('LogicView auth gates', () => {
     wrapper.vm.toggleDebug()
     await wrapper.vm.runGraph()
     expect(wrapper.vm.lastRunOutputs.n1.value).toBe(42)
-    expect(wrapper.vm.nodes[0].data._dbg).toBe('= 42')
+    expect(wrapper.vm.lastRunDebugOutputs.n1.value).toBe(42)
+    expect(wrapper.vm.nodes[0].data).not.toHaveProperty('_dbg')
+    expect(wrapper.vm.nodes[0].data).not.toHaveProperty('_dbg_title')
 
     await wrapper.vm.saveGraph()
     const savedPayload = logicApi.saveGraph.mock.calls.at(-1)[1]
@@ -398,8 +400,10 @@ describe('LogicView WebSocket', () => {
       inputs: { n1: { value: { incoming: 12, effective: 12, overridden: false } } },
     }) })
     expect(wrapper.vm.lastRunOutputs.n1.value).toEqual({ nested: true })
+    expect(wrapper.vm.lastRunDebugOutputs.n1.value).toEqual({ nested: true })
     expect(wrapper.vm.lastRunInputs.n1.value.incoming).toBe(12)
-    expect(wrapper.vm.nodes[0].data._dbg).toContain('[object Object]')
+    expect(wrapper.vm.nodes[0].data).not.toHaveProperty('_dbg')
+    expect(wrapper.vm.nodes[0].data).not.toHaveProperty('_dbg_title')
   })
 
   it('ignores logic_run message for a different graph_id', async () => {

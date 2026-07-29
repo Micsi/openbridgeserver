@@ -573,6 +573,10 @@ const lastRunOutputs = ref({})
 function applyDebugValues(outputs, captureDebugOutputs = debugMode.value) {
   lastRunOutputs.value = outputs
   if (captureDebugOutputs) lastRunDebugOutputs.value = outputs
+  if (debugMode.value) {
+    clearDebugValues()
+    return
+  }
   nodes.value = nodes.value.map(node => ({
     ...node,
     data: {
@@ -605,9 +609,9 @@ function toggleDebug() {
   debugMode.value = !debugMode.value
   debugStateGeneration += 1
   sendDebugSubscription(activeGraphId.value, debugMode.value)
+  clearDebugValues()
   if (!debugMode.value) {
     clearAllDebugOverrides()
-    clearDebugValues()
     debugNode.value = null
     lastRunMetadata.value = null
     lastRunInputs.value = {}
