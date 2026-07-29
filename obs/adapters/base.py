@@ -108,9 +108,10 @@ class AdapterBase(ABC):
         *,
         logical_value: Any,
         suppress_confirmation_actions: bool = False,
-    ) -> None:
+    ) -> bool:
         """Write a transformed value while retaining its pre-transform logical value."""
         await self.write(binding, value)
+        return True
 
     # ------------------------------------------------------------------
     # Status helpers

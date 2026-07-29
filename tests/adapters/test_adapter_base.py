@@ -114,13 +114,14 @@ class TestConcreteHelpers:
         a.write = AsyncMock()
         binding = object()
 
-        await a.write_with_context(
+        queued = await a.write_with_context(
             binding,
             5.0,
             logical_value=50.0,
             suppress_confirmation_actions=True,
         )
 
+        assert queued is True
         a.write.assert_awaited_once_with(binding, 5.0)
 
 

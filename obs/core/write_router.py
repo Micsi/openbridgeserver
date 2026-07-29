@@ -214,14 +214,6 @@ class WriteRouter:
             event.binding_id,
         )
 
-        if getattr(event, "suppress_write_propagation", False):
-            logger.debug(
-                "WriteRouter: state-only confirmation for dp=%s binding=%s — propagation skipped",
-                event.datapoint_id,
-                event.binding_id,
-            )
-            return
-
         if event.quality != "good" or event.value is None:
             logger.warning(
                 "WriteRouter: skip DataValueEvent propagation for dp=%s due to quality=%s value=%r",
@@ -253,6 +245,14 @@ class WriteRouter:
                 return
 
         await self._clear_type_mismatch(event.datapoint_id)
+        if getattr(event, "suppress_write_propagation", False):
+            logger.debug(
+                "WriteRouter: state-only confirmation for dp=%s binding=%s — propagation skipped",
+                event.datapoint_id,
+                event.binding_id,
+            )
+            return
+
         await self._write_to_dest_bindings(
             event.datapoint_id,
             value,
@@ -399,14 +399,14 @@ class WriteRouter:
                 if callable(context_writer):
                     can_confirm = binding.adapter_type == "KNX" and binding.direction == "BOTH"
                     suppress_binding_confirmation_actions = suppress_confirmation_actions or not actionable_confirmation_available
-                    await context_writer(
+                    confirmation_queued = await context_writer(
                         instance,
                         binding,
                         write_value,
                         logical_value=value,
                         suppress_confirmation_actions=suppress_binding_confirmation_actions,
                     )
-                    if can_confirm:
+                    if can_confirm and confirmation_queued is True:
                         actionable_confirmation_available = False
                 else:
                     await instance.write(binding, write_value)

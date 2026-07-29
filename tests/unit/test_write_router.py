@@ -32,8 +32,9 @@ class _FakeInstance:
 
 
 class _ContextInstance:
-    def __init__(self):
+    def __init__(self, *, confirmation_queued: bool = True):
         self.writes: list[tuple[object, object, bool]] = []
+        self.confirmation_queued = confirmation_queued
 
     async def write_with_context(
         self,
@@ -44,6 +45,7 @@ class _ContextInstance:
         suppress_confirmation_actions=False,
     ):
         self.writes.append((value, logical_value, suppress_confirmation_actions))
+        return self.confirmation_queued
 
 
 def _row(**overrides):
@@ -271,6 +273,41 @@ async def test_direct_write_allows_only_one_actionable_knx_confirmation(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_direct_write_reserves_action_slot_until_confirmation_is_queued(monkeypatch):
+    first_instance_id = uuid.uuid4()
+    second_instance_id = uuid.uuid4()
+    first = _binding(adapter_type="KNX", direction="BOTH", adapter_instance_id=first_instance_id)
+    second = _binding(adapter_type="KNX", direction="BOTH", adapter_instance_id=second_instance_id)
+    bindings = {
+        str(first.id): first,
+        str(second.id): second,
+    }
+    instances = {
+        first_instance_id: _ContextInstance(confirmation_queued=False),
+        second_instance_id: _ContextInstance(confirmation_queued=True),
+    }
+    router = _make_router(
+        [
+            {"id": str(first.id)},
+            {"id": str(second.id)},
+        ]
+    )
+    monkeypatch.setattr(adapter_registry, "_row_to_binding", lambda row: bindings[row["id"]])
+    monkeypatch.setattr(adapter_registry, "get_instance_by_id", lambda instance_id: instances[instance_id])
+    monkeypatch.setattr(adapter_registry, "get_instance", lambda _adapter_type: None)
+
+    await router._write_to_dest_bindings(
+        uuid.uuid4(),
+        50.0,
+        skip_binding_id=None,
+        suppress_confirmation_actions=False,
+    )
+
+    assert instances[first_instance_id].writes == [(50.0, 50.0, False)]
+    assert instances[second_instance_id].writes == [(50.0, 50.0, False)]
+
+
+@pytest.mark.asyncio
 async def test_handle_value_event_forwards_skip_binding_id(monkeypatch):
     router = _make_router([])
     router._registry = SimpleNamespace(get=lambda _: SimpleNamespace(name="dp", data_type="UNKNOWN"))
@@ -295,6 +332,10 @@ async def test_handle_value_event_forwards_skip_binding_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_value_event_does_not_propagate_state_only_confirmation():
     router = _make_router([])
+    router._registry = SimpleNamespace(
+        get=lambda _dp_id: SimpleNamespace(name="Temperature", data_type="FLOAT"),
+        clear_diagnostic=AsyncMock(),
+    )
     router._write_to_dest_bindings = AsyncMock()
     event = DataValueEvent(
         datapoint_id=uuid.uuid4(),
@@ -307,6 +348,7 @@ async def test_handle_value_event_does_not_propagate_state_only_confirmation():
 
     await router.handle_value_event(event)
 
+    router._registry.clear_diagnostic.assert_awaited_once_with(event.datapoint_id, "type_mismatch")
     router._write_to_dest_bindings.assert_not_awaited()
 
 

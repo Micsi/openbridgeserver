@@ -150,7 +150,7 @@ class KnxAdapter(AdapterBase):
             int,
             tuple[Any, str, str | None, bytes, Any, bool, tuple[Any, ...]],
         ] = {}
-        self._local_read_responses: dict[int, float | None] = {}
+        self._local_read_responses: dict[int, float] = {}
         self._value_getter: Any = None
         self._reconnect_task: asyncio.Task | None = None
         self._echo_cleanup_task: asyncio.Task | None = None
@@ -688,7 +688,7 @@ class KnxAdapter(AdapterBase):
                     destination_address=GroupAddress(ga),
                     payload=GroupValueResponse(payload_value),
                 )
-                self._local_read_responses[id(telegram)] = None
+                self._local_read_responses[id(telegram)] = self._monotonic()
                 try:
                     await self._xknx.telegrams.put(telegram)
                 except Exception:
@@ -806,10 +806,10 @@ class KnxAdapter(AdapterBase):
                 self._recent_writes.pop(key, None)
 
     def _prune_local_read_responses(self, now: float | None = None) -> None:
-        """Remove transmitted read responses not dispatched to the sniffer."""
+        """Remove queued or transmitted read responses not dispatched to the sniffer."""
         cutoff = (self._monotonic() if now is None else now) - ECHO_SUPPRESSION_WINDOW_S
-        for telegram_id, transmitted_at in list(self._local_read_responses.items()):
-            if transmitted_at is not None and transmitted_at < cutoff:
+        for telegram_id, tracked_at in list(self._local_read_responses.items()):
+            if tracked_at < cutoff:
                 self._local_read_responses.pop(telegram_id, None)
 
     def _is_local_confirmation(
@@ -911,9 +911,9 @@ class KnxAdapter(AdapterBase):
         *,
         logical_value: Any,
         suppress_confirmation_actions: bool = False,
-    ) -> None:
+    ) -> bool:
         if not self._xknx:
-            return
+            return False
         try:
             from xknx.dpt import DPTArray, DPTBinary  # xknx ≥ 3.x
             from xknx.telegram import Telegram
@@ -950,8 +950,10 @@ class KnxAdapter(AdapterBase):
                 self._pending_transmissions.pop(id(telegram), None)
                 raise
             logger.info("KNX write: GA=%s value=%s raw=%s", bc.group_address, value, raw.hex())
+            return binding.direction == "BOTH"
         except Exception:
             logger.exception("KNX write failed for binding %s", binding.id)
+            return False
 
 
 # ---------------------------------------------------------------------------

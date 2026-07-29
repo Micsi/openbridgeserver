@@ -21,6 +21,7 @@ from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWri
 from xknx.telegram.telegram import TelegramDirection
 
 from obs.adapters.knx.adapter import (
+    ECHO_SUPPRESSION_WINDOW_S,
     KnxAdapter,
     KnxAdapterConfig,
     KnxBindingConfig,
@@ -1810,7 +1811,8 @@ class TestKnxReadWrite:
         adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
         binding = make_binding({"group_address": "1/2/3", "dpt_id": "DPT9.001"})
         # Should not raise
-        await adapter.write(binding, 10.0)
+        queued = await adapter.write_with_context(binding, 10.0, logical_value=10.0)
+        assert queued is False
 
     @pytest.mark.asyncio
     async def test_read_exception_is_swallowed(self, mock_bus):
@@ -1836,7 +1838,8 @@ class TestKnxReadWrite:
             {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
             direction="BOTH",
         )
-        await adapter.write(binding, 10.0)
+        queued = await adapter.write_with_context(binding, 10.0, logical_value=10.0)
+        assert queued is False
         assert adapter._pending_transmissions == {}
 
 
@@ -1947,6 +1950,34 @@ class TestHandleReadRequest:
 
         mock_bus.publish.assert_not_awaited()
         assert adapter._local_read_responses == {}
+
+    @pytest.mark.asyncio
+    async def test_queued_local_read_response_expires_without_transmission(self, mock_bus):
+        from unittest.mock import MagicMock
+
+        adapter, mock_xknx = self._make_adapter(mock_bus)
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+        dpt = DPTRegistry.get("DPT9.001")
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "dpt_id": "DPT9.001",
+                "respond_to_read": True,
+            },
+            direction="SOURCE",
+        )
+        adapter._ga_respond_map["1/2/3"] = [(binding, dpt)]
+        adapter.set_value_getter(lambda _: MagicMock(quality="good", value=21.5))
+
+        await adapter._handle_read_request("1/2/3")
+        assert len(adapter._local_read_responses) == 1
+
+        now[0] += ECHO_SUPPRESSION_WINDOW_S + 0.1
+        adapter._prune_local_read_responses()
+
+        assert adapter._local_read_responses == {}
+        mock_xknx.telegrams.put.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_good_boolean_value_sends_dpt_binary_response(self, mock_bus):
