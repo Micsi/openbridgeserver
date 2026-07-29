@@ -1305,11 +1305,9 @@ class TestKnxReadWrite:
         await adapter._on_telegram(older_telegram)
         await adapter._on_telegram(older_confirmation)
 
-        latest_event, older_event, repeated_event = [call.args[0] for call in mock_bus.publish.call_args_list]
+        latest_event, repeated_event = [call.args[0] for call in mock_bus.publish.call_args_list]
         assert latest_event.value == 210.0
         assert latest_event.suppress_write_propagation is True
-        assert older_event.value == 200.0
-        assert older_event.suppress_write_propagation is True
         assert abs(repeated_event.value - 2.0) < 0.1
         assert repeated_event.suppress_write_propagation is False
 
@@ -1769,6 +1767,55 @@ class TestKnxReadWrite:
         assert confirmation.suppress_action_triggers is True
 
     @pytest.mark.asyncio
+    async def test_shared_state_telegram_consumes_only_one_binding_expectation(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        first_binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        second_binding = make_binding(
+            {
+                "group_address": "1/2/5",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        second_binding.datapoint_id = first_binding.datapoint_id
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/4"] = [
+            (first_binding, dpt),
+            (second_binding, dpt),
+        ]
+
+        await adapter.write(first_binding, 50.0)
+        first_command = mock_xknx.telegrams.put.call_args.args[0]
+        await adapter.write(second_binding, 50.0)
+        second_command = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(first_command)
+        adapter._on_telegram_transmitted(second_command)
+        state_confirmation = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=first_command.payload,
+        )
+
+        await adapter._on_telegram(state_confirmation)
+
+        remaining_state_expectations = sum(len(recent_writes) for (_, ga), recent_writes in adapter._recent_writes.items() if ga == "1/2/4")
+        assert remaining_state_expectations == 1
+        mock_bus.publish.assert_awaited_once()
+
+        await adapter._on_telegram(state_confirmation)
+
+        assert not any(ga == "1/2/4" for _, ga in adapter._recent_writes)
+        assert mock_bus.publish.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_state_confirmation_does_not_suppress_different_datapoint_peer(self, mock_bus):
         adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
         both_binding = make_binding(
@@ -2050,7 +2097,7 @@ class TestHandleReadRequest:
         assert adapter._local_read_responses == {}
 
     @pytest.mark.asyncio
-    async def test_queued_local_read_response_expires_without_transmission(self, mock_bus):
+    async def test_local_read_response_is_retained_while_queued_then_expires_after_transmission(self, mock_bus):
         from unittest.mock import MagicMock
 
         adapter, mock_xknx = self._make_adapter(mock_bus)
@@ -2074,8 +2121,15 @@ class TestHandleReadRequest:
         now[0] += ECHO_SUPPRESSION_WINDOW_S + 0.1
         adapter._prune_local_read_responses()
 
-        assert adapter._local_read_responses == {}
+        assert len(adapter._local_read_responses) == 1
         mock_xknx.telegrams.put.assert_awaited_once()
+
+        response = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(response)
+        now[0] += ECHO_SUPPRESSION_WINDOW_S + 0.1
+        adapter._prune_local_read_responses()
+
+        assert adapter._local_read_responses == {}
 
     @pytest.mark.asyncio
     async def test_good_boolean_value_sends_dpt_binary_response(self, mock_bus):
@@ -2455,6 +2509,16 @@ class TestKnxAdapterExceptionPaths:
         old_xknx = MagicMock()
         old_xknx.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
         adapter._xknx = old_xknx
+        adapter._pending_transmissions[123] = (
+            object(),
+            "1/2/3",
+            None,
+            b"\x01",
+            True,
+            False,
+            (),
+        )
+        adapter._local_read_responses[456] = None
 
         new_xknx = MagicMock()
         new_xknx.start = AsyncMock()
@@ -2467,6 +2531,8 @@ class TestKnxAdapterExceptionPaths:
             await adapter._do_connect()  # must not raise
 
         old_xknx.stop.assert_called_once()
+        assert adapter._pending_transmissions == {}
+        assert adapter._local_read_responses == {}
 
     @pytest.mark.asyncio
     async def test_do_connect_secure_generic_exception_publishes_error(self, mock_bus):

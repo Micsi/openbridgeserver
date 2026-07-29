@@ -151,7 +151,9 @@ class KnxAdapter(AdapterBase):
             int,
             tuple[Any, str, str | None, bytes, Any, bool, tuple[Any, ...]],
         ] = {}
-        self._local_read_responses: dict[int, float] = {}
+        self._outgoing_confirmation_owners: dict[int, tuple[str, float]] = {}
+        self._local_read_responses: dict[int, float | None] = {}
+        self._latest_confirmation_at: dict[str, float] = {}
         self._value_getter: Any = None
         self._reconnect_task: asyncio.Task | None = None
         self._echo_cleanup_task: asyncio.Task | None = None
@@ -204,6 +206,9 @@ class KnxAdapter(AdapterBase):
                 await self._xknx.stop()
             except Exception:
                 logger.exception("KNX cleanup of previous instance failed")
+            self._pending_transmissions.clear()
+            self._outgoing_confirmation_owners.clear()
+            self._local_read_responses.clear()
             self._xknx = None
 
         cfg = KnxAdapterConfig(**self._config)
@@ -454,7 +459,9 @@ class KnxAdapter(AdapterBase):
         self._sniffer = None
         self._recent_writes.clear()
         self._pending_transmissions.clear()
+        self._outgoing_confirmation_owners.clear()
         self._local_read_responses.clear()
+        self._latest_confirmation_at.clear()
         if self._xknx:
             try:
                 await self._xknx.stop()
@@ -603,14 +610,28 @@ class KnxAdapter(AdapterBase):
                 raw,
                 is_outgoing=is_outgoing,
             )
+            outgoing_owner = self._outgoing_confirmation_owners.get(id(telegram))
+            consumed_confirmation_datapoints: set[str] = set()
             for binding, dpt in entries:
-                suppress_peer_confirmation = str(binding.datapoint_id) in confirmation_datapoint_ids
-                is_outbound_confirmation, logical_value, suppress_action_triggers = self._consume_outbound_confirmation(
-                    binding,
-                    ga,
-                    raw,
-                    is_outgoing=is_outgoing,
+                datapoint_id = str(binding.datapoint_id)
+                suppress_peer_confirmation = datapoint_id in confirmation_datapoint_ids
+                may_consume = (
+                    outgoing_owner[0] == str(binding.id)
+                    if is_outgoing and outgoing_owner is not None
+                    else datapoint_id not in consumed_confirmation_datapoints
                 )
+                confirmation_at = self._matching_confirmation_timestamp(binding, ga, raw, is_outgoing=is_outgoing) if may_consume else None
+                if may_consume:
+                    is_outbound_confirmation, logical_value, suppress_action_triggers = self._consume_outbound_confirmation(
+                        binding,
+                        ga,
+                        raw,
+                        is_outgoing=is_outgoing,
+                    )
+                else:
+                    is_outbound_confirmation, logical_value, suppress_action_triggers = False, None, False
+                if is_outbound_confirmation:
+                    consumed_confirmation_datapoints.add(datapoint_id)
                 if suppress_peer_confirmation and not is_outbound_confirmation:
                     logger.debug(
                         "KNX duplicate peer confirmation ignored: GA=%s binding=%s",
@@ -619,6 +640,16 @@ class KnxAdapter(AdapterBase):
                     )
                     continue
                 if is_outbound_confirmation:
+                    latest_confirmation_at = self._latest_confirmation_at.get(datapoint_id)
+                    if confirmation_at is not None and latest_confirmation_at is not None and confirmation_at < latest_confirmation_at:
+                        logger.debug(
+                            "KNX stale confirmation ignored: GA=%s binding=%s",
+                            ga,
+                            binding.id,
+                        )
+                        continue
+                    if confirmation_at is not None:
+                        self._latest_confirmation_at[datapoint_id] = confirmation_at
                     logger.debug(
                         "KNX outbound confirmation: GA=%s binding=%s raw=%s",
                         ga,
@@ -666,6 +697,8 @@ class KnxAdapter(AdapterBase):
                         suppress_action_triggers=suppress_action_triggers,
                     ),
                 )
+            if is_outgoing:
+                self._outgoing_confirmation_owners.pop(id(telegram), None)
         except Exception:
             logger.exception("KNX _on_telegram unhandled exception")
 
@@ -698,7 +731,7 @@ class KnxAdapter(AdapterBase):
                     destination_address=GroupAddress(ga),
                     payload=GroupValueResponse(payload_value),
                 )
-                self._local_read_responses[id(telegram)] = self._monotonic()
+                self._local_read_responses[id(telegram)] = None
                 try:
                     await self._xknx.telegrams.put(telegram)
                 except Exception:
@@ -775,6 +808,7 @@ class KnxAdapter(AdapterBase):
             return
 
         written_at = self._monotonic()
+        self._outgoing_confirmation_owners[id(telegram)] = (str(binding.id), written_at)
         self._remember_outbound_write(
             binding,
             command_ga,
@@ -827,13 +861,40 @@ class KnxAdapter(AdapterBase):
                 self._recent_writes[key] = retained
             else:
                 self._recent_writes.pop(key, None)
+        owner_cutoff = current - ECHO_SUPPRESSION_WINDOW_S
+        for telegram_id, (_, transmitted_at) in list(self._outgoing_confirmation_owners.items()):
+            if transmitted_at < owner_cutoff:
+                self._outgoing_confirmation_owners.pop(telegram_id, None)
 
     def _prune_local_read_responses(self, now: float | None = None) -> None:
-        """Remove queued or transmitted read responses not dispatched to the sniffer."""
+        """Remove transmitted read responses not dispatched to the sniffer."""
         cutoff = (self._monotonic() if now is None else now) - ECHO_SUPPRESSION_WINDOW_S
         for telegram_id, tracked_at in list(self._local_read_responses.items()):
-            if tracked_at < cutoff:
+            if tracked_at is not None and tracked_at < cutoff:
                 self._local_read_responses.pop(telegram_id, None)
+
+    def _matching_confirmation_timestamp(
+        self,
+        binding: Any,
+        ga: str,
+        raw: bytes,
+        *,
+        is_outgoing: bool,
+    ) -> float | None:
+        """Return the write timestamp represented by a matching confirmation."""
+        recent_writes = self._recent_writes.get((str(binding.id), ga))
+        if not recent_writes:
+            return None
+        state_ga = binding.config.get("state_group_address")
+        is_distinct_state_ga = state_ga == ga and state_ga != binding.config.get("group_address")
+        if is_distinct_state_ga:
+            if is_outgoing:
+                return None
+            matching = [recent_write for recent_write in recent_writes if recent_write[1] == raw]
+            return matching[-1][0] if matching else None
+        if not is_outgoing:
+            return None
+        return next((written_at for written_at, written_raw, *_ in recent_writes if written_raw == raw), None)
 
     def _local_confirmation_datapoint_ids(
         self,
