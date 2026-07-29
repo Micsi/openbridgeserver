@@ -26,6 +26,7 @@ class _FakeWebSocket:
     def __init__(self) -> None:
         self.messages: list[dict] = []
         self.accepted = False
+        self.closed = False
 
     async def accept(self, subprotocol: str | None = None) -> None:
         self.accepted = True
@@ -34,7 +35,7 @@ class _FakeWebSocket:
         self.messages.append(msg)
 
     async def close(self) -> None:
-        return None
+        self.closed = True
 
 
 class _SerializationFailWebSocket(_FakeWebSocket):
@@ -81,6 +82,8 @@ async def test_logic_debug_access_is_revalidated_before_broadcast():
 
     access_check.assert_awaited_once()
     assert ws.messages == []
+    assert ws.closed is True
+    assert conn_id not in manager._connections
     assert manager.has_logic_debug_subscribers("graph") is False
 
 

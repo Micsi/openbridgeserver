@@ -25,6 +25,13 @@ def test_jsonable_converts_tuple_of_time_values():
     assert value == ["01:02:03", "04:05:06"]
 
 
+def test_jsonable_replaces_recursive_container_references():
+    value: dict[str, object] = {}
+    value["self"] = value
+
+    assert jsonable(value) == {"self": "<recursive dict>"}
+
+
 def test_json_dumps_raises_for_non_serializable():
     import pytest
 

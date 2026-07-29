@@ -170,8 +170,9 @@ class WebSocketManager:
                 continue
             access_check = self._logic_debug_access_checks.get(conn_id)
             if access_check is not None and not await access_check():
-                subscriptions.clear()
-                self._logic_debug_access.discard(conn_id)
+                # Closing notifies browser clients so they can reconnect with
+                # the access token refreshed by the REST client.
+                dead.append(conn_id)
                 continue
             if not await self._send(conn_id, msg):
                 dead.append(conn_id)
