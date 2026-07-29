@@ -120,15 +120,31 @@ Danach läuft der i18n-Gate automatisch vor jedem `git push`.
 
 ## Test Coverage Gate (verbindlich)
 
-**Jede neue Zeile Code muss durch Tests abgedeckt sein.** Codecov prüft die *Patch Coverage* —
-d.h. ob jede im Diff hinzugefügte Zeile durch die Testsuite ausgeführt wird. Das ist strenger als
-nur die Gesamtabdeckung zu halten: eine neue Funktion, die bestehende Zeilen nicht senkt, aber
-selbst ungetestet bleibt, fällt durch dieses Gate.
+**Jede neue Zeile Code muss durch Tests abgedeckt sein — und jeder neue Zweig einer Bedingung
+ebenfalls.** Codecov prüft die *Patch Coverage* auf zwei Ebenen, die beide grün sein müssen:
+
+1. **Line Coverage** — wurde jede im Diff hinzugefügte Zeile mindestens einmal ausgeführt?
+2. **Branch Coverage** — wurde bei jeder Bedingung *auf* einer geänderten Zeile jeder mögliche
+   Ausgang mindestens einmal durchlaufen?
+
+Das ist strenger als nur die Gesamtabdeckung zu halten: eine neue Funktion, die bestehende Zeilen
+nicht senkt, aber selbst ungetestet bleibt, fällt durch dieses Gate — und genauso eine Zeile, die
+zwar *ausgeführt* wurde, deren `if`/`else`, `try`/`finally`, `||`/`??`/Ternary oder Mehrfach-Guard
+(`a || b || c`) aber nur auf einer Seite getestet wurde. **Codecov markiert diesen zweiten Fall
+als „partial" und lässt das Gate genauso fehlschlagen wie eine komplett fehlende Zeile — obwohl
+lokale Line-Coverage-Reports (`--cov-report=term-missing`, Vitest-Tabellenausgabe) das oft nicht
+zeigen, weil sie primär Line- statt Branch-Daten hervorheben.** Ein lokal grüner Lauf ist daher
+keine Garantie für einen grünen `codecov/patch`-Check — insbesondere wenn bestehender Code neu in
+`try`/`if` eingepackt wird (das re-indentiert die Zeilen, wodurch sie im Diff als „neu" zählen und
+ihre ggf. schon vorher unvollständige Branch-Abdeckung erstmals gegen das Gate zählt).
 
 - **Neuer Code → neue Tests im selben Commit.** Jede neue API-Route, jeder neue Adapter, jede
   neue Hilfsfunktion braucht zugehörige Tests (Unit oder Integration), die genau die neuen Zeilen
-  ausführen.
-- **Refactorings** dürfen weder die Gesamtabdeckung noch die Patch Coverage senken.
+  ausführen — und bei jeder neuen/geänderten Bedingung Tests für **beide Seiten** (true/false,
+  vorhanden/fehlend, Guard greift/greift nicht).
+- **Refactorings** dürfen weder die Gesamtabdeckung noch die Patch Coverage (Line **und** Branch)
+  senken. Das Einpacken von bestehendem Code in ein neues `try`/`if`/`??` zählt als Refactoring in
+  diesem Sinne — vorher prüfen, ob die betroffenen Zeilen schon alle Zweige abgedeckt hatten.
 - **Vor jedem Push mit Backend-Änderungen** Coverage prüfen:
 
 ```bash
@@ -139,6 +155,21 @@ tools/with-venv pytest tests/integration --cov=obs --cov-append --cov-report=ter
 ```
 
 Wenn neue Zeilen im Report unter „Missing" auftauchen: Tests ergänzen, nicht pushen.
+
+- **Vor jedem Push mit GUI-Änderungen** ebenso `cd gui && npm run test:coverage` laufen lassen.
+  Für Branch-Detail auf einzelne Zeilen (nicht nur die aggregierte %-Spalte) die generierte
+  `gui/coverage/lcov.info` auswerten — `BRDA:<line>,<block>,<branch>,<hits>`-Zeilen mit `hits == 0`
+  markieren einen ungetesteten Zweig genau dieser Zeile:
+
+```bash
+awk '/SF:.*<Dateipfad>$/{f=1} f && /^BRDA:/{print} f && /end_of_record/{f=0}' gui/coverage/lcov.info \
+  | awk -F, '$4 == 0'
+```
+
+- **Bei einem bereits offenen PR**, wenn unklar ist, ob eine Änderung das Gate reißt: den
+  tatsächlichen `codecov/patch`-Check auf dem PR prüfen (`gh pr checks <nr>`), nicht nur lokale
+  Reports vertrauen — siehe oben, lokal und Codecov können bei Branch-Partials auseinanderlaufen.
+
 Gilt für Haupt-Sessions **und** für Subagents — bitte explizit in den Subagent-Prompt schreiben.
 
 ## Local Development Setup

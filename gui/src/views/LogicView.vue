@@ -2,101 +2,117 @@
   <div class="flex flex-col h-full" style="height: calc(100vh - 4rem)">
     <!-- Toolbar -->
     <div class="flex items-center gap-3 px-4 py-2 bg-surface-800 border-b border-slate-200 dark:border-slate-700/60 flex-shrink-0">
-      <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">{{ $t('logic.title') }}</h2>
-      <div class="flex-1" />
-      <!-- Logikblatt selector -->
-      <select v-model="activeGraphId" @change="loadGraph"
-        class="input text-xs py-1 px-2 max-w-[200px]" data-testid="select-graph">
-        <option value="">{{ $t('logic.selectGraph') }}</option>
-        <option v-for="g in store.graphs" :key="g.id" :value="g.id">{{ g.name }}{{ g.enabled ? '' : $t('logic.graphDisabledSuffix') }}</option>
-      </select>
-      <button v-if="auth.isAdmin" @click="newGraph" class="btn-primary btn-sm">{{ $t('logic.newGraphBtn') }}</button>
-      <button v-if="auth.isAdmin && activeGraphId" @click="saveGraph" class="btn-secondary btn-sm" :disabled="saving">
-        <Spinner v-if="saving" size="sm" color="white" />
-        {{ $t('common.save') }}
-      </button>
-      <button v-if="auth.isAdmin && activeGraphId" @click="runGraph"
-        :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-slate-500 opacity-50 cursor-not-allowed']"
-        :disabled="!activeGraph?.enabled"
-        :title="activeGraph?.enabled ? $t('logic.runTitle') : $t('logic.runDisabledTitle')"
-        data-testid="btn-run">
-        &#9654; {{ $t('logic.run') }}
-      </button>
-      <button v-if="auth.isAdmin && activeGraphId" @click="toggleDebug"
-        :class="['btn-secondary btn-sm', debugMode ? 'text-amber-400 ring-1 ring-amber-400/50' : 'text-slate-400']"
-        :title="$t('logic.debugMode')" data-testid="btn-debug">
-        <svg
-          aria-hidden="true"
-          class="inline-block h-4 w-4 align-[-0.125em]"
-          data-testid="icon-debug-bug"
-          fill="none"
-          stroke="currentColor"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          viewBox="0 0 24 24"
-        >
-          <path d="m8 2 2 2" />
-          <path d="m14 4 2-2" />
-          <path d="M9 7V6a3 3 0 0 1 6 0v1" />
-          <rect x="6" y="7" width="12" height="13" rx="6" />
-          <path d="M12 11v9M6 10 3 8M6 14H2M7 18l-3 3M18 10l3-2M18 14h4M17 18l3 3" />
-        </svg>
-        {{ $t('logic.debugBtn') }}
-      </button>
-      <div v-if="auth.isAdmin && activeGraphId" class="flex items-center gap-1">
-        <button
-          type="button"
-          :class="['btn-secondary btn-sm', snapToGrid ? 'text-blue-400 ring-1 ring-blue-400/50' : 'text-slate-400']"
-          :title="$t('logic.snapToGridTitle')"
-          data-testid="btn-snap-to-grid"
-          @click="snapToGrid = !snapToGrid"
-        >
-          # {{ $t('logic.snapToGrid') }}
+      <!-- Actions scroll horizontally on narrow/laptop viewports; the status
+           bar below lives outside this container so it stays visible
+           instead of scrolling off with whichever action produced it. -->
+      <div class="flex items-center gap-3 overflow-x-auto min-w-0">
+        <!-- Reserved to the NodePalette column's current width below (see
+             titleSpacerClass), so the dropdown lines up with the canvas
+             instead of crowding the title. -->
+        <h2 :class="[titleSpacerClass, 'flex-shrink-0 overflow-hidden whitespace-nowrap text-sm font-bold text-slate-800 dark:text-slate-100']">{{ $t('logic.title') }}</h2>
+        <!-- Logikblatt selector -->
+        <select v-model="activeGraphId" @change="loadGraph"
+          class="input text-xs py-1 px-2 max-w-[200px]" data-testid="select-graph">
+          <option value="">{{ $t('logic.selectGraph') }}</option>
+          <option v-for="g in store.graphs" :key="g.id" :value="g.id">{{ g.name }}{{ g.enabled ? '' : $t('logic.graphDisabledSuffix') }}</option>
+        </select>
+        <button v-if="auth.isAdmin" @click="newGraph" class="btn-primary btn-sm">{{ $t('logic.newGraphBtn') }}</button>
+        <button v-if="auth.isAdmin && activeGraphId" @click="saveGraph" class="btn-secondary btn-sm" :disabled="saving" data-testid="btn-save">
+          <Spinner v-if="saving" size="sm" color="white" />
+          {{ $t('common.save') }}
         </button>
-        <label v-if="snapToGrid" class="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
-          <span class="sr-only">{{ $t('logic.gridSize') }}</span>
-          <input
-            :value="snapGridSize"
-            type="number"
-            min="5"
-            max="100"
-            step="5"
-            class="input w-16 px-2 py-1 text-xs"
-            data-testid="input-snap-grid-size"
-            @change="updateSnapGridSize"
-          />
-          px
+        <button v-if="auth.isAdmin && activeGraphId" @click="runGraph"
+          :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-slate-500 opacity-50 cursor-not-allowed']"
+          :disabled="!activeGraph?.enabled"
+          :title="activeGraph?.enabled ? $t('logic.runTitle') : $t('logic.runDisabledTitle')"
+          data-testid="btn-run">
+          &#9654; {{ $t('logic.run') }}
+        </button>
+        <button v-if="auth.isAdmin && activeGraphId" @click="toggleDebug"
+          :class="['btn-secondary btn-sm', debugMode ? 'text-amber-400 ring-1 ring-amber-400/50' : 'text-slate-400']"
+          :title="$t('logic.debugMode')" data-testid="btn-debug">
+          <svg
+            aria-hidden="true"
+            class="inline-block h-4 w-4 align-[-0.125em]"
+            data-testid="icon-debug-bug"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+          >
+            <path d="m8 2 2 2" />
+            <path d="m14 4 2-2" />
+            <path d="M9 7V6a3 3 0 0 1 6 0v1" />
+            <rect x="6" y="7" width="12" height="13" rx="6" />
+            <path d="M12 11v9M6 10 3 8M6 14H2M7 18l-3 3M18 10l3-2M18 14h4M17 18l3 3" />
+          </svg>
+          {{ $t('logic.debugBtn') }}
+        </button>
+        <div v-if="auth.isAdmin && activeGraphId" class="flex items-center gap-1">
+          <button
+            type="button"
+            :class="['btn-secondary btn-sm', snapToGrid ? 'text-blue-400 ring-1 ring-blue-400/50' : 'text-slate-400']"
+            :title="$t('logic.snapToGridTitle')"
+            data-testid="btn-snap-to-grid"
+            @click="snapToGrid = !snapToGrid"
+          >
+            # {{ $t('logic.snapToGrid') }}
+          </button>
+          <label v-if="snapToGrid" class="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+            <span class="sr-only">{{ $t('logic.gridSize') }}</span>
+            <input
+              :value="snapGridSize"
+              type="number"
+              min="5"
+              max="100"
+              step="5"
+              class="input w-16 px-2 py-1 text-xs"
+              data-testid="input-snap-grid-size"
+              @change="updateSnapGridSize"
+            />
+            px
+          </label>
+        </div>
+        <button v-if="auth.isAdmin && activeGraphId" @click="doToggleEnabled"
+          :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-orange-400 ring-1 ring-orange-400/50']"
+          :title="activeGraph?.enabled ? $t('logic.toggleActiveTitle') : $t('logic.toggleDisabledTitle')"
+          data-testid="btn-toggle-enabled">
+          {{ activeGraph?.enabled ? $t('logic.toggleActive') : $t('logic.toggleDisabled') }}
+        </button>
+        <button v-if="auth.isAdmin && activeGraphId" @click="copySelection" class="btn-secondary btn-sm" :disabled="!hasSelection || graphLoading"
+          :title="$t('logic.copySelectionTitle')" data-testid="btn-copy-nodes">
+          ⧉ {{ $t('logic.copySelection') }}
+        </button>
+        <button v-if="auth.isAdmin && activeGraphId" @click="pasteClipboard" class="btn-secondary btn-sm" :disabled="!clipboard || graphLoading"
+          :title="$t('logic.pasteSelectionTitle')" data-testid="btn-paste-nodes">
+          📋 {{ $t('logic.pasteSelection') }}
+        </button>
+        <button v-if="auth.isAdmin && activeGraphId" @click="openRenameGraph" class="btn-secondary btn-sm" :title="$t('logic.renameGraph')" data-testid="btn-rename">
+          ✏ {{ $t('logic.rename') }}
+        </button>
+        <button v-if="auth.isAdmin && activeGraphId" @click="doDuplicateGraph" class="btn-secondary btn-sm" :title="$t('logic.duplicateGraph')" data-testid="btn-duplicate">
+          ⧉ {{ $t('logic.duplicate') }}
+        </button>
+        <button v-if="activeGraphId" @click="doExportGraph" class="btn-secondary btn-sm" :title="$t('logic.exportJson')" data-testid="btn-export">
+          ↓ {{ $t('logic.export') }}
+        </button>
+        <label v-if="auth.isAdmin" class="btn-secondary btn-sm cursor-pointer" :title="$t('logic.importJson')" data-testid="btn-import">
+          ↑ {{ $t('logic.import') }}
+          <input type="file" accept=".json" class="hidden" @change="onImportFile" data-testid="input-import-file" />
         </label>
+        <button v-if="auth.isAdmin && activeGraphId" @click="confirmDeleteGraph" class="btn-secondary btn-sm text-red-400" data-testid="btn-delete">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+          {{ $t('common.delete') }}
+        </button>
       </div>
-      <button v-if="auth.isAdmin && activeGraphId" @click="doToggleEnabled"
-        :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-orange-400 ring-1 ring-orange-400/50']"
-        :title="activeGraph?.enabled ? $t('logic.toggleActiveTitle') : $t('logic.toggleDisabledTitle')"
-        data-testid="btn-toggle-enabled">
-        {{ activeGraph?.enabled ? $t('logic.toggleActive') : $t('logic.toggleDisabled') }}
-      </button>
-      <button v-if="auth.isAdmin && activeGraphId" @click="openRenameGraph" class="btn-secondary btn-sm" :title="$t('logic.renameGraph')" data-testid="btn-rename">
-        ✏ {{ $t('logic.rename') }}
-      </button>
-      <button v-if="auth.isAdmin && activeGraphId" @click="doDuplicateGraph" class="btn-secondary btn-sm" :title="$t('logic.duplicateGraph')" data-testid="btn-duplicate">
-        ⧉ {{ $t('logic.duplicate') }}
-      </button>
-      <button v-if="activeGraphId" @click="doExportGraph" class="btn-secondary btn-sm" :title="$t('logic.exportJson')" data-testid="btn-export">
-        ↓ {{ $t('logic.export') }}
-      </button>
-      <label v-if="auth.isAdmin" class="btn-secondary btn-sm cursor-pointer" :title="$t('logic.importJson')" data-testid="btn-import">
-        ↑ {{ $t('logic.import') }}
-        <input type="file" accept=".json" class="hidden" @change="onImportFile" data-testid="input-import-file" />
-      </label>
-      <button v-if="auth.isAdmin && activeGraphId" @click="confirmDeleteGraph" class="btn-icon text-red-400" data-testid="btn-delete">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-        </svg>
-      </button>
     </div>
 
     <!-- Status bar -->
-    <div v-if="statusMsg" :class="['px-4 py-1.5 text-xs flex-shrink-0', statusMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']">
+    <div v-if="statusMsg" :class="['px-4 py-1.5 text-xs flex-shrink-0', statusMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']" data-testid="status-msg">
       {{ statusMsg.text }}
     </div>
     <div v-else-if="validationWarnings.length" class="px-4 py-1.5 text-xs flex-shrink-0 bg-amber-500/10 text-amber-500">
@@ -238,6 +254,7 @@ import { useLogicStore }    from '@/stores/logic'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore }     from '@/stores/auth'
 import { logicApi }        from '@/api/client'
+import { cloneSelectionForClipboard, remapClipboardForPaste } from '@/utils/logicClipboard'
 import { AUTH_TOKEN_REFRESHED_EVENT } from '@/utils/authEvents'
 import NodePalette         from '@/components/logic/NodePalette.vue'
 import NodeConfigPanel     from '@/components/logic/NodeConfigPanel.vue'
@@ -376,14 +393,29 @@ watch(() => activeGraph.value?.enabled, (enabled) => {
 })
 const paletteCollapsed = ref(localStorage.getItem('logic_palette_collapsed') === '1')
 watch(paletteCollapsed, v => localStorage.setItem('logic_palette_collapsed', v ? '1' : '0'))
+// Matches the NodePalette column's actual current width (w-56/w-8, or absent
+// entirely for non-admins) minus the toolbar's own px-4 — a fixed w-52 only
+// lined up the dropdown while the palette was expanded and visible.
+const titleSpacerClass = computed(() => {
+  if (!auth.isAdmin) return 'w-0'
+  return paletteCollapsed.value ? 'w-4' : 'w-52'
+})
 
 const saving        = ref(false)
+const graphLoading  = ref(false)
+let _loadGraphRequestId = 0
 const statusMsg     = ref(null)
 const canvasWrapper = ref(null)
 
+let _statusTimer = null
 function showStatus(ok, text, ms = 3000) {
+  // Without cancelling the previous timer, a quick Copy → Paste → Save
+  // sequence leaves multiple independent timeouts running; the earliest one
+  // (e.g. from Copy) can then null out a later, still-relevant status (e.g.
+  // Save's result) almost immediately instead of after its own `ms`.
+  clearTimeout(_statusTimer)
   statusMsg.value = { ok, text }
-  setTimeout(() => { statusMsg.value = null }, ms)
+  _statusTimer = setTimeout(() => { statusMsg.value = null }, ms)
 }
 
 const validationWarnings = computed(() => analyzeFlowWarnings(nodes.value, edges.value))
@@ -484,14 +516,37 @@ function findCyclicNodeIds(adj, candidates) {
 
 async function loadGraph() {
   if (!activeGraphId.value) { nodes.value = []; edges.value = []; return }
-  const { data } = await logicApi.getGraph(activeGraphId.value)
-  nodes.value = (data.flow_data.nodes || []).map(n => {
-    // eslint-disable-next-line no-unused-vars
-    const { _dbg, _dbg_title, ...nodeData } = n.data ?? {}
-    return { ...n, position: n.position || { x: 100, y: 100 }, data: nodeData }
-  })
-  edges.value = data.flow_data.edges || []
-  selectedNode.value = null
+  // Tag this request so overlapping sheet switches don't let an earlier
+  // response's `finally` clear graphLoading (or apply its stale data) after a
+  // newer request has already taken over.
+  const requestId = ++_loadGraphRequestId
+  graphLoading.value = true
+  try {
+    const { data } = await logicApi.getGraph(activeGraphId.value)
+    if (requestId !== _loadGraphRequestId) return
+    nodes.value = (data.flow_data.nodes || []).map(n => {
+      // eslint-disable-next-line no-unused-vars
+      const { _dbg, _dbg_title, ...nodeData } = n.data ?? {}
+      return { ...n, position: n.position || { x: 100, y: 100 }, data: nodeData }
+    })
+    edges.value = data.flow_data.edges || []
+    selectedNode.value = null
+  } catch (err) {
+    if (requestId !== _loadGraphRequestId) return
+    // A failed load must not leave an editable (but never actually loaded)
+    // sheet around: with only nodes/edges cleared, activeGraphId still
+    // named this sheet and graphLoading still clears in `finally` below, so
+    // Save stays enabled and would submit those empty arrays — overwriting
+    // the real, unrelated graph on the server with nothing. Revert the
+    // selection entirely instead of presenting a stale or blank editor.
+    activeGraphId.value = ''
+    nodes.value = []
+    edges.value = []
+    selectedNode.value = null
+    showStatus(false, err.response?.data?.detail ?? t('logic.errorLoad'))
+  } finally {
+    if (requestId === _loadGraphRequestId) graphLoading.value = false
+  }
 }
 
 async function saveGraph() {
@@ -916,6 +971,84 @@ function onNodeClick({ node }) {
   selectedNode.value = { ...node }
 }
 
+// ── Copy/Paste selected nodes (issue #1084) ────────────────────────────────
+const clipboard  = ref(null)
+const hasSelection = computed(() => nodes.value.some(n => n.selected))
+let pasteCount = 0
+
+function copySelection() {
+  // graphLoading guards against a slow getGraph() from an earlier sheet
+  // switch resolving after this copy — the selector may already name the
+  // target sheet while `nodes` still holds the previous sheet's blocks and
+  // selection, which would silently overwrite the clipboard with stale data.
+  if (!auth.isAdmin || graphLoading.value) return
+  const copied = cloneSelectionForClipboard(nodes.value, edges.value)
+  if (!copied) {
+    showStatus(false, t('logic.copySelectionEmpty'))
+    return
+  }
+  clipboard.value = { ...copied, sourceGraphId: activeGraphId.value }
+  pasteCount = 0
+  showStatus(true, t('logic.copiedNodes', { count: copied.nodes.length }))
+}
+
+function pasteClipboard() {
+  // graphLoading guards against a slow getGraph() from an earlier sheet
+  // switch resolving after this paste and overwriting nodes/edges with the
+  // just-loaded (pre-paste) sheet, silently dropping the pasted blocks.
+  if (!auth.isAdmin || !clipboard.value || !activeGraphId.value || graphLoading.value) return
+  // Anchor the pasted group at the center of the currently visible canvas
+  // (converted to flow coordinates, same technique as onDrop) only when
+  // pasting into a *different* sheet than the one it was copied from —
+  // otherwise pasting into a sheet whose viewport is fitted around a
+  // different graph-coordinate region than the source would leave the
+  // pasted blocks outside the destination's visible viewport. A same-sheet
+  // paste instead keeps remapClipboardForPaste's small relative offset, so
+  // the copy lands right next to its source instead of jumping to wherever
+  // the canvas happens to be centered.
+  let targetCenter = null
+  if (clipboard.value.sourceGraphId !== activeGraphId.value) {
+    const rect = canvasWrapper.value?.getBoundingClientRect()
+    if (rect && rect.width && rect.height) {
+      const { project } = useVueFlow('logic-canvas')
+      targetCenter = project({ x: rect.width / 2, y: rect.height / 2 })
+    }
+  }
+  const pasted = remapClipboardForPaste(clipboard.value, pasteCount, targetCenter)
+  pasteCount += 1
+  // Only the freshly pasted nodes/edges should stay selected, so they can be
+  // dragged as a group right away instead of also moving (or deleting) the
+  // still-selected originals.
+  nodes.value = [...nodes.value.map(n => ({ ...n, selected: false })), ...pasted.nodes]
+  edges.value = [...edges.value.map(e => ({ ...e, selected: false })), ...pasted.edges]
+  // Clear any single-node config-panel target — it may point at a node that
+  // was just deselected (or isn't part of the new paste), so editing it now
+  // would silently update the wrong node instead of the pasted selection.
+  selectedNode.value = null
+  showStatus(true, t('logic.pastedNodes', { count: pasted.nodes.length }))
+}
+
+function _isEditableTarget(el) {
+  if (!el) return false
+  const tag = el.tagName
+  // SELECT is intentionally excluded: it doesn't accept free-text paste, and
+  // the graph-select dropdown is the documented way to switch sheets before
+  // pasting — blocking the shortcut there defeats that workflow.
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable
+}
+
+function _onClipboardKeydown(event) {
+  if (!auth.isAdmin || !activeGraphId.value) return
+  if (!(event.ctrlKey || event.metaKey)) return
+  if (showNewGraph.value || showRenameGraph.value || showDeleteConfirm.value) return
+  if (_isEditableTarget(document.activeElement)) return
+  if (event.key === 'c' || event.key === 'C') {
+    copySelection()
+  } else if (event.key === 'v' || event.key === 'V') {
+    pasteClipboard()
+  }
+}
+
 let _autoSaveTimer = null
 function onNodeDataUpdate(newData) {
   if (!auth.isAdmin || !selectedNode.value) return
@@ -1018,6 +1151,7 @@ watch(activeGraphId, (id, previousId) => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 onMounted(async () => {
+  window.addEventListener('keydown', _onClipboardKeydown)
   window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, _wsReconnectAfterTokenRefresh)
   await store.fetchNodeTypes()
   await store.fetchGraphs()
@@ -1034,6 +1168,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   _wsDisconnect()
+  window.removeEventListener('keydown', _onClipboardKeydown)
   window.removeEventListener(AUTH_TOKEN_REFRESHED_EVENT, _wsReconnectAfterTokenRefresh)
   window.removeEventListener('mousemove', _onMinimapMouseMove, { capture: true })
   window.removeEventListener('mouseup',   _onMinimapMouseUp,   { capture: true })

@@ -892,6 +892,38 @@ describe('LogicView palette collapse', () => {
     await flushPromises()
     expect(storage.setItem).toHaveBeenCalledWith('logic_palette_collapsed', '0')
   })
+
+  it('titleSpacerClass matches the expanded NodePalette width for admins', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    wrapper.vm.paletteCollapsed = false
+    await flushPromises()
+    expect(wrapper.vm.titleSpacerClass).toBe('w-52')
+  })
+
+  it('titleSpacerClass shrinks to the collapsed NodePalette width for admins', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    wrapper.vm.paletteCollapsed = true
+    await flushPromises()
+    expect(wrapper.vm.titleSpacerClass).toBe('w-4')
+  })
+
+  it('titleSpacerClass reserves no space for non-admins, who have no NodePalette', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: false })
+    expect(wrapper.vm.titleSpacerClass).toBe('w-0')
+  })
+
+  it('clips the title text instead of letting it overflow the narrowed spacer', async () => {
+    // Regression: shrinking titleSpacerClass to w-4/w-0 only narrows the
+    // box — without overflow-hidden the title text still paints its full
+    // width by default and visually overlaps the graph-select dropdown
+    // laid out right after it.
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    wrapper.vm.paletteCollapsed = true
+    await flushPromises()
+    const classes = wrapper.find('h2').classes()
+    expect(classes).toContain('overflow-hidden')
+    expect(classes).toContain('whitespace-nowrap')
+  })
 })
 
 describe('LogicView import edge cases', () => {
