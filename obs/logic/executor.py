@@ -683,12 +683,20 @@ class GraphExecutor:
                     return {"out": prev_value, "changed": False}
                 value = inputs["in"]
                 has_prev = isinstance(state, dict) and "value" in state
+                # A dict/list `value` is stored as an isolated deep copy —
+                # never the same object handed out as `out` — because a
+                # downstream node (a "python_script" is explicitly allowed
+                # to mutate its inputs in place) could otherwise mutate the
+                # object this filter is using as its own comparison
+                # baseline, corrupting both the next comparison and the
+                # persisted state without ever passing through "in" again.
+                baseline = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
                 if not has_prev:
-                    self.hysteresis_state[node.id] = {"value": value}
+                    self.hysteresis_state[node.id] = {"value": baseline}
                     return {"out": value, "changed": True}
                 equal, via_normalizing_path = self._compare_values(value, state["value"], right_is_recovered_str=bool(state.get("_recovered_str")))
                 if not equal:
-                    self.hysteresis_state[node.id] = {"value": value}
+                    self.hysteresis_state[node.id] = {"value": baseline}
                     return {"out": value, "changed": True}
                 # On an "equal" result, normally keep emitting the persisted
                 # representation (matches existing numeric/boolean-alias and
@@ -698,8 +706,16 @@ class GraphExecutor:
                 # persisted, JSON-lossy string left over from a restart's
                 # `default=str` encoding) — emit the current input there
                 # instead, so `out`'s type doesn't silently degrade to
-                # whatever survived persistence.
-                return {"out": state["value"] if via_normalizing_path else value, "changed": False}
+                # whatever survived persistence. When emitting the persisted
+                # representation, hand out a copy for dict/list values too —
+                # same reasoning as the baseline above, since state["value"]
+                # is otherwise the exact object this filter keeps comparing
+                # against on every future "unchanged" tick.
+                if via_normalizing_path:
+                    out_value = copy.deepcopy(state["value"]) if isinstance(state["value"], (dict, list)) else state["value"]
+                else:
+                    out_value = value
+                return {"out": out_value, "changed": False}
 
             case "compare":
                 operator_key = str(d.get("operator", ">")).strip().lower()

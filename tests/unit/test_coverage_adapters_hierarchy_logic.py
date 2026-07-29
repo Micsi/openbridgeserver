@@ -3751,6 +3751,31 @@ class TestLogicManagerBasics:
         assert isinstance(restored, dict)
 
     @pytest.mark.asyncio
+    async def test_persist_then_load_restores_change_filter_tuple_value_exactly(self):
+        """Regression: a change_filter can hold a tuple (e.g. produced by a
+        Python Script node). json.dumps natively serializes a tuple as a
+        JSON array with no way to distinguish it from a genuine list
+        afterwards — its `default=` hook is never invoked for tuples, since
+        the encoder already knows how to handle them — so without explicit
+        tagging in _escape_persist_collision, the restored value would come
+        back as a list, and _compare_values would then report a spurious
+        changed=True on the very next identical live tuple after a restart."""
+        flow = _make_flow(nodes=[{"id": "cf", "type": "change_filter", "position": {"x": 0, "y": 0}, "data": {}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr._hysteresis["g1"] = {"cf": {"value": (1, 2, "three")}}
+
+        await mgr._persist_node_state("g1")
+        saved_json = db.execute_and_commit.await_args.args[1][0]
+
+        mgr2, db2, _, _ = _make_logic_manager()
+        db2.fetchall = AsyncMock(return_value=[_row(id="g1", name="G1", enabled=1, flow_data=flow.model_dump_json(), node_state=saved_json)])
+        await mgr2._load_graphs()
+
+        restored = mgr2._hysteresis["g1"]["cf"]["value"]
+        assert restored == (1, 2, "three")
+        assert isinstance(restored, tuple)
+
+    @pytest.mark.asyncio
     async def test_persist_then_load_restores_change_filter_bytes_value_exactly(self):
         """Same round-trip as the temporal case above, for a change_filter
         holding raw bytes (e.g. a DataPoint of the UNKNOWN/fallback type).

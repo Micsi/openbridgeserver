@@ -802,6 +802,69 @@ class TestHostCheckRisingEdge:
 
         assert outputs["cf"]["changed"] is False
 
+    def test_change_filter_is_not_held_when_fed_through_memory_from_an_unseeded_read(self):
+        """Regression: memory is an explicit tick boundary (per its own node
+        description) — its "out" this tick is whatever was committed at the
+        end of a *previous* tick, entirely independent of an unresolved
+        input feeding "in" this tick (that input only affects the value
+        committed for the *next* tick, via the executor's deferred
+        commit_memory_inputs). Propagating unresolved-source taint through
+        memory would hold a downstream change_filter hostage to an
+        unrelated, still-unresolved Read Object — potentially forever if
+        that Read Object never fires again this session — even though
+        memory's real, current value already differs from the filter's
+        persisted baseline."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("mem", "memory"),
+            node("cf", "change_filter"),
+            node("other_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "mem", "value", "in"),
+                edge("mem", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-memory-boundary"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"mem": {"value": 5}, "cf": {"value": 4}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"other_read": {"value": 1, "changed": True}}))
+
+        assert outputs["cf"]["changed"] is True
+        assert outputs["cf"]["out"] == 5
+
+    def test_change_filter_is_not_held_when_read_is_resolved_via_debug_override(self):
+        """Regression: a manual/debug execution (the debug-inspector "run"
+        feature) that supplies debug_overrides={read_id: {"value": ...}}
+        for an unconfigured/never-seeded Read Object explicitly delivers a
+        value for this run, exactly like a real event override does — but
+        only `overrides` (real events) were subtracted from
+        unseeded_read_ids, not debug_overrides. The Read Object therefore
+        still looked unresolved, so the taint-correction pass rolled back
+        and suppressed the downstream change_filter, defeating the whole
+        point of the one-off debug run."""
+        nodes = [
+            node("read", "datapoint_read", {}),  # no datapoint_id: always unseeded
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(nodes, [edge("read", "cf", "value", "in")])
+        manager = _make_manager()
+        graph_id = "g-cf-debug-override"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}, debug_overrides={"read": {"value": 5}}))
+
+        assert outputs["cf"]["changed"] is True
+        assert outputs["cf"]["out"] == 5
+
     def test_change_filter_is_not_held_when_or_gate_is_already_true_from_a_seeded_branch(self):
         """Regression: an OR gate combining an unseeded Read Object with a
         separate, seeded/live branch must not have its already-True output

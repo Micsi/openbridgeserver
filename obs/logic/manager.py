@@ -98,12 +98,16 @@ _INIT_EXCLUDED_NODE_TYPES = frozenset(
 )
 
 # Deterministic two-state nodes whose init-pass state IS committed when they
-# sit on a clean seeded path: their output is published, so the persisted
-# state must switch with it or the next real value inside the dead band would
-# flip the output back to the stale pre-save state. change_filter is included
-# for the same reason: if the seeded value triggered a publish, the filter
-# must remember it, or the next real event carrying the same value would
-# report changed=True again and re-fire the write it just suppressed for.
+# sit on a clean seeded path. gate/hysteresis commit only when their switched
+# output actually reached a published datapoint_write (see the commit loop
+# below) — their own output isn't state that matters on its own, only insofar
+# as it changed what got written. change_filter is different: its "last
+# value seen" is meaningful on its own regardless of whether it feeds a
+# Write Object at all — a seeded Change Filter → Wake-on-LAN/notification/
+# sequence branch with no write anywhere downstream must still remember the
+# seed, or the next real event carrying that same value looks like a fresh
+# first value and fires the action again. So change_filter always commits
+# once seeded/untainted, independent of published_writes.
 _INIT_COMMIT_STATE_NODE_TYPES = frozenset({"gate", "hysteresis", "change_filter"})
 
 # Input handles that control WHEN a node's output fires/passes but do not
@@ -176,12 +180,20 @@ def _escape_persist_collision(v: Any) -> Any:
     tag _persist_default generated. Recurses first (children are escaped
     before their parent is checked), so a collision at any nesting depth —
     including one manufactured by a previous escape wrapper — is caught.
+
+    Also tags tuples explicitly: json.dumps natively serializes a tuple as a
+    JSON array with no way to tell it apart from a genuine list afterwards
+    (its `default=` hook — where _persist_default runs — is never invoked
+    for tuples, since the encoder already knows how to handle them), so
+    this has to happen here, before json.dumps ever sees the value.
     """
     if isinstance(v, dict):
         escaped = {k: _escape_persist_collision(val) for k, val in v.items()}
         if _PERSIST_TYPE_TAG in escaped:
             return {_PERSIST_TYPE_TAG: _PERSIST_ESCAPED_TAG, "value": escaped}
         return escaped
+    if isinstance(v, tuple):
+        return {_PERSIST_TYPE_TAG: "tuple", "value": [_escape_persist_collision(item) for item in v]}
     if isinstance(v, list):
         return [_escape_persist_collision(item) for item in v]
     return v
@@ -222,6 +234,11 @@ def _decode_persisted_value(v: Any) -> Any:
                 return bytes.fromhex(v.get("value", ""))
             except (TypeError, ValueError):
                 return v
+        if tag == "tuple":
+            inner = v.get("value")
+            if isinstance(inner, list):
+                return tuple(_decode_persisted_value(item) for item in inner)
+            return v
         if tag in _PERSIST_ISOFORMAT_TYPES:
             try:
                 return _PERSIST_ISOFORMAT_TYPES[tag](v.get("value", ""))
@@ -1787,17 +1804,18 @@ class LogicManager:
             # output was actually published (see
             # _INIT_COMMIT_STATE_NODE_TYPES) — without a published write the
             # save must not act like a datapoint event on the stored state.
+            # change_filter is the exception: its own state is meaningful
+            # independent of whether any descendant is a datapoint_write at
+            # all, so it commits whenever seeded/untainted regardless of
+            # published_writes (see _INIT_COMMIT_STATE_NODE_TYPES).
             state_committed = False
             for node in flow.nodes:
-                if (
-                    node.type in _INIT_COMMIT_STATE_NODE_TYPES
-                    and node.id in seeded_paths
-                    and node.id not in tainted
-                    and node.id in hyst_copy
-                    and _downstream_closure({node.id}, flow.edges) & published_writes
-                ):
-                    self._hysteresis.setdefault(graph_id, {})[node.id] = hyst_copy[node.id]
-                    state_committed = True
+                if node.type not in _INIT_COMMIT_STATE_NODE_TYPES or node.id not in seeded_paths or node.id in tainted or node.id not in hyst_copy:
+                    continue
+                if node.type != "change_filter" and not (_downstream_closure({node.id}, flow.edges) & published_writes):
+                    continue
+                self._hysteresis.setdefault(graph_id, {})[node.id] = hyst_copy[node.id]
+                state_committed = True
             if state_committed:
                 # Persist like _execute_graph does — otherwise a restart
                 # before the next real execution reloads the stale pre-save
@@ -2011,6 +2029,13 @@ class LogicManager:
         # registry lookup above found nothing yet (e.g. this is the DataPoint's
         # very first value).
         unseeded_read_ids -= overrides.keys()
+        # Same for a manual/debug execution's value override: it explicitly
+        # supplies a value for this run just like a real event does, so a
+        # Read Object it targets must not still look unresolved — otherwise
+        # the taint-correction pass below rolls back and suppresses any
+        # downstream change_filter, defeating the whole point of a one-off
+        # debug run against an unconfigured/never-seeded Read Object.
+        unseeded_read_ids -= {node_id for node_id, values in debug_overrides.items() if "value" in values}
 
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
@@ -2327,6 +2352,19 @@ class LogicManager:
                     _target_node = _node_by_id_early.get(_te.target)
                     _target_type = _target_node.type if _target_node is not None else None
                     if _target_type in _decisive_gate_value and _gate_taint_absorbed(_te.target, _target_type):
+                        continue
+                    # memory is an explicit tick boundary (per its own node
+                    # description): this pass's "out" is whatever was
+                    # committed at the *end* of a previous tick, entirely
+                    # independent of an unresolved input feeding "in" this
+                    # tick — that input only affects the value committed for
+                    # the *next* tick, via the executor's deferred
+                    # commit_memory_inputs. Propagating taint through it
+                    # would hold a change_filter fed by memory hostage to an
+                    # unrelated, still-unresolved upstream Read Object,
+                    # potentially forever if that Read Object never fires
+                    # again this session.
+                    if _target_type == "memory":
                         continue
                     _tainted.add(_te.target)
                     _tq.append(_te.target)

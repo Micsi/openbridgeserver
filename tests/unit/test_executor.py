@@ -1041,6 +1041,45 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": [1, 3]}})
         assert out["cf"]["changed"] is True
 
+    def test_downstream_mutation_of_out_does_not_corrupt_stored_baseline(self):
+        """Regression: a downstream node (a "python_script" is explicitly
+        allowed to mutate its inputs in place) receiving a dict/list `out`
+        must not be able to corrupt the filter's own comparison baseline —
+        `out` on the first-value/changed-value path was previously the
+        exact same object stored as state["value"], so mutating one
+        mutated the other. A later, genuinely identical input must still
+        compare equal against the *original* stored value, not against
+        whatever a downstream node mutated it into."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        out1 = exc.execute({"cf": {"in": {"a": 1}}})
+        out1["cf"]["out"]["a"] = 999  # simulate a downstream node mutating its input
+
+        out2 = exc.execute({"cf": {"in": {"a": 1}}})
+
+        assert out2["cf"]["changed"] is False
+        assert out2["cf"]["out"] == {"a": 1}
+
+    def test_downstream_mutation_of_unchanged_out_does_not_corrupt_stored_baseline(self):
+        """Same isolation guarantee as above, for the "unchanged" path: when
+        equality holds via the dict/list normalizing path, `out` echoes the
+        persisted state["value"] — that must also be an independent copy,
+        not the object change_filter keeps comparing against on every
+        future tick."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": {"a": 1}}})
+        out2 = exc.execute({"cf": {"in": {"a": 1}}})  # equal via dict `==`, via_normalizing_path
+        assert out2["cf"]["changed"] is False
+        out2["cf"]["out"]["a"] = 999  # simulate a downstream node mutating its input
+
+        out3 = exc.execute({"cf": {"in": {"a": 1}}})
+
+        assert out3["cf"]["changed"] is False
+        assert out3["cf"]["out"] == {"a": 1}
+
     def test_numeric_and_boolean_string_aliases_stay_transitive(self):
         """Regression: 1 == "1" and "1" == "true", so 1 must also equal
         "true" — otherwise a source alternating between equivalent adapter

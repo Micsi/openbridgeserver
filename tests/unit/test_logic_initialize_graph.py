@@ -684,6 +684,43 @@ async def test_change_filter_state_on_seeded_path_is_committed():
 
 
 @pytest.mark.asyncio
+async def test_change_filter_state_is_committed_with_no_write_descendant():
+    """Regression: a seeded Change Filter feeding only a non-write branch
+    (here: wake_on_lan) was previously never committed, because the commit
+    loop only acted when the filter's descendants intersected
+    published_writes — which is empty when there is no datapoint_write in
+    the graph at all. After a save/restart, the seed would then be
+    discarded, and a later event from another Read node in the same graph
+    would replay the cached seed as the filter's "first" value, reporting
+    changed=True and firing the action even though the seed itself never
+    changed."""
+    src_id = str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r1", "type": "datapoint_read", "data": {"datapoint_id": src_id}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "wol", "type": "wake_on_lan", "data": {"mac_address": "AA:BB:CC:DD:EE:FF"}},
+        ],
+        [
+            {"source": "r1", "sourceHandle": "value", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "changed", "target": "wol", "targetHandle": "trigger"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={src_id: 50})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": 50}
+
+    import json
+
+    persist_calls = [c for c in mgr._db.execute_and_commit.await_args_list if "node_state" in c.args[0]]
+    assert len(persist_calls) == 1
+    assert json.loads(persist_calls[0].args[1][0])["state"]["cf1"] == {"value": 50}
+
+
+@pytest.mark.asyncio
 async def test_unrelated_read_of_target_does_not_skip_write():
     """Read A → Write B plus an independent Read B (no path back to the
     write) is not a feedback loop — B must still be initialized."""
@@ -847,6 +884,22 @@ class TestPersistDefaultAndDecode:
 
         colliding = {"__obs_persisted_type__": "date", "value": "2026-01-01"}
         assert _escape_persist_collision(colliding) == {"__obs_persisted_type__": "escaped", "value": colliding}
+
+    def test_escape_persist_collision_tags_tuples(self):
+        from obs.logic.manager import _escape_persist_collision
+
+        assert _escape_persist_collision((1, "a")) == {"__obs_persisted_type__": "tuple", "value": [1, "a"]}
+
+    def test_decode_persisted_value_restores_tuples(self):
+        from obs.logic.manager import _decode_persisted_value
+
+        assert _decode_persisted_value({"__obs_persisted_type__": "tuple", "value": [1, "a"]}) == (1, "a")
+
+    def test_decode_persisted_value_keeps_malformed_tagged_tuple_as_is(self):
+        from obs.logic.manager import _decode_persisted_value
+
+        malformed = {"__obs_persisted_type__": "tuple", "value": "not-a-list"}
+        assert _decode_persisted_value(malformed) is malformed
 
     def test_decode_persisted_value_keeps_malformed_tagged_escape_as_is(self):
         """An "escaped" tag whose "value" isn't a dict can only come from a
