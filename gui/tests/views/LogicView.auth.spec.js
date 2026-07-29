@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { AUTH_TOKEN_REFRESHED_EVENT } from '@/utils/authEvents'
 
 beforeEach(() => {
   vi.resetModules()
@@ -435,10 +436,18 @@ describe('LogicView WebSocket', () => {
     expect(wrapper.vm.nodes[0].data._dbg).toBeUndefined()
   })
 
-  it('does not reconnect after close code 4001', async () => {
+  it('reconnects with a refreshed token after close code 4001', async () => {
     let wsInstance = null
     let wsCreatedCount = 0
-    global.WebSocket = class { constructor() { wsInstance = this; this.close = vi.fn(); wsCreatedCount++ } }
+    const protocols = []
+    global.WebSocket = class {
+      constructor(_url, wsProtocols) {
+        wsInstance = this
+        this.close = vi.fn()
+        wsCreatedCount++
+        protocols.push(wsProtocols)
+      }
+    }
     overrideStorage({ access_token: 'tok' })
 
     const { wrapper } = await mountLogicView({ isAdmin: true })
@@ -447,6 +456,12 @@ describe('LogicView WebSocket', () => {
     wsInstance.onclose({ code: 4001 })
     vi.advanceTimersByTime(4100)
     expect(wsCreatedCount).toBe(1)
+
+    window.localStorage.getItem.mockImplementation(key => key === 'access_token' ? 'fresh-token' : null)
+    const connectionsBeforeRefresh = wsCreatedCount
+    window.dispatchEvent(new Event(AUTH_TOKEN_REFRESHED_EVENT))
+    expect(wsCreatedCount).toBeGreaterThan(connectionsBeforeRefresh)
+    expect(protocols.at(-1)).toEqual(['obs.jwt.fresh-token'])
 
     wrapper.unmount()
   })
@@ -627,6 +642,7 @@ describe('LogicView inspector inputs', () => {
 
     wrapper.vm.toggleDebug()
     const pendingRun = wrapper.vm.runGraph()
+    wrapper.vm.toggleDebug()
     wrapper.vm.toggleDebug()
     resolveRun({
       data: {

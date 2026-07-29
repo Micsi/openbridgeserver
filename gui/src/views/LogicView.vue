@@ -238,6 +238,7 @@ import { useLogicStore }    from '@/stores/logic'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore }     from '@/stores/auth'
 import { logicApi }        from '@/api/client'
+import { AUTH_TOKEN_REFRESHED_EVENT } from '@/utils/authEvents'
 import NodePalette         from '@/components/logic/NodePalette.vue'
 import NodeConfigPanel     from '@/components/logic/NodeConfigPanel.vue'
 import DebugInspector      from '@/components/logic/DebugInspector.vue'
@@ -569,9 +570,9 @@ function fmtDebugVal(nodeOut, { full = false, maxChars = null } = {}) {
 // json_extractor / xml_extractor config panels can read _preview data.
 const lastRunOutputs = ref({})
 
-function applyDebugValues(outputs) {
+function applyDebugValues(outputs, captureDebugOutputs = debugMode.value) {
   lastRunOutputs.value = outputs
-  if (debugMode.value) lastRunDebugOutputs.value = outputs
+  if (captureDebugOutputs) lastRunDebugOutputs.value = outputs
   nodes.value = nodes.value.map(node => ({
     ...node,
     data: {
@@ -698,6 +699,11 @@ async function runGraph() {
     const outputs = data.outputs || {}
     const evalCount = Object.keys(outputs).length
     const diagnosticCount = Array.isArray(data.warnings) ? data.warnings.length : countGraphDiagnostics(outputs)
+    const acceptsDebugResponse = (
+      requestedDebugState &&
+      debugMode.value &&
+      debugStateGeneration === requestDebugGeneration
+    )
     showStatus(
       diagnosticCount === 0,
       diagnosticCount > 0
@@ -706,16 +712,12 @@ async function runGraph() {
       diagnosticCount > 0 ? 6000 : 3000
     )
     // Always update lastRunOutputs (needed for extractor config panels)
-    if (debugMode.value || diagnosticCount > 0) applyDebugValues(outputs)
+    if (acceptsDebugResponse || diagnosticCount > 0) applyDebugValues(outputs, acceptsDebugResponse)
     else {
       lastRunOutputs.value = outputs
-      clearDebugValues()
+      if (!debugMode.value) clearDebugValues()
     }
-    if (
-      requestedDebugState &&
-      debugMode.value &&
-      debugStateGeneration === requestDebugGeneration
-    ) {
+    if (acceptsDebugResponse) {
       lastRunMetadata.value = data.debug || { timestamp: new Date().toISOString(), used_overrides: false }
       lastRunInputs.value = data.debug?.inputs || {}
     }
@@ -968,10 +970,28 @@ function sendDebugSubscription(graphId, enabled) {
 }
 
 function _wsDisconnect() {
+  _wsShouldReconnect = false
   clearTimeout(_wsTimer)
   _wsTimer = null
-  try { _ws?.close() } catch { /* ignore */ }
+  const ws = _ws
   _ws = null
+  if (ws) {
+    ws.onclose = null
+    try { ws.close() } catch { /* ignore */ }
+  }
+}
+
+function _wsReconnectAfterTokenRefresh() {
+  clearTimeout(_wsTimer)
+  _wsTimer = null
+  const staleWs = _ws
+  _ws = null
+  if (staleWs) {
+    staleWs.onclose = null
+    try { staleWs.close() } catch { /* ignore */ }
+  }
+  _wsShouldReconnect = true
+  _wsConnect()
 }
 
 // ── Persist active graph selection ────────────────────────────────────────
@@ -993,6 +1013,7 @@ watch(activeGraphId, (id, previousId) => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 onMounted(async () => {
+  window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, _wsReconnectAfterTokenRefresh)
   await store.fetchNodeTypes()
   await store.fetchGraphs()
   _wsConnect()
@@ -1008,6 +1029,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   _wsDisconnect()
+  window.removeEventListener(AUTH_TOKEN_REFRESHED_EVENT, _wsReconnectAfterTokenRefresh)
   window.removeEventListener('mousemove', _onMinimapMouseMove, { capture: true })
   window.removeEventListener('mouseup',   _onMinimapMouseUp,   { capture: true })
 })

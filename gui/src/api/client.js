@@ -3,6 +3,7 @@
  * All calls go through /api/v1 — in dev proxied via Vite, in prod served by FastAPI.
  */
 import axios from 'axios'
+import { notifyAuthTokenRefreshed } from '@/utils/authEvents'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -29,6 +30,7 @@ api.interceptors.response.use(
           const { data } = await axios.post('/api/v1/auth/refresh', { refresh_token: refreshToken })
           localStorage.setItem('access_token', data.access_token)
           localStorage.setItem('refresh_token', data.refresh_token)
+          notifyAuthTokenRefreshed()
           original.headers.Authorization = `Bearer ${data.access_token}`
           return api(original)
         } catch {
