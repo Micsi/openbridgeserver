@@ -6,6 +6,7 @@ import asyncio
 import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -25,6 +26,7 @@ class _FakeWebSocket:
     def __init__(self) -> None:
         self.messages: list[dict] = []
         self.accepted = False
+        self.closed = False
 
     async def accept(self, subprotocol: str | None = None) -> None:
         self.accepted = True
@@ -33,7 +35,7 @@ class _FakeWebSocket:
         self.messages.append(msg)
 
     async def close(self) -> None:
-        return None
+        self.closed = True
 
 
 class _SerializationFailWebSocket(_FakeWebSocket):
@@ -44,6 +46,45 @@ class _SerializationFailWebSocket(_FakeWebSocket):
 class _TransportFailWebSocket(_FakeWebSocket):
     async def send_json(self, msg: dict) -> None:
         raise RuntimeError("socket is closed")
+
+
+@pytest.mark.asyncio
+async def test_logic_debug_payloads_only_reach_subscribed_editor_connections():
+    subscribed_ws = _FakeWebSocket()
+    normal_ws = _FakeWebSocket()
+    page_ws = _FakeWebSocket()
+    manager = WebSocketManager()
+    subscribed_id = await manager.connect(subscribed_ws, logic_debug_access=True)
+    await manager.connect(normal_ws)
+    page_id = await manager.connect(page_ws, allowed_dp_ids=set())
+
+    manager.set_logic_debug(subscribed_id, "graph", True)
+    manager.set_logic_debug(page_id, "graph", True)
+    assert manager.has_logic_debug_subscribers("graph") is True
+    await manager.broadcast_logic_debug("graph", {"action": "logic_run"})
+
+    assert subscribed_ws.messages == [{"action": "logic_run"}]
+    assert normal_ws.messages == []
+    assert page_ws.messages == []
+    manager.set_logic_debug(subscribed_id, "graph", False)
+    assert manager.has_logic_debug_subscribers("graph") is False
+
+
+@pytest.mark.asyncio
+async def test_logic_debug_access_is_revalidated_before_broadcast():
+    ws = _FakeWebSocket()
+    access_check = AsyncMock(return_value=False)
+    manager = WebSocketManager()
+    conn_id = await manager.connect(ws, logic_debug_access=True, logic_debug_access_check=access_check)
+    manager.set_logic_debug(conn_id, "graph", True)
+
+    await manager.broadcast_logic_debug("graph", {"action": "logic_run"})
+
+    access_check.assert_awaited_once()
+    assert ws.messages == []
+    assert ws.closed is True
+    assert conn_id not in manager._connections
+    assert manager.has_logic_debug_subscribers("graph") is False
 
 
 @pytest.mark.asyncio
