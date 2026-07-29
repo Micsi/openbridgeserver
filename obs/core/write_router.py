@@ -284,6 +284,7 @@ class WriteRouter:
             return
 
         logger.info("WriteRouter: %d writable binding(s) for dp %s", len(rows), dp_id)
+        actionable_confirmation_available = not suppress_confirmation_actions
         for row in rows:
             try:
                 binding = _row_to_binding(row)
@@ -396,13 +397,17 @@ class WriteRouter:
             try:
                 context_writer = getattr(type(instance), "write_with_context", None)
                 if callable(context_writer):
+                    can_confirm = binding.adapter_type == "KNX" and binding.direction == "BOTH"
+                    suppress_binding_confirmation_actions = suppress_confirmation_actions or not actionable_confirmation_available
                     await context_writer(
                         instance,
                         binding,
                         write_value,
                         logical_value=value,
-                        suppress_confirmation_actions=suppress_confirmation_actions,
+                        suppress_confirmation_actions=suppress_binding_confirmation_actions,
                     )
+                    if can_confirm:
+                        actionable_confirmation_available = False
                 else:
                     await instance.write(binding, write_value)
                 self._last_sent[binding.id] = time.monotonic()

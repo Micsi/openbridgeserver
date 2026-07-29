@@ -596,7 +596,7 @@ class KnxAdapter(AdapterBase):
                 return
 
             raw = _telegram_to_bytes(telegram)
-            suppress_address_propagation = self._is_local_outgoing_confirmation(
+            suppress_address_propagation = self._is_local_confirmation(
                 ga,
                 raw,
                 is_outgoing=is_outgoing,
@@ -653,7 +653,7 @@ class KnxAdapter(AdapterBase):
                         source_adapter=self.adapter_type,
                         binding_id=binding.id,
                         suppress_write_propagation=is_outbound_confirmation or suppress_address_propagation,
-                        suppress_action_triggers=suppress_action_triggers,
+                        suppress_action_triggers=suppress_action_triggers or (suppress_address_propagation and not is_outbound_confirmation),
                     ),
                 )
         except Exception:
@@ -780,7 +780,7 @@ class KnxAdapter(AdapterBase):
                 written_raw,
                 logical_value,
                 written_at=written_at,
-                suppress_action_triggers=suppress_action_triggers,
+                suppress_action_triggers=True,
             )
 
     def _on_telegram_transmitted(self, telegram: Any) -> None:
@@ -812,21 +812,29 @@ class KnxAdapter(AdapterBase):
             if transmitted_at is not None and transmitted_at < cutoff:
                 self._local_read_responses.pop(telegram_id, None)
 
-    def _is_local_outgoing_confirmation(
+    def _is_local_confirmation(
         self,
         ga: str,
         raw: bytes,
         *,
         is_outgoing: bool,
     ) -> bool:
-        """Return whether an outgoing telegram matches any local write on this address."""
-        if not is_outgoing:
-            return False
+        """Return whether a telegram matches any local confirmation on this address."""
         self._prune_recent_writes()
-        return any(
-            key_ga == ga and any(written_raw == raw for _, written_raw, _, _, _ in recent_writes)
-            for (_, key_ga), recent_writes in self._recent_writes.items()
-        )
+        for (_, key_ga), recent_writes in self._recent_writes.items():
+            if key_ga != ga:
+                continue
+            for _, written_raw, _, _, signature in recent_writes:
+                if written_raw != raw:
+                    continue
+                config = signature[3]
+                command_ga = config.get("group_address")
+                state_ga = config.get("state_group_address")
+                if is_outgoing and ga == command_ga:
+                    return True
+                if not is_outgoing and ga == state_ga and state_ga != command_ga:
+                    return True
+        return False
 
     def _consume_outbound_confirmation(
         self,

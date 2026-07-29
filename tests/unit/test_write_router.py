@@ -221,6 +221,7 @@ async def test_send_throttle_skips_second_write_within_interval(monkeypatch):
 async def test_router_passes_pre_transform_logical_value_to_context_writer(monkeypatch):
     binding = _binding(
         adapter_type="KNX",
+        direction="BOTH",
         value_formula="x * 0.1",
     )
     instance = _ContextInstance()
@@ -235,6 +236,38 @@ async def test_router_passes_pre_transform_logical_value_to_context_writer(monke
     )
 
     assert instance.writes == [(pytest.approx(5.0), 50.0, True)]
+
+
+@pytest.mark.asyncio
+async def test_direct_write_allows_only_one_actionable_knx_confirmation(monkeypatch):
+    first = _binding(adapter_type="KNX", direction="BOTH")
+    second = _binding(adapter_type="KNX", direction="BOTH")
+    bindings = {
+        str(first.id): first,
+        str(second.id): second,
+    }
+    instance = _ContextInstance()
+    router = _make_router(
+        [
+            {"id": str(first.id)},
+            {"id": str(second.id)},
+        ]
+    )
+    monkeypatch.setattr(adapter_registry, "_row_to_binding", lambda row: bindings[row["id"]])
+    monkeypatch.setattr(adapter_registry, "get_instance_by_id", lambda _id: instance)
+    monkeypatch.setattr(adapter_registry, "get_instance", lambda _adapter_type: instance)
+
+    await router._write_to_dest_bindings(
+        uuid.uuid4(),
+        50.0,
+        skip_binding_id=None,
+        suppress_confirmation_actions=False,
+    )
+
+    assert instance.writes == [
+        (50.0, 50.0, False),
+        (50.0, 50.0, True),
+    ]
 
 
 @pytest.mark.asyncio

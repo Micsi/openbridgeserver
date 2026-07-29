@@ -1197,6 +1197,8 @@ class TestKnxReadWrite:
         events = [call.args[0] for call in mock_bus.publish.call_args_list]
         assert all(abs(event.value - 50.0) < 0.1 for event in events)
         assert all(event.suppress_write_propagation is True for event in events)
+        assert events[0].suppress_action_triggers is False
+        assert events[1].suppress_action_triggers is True
 
     @pytest.mark.asyncio
     async def test_matching_confirmation_is_consumed_only_once(self, mock_bus):
@@ -1724,7 +1726,48 @@ class TestKnxReadWrite:
         source_event = next(event for event in events if event.binding_id == source_binding.id)
         assert confirmation.suppress_write_propagation is True
         assert source_event.suppress_write_propagation is True
+        assert confirmation.suppress_action_triggers is False
+        assert source_event.suppress_action_triggers is True
         assert abs(source_event.value - 50.0) < 0.1
+
+    @pytest.mark.asyncio
+    async def test_state_confirmation_suppresses_peer_binding_propagation(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        both_binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        source_binding = make_binding(
+            {"group_address": "1/2/4", "dpt_id": "DPT9.001"},
+            direction="SOURCE",
+        )
+        both_binding.datapoint_id = source_binding.datapoint_id
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map = {
+            "1/2/3": [(both_binding, dpt)],
+            "1/2/4": [(both_binding, dpt), (source_binding, dpt)],
+        }
+
+        await adapter.write(both_binding, 50.0)
+        command = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(command)
+        state_confirmation = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=command.payload,
+        )
+        await adapter._on_telegram(state_confirmation)
+
+        confirmation, peer = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert confirmation.suppress_write_propagation is True
+        assert peer.suppress_write_propagation is True
+        assert confirmation.suppress_action_triggers is True
+        assert peer.suppress_action_triggers is True
 
     @pytest.mark.asyncio
     async def test_both_binding_accepts_matching_value_after_echo_window(self, mock_bus):
