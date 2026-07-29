@@ -500,6 +500,18 @@ async function loadGraph() {
     })
     edges.value = data.flow_data.edges || []
     selectedNode.value = null
+  } catch (err) {
+    if (requestId !== _loadGraphRequestId) return
+    // A failed load must not leave the previous sheet's nodes/edges/selection
+    // silently attached to the now-active (but never-loaded) graph id —
+    // graphLoading still clears in `finally` below, so Copy would clipboard
+    // stale blocks, Paste would append to them, and Save would write that
+    // mixed flow into the destination sheet. Treat it the same as "nothing
+    // loaded here" instead.
+    nodes.value = []
+    edges.value = []
+    selectedNode.value = null
+    showStatus(false, err.response?.data?.detail ?? t('logic.errorLoad'))
   } finally {
     if (requestId === _loadGraphRequestId) graphLoading.value = false
   }

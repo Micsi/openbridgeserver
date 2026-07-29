@@ -190,6 +190,46 @@ describe('LogicView node copy/paste', () => {
     expect(pasted.position).toEqual({ x: 440, y: 340 })
   })
 
+  it('does not center a cross-sheet paste when the canvas ref is unavailable', async () => {
+    const otherGraph = makeGraph('graph-2', { name: 'Other Graph', flow_data: { nodes: [], edges: [] } })
+    const { wrapper, logicApi } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+
+    logicApi.getGraph.mockResolvedValueOnce({ data: otherGraph })
+    wrapper.vm.activeGraphId = 'graph-2'
+    await wrapper.vm.loadGraph()
+
+    wrapper.vm.canvasWrapper = null
+
+    wrapper.vm.pasteClipboard()
+
+    // No rect at all (canvasWrapper.value is falsy) must fall back to the
+    // plain stack offset, same as every other centering-skipped case.
+    const pasted = wrapper.vm.nodes.at(-1)
+    expect(pasted.position).toEqual({ x: 40, y: 40 })
+  })
+
+  it('does not center a cross-sheet paste when the canvas rectangle has a zero height', async () => {
+    const otherGraph = makeGraph('graph-2', { name: 'Other Graph', flow_data: { nodes: [], edges: [] } })
+    const { wrapper, logicApi } = await mountLogicView()
+    wrapper.vm.nodes = wrapper.vm.nodes.map(n => n.id === 'n1' ? { ...n, selected: true } : n)
+    wrapper.vm.copySelection()
+
+    logicApi.getGraph.mockResolvedValueOnce({ data: otherGraph })
+    wrapper.vm.activeGraphId = 'graph-2'
+    await wrapper.vm.loadGraph()
+
+    wrapper.vm.canvasWrapper.getBoundingClientRect = () => ({
+      width: 800, height: 0, top: 0, left: 0, right: 800, bottom: 0, x: 0, y: 0, toJSON() {},
+    })
+
+    wrapper.vm.pasteClipboard()
+
+    const pasted = wrapper.vm.nodes.at(-1)
+    expect(pasted.position).toEqual({ x: 40, y: 40 })
+  })
+
   it('keeps a same-sheet paste near its source instead of jumping to the canvas center', async () => {
     // Regression: pasting back into the sheet the copy came from must
     // preserve the small relative offset, even when the canvas reports real
@@ -344,6 +384,34 @@ describe('LogicView node copy/paste', () => {
     expect(wrapper.vm.nodes).toEqual([{ id: 'fresh', position: { x: 100, y: 100 }, data: {} }])
   })
 
+  it('ignores a stale loadGraph rejection when a newer sheet switch is already in flight', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+
+    let rejectStale, resolveFresh
+    logicApi.getGraph
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectStale = reject }))
+      .mockReturnValueOnce(new Promise(resolve => { resolveFresh = resolve }))
+
+    wrapper.vm.activeGraphId = 'graph-1'
+    const stalePromise = wrapper.vm.loadGraph()
+    wrapper.vm.activeGraphId = 'graph-2'
+    const freshPromise = wrapper.vm.loadGraph()
+
+    // The older request fails last-in-first-served, but its catch block
+    // must not clear graphLoading or show an error status — the newer
+    // request for graph-2 is still pending.
+    rejectStale(new Error('stale network error'))
+    await stalePromise
+    expect(wrapper.vm.graphLoading).toBe(true)
+    expect(wrapper.vm.statusMsg).toBeNull()
+    expect(wrapper.vm.nodes.map(n => n.id)).toEqual(['n1', 'n2'])
+
+    resolveFresh({ data: { flow_data: { nodes: [{ id: 'fresh' }], edges: [] } } })
+    await freshPromise
+    expect(wrapper.vm.graphLoading).toBe(false)
+    expect(wrapper.vm.nodes).toEqual([{ id: 'fresh', position: { x: 100, y: 100 }, data: {} }])
+  })
+
   it('clears any pre-existing edge selection when pasting so an unrelated edge is not also selected', async () => {
     const { wrapper } = await mountLogicView()
     wrapper.vm.nodes = wrapper.vm.nodes.map(n => ({ ...n, selected: true }))
@@ -469,6 +537,27 @@ describe('LogicView node copy/paste', () => {
 
     expect(wrapper.vm.nodes).toEqual([])
     expect(wrapper.vm.edges).toEqual([])
+  })
+
+  it('clears stale nodes/edges/selection when a sheet switch fails to load, instead of leaving them attached to the new activeGraphId', async () => {
+    // Regression: without this, graphLoading still clears in `finally`
+    // (re-enabling Copy/Paste/Save) while `nodes`/`edges` silently keep the
+    // *previous* sheet's content under the *new* activeGraphId — Copy would
+    // clipboard those stale blocks, Paste would append to them, and Save
+    // would write that mixed flow into the destination sheet.
+    const { wrapper, logicApi } = await mountLogicView()
+    expect(wrapper.vm.nodes).toHaveLength(2)
+    wrapper.vm.selectedNode = { id: 'n1', type: 'and', data: {} }
+
+    logicApi.getGraph.mockRejectedValueOnce(new Error('network error'))
+    wrapper.vm.activeGraphId = 'graph-2'
+    await wrapper.vm.loadGraph()
+
+    expect(wrapper.vm.nodes).toEqual([])
+    expect(wrapper.vm.edges).toEqual([])
+    expect(wrapper.vm.selectedNode).toBeNull()
+    expect(wrapper.vm.graphLoading).toBe(false)
+    expect(wrapper.vm.statusMsg.ok).toBe(false)
   })
 
   it('copySelection is a no-op for non-admin users', async () => {

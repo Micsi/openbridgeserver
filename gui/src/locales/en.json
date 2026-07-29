@@ -1671,6 +1671,7 @@
     "create": "Create",
     "saved": "Graph saved",
     "errorSave": "Error saving graph",
+    "errorLoad": "Error loading graph",
     "runResult": "Graph executed — {count} nodes evaluated",
     "runResultWithWarnings": "Graph executed — {count} nodes checked, {warnings} warnings",
     "nodeError": "⚠ Error",

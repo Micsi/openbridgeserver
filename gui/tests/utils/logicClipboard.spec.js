@@ -32,7 +32,12 @@ describe('cloneSelectionForClipboard', () => {
     ]
     const edges = [
       { id: 'e1', source: 'n1', target: 'n2', sourceHandle: null, targetHandle: null },
+      // Outgoing boundary edge: selected source, unselected target.
       { id: 'e2', source: 'n2', target: 'n3', sourceHandle: null, targetHandle: null },
+      // Incoming boundary edge: unselected source, selected target — the
+      // `selectedIds.has(e.source) && ...` check must fail on the *source*
+      // side here rather than short-circuiting past a selected one.
+      { id: 'e3', source: 'n3', target: 'n1', sourceHandle: null, targetHandle: null },
     ]
     const result = cloneSelectionForClipboard(nodes, edges)
     expect(result.nodes).toHaveLength(2)
@@ -44,6 +49,13 @@ describe('cloneSelectionForClipboard', () => {
     const nodes = [makeNode('n1', { selected: true, data: { input_count: 2, _dbg: '= 1', _dbg_title: 'value=1' } })]
     const result = cloneSelectionForClipboard(nodes, [])
     expect(result.nodes[0].data).toEqual({ input_count: 2 })
+  })
+
+  it('treats a null/undefined node data as an empty object instead of throwing', () => {
+    const nodes = [makeNode('n1', { selected: true, data: null }), makeNode('n2', { selected: true, data: undefined })]
+    const result = cloneSelectionForClipboard(nodes, [])
+    expect(result.nodes[0].data).toEqual({})
+    expect(result.nodes[1].data).toEqual({})
   })
 
   it('deep-clones node data so mutating the source does not affect the clipboard', () => {
@@ -127,6 +139,23 @@ describe('remapClipboardForPaste', () => {
     const withoutTarget = remapClipboardForPaste(clipboard, 0)
     const withNullTarget = remapClipboardForPaste(clipboard, 0, null)
     expect(withoutTarget.nodes[0].position).toEqual(withNullTarget.nodes[0].position)
+  })
+
+  it('ignores a truthy targetCenter when the clipboard has no nodes, keeping the plain stack offset', () => {
+    // An empty clipboard can't happen via cloneSelectionForClipboard (it
+    // returns null for an empty selection), but remapClipboardForPaste is a
+    // separate exported function and must not divide by an empty bounding
+    // box (Math.min()/Math.max() of no arguments is Infinity/-Infinity).
+    const clipboard = { nodes: [], edges: [] }
+    const result = remapClipboardForPaste(clipboard, 0, { x: 10000, y: 10000 })
+    expect(result.nodes).toEqual([])
+  })
+
+  it('treats a null/undefined clipboard node data as an empty object instead of throwing', () => {
+    const clipboard = { nodes: [makeNode('n1', { data: null }), makeNode('n2', { data: undefined })], edges: [] }
+    const result = remapClipboardForPaste(clipboard, 0)
+    expect(result.nodes[0].data).toEqual({})
+    expect(result.nodes[1].data).toEqual({})
   })
 
   it('marks pasted nodes as selected so they can be dragged as a group', () => {
