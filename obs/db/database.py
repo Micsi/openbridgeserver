@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode
 
 import aiosqlite
 
@@ -797,11 +798,18 @@ class Database:
 
         self._path = path
         self._is_memory = _is_sqlite_memory_path(path)
-        # Plain ``:memory:`` databases only exist inside one SQLite connection.
-        # Give each Database instance a private named shared-memory URI so an
-        # isolated transaction can use its own connection without seeing a
-        # different database.
-        self._connection_path = f"file:obs-{uuid.uuid4().hex}?mode=memory&cache=shared" if path == ":memory:" else path
+        # Memory databases only exist inside one SQLite connection unless every
+        # connection uses the same shared-cache URI. Give plain ``:memory:`` a
+        # private name and normalize all supported memory URIs accordingly.
+        if path == ":memory:":
+            self._connection_path = f"file:obs-{uuid.uuid4().hex}?mode=memory&cache=shared"
+        elif self._is_memory:
+            uri_path, _, query_string = path.partition("?")
+            query = [(key, value) for key, value in parse_qsl(query_string, keep_blank_values=True) if key.lower() != "cache"]
+            query.append(("cache", "shared"))
+            self._connection_path = f"{uri_path}?{urlencode(query)}"
+        else:
+            self._connection_path = path
         self._conn: aiosqlite.Connection | None = None
         # Serializes WAL checkpoints and pairs them with disconnect: a restore
         # (POST /config/import/db) disconnects the DB and rewrites the file, and
@@ -999,9 +1007,9 @@ class Database:
                 self._connection_path,
                 uri=self._connection_path.startswith("file:"),
             )
-            isolated.row_factory = aiosqlite.Row
-            await isolated.execute("PRAGMA foreign_keys=ON")
             try:
+                isolated.row_factory = aiosqlite.Row
+                await isolated.execute("PRAGMA foreign_keys=ON")
                 yield _DatabaseTransaction(isolated)
             finally:
 

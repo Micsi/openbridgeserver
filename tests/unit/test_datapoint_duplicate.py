@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from contextlib import asynccontextmanager
 
+import aiosqlite
 import pytest
 
 import obs.api.v1.datapoints as datapoints_api
@@ -16,12 +18,14 @@ class _RegistryStub:
         self.source = source
         self.duplicate = duplicate
         self.inserted: list[uuid.UUID] = []
+        self.prepared_payloads = []
         self.published: list[uuid.UUID] = []
 
     def get(self, dp_id: uuid.UUID) -> DataPoint | None:
         return self.source if dp_id == self.source.id else None
 
-    def prepare_create(self, _payload) -> DataPoint:
+    def prepare_create(self, payload) -> DataPoint:
+        self.prepared_payloads.append(payload)
         return self.duplicate
 
     async def insert(self, dp: DataPoint, *, connection=None) -> None:
@@ -32,8 +36,9 @@ class _RegistryStub:
 
 
 class _FailingDb:
-    def __init__(self, binding: dict) -> None:
+    def __init__(self, binding: dict, source_row: dict | None = None) -> None:
         self.binding = binding
+        self.source_row = source_row
         self.rolled_back = False
         self.in_transaction = False
 
@@ -41,9 +46,9 @@ class _FailingDb:
         assert self.in_transaction
         return [self.binding]
 
-    async def fetchone(self, _sql: str, _params: tuple[str]) -> dict:
+    async def fetchone(self, _sql: str, params: tuple[str]) -> dict:
         assert self.in_transaction
-        return {"exists": 1}
+        return self.source_row or _datapoint_row(params[0])
 
     @asynccontextmanager
     async def isolated_transaction(self):
@@ -64,8 +69,9 @@ class _FailingDb:
 
 
 class _SuccessfulDb:
-    def __init__(self, binding: dict) -> None:
+    def __init__(self, binding: dict, source_row: dict | None = None) -> None:
         self.binding = binding
+        self.source_row = source_row
         self.committed = False
         self.in_transaction = False
 
@@ -73,9 +79,9 @@ class _SuccessfulDb:
         assert self.in_transaction
         return [self.binding]
 
-    async def fetchone(self, _sql: str, _params: tuple[str]) -> dict:
+    async def fetchone(self, _sql: str, params: tuple[str]) -> dict:
         assert self.in_transaction
-        return {"exists": 1}
+        return self.source_row or _datapoint_row(params[0])
 
     @asynccontextmanager
     async def isolated_transaction(self):
@@ -185,6 +191,24 @@ def _binding_row() -> dict:
     }
 
 
+def _datapoint_row(dp_id: str, **overrides) -> dict:
+    row = {
+        "id": dp_id,
+        "name": "Source",
+        "data_type": "FLOAT",
+        "unit": None,
+        "tags": "[]",
+        "mqtt_topic": f"dp/{dp_id}/value",
+        "mqtt_alias": None,
+        "persist_value": 1,
+        "record_history": 1,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    row.update(overrides)
+    return row
+
+
 @pytest.mark.asyncio
 async def test_duplicate_datapoint_removes_created_datapoint_when_binding_copy_fails(monkeypatch):
     source = DataPoint(name="Source", data_type="FLOAT")
@@ -226,6 +250,43 @@ async def test_duplicate_datapoint_rechecks_source_inside_transaction(monkeypatc
     assert db.rolled_back is True
     assert registry.inserted == []
     assert registry.published == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_datapoint_snapshots_metadata_inside_transaction(monkeypatch):
+    source = DataPoint(name="Stale source", data_type="STRING")
+    duplicate = DataPoint(name="Copy", data_type="FLOAT")
+    registry = _RegistryStub(source, duplicate)
+    db = _SuccessfulDb(
+        _binding_row(),
+        _datapoint_row(
+            str(source.id),
+            name="Current source",
+            data_type="FLOAT",
+            unit="°C",
+            tags=json.dumps(["current"]),
+            mqtt_alias="current/source",
+            persist_value=0,
+            record_history=0,
+        ),
+    )
+    monkeypatch.setattr(datapoints_api, "get_registry", lambda: registry)
+    monkeypatch.setattr(datapoints_api, "_enrich", lambda dp: dp)
+
+    await datapoints_api.duplicate_datapoint(
+        source.id,
+        datapoints_api.DataPointDuplicateIn(name="Copy"),
+        _user="admin",
+        db=db,
+    )
+
+    payload = registry.prepared_payloads[0]
+    assert payload.data_type == "FLOAT"
+    assert payload.unit == "°C"
+    assert payload.tags == ["current"]
+    assert payload.mqtt_alias == "current/source"
+    assert payload.persist_value is False
+    assert payload.record_history is False
 
 
 @pytest.mark.asyncio
@@ -550,8 +611,12 @@ async def test_database_transaction_finishes_cleanup_when_cancelled(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_memory_database_transaction_uses_private_connection_and_rolls_back():
-    db = Database(":memory:")
+@pytest.mark.parametrize(
+    "database_path",
+    [":memory:", "file:duplicate-normalized?mode=memory", "file::memory:"],
+)
+async def test_memory_database_transaction_uses_private_connection_and_rolls_back(database_path):
+    db = Database(database_path)
     await db.connect()
     try:
         await db.execute_and_commit("CREATE TABLE rolled_back_write (id INTEGER PRIMARY KEY)")
@@ -562,6 +627,39 @@ async def test_memory_database_transaction_uses_private_connection_and_rolls_bac
         row = await db.fetchone("SELECT COUNT(*) AS count FROM rolled_back_write")
         assert row["count"] == 0
     finally:
+        await db.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_isolated_transaction_closes_connection_when_setup_fails(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "setup-failure.db"))
+    await db.connect()
+    real_connect = aiosqlite.connect
+    connection_closed = asyncio.Event()
+
+    async def _connect_with_failing_setup(*args, **kwargs):
+        connection = await real_connect(*args, **kwargs)
+        real_close = connection.close
+
+        async def _fail_execute(_sql, _params=None):
+            raise RuntimeError("pragma failed")
+
+        async def _record_close():
+            await real_close()
+            connection_closed.set()
+
+        monkeypatch.setattr(connection, "execute", _fail_execute)
+        monkeypatch.setattr(connection, "close", _record_close)
+        return connection
+
+    monkeypatch.setattr(aiosqlite, "connect", _connect_with_failing_setup)
+    try:
+        with pytest.raises(RuntimeError, match="pragma failed"):
+            async with db.isolated_transaction():
+                pytest.fail("transaction setup unexpectedly succeeded")
+        assert connection_closed.is_set()
+    finally:
+        monkeypatch.setattr(aiosqlite, "connect", real_connect)
         await db.disconnect()
 
 

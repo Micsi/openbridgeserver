@@ -26,7 +26,7 @@ from obs.api.v1.datapoint_config import collect_datapoint_ids_from_config
 from obs.api.v1.services.knx_traceability import KnxDatapointContextOut, build_datapoint_knx_context
 from obs.api.v1.sessions import validate_session
 from obs.core.event_bus import DataValueEvent, get_event_bus
-from obs.core.registry import get_registry
+from obs.core.registry import _row_to_datapoint, get_registry
 from obs.db.database import Database, get_db
 from obs.models.datapoint import DataPointCreate, DataPointUpdate
 from obs.models.visu import PageConfig
@@ -271,22 +271,6 @@ async def duplicate_datapoint(
     db: Database = Depends(get_db),
 ) -> DataPointOut:
     registry = get_registry()
-    source = registry.get(dp_id)
-    if source is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
-
-    duplicate = registry.prepare_create(
-        DataPointCreate(
-            name=body.name,
-            data_type=source.data_type,
-            unit=source.unit,
-            tags=list(source.tags),
-            mqtt_alias=source.mqtt_alias,
-            persist_value=source.persist_value,
-            record_history=source.record_history,
-        )
-    )
-
     now = datetime.datetime.now(datetime.UTC).isoformat()
     cancelled_after_commit: asyncio.CancelledError | None = None
     committed = False
@@ -298,11 +282,23 @@ async def duplicate_datapoint(
                 # leave copied bindings pointing at an instance that no longer exists.
                 await transaction.execute("BEGIN IMMEDIATE")
                 source_row = await transaction.fetchone(
-                    "SELECT 1 FROM datapoints WHERE id=?",
+                    "SELECT * FROM datapoints WHERE id=?",
                     (str(dp_id),),
                 )
                 if source_row is None:
                     raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+                source = _row_to_datapoint(source_row)
+                duplicate = registry.prepare_create(
+                    DataPointCreate(
+                        name=body.name,
+                        data_type=source.data_type,
+                        unit=source.unit,
+                        tags=list(source.tags),
+                        mqtt_alias=source.mqtt_alias,
+                        persist_value=source.persist_value,
+                        record_history=source.record_history,
+                    )
+                )
                 binding_rows = await transaction.fetchall(
                     "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
                     (str(dp_id),),
