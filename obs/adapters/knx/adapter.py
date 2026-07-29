@@ -49,6 +49,7 @@ from obs.core.event_bus import DataValueEvent
 
 TUNNEL_OVERLOAD_DETAIL = "KNX-Tunnel-Slot wahrscheinlich von anderem Client belegt — Gateway-Pool überlastet."
 ECHO_SUPPRESSION_WINDOW_S = 2.0
+STATE_CONFIRMATION_WINDOW_S = 30.0
 
 # Import APCI classes at module level so missing symbols fail loudly at startup
 try:
@@ -610,6 +611,13 @@ class KnxAdapter(AdapterBase):
                     raw,
                     is_outgoing=is_outgoing,
                 )
+                if suppress_peer_confirmation and not is_outbound_confirmation:
+                    logger.debug(
+                        "KNX duplicate peer confirmation ignored: GA=%s binding=%s",
+                        ga,
+                        binding.id,
+                    )
+                    continue
                 if is_outbound_confirmation:
                     logger.debug(
                         "KNX outbound confirmation: GA=%s binding=%s raw=%s",
@@ -654,8 +662,8 @@ class KnxAdapter(AdapterBase):
                         quality=quality,
                         source_adapter=self.adapter_type,
                         binding_id=binding.id,
-                        suppress_write_propagation=is_outbound_confirmation or suppress_peer_confirmation,
-                        suppress_action_triggers=suppress_action_triggers or (suppress_peer_confirmation and not is_outbound_confirmation),
+                        suppress_write_propagation=is_outbound_confirmation,
+                        suppress_action_triggers=suppress_action_triggers,
                     ),
                 )
         except Exception:
@@ -799,15 +807,21 @@ class KnxAdapter(AdapterBase):
         )
 
     def _prune_recent_writes(self, now: float | None = None) -> None:
-        """Remove expired command echoes while retaining outstanding state feedback."""
-        cutoff = (self._monotonic() if now is None else now) - ECHO_SUPPRESSION_WINDOW_S
+        """Remove expired command echoes and bounded state-feedback expectations."""
+        current = self._monotonic() if now is None else now
+        command_cutoff = current - ECHO_SUPPRESSION_WINDOW_S
+        state_cutoff = current - STATE_CONFIRMATION_WINDOW_S
         for key, recent_writes in list(self._recent_writes.items()):
             key_ga = key[1]
             retained = deque(
                 recent_write
                 for recent_write in recent_writes
-                if recent_write[0] >= cutoff
-                or (recent_write[4][3].get("state_group_address") == key_ga and recent_write[4][3].get("group_address") != key_ga)
+                if recent_write[0]
+                >= (
+                    state_cutoff
+                    if (recent_write[4][3].get("state_group_address") == key_ga and recent_write[4][3].get("group_address") != key_ga)
+                    else command_cutoff
+                )
             )
             if retained:
                 self._recent_writes[key] = retained

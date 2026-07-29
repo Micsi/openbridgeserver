@@ -22,6 +22,7 @@ from xknx.telegram.telegram import TelegramDirection
 
 from obs.adapters.knx.adapter import (
     ECHO_SUPPRESSION_WINDOW_S,
+    STATE_CONFIRMATION_WINDOW_S,
     KnxAdapter,
     KnxAdapterConfig,
     KnxBindingConfig,
@@ -1699,7 +1700,7 @@ class TestKnxReadWrite:
         assert event.suppress_write_propagation is False
 
     @pytest.mark.asyncio
-    async def test_echo_suppression_does_not_hide_shared_ga_from_other_binding(self, mock_bus):
+    async def test_command_confirmation_skips_same_datapoint_peer_duplicate(self, mock_bus):
         adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
         both_binding = make_binding(
             {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
@@ -1722,18 +1723,15 @@ class TestKnxReadWrite:
         adapter._on_telegram_transmitted(transmitted_telegram)
         await adapter._on_telegram(transmitted_telegram)
 
-        assert mock_bus.publish.call_count == 2
-        events = [call.args[0] for call in mock_bus.publish.call_args_list]
-        confirmation = next(event for event in events if event.binding_id == both_binding.id)
-        source_event = next(event for event in events if event.binding_id == source_binding.id)
+        mock_bus.publish.assert_awaited_once()
+        confirmation = mock_bus.publish.call_args.args[0]
+        assert confirmation.binding_id == both_binding.id
         assert confirmation.suppress_write_propagation is True
-        assert source_event.suppress_write_propagation is True
         assert confirmation.suppress_action_triggers is False
-        assert source_event.suppress_action_triggers is True
-        assert abs(source_event.value - 50.0) < 0.1
+        assert confirmation.value == 50.0
 
     @pytest.mark.asyncio
-    async def test_state_confirmation_suppresses_peer_binding_propagation(self, mock_bus):
+    async def test_state_confirmation_skips_same_datapoint_peer_duplicate(self, mock_bus):
         adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
         both_binding = make_binding(
             {
@@ -1765,11 +1763,10 @@ class TestKnxReadWrite:
         )
         await adapter._on_telegram(state_confirmation)
 
-        confirmation, peer = [call.args[0] for call in mock_bus.publish.call_args_list]
+        mock_bus.publish.assert_awaited_once()
+        confirmation = mock_bus.publish.call_args.args[0]
         assert confirmation.suppress_write_propagation is True
-        assert peer.suppress_write_propagation is True
         assert confirmation.suppress_action_triggers is True
-        assert peer.suppress_action_triggers is True
 
     @pytest.mark.asyncio
     async def test_state_confirmation_does_not_suppress_different_datapoint_peer(self, mock_bus):
@@ -1844,6 +1841,42 @@ class TestKnxReadWrite:
         event = mock_bus.publish.call_args_list[-1].args[0]
         assert event.value == 50.0
         assert event.suppress_write_propagation is True
+        assert adapter._recent_writes == {}
+
+    @pytest.mark.asyncio
+    async def test_distinct_state_confirmation_expires_after_state_window(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map = {
+            "1/2/3": [(binding, dpt)],
+            "1/2/4": [(binding, dpt)],
+        }
+
+        await adapter.write(binding, 50.0)
+        transmitted_telegram = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(transmitted_telegram)
+        now[0] += STATE_CONFIRMATION_WINDOW_S + 0.1
+        delayed_state_telegram = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=transmitted_telegram.payload,
+        )
+        await adapter._on_telegram(delayed_state_telegram)
+
+        event = mock_bus.publish.call_args.args[0]
+        assert abs(event.value - 5.0) < 0.1
+        assert event.suppress_write_propagation is False
         assert adapter._recent_writes == {}
 
     @pytest.mark.asyncio
