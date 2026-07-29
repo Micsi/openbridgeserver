@@ -128,7 +128,17 @@ class GraphExecutor:
 
         for node in topo.order:
             if node.id in known_outputs:
-                outputs[node.id] = known_outputs[node.id]
+                # Deep copy: this replay's own nodes may still read a
+                # known_outputs entry as one of their inputs (e.g. a
+                # python_script downstream of the held island consuming a
+                # dict/list value from outside it) and — python_script is
+                # explicitly allowed to mutate its inputs in place — mutate
+                # it. Handing out the caller's own object here would let
+                # that mutation corrupt the original pass's outputs entry
+                # for the *same* node, which the caller (and any later
+                # correction pass reusing that same outputs dict) still
+                # relies on being untouched.
+                outputs[node.id] = copy.deepcopy(known_outputs[node.id])
                 continue
 
             # Resolve inputs for this node

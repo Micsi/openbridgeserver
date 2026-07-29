@@ -853,7 +853,52 @@ class TestPersistDefaultAndDecode:
     def test_persist_default_falls_back_to_str_for_unrecognized_types(self):
         from obs.logic.manager import _persist_default
 
-        assert _persist_default({1, 2, 3}) == str({1, 2, 3})
+        assert _persist_default(3 + 4j) == str(3 + 4j)
+
+    def test_persist_default_tags_set_and_frozenset(self):
+        from obs.logic.manager import _persist_default
+
+        assert _persist_default({1, 2}) == {"__obs_persisted_type__": "set", "value": [1, 2]}
+        assert _persist_default(frozenset({1, 2})) == {"__obs_persisted_type__": "frozenset", "value": [1, 2]}
+
+    def test_decode_persisted_value_restores_set_and_frozenset(self):
+        from obs.logic.manager import _decode_persisted_value
+
+        assert _decode_persisted_value({"__obs_persisted_type__": "set", "value": [1, 2]}) == {1, 2}
+        restored_fs = _decode_persisted_value({"__obs_persisted_type__": "frozenset", "value": [1, 2]})
+        assert restored_fs == frozenset({1, 2})
+        assert isinstance(restored_fs, frozenset)
+
+    def test_decode_persisted_value_keeps_malformed_tagged_set_as_is(self):
+        from obs.logic.manager import _decode_persisted_value
+
+        malformed = {"__obs_persisted_type__": "set", "value": "not-a-list"}
+        assert _decode_persisted_value(malformed) is malformed
+
+    def test_escape_persist_collision_tags_nonstring_keyed_dicts(self):
+        from obs.logic.manager import _escape_persist_collision
+
+        assert _escape_persist_collision({1: "x"}) == {"__obs_persisted_type__": "dict_nonstr_keys", "value": [[1, "x"]]}
+
+    def test_decode_persisted_value_restores_nonstring_keyed_dicts(self):
+        from obs.logic.manager import _decode_persisted_value
+
+        decoded = _decode_persisted_value({"__obs_persisted_type__": "dict_nonstr_keys", "value": [[1, "x"], [2, "y"]]})
+        assert decoded == {1: "x", 2: "y"}
+
+    def test_decode_persisted_value_keeps_malformed_tagged_nonstring_keys_as_is(self):
+        """A corrupted/hand-edited pair list (e.g. an unhashable "key" like
+        a nested list) must not crash the whole graph load."""
+        from obs.logic.manager import _decode_persisted_value
+
+        malformed = {"__obs_persisted_type__": "dict_nonstr_keys", "value": [[["not", "hashable"], "x"]]}
+        assert _decode_persisted_value(malformed) is malformed
+
+    def test_decode_persisted_value_keeps_tagged_nonstring_keys_with_non_list_value_as_is(self):
+        from obs.logic.manager import _decode_persisted_value
+
+        malformed = {"__obs_persisted_type__": "dict_nonstr_keys", "value": "not-a-list"}
+        assert _decode_persisted_value(malformed) is malformed
 
     def test_decode_persisted_value_restores_date_and_walks_lists(self):
         from datetime import date

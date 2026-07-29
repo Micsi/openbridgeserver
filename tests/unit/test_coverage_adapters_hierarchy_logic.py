@@ -3776,6 +3776,51 @@ class TestLogicManagerBasics:
         assert isinstance(restored, tuple)
 
     @pytest.mark.asyncio
+    async def test_persist_then_load_restores_change_filter_set_value_exactly(self):
+        """Regression: a change_filter can hold a set (e.g. produced by a
+        Python Script node). set/frozenset aren't natively JSON-encodable,
+        so the old default=str fallback flattened them to a repr() string
+        with no way back — _compare_values would then report a spurious
+        changed=True on the very next identical live set after a restart."""
+        flow = _make_flow(nodes=[{"id": "cf", "type": "change_filter", "position": {"x": 0, "y": 0}, "data": {}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr._hysteresis["g1"] = {"cf": {"value": {1, 2, "three"}}}
+
+        await mgr._persist_node_state("g1")
+        saved_json = db.execute_and_commit.await_args.args[1][0]
+
+        mgr2, db2, _, _ = _make_logic_manager()
+        db2.fetchall = AsyncMock(return_value=[_row(id="g1", name="G1", enabled=1, flow_data=flow.model_dump_json(), node_state=saved_json)])
+        await mgr2._load_graphs()
+
+        restored = mgr2._hysteresis["g1"]["cf"]["value"]
+        assert restored == {1, 2, "three"}
+        assert isinstance(restored, set)
+
+    @pytest.mark.asyncio
+    async def test_persist_then_load_restores_change_filter_nonstring_keyed_dict_exactly(self):
+        """Regression: a change_filter can hold a dict with a non-string key
+        (e.g. {1: "x"}, produced by a Python Script node or adapter).
+        json.dumps silently stringifies such keys with no default= call at
+        all, so the restored dict previously had the wrong key type
+        ({"1": "x"}), and _compare_values reported a spurious changed=True
+        on the next identical live dict after a restart."""
+        flow = _make_flow(nodes=[{"id": "cf", "type": "change_filter", "position": {"x": 0, "y": 0}, "data": {}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr._hysteresis["g1"] = {"cf": {"value": {1: "x", 2: "y"}}}
+
+        await mgr._persist_node_state("g1")
+        saved_json = db.execute_and_commit.await_args.args[1][0]
+
+        mgr2, db2, _, _ = _make_logic_manager()
+        db2.fetchall = AsyncMock(return_value=[_row(id="g1", name="G1", enabled=1, flow_data=flow.model_dump_json(), node_state=saved_json)])
+        await mgr2._load_graphs()
+
+        restored = mgr2._hysteresis["g1"]["cf"]["value"]
+        assert restored == {1: "x", 2: "y"}
+        assert all(isinstance(k, int) for k in restored)
+
+    @pytest.mark.asyncio
     async def test_persist_then_load_restores_change_filter_bytes_value_exactly(self):
         """Same round-trip as the temporal case above, for a change_filter
         holding raw bytes (e.g. a DataPoint of the UNKNOWN/fallback type).

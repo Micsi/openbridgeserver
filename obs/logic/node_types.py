@@ -773,7 +773,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         label="Benachrichtigung",
         category="notification",
         description="Sendet eine Nachricht über konfigurierte Ziele eines Message-/Benachrichtigungsadapters.",
-        inputs=[_port("trigger", "Trigger", "trigger"), _port("message", "Nachricht")],
+        inputs=[_port("trigger", "Trigger", "trigger"), _port("message", "Nachricht", "trigger")],
         outputs=[_port("sent", "Gesendet", "trigger")],
         config_schema={
             "adapter_instance_id": {"type": "string", "default": "", "label": "MESSAGE-Adapter"},
@@ -791,7 +791,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         description="Sendet eine Push-Benachrichtigung via Pushover API (api.pushover.net). Wird automatisch ausgelöst wenn eine Nachricht am Eingang ankommt.",
         inputs=[
             _port("trigger", "Trigger", "trigger"),
-            _port("message", "Nachricht"),
+            _port("message", "Nachricht", "trigger"),
             _port("url", "URL"),
             _port("url_title", "URL-Titel"),
             _port("image_url", "Bild-URL"),
@@ -837,7 +837,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         label="SMS (seven.io)",
         category="notification",
         description="Sendet eine SMS via seven.io Gateway (gateway.seven.io). Wird automatisch ausgelöst wenn eine Nachricht am Eingang ankommt.",
-        inputs=[_port("trigger", "Trigger", "trigger"), _port("message", "Nachricht")],
+        inputs=[_port("trigger", "Trigger", "trigger"), _port("message", "Nachricht", "trigger")],
         outputs=[_port("sent", "Gesendet", "trigger")],
         config_schema={
             "api_key": {"type": "string", "default": "", "label": "API-Key"},
@@ -864,7 +864,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         description="Schreibt eine Meldung in ein Meldungsarchiv. Wird automatisch ausgelöst wenn eine Nachricht am Eingang ankommt oder der Trigger wahr ist.",
         inputs=[
             _port("trigger", "Trigger", "trigger"),
-            _port("message", "Nachricht"),
+            _port("message", "Nachricht", "trigger"),
             _port("title", "Titel"),
         ],
         outputs=[_port("stored", "Gespeichert", "trigger")],

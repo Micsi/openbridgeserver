@@ -865,6 +865,169 @@ class TestHostCheckRisingEdge:
         assert outputs["cf"]["changed"] is True
         assert outputs["cf"]["out"] == 5
 
+    def test_change_filter_is_not_held_when_and_gate_has_an_unconnected_resolved_input(self):
+        """Regression: the AND gate's per-input taint-absorption check
+        skipped ("continue"d past) an unconnected input entirely, missing
+        that the executor's own _collect_gate_inputs evaluates a missing
+        port as a deterministic False — which alone makes an AND gate's
+        output deterministically False regardless of what an unresolved
+        sibling input eventually becomes. The downstream change_filter was
+        therefore held hostage to that unresolved input even though the
+        gate's real result was already fully decided."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("and_gate", "and", {"input_count": 2}),
+            node("cf", "change_filter"),
+            node("other_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "and_gate", "value", "in1"),
+                # in2 is intentionally left unwired
+                edge("and_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-and-unconnected-input"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"other_read": {"value": 1, "changed": True}}))
+
+        assert outputs["cf"]["changed"] is True
+        assert outputs["cf"]["out"] is False
+
+    def test_taint_analysis_survives_malformed_gate_input_count(self):
+        """Regression: a malformed input_count (e.g. an imported/legacy
+        node left with "invalid" or null) reached bare int() in the taint
+        analysis's own copy of the gate input-counting logic, uncaught —
+        unlike GraphExecutor's own per-node try/except, which isolates the
+        same parse failure to that one node's __error__ output and doesn't
+        abort the rest of graph execution. _execute_graph has no single
+        outer try/except of its own, so this crashed the entire call."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("and_gate", "and", {"input_count": "invalid"}),
+            node("cf", "change_filter"),
+            node("other_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "and_gate", "value", "in1"),
+                edge("and_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-and-malformed-count"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"other_read": {"value": 1, "changed": True}}))
+
+        # Treated as tainted (not absorbed) rather than crashing: the
+        # filter stays held, comparing against its unchanged prior state.
+        assert outputs["cf"]["changed"] is False
+
+    def test_change_filter_is_held_behind_a_wol_chained_to_an_unresolved_api_client(self):
+        """Regression (P1): _unresolved_source_ids only recognized an async
+        node as a taint source when its OWN _trigger was already true in
+        the initial pass — but for a chain like
+        api_client → wake_on_lan → change_filter → host_check, wake_on_lan's
+        trigger in the initial pass is computed from api_client's still-
+        placeholder success (False), so wake_on_lan itself never counted as
+        unresolved. change_filter downstream of it therefore committed its
+        comparison immediately using WoL's placeholder sent=False — and the
+        very next "Handle host_check" pass (which runs long before
+        api_client is even attempted) could see a resulting changed=True
+        and fire a real, irreversible ping using a value that was never
+        real to begin with.
+
+        Here the persisted change_filter baseline already matches what the
+        REAL wol.sent will resolve to (True, once api_client actually
+        succeeds and WoL actually sends), so the correct behavior for the
+        whole tick is "nothing changed, no ping at all" — the bug's
+        placeholder-based comparison (False vs persisted True) instead
+        looks like a change and pings early."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "wol", "success", "trigger"),
+                edge("wol", "cf", "sent", "in"),
+                edge("cf", "hc", "changed", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-chained-async"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            ):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        mock_ping.assert_not_awaited()
+
+    def test_correction_replay_does_not_double_mutate_a_reused_output(self):
+        """Regression: GraphExecutor.execute()'s known_outputs mechanism
+        handed out the caller's exact same per-node output dict to skip
+        re-evaluating nodes outside a held change_filter's island. A
+        python_script *inside* that island (a descendant of the held
+        filter, so it IS re-executed by the correction replay) that also
+        reads a mutable dict/list from OUTSIDE the island — reused via
+        known_outputs — could therefore mutate that shared object a second
+        time during the replay, on top of the mutation the main pass
+        already made, silently corrupting a value that never existed in
+        the real pass (here: memory's own persisted state, since memory's
+        "out" and its hysteresis_state["value"] are the same object)."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("not_gate", "not"),
+            node("cf", "change_filter"),
+            node("mem", "memory"),
+            node("script", "python_script", {"script": "inputs['in2']['count'] += 1\nresult = 1"}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "not_gate", "value", "in1"),
+                edge("not_gate", "cf", "out", "in"),
+                edge("cf", "script", "changed", "in1"),
+                edge("mem", "script", "out", "in2"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-known-outputs-isolation"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"mem": {"value": {"count": 0}}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert manager._hysteresis[graph_id]["mem"]["value"]["count"] == 1
+
     def test_change_filter_is_not_held_when_or_gate_is_already_true_from_a_seeded_branch(self):
         """Regression: an OR gate combining an unseeded Read Object with a
         separate, seeded/live branch must not have its already-True output

@@ -661,3 +661,39 @@ def test_change_filter_pulse_via_title_does_not_retrigger_downstream_host_check(
         _run(manager, flow, {"ma": {"trigger": True}, "cf": {"in": 2}})
 
     mock_ping.assert_awaited_once()
+
+
+def test_change_filter_pulse_via_message_retriggers_downstream_host_check() -> None:
+    """Regression: message_archive (and notify_pushover/notify_sms/
+    notify_message) fire when a message arrives regardless of "trigger" —
+    "message" is therefore an auto-triggering port in its own right, not a
+    plain data port like "title". Declaring only "trigger" as trigger-typed
+    made _edge_carries_pulse reject a pulse landing on "message" too, so a
+    change_filter wired to message_archive.message could never make a
+    downstream host_check look cron/pulse-reachable — every real message
+    change was wrongly deduplicated as a "sustained" trigger after the
+    first one."""
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node("cf", "change_filter"),
+            node("ma", "message_archive", {"archive_id": "Alerts", "title": "Stored"}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ],
+        [
+            edge("cf", "ma", "changed", "message"),
+            edge("ma", "hc", "stored", "trigger"),
+        ],
+    )
+    service = MagicMock()
+    service.record = AsyncMock(return_value={"id": "entry-1"})
+
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+    ):
+        _run(manager, flow, {"cf": {"in": 1}})
+        _run(manager, flow, {"cf": {"in": 2}})
+
+    assert mock_ping.await_count == 2

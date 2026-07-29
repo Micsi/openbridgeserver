@@ -171,6 +171,17 @@ def _persist_default(v: Any) -> Any:
         return {_PERSIST_TYPE_TAG: "time", "value": v.isoformat()}
     if isinstance(v, bytes):
         return {_PERSIST_TYPE_TAG: "bytes", "value": v.hex()}
+    # frozenset before set: a set/frozenset isn't natively JSON-encodable
+    # (unlike tuple, which the encoder treats as an array), so it reaches
+    # this default= hook directly — no separate handling in
+    # _escape_persist_collision is needed for that reason. Elements are
+    # encoded as a plain list; json.dumps then recurses into that list
+    # normally, so a non-JSON-native member (e.g. a set of datetimes) still
+    # gets its own _persist_default call at that point.
+    if isinstance(v, frozenset):
+        return {_PERSIST_TYPE_TAG: "frozenset", "value": list(v)}
+    if isinstance(v, set):
+        return {_PERSIST_TYPE_TAG: "set", "value": list(v)}
     return str(v)
 
 
@@ -186,8 +197,19 @@ def _escape_persist_collision(v: Any) -> Any:
     (its `default=` hook — where _persist_default runs — is never invoked
     for tuples, since the encoder already knows how to handle them), so
     this has to happen here, before json.dumps ever sees the value.
+
+    And dicts with a non-string key (e.g. {1: "x"}, produced by a
+    python_script or adapter): json.dumps silently stringifies such keys
+    with no `default=` call at all, so this also has to intercept them
+    here — encoded as a [key, value] pair list (which can hold a key of
+    any JSON-representable type) instead of a native JSON object.
     """
     if isinstance(v, dict):
+        if any(not isinstance(k, str) for k in v):
+            return {
+                _PERSIST_TYPE_TAG: "dict_nonstr_keys",
+                "value": [[_escape_persist_collision(k), _escape_persist_collision(val)] for k, val in v.items()],
+            }
         escaped = {k: _escape_persist_collision(val) for k, val in v.items()}
         if _PERSIST_TYPE_TAG in escaped:
             return {_PERSIST_TYPE_TAG: _PERSIST_ESCAPED_TAG, "value": escaped}
@@ -238,6 +260,20 @@ def _decode_persisted_value(v: Any) -> Any:
             inner = v.get("value")
             if isinstance(inner, list):
                 return tuple(_decode_persisted_value(item) for item in inner)
+            return v
+        if tag in ("set", "frozenset"):
+            inner = v.get("value")
+            if isinstance(inner, list):
+                decoded_items = (_decode_persisted_value(item) for item in inner)
+                return frozenset(decoded_items) if tag == "frozenset" else set(decoded_items)
+            return v
+        if tag == "dict_nonstr_keys":
+            inner = v.get("value")
+            if isinstance(inner, list):
+                try:
+                    return {_decode_persisted_value(k): _decode_persisted_value(val) for k, val in inner}
+                except (TypeError, ValueError):
+                    return v
             return v
         if tag in _PERSIST_ISOFORMAT_TYPES:
             try:
@@ -2314,29 +2350,76 @@ class LogicManager:
         # speculative extra execution could disagree with reality for
         # non-deterministic nodes (e.g. random_value) and make the hold
         # decision itself wrong.
-        _unresolved_source_ids: set[str] = unseeded_read_ids | {
-            _nid for _nid in async_replay_source_ids if GraphExecutor._to_bool(outputs.get(_nid, {}).get("_trigger"))
-        }
-        _cf_hold_ids: set[str] = set()
-        if _unresolved_source_ids:
-            _node_by_id_early = {n.id: n for n in flow.nodes}
-            _decisive_gate_value = {"or": True, "and": False}
-            _tainted: set[str] = set(_unresolved_source_ids)
+        _directly_triggered_async_ids = {_nid for _nid in async_replay_source_ids if GraphExecutor._to_bool(outputs.get(_nid, {}).get("_trigger"))}
+        # An async node's own _trigger reading in *this* pass can itself be
+        # derived from ANOTHER async node's still-placeholder output (e.g.
+        # api_client → wake_on_lan.trigger, before api_client's real HTTP
+        # call has run) — such a node's real trigger status is exactly as
+        # unresolved as an unseeded Read Object, however its own evaluated
+        # _trigger currently reads, because that reading itself is about to
+        # change once the upstream async node's real result is known. Treat
+        # it (and anything downstream, via the taint BFS below) as unresolved
+        # too — otherwise a change_filter/host_check reachable only through
+        # this chain would already commit — and host_check would already
+        # irreversibly ping — using a value derived from a still-pending
+        # upstream async result, before that upstream node has even run.
+        _chained_unresolved_async_ids = async_replay_source_ids & (
+            _downstream_closure(_directly_triggered_async_ids, flow.edges) - _directly_triggered_async_ids
+        )
+        _unresolved_source_ids: set[str] = unseeded_read_ids | _directly_triggered_async_ids | _chained_unresolved_async_ids
+
+        _node_by_id_early = {n.id: n for n in flow.nodes}
+        _decisive_gate_value = {"or": True, "and": False}
+
+        def _compute_cf_hold_ids(seed_ids: set[str]) -> set[str]:
+            """Taint-BFS from `seed_ids` (unresolved sources), returning the
+            change_filter node ids that must be held this pass. Factored out
+            of the original single, early computation so it can be re-run
+            with an updated seed later in the tick too (see
+            _still_unresolved_source_ids) — an async node newly discovered
+            to be chained behind another one that hasn't actually settled
+            yet must still hold any change_filter it reaches, even after
+            the initial pass already committed a value for it once.
+            """
+            if not seed_ids:
+                return set()
+            _tainted: set[str] = set(seed_ids)
 
             def _gate_taint_absorbed(gate_id: str, gate_type: str) -> bool:
                 decisive = _decisive_gate_value[gate_type]
                 gate_node = _node_by_id_early[gate_id]
                 gdata = gate_node.data or {}
-                count = max(2, min(30, int(gdata.get("input_count", 2))))
+                try:
+                    # A malformed input_count (e.g. an imported/legacy node
+                    # with "invalid" or null) must not crash this whole
+                    # execution — GraphExecutor's own per-node try/except
+                    # already isolates the same parse to a single node's
+                    # __error__ output; this duplicate copy of the gate's
+                    # input-counting logic needs the same isolation. Treat
+                    # the gate as un-absorbed (still tainted) rather than
+                    # guessing at malformed config.
+                    count = max(2, min(30, int(gdata.get("input_count", 2))))
+                except (TypeError, ValueError):
+                    return False
                 for i in range(1, count + 1):
                     handle = f"in{i}"
                     src_edge = next(
                         (e for e in flow.edges if e.target == gate_id and (e.targetHandle or "in") == handle),
                         None,
                     )
-                    if src_edge is None or src_edge.source in _tainted:
+                    if src_edge is not None and src_edge.source in _tainted:
                         continue
-                    v = GraphExecutor._to_bool(GraphExecutor._get_output_value(outputs.get(src_edge.source, {}), src_edge.sourceHandle or "out"))
+                    # An unconnected input is not "still unresolved" — the
+                    # executor's own _collect_gate_inputs evaluates a
+                    # missing port as a deterministic False (via _to_bool),
+                    # so it can independently decide the gate's output (a
+                    # negated unconnected OR input is a deterministic True)
+                    # exactly like any other resolved input.
+                    v = (
+                        False
+                        if src_edge is None
+                        else GraphExecutor._to_bool(GraphExecutor._get_output_value(outputs.get(src_edge.source, {}), src_edge.sourceHandle or "out"))
+                    )
                     if gdata.get(f"negate_{handle}"):
                         v = not v
                     if v == decisive:
@@ -2368,7 +2451,44 @@ class LogicManager:
                         continue
                     _tainted.add(_te.target)
                     _tq.append(_te.target)
-            _cf_hold_ids = {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _tainted}
+            return {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _tainted}
+
+        # Async nodes whose real side effect has actually run this tick (as
+        # opposed to merely having their _trigger read true) — updated
+        # inside _add_resolved_outputs below. Used by
+        # _still_unresolved_source_ids to know which links of an async
+        # chain are now settled and which are still only "triggered, not
+        # yet actually executed".
+        _settled_async_ids: set[str] = set()
+
+        def _still_unresolved_source_ids(outputs_source: dict[str, dict[str, Any]] | None = None) -> set[str]:
+            """Recompute the async-chain part of _unresolved_source_ids
+            using `outputs_source` (defaults to the outer `outputs`) and
+            _settled_async_ids.
+
+            A later replay stage's *own freshly computed* outputs (e.g.
+            once api_client's real result has propagated
+            wake_on_lan.trigger=True within that same replay pass) can
+            newly reveal that an async node — and anything it feeds,
+            including a change_filter — is still only "about to run", not
+            actually settled. The outer `outputs` dict is not updated until
+            *after* such a replay's copy-back, so a caller checking whether
+            it needs to redo its own replay with suppression must pass that
+            replay's own result, not rely on the stale outer snapshot.
+            Re-running the same taint BFS with this refreshed seed lets a
+            caller re-suppress that change_filter instead of letting it
+            commit with a still-wrong value.
+            """
+            _src = outputs_source if outputs_source is not None else outputs
+            directly_triggered_now = {
+                _nid
+                for _nid in async_replay_source_ids
+                if _nid not in _settled_async_ids and GraphExecutor._to_bool(_src.get(_nid, {}).get("_trigger"))
+            }
+            chained_now = async_replay_source_ids & (_downstream_closure(directly_triggered_now, flow.edges) - directly_triggered_now)
+            return (directly_triggered_now | chained_now) - _settled_async_ids
+
+        _cf_hold_ids: set[str] = _compute_cf_hold_ids(_unresolved_source_ids)
 
         def _apply_operating_hours_state(node_ids: set[str] | None = None, base_state: dict[str, Any] | None = None) -> None:
             target_ids = operating_hour_ids if node_ids is None else operating_hour_ids & node_ids
@@ -2614,6 +2734,7 @@ class LogicManager:
         triggered_api_clients: set[str] = set()
 
         def _add_resolved_outputs(node_ids: set[str]) -> None:
+            _settled_async_ids.update(node_ids & async_replay_source_ids)
             for _re in flow.edges:
                 if _re.source in node_ids:
                     resolved_async_edge_overrides.setdefault(_re.target, {})[_re.targetHandle or "in"] = GraphExecutor._get_output_value(
@@ -3138,6 +3259,30 @@ class LogicManager:
                     replay_hyst = copy.deepcopy(pre_execute_hyst)
                     second_executor = _executor(replay_hyst)
                     second_outputs = _execute_pass(second_executor, replay_overrides)
+                    # api_client's real result can newly reveal — only once
+                    # visible in this replay's OWN outputs — that a chained
+                    # async node downstream (e.g. wake_on_lan.trigger, now
+                    # fed by api_client's real success) is triggered but
+                    # hasn't actually run yet: its own output here is still
+                    # a placeholder (e.g. wol.sent=False before WoL is
+                    # actually sent, since GraphExecutor never performs the
+                    # real send itself). A change_filter reachable only
+                    # through that node must stay held rather than commit —
+                    # and let a downstream host_check irreversibly ping —
+                    # using this still-wrong value, exactly like the
+                    # initial pass's own _cf_hold_ids. Detected only after
+                    # running the replay once (the outer `outputs` is still
+                    # stale at that point), so redo it with suppression
+                    # applied if this reveals anything new.
+                    _late_pending = _still_unresolved_source_ids(second_outputs)
+                    _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending) if _late_pending else set()
+                    if _late_cf_hold_ids:
+                        for _late_cf_id in _late_cf_hold_ids:
+                            replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
+                        api_replay_overrides = {nid: dict(vals) for nid, vals in replay_overrides.items()}
+                        replay_hyst = copy.deepcopy(pre_execute_hyst)
+                        second_executor = _executor(replay_hyst)
+                        second_outputs = _execute_pass(second_executor, replay_overrides)
                     # Compute transitive descendants of triggered api_clients so that
                     # only their subtree is updated. This prevents the api_client
                     # second pass from overwriting WoL-propagated outputs that were
