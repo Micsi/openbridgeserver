@@ -1216,6 +1216,59 @@ class TestApiClientVariables:
         assert captured["url"] == "http://93.184.216.34/api/fresh"
 
     @patch("obs.logic.manager.httpx.AsyncClient")
+    @patch(
+        "obs.security.url_targets.socket.getaddrinfo",
+        return_value=[(None, None, None, None, ("93.184.216.34", 80))],
+    )
+    def test_variable_uses_debug_datapoint_override_before_duplicate_registry_seed(self, _mock_resolve, mock_client_cls):
+        captured: dict = {}
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        async def _capture(method, url, **kwargs):
+            captured["url"] = url
+            return _mock_response(200, {"ok": True})
+
+        mock_client.request = _capture
+
+        dp_id = uuid.uuid4()
+        manager = _make_manager()
+        manager._registry.get_value.return_value = self._state("stale")
+        nodes = [
+            node("read", "datapoint_read", {"datapoint_id": str(dp_id), "datapoint_name": "Source"}),
+            node(
+                "ac",
+                "api_client",
+                {
+                    "url": "http://example.com/api/###OBS1###",
+                    "method": "GET",
+                    "variables": [{"slot": 1, "datapoint_id": str(dp_id), "datapoint_name": "Source"}],
+                },
+            ),
+            node("duplicate_read", "datapoint_read", {"datapoint_id": str(dp_id), "datapoint_name": "Source"}),
+        ]
+        edges = [edge("read", "ac", "value", "trigger")]
+        flow = _flow(nodes, edges)
+        graph_id = "g-debug-var"
+        manager._graphs[graph_id] = ("t", True, flow)
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(
+                manager._execute_graph(
+                    graph_id,
+                    "t",
+                    flow,
+                    {},
+                    debug_overrides={"read": {"value": "debug-value"}},
+                )
+            )
+
+        assert outputs["read"]["value"] == "debug-value"
+        assert outputs["ac"]["success"] is True
+        assert captured["url"] == "http://93.184.216.34/api/debug-value"
+
+    @patch("obs.logic.manager.httpx.AsyncClient")
     def test_url_variable_in_authority_is_rejected(self, mock_client_cls):
         mock_client = AsyncMock()
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)

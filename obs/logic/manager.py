@@ -2495,10 +2495,18 @@ class LogicManager:
             if node.type != "datapoint_read":
                 continue
             dp_id_str = str(node.data.get("datapoint_id") or "").strip()
-            if not dp_id_str or node.id not in aug_overrides or "value" not in aug_overrides[node.id]:
+            node_override = {
+                **aug_overrides.get(node.id, {}),
+                **debug_overrides.get(node.id, {}),
+            }
+            if not dp_id_str or "value" not in node_override:
                 continue
-            node_override = aug_overrides[node.id]
-            priority = 2 if node.id in overrides or GraphExecutor._to_bool(node_override.get("changed")) else 1
+            if "value" in debug_overrides.get(node.id, {}):
+                priority = 3
+            elif node.id in overrides or GraphExecutor._to_bool(node_override.get("changed")):
+                priority = 2
+            else:
+                priority = 1
             if priority >= execution_value_priority_by_datapoint_id.get(dp_id_str, 0):
                 execution_values_by_datapoint_id[dp_id_str] = node_override["value"]
                 execution_value_priority_by_datapoint_id[dp_id_str] = priority
