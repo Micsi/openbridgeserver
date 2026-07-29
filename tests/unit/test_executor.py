@@ -24,6 +24,81 @@ from obs.logic.executor import ExecutionError, GraphExecutor
 from tests.unit.conftest import edge, make_executor, node
 
 
+def test_execute_captures_incoming_and_effective_inputs_without_mutating_values():
+    base = make_executor(
+        [node("source", "const_value", {"value": 3}), node("target", "math_formula", {"formula": "a * 2"})],
+        [edge("source", "target", "value", "in1")],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute({"target": {"in1": 7}})
+
+    assert outputs["target"]["result"] == 14
+    assert captured["target"]["in1"] == {"incoming": 3.0, "effective": 7, "overridden": True}
+
+
+def test_execute_captures_configured_compare_operand_as_effective_input():
+    base = make_executor(
+        [node("source", "const_value", {"value": 3}), node("target", "compare", {"operator": ">", "operand": 2})],
+        [edge("source", "target", "value", "in1")],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute()
+
+    assert outputs["target"]["out"] is True
+    assert captured["target"]["in2"] == {"incoming": None, "effective": 2, "overridden": False}
+
+
+def test_execute_captures_configured_string_values_and_override_precedence():
+    base = make_executor(
+        [node("target", "string_concat", {"count": 3, "separator": "-", "text_1": "A", "text_2": "B"})],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute({"target": {"in_2": "override"}})
+
+    assert outputs["target"]["result"] == "A-override-"
+    assert captured["target"] == {
+        "in_1": {"incoming": None, "effective": "A", "overridden": False},
+        "in_2": {"incoming": None, "effective": "override", "overridden": True},
+        "in_3": {"incoming": None, "effective": "", "overridden": False},
+    }
+
+
+def test_execute_snapshots_mutable_inputs_before_python_script_mutation():
+    mutable = {"x": 1}
+    base = make_executor(
+        [node("target", "python_script", {"script": "inputs['a']['x'] = 2; result = inputs['a']"})],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute(
+        {"target": {"a": mutable}},
+        capture_incoming_overrides={"target": {"a": mutable}},
+    )
+
+    assert mutable == {"x": 2}
+    assert outputs["target"]["result"] == {"x": 2}
+    assert captured["target"]["a"] == {
+        "incoming": {"x": 1},
+        "effective": {"x": 1},
+        "overridden": True,
+    }
+
+
+def test_invalid_configured_string_input_count_is_isolated_to_its_node():
+    executor = make_executor([node("target", "string_concat", {"count": "invalid"})])
+
+    outputs = executor.execute()
+
+    assert "invalid literal" in outputs["target"]["__error__"]
+
+
 def test_datetime_node_uses_application_formats():
     executor = make_executor(
         [node("clock", "datetime", {"custom_format": "yyyy-MM-dd HH:mm:ss"})],
