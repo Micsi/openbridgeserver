@@ -7,6 +7,7 @@ Returns a dict of node_id → output_values.
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import logging
 import math
@@ -24,6 +25,17 @@ from obs.logic.models import FlowData, LogicNode
 
 logger = logging.getLogger(__name__)
 _AVG_MULTI_MAX_SAMPLES = 100_000
+
+
+def _snapshot_debug_value(value: Any) -> Any:
+    try:
+        return copy.deepcopy(value)
+    except Exception:
+        try:
+            return json.loads(json.dumps(value, default=str))
+        except Exception:
+            return str(value)
+
 
 _COMPARE_OPS = {
     ">": operator.gt,
@@ -115,8 +127,8 @@ class GraphExecutor:
                 if self.input_capture is not None:
                     self.input_capture[node.id] = {
                         port: {
-                            "incoming": incoming_inputs.get(port),
-                            "effective": inputs.get(port),
+                            "incoming": _snapshot_debug_value(incoming_inputs.get(port)),
+                            "effective": _snapshot_debug_value(inputs.get(port)),
                             "overridden": port in node_overrides,
                         }
                         for port in inputs

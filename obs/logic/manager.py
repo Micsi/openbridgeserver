@@ -23,6 +23,7 @@ import stat
 import uuid
 from datetime import UTC, date, datetime, time
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, urlunparse
 
@@ -1803,6 +1804,7 @@ class LogicManager:
         debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         execute_now = datetime.now(UTC)
+        execution_started = perf_counter()
         graph_state = self._node_state.setdefault(graph_id, {})
         debug_overrides = debug_overrides or {}
         capture_debug_inputs = debug_input_capture is not None
@@ -3793,7 +3795,7 @@ class LogicManager:
                     "inputs": json.loads(json.dumps(jsonable(debug_inputs or {}), default=str)),
                     "debug": {
                         "timestamp": datetime.now(UTC).isoformat(),
-                        "duration_ms": round((datetime.now(UTC) - execute_now).total_seconds() * 1000, 2),
+                        "duration_ms": round((perf_counter() - execution_started) * 1000, 2),
                         "used_overrides": bool(debug_overrides),
                     },
                 },

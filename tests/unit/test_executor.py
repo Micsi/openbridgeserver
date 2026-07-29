@@ -69,6 +69,28 @@ def test_execute_captures_configured_string_values_and_override_precedence():
     }
 
 
+def test_execute_snapshots_mutable_inputs_before_python_script_mutation():
+    mutable = {"x": 1}
+    base = make_executor(
+        [node("target", "python_script", {"script": "inputs['a']['x'] = 2; result = inputs['a']"})],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute(
+        {"target": {"a": mutable}},
+        capture_incoming_overrides={"target": {"a": mutable}},
+    )
+
+    assert mutable == {"x": 2}
+    assert outputs["target"]["result"] == {"x": 2}
+    assert captured["target"]["a"] == {
+        "incoming": {"x": 1},
+        "effective": {"x": 1},
+        "overridden": True,
+    }
+
+
 def test_invalid_configured_string_input_count_is_isolated_to_its_node():
     executor = make_executor([node("target", "string_concat", {"count": "invalid"})])
 
