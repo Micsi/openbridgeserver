@@ -2742,8 +2742,6 @@ class SqliteSegmentStore(RingBufferStore):
         )
 
     async def _advance_active_segment_stats(self, events: list[StoreEvent]) -> None:
-        if not events or self._active_segment is None:
-            return
         batch_from_ts = min(event.ts for event in events)
         batch_to_ts = max(event.ts for event in events)
         await self._persist_active_segment_stats(
@@ -2761,8 +2759,6 @@ class SqliteSegmentStore(RingBufferStore):
         from_ts: str | None,
         to_ts: str | None,
     ) -> None:
-        if self._active_segment is None:
-            return
         self._active_segment.row_count = row_count
         self._active_segment.size_bytes = size_bytes
         self._active_segment.from_ts = from_ts
