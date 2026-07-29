@@ -1236,7 +1236,7 @@ class SqliteSegmentStore(RingBufferStore):
             # Transaktion daher zurückrollen – kein partieller Batch committet später.
             await self._active_conn.rollback()
             raise
-        await self._refresh_active_segment_stats()
+        await self._advance_active_segment_stats(events)
         # TODO(#932/#936): hier greift später Rotation nach segment_max_* und
         # anschließend enforce_retention() auf geschlossene Segmente.
 
@@ -2734,12 +2734,45 @@ class SqliteSegmentStore(RingBufferStore):
             return
         async with self._active_conn.execute("SELECT COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx FROM ringbuffer") as cur:
             row = await cur.fetchone()
-        await self.manifest.update_segment_stats(
-            self._active_segment.segment_id,
+        await self._persist_active_segment_stats(
             row_count=row["c"] if row else 0,
             size_bytes=self._segment_file_size(self._active_segment.filename),
             from_ts=row["mn"] if row else None,
             to_ts=row["mx"] if row else None,
+        )
+
+    async def _advance_active_segment_stats(self, events: list[StoreEvent]) -> None:
+        if not events or self._active_segment is None:
+            return
+        batch_from_ts = min(event.ts for event in events)
+        batch_to_ts = max(event.ts for event in events)
+        await self._persist_active_segment_stats(
+            row_count=self._active_segment.row_count + len(events),
+            size_bytes=self._segment_file_size(self._active_segment.filename),
+            from_ts=min(self._active_segment.from_ts, batch_from_ts) if self._active_segment.from_ts else batch_from_ts,
+            to_ts=max(self._active_segment.to_ts, batch_to_ts) if self._active_segment.to_ts else batch_to_ts,
+        )
+
+    async def _persist_active_segment_stats(
+        self,
+        *,
+        row_count: int,
+        size_bytes: int,
+        from_ts: str | None,
+        to_ts: str | None,
+    ) -> None:
+        if self._active_segment is None:
+            return
+        self._active_segment.row_count = row_count
+        self._active_segment.size_bytes = size_bytes
+        self._active_segment.from_ts = from_ts
+        self._active_segment.to_ts = to_ts
+        await self.manifest.update_segment_stats(
+            self._active_segment.segment_id,
+            row_count=row_count,
+            size_bytes=size_bytes,
+            from_ts=from_ts,
+            to_ts=to_ts,
         )
 
     def _segment_file_size(self, filename: str) -> int:

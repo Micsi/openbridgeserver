@@ -1,7 +1,7 @@
 """Recover active segment bounds after committed appends (#919, Review #951 Runde 33, Finding 4 :998).
 
 Wird der Prozess gekillt / läuft die Disk voll / scheitert das Manifest-Update
-NACH dem Segment-Commit, aber BEVOR ``_refresh_active_segment_stats()`` in die
+NACH dem Segment-Commit, aber BEVOR die inkrementelle Statistik in die
 separate Manifest-DB committet, behält das aktive Segment über den Restart STALE
 ``from_ts``/``to_ts``-Metadaten. Zeitfenster-Queries wählen Segmente anhand dieser
 Manifest-Grenzen (``list_segments_for_query``) → ein Query-Fenster kann das aktive
@@ -35,6 +35,33 @@ def _event(value: Any, ts: str, *, dp: str = "dp-1") -> StoreEvent:
         source_adapter="api",
         quality="good",
     )
+
+
+@pytest.mark.asyncio
+async def test_append_updates_active_stats_without_full_segment_scan(tmp_path: Path):
+    root = tmp_path / "root"
+    store = SqliteSegmentStore(root)
+    await store.open()
+    statements: list[str] = []
+    await store._active_conn.set_trace_callback(statements.append)
+
+    try:
+        await store.append([_event(1, "2026-03-01T10:00:05.000Z")])
+        await store.append(
+            [
+                _event(2, "2026-03-01T10:00:09.000Z"),
+                _event(3, "2026-03-01T10:00:01.000Z"),
+            ]
+        )
+
+        active = await store.manifest.get_active_segment()
+        assert active is not None
+        assert active.row_count == 3
+        assert active.from_ts == "2026-03-01T10:00:01.000Z"
+        assert active.to_ts == "2026-03-01T10:00:09.000Z"
+        assert not any("SELECT COUNT(*) AS c, MIN(ts) AS mn, MAX(ts) AS mx FROM ringbuffer" in sql for sql in statements)
+    finally:
+        await store.close()
 
 
 @pytest.mark.asyncio
@@ -99,8 +126,8 @@ async def test_open_recovers_stale_active_bounds_makes_committed_rows_visible(tm
 async def test_open_leaves_consistent_active_stats_unchanged(tmp_path: Path):
     """Gegentest: konsistente (frische) Stats bleiben nach ``open()`` unverändert.
 
-    Nach einem regulären Append hat ``_refresh_active_segment_stats`` bereits die
-    korrekten Grenzen geschrieben. Der Recovery-Refresh bei ``open()`` darf sie zwar
+    Nach einem regulären Append wurden die korrekten Grenzen inkrementell geschrieben.
+    Der Recovery-Refresh bei ``open()`` darf sie zwar
     idempotent neu berechnen, muss aber DIESELBEN Werte ergeben.
     """
     root = tmp_path / "root"
