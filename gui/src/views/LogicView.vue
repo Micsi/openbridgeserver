@@ -22,10 +22,27 @@
         data-testid="btn-run">
         &#9654; {{ $t('logic.run') }}
       </button>
-      <button v-if="activeGraphId" @click="toggleDebug"
+      <button v-if="auth.isAdmin && activeGraphId" @click="toggleDebug"
         :class="['btn-secondary btn-sm', debugMode ? 'text-amber-400 ring-1 ring-amber-400/50' : 'text-slate-400']"
         :title="$t('logic.debugMode')" data-testid="btn-debug">
-        &#128270; {{ $t('logic.debugBtn') }}
+        <svg
+          aria-hidden="true"
+          class="inline-block h-4 w-4 align-[-0.125em]"
+          data-testid="icon-debug-bug"
+          fill="none"
+          stroke="currentColor"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="m8 2 2 2" />
+          <path d="m14 4 2-2" />
+          <path d="M9 7V6a3 3 0 0 1 6 0v1" />
+          <rect x="6" y="7" width="12" height="13" rx="6" />
+          <path d="M12 11v9M6 10 3 8M6 14H2M7 18l-3 3M18 10l3-2M18 14h4M17 18l3 3" />
+        </svg>
+        {{ $t('logic.debugBtn') }}
       </button>
       <div v-if="auth.isAdmin && activeGraphId" class="flex items-center gap-1">
         <button
@@ -138,12 +155,24 @@
 
       <!-- Config Panel -->
       <NodeConfigPanel
-        v-if="selectedNode && auth.isAdmin"
+        v-if="selectedNode && auth.isAdmin && !debugNode"
         :node="selectedNode"
         :node-types="store.nodeTypes"
         :node-outputs="lastRunOutputs"
         @update="onNodeDataUpdate"
         @close="selectedNode = null"
+      />
+      <DebugInspector
+        v-if="auth.isAdmin && debugNode"
+        :node="debugNode"
+        :inputs="debugInputs"
+        :outputs="lastRunDebugOutputs[debugNode.id] || {}"
+        :metadata="lastRunMetadata"
+        :has-overrides="hasDebugOverrides"
+        @close="debugNode = null"
+        @set-override="setDebugOverride"
+        @clear-override="clearDebugOverride"
+        @clear-all="clearAllDebugOverrides"
       />
     </div>
 
@@ -209,8 +238,10 @@ import { useLogicStore }    from '@/stores/logic'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore }     from '@/stores/auth'
 import { logicApi }        from '@/api/client'
+import { AUTH_TOKEN_REFRESHED_EVENT } from '@/utils/authEvents'
 import NodePalette         from '@/components/logic/NodePalette.vue'
 import NodeConfigPanel     from '@/components/logic/NodeConfigPanel.vue'
+import DebugInspector      from '@/components/logic/DebugInspector.vue'
 import Modal               from '@/components/ui/Modal.vue'
 import ConfirmDialog       from '@/components/ui/ConfirmDialog.vue'
 import Spinner             from '@/components/ui/Spinner.vue'
@@ -485,7 +516,13 @@ async function saveGraph() {
 }
 
 // ── Debug mode ─────────────────────────────────────────────────────────────
-const debugMode = ref(localStorage.getItem('logic_debug_mode') === '1')
+const debugMode = ref(false)
+const debugNode = ref(null)
+const debugOverrides = ref({})
+const lastRunMetadata = ref(null)
+const lastRunInputs = ref({})
+const lastRunDebugOutputs = ref({})
+let debugStateGeneration = 0
 const DEBUG_TOOLTIP_MAX_CHARS = 1000
 
 function fmtDebugVal(nodeOut, { full = false, maxChars = null } = {}) {
@@ -495,80 +532,66 @@ function fmtDebugVal(nodeOut, { full = false, maxChars = null } = {}) {
     return maxChars !== null && text.length > maxChars ? `${text.slice(0, maxChars)}…` : text
   }
 
-  function fv(v) {
-    if (v === null || v === undefined) return '—'
-    if (typeof v === 'boolean') return v ? '✓' : '✗'
-    if (typeof v === 'number') return String(parseFloat(v.toPrecision(5)))
-    const text = String(v)
+  function fv(value) {
+    if (value === null || value === undefined) return '—'
+    if (typeof value === 'boolean') return value ? '✓' : '✗'
+    if (typeof value === 'number') return String(parseFloat(value.toPrecision(5)))
+    const text = String(value)
     return full ? maybeClip(text) : text.slice(0, 18)
   }
 
-  function clipped(v, limit) {
-    if (v === null || v === undefined) return '—'
-    const text = String(v)
+  function clipped(value, limit) {
+    if (value === null || value === undefined) return '—'
+    const text = String(value)
     if (full) return maybeClip(text)
     return text.length <= limit ? text : `${text.slice(0, limit)}…`
   }
 
-  // node execution error — show prominently before any other key handling
-  if ('__error__' in nodeOut) {
-    return `${t('logic.nodeError')}: ${clipped(nodeOut.__error__, 50)}`
-  }
-
-  // notify nodes — show message content + sent status (before generic key loop)
+  if ('__error__' in nodeOut) return `${t('logic.nodeError')}: ${clipped(nodeOut.__error__, 50)}`
   if ('_message' in nodeOut) {
-    const msg  = nodeOut._message !== null && nodeOut._message !== undefined
+    const message = nodeOut._message !== null && nodeOut._message !== undefined
       ? `"${String(nodeOut._message).slice(0, 24)}"`
       : '—'
     const sent = 'sent' in nodeOut ? `  sent=${fv(nodeOut.sent)}` : ''
-    return msg + sent
+    return message + sent
   }
-
-  // datapoint_read — show value compactly with = prefix
-  if ('value' in nodeOut && 'changed' in nodeOut) {
-    return `= ${fv(nodeOut.value)}`
-  }
-
-  // datapoint_write outputs are all _private — show write value with → prefix
-  if ('_write_value' in nodeOut) {
-    return `→ ${fv(nodeOut._write_value)}`
-  }
-
-  // api_client — response text is often the useful error and needs more room
+  if ('value' in nodeOut && 'changed' in nodeOut) return `= ${fv(nodeOut.value)}`
+  if ('_write_value' in nodeOut) return `→ ${fv(nodeOut._write_value)}`
   if ('response' in nodeOut && 'status' in nodeOut && 'success' in nodeOut) {
     return `response=${clipped(nodeOut.response, 80)}   status=${fv(nodeOut.status)}   success=${fv(nodeOut.success)}`
   }
-
-  // Public keys (no leading _) — generic fallback
   const pairs = Object.entries(nodeOut)
-    .filter(([k]) => !k.startsWith('_'))
-    .map(([k, v]) => `${k}=${fv(v)}`)
-  if (pairs.length) return pairs.join('   ')
-
-  return null
+    .filter(([key]) => !key.startsWith('_'))
+    .map(([key, value]) => `${key}=${fv(value)}`)
+  return pairs.length ? pairs.join('   ') : null
 }
 
 // Last run outputs — always kept (not just in debug mode) so that
 // json_extractor / xml_extractor config panels can read _preview data.
 const lastRunOutputs = ref({})
 
-function applyDebugValues(outputs) {
+function applyDebugValues(outputs, captureDebugOutputs = debugMode.value) {
   lastRunOutputs.value = outputs
-  nodes.value = nodes.value.map(n => ({
-    ...n,
+  if (captureDebugOutputs) lastRunDebugOutputs.value = outputs
+  if (debugMode.value) {
+    clearDebugValues()
+    return
+  }
+  nodes.value = nodes.value.map(node => ({
+    ...node,
     data: {
-      ...n.data,
-      _dbg: fmtDebugVal(outputs[n.id]) ?? undefined,
-      _dbg_title: fmtDebugVal(outputs[n.id], { full: true, maxChars: DEBUG_TOOLTIP_MAX_CHARS }) ?? undefined,
-    }
+      ...node.data,
+      _dbg: fmtDebugVal(outputs[node.id]) ?? undefined,
+      _dbg_title: fmtDebugVal(outputs[node.id], { full: true, maxChars: DEBUG_TOOLTIP_MAX_CHARS }) ?? undefined,
+    },
   }))
 }
 
 function clearDebugValues() {
-  nodes.value = nodes.value.map(n => {
+  nodes.value = nodes.value.map(node => {
     // eslint-disable-next-line no-unused-vars
-    const { _dbg, _dbg_title, ...rest } = n.data
-    return { ...n, data: rest }
+    const { _dbg, _dbg_title, ...data } = node.data
+    return { ...node, data }
   })
 }
 
@@ -582,18 +605,109 @@ function countGraphDiagnostics(outputs) {
 }
 
 function toggleDebug() {
+  if (!auth.isAdmin) return
   debugMode.value = !debugMode.value
-  localStorage.setItem('logic_debug_mode', debugMode.value ? '1' : '0')
-  if (!debugMode.value) clearDebugValues()
+  debugStateGeneration += 1
+  sendDebugSubscription(activeGraphId.value, debugMode.value)
+  clearDebugValues()
+  if (!debugMode.value) {
+    clearAllDebugOverrides()
+    debugNode.value = null
+    lastRunMetadata.value = null
+    lastRunInputs.value = {}
+    lastRunDebugOutputs.value = {}
+  }
 }
+
+function parseOverride(text) {
+  if (!text.trim()) return undefined
+  try { return JSON.parse(text) } catch { return text }
+}
+
+function setDebugOverride(inputId, text) {
+  if (!auth.isAdmin || !debugNode.value) return
+  const nodeValues = { ...(debugOverrides.value[debugNode.value.id] || {}) }
+  if (!text.trim()) delete nodeValues[inputId]
+  else nodeValues[inputId] = text
+  debugOverrides.value = { ...debugOverrides.value, [debugNode.value.id]: nodeValues }
+}
+
+function clearDebugOverride(inputId) { setDebugOverride(inputId, '') }
+function clearAllDebugOverrides() { debugOverrides.value = {} }
+const hasDebugOverrides = computed(() => Object.values(debugOverrides.value).some(values => Object.keys(values).length > 0))
+
+const debugInputs = computed(() => {
+  if (!debugNode.value) return []
+  const definition = store.nodeTypes.find(type => type.type === debugNode.value.type)
+  let ports = definition?.inputs || []
+  const count = Number(debugNode.value.data?.input_count) || 2
+  if (['and', 'or', 'xor'].includes(debugNode.value.type)) {
+    ports = Array.from({ length: Math.max(2, Math.min(30, count)) }, (_, i) => ({ id: `in${i + 1}`, label: `${i + 1}` }))
+  } else if (debugNode.value.type === 'avg_multi') {
+    ports = Array.from({ length: Math.max(2, Math.min(20, count)) }, (_, i) => ({ id: `in_${i + 1}`, label: `${i + 1}` }))
+  } else if (debugNode.value.type === 'string_concat') {
+    const stringCount = Number(debugNode.value.data?.count) || 2
+    ports = Array.from({ length: Math.max(2, Math.min(20, stringCount)) }, (_, i) => ({ id: `in_${i + 1}`, label: `${i + 1}` }))
+  } else if (debugNode.value.type === 'python_script') {
+    ports = ['a', 'b', 'c'].map(id => ({ id, label: id }))
+  }
+  const known = new Set(ports.map(port => port.id))
+  for (const edge of edges.value.filter(item => item.target === debugNode.value.id)) {
+    const id = edge.targetHandle || 'in'
+    if (!known.has(id)) {
+      ports = [...ports, { id, label: id }]
+      known.add(id)
+    }
+  }
+  for (const id of Object.keys(lastRunInputs.value[debugNode.value.id] || {})) {
+    if (!known.has(id)) {
+      ports = [...ports, { id, label: id }]
+      known.add(id)
+    }
+  }
+  return ports.map(port => {
+    const edge = edges.value.find(item => item.target === debugNode.value.id && (item.targetHandle || 'in') === port.id)
+    const captured = lastRunInputs.value[debugNode.value.id]?.[port.id]
+    const hasCapturedInput = captured && Object.prototype.hasOwnProperty.call(captured, 'incoming')
+    const incoming = hasCapturedInput ? captured.incoming : (edge ? lastRunDebugOutputs.value[edge.source]?.[edge.sourceHandle || 'out'] : undefined)
+    const overrideText = debugOverrides.value[debugNode.value.id]?.[port.id]
+    const locallyOverridden = overrideText !== undefined
+    const capturedOverridden = captured?.overridden === true
+    return {
+      id: port.id,
+      label: port.label || port.id,
+      incoming,
+      effective: captured?.effective,
+      locallyOverridden,
+      capturedOverridden,
+      overridden: locallyOverridden || capturedOverridden,
+      overrideText: overrideText ?? '',
+    }
+  })
+})
 
 async function runGraph() {
   if (!auth.isAdmin || !activeGraphId.value) return
+  const requestGraphId = activeGraphId.value
+  const requestDebugGeneration = debugStateGeneration
+  const requestedDebugState = debugMode.value
   try {
-    const { data } = await logicApi.runGraph(activeGraphId.value)
+    const parsedOverrides = Object.fromEntries(Object.entries(debugOverrides.value).map(([nodeId, values]) => [
+      nodeId,
+      Object.fromEntries(Object.entries(values).map(([port, value]) => [port, parseOverride(value)])),
+    ]).filter(([, values]) => Object.keys(values).length))
+    const { data } = requestedDebugState || Object.keys(parsedOverrides).length
+      ? await logicApi.runGraph(requestGraphId, { debug: requestedDebugState, input_overrides: parsedOverrides })
+      : await logicApi.runGraph(requestGraphId)
+    if (activeGraphId.value !== requestGraphId) return
     const outputs = data.outputs || {}
     const evalCount = Object.keys(outputs).length
     const diagnosticCount = Array.isArray(data.warnings) ? data.warnings.length : countGraphDiagnostics(outputs)
+    const acceptsDebugResponse = (
+      requestedDebugState &&
+      debugMode.value &&
+      debugStateGeneration === requestDebugGeneration
+    )
     showStatus(
       diagnosticCount === 0,
       diagnosticCount > 0
@@ -602,9 +716,15 @@ async function runGraph() {
       diagnosticCount > 0 ? 6000 : 3000
     )
     // Always update lastRunOutputs (needed for extractor config panels)
-    lastRunOutputs.value = outputs
-    if (debugMode.value || diagnosticCount > 0) applyDebugValues(outputs)
-    else clearDebugValues()
+    if (acceptsDebugResponse || diagnosticCount > 0) applyDebugValues(outputs, acceptsDebugResponse)
+    else {
+      lastRunOutputs.value = outputs
+      if (!debugMode.value) clearDebugValues()
+    }
+    if (acceptsDebugResponse) {
+      lastRunMetadata.value = data.debug || { timestamp: new Date().toISOString(), used_overrides: false }
+      lastRunInputs.value = data.debug?.inputs || {}
+    }
   } catch (err) {
     showStatus(false, err.response?.data?.detail ?? t('common.error'))
   }
@@ -786,6 +906,11 @@ function onDrop(event) {
 const selectedNode = ref(null)
 
 function onNodeClick({ node }) {
+  if (auth.isAdmin && debugMode.value) {
+    debugNode.value = { ...node }
+    selectedNode.value = null
+    return
+  }
   if (!auth.isAdmin) return
   selectedNode.value = { ...node }
 }
@@ -817,6 +942,8 @@ function _wsConnect() {
     _ws = new WebSocket(url, [`obs.jwt.${token}`])
   } catch { return }
 
+  _ws.onopen = () => sendDebugSubscription(activeGraphId.value, debugMode.value)
+
   _ws.onmessage = (ev) => {
     try {
       const msg = JSON.parse(ev.data)
@@ -826,6 +953,8 @@ function _wsConnect() {
         debugMode.value
       ) {
         applyDebugValues(msg.outputs || {})
+        lastRunInputs.value = msg.inputs || {}
+        lastRunMetadata.value = msg.debug || { timestamp: new Date().toISOString(), used_overrides: false }
       }
     } catch { /* ignore parse errors */ }
   }
@@ -839,21 +968,56 @@ function _wsConnect() {
   _ws.onerror = () => { try { _ws?.close() } catch { /* ignore */ } }
 }
 
+function sendDebugSubscription(graphId, enabled) {
+  if (!graphId || !_ws || typeof _ws.send !== 'function' || _ws.readyState !== WebSocket.OPEN) return
+  _ws.send(JSON.stringify({ action: 'logic_debug', graph_id: graphId, enabled }))
+}
+
 function _wsDisconnect() {
+  _wsShouldReconnect = false
   clearTimeout(_wsTimer)
   _wsTimer = null
-  try { _ws?.close() } catch { /* ignore */ }
+  const ws = _ws
   _ws = null
+  if (ws) {
+    ws.onclose = null
+    try { ws.close() } catch { /* ignore */ }
+  }
+}
+
+function _wsReconnectAfterTokenRefresh() {
+  clearTimeout(_wsTimer)
+  _wsTimer = null
+  const staleWs = _ws
+  _ws = null
+  if (staleWs) {
+    staleWs.onclose = null
+    try { staleWs.close() } catch { /* ignore */ }
+  }
+  _wsShouldReconnect = true
+  _wsConnect()
 }
 
 // ── Persist active graph selection ────────────────────────────────────────
-watch(activeGraphId, (id) => {
+watch(activeGraphId, (id, previousId) => {
+  if (previousId && id !== previousId) {
+    debugStateGeneration += 1
+    sendDebugSubscription(previousId, false)
+    debugMode.value = false
+    debugNode.value = null
+    debugOverrides.value = {}
+    lastRunOutputs.value = {}
+    lastRunInputs.value = {}
+    lastRunDebugOutputs.value = {}
+    lastRunMetadata.value = null
+  }
   if (id) localStorage.setItem('logic_active_graph', id)
   else localStorage.removeItem('logic_active_graph')
 })
 
 // ── Init ───────────────────────────────────────────────────────────────────
 onMounted(async () => {
+  window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, _wsReconnectAfterTokenRefresh)
   await store.fetchNodeTypes()
   await store.fetchGraphs()
   _wsConnect()
@@ -869,6 +1033,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   _wsDisconnect()
+  window.removeEventListener(AUTH_TOKEN_REFRESHED_EVENT, _wsReconnectAfterTokenRefresh)
   window.removeEventListener('mousemove', _onMinimapMouseMove, { capture: true })
   window.removeEventListener('mouseup',   _onMinimapMouseUp,   { capture: true })
 })
