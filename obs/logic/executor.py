@@ -13,7 +13,9 @@ import math
 import operator
 import re
 import sys
+from datetime import date as _date
 from datetime import datetime as _datetime
+from datetime import time as _time
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo as _ZoneInfo
@@ -315,12 +317,12 @@ class GraphExecutor:
 
         via_normalizing_path is True when equality was decided by a
         normalizing equivalence — boolean/int/num aliasing, or structural
-        dict/list `==` — and False when it fell through to the final
-        str(left) == str(right) comparison. That fallback can equate values
-        whose types genuinely differ (e.g. a live datetime.time vs. a
-        persisted, JSON-lossy string left over from `default=str`), so a
-        caller that wants to keep emitting one side's own representation on
-        an "equal" result needs to know whether doing so is safe.
+        dict/list `==` — and False when it fell through to the temporal
+        str()-recovery path below. That path can equate a live value with a
+        persisted, JSON-lossy string left over from `default=str` (e.g. a
+        datetime.time vs. "10:30:00"), so a caller that wants to keep
+        emitting one side's own representation on an "equal" result needs to
+        know whether doing so is safe.
         """
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
@@ -335,7 +337,17 @@ class GraphExecutor:
             return num_left == num_right, True
         if isinstance(left, (dict, list)) and isinstance(right, (dict, list)):
             return left == right, True
-        return str(left) == str(right), False
+        # A persisted datetime.date/time/datetime (e.g. a KNX DPT10/11 value)
+        # survives a restart only as its str() form (`default=str` in
+        # _persist_node_state) — recognize *that specific* recovery. A blanket
+        # str(left) == str(right) fallback would also equate a list/dict with
+        # a string that happens to match its repr (e.g. [1, 2] and "[1, 2]"),
+        # which are genuinely different values/types, not a persistence
+        # artifact, so it must not be treated as "unchanged".
+        for value, other in ((left, right), (right, left)):
+            if isinstance(value, (_date, _time)) and isinstance(other, str):
+                return str(value) == other, False
+        return left == right, True
 
     @classmethod
     def _values_equal(cls, left: Any, right: Any) -> bool:

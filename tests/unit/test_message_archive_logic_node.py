@@ -413,6 +413,42 @@ def test_generic_notification_reports_no_results_and_adapter_exception() -> None
         assert message in outputs["notify"]["__error__"]
 
 
+def test_pushover_missing_credentials_releases_held_change_filter() -> None:
+    """Regression: a change_filter held behind notify_pushover must still be
+    released when app_token/user_key are missing — that's a permanent
+    misconfiguration, not a transient failure, so the manager must mark the
+    node "resolved" even though it never actually sent, or the filter would
+    stay held forever instead of showing its real (here: first) value."""
+    manager = _make_manager()
+    flow = _flow(
+        [node("notify", "notify_pushover", {}), node("cf", "change_filter")],
+        [edge("notify", "cf", "sent", "in")],
+    )
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        outputs = _run(manager, flow, {"notify": {"trigger": True}})
+
+    assert outputs["notify"]["sent"] is False
+    assert outputs["cf"]["out"] is False
+    assert outputs["cf"]["changed"] is True
+
+
+def test_sms_missing_credentials_releases_held_change_filter() -> None:
+    """Same as the Pushover case above, for notify_sms's api_key/to check."""
+    manager = _make_manager()
+    flow = _flow(
+        [node("notify", "notify_sms", {}), node("cf", "change_filter")],
+        [edge("notify", "cf", "sent", "in")],
+    )
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        outputs = _run(manager, flow, {"notify": {"trigger": True}})
+
+    assert outputs["notify"]["sent"] is False
+    assert outputs["cf"]["out"] is False
+    assert outputs["cf"]["changed"] is True
+
+
 def test_notify_sent_output_replays_downstream_notify() -> None:
     manager = _make_manager()
     flow = _flow(

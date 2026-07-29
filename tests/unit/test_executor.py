@@ -1050,6 +1050,22 @@ class TestChangeFilterNode:
         assert out["cf"]["out"] == time(10, 30, 0)
         assert isinstance(out["cf"]["out"], time)
 
+    def test_list_is_not_equal_to_its_own_string_representation(self):
+        """Regression: a transition from a list/dict to a string that happens
+        to match its str() repr (e.g. [1, 2] -> "[1, 2]") is a genuine type
+        change, not a persisted-value recovery — it must report changed=True,
+        not be swallowed by a blanket str(left) == str(right) fallback."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": [1, 2]}})
+        out = exc.execute({"cf": {"in": "[1, 2]"}})
+        assert out["cf"]["changed"] is True
+
+        exc.execute({"cf": {"in": {"a": 1}}})
+        out = exc.execute({"cf": {"in": "{'a': 1}"}})
+        assert out["cf"]["changed"] is True
+
 
 # ===========================================================================
 # math_formula node

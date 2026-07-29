@@ -2052,105 +2052,64 @@ class LogicManager:
             except Exception:
                 logger.exception("Graph %s: heating_circuit history pre-fill failed", graph_id[:8])
 
-        # ── Change Filter: hold state while an upstream async node hasn't
-        # resolved on this pass ────────────────────────────────────────────
+        # A pre-execute snapshot is needed whenever *anything* below may need
+        # to roll a change_filter back to its state from before this pass —
+        # both the async-replay machinery further down and the change_filter
+        # correction immediately below can require it.
+        _needs_pre_execute_snapshot = needs_async_replay_snapshot or bool(unseeded_read_ids)
+
+        executor = GraphExecutor(flow, hyst, self._app_config)
+        try:
+            pre_execute_hyst = copy.deepcopy(hyst) if _needs_pre_execute_snapshot else None
+            pre_execute_node_state = copy.deepcopy(graph_state) if _needs_pre_execute_snapshot else None
+            outputs = executor.execute(aug_overrides, commit_memory=False)
+        except Exception:
+            logger.exception("Graph %s (%s) execution error", graph_id, name)
+            return {}
+
+        # ── Change Filter: correct any comparison made against an unresolved
+        # value on this real pass ─────────────────────────────────────────
         # api_client/host_check/message_archive/notify outputs are only
         # unresolved placeholders on the pass(es) where that specific node
         # instance is actually triggered — an async source that isn't
         # triggered this pass reports its genuine "not active" output (e.g.
         # host_check.reachable=False when untriggered), which is final, not a
-        # placeholder, and must NOT be held (otherwise a real change on a
-        # separate synchronous branch feeding the same downstream node, e.g.
-        # an OR gate, would be discarded in favor of the filter's old value,
-        # permanently losing that change since an inactive async source never
-        # triggers a replay to restore it). change_filter commits its
-        # comparison inline, unlike memory's deferred commit_memory_inputs —
-        # so without a guard, a placeholder input looks like a real change
-        # and can fire an unrecoverable host_check ping / WoL packet before
-        # the replay ever sees the real value.
+        # placeholder. A Read Object that has never received any value is
+        # unresolved for every pass until its own real DataValueEvent arrives.
+        # change_filter commits its comparison inline, unlike memory's
+        # deferred commit_memory_inputs — so without a correction, a
+        # placeholder/never-seeded input looks like a real change and can
+        # fire an unrecoverable host_check ping / WoL packet, or corrupt
+        # persisted state, before the real value is ever known.
         #
-        # Only bother with any of this when a change_filter is actually
-        # structurally downstream of an async source at all — the check
-        # below needs a disposable dry run of the *whole* graph to learn
-        # which async sources fire this pass, which would otherwise also
-        # double-evaluate unrelated non-idempotent nodes elsewhere in the
-        # same graph (e.g. random_value) for every graph that merely
-        # contains an api_client/host_check/message_archive/notify node,
-        # whether or not change_filter is anywhere near it.
-        _static_async_reachable: set[str] = set(async_replay_source_ids)
-        _saq: list[str] = list(_static_async_reachable)
-        while _saq:
-            _san = _saq.pop()
-            for _sae in flow.edges:
-                if _sae.source == _san and _sae.target not in _static_async_reachable:
-                    _static_async_reachable.add(_sae.target)
-                    _saq.append(_sae.target)
-        _change_filters_possibly_held = {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _static_async_reachable}
-
-        # Overrides for the initial pass only — every replay pass further
-        # below rebuilds its own overrides from `aug_overrides` (never from
-        # this dict), so the suppression flag injected here cannot leak into
-        # a replay and permanently block it from ever computing the real
-        # comparison once the async result resolves.
-        initial_pass_overrides = aug_overrides
-        if _change_filters_possibly_held:
-            # Disposable dry run — its own hyst copy, discarded afterwards —
-            # determines which async sources actually fire this pass without
-            # perturbing real state or persisting any placeholder-derived
-            # value.
-            _dry_hyst = copy.deepcopy(hyst)
-            _dry_outputs = GraphExecutor(flow, _dry_hyst, self._app_config).execute(aug_overrides, commit_memory=False)
-            _triggered_async_ids = {_nid for _nid in async_replay_source_ids if GraphExecutor._to_bool(_dry_outputs.get(_nid, {}).get("_trigger"))}
-            _async_reachable: set[str] = set(_triggered_async_ids)
-            _aq: list[str] = list(_async_reachable)
-            while _aq:
-                _an = _aq.pop()
-                for _ae in flow.edges:
-                    if _ae.source == _an and _ae.target not in _async_reachable:
-                        _async_reachable.add(_ae.target)
-                        _aq.append(_ae.target)
-            # Suppress unconditionally (whether or not the filter already
-            # holds prior state), so a new/reset filter can't adopt a
-            # placeholder as its first value either; the replay passes
-            # re-run with the real value using a pre-execute state snapshot
-            # and produce the correct pulse.
-            _held_cf_ids = _change_filters_possibly_held & _async_reachable
-            if _held_cf_ids:
-                initial_pass_overrides = {nid: dict(vals) for nid, vals in aug_overrides.items()}
-                for _cf_id in _held_cf_ids:
-                    initial_pass_overrides[_cf_id] = {**initial_pass_overrides.get(_cf_id, {}), "_suppress_change_filter": True}
-
-        # A change_filter downstream of a Read Object that has never received
-        # a value gets the same None every unrelated execution — unlike the
-        # async case there's no future "replay" that resolves it (the read
-        # only ever becomes seeded via its own real DataValueEvent, which is
-        # exactly the `overrides`-driven execution that already excludes it
-        # from unseeded_read_ids above), so this suppression is unconditional
-        # rather than dry-run-gated.
-        if unseeded_read_ids:
-            _unseeded_reachable: set[str] = set(unseeded_read_ids)
-            _urq: list[str] = list(_unseeded_reachable)
-            while _urq:
-                _urn = _urq.pop()
-                for _ure in flow.edges:
-                    if _ure.source == _urn and _ure.target not in _unseeded_reachable:
-                        _unseeded_reachable.add(_ure.target)
-                        _urq.append(_ure.target)
-            _held_cf_ids_unseeded = {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _unseeded_reachable}
-            if _held_cf_ids_unseeded:
-                if initial_pass_overrides is aug_overrides:
-                    initial_pass_overrides = {nid: dict(vals) for nid, vals in aug_overrides.items()}
-                for _cf_id in _held_cf_ids_unseeded:
-                    initial_pass_overrides[_cf_id] = {**initial_pass_overrides.get(_cf_id, {}), "_suppress_change_filter": True}
-
-        executor = GraphExecutor(flow, hyst, self._app_config)
-        try:
-            pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
-            pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
-            outputs = executor.execute(initial_pass_overrides, commit_memory=False)
-        except Exception:
-            logger.exception("Graph %s (%s) execution error", graph_id, name)
-            return {}
+        # Reachability from an unresolved source is deliberately NOT treated
+        # as tainting every transitive descendant: an "or" gate whose real,
+        # already-computed output this pass is True is safe regardless of
+        # what an unresolved input would otherwise have been (True OR
+        # anything is True), so a separate resolved branch feeding the same
+        # gate is not discarded just because another branch is still
+        # unresolved. Trigger detection reuses this real pass's own outputs
+        # instead of a separate dry run of the whole graph — a speculative
+        # extra execution could disagree with reality for non-deterministic
+        # nodes (e.g. random_value) and make the hold decision itself wrong.
+        _unresolved_source_ids: set[str] = unseeded_read_ids | {
+            _nid for _nid in async_replay_source_ids if GraphExecutor._to_bool(outputs.get(_nid, {}).get("_trigger"))
+        }
+        _cf_hold_ids: set[str] = set()
+        if _unresolved_source_ids:
+            _node_type_by_id_early = {n.id: n.type for n in flow.nodes}
+            _tainted: set[str] = set(_unresolved_source_ids)
+            _tq: list[str] = list(_tainted)
+            while _tq:
+                _tn = _tq.pop()
+                for _te in flow.edges:
+                    if _te.source != _tn or _te.target in _tainted:
+                        continue
+                    if _node_type_by_id_early.get(_te.target) == "or" and GraphExecutor._to_bool(outputs.get(_te.target, {}).get("out")):
+                        continue
+                    _tainted.add(_te.target)
+                    _tq.append(_te.target)
+            _cf_hold_ids = {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _tainted}
 
         def _apply_operating_hours_state(node_ids: set[str] | None = None, base_state: dict[str, Any] | None = None) -> None:
             target_ids = operating_hour_ids if node_ids is None else operating_hour_ids & node_ids
@@ -2175,6 +2134,36 @@ class LogicManager:
 
         # ── Update operating_hours state ─────────────────────────────────
         _apply_operating_hours_state()
+
+        if _cf_hold_ids:
+            # Roll each held filter back to its pre-pass state and recompute
+            # its whole descendant subtree from the pre-pass snapshot, so any
+            # node that already consumed this pass's (wrong) real output —
+            # e.g. a host_check whose trigger comes straight from this
+            # filter's "changed" — sees the corrected, no-op value before the
+            # host_check block below ever runs. Suppressed unconditionally
+            # (whether or not the filter already holds prior state), so a
+            # new/reset filter can't adopt an unresolved value as its first
+            # value either.
+            _cf_hold_desc: set[str] = set()
+            _cfq: list[str] = list(_cf_hold_ids)
+            while _cfq:
+                _cn = _cfq.pop()
+                for _ce in flow.edges:
+                    if _ce.source == _cn and _ce.target not in _cf_hold_desc:
+                        _cf_hold_desc.add(_ce.target)
+                        _cfq.append(_ce.target)
+            _cf_hold_overrides: dict[str, dict[str, Any]] = {nid: dict(vals) for nid, vals in aug_overrides.items()}
+            for _cf_id in _cf_hold_ids:
+                _cf_hold_overrides[_cf_id] = {**_cf_hold_overrides.get(_cf_id, {}), "_suppress_change_filter": True}
+            _cf_hold_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+            _cf_hold_outputs = GraphExecutor(flow, _cf_hold_hyst, self._app_config).execute(_cf_hold_overrides, commit_memory=False)
+            for _nid, _vals in _cf_hold_outputs.items():
+                if _nid in _cf_hold_ids or _nid in _cf_hold_desc:
+                    outputs[_nid] = _vals
+                    if _nid in _cf_hold_hyst:
+                        hyst[_nid] = _cf_hold_hyst[_nid]
+            _apply_operating_hours_state(_cf_hold_ids | _cf_hold_desc, pre_execute_node_state)
 
         # ── Cron-reachability preamble ────────────────────────────────────
         # Shared by host_check and wake_on_lan: each cron tick is treated as a
@@ -2274,12 +2263,18 @@ class LogicManager:
             host = (node.data.get("host") or "").strip()
             if not host:
                 logger.warning("host_check: host missing on node %s", node.id[:8])
+                # A misconfigured node will never succeed this tick — mark it
+                # resolved (not merely "pending") so any change_filter held
+                # behind it is released with this final (placeholder) output
+                # instead of staying stuck until a config fix retriggers it.
+                target_set.add(node.id)
                 return False
             try:
                 timeout_s, count = _normalise_host_check_ping_config(node.data.get("timeout_s"), node.data.get("count"))
                 config_sig = f"{host}\0{timeout_s:g}\0{count}"
             except Exception:
                 logger.exception("Graph %s: host_check %s failed", graph_id[:8], host)
+                target_set.add(node.id)
                 return False
             if (
                 was_triggered
@@ -2312,6 +2307,7 @@ class LogicManager:
                 return True
             except Exception:
                 logger.exception("Graph %s: host_check %s failed", graph_id[:8], host)
+                target_set.add(node.id)
                 return False
 
         # ── Handle host_check ─────────────────────────────────────────────
@@ -2447,10 +2443,16 @@ class LogicManager:
                 hyst_wol["wol_prev_trigger"] = False
                 return False
             if was_triggered and not is_cron_triggered:
+                # Dedup skip, not a failure — but the trigger IS active this
+                # tick and "sent" is settled (no new packet this time), so a
+                # change_filter held behind this node's output must still be
+                # released instead of waiting for a send that isn't coming.
+                target_set.add(node.id)
                 return False
             mac = (node.data.get("mac_address") or "").strip()
             if not mac:
                 logger.warning("wake_on_lan: mac_address missing on node %s", node.id[:8])
+                target_set.add(node.id)
                 return False
             broadcast = (node.data.get("broadcast_ip") or "").strip() or "255.255.255.255"
             _port_raw = node.data.get("port")
@@ -2474,6 +2476,7 @@ class LogicManager:
                 return True
             except Exception:
                 logger.exception("Graph %s: WoL failed on node %s", graph_id[:8], node.id[:8])
+                target_set.add(node.id)
                 return False
 
         # ── Handle wake_on_lan ────────────────────────────────────────────
@@ -2641,6 +2644,7 @@ class LogicManager:
                     variable_resolver,
                 ).strip()
                 if not url:
+                    target_set.add(node.id)
                     return False
             except _ApiClientVariableError as exc:
                 logger.warning("Graph %s: api_client variable error: %s", graph_id[:8], exc)
@@ -3464,6 +3468,7 @@ class LogicManager:
             archive_id = (node.data.get("archive_id") or "").strip().lower()
             if not archive_id:
                 logger.warning("Message archive: archive_id missing on node %s", node.id[:8])
+                target_set.add(node.id)
                 return False
 
             _raw_msg = out.get("_message")
@@ -3491,6 +3496,7 @@ class LogicManager:
                 return True
             except Exception:
                 logger.exception("Graph %s: message archive write failed (node=%s)", graph_id[:8], node.id[:8])
+                target_set.add(node.id)
                 return False
 
         triggered_notify_nodes: set[str] = set()
@@ -3506,6 +3512,7 @@ class LogicManager:
                 if not instance_id or not isinstance(providers, list) or not providers:
                     outputs[node.id]["__error__"] = "MESSAGE adapter and at least one target are required"
                     logger.warning("Notification: adapter or targets missing on node %s", node.id[:8])
+                    target_set.add(node.id)
                     return False
                 from obs.adapters import registry as adapter_registry
 
@@ -3513,6 +3520,7 @@ class LogicManager:
                 if adapter is None or getattr(adapter, "adapter_type", None) != "MESSAGE":
                     outputs[node.id]["__error__"] = "MESSAGE adapter instance is unavailable"
                     logger.warning("Notification: MESSAGE adapter %s unavailable", instance_id)
+                    target_set.add(node.id)
                     return False
                 raw_message = out.get("_message")
                 message = _msg_to_str(raw_message) if raw_message is not None else str(node.data.get("message") or "")
@@ -3534,6 +3542,7 @@ class LogicManager:
                         detail = ", ".join(f"{result.provider}/{result.target}: {result.detail}" for result in failures)
                         outputs[node.id]["__error__"] = detail or "MESSAGE adapter did not process any targets"
                         logger.warning("Graph %s: notification failed: %s", graph_id[:8], outputs[node.id]["__error__"])
+                        target_set.add(node.id)
                         return False
                     outputs[node.id]["sent"] = True
                     target_set.add(node.id)
@@ -3541,6 +3550,7 @@ class LogicManager:
                 except Exception as exc:
                     outputs[node.id]["__error__"] = str(exc)
                     logger.exception("Graph %s: notification failed", graph_id[:8])
+                    target_set.add(node.id)
                     return False
 
             if node.type == "notify_pushover":
@@ -3548,6 +3558,7 @@ class LogicManager:
                 user_key = (node.data.get("user_key") or "").strip()
                 if not app_token or not user_key:
                     logger.warning("Pushover: app_token or user_key missing on node %s", node.id[:8])
+                    target_set.add(node.id)
                     return False
                 _raw_msg = out.get("_message")
                 msg = _msg_to_str(_raw_msg) if _raw_msg is not None else str(node.data.get("message") or "")
@@ -3632,6 +3643,7 @@ class LogicManager:
                         graph_id[:8],
                         msg[:40],
                     )
+                    target_set.add(node.id)
                     return False
 
             if node.type == "notify_sms":
@@ -3639,6 +3651,7 @@ class LogicManager:
                 to = (node.data.get("to") or "").strip()
                 if not api_key or not to:
                     logger.warning("seven.io SMS: api_key or to missing on node %s", node.id[:8])
+                    target_set.add(node.id)
                     return False
                 _raw_msg = out.get("_message")
                 msg = _msg_to_str(_raw_msg) if _raw_msg is not None else str(node.data.get("message") or "")
@@ -3694,6 +3707,7 @@ class LogicManager:
                         graph_id[:8],
                         msg[:40],
                     )
+                    target_set.add(node.id)
                     return False
 
             return False

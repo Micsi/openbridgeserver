@@ -475,6 +475,96 @@ class TestHostCheckRisingEdge:
         assert outputs["ac"]["response"] == "OK"
         mock_ping.assert_not_awaited()
 
+    def test_change_filter_is_not_held_when_or_gate_is_already_true_despite_an_unresolved_async_branch(self):
+        """Regression: an OR gate combining an api_client output with a
+        separate, already-True branch must not have its already-True result
+        held back just because api_client is genuinely triggered (and
+        therefore unresolved-until-replay) this pass — OR's True output is
+        final regardless of what api_client's real response turns out to be,
+        so a real change coming through the OTHER branch must not be
+        silently discarded in favor of the filter's old value."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("live", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("or_gate", "or", {"input_count": 2}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "or_gate", "success", "in1"),
+                edge("live", "or_gate", "value", "in2"),
+                edge("or_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-or-async"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        assert outputs["cf"]["out"] is True
+        assert outputs["cf"]["changed"] is True
+
+    def test_change_filter_presence_does_not_add_an_extra_full_graph_evaluation_when_async_source_is_inactive(self):
+        """Regression: determining whether an async source is triggered this
+        pass used to require a disposable "dry run" of the *whole* graph
+        whenever a change_filter was merely reachable from an async source
+        at all — regardless of whether that source ever actually triggers.
+        For a graph that also contains a non-deterministic node
+        (random_value) elsewhere, that meant an extra evaluation purely
+        because a change_filter happened to be nearby, and the dry run's own
+        random draw could disagree with the real pass's, making the hold
+        decision itself unreliable. With api_client never triggered here,
+        there is nothing to hold or replay, so adding an unrelated
+        change_filter downstream of it must not change how many times
+        random.randint is called."""
+
+        def _make_flow(with_change_filter):
+            nodes = [
+                node("cv", "const_value", {"value": "false", "data_type": "bool"}),  # api_client never triggers
+                node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+                node("rand_trigger", "const_value", {"value": "true", "data_type": "bool"}),
+                node("rand", "random_value", {"data_type": "int", "min": 1, "max": 100}),
+            ]
+            edges = [
+                edge("cv", "ac", "value", "trigger"),
+                edge("rand_trigger", "rand", "value", "trigger"),
+            ]
+            if with_change_filter:
+                nodes.append(node("cf", "change_filter"))
+                edges.append(edge("ac", "cf", "success", "in"))
+            return _flow(nodes, edges)
+
+        def _run(with_change_filter):
+            manager = _make_manager()
+            flow = _make_flow(with_change_filter)
+            graph_id = "g"
+            manager._graphs[graph_id] = ("test", True, flow)
+            manager._node_state[graph_id] = {}
+            mock_client_cls = _patch_api_success()
+            try:
+                with (
+                    patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                    patch("random.randint", return_value=42) as mock_rand,
+                ):
+                    asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            finally:
+                mock_client_cls.stop()
+            return mock_rand.call_count
+
+        baseline_count = _run(with_change_filter=False)
+        with_cf_count = _run(with_change_filter=True)
+        assert with_cf_count == baseline_count
+
     def test_change_filter_pulse_via_data_port_does_not_bypass_dedup(self):
         """Regression: change_filter.changed feeding a pure data port (e.g.
         api_client.body) must not exempt whatever that node's own, separately
@@ -577,6 +667,69 @@ class TestHostCheckRisingEdge:
             outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"other_read": {"value": 1, "changed": True}}))
 
         assert outputs["cf"]["changed"] is False
+
+    def test_change_filter_is_not_held_when_or_gate_is_already_true_from_a_seeded_branch(self):
+        """Regression: an OR gate combining an unseeded Read Object with a
+        separate, seeded/live branch must not have its already-True output
+        discarded just because the filter is structurally reachable from the
+        unseeded branch too — OR's True result is final regardless of what
+        the unseeded read eventually becomes, so a real change coming
+        through the OTHER branch must not be silently lost."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("live_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("or_gate", "or", {"input_count": 2}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "or_gate", "value", "in1"),
+                edge("live_read", "or_gate", "value", "in2"),
+                edge("or_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()  # registry.get_value defaults to None (unseeded_read stays unseeded)
+        graph_id = "g-cf-or-unseeded"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"live_read": {"value": True, "changed": True}}))
+
+        assert outputs["cf"]["out"] is True
+        assert outputs["cf"]["changed"] is True
+
+    def test_change_filter_stays_held_when_or_gate_is_false_from_an_unseeded_branch(self):
+        """The OR-short-circuit exception only applies when the gate's real
+        output this pass is already True; when it's False (every input,
+        resolved or not, is currently false), the result could still flip
+        once the unseeded branch is populated, so the filter must stay held
+        rather than adopting this pass's not-yet-final False as confirmed."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("live_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("or_gate", "or", {"input_count": 2}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "or_gate", "value", "in1"),
+                edge("live_read", "or_gate", "value", "in2"),
+                edge("or_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-or-false-unseeded"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"live_read": {"value": False, "changed": True}}))
+
+        assert outputs["cf"]["changed"] is False
+        assert outputs["cf"]["out"] is None
 
     def test_change_filter_holds_behind_unresolved_wake_on_lan(self):
         """Regression: wake_on_lan.sent is a placeholder-then-replayed
@@ -903,6 +1056,56 @@ class TestHostCheckRisingEdge:
             patcher.stop()
 
         assert mock_ping.await_count == 3
+
+    def test_change_filter_state_is_released_when_host_check_ping_raises(self):
+        """Regression: a change_filter held behind a host_check must still be
+        released with the ping's final (failure) output, not stay stuck
+        showing the last successful value forever — several handlers used to
+        only schedule the descendant replay that releases held filters on
+        success, so an exception (or a config/validation failure) left the
+        held filter permanently stale."""
+
+        def _make_flow(host):
+            nodes = [
+                node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+                node("hc", "host_check", {"host": host, "timeout_s": 1, "count": 1}),
+                node("cf", "change_filter"),
+            ]
+            return _flow(
+                nodes,
+                [
+                    edge("cv", "hc", "value", "trigger"),
+                    edge("hc", "cf", "reachable", "in"),
+                ],
+            )
+
+        manager = _make_manager()
+        graph_id = "g-cf-hc-fail"
+        flow1 = _make_flow("192.168.1.1")
+        manager._graphs[graph_id] = ("test", True, flow1)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)),
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow1, {}))
+        assert outputs["cf"]["out"] is True
+        assert outputs["cf"]["changed"] is True
+
+        # A different host changes host_check's config signature, forcing a
+        # fresh ping attempt instead of the rising-edge dedup reusing the
+        # cached (successful) result from the first execution.
+        flow2 = _make_flow("192.168.1.2")
+        manager._graphs[graph_id] = ("test", True, flow2)
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, side_effect=OSError("unreachable")),
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow2, {}))
+
+        assert outputs["cf"]["out"] is False
+        assert outputs["cf"]["changed"] is True
 
 
 # ===========================================================================
