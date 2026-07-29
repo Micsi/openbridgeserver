@@ -95,10 +95,24 @@ class GraphExecutor:
         *,
         commit_memory: bool = True,
         capture_incoming_overrides: dict[str, dict[str, Any]] | None = None,
+        known_outputs: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Run the graph. Returns output values for every node."""
+        """Run the graph. Returns output values for every node.
+
+        `known_outputs` lets a caller replay only a subset of the graph: any
+        node.id present there is not re-evaluated at all — its provided
+        output is used as-is and downstream nodes read it like any other via
+        the normal edge map. This is for replaying a specific node/descendant
+        island with a fresh hyst snapshot (e.g. to correct a held
+        change_filter) without re-invoking nodes outside that island a
+        second time — a non-deterministic producer (random_value) or a
+        real-world side effect (api_client, host_check, …) elsewhere in the
+        graph must not run twice just because the replay re-executes the
+        whole topological order.
+        """
         input_overrides = input_overrides or {}
         capture_incoming_overrides = capture_incoming_overrides or {}
+        known_outputs = known_outputs or {}
 
         # Build adjacency: edge target_node.handle ← source_node.handle value
         # edge_map[target_node_id][target_handle] = (source_node_id, source_handle)
@@ -113,6 +127,10 @@ class GraphExecutor:
         outputs: dict[str, dict[str, Any]] = {}
 
         for node in topo.order:
+            if node.id in known_outputs:
+                outputs[node.id] = known_outputs[node.id]
+                continue
+
             # Resolve inputs for this node
             inputs: dict[str, Any] = {}
             for handle, (src_id, src_handle) in edge_map.get(node.id, {}).items():

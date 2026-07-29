@@ -1842,11 +1842,13 @@ class LogicManager:
             candidate: dict[str, dict[str, Any]],
             *,
             commit_memory: bool = False,
+            known_outputs: dict[str, dict[str, Any]] | None = None,
         ) -> dict[str, dict[str, Any]]:
             return executor.execute(
                 _debug_run_overrides(candidate),
                 commit_memory=commit_memory,
                 capture_incoming_overrides=candidate,
+                known_outputs=known_outputs,
             )
 
         def _executor(state: dict[str, Any]) -> GraphExecutor:
@@ -2166,29 +2168,61 @@ class LogicManager:
         # persisted state, before the real value is ever known.
         #
         # Reachability from an unresolved source is deliberately NOT treated
-        # as tainting every transitive descendant: an "or" gate whose real,
-        # already-computed output this pass is True is safe regardless of
-        # what an unresolved input would otherwise have been (True OR
-        # anything is True), so a separate resolved branch feeding the same
-        # gate is not discarded just because another branch is still
-        # unresolved. Trigger detection reuses this real pass's own outputs
-        # instead of a separate dry run of the whole graph — a speculative
-        # extra execution could disagree with reality for non-deterministic
-        # nodes (e.g. random_value) and make the hold decision itself wrong.
+        # as tainting every transitive descendant: an "or"/"and" gate is safe
+        # to leave untainted when a *resolved* (non-tainted) input alone
+        # already guarantees its output — an OR with any resolved input True,
+        # or an AND with any resolved input False — regardless of what an
+        # unresolved input would otherwise have been. A separate resolved
+        # branch feeding the same gate is therefore not discarded just
+        # because another branch is still unresolved. Checking the gate's
+        # own already-computed `out` value is not enough: if the *tainted*
+        # input is the one currently making an OR true (e.g. an unseeded
+        # Read Object through a NOT feeding an otherwise-unwired OR), that
+        # true is exactly the placeholder this correction exists to catch,
+        # not an independent guarantee — so each resolved input is checked
+        # individually instead. Trigger detection reuses this real pass's own
+        # outputs instead of a separate dry run of the whole graph — a
+        # speculative extra execution could disagree with reality for
+        # non-deterministic nodes (e.g. random_value) and make the hold
+        # decision itself wrong.
         _unresolved_source_ids: set[str] = unseeded_read_ids | {
             _nid for _nid in async_replay_source_ids if GraphExecutor._to_bool(outputs.get(_nid, {}).get("_trigger"))
         }
         _cf_hold_ids: set[str] = set()
         if _unresolved_source_ids:
-            _node_type_by_id_early = {n.id: n.type for n in flow.nodes}
+            _node_by_id_early = {n.id: n for n in flow.nodes}
+            _decisive_gate_value = {"or": True, "and": False}
             _tainted: set[str] = set(_unresolved_source_ids)
+
+            def _gate_taint_absorbed(gate_id: str, gate_type: str) -> bool:
+                decisive = _decisive_gate_value[gate_type]
+                gate_node = _node_by_id_early[gate_id]
+                gdata = gate_node.data or {}
+                count = max(2, min(30, int(gdata.get("input_count", 2))))
+                for i in range(1, count + 1):
+                    handle = f"in{i}"
+                    src_edge = next(
+                        (e for e in flow.edges if e.target == gate_id and (e.targetHandle or "in") == handle),
+                        None,
+                    )
+                    if src_edge is None or src_edge.source in _tainted:
+                        continue
+                    v = GraphExecutor._to_bool(GraphExecutor._get_output_value(outputs.get(src_edge.source, {}), src_edge.sourceHandle or "out"))
+                    if gdata.get(f"negate_{handle}"):
+                        v = not v
+                    if v == decisive:
+                        return True
+                return False
+
             _tq: list[str] = list(_tainted)
             while _tq:
                 _tn = _tq.pop()
                 for _te in flow.edges:
                     if _te.source != _tn or _te.target in _tainted:
                         continue
-                    if _node_type_by_id_early.get(_te.target) == "or" and GraphExecutor._to_bool(outputs.get(_te.target, {}).get("out")):
+                    _target_node = _node_by_id_early.get(_te.target)
+                    _target_type = _target_node.type if _target_node is not None else None
+                    if _target_type in _decisive_gate_value and _gate_taint_absorbed(_te.target, _target_type):
                         continue
                     _tainted.add(_te.target)
                     _tq.append(_te.target)
@@ -2236,11 +2270,22 @@ class LogicManager:
                     if _ce.source == _cn and _ce.target not in _cf_hold_desc:
                         _cf_hold_desc.add(_ce.target)
                         _cfq.append(_ce.target)
+            _cf_hold_island = _cf_hold_ids | _cf_hold_desc
             _cf_hold_overrides: dict[str, dict[str, Any]] = {nid: dict(vals) for nid, vals in aug_overrides.items()}
             for _cf_id in _cf_hold_ids:
                 _cf_hold_overrides[_cf_id] = {**_cf_hold_overrides.get(_cf_id, {}), "_suppress_change_filter": True}
+            # Everything outside the held/descendant island reuses this
+            # pass's already-computed real output instead of being
+            # re-evaluated by the replay — the replay executor otherwise
+            # runs the whole topological order internally regardless of
+            # overrides, so without this an unrelated non-deterministic
+            # producer (e.g. random_value) that also happens to feed a
+            # descendant would be sampled a second time, and that second,
+            # different draw — not the real pass's — could reach a Host
+            # Check, notification, or Wake-on-LAN.
+            _cf_hold_known_outputs = {nid: vals for nid, vals in outputs.items() if nid not in _cf_hold_island}
             _cf_hold_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            _cf_hold_outputs = _execute_pass(_executor(_cf_hold_hyst), _cf_hold_overrides)
+            _cf_hold_outputs = _execute_pass(_executor(_cf_hold_hyst), _cf_hold_overrides, known_outputs=_cf_hold_known_outputs)
             for _nid, _vals in _cf_hold_outputs.items():
                 if _nid in _cf_hold_ids or _nid in _cf_hold_desc:
                     outputs[_nid] = _vals

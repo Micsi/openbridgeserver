@@ -780,6 +780,152 @@ class TestHostCheckRisingEdge:
         assert outputs["cf"]["changed"] is False
         assert outputs["cf"]["out"] is None
 
+    def test_change_filter_stays_held_when_or_true_comes_only_from_the_unseeded_branch(self):
+        """Regression: checking only the gate's own `out` value is not
+        enough — if the *tainted* input is the one currently making an OR
+        true (here via an unseeded Read Object through a NOT, with nothing
+        else wired), that true is exactly the placeholder this correction
+        exists to catch, not an independent guarantee from a resolved
+        input, so the filter must stay held."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("not_gate", "not"),
+            node("or_gate", "or", {"input_count": 2}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "not_gate", "value", "in1"),
+                edge("not_gate", "or_gate", "out", "in1"),
+                edge("or_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-or-not-unseeded"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["cf"]["changed"] is False
+        assert outputs["cf"]["out"] is None
+
+    def test_change_filter_is_released_when_and_gate_is_deterministically_false(self):
+        """Regression: a resolved False input to an AND gate fixes its
+        output at False regardless of what an unseeded second input
+        eventually becomes — the filter must report that definite
+        transition instead of staying held (and stuck on its old, stale
+        value) forever just because the AND is reachable from an unseeded
+        Read Object too."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("live_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("and_gate", "and", {"input_count": 2}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "and_gate", "value", "in1"),
+                edge("live_read", "and_gate", "value", "in2"),
+                edge("and_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-and-unseeded"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"live_read": {"value": False, "changed": True}}))
+
+        assert outputs["cf"]["out"] is False
+        assert outputs["cf"]["changed"] is True
+
+    def test_change_filter_is_released_when_and_gate_is_false_via_a_negated_resolved_input(self):
+        """Regression: a resolved input's per-input negation (negate_inN)
+        must be applied before checking whether it independently decides
+        the gate result — a True input with negate_in2 set is effectively
+        False, which still fixes an AND at False regardless of an unseeded
+        sibling input."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("live_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("and_gate", "and", {"input_count": 2, "negate_in2": True}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "and_gate", "value", "in1"),
+                edge("live_read", "and_gate", "value", "in2"),
+                edge("and_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-and-negated"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"live_read": {"value": True, "changed": True}}))
+
+        assert outputs["cf"]["out"] is False
+        assert outputs["cf"]["changed"] is True
+
+    def test_correction_replay_reuses_first_pass_value_instead_of_resampling_random_value(self):
+        """Regression: the correction replay for a held change_filter used to
+        re-execute the *whole* graph and copy back every descendant's new
+        output — for a descendant that also consumes an independent
+        random_value branch, that meant sampling it a second time and a
+        downstream Host Check could fire based on that second, different
+        draw instead of the real pass's. Inputs crossing into the held
+        filter's descendant island from outside it must reuse this pass's
+        already-computed value instead."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("cf", "change_filter"),
+            node("rand_trigger", "const_value", {"value": "true", "data_type": "bool"}),
+            node("rand", "random_value", {"data_type": "int", "min": 1, "max": 100}),
+            node("compare", "compare", {"operator": ">", "operand": "50"}),
+            node("or_gate", "or", {"input_count": 2}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "cf", "value", "in"),
+                edge("rand_trigger", "rand", "value", "trigger"),
+                edge("rand", "compare", "value", "in1"),
+                edge("cf", "or_gate", "changed", "in1"),
+                edge("compare", "or_gate", "out", "in2"),
+                edge("or_gate", "hc", "out", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-no-resample"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            patch("random.randint", side_effect=[10, 90]) as mock_rand,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert mock_rand.call_count == 1
+        # The (only) random draw was 10 (<= 50), so compare(">50") is False;
+        # cf is held (suppressed) since its own input is unseeded, so the OR
+        # gate must see (False, False) => False and host_check must never
+        # ping. If the second, "90" draw leaked in instead, compare would be
+        # True and the OR would fire the ping.
+        mock_ping.assert_not_awaited()
+
     def test_change_filter_holds_behind_unresolved_wake_on_lan(self):
         """Regression: wake_on_lan.sent is a placeholder-then-replayed
         output just like api_client/host_check, but async_replay_source_ids
