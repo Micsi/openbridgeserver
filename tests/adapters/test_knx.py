@@ -913,11 +913,16 @@ class TestOnBindingsReloaded:
         assert "1/2/3" in adapter._ga_source_map
 
     @pytest.mark.asyncio
-    async def test_reload_clears_confirmation_state(self, mock_bus):
+    async def test_reload_preserves_confirmation_state_for_unchanged_binding(self, mock_bus):
         binding = make_binding({"group_address": "1/2/3", "dpt_id": "DPT9.001"}, direction="BOTH")
-        adapter = self._make_adapter(mock_bus, [binding])
+        replacement = make_binding({"group_address": "1/2/3", "dpt_id": "DPT9.001"}, direction="BOTH")
+        replacement.id = binding.id
+        replacement.datapoint_id = binding.datapoint_id
+        replacement.enabled = binding.enabled
+        adapter = self._make_adapter(mock_bus, [replacement])
+        signature = adapter._confirmation_binding_signature(binding)
         adapter._recent_writes[(str(binding.id), "1/2/3")] = deque(
-            [(100.0, b"\x01", True, False)],
+            [(100.0, b"\x01", True, False, signature)],
         )
         adapter._pending_transmissions[123] = (
             binding,
@@ -926,7 +931,31 @@ class TestOnBindingsReloaded:
             b"\x01",
             True,
             False,
+            signature,
         )
+
+        await adapter._on_bindings_reloaded()
+
+        assert len(adapter._recent_writes[(str(binding.id), "1/2/3")]) == 1
+        assert 123 in adapter._pending_transmissions
+        assert adapter._pending_transmissions[123][0] is replacement
+
+    @pytest.mark.asyncio
+    async def test_reload_drops_confirmation_state_for_changed_binding(self, mock_bus):
+        binding = make_binding({"group_address": "1/2/3", "dpt_id": "DPT9.001"}, direction="BOTH")
+        adapter = self._make_adapter(mock_bus, [binding])
+        adapter._remember_outbound_write(binding, "1/2/3", b"\x01", True)
+        signature = adapter._confirmation_binding_signature(binding)
+        adapter._pending_transmissions[123] = (
+            binding,
+            "1/2/3",
+            None,
+            b"\x01",
+            True,
+            False,
+            signature,
+        )
+        binding.config = {"group_address": "1/2/4", "dpt_id": "DPT9.001"}
 
         await adapter._on_bindings_reloaded()
 
@@ -1357,7 +1386,7 @@ class TestKnxReadWrite:
         assert logical_value == 55.0
         assert suppress_actions is False
         remaining = adapter._recent_writes[(str(binding.id), "1/2/4")]
-        assert [(raw, value) for _, raw, value, _ in remaining] == [
+        assert [(raw, value) for _, raw, value, _, _ in remaining] == [
             (raw_six, 60.0),
             (raw_five, 55.0),
         ]
@@ -1555,16 +1584,22 @@ class TestKnxReadWrite:
         from unittest.mock import AsyncMock, patch
 
         adapter, _ = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT1.001"},
+            direction="BOTH",
+        )
+        signature = adapter._confirmation_binding_signature(binding)
         adapter._recent_writes[("binding", "1/2/3")] = deque(
-            [(100.0, b"\x01", True, False)],
+            [(100.0, b"\x01", True, False, signature)],
         )
         adapter._pending_transmissions[123] = (
-            object(),
+            binding,
             "1/2/3",
             None,
             b"\x01",
             True,
             False,
+            signature,
         )
         adapter._monotonic = lambda: 131.0
 
@@ -1841,6 +1876,34 @@ class TestHandleReadRequest:
         from xknx.telegram.apci import GroupValueResponse
 
         assert isinstance(telegram.payload, GroupValueResponse)
+
+    @pytest.mark.asyncio
+    async def test_local_read_response_does_not_reenter_as_inbound_value(self, mock_bus):
+        from unittest.mock import MagicMock
+
+        adapter, mock_xknx = self._make_adapter(mock_bus)
+        dpt = DPTRegistry.get("DPT9.001")
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "dpt_id": "DPT9.001",
+                "respond_to_read": True,
+            },
+            direction="SOURCE",
+            value_formula="x * 0.1",
+        )
+        adapter._ga_respond_map["1/2/3"] = [(binding, dpt)]
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+        state = MagicMock(quality="good", value=50.0)
+        adapter.set_value_getter(lambda _: state)
+
+        await adapter._handle_read_request("1/2/3")
+        response = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(response)
+        await adapter._on_telegram(response)
+
+        mock_bus.publish.assert_not_awaited()
+        assert adapter._local_read_responses == {}
 
     @pytest.mark.asyncio
     async def test_good_boolean_value_sends_dpt_binary_response(self, mock_bus):
