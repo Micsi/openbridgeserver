@@ -3723,6 +3723,34 @@ class TestLogicManagerBasics:
         assert mgr._hysteresis["g1"]["cf"] == {"value": "10:30:00", "_recovered_str": True}
 
     @pytest.mark.asyncio
+    async def test_persist_then_load_escapes_application_dict_colliding_with_type_tag(self):
+        """Regression: a change_filter can hold an arbitrary JSON object
+        (e.g. an api_client/json_extractor result) that — by pure
+        coincidence or malicious input — already looks exactly like a
+        generated type-tag envelope, such as
+        {"__obs_persisted_type__": "date", "value": "2026-01-01"}. Without
+        escaping this at persist time, _decode_persisted_value would
+        misinterpret it as a real datetime.date on the next load and
+        silently replace the application's actual dict value, corrupting
+        it and causing every subsequent identical input to look like a
+        genuine change."""
+        colliding_value = {"__obs_persisted_type__": "date", "value": "2026-01-01"}
+        flow = _make_flow(nodes=[{"id": "cf", "type": "change_filter", "position": {"x": 0, "y": 0}, "data": {}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr._hysteresis["g1"] = {"cf": {"value": colliding_value}}
+
+        await mgr._persist_node_state("g1")
+        saved_json = db.execute_and_commit.await_args.args[1][0]
+
+        mgr2, db2, _, _ = _make_logic_manager()
+        db2.fetchall = AsyncMock(return_value=[_row(id="g1", name="G1", enabled=1, flow_data=flow.model_dump_json(), node_state=saved_json)])
+        await mgr2._load_graphs()
+
+        restored = mgr2._hysteresis["g1"]["cf"]["value"]
+        assert restored == colliding_value
+        assert isinstance(restored, dict)
+
+    @pytest.mark.asyncio
     async def test_persist_then_load_restores_change_filter_bytes_value_exactly(self):
         """Same round-trip as the temporal case above, for a change_filter
         holding raw bytes (e.g. a DataPoint of the UNKNOWN/fallback type).

@@ -643,7 +643,7 @@ async def test_hysteresis_state_on_seeded_path_is_committed():
     assert len(persist_calls) == 1
     import json
 
-    assert json.loads(persist_calls[0].args[1][0])["h1"] is True
+    assert json.loads(persist_calls[0].args[1][0])["state"]["h1"] is True
     assert persist_calls[0].args[1][1] == "g1"
 
 
@@ -679,7 +679,7 @@ async def test_change_filter_state_on_seeded_path_is_committed():
     assert len(persist_calls) == 1
     import json
 
-    assert json.loads(persist_calls[0].args[1][0])["cf1"] == {"value": 50}
+    assert json.loads(persist_calls[0].args[1][0])["state"]["cf1"] == {"value": 50}
     assert persist_calls[0].args[1][1] == "g1"
 
 
@@ -740,7 +740,7 @@ async def test_persist_node_state_excludes_persist_state_false_nodes():
 
     mgr._db.execute_and_commit.assert_awaited_once()
     saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
-    assert saved == {"h1": True}
+    assert saved["state"] == {"h1": True}
 
 
 @pytest.mark.asyncio
@@ -753,7 +753,7 @@ async def test_persist_node_state_without_graph_entry_saves_everything():
     await mgr._persist_node_state("g1")
 
     saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
-    assert saved == {"h1": False}
+    assert saved["state"] == {"h1": False}
 
 
 @pytest.mark.asyncio
@@ -791,7 +791,8 @@ async def test_persist_node_state_serializes_non_json_native_values():
     await mgr._persist_node_state("g1")
 
     saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
-    assert saved == {"cf": {"value": {"__obs_persisted_type__": "time", "value": "14:30:00"}}, "other": {"value": 1}}
+    assert saved["__obs_node_state_version__"] == 2
+    assert saved["state"] == {"cf": {"value": {"__obs_persisted_type__": "time", "value": "14:30:00"}}, "other": {"value": 1}}
 
 
 class TestPersistDefaultAndDecode:
@@ -839,6 +840,22 @@ class TestPersistDefaultAndDecode:
         from obs.logic.manager import _decode_persisted_value
 
         malformed = {"__obs_persisted_type__": "time", "value": "not-a-time"}
+        assert _decode_persisted_value(malformed) is malformed
+
+    def test_escape_persist_collision_wraps_a_colliding_dict(self):
+        from obs.logic.manager import _escape_persist_collision
+
+        colliding = {"__obs_persisted_type__": "date", "value": "2026-01-01"}
+        assert _escape_persist_collision(colliding) == {"__obs_persisted_type__": "escaped", "value": colliding}
+
+    def test_decode_persisted_value_keeps_malformed_tagged_escape_as_is(self):
+        """An "escaped" tag whose "value" isn't a dict can only come from a
+        corrupted/hand-edited row — _escape_persist_collision itself never
+        produces that shape. Must not crash; return the tagged dict as-is,
+        matching the bytes/isoformat malformed-tag recovery above."""
+        from obs.logic.manager import _decode_persisted_value
+
+        malformed = {"__obs_persisted_type__": "escaped", "value": "not-a-dict"}
         assert _decode_persisted_value(malformed) is malformed
 
 

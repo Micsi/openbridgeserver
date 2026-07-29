@@ -140,6 +140,21 @@ _PERSIST_ISOFORMAT_TYPES: dict[str, Callable[[str], Any]] = {
     "date": date.fromisoformat,
     "time": time.fromisoformat,
 }
+# A dict a stateful node holds natively (e.g. a json_extractor/api_client
+# result cached by a memory node) could, in principle, itself already
+# contain the reserved _PERSIST_TYPE_TAG key — _escape_persist_collision
+# wraps any such dict in an "escaped" envelope *before* json.dumps runs, so
+# _decode_persisted_value can always tell a generated type tag apart from
+# arbitrary application data, however deeply nested.
+_PERSIST_ESCAPED_TAG = "escaped"
+
+# Bumped whenever the node_state envelope/tagging format changes. Only a
+# row saved *under* this exact version is guaranteed to have every
+# non-JSON-native value fully tagged — only then can _load_graphs skip the
+# legacy "_recovered_str" heuristic entirely (see there for why applying it
+# to a value this format already round-trips exactly would be wrong).
+_PERSIST_STATE_VERSION = 2
+_PERSIST_STATE_VERSION_KEY = "__obs_node_state_version__"
 
 
 def _persist_default(v: Any) -> Any:
@@ -155,8 +170,26 @@ def _persist_default(v: Any) -> Any:
     return str(v)
 
 
+def _escape_persist_collision(v: Any) -> Any:
+    """Walk state_to_save before json.dumps, escaping any dict that already
+    happens to contain _PERSIST_TYPE_TAG so it can never be confused with a
+    tag _persist_default generated. Recurses first (children are escaped
+    before their parent is checked), so a collision at any nesting depth —
+    including one manufactured by a previous escape wrapper — is caught.
+    """
+    if isinstance(v, dict):
+        escaped = {k: _escape_persist_collision(val) for k, val in v.items()}
+        if _PERSIST_TYPE_TAG in escaped:
+            return {_PERSIST_TYPE_TAG: _PERSIST_ESCAPED_TAG, "value": escaped}
+        return escaped
+    if isinstance(v, list):
+        return [_escape_persist_collision(item) for item in v]
+    return v
+
+
 def _decode_persisted_value(v: Any) -> Any:
-    """Reverse of `_persist_default`, applied recursively after json.loads.
+    """Reverse of `_persist_default`/`_escape_persist_collision`, applied
+    recursively after json.loads.
 
     A dict lacking the tag is application state (e.g. change_filter's own
     `{"value": ...}` wrapper) and is walked, not replaced. Untagged strings
@@ -167,6 +200,23 @@ def _decode_persisted_value(v: Any) -> Any:
     """
     if isinstance(v, dict):
         tag = v.get(_PERSIST_TYPE_TAG)
+        if tag == _PERSIST_ESCAPED_TAG:
+            # Unwrap one escape layer *without* re-examining the inner
+            # dict's own top-level tag membership — it still literally
+            # carries the original application key that triggered the
+            # escape (e.g. its own _PERSIST_TYPE_TAG entry), which must be
+            # returned verbatim, not decoded as a real tag. Each of its
+            # values is still walked recursively, since _escape_persist_
+            # collision already escaped any collision nested deeper inside
+            # them before this wrapper was added. _escape_persist_collision
+            # only ever wraps a dict this way (never a list), so "value" is
+            # always a dict here unless the row is malformed (e.g.
+            # hand-edited) — in that case, return the tagged dict unchanged
+            # rather than crashing, matching the bytes/isoformat branches.
+            inner = v.get("value")
+            if isinstance(inner, dict):
+                return {k: _decode_persisted_value(val) for k, val in inner.items()}
+            return v
         if tag == "bytes":
             try:
                 return bytes.fromhex(v.get("value", ""))
@@ -2365,20 +2415,26 @@ class LogicManager:
 
         def _edge_carries_pulse(edge: Any) -> bool:
             # A pulse only continues through an edge if its target either has
-            # no dedicated "trigger" input at all (a pure logic/relay node —
-            # NOT/AND/OR/Decision/etc. — where any input legitimately means
-            # the computed output is pulse-derived, however many hops deep),
-            # or the edge specifically targets that trigger port. This stops
-            # a pulse from leaking through a data port into an action node
-            # (api_client/host_check/notify_*/message_archive/wake_on_lan)
-            # whose own separate trigger is unrelated and sustained — e.g.
+            # no dedicated trigger-typed input at all (a pure logic/relay
+            # node — NOT/AND/OR/Decision/etc. — where any input legitimately
+            # means the computed output is pulse-derived, however many hops
+            # deep), or the edge specifically targets one of those
+            # trigger-typed ports. Matched by the port's declared type, not
+            # by hard-coding the id "trigger" — some nodes (e.g.
+            # operating_hours' "active"/"reset") have multiple trigger-typed
+            # inputs under other names. This stops a pulse from leaking
+            # through a data port into an action node (api_client/
+            # host_check/notify_*/message_archive/wake_on_lan) whose own
+            # separate trigger is unrelated and sustained — e.g.
             # change_filter.changed → api_client.body must not exempt
             # whatever api_client.success drives from rising-edge dedup.
             target_type = get_node_type(_node_type_by_id.get(edge.target))
-            has_trigger_input = bool(target_type) and any(p.type == "trigger" for p in target_type.inputs)
-            if not has_trigger_input:
+            if not target_type:
                 return True
-            return (edge.targetHandle or "in") == "trigger"
+            trigger_port_ids = {p.id for p in target_type.inputs if p.type == "trigger"}
+            if not trigger_port_ids:
+                return True
+            return (edge.targetHandle or "in") in trigger_port_ids
 
         cron_node_ids = {n.id for n in flow.nodes if n.type == "timer_cron"}
         # A change_filter's "changed" pulse is a discrete edge just like a
@@ -2706,16 +2762,21 @@ class LogicManager:
                     wol_merged.setdefault(nid, {}).update(vals)
                 for nid, vals in wol_downstream_overrides.items():
                     wol_merged.setdefault(nid, {}).update(vals)
-                # Use a deep copy of hyst so that stateful nodes (statistics,
-                # avg_multi, …) don't accumulate a second sample just because
-                # a WoL edge is present — we only want their *outputs*, not
-                # a second mutation of their persisted state. change_filter is
-                # the one exception: its "state" *is* its output-determining
-                # comparison baseline, so its new value must be copied back
-                # into the real hyst below (like every other replay site
-                # here), or the next tick compares against a stale baseline
+                # Replay from the *pre-execution* snapshot, not the current
+                # (already first-pass-mutated) hyst — matching every other
+                # replay site in this function. Deep-copying the current
+                # hyst instead would let a stateful descendant (statistics,
+                # avg_multi, …) mutate its already-mutated-once state a
+                # second time here, and the copy-back below would commit
+                # that double mutation as if it were a single real sample.
+                # Replaying from the untouched pre-execution baseline means
+                # this is that descendant's *only* mutation this tick, so
+                # copying its result back is safe for every descendant type
+                # — including change_filter, whose "state" *is* its
+                # output-determining comparison baseline and must be copied
+                # back, or the next tick compares against a stale baseline
                 # and silently drops the following real change.
-                wol_second_hyst = copy.deepcopy(hyst)
+                wol_second_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 wol_second_executor = _executor(wol_second_hyst)
                 wol_second_outputs = _execute_pass(wol_second_executor, wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
@@ -4184,10 +4245,17 @@ class LogicManager:
             # Recognized types are tagged so _load_graphs can restore the
             # exact original value/type instead of leaving it as a lossy
             # str() that a live value of the same type can never compare
-            # equal to again.
+            # equal to again. _escape_persist_collision runs first so a
+            # node's own application data can never be misread as one of
+            # those tags, and the version envelope lets _load_graphs know
+            # this row is guaranteed fully tagged (see _PERSIST_STATE_VERSION).
+            envelope = {
+                _PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION,
+                "state": _escape_persist_collision(state_to_save),
+            }
             await self._db.execute_and_commit(
                 "UPDATE logic_graphs SET node_state = ? WHERE id = ?",
-                (json.dumps(state_to_save, default=_persist_default), graph_id),
+                (json.dumps(envelope, default=_persist_default), graph_id),
             )
         except Exception:
             logger.exception("Graph %s: failed to persist node_state", graph_id[:8])
@@ -4306,34 +4374,48 @@ class LogicManager:
                 # triggered by a graph save does NOT overwrite the live accumulators.
                 if row["id"] not in self._hysteresis:
                     try:
-                        saved = json.loads(row["node_state"] or "{}")
-                        if isinstance(saved, dict) and saved:
+                        saved_raw = json.loads(row["node_state"] or "{}")
+                        is_tagged_envelope = (
+                            isinstance(saved_raw, dict)
+                            and saved_raw.get(_PERSIST_STATE_VERSION_KEY) == _PERSIST_STATE_VERSION
+                            and isinstance(saved_raw.get("state"), dict)
+                        )
+                        if is_tagged_envelope:
                             # Restore any value _persist_node_state had to tag
                             # (datetime.date/time/datetime, bytes) back to its
-                            # exact original type — done first, so a node
-                            # persisted under this scheme round-trips exactly
-                            # and never needs the string-recovery fallback
-                            # below at all.
-                            saved = {nid: _decode_persisted_value(s) for nid, s in saved.items()}
-                            # Tag change_filter string "value" entries as
-                            # DB-recovered: state persisted *before* the
-                            # tagging above existed may still hold a
-                            # datetime.date/time/datetime lossily flattened to
-                            # a plain str() by the old default=str encoding.
-                            # GraphExecutor._compare_values uses this flag to
-                            # know it may safely re-recognize a matching live
-                            # temporal value as "unchanged" — without it, a
-                            # string this node received live *this session*
-                            # (never round-tripped through persistence) would
-                            # be wrongly treated the same way, swallowing a
+                            # exact original type. A row saved under this
+                            # exact version is *guaranteed* fully tagged, so
+                            # any string surviving this decode is a genuine
+                            # string value — never needs the legacy
+                            # "_recovered_str" marker below at all (applying
+                            # it here would wrongly suppress a real
+                            # string→datetime type transition on a source
+                            # that legitimately persisted a native string).
+                            saved = {nid: _decode_persisted_value(s) for nid, s in saved_raw["state"].items()}
+                        elif isinstance(saved_raw, dict) and saved_raw:
+                            # Legacy row (saved before tagged persistence
+                            # existed): plain default=str, no version
+                            # envelope. May still hold a change_filter's
+                            # datetime.date/time/datetime lossily flattened
+                            # to a plain str() — tag those as DB-recovered so
+                            # GraphExecutor._compare_values knows it may
+                            # safely re-recognize a matching live temporal
+                            # value as "unchanged". Without it, a string this
+                            # node received live *this session* (never
+                            # round-tripped through persistence) would be
+                            # wrongly treated the same way, swallowing a
                             # genuine live type transition. The flag is
                             # self-clearing: any real value commit replaces
                             # the whole state dict, dropping it again.
+                            saved = saved_raw
                             _cf_ids = {n.id for n in flow.nodes if n.type == "change_filter"}
                             for _nid in _cf_ids:
                                 _node_state = saved.get(_nid)
                                 if isinstance(_node_state, dict) and isinstance(_node_state.get("value"), str):
                                     _node_state["_recovered_str"] = True
+                        else:
+                            saved = saved_raw
+                        if isinstance(saved, dict) and saved:
                             self._hysteresis[row["id"]] = saved
                             logger.debug(
                                 "Graph %s: restored node_state (%d nodes)",

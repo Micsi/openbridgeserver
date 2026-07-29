@@ -482,6 +482,37 @@ class TestWakeOnLanDownstreamPropagation:
         assert outputs["wol"]["sent"] is True
         assert outputs["gate"]["out"] is True
 
+    def test_stateful_descendant_counts_real_result_once(self):
+        """Regression: the WoL downstream replay deep-copied the *current*
+        (already first-pass-mutated) hyst instead of the pre-execution
+        snapshot, then executed a second full pass on top of it and copied
+        every descendant's result back — so a stateful descendant like
+        statistics recorded its sample twice per single real execution
+        (once from the first pass, again from the replay mutating the same
+        already-mutated copy), corrupting its running aggregate."""
+        from tests.unit.conftest import edge
+
+        nodes = [
+            node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+            node("stats", "statistics", {}),
+        ]
+        edges = [edge("wol", "stats", "sent", "value")]
+        flow = _flow(nodes, edges)
+
+        manager = _make_manager()
+        graph_id = "g-wol-stats"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock),
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"wol": {"trigger": True}}))
+
+        assert outputs["stats"]["count"] == 1
+        assert manager._hysteresis[graph_id]["stats"]["s_count"] == 1
+
     def test_downstream_gate_stays_false_on_wol_failure(self):
         """When WoL send fails, sent=False must NOT re-propagate (gate stays False)."""
         from tests.unit.conftest import edge

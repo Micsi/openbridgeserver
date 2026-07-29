@@ -393,6 +393,91 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 3
 
+    def test_cron_retriggers_through_operating_hours_named_trigger_port(self):
+        """Regression: _edge_carries_pulse matched a trigger-typed input
+        port only when its id was literally "trigger" — but operating_hours
+        declares two trigger-typed inputs named "active" and "reset"
+        instead. A cron → operating_hours.active → host_check.trigger
+        chain was therefore never added to cron_reachable at all (the very
+        first hop, into "active", was incorrectly rejected), so once
+        host_check's own sustained trigger settled, later cron ticks were
+        wrongly deduplicated as if the trigger had never re-risen."""
+        nodes = [
+            node("cron", "timer_cron", {"cron": "* * * * *"}),
+            node("oh", "operating_hours", {}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cron", "oh", "trigger", "active"),
+                edge("oh", "hc", "hours", "trigger"),
+            ],
+        )
+
+        manager = _make_manager()
+        graph_id = "g-oh-cron"
+        manager._graphs[graph_id] = ("test", True, flow)
+        # Pre-seed operating_hours as already accumulating (started an hour
+        # ago), so its "hours" output is reliably nonzero/truthy from the
+        # very first tick — not dependent on real wall-clock time elapsing
+        # between two asyncio.run() calls within this test.
+        from datetime import UTC, datetime, timedelta
+
+        manager._node_state[graph_id] = {"oh": {"accumulated_hours": 0.0, "last_start": datetime.now(UTC) - timedelta(hours=1)}}
+
+        cron_overrides = {"cron": {"trigger": True}}
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            # Tick 1: hours is already truthy — first real trigger, always pings.
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, cron_overrides))
+            # Tick 2: trigger stays sustained (hours keeps growing) — must
+            # still ping again because this is a fresh cron tick.
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, cron_overrides))
+
+        assert mock_ping.await_count == 2
+
+    def test_pulse_continues_through_edge_targeting_unregistered_node_type(self):
+        """_edge_carries_pulse must still treat an edge as pulse-carrying
+        when its target node's "type" isn't registered at all (e.g. a
+        stale/removed node type left over in an old saved flow) — there is
+        no trigger-typed port to compare against, so the pulse must pass
+        through rather than being silently dropped. A change_filter pulse
+        routed through such a node must still reach and retrigger a
+        downstream host_check on every real change."""
+        nodes = [
+            node("cf", "change_filter"),
+            node("unk", "some_bogus_unregistered_type"),
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("or_gate", "or", {"input_count": 2}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf", "unk", "changed", "in"),
+                edge("unk", "or_gate", "out", "in1"),
+                edge("cv", "or_gate", "value", "in2"),
+                edge("or_gate", "hc", "out", "trigger"),
+            ],
+        )
+
+        manager = _make_manager()
+        graph_id = "g-unk-type"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+
+        assert mock_ping.await_count == 2
+
     def test_change_filter_pulse_retriggers_on_each_execution(self):
         """Regression: change_filter.changed must be a discrete retriggerable
         pulse like a cron tick — consecutive real changes must each ping,
