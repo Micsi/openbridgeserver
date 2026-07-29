@@ -23,11 +23,13 @@ import stat
 import uuid
 from datetime import UTC, date, datetime, time
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, urlunparse
 
 import httpx
 
+from obs.core.json import jsonable
 from obs.logic.executor import GraphExecutor
 from obs.logic.models import FlowData
 from obs.logic.node_types import get_node_type
@@ -1360,7 +1362,11 @@ class LogicManager:
 
     # ── Execution ─────────────────────────────────────────────────────────
 
-    async def execute_graph(self, graph_id: str) -> dict[str, Any]:
+    async def execute_graph(
+        self,
+        graph_id: str,
+        input_overrides: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Manually trigger a graph (e.g. from API).
 
         Registry seeding for all datapoint_read nodes is handled inside
@@ -1370,7 +1376,34 @@ class LogicManager:
         if not entry:
             raise KeyError(f"Graph {graph_id} not in cache")
         name, _enabled, flow = entry
-        return await self._execute_graph(graph_id, name, flow, {})
+        return await self._execute_graph(
+            graph_id,
+            name,
+            flow,
+            {},
+            debug_overrides=input_overrides or {},
+        )
+
+    async def execute_graph_debug(
+        self,
+        graph_id: str,
+        input_overrides: dict[str, dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, dict[str, dict[str, Any]]]]:
+        """Manually run a graph and return its actual final-pass inputs."""
+        entry = self._graphs.get(graph_id)
+        if not entry:
+            raise KeyError(f"Graph {graph_id} not in cache")
+        name, _enabled, flow = entry
+        input_capture: dict[str, dict[str, dict[str, Any]]] = {}
+        outputs = await self._execute_graph(
+            graph_id,
+            name,
+            flow,
+            {},
+            debug_overrides=input_overrides or {},
+            debug_input_capture=input_capture,
+        )
+        return outputs, input_capture
 
     async def initialize_graph(self, graph_id: str, logic_depth: int = 0, seed_overrides: dict[str, Any] | None = None) -> None:
         """Seed Read Object nodes with their current registry values right
@@ -1779,9 +1812,59 @@ class LogicManager:
         flow: FlowData,
         overrides: dict[str, dict[str, Any]],
         logic_depth: int = 0,
+        debug_overrides: dict[str, dict[str, Any]] | None = None,
+        debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         execute_now = datetime.now(UTC)
+        execution_started = perf_counter()
         graph_state = self._node_state.setdefault(graph_id, {})
+        debug_overrides = debug_overrides or {}
+        capture_debug_inputs = debug_input_capture is not None
+        if not capture_debug_inputs:
+            try:
+                from obs.api.v1.websocket import get_ws_manager
+
+                if get_ws_manager().has_logic_debug_subscribers(graph_id):
+                    capture_debug_inputs = True
+            except Exception:
+                logger.debug("WebSocket debug subscriber lookup unavailable", exc_info=True)
+        debug_inputs: dict[str, dict[str, dict[str, Any]]] = {}
+        debug_input_runs: list[tuple[dict[str, Any], dict[str, dict[str, dict[str, Any]]]]] = []
+
+        def _debug_run_overrides(candidate: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+            merged = {node_id: dict(values) for node_id, values in candidate.items()}
+            for node_id, values in debug_overrides.items():
+                merged.setdefault(node_id, {}).update(values)
+            return merged
+
+        def _execute_pass(
+            executor: GraphExecutor,
+            candidate: dict[str, dict[str, Any]],
+            *,
+            commit_memory: bool = False,
+        ) -> dict[str, dict[str, Any]]:
+            return executor.execute(
+                _debug_run_overrides(candidate),
+                commit_memory=commit_memory,
+                capture_incoming_overrides=candidate,
+            )
+
+        def _executor(state: dict[str, Any]) -> GraphExecutor:
+            if not capture_debug_inputs:
+                return GraphExecutor(flow, state, self._app_config)
+
+            run_inputs: dict[str, dict[str, dict[str, Any]]] = {}
+
+            class CapturingGraphExecutor(GraphExecutor):
+                def execute(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                    run_outputs = super().execute(*args, **kwargs)
+                    # ``outputs`` is updated in place as async replay results are
+                    # merged. A shallow copy preserves each node output object's
+                    # identity while isolating the pass's top-level mapping.
+                    debug_input_runs.append((dict(run_outputs), run_inputs))
+                    return run_outputs
+
+            return CapturingGraphExecutor(flow, state, self._app_config, run_inputs)
 
         # ── Seed all datapoint_read nodes from registry ───────────────────
         # In event-driven execution only the triggered node(s) have overrides.
@@ -2058,11 +2141,11 @@ class LogicManager:
         # correction immediately below can require it.
         _needs_pre_execute_snapshot = needs_async_replay_snapshot or bool(unseeded_read_ids)
 
-        executor = GraphExecutor(flow, hyst, self._app_config)
+        executor = _executor(hyst)
         try:
             pre_execute_hyst = copy.deepcopy(hyst) if _needs_pre_execute_snapshot else None
             pre_execute_node_state = copy.deepcopy(graph_state) if _needs_pre_execute_snapshot else None
-            outputs = executor.execute(aug_overrides, commit_memory=False)
+            outputs = _execute_pass(executor, aug_overrides)
         except Exception:
             logger.exception("Graph %s (%s) execution error", graph_id, name)
             return {}
@@ -2157,7 +2240,7 @@ class LogicManager:
             for _cf_id in _cf_hold_ids:
                 _cf_hold_overrides[_cf_id] = {**_cf_hold_overrides.get(_cf_id, {}), "_suppress_change_filter": True}
             _cf_hold_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            _cf_hold_outputs = GraphExecutor(flow, _cf_hold_hyst, self._app_config).execute(_cf_hold_overrides, commit_memory=False)
+            _cf_hold_outputs = _execute_pass(_executor(_cf_hold_hyst), _cf_hold_overrides)
             for _nid, _vals in _cf_hold_outputs.items():
                 if _nid in _cf_hold_ids or _nid in _cf_hold_desc:
                     outputs[_nid] = _vals
@@ -2364,8 +2447,8 @@ class LogicManager:
                 replay_overrides.setdefault(edge.target, {})[target_handle] = source_value
 
             replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            replay_executor = GraphExecutor(flow, replay_hyst, self._app_config)
-            replay_outputs = replay_executor.execute(replay_overrides, commit_memory=False)
+            replay_executor = _executor(replay_hyst)
+            replay_outputs = _execute_pass(replay_executor, replay_overrides)
             blocked_ids = skip_node_ids or set()
             for nid, vals in replay_outputs.items():
                 if nid in descendants and nid not in blocked_ids:
@@ -2405,8 +2488,8 @@ class LogicManager:
             for nid, vals in hc_downstream_overrides.items():
                 hc_merged.setdefault(nid, {}).update(vals)
             hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            hc_second_executor = GraphExecutor(flow, hc_hyst_snapshot, self._app_config)
-            hc_second_outputs = hc_second_executor.execute(hc_merged, commit_memory=False)
+            hc_second_executor = _executor(hc_hyst_snapshot)
+            hc_second_outputs = _execute_pass(hc_second_executor, hc_merged)
             hc_descendants: set[str] = set()
             hc_queue: list[str] = list(replay_sources)
             while hc_queue:
@@ -2524,8 +2607,8 @@ class LogicManager:
                 # here), or the next tick compares against a stale baseline
                 # and silently drops the following real change.
                 wol_second_hyst = copy.deepcopy(hyst)
-                wol_second_executor = GraphExecutor(flow, wol_second_hyst, self._app_config)
-                wol_second_outputs = wol_second_executor.execute(wol_merged, commit_memory=False)
+                wol_second_executor = _executor(wol_second_hyst)
+                wol_second_outputs = _execute_pass(wol_second_executor, wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
                 # their descendants are updated, leaving unrelated nodes intact.
                 wol_descendants: set[str] = set()
@@ -2584,8 +2667,8 @@ class LogicManager:
                     for nid, vals in _pwol_dn_ovr.items():
                         _pwol_merged.setdefault(nid, {}).update(vals)
                     _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                    _pwol_exec = GraphExecutor(flow, _pwol_hyst, self._app_config)
-                    _pwol_out = _pwol_exec.execute(_pwol_merged, commit_memory=False)
+                    _pwol_exec = _executor(_pwol_hyst)
+                    _pwol_out = _execute_pass(_pwol_exec, _pwol_merged)
                     _pwol_desc: set[str] = set()
                     _pwol_dq: list[str] = list(_pwol_src)
                     while _pwol_dq:
@@ -2620,10 +2703,18 @@ class LogicManager:
             if node.type != "datapoint_read":
                 continue
             dp_id_str = str(node.data.get("datapoint_id") or "").strip()
-            if not dp_id_str or node.id not in aug_overrides or "value" not in aug_overrides[node.id]:
+            node_override = {
+                **aug_overrides.get(node.id, {}),
+                **debug_overrides.get(node.id, {}),
+            }
+            if not dp_id_str or "value" not in node_override:
                 continue
-            node_override = aug_overrides[node.id]
-            priority = 2 if node.id in overrides or GraphExecutor._to_bool(node_override.get("changed")) else 1
+            if "value" in debug_overrides.get(node.id, {}):
+                priority = 3
+            elif node.id in overrides or GraphExecutor._to_bool(node_override.get("changed")):
+                priority = 2
+            else:
+                priority = 1
             if priority >= execution_value_priority_by_datapoint_id.get(dp_id_str, 0):
                 execution_values_by_datapoint_id[dp_id_str] = node_override["value"]
                 execution_value_priority_by_datapoint_id[dp_id_str] = priority
@@ -2837,8 +2928,8 @@ class LogicManager:
                 api_replay_overrides = {nid: dict(vals) for nid, vals in replay_overrides.items()}
                 if pre_execute_hyst is not None:
                     replay_hyst = copy.deepcopy(pre_execute_hyst)
-                    second_executor = GraphExecutor(flow, replay_hyst, self._app_config)
-                    second_outputs = second_executor.execute(replay_overrides, commit_memory=False)
+                    second_executor = _executor(replay_hyst)
+                    second_outputs = _execute_pass(second_executor, replay_overrides)
                     # Compute transitive descendants of triggered api_clients so that
                     # only their subtree is updated. This prevents the api_client
                     # second pass from overwriting WoL-propagated outputs that were
@@ -2894,8 +2985,8 @@ class LogicManager:
             for nid, vals in pat_hc_overrides.items():
                 pat_merged.setdefault(nid, {}).update(vals)
             pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            pat_executor = GraphExecutor(flow, pat_hyst_snapshot, self._app_config)
-            pat_outputs = pat_executor.execute(pat_merged, commit_memory=False)
+            pat_executor = _executor(pat_hyst_snapshot)
+            pat_outputs = _execute_pass(pat_executor, pat_merged)
             pat_descendants: set[str] = set()
             pat_queue: list[str] = list(replay_sources)
             while pat_queue:
@@ -2981,8 +3072,8 @@ class LogicManager:
                 for nid, vals in post_api_wol_overrides.items():
                     post_api_wol_merged.setdefault(nid, {}).update(vals)
                 _pawol_hyst_snap = copy.deepcopy(hyst)
-                post_api_wol_executor = GraphExecutor(flow, _pawol_hyst_snap, self._app_config)
-                post_api_wol_outputs = post_api_wol_executor.execute(post_api_wol_merged, commit_memory=False)
+                post_api_wol_executor = _executor(_pawol_hyst_snap)
+                post_api_wol_outputs = _execute_pass(post_api_wol_executor, post_api_wol_merged)
                 post_api_wol_descendants: set[str] = set()
                 post_api_wol_queue = list(post_api_wol_nodes)
                 while post_api_wol_queue:
@@ -3029,8 +3120,8 @@ class LogicManager:
                         for nid, vals in _pawol_dn_ovr.items():
                             _pawol_merged.setdefault(nid, {}).update(vals)
                         _pawol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        _pawol_exec = GraphExecutor(flow, _pawol_hyst, self._app_config)
-                        _pawol_out = _pawol_exec.execute(_pawol_merged, commit_memory=False)
+                        _pawol_exec = _executor(_pawol_hyst)
+                        _pawol_out = _execute_pass(_pawol_exec, _pawol_merged)
                         _pawol_desc: set[str] = set()
                         _pawol_dq: list[str] = list(_pawol_replay_src)
                         while _pawol_dq:
@@ -3255,8 +3346,8 @@ class LogicManager:
                     tgt_handle = e.targetHandle or "in"
                     replay_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs.get(e.source, {}), src_handle)
                 replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                api_executor = GraphExecutor(flow, replay_hyst, self._app_config)
-                api_outputs = api_executor.execute(replay_overrides, commit_memory=False)
+                api_executor = _executor(replay_hyst)
+                api_outputs = _execute_pass(api_executor, replay_overrides)
                 for nid, vals in api_outputs.items():
                     if nid not in api_client_ids and nid in api_descendants:
                         outputs[nid] = vals
@@ -3312,8 +3403,8 @@ class LogicManager:
                                 src_handle,
                             )
                         final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        final_hc_executor = GraphExecutor(flow, final_hc_hyst, self._app_config)
-                        final_hc_outputs = final_hc_executor.execute(final_hc_merged, commit_memory=False)
+                        final_hc_executor = _executor(final_hc_hyst)
+                        final_hc_outputs = _execute_pass(final_hc_executor, final_hc_merged)
                         for nid, vals in final_hc_outputs.items():
                             if nid in final_hc_descendants and nid not in triggered_api_clients:
                                 outputs[nid] = vals
@@ -3385,8 +3476,8 @@ class LogicManager:
                 for nid, vals in _fwol_dn_ovr.items():
                     _fwol_merged.setdefault(nid, {}).update(vals)
                 _fwol_hyst_snap = copy.deepcopy(hyst)
-                _fwol_exec = GraphExecutor(flow, _fwol_hyst_snap, self._app_config)
-                _fwol_out = _fwol_exec.execute(_fwol_merged, commit_memory=False)
+                _fwol_exec = _executor(_fwol_hyst_snap)
+                _fwol_out = _execute_pass(_fwol_exec, _fwol_merged)
                 _fwol_desc: set[str] = set()
                 _fwol_q: list[str] = list(_final_wol_candidates)
                 while _fwol_q:
@@ -3431,8 +3522,8 @@ class LogicManager:
                         for nid, vals in _fwolhc_dn_ovr.items():
                             _fwolhc_mrgd.setdefault(nid, {}).update(vals)
                         _fwolhc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        _fwolhc_exec = GraphExecutor(flow, _fwolhc_hyst, self._app_config)
-                        _fwolhc_out = _fwolhc_exec.execute(_fwolhc_mrgd, commit_memory=False)
+                        _fwolhc_exec = _executor(_fwolhc_hyst)
+                        _fwolhc_out = _execute_pass(_fwolhc_exec, _fwolhc_mrgd)
                         _fwolhc_desc: set[str] = set()
                         _fwolhc_dq: list[str] = list(_fwolhc_srcs)
                         while _fwolhc_dq:
@@ -3819,7 +3910,7 @@ class LogicManager:
         # Memory is the explicit tick boundary for feedback loops. Commit it
         # after all async node re-propagation so the stored value always reflects
         # the final graph outputs, not executor placeholders from an earlier pass.
-        executor.commit_memory_inputs(outputs, aug_overrides)
+        executor.commit_memory_inputs(outputs, _debug_run_overrides(aug_overrides))
 
         # ── Start/cancel value sequences ──────────────────────────────────
         wired_inputs: set[tuple[str, str]] = {(e.target, e.targetHandle or "in") for e in flow.edges}
@@ -3908,24 +3999,48 @@ class LogicManager:
         # ── Persist node state (statistics / hysteresis) to DB ───────────
         await self._persist_node_state(graph_id)
 
+        # Select each node's capture from the execution pass whose output was
+        # retained. Async replay passes may execute unrelated branches whose
+        # outputs are deliberately discarded; their inputs must be discarded too.
+        if capture_debug_inputs:
+            for run_outputs, run_inputs in debug_input_runs:
+                for node_id, ports in run_inputs.items():
+                    if run_outputs.get(node_id) is outputs.get(node_id):
+                        debug_inputs[node_id] = ports
+            if debug_input_capture is not None:
+                debug_input_capture.clear()
+                debug_input_capture.update(debug_inputs)
+
         # ── Broadcast final execution results to all WS clients ──────────
         # Broadcast happens here — after all async ops (api_client HTTP calls,
         # second-pass re-execution, etc.) — so the debug view shows the real
         # success/response values and not the executor's initial placeholders.
+        for node_id, ports in (debug_inputs or {}).items():
+            node_debug_overrides = debug_overrides.get(node_id, {})
+            for port, snapshot in ports.items():
+                is_debug_override = port in node_debug_overrides
+                snapshot["overridden"] = is_debug_override
+                if not is_debug_override:
+                    snapshot["incoming"] = snapshot["effective"]
         try:
             from obs.api.v1.websocket import get_ws_manager
 
-            def _safe(v: Any) -> Any:
-                if v is None or isinstance(v, (bool, int, float, str)):
-                    return v
-                return str(v)
+            ws_manager = get_ws_manager()
+            if not ws_manager.has_logic_debug_subscribers(graph_id):
+                return outputs
 
-            safe_outputs = {nid: {k: _safe(val) for k, val in node_out.items()} for nid, node_out in outputs.items() if isinstance(node_out, dict)}
-            await get_ws_manager().broadcast(
+            await ws_manager.broadcast_logic_debug(
+                graph_id,
                 {
                     "action": "logic_run",
                     "graph_id": graph_id,
-                    "outputs": safe_outputs,
+                    "outputs": json.loads(json.dumps(jsonable(outputs), default=str)),
+                    "inputs": json.loads(json.dumps(jsonable(debug_inputs or {}), default=str)),
+                    "debug": {
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "duration_ms": round((perf_counter() - execution_started) * 1000, 2),
+                        "used_overrides": bool(debug_overrides),
+                    },
                 },
             )
         except Exception:

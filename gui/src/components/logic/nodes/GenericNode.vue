@@ -13,12 +13,12 @@
          :style="{ borderTopColor: def.color, background: def.color + '12', minHeight: cardH + 'px' }">
 
       <div class="gn-header" :style="{ background: def.color + '28' }">
-        <span class="gn-title">{{ def.label }}</span>
+        <span class="gn-title" :title="def.label">{{ def.label }}</span>
         <button class="gn-del nodrag" :style="{ visibility: hovered ? 'visible' : 'hidden' }" @click.stop="remove">✕</button>
       </div>
 
       <div class="gn-body">
-        <div v-if="summary" class="gn-summary">{{ summary }}</div>
+        <div v-if="summary" class="gn-summary" :title="summary">{{ summary }}</div>
 
         <!-- Port rows — height matches handle spacing -->
         <div class="gn-ports-rows">
@@ -49,9 +49,7 @@
           </div>
         </div>
       </div>
-
-      <!-- Debug value strip -->
-      <div v-if="data._dbg" class="gn-debug" :title="debugTitle" data-testid="debug-band">{{ data._dbg }}</div>
+      <div v-if="data._dbg" class="gn-debug" :title="data._dbg_title || data._dbg" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <!-- Output handles (RIGHT) -->
@@ -93,8 +91,6 @@ function parseRowList(raw) {
     return []
   }
 }
-
-const debugTitle = computed(() => props.data._dbg_title || props.data._dbg || '')
 
 // ── Node definitions ───────────────────────────────────────────────────────
 const NODE_DEFS = computed(() => ({
@@ -358,7 +354,7 @@ const DEBUG_H  = 18   // px  debug value strip height (only when present)
 
 const rowCount  = computed(() => Math.max(def.value.inputs.length, def.value.outputs.length, 1))
 const summaryPx = computed(() => summary.value ? SUMMARY_H : 0)
-const debugPx   = computed(() => props.data._dbg   ? DEBUG_H  : 0)
+const debugPx   = computed(() => props.data._dbg ? DEBUG_H : 0)
 const cardH     = computed(() => HEADER_H + summaryPx.value + rowCount.value * PORT_H + debugPx.value + 8)
 
 // port row indices (0..rowCount-1)
@@ -393,7 +389,7 @@ function remove() { removeNodes([props.id]) }
 .gn-root  { position: relative; }
 
 .gn-card  {
-  min-width: 130px;
+  width: 130px;
   border: 1px solid var(--node-card-border);
   border-top: 3px solid #475569;
   border-radius: 8px;
@@ -409,18 +405,33 @@ function remove() { removeNodes([props.id]) }
   padding: 4px 10px;
   border-radius: 5px 5px 0 0;
 }
-.gn-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--node-title-color); }
-.gn-del   { font-size:11px; color:var(--node-del-color); background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; }
+.gn-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--node-title-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gn-del   { flex-shrink:0; font-size:11px; color:var(--node-del-color); background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; }
 .gn-del:hover { color:#f87171; }
 
 .gn-body  { padding: 0; }
 
 .gn-summary {
+  box-sizing: border-box;
+  width: 100%;
   font-size: 10px;
   color: var(--node-summary-color);
   padding: 2px 10px;
   font-family: ui-monospace, monospace;
   border-bottom: 1px solid var(--node-card-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gn-ports-rows { padding: 0 10px; }
@@ -450,6 +461,9 @@ function remove() { removeNodes([props.id]) }
 .gn-port-negate--right         { margin-left: auto; }
 
 .gn-debug {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   font-size: 9px;
   color: var(--node-debug-color);
   font-family: ui-monospace, monospace;
