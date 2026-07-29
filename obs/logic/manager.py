@@ -21,6 +21,7 @@ import re
 import socket
 import stat
 import uuid
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time
 from pathlib import Path
 from time import perf_counter
@@ -127,6 +128,59 @@ def _downstream_closure(start: set[str], edges: list[Any]) -> set[str]:
                 reached.add(edge.target)
                 grew = True
     return reached
+
+
+# Tag key for persisted node_state values that json.dumps cannot encode
+# natively (datetime.date/time/datetime, bytes) — lets _load_graphs restore
+# the exact original type instead of leaving behind a lossy str() that a
+# live value of the same type could never compare equal to again.
+_PERSIST_TYPE_TAG = "__obs_persisted_type__"
+_PERSIST_ISOFORMAT_TYPES: dict[str, Callable[[str], Any]] = {
+    "datetime": datetime.fromisoformat,
+    "date": date.fromisoformat,
+    "time": time.fromisoformat,
+}
+
+
+def _persist_default(v: Any) -> Any:
+    """`json.dumps(..., default=...)` hook: tag recognized non-JSON types."""
+    if isinstance(v, datetime):
+        return {_PERSIST_TYPE_TAG: "datetime", "value": v.isoformat()}
+    if isinstance(v, date):
+        return {_PERSIST_TYPE_TAG: "date", "value": v.isoformat()}
+    if isinstance(v, time):
+        return {_PERSIST_TYPE_TAG: "time", "value": v.isoformat()}
+    if isinstance(v, bytes):
+        return {_PERSIST_TYPE_TAG: "bytes", "value": v.hex()}
+    return str(v)
+
+
+def _decode_persisted_value(v: Any) -> Any:
+    """Reverse of `_persist_default`, applied recursively after json.loads.
+
+    A dict lacking the tag is application state (e.g. change_filter's own
+    `{"value": ...}` wrapper) and is walked, not replaced. Untagged strings
+    left over from node_state saved before this tagging existed (or any
+    value type this function doesn't recognize) pass through unchanged —
+    callers needing to know "this string may be a lossy legacy persist" use
+    a separate, explicit marker rather than inferring it here.
+    """
+    if isinstance(v, dict):
+        tag = v.get(_PERSIST_TYPE_TAG)
+        if tag == "bytes":
+            try:
+                return bytes.fromhex(v.get("value", ""))
+            except (TypeError, ValueError):
+                return v
+        if tag in _PERSIST_ISOFORMAT_TYPES:
+            try:
+                return _PERSIST_ISOFORMAT_TYPES[tag](v.get("value", ""))
+            except (TypeError, ValueError):
+                return v
+        return {k: _decode_persisted_value(val) for k, val in v.items()}
+    if isinstance(v, list):
+        return [_decode_persisted_value(item) for item in v]
+    return v
 
 
 _ICAL_MAX_BYTES = 1_048_576
@@ -4122,14 +4176,18 @@ class LogicManager:
                 state_to_save = {nid: s for nid, s in hyst.items() if nid not in no_persist}
             else:
                 state_to_save = hyst
-            # default=str covers values json can't natively encode (e.g. a
-            # change_filter holding a datetime.time/date from a KNX DPT10/11
-            # object) — without it, one such node poisons persistence for
-            # every node in the graph, since this dumps the whole snapshot
-            # in one call.
+            # _persist_default covers values json can't natively encode
+            # (e.g. a change_filter holding a datetime.time/date from a KNX
+            # DPT10/11 object, or bytes from an UNKNOWN-type DataPoint) —
+            # without it, one such node poisons persistence for every node
+            # in the graph, since this dumps the whole snapshot in one call.
+            # Recognized types are tagged so _load_graphs can restore the
+            # exact original value/type instead of leaving it as a lossy
+            # str() that a live value of the same type can never compare
+            # equal to again.
             await self._db.execute_and_commit(
                 "UPDATE logic_graphs SET node_state = ? WHERE id = ?",
-                (json.dumps(state_to_save, default=str), graph_id),
+                (json.dumps(state_to_save, default=_persist_default), graph_id),
             )
         except Exception:
             logger.exception("Graph %s: failed to persist node_state", graph_id[:8])
@@ -4250,6 +4308,32 @@ class LogicManager:
                     try:
                         saved = json.loads(row["node_state"] or "{}")
                         if isinstance(saved, dict) and saved:
+                            # Restore any value _persist_node_state had to tag
+                            # (datetime.date/time/datetime, bytes) back to its
+                            # exact original type — done first, so a node
+                            # persisted under this scheme round-trips exactly
+                            # and never needs the string-recovery fallback
+                            # below at all.
+                            saved = {nid: _decode_persisted_value(s) for nid, s in saved.items()}
+                            # Tag change_filter string "value" entries as
+                            # DB-recovered: state persisted *before* the
+                            # tagging above existed may still hold a
+                            # datetime.date/time/datetime lossily flattened to
+                            # a plain str() by the old default=str encoding.
+                            # GraphExecutor._compare_values uses this flag to
+                            # know it may safely re-recognize a matching live
+                            # temporal value as "unchanged" — without it, a
+                            # string this node received live *this session*
+                            # (never round-tripped through persistence) would
+                            # be wrongly treated the same way, swallowing a
+                            # genuine live type transition. The flag is
+                            # self-clearing: any real value commit replaces
+                            # the whole state dict, dropping it again.
+                            _cf_ids = {n.id for n in flow.nodes if n.type == "change_filter"}
+                            for _nid in _cf_ids:
+                                _node_state = saved.get(_nid)
+                                if isinstance(_node_state, dict) and isinstance(_node_state.get("value"), str):
+                                    _node_state["_recovered_str"] = True
                             self._hysteresis[row["id"]] = saved
                             logger.debug(
                                 "Graph %s: restored node_state (%d nodes)",

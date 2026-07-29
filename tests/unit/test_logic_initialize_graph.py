@@ -780,7 +780,8 @@ async def test_persist_node_state_serializes_non_json_native_values():
     from a KNX DPT10/11 decode) must not raise inside json.dumps and poison
     persistence for the whole graph — this is a single dumps() call for
     every node's state, so one unserializable value would otherwise stop
-    all of it from being saved."""
+    all of it from being saved. The value is tagged (not just str()-ed) so
+    _load_graphs can restore the exact original type/value on restart."""
     import datetime as dt_module
     import json
 
@@ -790,7 +791,55 @@ async def test_persist_node_state_serializes_non_json_native_values():
     await mgr._persist_node_state("g1")
 
     saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
-    assert saved == {"cf": {"value": "14:30:00"}, "other": {"value": 1}}
+    assert saved == {"cf": {"value": {"__obs_persisted_type__": "time", "value": "14:30:00"}}, "other": {"value": 1}}
+
+
+class TestPersistDefaultAndDecode:
+    """Direct tests for the _persist_default/_decode_persisted_value pair
+    (issue #1087 Codex finding: "Preserve non-JSON value types in persisted
+    filter state") covering the date/datetime/list branches and the
+    malformed-tag recovery paths not already exercised by the round-trip
+    tests in test_coverage_adapters_hierarchy_logic.py."""
+
+    def test_persist_default_tags_date_and_datetime(self):
+        from datetime import date
+
+        from obs.logic.manager import _persist_default
+
+        assert _persist_default(date(2026, 1, 1)) == {"__obs_persisted_type__": "date", "value": "2026-01-01"}
+        assert _persist_default(datetime(2026, 1, 1, 12, 30, tzinfo=UTC)) == {
+            "__obs_persisted_type__": "datetime",
+            "value": "2026-01-01T12:30:00+00:00",
+        }
+
+    def test_persist_default_falls_back_to_str_for_unrecognized_types(self):
+        from obs.logic.manager import _persist_default
+
+        assert _persist_default({1, 2, 3}) == str({1, 2, 3})
+
+    def test_decode_persisted_value_restores_date_and_walks_lists(self):
+        from datetime import date
+
+        from obs.logic.manager import _decode_persisted_value
+
+        decoded = _decode_persisted_value({"value": [{"__obs_persisted_type__": "date", "value": "2026-01-01"}, 1]})
+        assert decoded == {"value": [date(2026, 1, 1), 1]}
+
+    def test_decode_persisted_value_keeps_malformed_tagged_bytes_as_is(self):
+        """A corrupted DB row (e.g. hand-edited or from a future format)
+        must not crash the whole graph load — bytes.fromhex on a
+        non-hex string raises ValueError, which must be caught and the
+        tagged dict returned unchanged rather than propagating."""
+        from obs.logic.manager import _decode_persisted_value
+
+        malformed = {"__obs_persisted_type__": "bytes", "value": "not-hex"}
+        assert _decode_persisted_value(malformed) is malformed
+
+    def test_decode_persisted_value_keeps_malformed_tagged_isoformat_as_is(self):
+        from obs.logic.manager import _decode_persisted_value
+
+        malformed = {"__obs_persisted_type__": "time", "value": "not-a-time"}
+        assert _decode_persisted_value(malformed) is malformed
 
 
 # ---------------------------------------------------------------------------

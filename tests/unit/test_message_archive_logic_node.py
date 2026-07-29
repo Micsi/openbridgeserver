@@ -623,3 +623,41 @@ def test_message_archive_node_does_not_record_without_archive() -> None:
 
     assert outputs["ma"]["stored"] is False
     service.record.assert_not_awaited()
+
+
+def test_change_filter_pulse_via_title_does_not_retrigger_downstream_host_check() -> None:
+    """Regression: message_archive's "trigger" input port was declared
+    without type="trigger" (unlike its own "stored" output and unlike
+    notify_message's equivalent input), so _edge_carries_pulse's
+    has_trigger_input check found no trigger-tagged input port at all and
+    let *every* edge into message_archive — including one landing on the
+    unrelated "title" data port — count as pulse-carrying. A change_filter
+    wired only to "title" would then falsely make message_archive (and
+    anything downstream of its own separately sustained "stored" trigger,
+    such as a host_check) look cron/pulse-reachable, bypassing rising-edge
+    dedup and re-pinging on every title change even though the archive's
+    own trigger never rose again."""
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node("cf", "change_filter"),
+            node("ma", "message_archive", {"archive_id": "Alerts", "message": "Stored"}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ],
+        [
+            edge("cf", "ma", "changed", "title"),
+            edge("ma", "hc", "stored", "trigger"),
+        ],
+    )
+    service = MagicMock()
+    service.record = AsyncMock(return_value={"id": "entry-1"})
+
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+    ):
+        _run(manager, flow, {"ma": {"trigger": True}, "cf": {"in": 1}})
+        _run(manager, flow, {"ma": {"trigger": True}, "cf": {"in": 2}})
+
+    mock_ping.assert_awaited_once()

@@ -378,18 +378,55 @@ class GraphExecutor:
                 return None
         return None
 
+    @staticmethod
+    def _try_decimal(v: Any) -> Decimal | None:
+        """Return an exact Decimal only when the value is numeric-like.
+
+        Unlike `_try_num`'s float() conversion, this preserves full
+        precision for high-precision decimal strings (e.g. an adapter
+        supplying "0.123456789012345678901") — float() would silently round
+        both that value and a distinct neighbour like
+        "0.123456789012345678902" to the same nearest binary value, making
+        two genuinely different readings compare as equal.
+        """
+        if isinstance(v, bool):
+            return Decimal(1) if v else Decimal(0)
+        if isinstance(v, int):
+            dec = Decimal(v)
+        elif isinstance(v, float):
+            # str() of any float (finite, inf, or nan) is always a valid
+            # Decimal literal — unlike the str branch below, this can never
+            # raise InvalidOperation.
+            dec = Decimal(str(v))
+        elif isinstance(v, str):
+            try:
+                dec = Decimal(v.strip())
+            except InvalidOperation:
+                return None
+        else:
+            return None
+        return dec if dec.is_finite() else None
+
     @classmethod
-    def _compare_values(cls, left: Any, right: Any) -> tuple[bool, bool]:
+    def _compare_values(cls, left: Any, right: Any, *, right_is_recovered_str: bool = False) -> tuple[bool, bool]:
         """Return (are_equal, via_normalizing_path).
 
         via_normalizing_path is True when equality was decided by a
-        normalizing equivalence — boolean/int/num aliasing, or structural
-        dict/list `==` — and False when it fell through to the temporal
-        str()-recovery path below. That path can equate a live value with a
-        persisted, JSON-lossy string left over from `default=str` (e.g. a
-        datetime.time vs. "10:30:00"), so a caller that wants to keep
-        emitting one side's own representation on an "equal" result needs to
-        know whether doing so is safe.
+        normalizing equivalence — boolean/int/decimal aliasing, or
+        structural dict/list `==` — and False when it fell through to the
+        temporal str()-recovery path below. That path can equate a live
+        value with a persisted, JSON-lossy string left over from
+        `default=str` (e.g. a datetime.time vs. "10:30:00"), so a caller
+        that wants to keep emitting one side's own representation on an
+        "equal" result needs to know whether doing so is safe.
+
+        `right_is_recovered_str` must be set only when `right` (always the
+        previously-held/persisted side at the change_filter call site, per
+        that node's own state layout) is known to have come from a DB
+        restore rather than a live value received this session — otherwise
+        a source that legitimately emits the literal string "10:30:00" and
+        later emits datetime.time(10, 30) would have its genuine type
+        transition swallowed by the recovery path below.
         """
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
@@ -399,21 +436,22 @@ class GraphExecutor:
         int_left, int_right = cls._try_exact_int(left), cls._try_exact_int(right)
         if int_left is not None and int_right is not None:
             return int_left == int_right, True
-        num_left, num_right = cls._try_num(left), cls._try_num(right)
-        if num_left is not None and num_right is not None:
-            return num_left == num_right, True
+        dec_left, dec_right = cls._try_decimal(left), cls._try_decimal(right)
+        if dec_left is not None and dec_right is not None:
+            return dec_left == dec_right, True
         if isinstance(left, (dict, list)) and isinstance(right, (dict, list)):
             return left == right, True
         # A persisted datetime.date/time/datetime (e.g. a KNX DPT10/11 value)
         # survives a restart only as its str() form (`default=str` in
-        # _persist_node_state) — recognize *that specific* recovery. A blanket
-        # str(left) == str(right) fallback would also equate a list/dict with
-        # a string that happens to match its repr (e.g. [1, 2] and "[1, 2]"),
-        # which are genuinely different values/types, not a persistence
-        # artifact, so it must not be treated as "unchanged".
-        for value, other in ((left, right), (right, left)):
-            if isinstance(value, (_date, _time)) and isinstance(other, str):
-                return str(value) == other, False
+        # _persist_node_state) — recognize *that specific* recovery, and
+        # only when `right` is actually flagged as such a restored value. A
+        # blanket str(left) == str(right) fallback would also equate a
+        # list/dict with a string that happens to match its repr (e.g.
+        # [1, 2] and "[1, 2]"), which are genuinely different values/types,
+        # not a persistence artifact, so it must not be treated as
+        # "unchanged".
+        if right_is_recovered_str and isinstance(right, str) and isinstance(left, (_date, _time)):
+            return str(left) == right, False
         return left == right, True
 
     @classmethod
@@ -648,7 +686,7 @@ class GraphExecutor:
                 if not has_prev:
                     self.hysteresis_state[node.id] = {"value": value}
                     return {"out": value, "changed": True}
-                equal, via_normalizing_path = self._compare_values(value, state["value"])
+                equal, via_normalizing_path = self._compare_values(value, state["value"], right_is_recovered_str=bool(state.get("_recovered_str")))
                 if not equal:
                     self.hysteresis_state[node.id] = {"value": value}
                     return {"out": value, "changed": True}

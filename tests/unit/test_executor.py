@@ -1103,9 +1103,12 @@ class TestChangeFilterNode:
         but int() on it would try to materialize an actual multi-gigabyte
         integer — a single adapter-supplied string could exhaust memory/CPU.
         Must be rejected as "not an exact int" before ever calling int()
-        (the comparison then falls through to the numeric path, where
-        float() overflows both operands to the same inf — "equal", but the
-        important thing here is that evaluation completes at all)."""
+        (the comparison then falls through to the exact-decimal path, which
+        also never materializes the giant integer — Decimal compares by
+        coefficient+exponent — so evaluation stays fast, but unlike the old
+        float()-based fallback it now also gets the *correct*, distinct
+        result instead of both operands coincidentally overflowing to the
+        same inf)."""
         state = {}
         n1 = node("cf", "change_filter")
         exc = make_executor([n1], hysteresis_state=state)
@@ -1114,7 +1117,7 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": "2e10000000000"}})
         elapsed = time.monotonic() - start
         assert elapsed < 2.0
-        assert out["cf"]["changed"] is False
+        assert out["cf"]["changed"] is True
 
     def test_huge_scientific_exponent_compares_as_different_from_finite_value(self):
         """A huge scientific-notation string must not be treated as an exact
@@ -1139,6 +1142,36 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": "1e2"}})
         assert out["cf"]["changed"] is False
 
+    def test_bool_treated_as_one_or_zero_against_a_non_integral_number(self):
+        """Regression: True/False must alias to 1/0 in the decimal-numeric
+        comparison path too (not just the earlier boolean-literal path,
+        which only applies when *both* sides parse as a boolean literal —
+        1.5 does not), so a change from True to a genuinely different
+        non-integral number (1.5) is still reported as changed, and from
+        True to the equivalent 1.0 is not."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": True}})
+        out = exc.execute({"cf": {"in": 1.5}})
+        assert out["cf"]["changed"] is True
+
+        exc.execute({"cf": {"in": True}})
+        out = exc.execute({"cf": {"in": 1.0}})
+        assert out["cf"]["changed"] is False
+
+    def test_high_precision_decimal_strings_compared_exactly(self):
+        """Regression: two distinct high-precision decimal strings must not
+        collapse onto the same rounded binary float — an adapter supplying
+        "0.123456789012345678901" and, later, the neighbouring
+        "0.123456789012345678902" must be reported as a real change."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": "0.123456789012345678901"}})
+        out = exc.execute({"cf": {"in": "0.123456789012345678902"}})
+        assert out["cf"]["changed"] is True
+
     def test_non_integral_decimal_string_does_not_short_circuit_exact_int(self):
         """Regression: "1.5" parses as a valid Decimal but isn't a whole
         number — it must not be treated as an exact-int candidate, so a
@@ -1151,22 +1184,42 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is True
 
     def test_equal_via_str_fallback_emits_current_input_not_persisted_value(self):
-        """Regression: after a restart, persisted non-JSON-native values
-        (e.g. a KNX DPT10/11 datetime.time/date) are stored as a lossy
-        string via `default=str`. When the next real value round-trips to
-        the same string via the str() equality fallback, the "unchanged"
-        branch must emit the current (typed) input, not the persisted
-        string — otherwise `out`'s type silently degrades after every
-        restart even though nothing about the underlying value changed."""
+        """Regression: after a restart, a *legacy* persisted non-JSON-native
+        value (e.g. a KNX DPT10/11 datetime.time/date saved before tagged
+        persistence existed) is stored as a lossy string via the old
+        `default=str`. LogicManager._load_graphs marks such a restored
+        string with "_recovered_str" so the change_filter case can safely
+        recognize it. When the next real value round-trips to the same
+        string via that recovery path, the "unchanged" branch must emit the
+        current (typed) input, not the persisted string — otherwise `out`'s
+        type silently degrades after every restart even though nothing
+        about the underlying value changed."""
         from datetime import time
 
-        state = {"cf": {"value": "10:30:00"}}
+        state = {"cf": {"value": "10:30:00", "_recovered_str": True}}
         n1 = node("cf", "change_filter")
         exc = make_executor([n1], hysteresis_state=state)
         out = exc.execute({"cf": {"in": time(10, 30, 0)}})
         assert out["cf"]["changed"] is False
         assert out["cf"]["out"] == time(10, 30, 0)
         assert isinstance(out["cf"]["out"], time)
+
+    def test_live_string_matching_a_temporal_repr_is_not_treated_as_recovered(self):
+        """Regression: a source that legitimately emits the literal string
+        "10:30:00" *live*, this session — never round-tripped through DB
+        persistence — must not have a later, genuinely different
+        datetime.time(10, 30) value swallowed by the persisted-string
+        recovery path. Only a value LogicManager._load_graphs actually
+        flagged as DB-recovered (via "_recovered_str") may use that
+        recovery; without the flag this is a real type transition."""
+        from datetime import time
+
+        state = {"cf": {"value": "10:30:00"}}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        out = exc.execute({"cf": {"in": time(10, 30, 0)}})
+        assert out["cf"]["changed"] is True
+        assert out["cf"]["out"] == time(10, 30, 0)
 
     def test_list_is_not_equal_to_its_own_string_representation(self):
         """Regression: a transition from a list/dict to a string that happens
