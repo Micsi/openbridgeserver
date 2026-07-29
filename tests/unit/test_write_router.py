@@ -33,10 +33,17 @@ class _FakeInstance:
 
 class _ContextInstance:
     def __init__(self):
-        self.writes: list[tuple[object, object]] = []
+        self.writes: list[tuple[object, object, bool]] = []
 
-    async def write_with_context(self, _binding, value, *, logical_value):
-        self.writes.append((value, logical_value))
+    async def write_with_context(
+        self,
+        _binding,
+        value,
+        *,
+        logical_value,
+        suppress_confirmation_actions=False,
+    ):
+        self.writes.append((value, logical_value, suppress_confirmation_actions))
 
 
 def _row(**overrides):
@@ -224,9 +231,10 @@ async def test_router_passes_pre_transform_logical_value_to_context_writer(monke
         uuid.uuid4(),
         50.0,
         skip_binding_id=None,
+        suppress_confirmation_actions=True,
     )
 
-    assert instance.writes == [(pytest.approx(5.0), 50.0)]
+    assert instance.writes == [(pytest.approx(5.0), 50.0, True)]
 
 
 @pytest.mark.asyncio
@@ -247,6 +255,7 @@ async def test_handle_value_event_forwards_skip_binding_id(monkeypatch):
         event.datapoint_id,
         event.value,
         skip_binding_id=event.binding_id,
+        suppress_confirmation_actions=True,
     )
 
 
@@ -384,7 +393,12 @@ async def test_handle_with_writable_binding_writes_adapter_without_publishing_st
 
     await router.handle(dp_id, "21.5")
 
-    router._write_to_dest_bindings.assert_awaited_once_with(dp_id, pytest.approx(21.5), skip_binding_id=None)
+    router._write_to_dest_bindings.assert_awaited_once_with(
+        dp_id,
+        pytest.approx(21.5),
+        skip_binding_id=None,
+        suppress_confirmation_actions=False,
+    )
     bus.publish.assert_not_awaited()
 
 
@@ -520,7 +534,12 @@ async def test_handle_preserves_raw_string_payload_for_writable_binding():
 
     await router.handle(dp_id, "hello")
 
-    router._write_to_dest_bindings.assert_awaited_once_with(dp_id, "hello", skip_binding_id=None)
+    router._write_to_dest_bindings.assert_awaited_once_with(
+        dp_id,
+        "hello",
+        skip_binding_id=None,
+        suppress_confirmation_actions=False,
+    )
     bus.publish.assert_not_awaited()
 
 
@@ -556,7 +575,12 @@ async def test_handle_preserves_raw_temporal_payload_for_writable_binding():
 
     await router.handle(dp_id, "10:30:00")
 
-    router._write_to_dest_bindings.assert_awaited_once_with(dp_id, datetime.time(10, 30, 0), skip_binding_id=None)
+    router._write_to_dest_bindings.assert_awaited_once_with(
+        dp_id,
+        datetime.time(10, 30, 0),
+        skip_binding_id=None,
+        suppress_confirmation_actions=False,
+    )
     bus.publish.assert_not_awaited()
 
 

@@ -582,12 +582,12 @@ class TestTunnelOverloadDetection:
     ):
         adapter = self._make_adapter(mock_bus, threshold=3, window_s=300)
         adapter._pending_transmissions[123] = (
-            100.0,
             object(),
             "1/2/3",
             None,
             b"\x01",
             True,
+            False,
         )
 
         adapter._on_xknx_connection_state(XknxConnectionState.DISCONNECTED)
@@ -917,15 +917,15 @@ class TestOnBindingsReloaded:
         binding = make_binding({"group_address": "1/2/3", "dpt_id": "DPT9.001"}, direction="BOTH")
         adapter = self._make_adapter(mock_bus, [binding])
         adapter._recent_writes[(str(binding.id), "1/2/3")] = deque(
-            [(100.0, b"\x01", True)],
+            [(100.0, b"\x01", True, False)],
         )
         adapter._pending_transmissions[123] = (
-            100.0,
             binding,
             "1/2/3",
             None,
             b"\x01",
             True,
+            False,
         )
 
         await adapter._on_bindings_reloaded()
@@ -1323,8 +1323,8 @@ class TestKnxReadWrite:
         assert latest_event.value == 60.0
         assert state_event.value == 60.0
         assert state_event.suppress_write_propagation is True
-        assert abs(repeated_state_event.value - 0.5) < 0.1
-        assert repeated_state_event.suppress_write_propagation is False
+        assert repeated_state_event.value == 60.0
+        assert repeated_state_event.suppress_write_propagation is True
 
     def test_state_confirmation_keeps_expectations_for_other_raw_values(
         self,
@@ -1346,7 +1346,7 @@ class TestKnxReadWrite:
         adapter._remember_outbound_write(binding, "1/2/4", raw_six, 60.0)
         adapter._remember_outbound_write(binding, "1/2/4", raw_five, 55.0)
 
-        matched, logical_value = adapter._consume_outbound_confirmation(
+        matched, logical_value, suppress_actions = adapter._consume_outbound_confirmation(
             binding,
             "1/2/4",
             raw_five,
@@ -1355,8 +1355,12 @@ class TestKnxReadWrite:
 
         assert matched is True
         assert logical_value == 55.0
+        assert suppress_actions is False
         remaining = adapter._recent_writes[(str(binding.id), "1/2/4")]
-        assert [(raw, value) for _, raw, value in remaining] == [(raw_six, 60.0)]
+        assert [(raw, value) for _, raw, value, _ in remaining] == [
+            (raw_six, 60.0),
+            (raw_five, 55.0),
+        ]
 
     def test_command_address_mismatch_remains_pending(self, mock_bus):
         adapter, _ = self._make_adapter_with_xknx(mock_bus)
@@ -1372,7 +1376,7 @@ class TestKnxReadWrite:
             50.0,
         )
 
-        matched, logical_value = adapter._consume_outbound_confirmation(
+        matched, logical_value, suppress_actions = adapter._consume_outbound_confirmation(
             binding,
             "1/2/3",
             dpt.encoder(6.0),
@@ -1381,6 +1385,7 @@ class TestKnxReadWrite:
 
         assert matched is False
         assert logical_value is None
+        assert suppress_actions is False
         assert len(adapter._recent_writes[(str(binding.id), "1/2/3")]) == 1
 
     def test_confirmation_matching_rejects_wrong_telegram_direction(self, mock_bus):
@@ -1410,8 +1415,8 @@ class TestKnxReadWrite:
             is_outgoing=True,
         )
 
-        assert incoming_command == (False, None)
-        assert outgoing_state == (False, None)
+        assert incoming_command == (False, None, False)
+        assert outgoing_state == (False, None, False)
         assert len(adapter._recent_writes) == 2
 
     @pytest.mark.asyncio
@@ -1437,6 +1442,30 @@ class TestKnxReadWrite:
         assert event.value == 50.0
         assert event.suppress_write_propagation is True
         assert adapter._pending_transmissions == {}
+
+    @pytest.mark.asyncio
+    async def test_confirmation_suppresses_actions_when_origin_event_already_ran(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+
+        await adapter.write_with_context(
+            binding,
+            5.0,
+            logical_value=50.0,
+            suppress_confirmation_actions=True,
+        )
+        telegram = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(telegram)
+        await adapter._on_telegram(telegram)
+
+        event = mock_bus.publish.call_args.args[0]
+        assert event.value == 50.0
+        assert event.suppress_action_triggers is True
 
     @pytest.mark.asyncio
     async def test_real_xknx_dispatch_publishes_outgoing_and_preserves_external_incoming(self, mock_bus):
@@ -1519,7 +1548,7 @@ class TestKnxReadWrite:
         assert adapter._pending_transmissions == {}
 
     @pytest.mark.asyncio
-    async def test_cleanup_loop_prunes_expired_confirmations_without_traffic(
+    async def test_cleanup_loop_prunes_only_sent_confirmations_without_traffic(
         self,
         mock_bus,
     ):
@@ -1527,15 +1556,15 @@ class TestKnxReadWrite:
 
         adapter, _ = self._make_adapter_with_xknx(mock_bus)
         adapter._recent_writes[("binding", "1/2/3")] = deque(
-            [(100.0, b"\x01", True)],
+            [(100.0, b"\x01", True, False)],
         )
         adapter._pending_transmissions[123] = (
-            100.0,
             object(),
             "1/2/3",
             None,
             b"\x01",
             True,
+            False,
         )
         adapter._monotonic = lambda: 131.0
 
@@ -1549,27 +1578,32 @@ class TestKnxReadWrite:
             await adapter._echo_cleanup_loop()
 
         assert adapter._recent_writes == {}
-        assert adapter._pending_transmissions == {}
+        assert 123 in adapter._pending_transmissions
 
     @pytest.mark.asyncio
-    async def test_async_send_failure_pending_write_expires(self, mock_bus):
-        adapter, _ = self._make_adapter_with_xknx(mock_bus)
+    async def test_delayed_queued_write_retains_context_until_transmitted(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
         now = [100.0]
         adapter._monotonic = lambda: now[0]
         binding = make_binding(
             {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
             direction="BOTH",
         )
+        adapter._ga_source_map["1/2/3"] = [
+            (binding, DPTRegistry.get("DPT9.001")),
+        ]
 
         await adapter.write_with_context(binding, 5.0, logical_value=50.0)
         assert len(adapter._pending_transmissions) == 1
 
-        # XKNX accepted the queue item but neither emitted its outgoing callback
-        # nor raised from Queue.put(), as happens when the later transport send fails.
+        telegram = mock_xknx.telegrams.put.call_args.args[0]
         now[0] += 31.0
-        adapter._prune_pending_transmissions()
-
+        adapter._on_telegram_transmitted(telegram)
         assert adapter._pending_transmissions == {}
+        await adapter._on_telegram(telegram)
+        event = mock_bus.publish.call_args.args[0]
+        assert event.value == 50.0
+        assert event.suppress_write_propagation is True
 
     @pytest.mark.asyncio
     async def test_mutated_transmitted_telegram_does_not_activate_confirmation(
@@ -1654,7 +1688,7 @@ class TestKnxReadWrite:
         confirmation = next(event for event in events if event.binding_id == both_binding.id)
         source_event = next(event for event in events if event.binding_id == source_binding.id)
         assert confirmation.suppress_write_propagation is True
-        assert source_event.suppress_write_propagation is False
+        assert source_event.suppress_write_propagation is True
         assert abs(source_event.value - 50.0) < 0.1
 
     @pytest.mark.asyncio

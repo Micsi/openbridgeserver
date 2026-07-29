@@ -49,7 +49,6 @@ from obs.core.event_bus import DataValueEvent
 
 TUNNEL_OVERLOAD_DETAIL = "KNX-Tunnel-Slot wahrscheinlich von anderem Client belegt — Gateway-Pool überlastet."
 ECHO_SUPPRESSION_WINDOW_S = 2.0
-PENDING_TRANSMISSION_TIMEOUT_S = 30.0
 
 # Import APCI classes at module level so missing symbols fail loudly at startup
 try:
@@ -145,11 +144,11 @@ class KnxAdapter(AdapterBase):
         self._ga_respond_map: dict[str, list[tuple[Any, Any]]] = {}
         self._recent_writes: dict[
             tuple[str, str],
-            deque[tuple[float, bytes, Any]],
+            deque[tuple[float, bytes, Any, bool]],
         ] = {}
         self._pending_transmissions: dict[
             int,
-            tuple[float, Any, str, str | None, bytes, Any],
+            tuple[Any, str, str | None, bytes, Any, bool],
         ] = {}
         self._value_getter: Any = None
         self._reconnect_task: asyncio.Task | None = None
@@ -360,11 +359,10 @@ class KnxAdapter(AdapterBase):
                 await self._do_connect()
 
     async def _echo_cleanup_loop(self) -> None:
-        """Remove expired queued and sent confirmation expectations."""
+        """Remove expired sent confirmation expectations."""
         while not self._stopped:
             await asyncio.sleep(ECHO_SUPPRESSION_WINDOW_S)
             self._prune_recent_writes()
-            self._prune_pending_transmissions()
 
     # ------------------------------------------------------------------
     # Tunnel-pool overload detection — issue #466
@@ -565,8 +563,13 @@ class KnxAdapter(AdapterBase):
 
             raw = _telegram_to_bytes(telegram)
             is_outgoing = getattr(getattr(telegram, "direction", None), "name", None) == "OUTGOING"
+            suppress_address_propagation = self._is_local_outgoing_confirmation(
+                ga,
+                raw,
+                is_outgoing=is_outgoing,
+            )
             for binding, dpt in entries:
-                is_outbound_confirmation, logical_value = self._consume_outbound_confirmation(
+                is_outbound_confirmation, logical_value, suppress_action_triggers = self._consume_outbound_confirmation(
                     binding,
                     ga,
                     raw,
@@ -616,7 +619,8 @@ class KnxAdapter(AdapterBase):
                         quality=quality,
                         source_adapter=self.adapter_type,
                         binding_id=binding.id,
-                        suppress_write_propagation=is_outbound_confirmation,
+                        suppress_write_propagation=is_outbound_confirmation or suppress_address_propagation,
+                        suppress_action_triggers=suppress_action_triggers,
                     ),
                 )
         except Exception:
@@ -678,13 +682,14 @@ class KnxAdapter(AdapterBase):
         logical_value: Any,
         *,
         written_at: float | None = None,
+        suppress_action_triggers: bool = False,
     ) -> None:
         """Remember a BOTH-binding write so its immediate confirmation can be recognized."""
         key = (str(binding.id), ga)
         now = self._monotonic() if written_at is None else written_at
         self._prune_recent_writes(now)
         recent_writes = self._recent_writes.setdefault(key, deque())
-        recent_writes.append((now, bytes(raw), logical_value))
+        recent_writes.append((now, bytes(raw), logical_value, suppress_action_triggers))
 
     def _activate_outbound_write(self, telegram: Any, ga: str, raw: bytes) -> None:
         """Start confirmation windows after XKNX has transmitted a queued telegram."""
@@ -692,7 +697,7 @@ class KnxAdapter(AdapterBase):
         if pending is None:
             return
 
-        _, binding, command_ga, state_ga, written_raw, logical_value = pending
+        binding, command_ga, state_ga, written_raw, logical_value, suppress_action_triggers = pending
         if ga != command_ga or written_raw != bytes(raw):
             logger.warning(
                 "KNX transmitted telegram differs from queued write: GA=%s expected_GA=%s",
@@ -708,6 +713,7 @@ class KnxAdapter(AdapterBase):
             written_raw,
             logical_value,
             written_at=written_at,
+            suppress_action_triggers=suppress_action_triggers,
         )
         if state_ga and state_ga != command_ga:
             self._remember_outbound_write(
@@ -716,6 +722,7 @@ class KnxAdapter(AdapterBase):
                 written_raw,
                 logical_value,
                 written_at=written_at,
+                suppress_action_triggers=suppress_action_triggers,
             )
 
     def _on_telegram_transmitted(self, telegram: Any) -> None:
@@ -737,12 +744,21 @@ class KnxAdapter(AdapterBase):
             if not recent_writes:
                 self._recent_writes.pop(key, None)
 
-    def _prune_pending_transmissions(self, now: float | None = None) -> None:
-        """Remove writes XKNX did not report as transmitted within a bounded wait."""
-        cutoff = (self._monotonic() if now is None else now) - PENDING_TRANSMISSION_TIMEOUT_S
-        for telegram_id, pending in list(self._pending_transmissions.items()):
-            if pending[0] < cutoff:
-                self._pending_transmissions.pop(telegram_id, None)
+    def _is_local_outgoing_confirmation(
+        self,
+        ga: str,
+        raw: bytes,
+        *,
+        is_outgoing: bool,
+    ) -> bool:
+        """Return whether an outgoing telegram matches any local write on this address."""
+        if not is_outgoing:
+            return False
+        self._prune_recent_writes()
+        return any(
+            key_ga == ga and any(written_raw == raw for _, written_raw, _, _ in recent_writes)
+            for (_, key_ga), recent_writes in self._recent_writes.items()
+        )
 
     def _consume_outbound_confirmation(
         self,
@@ -751,41 +767,44 @@ class KnxAdapter(AdapterBase):
         raw: bytes,
         *,
         is_outgoing: bool,
-    ) -> tuple[bool, Any]:
+    ) -> tuple[bool, Any, bool]:
         """Consume and return the logical value for one matching recent write."""
         self._prune_recent_writes()
         key = (str(binding.id), ga)
         recent_writes = self._recent_writes.get(key)
         if recent_writes is None:
-            return False, None
+            return False, None, False
 
         state_ga = binding.config.get("state_group_address")
         is_distinct_state_ga = state_ga == ga and state_ga != binding.config.get("group_address")
         if is_distinct_state_ga:
             if is_outgoing:
-                return False, None
+                return False, None, False
             matching_writes = [recent_write for recent_write in recent_writes if recent_write[1] == raw]
             if not matching_writes:
-                return False, None
+                return False, None, False
 
-            remaining_writes = deque(recent_write for recent_write in recent_writes if recent_write[1] != raw)
-            if remaining_writes:
-                self._recent_writes[key] = remaining_writes
-            else:
+            newest_logical_value = matching_writes[-1][2]
+            suppress_action_triggers = matching_writes[-1][3]
+            for index, recent_write in enumerate(recent_writes):
+                if recent_write[1] == raw:
+                    del recent_writes[index]
+                    break
+            if not recent_writes:
                 self._recent_writes.pop(key, None)
-            return True, matching_writes[-1][2]
+            return True, newest_logical_value, suppress_action_triggers
 
         if not is_outgoing:
-            return False, None
-        for index, (_, written_raw, logical_value) in enumerate(recent_writes):
+            return False, None, False
+        for index, (_, written_raw, logical_value, suppress_action_triggers) in enumerate(recent_writes):
             if written_raw != raw:
                 continue
             del recent_writes[index]
             if not recent_writes:
                 self._recent_writes.pop(key, None)
-            return True, logical_value
+            return True, logical_value, suppress_action_triggers
 
-        return False, None
+        return False, None, False
 
     async def read(self, binding: Any) -> Any:
         if not self._xknx:
@@ -815,6 +834,7 @@ class KnxAdapter(AdapterBase):
         value: Any,
         *,
         logical_value: Any,
+        suppress_confirmation_actions: bool = False,
     ) -> None:
         if not self._xknx:
             return
@@ -840,12 +860,12 @@ class KnxAdapter(AdapterBase):
             )
             if binding.direction == "BOTH":
                 self._pending_transmissions[id(telegram)] = (
-                    self._monotonic(),
                     binding,
                     bc.group_address,
                     bc.state_group_address,
                     bytes(raw),
                     logical_value,
+                    suppress_confirmation_actions,
                 )
             try:
                 await self._xknx.telegrams.put(telegram)

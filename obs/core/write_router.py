@@ -187,7 +187,12 @@ class WriteRouter:
         logger.info("WriteRouter: dp=%s value=%r (type=%s)", dp.name, value, dp.data_type)
 
         if has_writable_bindings:
-            await self._write_to_dest_bindings(dp_id, value, skip_binding_id=None)
+            await self._write_to_dest_bindings(
+                dp_id,
+                value,
+                skip_binding_id=None,
+                suppress_confirmation_actions=False,
+            )
             return
 
         logger.warning("Write request for bindingless internal DataPoint %s — ignored", dp_id)
@@ -248,7 +253,12 @@ class WriteRouter:
                 return
 
         await self._clear_type_mismatch(event.datapoint_id)
-        await self._write_to_dest_bindings(event.datapoint_id, value, skip_binding_id=event.binding_id)
+        await self._write_to_dest_bindings(
+            event.datapoint_id,
+            value,
+            skip_binding_id=event.binding_id,
+            suppress_confirmation_actions=True,
+        )
 
     # ------------------------------------------------------------------
     # Shared helper
@@ -259,6 +269,7 @@ class WriteRouter:
         dp_id: uuid.UUID,
         value: Any,
         skip_binding_id: uuid.UUID | None,
+        suppress_confirmation_actions: bool = False,
     ) -> None:
         from obs.adapters import registry as adapter_registry
         from obs.adapters.registry import _row_to_binding
@@ -390,6 +401,7 @@ class WriteRouter:
                         binding,
                         write_value,
                         logical_value=value,
+                        suppress_confirmation_actions=suppress_confirmation_actions,
                     )
                 else:
                     await instance.write(binding, write_value)

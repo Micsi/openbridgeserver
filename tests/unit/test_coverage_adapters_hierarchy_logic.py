@@ -3666,6 +3666,31 @@ class TestLogicManagerBasics:
 
 class TestLogicManagerValueEvent:
     @pytest.mark.asyncio
+    async def test_on_value_event_ignores_state_only_confirmation_actions(self):
+        dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "n1",
+                    "type": "datapoint_read",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"datapoint_id": str(dp_id)},
+                }
+            ]
+        )
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr._execute_graph = AsyncMock()
+        event = SimpleNamespace(
+            datapoint_id=dp_id,
+            value=42.0,
+            suppress_action_triggers=True,
+        )
+
+        await mgr._on_value_event(event)
+
+        mgr._execute_graph.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_on_value_event_no_matching_graph(self):
         """When no graph has a node watching the DP, no execute call is made."""
         mgr, _db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, _make_flow())})
