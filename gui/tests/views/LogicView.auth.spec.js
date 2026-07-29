@@ -613,6 +613,38 @@ describe('LogicView inspector inputs', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.findComponent({ name: 'DebugInspector' }).props('outputs')).toEqual({})
   })
+
+  it('ignores debug state from a run completed after debug mode is disabled', async () => {
+    const graph = makeGraph('graph-1')
+    const { wrapper, logicApi } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+    let resolveRun
+    logicApi.runGraph.mockReturnValueOnce(new Promise(resolve => { resolveRun = resolve }))
+
+    wrapper.vm.toggleDebug()
+    const pendingRun = wrapper.vm.runGraph()
+    wrapper.vm.toggleDebug()
+    resolveRun({
+      data: {
+        outputs: { n1: { value: 9 } },
+        debug: {
+          inputs: { n1: { value: { incoming: 1, effective: 9, overridden: true } } },
+          timestamp: '2026-07-29T05:00:00Z',
+          used_overrides: true,
+        },
+      },
+    })
+    await pendingRun
+
+    expect(wrapper.vm.lastRunInputs).toEqual({})
+    expect(wrapper.vm.lastRunMetadata).toBe(null)
+    expect(wrapper.vm.lastRunDebugOutputs).toEqual({})
+    expect(wrapper.vm.lastRunOutputs.n1.value).toBe(9)
+  })
 })
 
 describe('LogicView graph cycle validation', () => {

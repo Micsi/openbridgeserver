@@ -521,6 +521,7 @@ const debugOverrides = ref({})
 const lastRunMetadata = ref(null)
 const lastRunInputs = ref({})
 const lastRunDebugOutputs = ref({})
+let debugStateGeneration = 0
 const DEBUG_TOOLTIP_MAX_CHARS = 1000
 
 function fmtDebugVal(nodeOut, { full = false, maxChars = null } = {}) {
@@ -601,6 +602,7 @@ function countGraphDiagnostics(outputs) {
 function toggleDebug() {
   if (!auth.isAdmin) return
   debugMode.value = !debugMode.value
+  debugStateGeneration += 1
   sendDebugSubscription(activeGraphId.value, debugMode.value)
   if (!debugMode.value) {
     clearAllDebugOverrides()
@@ -681,14 +683,18 @@ const debugInputs = computed(() => {
 
 async function runGraph() {
   if (!auth.isAdmin || !activeGraphId.value) return
+  const requestGraphId = activeGraphId.value
+  const requestDebugGeneration = debugStateGeneration
+  const requestedDebugState = debugMode.value
   try {
     const parsedOverrides = Object.fromEntries(Object.entries(debugOverrides.value).map(([nodeId, values]) => [
       nodeId,
       Object.fromEntries(Object.entries(values).map(([port, value]) => [port, parseOverride(value)])),
     ]).filter(([, values]) => Object.keys(values).length))
-    const { data } = debugMode.value || Object.keys(parsedOverrides).length
-      ? await logicApi.runGraph(activeGraphId.value, { debug: debugMode.value, input_overrides: parsedOverrides })
-      : await logicApi.runGraph(activeGraphId.value)
+    const { data } = requestedDebugState || Object.keys(parsedOverrides).length
+      ? await logicApi.runGraph(requestGraphId, { debug: requestedDebugState, input_overrides: parsedOverrides })
+      : await logicApi.runGraph(requestGraphId)
+    if (activeGraphId.value !== requestGraphId) return
     const outputs = data.outputs || {}
     const evalCount = Object.keys(outputs).length
     const diagnosticCount = Array.isArray(data.warnings) ? data.warnings.length : countGraphDiagnostics(outputs)
@@ -705,8 +711,14 @@ async function runGraph() {
       lastRunOutputs.value = outputs
       clearDebugValues()
     }
-    lastRunMetadata.value = data.debug || { timestamp: new Date().toISOString(), used_overrides: false }
-    lastRunInputs.value = data.debug?.inputs || {}
+    if (
+      requestedDebugState &&
+      debugMode.value &&
+      debugStateGeneration === requestDebugGeneration
+    ) {
+      lastRunMetadata.value = data.debug || { timestamp: new Date().toISOString(), used_overrides: false }
+      lastRunInputs.value = data.debug?.inputs || {}
+    }
   } catch (err) {
     showStatus(false, err.response?.data?.detail ?? t('common.error'))
   }
@@ -965,6 +977,7 @@ function _wsDisconnect() {
 // ── Persist active graph selection ────────────────────────────────────────
 watch(activeGraphId, (id, previousId) => {
   if (previousId && id !== previousId) {
+    debugStateGeneration += 1
     sendDebugSubscription(previousId, false)
     debugMode.value = false
     debugNode.value = null

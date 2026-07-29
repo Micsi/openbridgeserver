@@ -29,7 +29,7 @@ def _jsonable(value: Any, active_containers: set[int]) -> Any:
             return "<recursive dict>"
         active_containers.add(container_id)
         try:
-            return {key: _jsonable(item, active_containers) for key, item in value.items()}
+            return {_jsonable_key(key): _jsonable(item, active_containers) for key, item in value.items()}
         finally:
             active_containers.remove(container_id)
     if isinstance(value, (list, tuple)):
@@ -44,3 +44,11 @@ def _jsonable(value: Any, active_containers: set[int]) -> Any:
     if isinstance(value, (date, datetime, time)):
         return value.isoformat()
     return value
+
+
+def _jsonable_key(key: Any) -> Any:
+    if isinstance(key, (str, int, float, bool)) or key is None:
+        return key
+    if isinstance(key, (date, datetime, time)):
+        return key.isoformat()
+    return str(key)

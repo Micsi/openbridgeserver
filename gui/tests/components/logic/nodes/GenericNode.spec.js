@@ -41,6 +41,12 @@ describe('GenericNode — label from NODE_DEFS', () => {
     await flushPromises()
     expect(w.find('.gn-title').text()).toBe('mystery_node')
   })
+
+  it('exposes the full heading when its fixed-width display is truncated', async () => {
+    const w = await mountGN('substring_extractor')
+    await flushPromises()
+    expect(w.find('.gn-title').attributes('title')).toBe(w.find('.gn-title').text())
+  })
 })
 
 describe('GenericNode — handles', () => {

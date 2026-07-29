@@ -32,6 +32,13 @@ def test_jsonable_replaces_recursive_container_references():
     assert jsonable(value) == {"self": "<recursive dict>"}
 
 
+def test_jsonable_normalizes_non_json_mapping_keys():
+    value = {(1, 2): "tuple", datetime.date(2026, 7, 29): "date"}
+
+    assert jsonable(value) == {"(1, 2)": "tuple", "2026-07-29": "date"}
+    assert json.loads(json.dumps(jsonable(value))) == {"(1, 2)": "tuple", "2026-07-29": "date"}
+
+
 def test_json_dumps_raises_for_non_serializable():
     import pytest
 

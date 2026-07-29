@@ -13,7 +13,7 @@
          :style="{ borderTopColor: def.color, background: def.color + '12', minHeight: cardH + 'px' }">
 
       <div class="gn-header" :style="{ background: def.color + '28' }">
-        <span class="gn-title">{{ def.label }}</span>
+        <span class="gn-title" :title="def.label">{{ def.label }}</span>
         <button class="gn-del nodrag" :style="{ visibility: hovered ? 'visible' : 'hidden' }" @click.stop="remove">✕</button>
       </div>
 
@@ -404,8 +404,18 @@ function remove() { removeNodes([props.id]) }
   padding: 4px 10px;
   border-radius: 5px 5px 0 0;
 }
-.gn-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--node-title-color); }
-.gn-del   { font-size:11px; color:var(--node-del-color); background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; }
+.gn-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--node-title-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gn-del   { flex-shrink:0; font-size:11px; color:var(--node-del-color); background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; }
 .gn-del:hover { color:#f87171; }
 
 .gn-body  { padding: 0; }
