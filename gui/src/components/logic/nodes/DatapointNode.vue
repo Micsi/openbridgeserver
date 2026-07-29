@@ -28,7 +28,7 @@
           <span ref="portRef2" class="gn-port-label">{{ $t('logic.ports.changed') }}</span>
         </div>
       </div>
-      <div v-if="data._dbg" class="gn-debug" data-testid="debug-band">{{ data._dbg }}</div>
+      <div v-if="data._dbg" class="gn-debug" :title="data._dbg_title || data._dbg" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <template v-if="!isWrite">
@@ -110,7 +110,7 @@ const hasFilter = computed(() => {
 }
 
 .gn-card {
-  min-width: 160px;
+  width: 160px;
   background: var(--node-card-bg);
   border: 1px solid var(--node-card-border);
   border-top: 3px solid #0f766e;
@@ -138,6 +138,9 @@ const hasFilter = computed(() => {
 .gn-port-col { display:flex; flex-direction:column; gap:2px; }
 .gn-port-label { font-size:9px; color:var(--node-port-label); }
 .gn-debug {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   font-size: 9px;
   color: var(--node-debug-color);
   font-family: ui-monospace, monospace;

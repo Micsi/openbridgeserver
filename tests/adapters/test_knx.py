@@ -616,7 +616,10 @@ class TestKnxAdapterMiscSetters:
 
     def test_set_value_getter(self, mock_bus):
         adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
-        getter = lambda dp_id: None
+
+        def getter(dp_id):
+            return None
+
         adapter.set_value_getter(getter)
         assert adapter._value_getter is getter
 
