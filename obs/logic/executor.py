@@ -30,10 +30,10 @@ _AVG_MULTI_MAX_SAMPLES = 100_000
 def _snapshot_debug_value(value: Any) -> Any:
     try:
         return copy.deepcopy(value)
-    except Exception:
+    except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing copy hooks
         try:
             return json.loads(json.dumps(value, default=str))
-        except Exception:
+        except Exception:  # noqa: BLE001 - debug capture must never break graph execution
             return str(value)
 
 
