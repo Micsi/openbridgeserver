@@ -877,6 +877,41 @@ class TestHostCheckRisingEdge:
         assert outputs["cf"]["out"] is False
         assert outputs["cf"]["changed"] is True
 
+    def test_change_filter_rollback_clears_placeholder_state_for_a_fresh_filter(self):
+        """Regression: a fresh (no prior state) change_filter held behind an
+        unseeded Read Object must have any placeholder state the
+        uncorrected initial pass wrote for it inline cleared during
+        rollback — leaving it behind would make the filter's first REAL
+        value (once the Read Object is finally seeded) compare against
+        that stale placeholder instead of reporting the genuine first
+        change."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("not_gate", "not"),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "not_gate", "value", "in1"),
+                edge("not_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-rollback-clear"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            # Two unrelated executions while the Read Object stays unseeded.
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+            # The Read Object finally receives its real (first-ever) value.
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"unseeded_read": {"value": False, "changed": True}}))
+
+        assert outputs["cf"]["changed"] is True
+
     def test_correction_replay_reuses_first_pass_value_instead_of_resampling_random_value(self):
         """Regression: the correction replay for a held change_filter used to
         re-execute the *whole* graph and copy back every descendant's new

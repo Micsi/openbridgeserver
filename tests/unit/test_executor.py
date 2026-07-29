@@ -582,6 +582,49 @@ class TestDecisionNode:
 
         assert out["empty"] is True
 
+    def test_equality_condition_matches_large_integers_exactly(self):
+        out = run_single(
+            "decision",
+            {"conditions": [{"handle": "match", "operator": "eq", "value": 9007199254740993}]},
+            {"value": 9007199254740993},
+        )
+
+        assert out["match"] is True
+
+    def test_equality_condition_matches_numeric_values(self):
+        out = run_single(
+            "decision",
+            {"conditions": [{"handle": "match", "operator": "eq", "value": 5.5}]},
+            {"value": 5.5},
+        )
+
+        assert out["match"] is True
+
+    def test_equality_condition_matches_structurally_equal_lists(self):
+        out = run_single(
+            "decision",
+            {"conditions": [{"handle": "match", "operator": "eq", "value": [1, 2]}]},
+            {"value": [1, 2]},
+        )
+
+        assert out["match"] is True
+
+    def test_equality_condition_matches_a_list_against_its_text_repr(self):
+        """Regression: a Decision rule's compare value is entered through a
+        NodeConfigPanel text input and is therefore always a string — an
+        API/JSON list [1, 2] must still match a rule configured as the
+        string "[1, 2]", same as before change_filter's stricter, type-
+        sensitive persisted-state comparison was introduced. That stricter
+        behavior must stay local to change_filter, not leak into Decision/
+        Value Mapping conditions and silently break existing rules."""
+        out = run_single(
+            "decision",
+            {"conditions": [{"handle": "match", "operator": "eq", "value": "[1, 2]"}]},
+            {"value": [1, 2]},
+        )
+
+        assert out["match"] is True
+
     @pytest.mark.parametrize(
         "input_value, expected_value, expected",
         [

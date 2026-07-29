@@ -2289,8 +2289,18 @@ class LogicManager:
             for _nid, _vals in _cf_hold_outputs.items():
                 if _nid in _cf_hold_ids or _nid in _cf_hold_desc:
                     outputs[_nid] = _vals
+                    # A node absent from the pre-pass snapshot had no state
+                    # *before* this pass, but the uncorrected initial pass
+                    # (executed before this correction ever ran) may already
+                    # have written placeholder state for it inline — e.g. a
+                    # fresh change_filter's first-value commit. Leaving that
+                    # behind instead of clearing it would let the next real
+                    # execution compare against the wrong (placeholder)
+                    # baseline and suppress a legitimate change.
                     if _nid in _cf_hold_hyst:
                         hyst[_nid] = _cf_hold_hyst[_nid]
+                    else:
+                        hyst.pop(_nid, None)
             _apply_operating_hours_state(_cf_hold_ids | _cf_hold_desc, pre_execute_node_state)
 
         # ── Cron-reachability preamble ────────────────────────────────────

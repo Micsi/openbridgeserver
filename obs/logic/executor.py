@@ -418,8 +418,30 @@ class GraphExecutor:
 
     @classmethod
     def _values_equal(cls, left: Any, right: Any) -> bool:
-        equal, _ = cls._compare_values(left, right)
-        return equal
+        """Type-tolerant equality for Decision/Value Mapping rule conditions.
+
+        Their `expected` value is entered through a NodeConfigPanel text
+        input and is therefore always a string — e.g. an API/JSON list
+        `[1, 2]` must still match a rule configured as the string `"[1, 2]"`.
+        Unlike `_compare_values` (change_filter's own persisted-state
+        comparison, which needs the stricter behavior to avoid silently
+        losing type information across a restart), this keeps the lenient
+        str(left) == str(right) fallback for any pair not already handled by
+        the normalizing paths below — narrowing it here too would silently
+        break existing rules built around that fallback.
+        """
+        bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
+        if bool_left is not None and bool_right is not None:
+            return bool_left == bool_right
+        int_left, int_right = cls._try_exact_int(left), cls._try_exact_int(right)
+        if int_left is not None and int_right is not None:
+            return int_left == int_right
+        num_left, num_right = cls._try_num(left), cls._try_num(right)
+        if num_left is not None and num_right is not None:
+            return num_left == num_right
+        if isinstance(left, (dict, list)) and isinstance(right, (dict, list)):
+            return left == right
+        return str(left) == str(right)
 
     @staticmethod
     def _to_bool(v: Any) -> bool:
