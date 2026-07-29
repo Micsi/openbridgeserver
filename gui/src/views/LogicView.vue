@@ -502,12 +502,13 @@ async function loadGraph() {
     selectedNode.value = null
   } catch (err) {
     if (requestId !== _loadGraphRequestId) return
-    // A failed load must not leave the previous sheet's nodes/edges/selection
-    // silently attached to the now-active (but never-loaded) graph id —
-    // graphLoading still clears in `finally` below, so Copy would clipboard
-    // stale blocks, Paste would append to them, and Save would write that
-    // mixed flow into the destination sheet. Treat it the same as "nothing
-    // loaded here" instead.
+    // A failed load must not leave an editable (but never actually loaded)
+    // sheet around: with only nodes/edges cleared, activeGraphId still
+    // named this sheet and graphLoading still clears in `finally` below, so
+    // Save stays enabled and would submit those empty arrays — overwriting
+    // the real, unrelated graph on the server with nothing. Revert the
+    // selection entirely instead of presenting a stale or blank editor.
+    activeGraphId.value = ''
     nodes.value = []
     edges.value = []
     selectedNode.value = null

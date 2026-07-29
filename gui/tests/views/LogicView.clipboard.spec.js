@@ -539,12 +539,13 @@ describe('LogicView node copy/paste', () => {
     expect(wrapper.vm.edges).toEqual([])
   })
 
-  it('clears stale nodes/edges/selection when a sheet switch fails to load, instead of leaving them attached to the new activeGraphId', async () => {
+  it('clears stale nodes/edges/selection and the active graph selection when a sheet switch fails to load', async () => {
     // Regression: without this, graphLoading still clears in `finally`
-    // (re-enabling Copy/Paste/Save) while `nodes`/`edges` silently keep the
-    // *previous* sheet's content under the *new* activeGraphId — Copy would
-    // clipboard those stale blocks, Paste would append to them, and Save
-    // would write that mixed flow into the destination sheet.
+    // (re-enabling Copy/Paste/Save) while activeGraphId keeps naming the
+    // sheet that failed to load — Save stays enabled and would submit
+    // whatever nodes/edges are on screen (stale, or emptied), overwriting
+    // the real graph on the server. Reverting activeGraphId to '' hides the
+    // whole editor and disables every admin action gated on it.
     const { wrapper, logicApi } = await mountLogicView()
     expect(wrapper.vm.nodes).toHaveLength(2)
     wrapper.vm.selectedNode = { id: 'n1', type: 'and', data: {} }
@@ -553,11 +554,22 @@ describe('LogicView node copy/paste', () => {
     wrapper.vm.activeGraphId = 'graph-2'
     await wrapper.vm.loadGraph()
 
+    expect(wrapper.vm.activeGraphId).toBe('')
     expect(wrapper.vm.nodes).toEqual([])
     expect(wrapper.vm.edges).toEqual([])
     expect(wrapper.vm.selectedNode).toBeNull()
     expect(wrapper.vm.graphLoading).toBe(false)
     expect(wrapper.vm.statusMsg.ok).toBe(false)
+  })
+
+  it('shows the server-provided error detail when a sheet load fails with a response body', async () => {
+    const { wrapper, logicApi } = await mountLogicView()
+
+    logicApi.getGraph.mockRejectedValueOnce({ response: { data: { detail: 'Graph not found' } } })
+    wrapper.vm.activeGraphId = 'graph-2'
+    await wrapper.vm.loadGraph()
+
+    expect(wrapper.vm.statusMsg).toEqual({ ok: false, text: 'Graph not found' })
   })
 
   it('copySelection is a no-op for non-admin users', async () => {
