@@ -693,14 +693,16 @@ class GraphExecutor:
                     return {"out": prev_value, "changed": False}
                 value = inputs["in"]
                 has_prev = isinstance(state, dict) and "value" in state
-                # A dict/list `value` is stored as an isolated deep copy —
+                # A dict/list/set `value` is stored as an isolated deep copy —
                 # never the same object handed out as `out` — because a
                 # downstream node (a "python_script" is explicitly allowed
                 # to mutate its inputs in place) could otherwise mutate the
                 # object this filter is using as its own comparison
                 # baseline, corrupting both the next comparison and the
                 # persisted state without ever passing through "in" again.
-                baseline = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
+                # tuple/frozenset are immutable and need no copy; datetime/
+                # date/time/bytes are also immutable.
+                baseline = copy.deepcopy(value) if isinstance(value, (dict, list, set)) else value
                 if not has_prev:
                     self.hysteresis_state[node.id] = {"value": baseline}
                     return {"out": value, "changed": True}
@@ -717,12 +719,12 @@ class GraphExecutor:
                 # `default=str` encoding) — emit the current input there
                 # instead, so `out`'s type doesn't silently degrade to
                 # whatever survived persistence. When emitting the persisted
-                # representation, hand out a copy for dict/list values too —
-                # same reasoning as the baseline above, since state["value"]
-                # is otherwise the exact object this filter keeps comparing
-                # against on every future "unchanged" tick.
+                # representation, hand out a copy for dict/list/set values
+                # too — same reasoning as the baseline above, since
+                # state["value"] is otherwise the exact object this filter
+                # keeps comparing against on every future "unchanged" tick.
                 if via_normalizing_path:
-                    out_value = copy.deepcopy(state["value"]) if isinstance(state["value"], (dict, list)) else state["value"]
+                    out_value = copy.deepcopy(state["value"]) if isinstance(state["value"], (dict, list, set)) else state["value"]
                 else:
                     out_value = value
                 return {"out": out_value, "changed": False}

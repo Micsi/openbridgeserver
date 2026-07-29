@@ -721,6 +721,103 @@ async def test_change_filter_state_is_committed_with_no_write_descendant():
 
 
 @pytest.mark.asyncio
+async def test_change_filter_state_committed_when_or_gate_absorbed_by_seeded_input():
+    """Regression: the blanket `tainted` closure used to discard a Change
+    Filter's initialization baseline whenever ANY upstream Read Object was
+    unseeded, even if an OR gate in between is already decisively True from
+    its OTHER, seeded input. E.g. seeded True + unseeded Read -> OR ->
+    change_filter: the OR's output is fully deterministic, so the filter's
+    committed state must not be discarded — otherwise the next unrelated
+    event would replay the unchanged True as the filter's "first" value and
+    re-fire the downstream action."""
+    seeded_id, unseeded_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r_seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "r_unseeded", "type": "datapoint_read", "data": {"datapoint_id": unseeded_id}},
+            {"id": "or1", "type": "or", "data": {}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r_seeded", "sourceHandle": "value", "target": "or1", "targetHandle": "in1"},
+            {"source": "r_unseeded", "sourceHandle": "value", "target": "or1", "targetHandle": "in2"},
+            {"source": "or1", "sourceHandle": "out", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "out", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: True})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": True}
+
+
+@pytest.mark.asyncio
+async def test_change_filter_state_committed_when_and_gate_absorbed_by_negated_seeded_input():
+    """Same absorption as the OR case above, but for an AND gate (decisive
+    value False) whose seeded input is negated to reach that decisive
+    value — also exercises the negate_in{handle} branch of the taint
+    analysis's gate-absorption check."""
+    seeded_id, unseeded_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r_seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "r_unseeded", "type": "datapoint_read", "data": {"datapoint_id": unseeded_id}},
+            {"id": "and1", "type": "and", "data": {"negate_in1": True}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r_seeded", "sourceHandle": "value", "target": "and1", "targetHandle": "in1"},
+            {"source": "r_unseeded", "sourceHandle": "value", "target": "and1", "targetHandle": "in2"},
+            {"source": "and1", "sourceHandle": "out", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "out", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: True})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": False}
+
+
+@pytest.mark.asyncio
+async def test_change_filter_taint_survives_malformed_gate_input_count_during_initialization():
+    """Regression: a malformed input_count (e.g. an imported/legacy node
+    left with "invalid" or null) must not crash the whole initialization
+    pass — the gate is instead treated as not-absorbed (still tainted), so
+    a downstream Change Filter's baseline is correctly held rather than
+    committed from a still-undetermined gate output."""
+    seeded_id, unseeded_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r_seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "r_unseeded", "type": "datapoint_read", "data": {"datapoint_id": unseeded_id}},
+            {"id": "and1", "type": "and", "data": {"input_count": "invalid"}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r_seeded", "sourceHandle": "value", "target": "and1", "targetHandle": "in1"},
+            {"source": "r_unseeded", "sourceHandle": "value", "target": "and1", "targetHandle": "in2"},
+            {"source": "and1", "sourceHandle": "out", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "out", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: True})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": "stale"}
+    persist_calls = [c for c in mgr._db.execute_and_commit.await_args_list if "node_state" in c.args[0]]
+    assert len(persist_calls) == 0
+
+
+@pytest.mark.asyncio
 async def test_unrelated_read_of_target_does_not_skip_write():
     """Read A → Write B plus an independent Read B (no path back to the
     write) is not a feedback loop — B must still be initialized."""

@@ -194,6 +194,51 @@ def test_message_archive_replay_runs_downstream_host_check_and_wol() -> None:
     assert outputs["wol"]["sent"] is True
 
 
+def test_message_archive_replay_holds_change_filter_behind_pending_wol() -> None:
+    """Regression: _replay_async_descendants (used for message_archive/notify
+    replays) registered a change_filter's pulse right after evaluating a
+    downstream async node's PLACEHOLDER output, with no suppression for a
+    still-pending sibling — unlike the api_client replay branch, which holds
+    such a filter until the real result is known. Here wol.sent is a
+    placeholder False in the first replay pass (wol hasn't actually sent
+    yet); the persisted change_filter baseline is True, so a naive compare
+    reports changed=True and a downstream host_check pings immediately —
+    before wol's real send (which also settles to True, i.e. no real change)
+    ever happens. The filter must stay held until wol actually runs, and
+    since the real result matches the persisted baseline, host_check must
+    never be triggered at all."""
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node("ma", "message_archive", {"archive_id": "Alerts", "message": "Stored"}),
+            node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+            node("cf", "change_filter", {}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ],
+        [
+            edge("ma", "wol", "stored", "trigger"),
+            edge("wol", "cf", "sent", "in"),
+            edge("cf", "hc", "changed", "trigger"),
+        ],
+    )
+    service = MagicMock()
+    service.record = AsyncMock(return_value={"id": "entry-1"})
+    manager._hysteresis["archive-graph"] = {"cf": {"value": True}}
+
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
+    ):
+        outputs = _run(manager, flow, {"ma": {"trigger": True}})
+
+    mock_to_thread.assert_awaited_once()
+    mock_ping.assert_not_awaited()
+    assert outputs["wol"]["sent"] is True
+    assert outputs["cf"]["changed"] is False
+
+
 def test_message_archive_replay_runs_downstream_message_archive() -> None:
     manager = _make_manager()
     flow = _flow(

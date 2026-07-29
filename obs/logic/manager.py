@@ -1836,17 +1836,74 @@ class LogicManager:
             finally:
                 self._initializing_graphs.pop(graph_id, None)
 
+            # `tainted` is a blanket downstream closure from unseeded/excluded
+            # nodes — but an AND/OR gate can be decisively resolved by a
+            # seeded input alone (e.g. seeded True feeding an OR whose other
+            # input is an unseeded Read Object), making everything downstream
+            # of that gate deterministic despite being nominally "tainted".
+            # change_filter's own committed state is only ever gated on this
+            # refined taint (never on skip_writes/gate/hysteresis, which keep
+            # using the blanket `tainted` above) — mirrors _compute_cf_hold_ids'
+            # _gate_taint_absorbed in _execute_graph, computed here against the
+            # settled `outputs`/`tainted` from the loop above.
+            _node_by_id_init = {n.id: n for n in flow.nodes}
+            _decisive_gate_value_init = {"or": True, "and": False}
+
+            def _gate_taint_absorbed_init(gate_id: str, gate_type: str) -> bool:
+                decisive = _decisive_gate_value_init[gate_type]
+                gate_node = _node_by_id_init[gate_id]
+                gdata = gate_node.data or {}
+                try:
+                    count = max(2, min(30, int(gdata.get("input_count", 2))))
+                except (TypeError, ValueError):
+                    return False
+                for i in range(1, count + 1):
+                    handle = f"in{i}"
+                    src_edge = next(
+                        (e for e in flow.edges if e.target == gate_id and (e.targetHandle or "in") == handle),
+                        None,
+                    )
+                    if src_edge is not None and src_edge.source in cf_tainted:
+                        continue
+                    v = (
+                        False
+                        if src_edge is None
+                        else GraphExecutor._to_bool(GraphExecutor._get_output_value(outputs.get(src_edge.source, {}), src_edge.sourceHandle or "out"))
+                    )
+                    if gdata.get(f"negate_{handle}"):
+                        v = not v
+                    if v == decisive:
+                        return True
+                return False
+
+            cf_tainted: set[str] = set(unseeded | changed_targets | excluded_ids)
+            _cfq: list[str] = list(cf_tainted)
+            while _cfq:
+                _cn = _cfq.pop()
+                for _ce in flow.edges:
+                    if _ce.source != _cn or _ce.target in cf_tainted:
+                        continue
+                    _ctarget = _node_by_id_init.get(_ce.target)
+                    _ctype = _ctarget.type if _ctarget is not None else None
+                    if _ctype in _decisive_gate_value_init and _gate_taint_absorbed_init(_ce.target, _ctype):
+                        continue
+                    cf_tainted.add(_ce.target)
+                    _cfq.append(_ce.target)
+
             # Commit gate/hysteresis state only for nodes whose switched
             # output was actually published (see
             # _INIT_COMMIT_STATE_NODE_TYPES) — without a published write the
             # save must not act like a datapoint event on the stored state.
             # change_filter is the exception: its own state is meaningful
             # independent of whether any descendant is a datapoint_write at
-            # all, so it commits whenever seeded/untainted regardless of
-            # published_writes (see _INIT_COMMIT_STATE_NODE_TYPES).
+            # all, so it commits whenever seeded/untainted (per the refined
+            # cf_tainted above) regardless of published_writes (see
+            # _INIT_COMMIT_STATE_NODE_TYPES).
             state_committed = False
             for node in flow.nodes:
-                if node.type not in _INIT_COMMIT_STATE_NODE_TYPES or node.id not in seeded_paths or node.id in tainted or node.id not in hyst_copy:
+                if node.type not in _INIT_COMMIT_STATE_NODE_TYPES or node.id not in seeded_paths or node.id not in hyst_copy:
+                    continue
+                if node.id in (cf_tainted if node.type == "change_filter" else tainted):
                     continue
                 if node.type != "change_filter" and not (_downstream_closure({node.id}, flow.edges) & published_writes):
                     continue
@@ -2773,6 +2830,23 @@ class LogicManager:
             replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             replay_executor = _executor(replay_hyst)
             replay_outputs = _execute_pass(replay_executor, replay_overrides)
+            # A downstream async node (e.g. wake_on_lan) newly reachable
+            # within this replay's own outputs may still be only "triggered,
+            # not yet actually run" — its own output here is a placeholder,
+            # same as the api_client replay branch further below. A
+            # change_filter reachable through it — or through a still-
+            # unseeded Read Object — must stay held rather than commit that
+            # placeholder and let a downstream host_check irreversibly ping.
+            # Redo the replay with suppression applied if this reveals
+            # anything new.
+            _late_pending = _still_unresolved_source_ids(replay_outputs)
+            _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending)
+            if _late_cf_hold_ids:
+                for _late_cf_id in _late_cf_hold_ids:
+                    replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
+                replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                replay_executor = _executor(replay_hyst)
+                replay_outputs = _execute_pass(replay_executor, replay_overrides)
             blocked_ids = skip_node_ids or set()
             for nid, vals in replay_outputs.items():
                 if nid in descendants and nid not in blocked_ids:
@@ -3273,9 +3347,16 @@ class LogicManager:
                     # initial pass's own _cf_hold_ids. Detected only after
                     # running the replay once (the outer `outputs` is still
                     # stale at that point), so redo it with suppression
-                    # applied if this reveals anything new.
+                    # applied if this reveals anything new. Always folded in
+                    # regardless of whether _late_pending itself is
+                    # non-empty: a change_filter that also depends on an
+                    # unseeded Read Object must stay held even when no new
+                    # async node became pending in this replay — the read
+                    # is still unresolved and its placeholder must not be
+                    # committed just because this pass happened to be an
+                    # API replay.
                     _late_pending = _still_unresolved_source_ids(second_outputs)
-                    _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending) if _late_pending else set()
+                    _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending)
                     if _late_cf_hold_ids:
                         for _late_cf_id in _late_cf_hold_ids:
                             replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True

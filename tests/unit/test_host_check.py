@@ -989,6 +989,52 @@ class TestHostCheckRisingEdge:
 
         mock_ping.assert_not_awaited()
 
+    def test_change_filter_stays_held_during_api_replay_when_also_fed_by_an_unseeded_read(self):
+        """Regression (P1): the API-replay branch only recomputed change_filter
+        hold-ids when _late_pending (a newly-discovered pending async node,
+        e.g. a chained wake_on_lan) was non-empty — for
+        api_client.success + unseeded read -> AND -> change_filter, there is
+        no such chained async node, so the hold-id recompute was skipped
+        entirely and the filter committed the API replay's result even
+        though the unseeded read never actually resolved this tick (its
+        missing value evaluates as a deterministic-looking False that isn't
+        really final). Holds must be computed from unseeded_read_ids
+        regardless of whether _late_pending is itself empty."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("and_gate", "and", {"input_count": 2}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "and_gate", "success", "in1"),
+                edge("unseeded_read", "and_gate", "value", "in2"),
+                edge("and_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-api-plus-unseeded"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        # The AND gate's real result (api_client succeeded, unseeded read
+        # still unresolved) evaluates to False either way — the filter must
+        # nonetheless stay held against its persisted True baseline, since
+        # the unresolved read was never actually settled this tick.
+        assert manager._hysteresis[graph_id]["cf"] == {"value": True}
+
     def test_correction_replay_does_not_double_mutate_a_reused_output(self):
         """Regression: GraphExecutor.execute()'s known_outputs mechanism
         handed out the caller's exact same per-node output dict to skip
