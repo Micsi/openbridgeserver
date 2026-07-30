@@ -294,6 +294,8 @@ class WriteRouter:
             confirmation_order_tracker = ConfirmationOrderTracker()
             self._confirmation_order_tracker = confirmation_order_tracker
         confirmation_write_order = confirmation_order_tracker.issue(dp_id)
+        if suppress_confirmation_actions:
+            confirmation_write_order.activate()
         for row in rows:
             try:
                 binding = _row_to_binding(row)

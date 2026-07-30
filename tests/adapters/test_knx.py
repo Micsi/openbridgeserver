@@ -930,6 +930,55 @@ class TestKnxAdapterConnectDisconnect:
         assert adapter._stopped is True
 
     @pytest.mark.asyncio
+    async def test_disconnect_preserves_owner_until_scheduled_dispatch_finishes(
+        self,
+        mock_bus,
+    ):
+        from unittest.mock import AsyncMock
+
+        adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+        raw = dpt.encoder(5.0)
+        telegram = Telegram(
+            destination_address=GroupAddress("1/2/3"),
+            direction=TelegramDirection.OUTGOING,
+            payload=GroupValueWrite(DPTArray(list(raw))),
+        )
+        recent_write = adapter._remember_outbound_write(
+            binding,
+            "1/2/3",
+            bytes(raw),
+            50.0,
+        )
+        adapter._outgoing_confirmation_owners[id(telegram)] = (
+            str(binding.id),
+            recent_write[0],
+            telegram,
+            recent_write,
+        )
+
+        async def stop_after_dispatch():
+            assert id(telegram) in adapter._outgoing_confirmation_owners
+            await adapter._on_telegram(telegram)
+
+        mock_xknx = self._make_mock_xknx()
+        mock_xknx.stop = AsyncMock(side_effect=stop_after_dispatch)
+        adapter._xknx = mock_xknx
+
+        await adapter.disconnect()
+
+        event = mock_bus.publish.call_args_list[0].args[0]
+        assert event.value == 50.0
+        assert event.suppress_write_propagation is True
+        assert adapter._outgoing_confirmation_owners == {}
+
+    @pytest.mark.asyncio
     async def test_disconnect_cancels_reconnect_task(self, mock_bus):
         adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
         mock_xknx_instance = self._make_mock_xknx()

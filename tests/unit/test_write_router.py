@@ -309,6 +309,34 @@ async def test_router_defers_confirmation_order_activation_to_adapter_transmissi
 
 
 @pytest.mark.asyncio
+async def test_source_event_activates_confirmation_order_immediately(monkeypatch):
+    binding = _binding(adapter_type="KNX", direction="BOTH")
+    instance = _ContextInstance()
+    router = _make_router([{"id": str(binding.id)}])
+    _patch_registry(monkeypatch, binding, instance)
+    dp_id = uuid.uuid4()
+
+    await router._write_to_dest_bindings(
+        dp_id,
+        50.0,
+        skip_binding_id=None,
+        suppress_confirmation_actions=False,
+    )
+    await router._write_to_dest_bindings(
+        dp_id,
+        60.0,
+        skip_binding_id=None,
+        suppress_confirmation_actions=True,
+    )
+
+    older_order, source_event_order = instance.confirmation_write_orders
+    assert older_order is not None
+    assert source_event_order is not None
+    assert older_order.accept_confirmation() is False
+    assert source_event_order.accept_confirmation() is True
+
+
+@pytest.mark.asyncio
 async def test_skipped_router_write_does_not_invalidate_queued_confirmation(monkeypatch):
     binding = _binding(
         adapter_type="KNX",

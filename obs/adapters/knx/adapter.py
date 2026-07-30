@@ -481,6 +481,11 @@ class KnxAdapter(AdapterBase):
             except asyncio.CancelledError:
                 pass
         self._echo_cleanup_task = None
+        if self._xknx:
+            try:
+                await self._xknx.stop()
+            except Exception:
+                logger.exception("KNX disconnect error")
         self._sniffer = None
         self._recent_writes.clear()
         self._pending_transmissions.clear()
@@ -490,11 +495,6 @@ class KnxAdapter(AdapterBase):
         self._invalidated_transmissions.clear()
         self._invalidated_state_confirmations.clear()
         self._latest_confirmation_at.clear()
-        if self._xknx:
-            try:
-                await self._xknx.stop()
-            except Exception:
-                logger.exception("KNX disconnect error")
         await self._publish_status(False, "Disconnected", code="disconnected")
         self._xknx = None
 
