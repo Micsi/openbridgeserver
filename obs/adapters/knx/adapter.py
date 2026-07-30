@@ -169,6 +169,10 @@ class KnxAdapter(AdapterBase):
         self._outgoing_confirmation_owners: dict[int, tuple[str, float, Any, tuple[Any, ...]]] = {}
         self._local_read_responses: dict[int, tuple[Any, str, float | None]] = {}
         self._invalidated_transmissions: dict[int, tuple[Any, str, str, float | None]] = {}
+        self._invalidated_state_confirmations: dict[
+            tuple[str, bytes],
+            deque[tuple[float, str, str]],
+        ] = {}
         self._latest_confirmation_at: dict[str, float] = {}
         self._value_getter: Any = None
         self._reconnect_task: asyncio.Task | None = None
@@ -224,9 +228,12 @@ class KnxAdapter(AdapterBase):
                 logger.exception("KNX cleanup of previous instance failed")
             self._pending_transmissions.clear()
             self._pending_telegram_refs.clear()
-            self._outgoing_confirmation_owners.clear()
-            self._local_read_responses.clear()
-            self._invalidated_transmissions.clear()
+            self._local_read_responses = {
+                telegram_id: response for telegram_id, response in self._local_read_responses.items() if response[2] is not None
+            }
+            self._invalidated_transmissions = {
+                telegram_id: transmission for telegram_id, transmission in self._invalidated_transmissions.items() if transmission[3] is not None
+            }
             self._xknx = None
 
         cfg = KnxAdapterConfig(**self._config)
@@ -481,6 +488,7 @@ class KnxAdapter(AdapterBase):
         self._outgoing_confirmation_owners.clear()
         self._local_read_responses.clear()
         self._invalidated_transmissions.clear()
+        self._invalidated_state_confirmations.clear()
         self._latest_confirmation_at.clear()
         if self._xknx:
             try:
@@ -504,12 +512,24 @@ class KnxAdapter(AdapterBase):
             if replacement is None:
                 self._recent_writes.pop(key, None)
                 invalidated_confirmation_datapoints[key[0]] = str(recent_writes[0][4][0])
+                for recent_write in recent_writes:
+                    self._remember_invalidated_state_confirmation(
+                        key[0],
+                        key[1],
+                        recent_write,
+                    )
                 continue
             signature = self._confirmation_binding_signature(replacement)
             invalidated = [recent_write for recent_write in recent_writes if recent_write[4] != signature]
             retained = deque(recent_write for recent_write in recent_writes if recent_write[4] == signature)
             if invalidated:
                 invalidated_confirmation_datapoints[key[0]] = str(invalidated[0][4][0])
+                for recent_write in invalidated:
+                    self._remember_invalidated_state_confirmation(
+                        key[0],
+                        key[1],
+                        recent_write,
+                    )
             if retained:
                 self._recent_writes[key] = retained
             else:
@@ -665,6 +685,16 @@ class KnxAdapter(AdapterBase):
                 return
 
             raw = _telegram_to_bytes(telegram)
+            if not is_outgoing:
+                invalidated_state_owner = self._consume_invalidated_state_confirmation(ga, raw)
+                if invalidated_state_owner is not None:
+                    suppressed_local_binding_id, suppressed_local_datapoint_id = invalidated_state_owner
+                    logger.debug(
+                        "KNX invalidated state owner ignored: GA=%s binding=%s dp=%s",
+                        ga,
+                        suppressed_local_binding_id,
+                        suppressed_local_datapoint_id,
+                    )
             outgoing_owner = self._outgoing_confirmation_owners.get(id(telegram))
             confirmation_datapoint_ids = (
                 self._local_confirmation_datapoint_ids(
@@ -995,6 +1025,47 @@ class KnxAdapter(AdapterBase):
         for telegram_id, (_, transmitted_at, _, _) in list(self._outgoing_confirmation_owners.items()):
             if transmitted_at < owner_cutoff:
                 self._outgoing_confirmation_owners.pop(telegram_id, None)
+        self._prune_invalidated_state_confirmations(current)
+
+    def _remember_invalidated_state_confirmation(
+        self,
+        binding_id: str,
+        ga: str,
+        recent_write: tuple[Any, ...],
+    ) -> None:
+        """Retain bounded identity-independent suppression for invalidated state feedback."""
+        written_at, raw, _, _, signature, *_ = recent_write
+        config = signature[3]
+        if config.get("state_group_address") != ga or config.get("group_address") == ga:
+            return
+        tombstones = self._invalidated_state_confirmations.setdefault((ga, bytes(raw)), deque())
+        tombstones.append((written_at, binding_id, str(signature[0])))
+
+    def _prune_invalidated_state_confirmations(self, now: float | None = None) -> None:
+        """Remove invalidated state-feedback markers after the feedback window."""
+        cutoff = (self._monotonic() if now is None else now) - STATE_CONFIRMATION_WINDOW_S
+        for key, tombstones in list(self._invalidated_state_confirmations.items()):
+            retained = deque(tombstone for tombstone in tombstones if tombstone[0] >= cutoff)
+            if retained:
+                self._invalidated_state_confirmations[key] = retained
+            else:
+                self._invalidated_state_confirmations.pop(key, None)
+
+    def _consume_invalidated_state_confirmation(
+        self,
+        ga: str,
+        raw: bytes,
+    ) -> tuple[str, str] | None:
+        """Consume one invalidated state expectation matching an incoming telegram."""
+        self._prune_invalidated_state_confirmations()
+        key = (ga, bytes(raw))
+        tombstones = self._invalidated_state_confirmations.get(key)
+        if not tombstones:
+            return None
+        _, binding_id, datapoint_id = tombstones.popleft()
+        if not tombstones:
+            self._invalidated_state_confirmations.pop(key, None)
+        return binding_id, datapoint_id
 
     def _prune_local_read_responses(self, now: float | None = None) -> None:
         """Remove transmitted read responses not dispatched to the sniffer."""

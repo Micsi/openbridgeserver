@@ -841,6 +841,83 @@ class TestKnxAdapterConnectDisconnect:
         old_xknx.stop.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_reconnect_preserves_transmitted_markers_for_scheduled_dispatch(
+        self,
+        mock_bus,
+    ):
+        from unittest.mock import patch
+
+        adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
+        old_xknx = self._make_mock_xknx()
+        adapter._xknx = old_xknx
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        adapter._bindings = [binding]
+        adapter._monotonic = lambda: 100.0
+        dpt = DPTRegistry.get("DPT9.001")
+        raw = dpt.encoder(5.0)
+        telegram = Telegram(
+            destination_address=GroupAddress("1/2/3"),
+            direction=TelegramDirection.OUTGOING,
+            payload=GroupValueWrite(DPTArray(list(raw))),
+        )
+        recent_write = adapter._remember_outbound_write(
+            binding,
+            "1/2/3",
+            bytes(raw),
+            50.0,
+            written_at=100.0,
+        )
+        adapter._outgoing_confirmation_owners[id(telegram)] = (
+            str(binding.id),
+            100.0,
+            telegram,
+            recent_write,
+        )
+        adapter._local_read_responses[1] = (object(), str(binding.datapoint_id), 100.0)
+        adapter._local_read_responses[2] = (object(), str(binding.datapoint_id), None)
+        adapter._invalidated_transmissions[3] = (
+            object(),
+            str(binding.id),
+            str(binding.datapoint_id),
+            100.0,
+        )
+        adapter._invalidated_transmissions[4] = (
+            object(),
+            str(binding.id),
+            str(binding.datapoint_id),
+            None,
+        )
+        adapter._pending_transmissions[5] = (
+            binding,
+            "1/2/3",
+            None,
+            bytes(raw),
+            50.0,
+            False,
+            adapter._confirmation_binding_signature(binding),
+        )
+
+        new_xknx = self._make_mock_xknx()
+        with patch("xknx.XKNX", return_value=new_xknx):
+            await adapter._do_connect()
+
+        assert id(telegram) in adapter._outgoing_confirmation_owners
+        assert set(adapter._local_read_responses) == {1}
+        assert set(adapter._invalidated_transmissions) == {3}
+        assert adapter._pending_transmissions == {}
+
+        adapter._ga_source_map["1/2/3"] = [(binding, dpt)]
+        await adapter._on_telegram(telegram)
+
+        event = mock_bus.publish.call_args.args[0]
+        assert event.value == 50.0
+        assert event.suppress_write_propagation is True
+
+    @pytest.mark.asyncio
     async def test_disconnect_stops_xknx(self, mock_bus):
         adapter = KnxAdapter(event_bus=mock_bus, config={"host": "127.0.0.1"})
         mock_xknx_instance = self._make_mock_xknx()
@@ -1140,6 +1217,90 @@ class TestOnBindingsReloaded:
         assert adapter._recent_writes == {}
         assert adapter._outgoing_confirmation_owners == {}
         assert adapter._invalidated_transmissions == {}
+
+    @pytest.mark.asyncio
+    async def test_reload_tombstones_delayed_state_feedback_for_changed_binding(
+        self,
+        mock_bus,
+    ):
+        original = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        replacement = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.2",
+        )
+        replacement.id = original.id
+        replacement.datapoint_id = original.datapoint_id
+        replacement.enabled = original.enabled
+        peer = make_binding(
+            {"group_address": "1/2/4", "dpt_id": "DPT9.001"},
+            direction="SOURCE",
+        )
+        adapter = self._make_adapter(mock_bus, [replacement, peer])
+        dpt = DPTRegistry.get("DPT9.001")
+        raw = dpt.encoder(5.0)
+        adapter._remember_outbound_write(
+            original,
+            "1/2/4",
+            bytes(raw),
+            50.0,
+            written_at=adapter._monotonic(),
+        )
+
+        await adapter._on_bindings_reloaded()
+        delayed_state = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=GroupValueWrite(DPTArray(list(raw))),
+        )
+        await adapter._on_telegram(delayed_state)
+
+        mock_bus.publish.assert_awaited_once()
+        event = mock_bus.publish.call_args.args[0]
+        assert event.binding_id == peer.id
+        assert event.suppress_write_propagation is False
+        assert adapter._invalidated_state_confirmations == {}
+
+    def test_invalidated_state_feedback_tombstone_expires(self, mock_bus):
+        adapter = self._make_adapter(mock_bus)
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        recent_write = adapter._remember_outbound_write(
+            binding,
+            "1/2/4",
+            b"\x01",
+            True,
+        )
+        adapter._remember_invalidated_state_confirmation(
+            str(binding.id),
+            "1/2/4",
+            recent_write,
+        )
+
+        now[0] += STATE_CONFIRMATION_WINDOW_S + 0.1
+
+        assert adapter._consume_invalidated_state_confirmation("1/2/4", b"\x01") is None
+        assert adapter._invalidated_state_confirmations == {}
 
     @pytest.mark.asyncio
     async def test_source_binding_added_to_source_map(self, mock_bus):
