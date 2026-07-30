@@ -7,7 +7,7 @@
 
     <div class="gn-card">
       <div class="gn-header">
-        <span class="gn-label">Python Script</span>
+        <span class="gn-label">{{ $t('logic.nodeTypes.python_script') }}</span>
         <button v-show="hovered" class="gn-delete nodrag" @click.stop="remove" :title="$t('logic.deleteBlock')">✕</button>
       </div>
       <div class="gn-body">
@@ -21,7 +21,7 @@
         </div>
         <span class="gn-port-label" style="margin-left:auto;align-self:center;">{{ $t('logic.ports.result') }}</span>
       </div>
-      <div v-if="data._dbg" class="gn-debug">{{ data._dbg }}</div>
+      <div v-if="data._dbg" class="gn-debug" :title="data._dbg_title || data._dbg" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <Handle type="source" id="result" :position="Position.Right" class="gn-handle-out" :style="{ top: '52%' }" />
@@ -70,7 +70,7 @@ function remove() { removeNodes([props.id]) }
 }
 
 .gn-card {
-  min-width: 180px;
+  width: 180px;
   background: #1e293b;
   border: 1px solid #334155;
   border-top: 3px solid #be185d;
@@ -89,12 +89,15 @@ function remove() { removeNodes([props.id]) }
 .gn-port-col { display:flex; flex-direction:column; gap:2px; }
 .gn-port-label { font-size:9px; color:#64748b; }
 .gn-debug {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   font-size: 9px;
-  color: #fbbf24;
+  color: var(--node-debug-color);
   font-family: ui-monospace, monospace;
   padding: 2px 10px 5px;
-  border-top: 1px solid #1e3a2f;
-  background: rgba(16, 185, 129, 0.08);
+  border-top: 1px solid var(--node-card-border);
+  background: var(--node-debug-bg);
   border-radius: 0 0 6px 6px;
   white-space: nowrap;
   overflow: hidden;

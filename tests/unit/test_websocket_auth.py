@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -369,6 +370,32 @@ async def test_ws_log_access_ignores_stray_api_key_for_jwt_identity(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_ws_logic_debug_access_requires_current_admin_identity(monkeypatch):
+    class _AdminDb:
+        async def fetchone(self, _query, params):
+            return {"is_admin": params[0] == "admin"}
+
+    monkeypatch.setattr(ws_api, "get_db", _AdminDb)
+
+    assert await ws_api._ws_has_logic_debug_access("admin") is True
+    assert await ws_api._ws_has_logic_debug_access("alice") is False
+    assert await ws_api._ws_has_logic_debug_access(None) is False
+    assert await ws_api._ws_has_logic_debug_access("__api_key__") is False
+    assert await ws_api._ws_has_logic_debug_access("api_key:automation") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("database unavailable"), sqlite3.OperationalError("database locked")])
+async def test_ws_logic_debug_access_fails_closed_on_database_errors(monkeypatch, error):
+    def _fail_get_db():
+        raise error
+
+    monkeypatch.setattr(ws_api, "get_db", _fail_get_db)
+
+    assert await ws_api._ws_has_logic_debug_access("admin") is False
+
+
+@pytest.mark.asyncio
 async def test_websocket_endpoint_accepts_public_visu_page_scope(monkeypatch):
     db = _DbStub(has_key=False, page_type="PAGE")
     monkeypatch.setattr(ws_api, "get_db", lambda: db)
@@ -465,3 +492,43 @@ async def test_websocket_endpoint_closes_when_second_decode_fails_without_page_c
     await ws_api.websocket_endpoint(ws)
 
     assert ws.close_calls == [(4001, "Invalid token")]
+
+
+@pytest.mark.asyncio
+async def test_logic_debug_access_revalidates_jwt_before_broadcast(monkeypatch):
+    token_valid = True
+
+    def _decode_token(_token: str, expected_type: str = "access") -> str:
+        if token_valid and expected_type == "access":
+            return "admin"
+        raise HTTPException(401, "expired")
+
+    class _AdminDb:
+        async def fetchone(self, _query: str, _params: tuple):
+            return {"is_admin": 1}
+
+    class _ManagerStub:
+        logic_debug_access = False
+        logic_debug_access_check = None
+
+        async def connect(self, ws, **kwargs):
+            self.logic_debug_access = kwargs["logic_debug_access"]
+            self.logic_debug_access_check = kwargs["logic_debug_access_check"]
+            await ws.accept()
+            return "conn-1"
+
+        async def disconnect(self, _conn_id: str) -> None:
+            return None
+
+    monkeypatch.setattr(auth_api, "decode_token", _decode_token)
+    monkeypatch.setattr(ws_api, "get_db", lambda: _AdminDb())
+    manager = _ManagerStub()
+    monkeypatch.setattr(ws_api, "get_ws_manager", lambda: manager)
+
+    ws = _FakeWebSocket(headers={"authorization": "Bearer jwt"})
+    await ws_api.websocket_endpoint(ws)
+
+    assert manager.logic_debug_access is True
+    assert manager.logic_debug_access_check is not None
+    token_valid = False
+    assert await manager.logic_debug_access_check() is False
