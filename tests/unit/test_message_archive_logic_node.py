@@ -819,6 +819,56 @@ def test_untriggered_random_value_does_not_become_a_coerced_fresh_message() -> N
     adapter.send_notification.assert_not_awaited()
 
 
+def test_empty_value_mapping_result_does_not_become_a_coerced_fresh_message() -> None:
+    datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node(
+                "mapping",
+                "value_mapping",
+                {
+                    "output_type": "string",
+                    "rules": [{"operator": "eq", "value": "alert", "result": "mapped alert"}],
+                    "has_default": False,
+                },
+            ),
+            node("concat", "string_concat", {"count": 2, "text_2": " prefix"}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "mapping", "value", "value"),
+            edge("mapping", "concat", "result", "in_1"),
+            edge("concat", "notify", "result", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(
+            manager,
+            flow,
+            {"read": {"value": "not-an-alert", "changed": True}},
+        )
+
+    assert outputs["mapping"]["result"] is None
+    assert outputs["notify"]["_message"] == " prefix"
+    assert outputs["notify"]["sent"] is False
+    adapter.send_notification.assert_not_awaited()
+
+
 def test_duplicate_input_edges_do_not_send_cached_effective_message() -> None:
     fresh_datapoint_id = uuid.uuid4()
     cached_datapoint_id = uuid.uuid4()

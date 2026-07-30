@@ -130,11 +130,13 @@ def _fresh_input_handles(
     overrides: dict[str, dict[str, Any]],
     edges: list[Any],
     blocked_sources: set[str] | None = None,
+    blocked_outputs: set[tuple[str, str]] | None = None,
 ) -> dict[str, set[str]]:
     """Input handles that receive values downstream of explicit overrides."""
     fresh_inputs = {node_id: set(values) for node_id, values in overrides.items()}
     reached = set(overrides)
     blocked_sources = blocked_sources or set()
+    blocked_outputs = blocked_outputs or set()
     effective_edges: dict[tuple[str, str], Any] = {}
     for edge in edges:
         effective_edges[(edge.target, edge.targetHandle or "in")] = edge
@@ -147,6 +149,8 @@ def _fresh_input_handles(
         if source in blocked_sources:
             continue
         for edge in outgoing.get(source, []):
+            if (source, edge.sourceHandle or "out") in blocked_outputs:
+                continue
             fresh_inputs.setdefault(edge.target, set()).add(edge.targetHandle or "in")
             if edge.target not in reached:
                 reached.add(edge.target)
@@ -3419,7 +3423,7 @@ class LogicManager:
         replayed_notify_nodes: set[str] = set()
 
         input_sources = {(edge.target, edge.targetHandle or "in"): (edge.source, edge.sourceHandle or "out") for edge in flow.edges}
-        freshness_cache: dict[frozenset[str], dict[str, set[str]]] = {}
+        freshness_cache: dict[tuple[frozenset[str], frozenset[tuple[str, str]]], dict[str, set[str]]] = {}
 
         def _current_input_value(node_id: str, handle: str) -> Any:
             node_overrides = {**aug_overrides.get(node_id, {}), **debug_overrides.get(node_id, {})}
@@ -3445,10 +3449,15 @@ class LogicManager:
                 and node.data.get("closed_behavior", "retain") == "retain"
                 and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
             )
+            blocked_outputs = {
+                (edge.source, edge.sourceHandle or "out")
+                for edge in flow.edges
+                if GraphExecutor._get_output_value(outputs.get(edge.source, {}), edge.sourceHandle or "out") is None
+            }
             while True:
-                cache_key = frozenset(blocked_sources)
+                cache_key = (frozenset(blocked_sources), frozenset(blocked_outputs))
                 if cache_key not in freshness_cache:
-                    freshness_cache[cache_key] = _fresh_input_handles(overrides, flow.edges, blocked_sources)
+                    freshness_cache[cache_key] = _fresh_input_handles(overrides, flow.edges, blocked_sources, blocked_outputs)
                 event_fresh_inputs = freshness_cache[cache_key]
                 newly_blocked_default_gates = {
                     node.id
