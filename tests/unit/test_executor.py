@@ -1243,6 +1243,26 @@ class TestChangeFilterNode:
         assert out["cf"]["out"] == time(10, 30, 0)
         assert isinstance(out["cf"]["out"], time)
 
+    def test_equal_via_str_fallback_migrates_persisted_state_to_typed_value(self):
+        """Regression: matching via the legacy str()-recovery path emitted
+        the correct typed "out" (test above) but left the persisted state
+        itself as the unmigrated legacy string with "_recovered_str" still
+        set. _execute_graph then persists that unchanged string inside the
+        new version-2 envelope; on the *next* restart the loader treats a
+        version-2-envelope string as already-native (no "_recovered_str"
+        added — see LogicManager._load_graphs), so the same live time would
+        compare unequal to it and report a spurious changed=True forever.
+        The state must be migrated to the typed value (marker cleared) as
+        soon as the recovery path is used, not left for a future tick."""
+        from datetime import time
+
+        state = {"cf": {"value": "10:30:00", "_recovered_str": True}}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": time(10, 30, 0)}})
+
+        assert state["cf"] == {"value": time(10, 30, 0)}
+
     def test_live_string_matching_a_temporal_repr_is_not_treated_as_recovered(self):
         """Regression: a source that legitimately emits the literal string
         "10:30:00" *live*, this session — never round-tripped through DB

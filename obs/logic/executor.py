@@ -726,7 +726,20 @@ class GraphExecutor:
                 if via_normalizing_path:
                     out_value = copy.deepcopy(state["value"]) if isinstance(state["value"], (dict, list, set)) else state["value"]
                 else:
+                    # Equality here only held through the legacy
+                    # str()-recovery fallback: state["value"] is still the
+                    # pre-migration persisted string and "_recovered_str" is
+                    # still set. Migrate stored state to the live, typed
+                    # value now (dropping the marker) so the *next* persist
+                    # writes it properly tagged under the version-2
+                    # envelope — otherwise a future restart's loader (which
+                    # only re-applies the recovery heuristic to untagged
+                    # legacy strings, never to an already-migrated value)
+                    # would keep comparing this same unmigrated string
+                    # against a live value on every restart and report a
+                    # spurious changed=True each time.
                     out_value = value
+                    self.hysteresis_state[node.id] = {"value": baseline}
                 return {"out": out_value, "changed": False}
 
             case "compare":

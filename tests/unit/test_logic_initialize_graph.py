@@ -958,6 +958,44 @@ class TestPersistDefaultAndDecode:
         assert _persist_default({1, 2}) == {"__obs_persisted_type__": "set", "value": [1, 2]}
         assert _persist_default(frozenset({1, 2})) == {"__obs_persisted_type__": "frozenset", "value": [1, 2]}
 
+    def test_persist_default_recursively_escapes_set_members(self):
+        """Regression: a set member that json.dumps' own encoder handles
+        NATIVELY (a tuple) is never passed through default=, unlike a plain
+        set/frozenset member — so converting a set straight to list(v)
+        would silently flatten a tuple member into an indistinguishable
+        plain JSON array, exactly the collision _escape_persist_collision's
+        own tuple branch exists to prevent for top-level lists. Each set
+        member must be pre-escaped the same way before being handed to
+        json.dumps."""
+        from obs.logic.manager import _persist_default
+
+        assert _persist_default({(1, 2)}) == {
+            "__obs_persisted_type__": "set",
+            "value": [{"__obs_persisted_type__": "tuple", "value": [1, 2]}],
+        }
+        assert _persist_default(frozenset({(1, 2)})) == {
+            "__obs_persisted_type__": "frozenset",
+            "value": [{"__obs_persisted_type__": "tuple", "value": [1, 2]}],
+        }
+
+    def test_persist_state_round_trip_survives_a_set_of_tuples(self):
+        """Full _escape_persist_collision -> json.dumps(default=
+        _persist_default) -> json.loads -> _decode_persisted_value round
+        trip, matching _persist_node_state's exact production pipeline.
+        Without escaping tuple members inside a set first, the decoded
+        "value" list would contain a plain (unhashable) list instead of a
+        tuple, and set(decoded_items) would raise TypeError — silently
+        skipping restoration of the graph's entire persisted state."""
+        import json
+
+        from obs.logic.manager import _decode_persisted_value, _escape_persist_collision, _persist_default
+
+        state_to_save = {"cf": {"value": {(1, 2)}}}
+        dumped = json.dumps(_escape_persist_collision(state_to_save), default=_persist_default)
+        restored = _decode_persisted_value(json.loads(dumped))
+
+        assert restored == {"cf": {"value": {(1, 2)}}}
+
     def test_decode_persisted_value_restores_set_and_frozenset(self):
         from obs.logic.manager import _decode_persisted_value
 

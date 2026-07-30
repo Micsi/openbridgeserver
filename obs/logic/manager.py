@@ -174,14 +174,21 @@ def _persist_default(v: Any) -> Any:
     # frozenset before set: a set/frozenset isn't natively JSON-encodable
     # (unlike tuple, which the encoder treats as an array), so it reaches
     # this default= hook directly — no separate handling in
-    # _escape_persist_collision is needed for that reason. Elements are
-    # encoded as a plain list; json.dumps then recurses into that list
-    # normally, so a non-JSON-native member (e.g. a set of datetimes) still
-    # gets its own _persist_default call at that point.
+    # _escape_persist_collision is needed for that reason. Members that are
+    # themselves non-JSON-native (e.g. a nested frozenset, or a dict with a
+    # non-string key) still get their own _persist_default call once
+    # json.dumps recurses into the returned list — but a member that the
+    # encoder handles NATIVELY without ever calling default=, namely a
+    # tuple, would otherwise reach json.dumps unescaped and be silently
+    # flattened into a plain JSON array indistinguishable from a list, so
+    # each member is run through _escape_persist_collision here first,
+    # exactly like _escape_persist_collision's own list/tuple branches do
+    # for a top-level list — this is simply that same pre-pass, applied to
+    # a set's members instead of a list's.
     if isinstance(v, frozenset):
-        return {_PERSIST_TYPE_TAG: "frozenset", "value": list(v)}
+        return {_PERSIST_TYPE_TAG: "frozenset", "value": [_escape_persist_collision(item) for item in v]}
     if isinstance(v, set):
-        return {_PERSIST_TYPE_TAG: "set", "value": list(v)}
+        return {_PERSIST_TYPE_TAG: "set", "value": [_escape_persist_collision(item) for item in v]}
     return str(v)
 
 
@@ -2888,6 +2895,23 @@ class LogicManager:
             hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             hc_second_executor = _executor(hc_hyst_snapshot)
             hc_second_outputs = _execute_pass(hc_second_executor, hc_merged)
+            # A downstream async node (e.g. wake_on_lan) newly reachable
+            # within this replay's own outputs may still be only "triggered,
+            # not yet actually run" — its own output here is a placeholder,
+            # same as the api_client/_replay_async_descendants replay
+            # branches. A change_filter reachable through it — or through a
+            # still-unseeded Read Object — must stay held rather than
+            # commit that placeholder and let a further downstream
+            # host_check irreversibly ping. Redo the replay with
+            # suppression applied if this reveals anything new.
+            _hc_late_pending = _still_unresolved_source_ids(hc_second_outputs)
+            _hc_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _hc_late_pending)
+            if _hc_late_cf_hold_ids:
+                for _hc_late_cf_id in _hc_late_cf_hold_ids:
+                    hc_merged.setdefault(_hc_late_cf_id, {})["_suppress_change_filter"] = True
+                hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                hc_second_executor = _executor(hc_hyst_snapshot)
+                hc_second_outputs = _execute_pass(hc_second_executor, hc_merged)
             hc_descendants: set[str] = set()
             hc_queue: list[str] = list(replay_sources)
             while hc_queue:
