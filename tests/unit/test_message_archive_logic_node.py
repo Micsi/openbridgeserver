@@ -869,6 +869,46 @@ def test_empty_value_mapping_result_does_not_become_a_coerced_fresh_message() ->
     adapter.send_notification.assert_not_awaited()
 
 
+def test_failed_scheduled_ical_refresh_does_not_send_cached_calendar() -> None:
+    manager = _make_manager()
+    url = "https://example.com/calendar.ics"
+    cached_calendar = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+    manager._hysteresis["archive-graph"] = {
+        "calendar": {
+            "raw": cached_calendar,
+            "fetched_url": url,
+            "last_fetch_ts": 0,
+        },
+    }
+    flow = _flow(
+        [
+            node("calendar", "ical", {"url": url, "filters": "[]", "filter_count": 0}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [edge("calendar", "notify", "raw", "message")],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.logic.manager._build_ical_fetch_targets", side_effect=RuntimeError("calendar unavailable")),
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"calendar": {}})
+
+    assert outputs["calendar"]["raw"] == cached_calendar
+    assert outputs["notify"]["sent"] is False
+    adapter.send_notification.assert_not_awaited()
+
+
 def test_duplicate_input_edges_do_not_send_cached_effective_message() -> None:
     fresh_datapoint_id = uuid.uuid4()
     cached_datapoint_id = uuid.uuid4()

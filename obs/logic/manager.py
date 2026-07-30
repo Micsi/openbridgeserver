@@ -1920,6 +1920,7 @@ class LogicManager:
 
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
+        ical_ids = {node.id for node in flow.nodes if node.type == "ical"}
         message_archive_ids = {node.id for node in flow.nodes if node.type == "message_archive"}
         notify_ids = {node.id for node in flow.nodes if node.type in {"notify_message", "notify_pushover", "notify_sms"}}
         operating_hour_ids = {node.id for node in flow.nodes if node.type == "operating_hours"}
@@ -1940,6 +1941,7 @@ class LogicManager:
 
         # ── Pre-fetch iCal URLs (refresh only when cache is stale) ───────────
         hyst = self._hysteresis.setdefault(graph_id, {})
+        refreshed_ical_nodes: set[str] = set()
         for node in flow.nodes:
             if node.type != "ical":
                 continue
@@ -2035,6 +2037,7 @@ class LogicManager:
                         hyst_node["raw"] = _raw_text
                         hyst_node["fetched_url"] = url
                         hyst_node["last_fetch_ts"] = execute_now.timestamp()
+                        refreshed_ical_nodes.add(node.id)
                         logger.info("Graph %s: iCal fetched from %s (%d bytes)", graph_id[:8], current_url, len(_resp_bytes))
                         break
                 except Exception:
@@ -3438,6 +3441,7 @@ class LogicManager:
             blocked_sources = {node.id for node in flow.nodes if node.type == "memory"}
             blocked_sources.update(api_client_ids - triggered_api_clients)
             blocked_sources.update(host_check_ids - executed_host_check_nodes)
+            blocked_sources.update(ical_ids - refreshed_ical_nodes)
             blocked_sources.update(message_archive_ids - replayed_message_archive_nodes)
             blocked_sources.update(notify_ids - replayed_notify_nodes)
             blocked_sources.update(node.id for node in flow.nodes if node.type == "wake_on_lan" and node.id not in triggered_wol_nodes)
