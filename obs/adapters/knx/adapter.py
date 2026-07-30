@@ -150,7 +150,16 @@ class KnxAdapter(AdapterBase):
         self._ga_respond_map: dict[str, list[tuple[Any, Any]]] = {}
         self._recent_writes: dict[
             tuple[str, str],
-            deque[tuple[float, bytes, Any, bool, tuple[Any, ...], ConfirmationWriteOrder | None]],
+            deque[
+                tuple[
+                    float,
+                    bytes,
+                    Any,
+                    ConfirmationActionContext | bool,
+                    tuple[Any, ...],
+                    ConfirmationWriteOrder | None,
+                ]
+            ],
         ] = {}
         self._pending_transmissions: dict[
             int,
@@ -486,17 +495,26 @@ class KnxAdapter(AdapterBase):
     async def _on_bindings_reloaded(self) -> None:
         """Rebuild GA→binding map and re-register the sniffer Device."""
         bindings_by_id = {str(binding.id): binding for binding in self._bindings}
+        invalidated_confirmation_bindings: set[str] = set()
         for key, recent_writes in list(self._recent_writes.items()):
             replacement = bindings_by_id.get(key[0])
             if replacement is None:
                 self._recent_writes.pop(key, None)
+                invalidated_confirmation_bindings.add(key[0])
                 continue
             signature = self._confirmation_binding_signature(replacement)
             retained = deque(recent_write for recent_write in recent_writes if recent_write[4] == signature)
+            if len(retained) != len(recent_writes):
+                invalidated_confirmation_bindings.add(key[0])
             if retained:
                 self._recent_writes[key] = retained
             else:
                 self._recent_writes.pop(key, None)
+        for telegram_id, (binding_id, _) in list(self._outgoing_confirmation_owners.items()):
+            if binding_id not in invalidated_confirmation_bindings:
+                continue
+            self._outgoing_confirmation_owners.pop(telegram_id, None)
+            self._invalidated_transmissions[telegram_id] = self._monotonic()
         for telegram_id, pending in list(self._pending_transmissions.items()):
             binding, command_ga, state_ga, raw, logical_value, suppress_actions, signature = pending
             replacement = bindings_by_id.get(str(binding.id))
@@ -636,14 +654,14 @@ class KnxAdapter(AdapterBase):
                 )
                 confirmation_at = self._matching_confirmation_timestamp(binding, ga, raw, is_outgoing=is_outgoing) if may_consume else None
                 if may_consume:
-                    is_outbound_confirmation, logical_value, suppress_action_triggers, write_order = self._consume_outbound_confirmation(
+                    is_outbound_confirmation, logical_value, action_context, write_order = self._consume_outbound_confirmation(
                         binding,
                         ga,
                         raw,
                         is_outgoing=is_outgoing,
                     )
                 else:
-                    is_outbound_confirmation, logical_value, suppress_action_triggers, write_order = False, None, False, None
+                    is_outbound_confirmation, logical_value, action_context, write_order = False, None, False, None
                 if is_outbound_confirmation:
                     consumed_confirmation_datapoints.add(datapoint_id)
                 if suppress_peer_confirmation and not is_outbound_confirmation:
@@ -677,9 +695,13 @@ class KnxAdapter(AdapterBase):
                         binding.id,
                         raw.hex(),
                     )
+                    suppress_action_triggers = (
+                        action_context if isinstance(action_context, bool) else action_context.suppress_actions_at_confirmation()
+                    )
                     value = logical_value
                     quality = "good"
                 else:
+                    suppress_action_triggers = False
                     try:
                         value = dpt.decoder(raw)
                         quality = "good"
@@ -797,6 +819,7 @@ class KnxAdapter(AdapterBase):
         *,
         written_at: float | None = None,
         suppress_action_triggers: bool = False,
+        action_context: ConfirmationActionContext | None = None,
         write_order: ConfirmationWriteOrder | None = None,
     ) -> None:
         """Remember a BOTH-binding write so its immediate confirmation can be recognized."""
@@ -809,7 +832,7 @@ class KnxAdapter(AdapterBase):
                 now,
                 bytes(raw),
                 logical_value,
-                suppress_action_triggers,
+                action_context if action_context is not None else suppress_action_triggers,
                 self._confirmation_binding_signature(binding),
                 write_order,
             )
@@ -830,7 +853,6 @@ class KnxAdapter(AdapterBase):
             )
             return
 
-        suppress_action_triggers = action_context if isinstance(action_context, bool) else action_context.suppress_actions_at_transmission()
         write_order = None if isinstance(action_context, bool) else action_context.write_order
         if write_order is not None:
             write_order.activate()
@@ -842,7 +864,8 @@ class KnxAdapter(AdapterBase):
             written_raw,
             logical_value,
             written_at=written_at,
-            suppress_action_triggers=suppress_action_triggers,
+            suppress_action_triggers=action_context if isinstance(action_context, bool) else False,
+            action_context=None if isinstance(action_context, bool) else action_context,
             write_order=write_order,
         )
         if state_ga and state_ga != command_ga:
@@ -965,7 +988,7 @@ class KnxAdapter(AdapterBase):
         raw: bytes,
         *,
         is_outgoing: bool,
-    ) -> tuple[bool, Any, bool, ConfirmationWriteOrder | None]:
+    ) -> tuple[bool, Any, ConfirmationActionContext | bool, ConfirmationWriteOrder | None]:
         """Consume and return the logical value for one matching recent write."""
         self._prune_recent_writes()
         key = (str(binding.id), ga)
@@ -984,7 +1007,7 @@ class KnxAdapter(AdapterBase):
                 return False, None, False, None
 
             newest_logical_value = matching_writes[-1][2]
-            suppress_action_triggers = matching_writes[-1][3]
+            action_context = matching_writes[-1][3]
             write_order = matching_writes[-1][5] if len(matching_writes[-1]) > 5 else None
             for index, recent_write in enumerate(recent_writes):
                 if recent_write[1] == raw:
@@ -992,19 +1015,19 @@ class KnxAdapter(AdapterBase):
                     break
             if not recent_writes:
                 self._recent_writes.pop(key, None)
-            return True, newest_logical_value, suppress_action_triggers, write_order
+            return True, newest_logical_value, action_context, write_order
 
         if not is_outgoing:
             return False, None, False, None
         for index, recent_write in enumerate(recent_writes):
-            _, written_raw, logical_value, suppress_action_triggers, *_ = recent_write
+            _, written_raw, logical_value, action_context, *_ = recent_write
             if written_raw != raw:
                 continue
             write_order = recent_write[5] if len(recent_write) > 5 else None
             del recent_writes[index]
             if not recent_writes:
                 self._recent_writes.pop(key, None)
-            return True, logical_value, suppress_action_triggers, write_order
+            return True, logical_value, action_context, write_order
 
         return False, None, False, None
 

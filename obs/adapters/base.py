@@ -75,7 +75,7 @@ class ConfirmationWriteOrder:
 
 
 class ConfirmationActionContext:
-    """Resolve action suppression when an adapter actually transmits."""
+    """Resolve action suppression when an adapter publishes a confirmation."""
 
     def __init__(
         self,
@@ -88,7 +88,7 @@ class ConfirmationActionContext:
         self._token = token
         self.write_order = write_order
 
-    def suppress_actions_at_transmission(self) -> bool:
+    def suppress_actions_at_confirmation(self) -> bool:
         if self._suppress:
             return True
         if self._token is None:

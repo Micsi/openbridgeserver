@@ -1008,6 +1008,48 @@ class TestOnBindingsReloaded:
         assert adapter._invalidated_transmissions == {}
 
     @pytest.mark.asyncio
+    async def test_reload_tombstones_transmitted_confirmation_until_dispatch(self, mock_bus):
+        original = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        replacement = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.2",
+        )
+        replacement.id = original.id
+        replacement.datapoint_id = original.datapoint_id
+        replacement.enabled = original.enabled
+        adapter = self._make_adapter(mock_bus, [replacement])
+        dpt = DPTRegistry.get("DPT9.001")
+        raw = dpt.encoder(5.0)
+        telegram = Telegram(
+            destination_address=GroupAddress("1/2/3"),
+            direction=TelegramDirection.OUTGOING,
+            payload=GroupValueWrite(DPTArray(list(raw))),
+        )
+        adapter._pending_transmissions[id(telegram)] = (
+            original,
+            "1/2/3",
+            None,
+            bytes(raw),
+            50.0,
+            False,
+            adapter._confirmation_binding_signature(original),
+        )
+        adapter._on_telegram_transmitted(telegram)
+
+        await adapter._on_bindings_reloaded()
+        await adapter._on_telegram(telegram)
+
+        mock_bus.publish.assert_not_awaited()
+        assert adapter._recent_writes == {}
+        assert adapter._outgoing_confirmation_owners == {}
+        assert adapter._invalidated_transmissions == {}
+
+    @pytest.mark.asyncio
     async def test_source_binding_added_to_source_map(self, mock_bus):
         binding = make_binding({"group_address": "2/3/4", "dpt_id": "DPT1.001"}, direction="SOURCE")
         adapter = self._make_adapter(mock_bus, [binding])
@@ -1192,7 +1234,7 @@ class TestKnxReadWrite:
         assert isinstance(telegram.payload.value, DPTArray)
 
     @pytest.mark.asyncio
-    async def test_action_token_is_claimed_by_first_transmitted_confirmation(self, mock_bus):
+    async def test_action_token_is_claimed_by_first_published_confirmation(self, mock_bus):
         stalled_adapter, stalled_xknx = self._make_adapter_with_xknx(mock_bus)
         healthy_adapter, healthy_xknx = self._make_adapter_with_xknx(mock_bus)
         stalled_binding = make_binding(
@@ -1223,13 +1265,13 @@ class TestKnxReadWrite:
         )
         healthy_telegram = healthy_xknx.telegrams.put.call_args[0][0]
 
+        stalled_adapter._on_telegram_transmitted(stalled_telegram)
         healthy_adapter._on_telegram_transmitted(healthy_telegram)
         await healthy_adapter._on_telegram(healthy_telegram)
 
         healthy_event = mock_bus.publish.call_args_list[-1].args[0]
         assert healthy_event.suppress_action_triggers is False
 
-        stalled_adapter._on_telegram_transmitted(stalled_telegram)
         await stalled_adapter._on_telegram(stalled_telegram)
 
         stalled_event = mock_bus.publish.call_args_list[-1].args[0]
