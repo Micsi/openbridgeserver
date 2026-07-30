@@ -2001,6 +2001,57 @@ class TestKnxReadWrite:
         assert repeated_state_event.value == 60.0
         assert repeated_state_event.suppress_write_propagation is True
 
+    @pytest.mark.asyncio
+    async def test_state_confirmation_uses_logical_order_when_callbacks_reverse(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        adapter._ga_source_map = {
+            "1/2/3": [(binding, DPTRegistry.get("DPT9.001"))],
+            "1/2/4": [(binding, DPTRegistry.get("DPT9.001"))],
+        }
+        order_tracker = ConfirmationOrderTracker()
+        older_order = order_tracker.issue(binding.datapoint_id)
+        newer_order = order_tracker.issue(binding.datapoint_id)
+
+        await adapter.write_with_context(
+            binding,
+            5.0,
+            logical_value=50.0,
+            confirmation_write_order=older_order,
+        )
+        older_command = mock_xknx.telegrams.put.call_args.args[0]
+        await adapter.write_with_context(
+            binding,
+            5.0,
+            logical_value=60.0,
+            confirmation_write_order=newer_order,
+        )
+        newer_command = mock_xknx.telegrams.put.call_args.args[0]
+
+        adapter._on_telegram_transmitted(newer_command)
+        adapter._on_telegram_transmitted(older_command)
+        state_confirmation = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=newer_command.payload,
+        )
+        await adapter._on_telegram(state_confirmation)
+
+        mock_bus.publish.assert_awaited_once()
+        event = mock_bus.publish.call_args.args[0]
+        assert event.value == 60.0
+        assert event.suppress_write_propagation is True
+
     def test_state_confirmation_keeps_expectations_for_other_raw_values(
         self,
         mock_bus,

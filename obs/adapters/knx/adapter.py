@@ -1179,11 +1179,21 @@ class KnxAdapter(AdapterBase):
                 self._recent_writes.pop(key, None)
                 return False, None, False, None
 
-            newest_logical_value = matching_writes[-1][2]
-            action_context = matching_writes[-1][3]
-            write_order = matching_writes[-1][5] if len(matching_writes[-1]) > 5 else None
+            ordered_writes = [recent_write for recent_write in matching_writes if len(recent_write) > 5 and recent_write[5] is not None]
+            selected_write = matching_writes[-1]
+            removal_target = matching_writes[0]
+            if ordered_writes:
+                selected_write = ordered_writes[0]
+                for candidate in ordered_writes[1:]:
+                    if candidate[5].is_newer_than(selected_write[5]):
+                        selected_write = candidate
+                removal_target = selected_write
+
+            newest_logical_value = selected_write[2]
+            action_context = selected_write[3]
+            write_order = selected_write[5] if len(selected_write) > 5 else None
             for index, recent_write in enumerate(recent_writes):
-                if recent_write[1] == raw:
+                if recent_write is removal_target:
                     del recent_writes[index]
                     break
             if not recent_writes:
