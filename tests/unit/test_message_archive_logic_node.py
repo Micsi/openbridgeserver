@@ -709,6 +709,153 @@ def test_untriggered_async_action_placeholder_is_not_a_fresh_message(
     adapter.send_notification.assert_not_awaited()
 
 
+def test_untriggered_random_value_does_not_become_a_coerced_fresh_message() -> None:
+    datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    manager._registry.get_value.return_value = MagicMock(value=5)
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node("condition", "compare", {"operator": ">", "operand": 10}),
+            node("random", "random_value", {"min": 1, "max": 10}),
+            node("concat", "string_concat", {"count": 2, "text_2": " prefix"}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "condition", "value", "in1"),
+            edge("condition", "random", "out", "trigger"),
+            edge("random", "concat", "value", "in_1"),
+            edge("concat", "notify", "result", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"read": {"value": 5, "changed": True}})
+
+    assert outputs["notify"]["_message"] == " prefix"
+    assert outputs["notify"]["sent"] is False
+    adapter.send_notification.assert_not_awaited()
+
+
+def test_notification_chain_waits_for_sent_output_replay() -> None:
+    datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    manager._registry.get_value.return_value = MagicMock(value="fresh alert")
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node(
+                "notify_a",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "first"}],
+                },
+            ),
+            node(
+                "notify_b",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "second"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "notify_a", "value", "message"),
+            edge("notify_a", "notify_b", "sent", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(
+        side_effect=[
+            [MessageSendResult("telegram", "first", True)],
+            [MessageSendResult("telegram", "second", True)],
+        ]
+    )
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(
+            manager,
+            flow,
+            {"read": {"value": "fresh alert", "changed": True}},
+        )
+
+    assert outputs["notify_a"]["sent"] is True
+    assert outputs["notify_b"]["sent"] is True
+    assert [call.kwargs["message"] for call in adapter.send_notification.await_args_list] == [
+        "fresh alert",
+        "True",
+    ]
+
+
+def test_archive_requires_fresh_truthy_trigger_when_message_is_cached() -> None:
+    message_datapoint_id = uuid.uuid4()
+    condition_datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {
+        message_datapoint_id: MagicMock(value="cached archive alert"),
+        condition_datapoint_id: MagicMock(value=5),
+    }.get
+    flow = _flow(
+        [
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node("condition_read", "datapoint_read", {"datapoint_id": str(condition_datapoint_id)}),
+            node("condition", "compare", {"operator": ">", "operand": 10}),
+            node("archive", "message_archive", {"archive_id": "Alerts"}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("message_read", "archive", "value", "message"),
+            edge("condition_read", "condition", "value", "in1"),
+            edge("condition", "archive", "out", "trigger"),
+            edge("archive", "notify", "stored", "message"),
+        ],
+    )
+    service = MagicMock()
+    service.record = AsyncMock(return_value={"id": "entry-1"})
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(
+            manager,
+            flow,
+            {"condition_read": {"value": 5, "changed": True}},
+        )
+
+    assert outputs["archive"]["stored"] is False
+    assert outputs["notify"]["sent"] is False
+    service.record.assert_not_awaited()
+    adapter.send_notification.assert_not_awaited()
+
+
 def test_generic_notification_reports_target_failure() -> None:
     manager = _make_manager()
     flow = _flow(

@@ -3368,10 +3368,13 @@ class LogicManager:
 
         # ── Handle message_archive ────────────────────────────────────────────
         triggered_message_archive_nodes: set[str] = set()
+        replayed_message_archive_nodes: set[str] = set()
 
         async def _run_message_archive_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
+                return False
+            if not _has_fresh_firing_input(node.id, out):
                 return False
 
             archive_id = (node.data.get("archive_id") or "").strip().lower()
@@ -3407,6 +3410,7 @@ class LogicManager:
                 return False
 
         triggered_notify_nodes: set[str] = set()
+        replayed_notify_nodes: set[str] = set()
 
         input_sources = {(edge.target, edge.targetHandle or "in"): (edge.source, edge.sourceHandle or "out") for edge in flow.edges}
         freshness_cache: dict[frozenset[str], dict[str, set[str]]] = {}
@@ -3424,9 +3428,10 @@ class LogicManager:
             blocked_sources = {node.id for node in flow.nodes if node.type == "memory"}
             blocked_sources.update(api_client_ids - triggered_api_clients)
             blocked_sources.update(host_check_ids - triggered_host_check_nodes)
-            blocked_sources.update(message_archive_ids - triggered_message_archive_nodes)
-            blocked_sources.update(notify_ids - triggered_notify_nodes)
+            blocked_sources.update(message_archive_ids - replayed_message_archive_nodes)
+            blocked_sources.update(notify_ids - replayed_notify_nodes)
             blocked_sources.update(node.id for node in flow.nodes if node.type == "wake_on_lan" and node.id not in triggered_wol_nodes)
+            blocked_sources.update(node.id for node in flow.nodes if node.type == "random_value" and outputs.get(node.id, {}).get("value") is None)
             blocked_sources.update(
                 node.id
                 for node in flow.nodes
@@ -3439,17 +3444,21 @@ class LogicManager:
                 freshness_cache[cache_key] = _fresh_input_handles(overrides, flow.edges, blocked_sources)
             return freshness_cache[cache_key]
 
+        def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
+            event_fresh_inputs = _event_fresh_inputs()
+            if event_fresh_inputs is None:
+                return True
+            fresh_handles = event_fresh_inputs.get(node_id, set())
+            fresh_message = "message" in fresh_handles and out.get("_message") is not None
+            fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger"))
+            return fresh_message or fresh_trigger
+
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
                 return False
-            event_fresh_inputs = _event_fresh_inputs()
-            if event_fresh_inputs is not None:
-                fresh_handles = event_fresh_inputs.get(node.id, set())
-                fresh_message = "message" in fresh_handles and out.get("_message") is not None
-                fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node.id, "trigger"))
-                if not (fresh_message or fresh_trigger):
-                    return False
+            if not _has_fresh_firing_input(node.id, out):
+                return False
 
             if node.type == "notify_message":
                 instance_id = str(node.data.get("adapter_instance_id") or "").strip()
@@ -3677,12 +3686,11 @@ class LogicManager:
                     elif node.type == "message_archive" and node.id not in triggered_message_archive_nodes:
                         if await _run_message_archive_node(node, newly_triggered):
                             triggered_message_archive_nodes.add(node.id)
-                    elif (
-                        node.type in {"notify_message", "notify_pushover", "notify_sms"}
-                        and node.id not in triggered_notify_nodes
-                        and (await _run_notify_node(node, newly_triggered) or GraphExecutor._to_bool(outputs.get(node.id, {}).get("_trigger")))
-                    ):
-                        triggered_notify_nodes.add(node.id)
+                    elif node.type in {"notify_message", "notify_pushover", "notify_sms"} and node.id not in triggered_notify_nodes:
+                        out = outputs.get(node.id, {})
+                        if GraphExecutor._to_bool(out.get("_trigger")) and _has_fresh_firing_input(node.id, out):
+                            await _run_notify_node(node, newly_triggered)
+                            triggered_notify_nodes.add(node.id)
                 if not newly_triggered:
                     break
                 _add_resolved_outputs(newly_triggered)
@@ -3690,6 +3698,8 @@ class LogicManager:
                     newly_triggered,
                     skip_node_ids=_triggered_side_effect_ids(),
                 )
+                replayed_message_archive_nodes.update(newly_triggered & triggered_message_archive_nodes)
+                replayed_notify_nodes.update(newly_triggered & triggered_notify_nodes)
 
         for node in flow.nodes:
             if node.type != "message_archive":
@@ -3705,6 +3715,7 @@ class LogicManager:
                 | triggered_wol_nodes
                 | triggered_host_check_nodes,
             )
+            replayed_message_archive_nodes.update(triggered_message_archive_nodes)
             await _run_replay_triggered_side_effects(message_archive_descendants)
 
         # ── Handle notify_pushover ────────────────────────────────────────
@@ -3741,6 +3752,7 @@ class LogicManager:
                 | triggered_wol_nodes
                 | triggered_host_check_nodes,
             )
+            replayed_notify_nodes.update(triggered_notify_nodes)
             await _run_replay_triggered_side_effects(notify_descendants)
 
         # Deferred hc_prev_trigger=False: clear only for HC nodes that did NOT
