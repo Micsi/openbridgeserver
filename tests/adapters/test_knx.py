@@ -1335,6 +1335,69 @@ class TestOnBindingsReloaded:
         assert event.suppress_write_propagation is False
         assert adapter._invalidated_state_confirmations == {}
 
+    @pytest.mark.asyncio
+    async def test_newer_live_state_confirmation_supersedes_reload_tombstone(
+        self,
+        mock_bus,
+    ):
+        original = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        replacement = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.2",
+        )
+        replacement.id = original.id
+        replacement.datapoint_id = original.datapoint_id
+        replacement.enabled = original.enabled
+        adapter = self._make_adapter(mock_bus, [replacement])
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+        dpt = DPTRegistry.get("DPT9.001")
+        raw = bytes(dpt.encoder(5.0))
+        adapter._remember_outbound_write(
+            original,
+            "1/2/4",
+            raw,
+            50.0,
+            written_at=100.0,
+        )
+
+        await adapter._on_bindings_reloaded()
+        now[0] = 101.0
+        adapter._remember_outbound_write(
+            replacement,
+            "1/2/4",
+            raw,
+            60.0,
+            written_at=101.0,
+        )
+        state = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=GroupValueWrite(DPTArray(list(raw))),
+        )
+
+        await adapter._on_telegram(state)
+
+        mock_bus.publish.assert_awaited_once()
+        event = mock_bus.publish.call_args.args[0]
+        assert event.binding_id == replacement.id
+        assert event.value == 60.0
+        assert event.suppress_write_propagation is True
+        assert adapter._invalidated_state_confirmations == {}
+
     def test_invalidated_state_feedback_tombstone_expires(self, mock_bus):
         adapter = self._make_adapter(mock_bus)
         now = [100.0]
@@ -2084,6 +2147,49 @@ class TestKnxReadWrite:
         assert state_event.suppress_write_propagation is True
         assert repeated_state_event.value == 60.0
         assert repeated_state_event.suppress_write_propagation is True
+
+    @pytest.mark.asyncio
+    async def test_nonmatching_state_update_retains_pending_confirmation(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/4"] = [(binding, dpt)]
+
+        await adapter.write_with_context(binding, 5.0, logical_value=50.0)
+        command = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(command)
+        old_state = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=GroupValueWrite(DPTArray(list(dpt.encoder(4.0)))),
+        )
+        matching_state = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=command.payload,
+        )
+
+        await adapter._on_telegram(old_state)
+        assert adapter._recent_writes
+        await adapter._on_telegram(matching_state)
+
+        old_event, confirmation = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert abs(old_event.value - 0.4) < 0.1
+        assert old_event.suppress_write_propagation is False
+        assert confirmation.value == 50.0
+        assert confirmation.suppress_write_propagation is True
+        assert not any(ga == "1/2/4" for _, ga in adapter._recent_writes)
 
     @pytest.mark.asyncio
     async def test_state_confirmation_uses_logical_order_when_callbacks_reverse(

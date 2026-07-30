@@ -1091,15 +1091,29 @@ class KnxAdapter(AdapterBase):
         raw: bytes,
     ) -> tuple[str, str] | None:
         """Consume one invalidated state expectation matching an incoming telegram."""
+        self._prune_recent_writes()
         self._prune_invalidated_state_confirmations()
         key = (ga, bytes(raw))
         tombstones = self._invalidated_state_confirmations.get(key)
         if not tombstones:
             return None
-        _, binding_id, datapoint_id = tombstones.popleft()
+        while tombstones:
+            written_at, binding_id, datapoint_id = tombstones.popleft()
+            has_newer_live_expectation = any(
+                key_ga == ga
+                and (live_binding_id == binding_id or str(recent_write[4][0]) == datapoint_id)
+                and recent_write[1] == raw
+                and recent_write[0] > written_at
+                for (live_binding_id, key_ga), recent_writes in self._recent_writes.items()
+                for recent_write in recent_writes
+            )
+            if not has_newer_live_expectation:
+                if not tombstones:
+                    self._invalidated_state_confirmations.pop(key, None)
+                return binding_id, datapoint_id
         if not tombstones:
             self._invalidated_state_confirmations.pop(key, None)
-        return binding_id, datapoint_id
+        return None
 
     def _prune_local_read_responses(self, now: float | None = None) -> None:
         """Remove transmitted read responses not dispatched to the sniffer."""
@@ -1210,7 +1224,6 @@ class KnxAdapter(AdapterBase):
                 return False, None, False, None
             matching_writes = [recent_write for recent_write in recent_writes if recent_write[1] == raw]
             if not matching_writes:
-                self._recent_writes.pop(key, None)
                 return False, None, False, None
 
             ordered_writes = [recent_write for recent_write in matching_writes if len(recent_write) > 5 and recent_write[5] is not None]
