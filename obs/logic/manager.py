@@ -125,15 +125,20 @@ def _downstream_closure(start: set[str], edges: list[Any]) -> set[str]:
     return reached
 
 
-def _fresh_input_handles(overrides: dict[str, dict[str, Any]], edges: list[Any]) -> dict[str, set[str]]:
+def _fresh_input_handles(
+    overrides: dict[str, dict[str, Any]],
+    edges: list[Any],
+    blocked_sources: set[str] | None = None,
+) -> dict[str, set[str]]:
     """Input handles that receive values downstream of explicit overrides."""
     fresh_inputs = {node_id: set(values) for node_id, values in overrides.items()}
     reached = set(overrides)
+    blocked_sources = blocked_sources or set()
     grew = True
     while grew:
         grew = False
         for edge in edges:
-            if edge.source not in reached:
+            if edge.source not in reached or edge.source in blocked_sources:
                 continue
             fresh_inputs.setdefault(edge.target, set()).add(edge.targetHandle or "in")
             if edge.target not in reached:
@@ -1829,7 +1834,6 @@ class LogicManager:
         # cached inputs are context, not fresh notification triggers. An
         # execution without overrides is a manual/full-sheet run and keeps the
         # existing all-inputs behaviour.
-        event_fresh_inputs = _fresh_input_handles(overrides, flow.edges) if overrides else None
         debug_overrides = debug_overrides or {}
         capture_debug_inputs = debug_input_capture is not None
         if not capture_debug_inputs:
@@ -3406,6 +3410,14 @@ class LogicManager:
                 return node_overrides[handle]
             source_id, source_handle = input_sources.get((node_id, handle), ("", ""))
             return GraphExecutor._get_output_value(outputs.get(source_id, {}), source_handle)
+
+        blocked_freshness_sources = {node.id for node in flow.nodes if node.type == "memory"}
+        blocked_freshness_sources.update(
+            node.id
+            for node in flow.nodes
+            if node.type == "gate" and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
+        )
+        event_fresh_inputs = _fresh_input_handles(overrides, flow.edges, blocked_freshness_sources) if overrides else None
 
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
