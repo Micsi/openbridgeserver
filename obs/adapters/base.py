@@ -88,6 +88,10 @@ class ConfirmationActionContext:
         self._token = token
         self.write_order = write_order
 
+    @property
+    def shares_action_token(self) -> bool:
+        return self._token is not None
+
     def suppress_actions_at_confirmation(self) -> bool:
         if self._suppress:
             return True
