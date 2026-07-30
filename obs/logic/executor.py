@@ -7,6 +7,7 @@ Returns a dict of node_id → output_values.
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import logging
 import math
@@ -24,6 +25,17 @@ from obs.logic.models import FlowData, LogicNode
 
 logger = logging.getLogger(__name__)
 _AVG_MULTI_MAX_SAMPLES = 100_000
+
+
+def _snapshot_debug_value(value: Any) -> Any:
+    try:
+        return copy.deepcopy(value)
+    except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing copy hooks
+        try:
+            return json.loads(json.dumps(value, default=str))
+        except Exception:  # noqa: BLE001 - debug capture must never break graph execution
+            return str(value)
+
 
 _COMPARE_OPS = {
     ">": operator.gt,
@@ -64,6 +76,7 @@ class GraphExecutor:
         flow: FlowData,
         hysteresis_state: dict[str, Any] | None = None,
         app_config: dict[str, Any] | None = None,
+        input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
     ):
         self.flow = flow
         # NOTE: use `is not None` instead of `or {}` — an empty dict {} is falsy,
@@ -71,15 +84,18 @@ class GraphExecutor:
         # using the passed-in reference, breaking state persistence between runs.
         self.hysteresis_state = hysteresis_state if hysteresis_state is not None else {}
         self.app_config = app_config or {}
+        self.input_capture = input_capture
 
     def execute(
         self,
         input_overrides: dict[str, dict[str, Any]] | None = None,
         *,
         commit_memory: bool = True,
+        capture_incoming_overrides: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Run the graph. Returns output values for every node."""
         input_overrides = input_overrides or {}
+        capture_incoming_overrides = capture_incoming_overrides or {}
 
         # Build adjacency: edge target_node.handle ← source_node.handle value
         # edge_map[target_node_id][target_handle] = (source_node_id, source_handle)
@@ -100,11 +116,24 @@ class GraphExecutor:
                 src_out = outputs.get(src_id, {})
                 inputs[handle] = self._get_output_value(src_out, src_handle)
 
-            # Apply overrides (for datapoint_read triggers)
-            if node.id in input_overrides:
-                inputs.update(input_overrides[node.id])
+            incoming_inputs = inputs.copy()
+            incoming_inputs.update(capture_incoming_overrides.get(node.id, {}))
+            node_overrides = input_overrides.get(node.id, {})
+            inputs.update(node_overrides)
 
             try:
+                inputs = self._resolve_effective_inputs(node, inputs)
+
+                if self.input_capture is not None:
+                    self.input_capture[node.id] = {
+                        port: {
+                            "incoming": _snapshot_debug_value(incoming_inputs.get(port)),
+                            "effective": _snapshot_debug_value(inputs.get(port)),
+                            "overridden": port in node_overrides,
+                        }
+                        for port in inputs
+                    }
+
                 result = self._eval_node(node, inputs)
             except Exception as exc:
                 logger.exception("Node %s (%s) error", node.id, node.type)
@@ -140,6 +169,26 @@ class GraphExecutor:
         if commit_memory:
             self._commit_memory_inputs(outputs, input_overrides, edge_map)
         return outputs
+
+    @staticmethod
+    def _resolve_effective_inputs(node: LogicNode, inputs: dict[str, Any]) -> dict[str, Any]:
+        """Include configured input fallbacks in the values used and captured."""
+        effective = inputs.copy()
+        data = node.data
+
+        if node.type == "compare" and "in2" not in effective:
+            operand = data.get("operand")
+            if not (isinstance(operand, str) and operand.strip() == ""):
+                effective["in2"] = operand
+        elif node.type == "string_concat":
+            count = max(2, min(20, int(data.get("count", 2))))
+            for index in range(1, count + 1):
+                port = f"in_{index}"
+                if effective.get(port) is None:
+                    static = data.get(f"text_{index}")
+                    effective[port] = static if static is not None else ""
+
+        return effective
 
     # ── Topological Sort ──────────────────────────────────────────────────
 
@@ -453,10 +502,6 @@ class GraphExecutor:
                 operator_key = str(d.get("operator", ">")).strip().lower()
                 op = _COMPARE_OPS.get(operator_key, operator.gt)
                 a, b = inputs.get("in1"), inputs.get("in2")
-                if "in2" not in inputs:
-                    operand = d.get("operand")
-                    if not (isinstance(operand, str) and operand.strip() == ""):
-                        b = operand
                 if a is None or b is None:
                     return {"out": False}
                 # Auto-coerce to number when both values look numeric
@@ -601,11 +646,7 @@ class GraphExecutor:
                 parts: list[str] = []
                 for i in range(1, count + 1):
                     val = inputs.get(f"in_{i}")
-                    if val is not None:
-                        parts.append(str(val))
-                    else:
-                        static = d.get(f"text_{i}")
-                        parts.append(str(static) if static is not None else "")
+                    parts.append(str(val) if val is not None else "")
                 return {"result": sep.join(parts)}
 
             case "statistics":

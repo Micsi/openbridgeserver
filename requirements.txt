@@ -2,7 +2,7 @@
 # Python 3.13+
 
 # Web Framework
-fastapi>=0.140,<0.141
+fastapi>=0.141,<0.142
 uvicorn[standard]>=0.46.0
 
 # Data Validation & Settings
@@ -44,7 +44,7 @@ astral>=3.2,<4             # 2.x→3.x changed LocationInfo constructor signatur
 # Zeitschaltuhr — holiday calendar
 holidays>=0.95,<1          # pre-1.0; country_holidays() API may change
 httpx>=0.28.1,<1           # pre-1.0
-websockets>=16.0,<17       # major versions have broken the connect/send API
+websockets>=17,<18       # major versions have broken the connect/send API
 # ioBroker socketio v7 still speaks Engine.IO v3; python-socketio v4 is compatible.
 python-socketio[asyncio_client]>=5.16.1,<6
 

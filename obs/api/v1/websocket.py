@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["websocket"])
 
 LogAccessCheck = Callable[[], Awaitable[bool]]
+LogicDebugAccessCheck = Callable[[], Awaitable[bool]]
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,9 @@ class WebSocketManager:
         self._connections: dict[str, tuple[WebSocket, set[str], asyncio.Lock, set[str] | None, bool, LogAccessCheck | None]] = {}
         # conn_id -> allowed message archive predicates. None means unrestricted.
         self._message_archive_access: dict[str, MessageArchiveAccess] = {}
+        self._logic_debug_subscriptions: dict[str, set[str]] = {}
+        self._logic_debug_access: set[str] = set()
+        self._logic_debug_access_checks: dict[str, LogicDebugAccessCheck] = {}
 
     async def connect(
         self,
@@ -81,6 +86,8 @@ class WebSocketManager:
         allowed_message_archive_access: MessageArchiveAccess = None,
         log_access: bool = False,
         log_access_check: LogAccessCheck | None = None,
+        logic_debug_access: bool = False,
+        logic_debug_access_check: LogicDebugAccessCheck | None = None,
         subprotocol: str | None = None,
     ) -> str:
         if subprotocol is None:
@@ -93,6 +100,11 @@ class WebSocketManager:
                 await ws.accept()
         conn_id = str(uuid.uuid4())
         self._connections[conn_id] = (ws, set(), asyncio.Lock(), allowed_dp_ids, log_access, log_access_check)
+        self._logic_debug_subscriptions[conn_id] = set()
+        if logic_debug_access:
+            self._logic_debug_access.add(conn_id)
+            if logic_debug_access_check is not None:
+                self._logic_debug_access_checks[conn_id] = logic_debug_access_check
         if allowed_message_archive_access is not None:
             self._message_archive_access[conn_id] = allowed_message_archive_access
         elif allowed_message_archive_ids is not None:
@@ -105,6 +117,9 @@ class WebSocketManager:
     async def disconnect(self, conn_id: str) -> None:
         entry = self._connections.pop(conn_id, None)
         self._message_archive_access.pop(conn_id, None)
+        self._logic_debug_subscriptions.pop(conn_id, None)
+        self._logic_debug_access.discard(conn_id)
+        self._logic_debug_access_checks.pop(conn_id, None)
         if entry:
             ws = entry[0]
             try:
@@ -135,6 +150,34 @@ class WebSocketManager:
     def unsubscribe(self, conn_id: str, dp_ids: list[str]) -> None:
         if conn_id in self._connections:
             self._connections[conn_id][1].difference_update(dp_ids)
+
+    def set_logic_debug(self, conn_id: str, graph_id: str, enabled: bool) -> None:
+        subscriptions = self._logic_debug_subscriptions.get(conn_id)
+        if subscriptions is None or conn_id not in self._logic_debug_access:
+            return
+        if enabled:
+            subscriptions.add(graph_id)
+        else:
+            subscriptions.discard(graph_id)
+
+    def has_logic_debug_subscribers(self, graph_id: str) -> bool:
+        return any(graph_id in subscriptions for subscriptions in self._logic_debug_subscriptions.values())
+
+    async def broadcast_logic_debug(self, graph_id: str, msg: dict) -> None:
+        dead: list[str] = []
+        for conn_id, subscriptions in list(self._logic_debug_subscriptions.items()):
+            if graph_id not in subscriptions:
+                continue
+            access_check = self._logic_debug_access_checks.get(conn_id)
+            if access_check is not None and not await access_check():
+                # Closing notifies browser clients so they can reconnect with
+                # the access token refreshed by the REST client.
+                dead.append(conn_id)
+                continue
+            if not await self._send(conn_id, msg):
+                dead.append(conn_id)
+        for conn_id in dead:
+            await self.disconnect(conn_id)
 
     async def send_initial_values(self, conn_id: str, dp_ids: list[str]) -> None:
         """Send current registry values for subscribed datapoints."""
@@ -793,6 +836,25 @@ async def _ws_has_log_access(user: str | None, api_key: str | None, *, identity_
     return bool(user and user != "__api_key__")
 
 
+async def _ws_has_logic_debug_access(user: str | None, token: str | None = None) -> bool:
+    """Only administrator JWT identities may inspect live logic values."""
+    if not user or user == "__api_key__" or user.startswith("api_key:"):
+        return False
+    if token is not None:
+        from obs.api.auth import decode_token
+
+        try:
+            if decode_token(token) != user:
+                return False
+        except HTTPException:
+            return False
+    try:
+        row = await get_db().fetchone("SELECT is_admin FROM users WHERE username=?", (user,))
+    except (RuntimeError, sqlite3.Error):
+        return False
+    return bool(row and row["is_admin"])
+
+
 # ---------------------------------------------------------------------------
 # Singleton
 # ---------------------------------------------------------------------------
@@ -942,6 +1004,7 @@ async def websocket_endpoint(
         )
 
     log_access = await _ws_has_log_access(user, api_key, identity_from_jwt=identity_from_jwt) if allowed_dp_ids is None else False
+    logic_debug_access = await _ws_has_logic_debug_access(user, resolved_token) if identity_from_jwt and allowed_dp_ids is None else False
 
     manager = get_ws_manager()
     conn_id = await manager.connect(
@@ -950,6 +1013,8 @@ async def websocket_endpoint(
         allowed_message_archive_access=allowed_message_archive_access,
         log_access=log_access,
         log_access_check=(lambda: _ws_has_log_access(user, api_key, identity_from_jwt=identity_from_jwt)) if log_access else None,
+        logic_debug_access=logic_debug_access,
+        logic_debug_access_check=(lambda: _ws_has_logic_debug_access(user, resolved_token)) if logic_debug_access else None,
         subprotocol=selected_subprotocol,
     )
 
@@ -981,6 +1046,11 @@ async def websocket_endpoint(
 
             elif action == "ping":
                 await ws.send_json({"action": "pong"})
+
+            elif action == "logic_debug":
+                graph_id = str(data.get("graph_id") or "")
+                if graph_id:
+                    manager.set_logic_debug(conn_id, graph_id, bool(data.get("enabled")))
 
     except WebSocketDisconnect:
         pass

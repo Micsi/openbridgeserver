@@ -3610,12 +3610,24 @@ class TestLogicManagerBasics:
 
     @pytest.mark.asyncio
     async def test_execute_graph_success(self):
+        from obs.logic.executor import GraphExecutor
+
         flow = _make_flow()
         mgr, _db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        captures = []
+        original_init = GraphExecutor.__init__
+
+        def recording_init(instance, *args, **kwargs):
+            captures.append(args[3] if len(args) > 3 else kwargs.get("input_capture"))
+            original_init(instance, *args, **kwargs)
+
         with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
             mock_ws.return_value.broadcast = AsyncMock()
-            result = await mgr.execute_graph("g1")
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            with patch.object(GraphExecutor, "__init__", recording_init):
+                result = await mgr.execute_graph("g1")
         assert isinstance(result, dict)
+        assert captures and all(capture is None for capture in captures)
 
     @pytest.mark.asyncio
     async def test_load_graphs_parses_flow(self):
@@ -3665,6 +3677,31 @@ class TestLogicManagerBasics:
 
 
 class TestLogicManagerValueEvent:
+    @pytest.mark.asyncio
+    async def test_on_value_event_ignores_state_only_confirmation_actions(self):
+        dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "n1",
+                    "type": "datapoint_read",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"datapoint_id": str(dp_id)},
+                }
+            ]
+        )
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr._execute_graph = AsyncMock()
+        event = SimpleNamespace(
+            datapoint_id=dp_id,
+            value=42.0,
+            suppress_action_triggers=True,
+        )
+
+        await mgr._on_value_event(event)
+
+        mgr._execute_graph.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_on_value_event_no_matching_graph(self):
         """When no graph has a node watching the DP, no execute call is made."""
@@ -4288,3 +4325,7 @@ class TestStartCronTasks:
 
         assert sleep_calls == [60, 60]
         assert mgr._execute_graph.await_count == 2
+        assert [entry.args[3] for entry in mgr._execute_graph.await_args_list] == [
+            {"i1": {}},
+            {"i1": {}},
+        ]
