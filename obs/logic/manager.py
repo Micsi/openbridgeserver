@@ -3438,6 +3438,9 @@ class LogicManager:
         def _event_fresh_inputs() -> dict[str, set[str]] | None:
             if not overrides:
                 return None
+            event_sources = {node_id: dict(values) for node_id, values in overrides.items()}
+            for node_id in refreshed_ical_nodes:
+                event_sources.setdefault(node_id, {})
             blocked_sources = {node.id for node in flow.nodes if node.type == "memory"}
             blocked_sources.update(api_client_ids - triggered_api_clients)
             blocked_sources.update(host_check_ids - executed_host_check_nodes)
@@ -3461,7 +3464,7 @@ class LogicManager:
             while True:
                 cache_key = (frozenset(blocked_sources), frozenset(blocked_outputs))
                 if cache_key not in freshness_cache:
-                    freshness_cache[cache_key] = _fresh_input_handles(overrides, flow.edges, blocked_sources, blocked_outputs)
+                    freshness_cache[cache_key] = _fresh_input_handles(event_sources, flow.edges, blocked_sources, blocked_outputs)
                 event_fresh_inputs = freshness_cache[cache_key]
                 newly_blocked_default_gates = {
                     node.id
@@ -3469,7 +3472,7 @@ class LogicManager:
                     if node.type == "gate"
                     and node.data.get("closed_behavior", "retain") == "default_value"
                     and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
-                    and "enable" not in event_fresh_inputs.get(node.id, set())
+                    and ("enable" not in event_fresh_inputs.get(node.id, set()) or graph_state.get(node.id, {}).get("gate_prev_open") is False)
                 } - blocked_sources
                 if not newly_blocked_default_gates:
                     return event_fresh_inputs
@@ -3875,6 +3878,12 @@ class LogicManager:
             current_condition = self._sequence_conditions.get((graph_id, node.id), condition)
             if current_condition:
                 self._start_value_sequence(graph_id, node, current_condition, logic_depth, flow.model_dump_json())
+
+        for node in flow.nodes:
+            if node.type == "gate":
+                graph_state.setdefault(node.id, {})["gate_prev_open"] = GraphExecutor._to_bool(_current_input_value(node.id, "enable")) != bool(
+                    node.data.get("negate_enable")
+                )
 
         # ── Persist node state (statistics / hysteresis) to DB ───────────
         await self._persist_node_state(graph_id)

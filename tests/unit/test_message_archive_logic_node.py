@@ -636,6 +636,66 @@ def test_closed_default_gate_ignores_fresh_data_input() -> None:
     adapter.send_notification.assert_not_awaited()
 
 
+def test_closed_default_gate_only_emits_default_on_transition() -> None:
+    datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node("condition", "compare", {"operator": ">", "operand": 10}),
+            node(
+                "gate",
+                "gate",
+                {
+                    "closed_behavior": "default_value",
+                    "default_value": "default alert",
+                },
+            ),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "gate", "value", "in"),
+            edge("read", "condition", "value", "in1"),
+            edge("condition", "gate", "out", "enable"),
+            edge("gate", "notify", "out", "message"),
+        ],
+    )
+    graph_id = "default-gate-transition"
+    manager._graphs[graph_id] = ("Default Gate", True, flow)
+    manager._node_state[graph_id] = {}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    async def execute(value: int) -> dict:
+        return await manager._execute_graph(
+            graph_id,
+            "Default Gate",
+            flow,
+            {"read": {"value": value, "changed": True}},
+        )
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        open_outputs = asyncio.run(execute(15))
+        closed_outputs = asyncio.run(execute(5))
+        still_closed_outputs = asyncio.run(execute(4))
+
+    assert open_outputs["notify"]["sent"] is True
+    assert closed_outputs["notify"]["sent"] is True
+    assert closed_outputs["notify"]["_message"] == "default alert"
+    assert still_closed_outputs["notify"]["sent"] is False
+    assert adapter.send_notification.await_count == 2
+
+
 def test_gate_freshness_is_recomputed_after_async_replay() -> None:
     archive_datapoint_id = uuid.uuid4()
     message_datapoint_id = uuid.uuid4()
@@ -907,6 +967,86 @@ def test_failed_scheduled_ical_refresh_does_not_send_cached_calendar() -> None:
     assert outputs["calendar"]["raw"] == cached_calendar
     assert outputs["notify"]["sent"] is False
     adapter.send_notification.assert_not_awaited()
+
+
+def test_scheduled_ical_execution_attributes_every_successful_refresh() -> None:
+    manager = _make_manager()
+    calendar_body = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+    flow = _flow(
+        [
+            node("calendar_a", "ical", {"url": "https://a.example/calendar.ics", "filters": "[]", "filter_count": 0}),
+            node("calendar_b", "ical", {"url": "https://b.example/calendar.ics", "filters": "[]", "filter_count": 0}),
+            node(
+                "notify_a",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "a"}],
+                },
+            ),
+            node(
+                "notify_b",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "b"}],
+                },
+            ),
+        ],
+        [
+            edge("calendar_a", "notify_a", "raw", "message"),
+            edge("calendar_b", "notify_b", "raw", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    class Headers:
+        @staticmethod
+        def get(name: str, default=None):
+            return {"content-type": "text/calendar"}.get(name.lower(), default)
+
+        @staticmethod
+        def get_list(_name: str) -> list[str]:
+            return []
+
+    class Response:
+        status_code = 200
+        headers = Headers()
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        async def aiter_bytes():
+            yield calendar_body
+
+    class StreamContext:
+        async def __aenter__(self):
+            return Response()
+
+        async def __aexit__(self, _exc_type, _exc, _tb):
+            return False
+
+    client = MagicMock()
+    client.stream.return_value = StreamContext()
+    client.aclose = AsyncMock()
+
+    with (
+        patch(
+            "obs.logic.manager._build_ical_fetch_targets",
+            return_value=(["https://93.184.216.34/calendar.ics"], {}, {}),
+        ),
+        patch("obs.logic.manager.httpx.AsyncClient", return_value=client),
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"calendar_a": {}})
+
+    assert outputs["notify_a"]["sent"] is True
+    assert outputs["notify_b"]["sent"] is True
+    assert adapter.send_notification.await_count == 2
 
 
 def test_duplicate_input_edges_do_not_send_cached_effective_message() -> None:
