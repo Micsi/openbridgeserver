@@ -1080,6 +1080,26 @@ class TestChangeFilterNode:
         assert out3["cf"]["changed"] is False
         assert out3["cf"]["out"] == {"a": 1}
 
+    def test_downstream_mutation_of_nested_list_inside_tuple_baseline_does_not_corrupt_state(self):
+        """Regression: the isolation copy only deep-copied when the OUTER
+        value was itself a dict/list/set — a tuple containing a mutable
+        list member, e.g. ([1],), was handed out (and stored) as the exact
+        same nested list object, since the outer tuple alone is otherwise
+        immutable. Mutating that nested list via the emitted "out" would
+        therefore also mutate the persisted baseline, and the next
+        genuinely identical ([1],) input would be reported as changed
+        against its own already-corrupted stored value."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        out1 = exc.execute({"cf": {"in": ([1],)}})
+        out1["cf"]["out"][0].append(999)  # simulate a downstream node mutating the nested list
+
+        out2 = exc.execute({"cf": {"in": ([1],)}})
+
+        assert out2["cf"]["changed"] is False
+        assert out2["cf"]["out"] == ([1],)
+
     def test_numeric_and_boolean_string_aliases_stay_transitive(self):
         """Regression: 1 == "1" and "1" == "true", so 1 must also equal
         "true" — otherwise a source alternating between equivalent adapter

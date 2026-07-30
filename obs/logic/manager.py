@@ -2435,7 +2435,7 @@ class LogicManager:
         _node_by_id_early = {n.id: n for n in flow.nodes}
         _decisive_gate_value = {"or": True, "and": False}
 
-        def _compute_cf_hold_ids(seed_ids: set[str]) -> set[str]:
+        def _compute_cf_hold_ids(seed_ids: set[str], outputs_source: dict[str, dict[str, Any]] | None = None) -> set[str]:
             """Taint-BFS from `seed_ids` (unresolved sources), returning the
             change_filter node ids that must be held this pass. Factored out
             of the original single, early computation so it can be re-run
@@ -2444,10 +2444,22 @@ class LogicManager:
             to be chained behind another one that hasn't actually settled
             yet must still hold any change_filter it reaches, even after
             the initial pass already committed a value for it once.
+
+            `outputs_source` (defaults to the outer `outputs`) is read by
+            the gate-absorption check below for each of a decisive gate's
+            OTHER (non-tainted) inputs. A caller re-running this for a
+            later replay must pass that replay's own fresh output snapshot
+            (e.g. second_outputs/replay_outputs) — the outer `outputs` is
+            still the stale first pass at that point, so checking against
+            it could either wrongly "absorb" a gate via a placeholder that
+            has since resolved differently, or fail to absorb one that a
+            fresher, real result now decides — same reasoning as
+            _still_unresolved_source_ids' own outputs_source parameter.
             """
             if not seed_ids:
                 return set()
             _tainted: set[str] = set(seed_ids)
+            _src = outputs_source if outputs_source is not None else outputs
 
             def _gate_taint_absorbed(gate_id: str, gate_type: str) -> bool:
                 decisive = _decisive_gate_value[gate_type]
@@ -2479,10 +2491,27 @@ class LogicManager:
                     # so it can independently decide the gate's output (a
                     # negated unconnected OR input is a deterministic True)
                     # exactly like any other resolved input.
+                    #
+                    # An async_replay_source_ids node's OWN output slot
+                    # (api_client.success, host_check.reachable,
+                    # wake_on_lan.sent, …) is never derived by that node's
+                    # own _eval_node from its inputs — it's mutated in place
+                    # into the OUTER `outputs` once its real side effect
+                    # actually runs (_run_api_client_node et al.), and a
+                    # fresh replay pass re-evaluating that SAME node always
+                    # re-computes its own placeholder there regardless of
+                    # any override, since overrides only redirect its
+                    # DOWNSTREAM edges, not its own output. So for such a
+                    # node specifically, the outer `outputs` — not
+                    # `outputs_source` — holds the authoritative value;
+                    # every other (pass-through) node's real, propagated
+                    # value only shows up in `outputs_source`, which is
+                    # exactly why this parameter exists in the first place.
+                    _v_src = outputs if src_edge is not None and src_edge.source in async_replay_source_ids else _src
                     v = (
                         False
                         if src_edge is None
-                        else GraphExecutor._to_bool(GraphExecutor._get_output_value(outputs.get(src_edge.source, {}), src_edge.sourceHandle or "out"))
+                        else GraphExecutor._to_bool(GraphExecutor._get_output_value(_v_src.get(src_edge.source, {}), src_edge.sourceHandle or "out"))
                     )
                     if gdata.get(f"negate_{handle}"):
                         v = not v
@@ -2847,7 +2876,7 @@ class LogicManager:
             # Redo the replay with suppression applied if this reveals
             # anything new.
             _late_pending = _still_unresolved_source_ids(replay_outputs)
-            _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending)
+            _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending, replay_outputs)
             if _late_cf_hold_ids:
                 for _late_cf_id in _late_cf_hold_ids:
                     replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
@@ -2905,7 +2934,7 @@ class LogicManager:
             # host_check irreversibly ping. Redo the replay with
             # suppression applied if this reveals anything new.
             _hc_late_pending = _still_unresolved_source_ids(hc_second_outputs)
-            _hc_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _hc_late_pending)
+            _hc_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _hc_late_pending, hc_second_outputs)
             if _hc_late_cf_hold_ids:
                 for _hc_late_cf_id in _hc_late_cf_hold_ids:
                     hc_merged.setdefault(_hc_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3047,7 +3076,7 @@ class LogicManager:
                 # downstream host_check irreversibly ping. Redo the replay
                 # with suppression applied if this reveals anything new.
                 _wol_late_pending = _still_unresolved_source_ids(wol_second_outputs)
-                _wol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _wol_late_pending)
+                _wol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _wol_late_pending, wol_second_outputs)
                 if _wol_late_cf_hold_ids:
                     for _wol_late_cf_id in _wol_late_cf_hold_ids:
                         wol_merged.setdefault(_wol_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3398,7 +3427,7 @@ class LogicManager:
                     # committed just because this pass happened to be an
                     # API replay.
                     _late_pending = _still_unresolved_source_ids(second_outputs)
-                    _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending)
+                    _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending, second_outputs)
                     if _late_cf_hold_ids:
                         for _late_cf_id in _late_cf_hold_ids:
                             replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3463,6 +3492,28 @@ class LogicManager:
             pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             pat_executor = _executor(pat_hyst_snapshot)
             pat_outputs = _execute_pass(pat_executor, pat_merged)
+            # A downstream async node (e.g. wake_on_lan) newly reachable
+            # within this replay's own outputs may still be only "triggered,
+            # not yet actually run" — its own output here is a placeholder,
+            # same as the other replay branches. A change_filter reachable
+            # through it — or through a still-unseeded Read Object — must
+            # stay held rather than commit that placeholder and let a
+            # further downstream host_check irreversibly ping. In practice
+            # a change_filter reachable from THIS pass's replay_sources is
+            # already held via pat_base_overrides (inherited from the
+            # api-client stage's own suppression, since any host_check
+            # replayed here was necessarily already one of ITS late-pending
+            # seeds) — this recompute is kept for defense in depth and
+            # consistency with every other replay site, in case a future
+            # change decouples pat_base_overrides from that inheritance.
+            _pat_late_pending = _still_unresolved_source_ids(pat_outputs)
+            _pat_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _pat_late_pending, pat_outputs)
+            if _pat_late_cf_hold_ids:
+                for _pat_late_cf_id in _pat_late_cf_hold_ids:
+                    pat_merged.setdefault(_pat_late_cf_id, {})["_suppress_change_filter"] = True
+                pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                pat_executor = _executor(pat_hyst_snapshot)
+                pat_outputs = _execute_pass(pat_executor, pat_merged)
             pat_descendants: set[str] = set()
             pat_queue: list[str] = list(replay_sources)
             while pat_queue:

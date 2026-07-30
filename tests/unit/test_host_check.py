@@ -1035,6 +1035,57 @@ class TestHostCheckRisingEdge:
         # the unresolved read was never actually settled this tick.
         assert manager._hysteresis[graph_id]["cf"] == {"value": True}
 
+    def test_gate_absorption_uses_fresh_replay_output_not_stale_first_pass(self):
+        """Regression (P1): _compute_cf_hold_ids' gate-absorption check
+        always read the OUTER (still stale) first-pass `outputs` even when
+        recomputing holds for a later replay's own fresh result. For
+        api_client.success -> NOT -> OR, an unseeded Read Object on the
+        other OR input, and OR -> change_filter: the first-pass placeholder
+        (ac.success=False) makes the stale NOT output True, so the OR looks
+        decisively resolved via that stale True — but once the real
+        api_client result (True) propagates through NOT within the
+        replay's own pass, NOT's real output is False, and the OR's
+        decisiveness then depends entirely on the still-unresolved read.
+        The filter must therefore stay held; using the replay's own fresh
+        output (not the outer stale one) for this check is what makes that
+        distinction possible."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("not1", "not", {}),
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("or_gate", "or", {"input_count": 2}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "not1", "success", "in1"),
+                edge("not1", "or_gate", "out", "in1"),
+                edge("unseeded_read", "or_gate", "value", "in2"),
+                edge("or_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-not-or-unseeded"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        # NOT(real True) = False, and the OR's other input is still
+        # unresolved — the filter must stay held against its persisted
+        # True baseline rather than committing OR's real-but-not-decisive
+        # False result.
+        assert manager._hysteresis[graph_id]["cf"] == {"value": True}
+
     def test_correction_replay_does_not_double_mutate_a_reused_output(self):
         """Regression: GraphExecutor.execute()'s known_outputs mechanism
         handed out the caller's exact same per-node output dict to skip
@@ -3017,6 +3068,64 @@ class TestReplayOrderingFixes:
         assert outputs["hc1"]["reachable"] is True
         assert outputs["wol"]["sent"] is True
         assert outputs["hc2"]["reachable"] is True
+
+    def test_post_api_host_check_replay_recomputes_change_filter_holds(self):
+        """Regression (P1): the post-api-replay host_check while-loop
+        registered change_filter pulses without recomputing late-pending
+        async descendants first, unlike the initial (pre-api) host_check
+        replay. For api_client -> host_check1 -> wake_on_lan ->
+        change_filter.changed -> host_check2, wol is still only "triggered,
+        not yet actually run" within this replay's own pat_outputs.
+
+        In this exact topology the filter is, in practice, already held via
+        pat_base_overrides — inherited from the api-client stage's own
+        suppression, since any host_check reachable here was necessarily
+        already one of THAT stage's late-pending seeds (both checks use the
+        identical "_trigger is True and not yet settled" criterion). This
+        test therefore mainly exercises the recompute path itself (for
+        defense-in-depth / consistency with every other replay site) rather
+        than proving a distinct observable bug for this specific shape —
+        host_check2 must not be pinged before wol's real send, whether that
+        protection comes from here or from the inherited suppression."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34", "method": "GET"}),
+            node("hc1", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+            node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+            node("cf", "change_filter"),
+            node("hc2", "host_check", {"host": "192.168.1.2", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "hc1", "success", "trigger"),
+                edge("hc1", "wol", "reachable", "trigger"),
+                edge("wol", "cf", "sent", "in"),
+                edge("cf", "hc2", "changed", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-api-hc-wol-cf-hc2"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        mock_ping.assert_awaited_once()
+        assert mock_ping.await_args.args[0] == "192.168.1.1"
+        assert outputs["wol"]["sent"] is True
+        assert outputs["cf"]["changed"] is False
 
 
 # ===========================================================================
