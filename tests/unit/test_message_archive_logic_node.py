@@ -4,8 +4,10 @@ import asyncio
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from obs.adapters.message.providers.base import MessageSendResult
-from obs.logic.manager import LogicManager
+from obs.logic.manager import LogicManager, _fresh_input_handles
 from obs.logic.models import FlowData
 from obs.logic.node_types import get_node_type
 from tests.unit.conftest import edge, node
@@ -55,6 +57,23 @@ def _patch_api_success():
     mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
     mock_client.request = AsyncMock(return_value=_MockResponse())
     return patcher, mock_client
+
+
+def test_fresh_input_traversal_handles_reverse_edges_and_converging_paths() -> None:
+    edges = _flow(
+        [],
+        [
+            edge("middle", "target", "out", "message"),
+            edge("source", "target", "value", "trigger"),
+            edge("source", "middle", "value", "in"),
+        ],
+    ).edges
+    handles = _fresh_input_handles(
+        {"source": {"value": "fresh"}},
+        edges,
+    )
+
+    assert handles["target"] == {"message", "trigger"}
 
 
 def test_message_archive_node_type_is_registered() -> None:
@@ -636,6 +655,56 @@ def test_memory_output_is_not_fresh_during_its_input_tick() -> None:
         outputs = _run(manager, flow, {"read": {"value": "new alert", "changed": True}})
 
     assert outputs["notify"]["_message"] == "old alert"
+    assert outputs["notify"]["sent"] is False
+    adapter.send_notification.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("action_type", "action_data", "result_handle"),
+    [
+        ("api_client", {"url": "http://93.184.216.34/hook", "method": "GET"}, "success"),
+        ("host_check", {"host": "192.168.1.1"}, "reachable"),
+        ("wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}, "sent"),
+    ],
+)
+def test_untriggered_async_action_placeholder_is_not_a_fresh_message(
+    action_type: str,
+    action_data: dict,
+    result_handle: str,
+) -> None:
+    datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    manager._registry.get_value.return_value = MagicMock(value=5)
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node("condition", "compare", {"operator": ">", "operand": 10}),
+            node("action", action_type, action_data),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "condition", "value", "in1"),
+            edge("condition", "action", "out", "trigger"),
+            edge("action", "notify", result_handle, "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"read": {"value": 5, "changed": True}})
+
+    assert outputs["notify"]["_message"] is False
     assert outputs["notify"]["sent"] is False
     adapter.send_notification.assert_not_awaited()
 

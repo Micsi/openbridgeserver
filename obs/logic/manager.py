@@ -21,6 +21,7 @@ import re
 import socket
 import stat
 import uuid
+from collections import deque
 from datetime import UTC, date, datetime, time
 from pathlib import Path
 from time import perf_counter
@@ -134,16 +135,19 @@ def _fresh_input_handles(
     fresh_inputs = {node_id: set(values) for node_id, values in overrides.items()}
     reached = set(overrides)
     blocked_sources = blocked_sources or set()
-    grew = True
-    while grew:
-        grew = False
-        for edge in edges:
-            if edge.source not in reached or edge.source in blocked_sources:
-                continue
+    outgoing: dict[str, list[Any]] = {}
+    for edge in edges:
+        outgoing.setdefault(edge.source, []).append(edge)
+    pending = deque(reached)
+    while pending:
+        source = pending.popleft()
+        if source in blocked_sources:
+            continue
+        for edge in outgoing.get(source, []):
             fresh_inputs.setdefault(edge.target, set()).add(edge.targetHandle or "in")
             if edge.target not in reached:
                 reached.add(edge.target)
-                grew = True
+                pending.append(edge.target)
     return fresh_inputs
 
 
@@ -1208,7 +1212,7 @@ class LogicManager:
                 entry = self._graphs.get(graph_id)
                 if entry and entry[1]:  # still exists and enabled
                     g_name, _, flow = entry
-                    await self._execute_graph(graph_id, g_name, flow, {})
+                    await self._execute_graph(graph_id, g_name, flow, {node_id: {}})
                     logger.debug("iCal graph %s (%s) node %s refreshed", graph_id[:8], g_name, node_id[:8])
 
                 await asyncio.sleep(refresh_min * 60)
@@ -3405,6 +3409,7 @@ class LogicManager:
         triggered_notify_nodes: set[str] = set()
 
         input_sources = {(edge.target, edge.targetHandle or "in"): (edge.source, edge.sourceHandle or "out") for edge in flow.edges}
+        freshness_cache: dict[frozenset[str], dict[str, set[str]]] = {}
 
         def _current_input_value(node_id: str, handle: str) -> Any:
             node_overrides = {**aug_overrides.get(node_id, {}), **debug_overrides.get(node_id, {})}
@@ -3417,6 +3422,11 @@ class LogicManager:
             if not overrides:
                 return None
             blocked_sources = {node.id for node in flow.nodes if node.type == "memory"}
+            blocked_sources.update(api_client_ids - triggered_api_clients)
+            blocked_sources.update(host_check_ids - triggered_host_check_nodes)
+            blocked_sources.update(message_archive_ids - triggered_message_archive_nodes)
+            blocked_sources.update(notify_ids - triggered_notify_nodes)
+            blocked_sources.update(node.id for node in flow.nodes if node.type == "wake_on_lan" and node.id not in triggered_wol_nodes)
             blocked_sources.update(
                 node.id
                 for node in flow.nodes
@@ -3424,7 +3434,10 @@ class LogicManager:
                 and node.data.get("closed_behavior", "retain") == "retain"
                 and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
             )
-            return _fresh_input_handles(overrides, flow.edges, blocked_sources)
+            cache_key = frozenset(blocked_sources)
+            if cache_key not in freshness_cache:
+                freshness_cache[cache_key] = _fresh_input_handles(overrides, flow.edges, blocked_sources)
+            return freshness_cache[cache_key]
 
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
