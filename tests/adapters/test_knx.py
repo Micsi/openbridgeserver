@@ -1576,6 +1576,48 @@ class TestKnxReadWrite:
         assert adapter._recent_writes == {}
 
     @pytest.mark.asyncio
+    async def test_same_raw_outgoing_confirmation_uses_its_write_context(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        adapter._ga_source_map["1/2/3"] = [
+            (binding, DPTRegistry.get("DPT9.001")),
+        ]
+        order_tracker = ConfirmationOrderTracker()
+        older_order = order_tracker.issue(binding.datapoint_id)
+        newer_order = order_tracker.issue(binding.datapoint_id)
+
+        await adapter.write_with_context(
+            binding,
+            5.0,
+            logical_value=50.0,
+            confirmation_write_order=older_order,
+        )
+        older_telegram = mock_xknx.telegrams.put.call_args.args[0]
+        await adapter.write_with_context(
+            binding,
+            5.0,
+            logical_value=60.0,
+            confirmation_write_order=newer_order,
+        )
+        newer_telegram = mock_xknx.telegrams.put.call_args.args[0]
+
+        adapter._on_telegram_transmitted(older_telegram)
+        adapter._on_telegram_transmitted(newer_telegram)
+        await adapter._on_telegram(newer_telegram)
+
+        mock_bus.publish.assert_awaited_once()
+        event = mock_bus.publish.call_args.args[0]
+        assert event.value == 60.0
+        assert event.suppress_write_propagation is True
+
+    @pytest.mark.asyncio
     async def test_rapid_write_confirmations_can_arrive_out_of_order(self, mock_bus):
         adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
         binding = make_binding(

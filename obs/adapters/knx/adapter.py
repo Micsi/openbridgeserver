@@ -166,7 +166,7 @@ class KnxAdapter(AdapterBase):
             tuple[Any, str, str | None, bytes, Any, ConfirmationActionContext | bool, tuple[Any, ...]],
         ] = {}
         self._pending_telegram_refs: dict[int, Any] = {}
-        self._outgoing_confirmation_owners: dict[int, tuple[str, float, Any]] = {}
+        self._outgoing_confirmation_owners: dict[int, tuple[str, float, Any, tuple[Any, ...]]] = {}
         self._local_read_responses: dict[int, tuple[Any, str, float | None]] = {}
         self._invalidated_transmissions: dict[int, tuple[Any, str, float | None]] = {}
         self._latest_confirmation_at: dict[str, float] = {}
@@ -514,7 +514,7 @@ class KnxAdapter(AdapterBase):
                 self._recent_writes[key] = retained
             else:
                 self._recent_writes.pop(key, None)
-        for telegram_id, (binding_id, _, telegram) in list(self._outgoing_confirmation_owners.items()):
+        for telegram_id, (binding_id, _, telegram, _) in list(self._outgoing_confirmation_owners.items()):
             datapoint_id = invalidated_confirmation_datapoints.get(binding_id)
             if datapoint_id is None:
                 continue
@@ -670,13 +670,20 @@ class KnxAdapter(AdapterBase):
                     if is_outgoing
                     else datapoint_id not in consumed_confirmation_datapoints
                 )
-                confirmation_at = self._matching_confirmation_timestamp(binding, ga, raw, is_outgoing=is_outgoing) if may_consume else None
+                confirmation_at = None
+                if may_consume:
+                    confirmation_at = (
+                        outgoing_owner[3][0]
+                        if is_outgoing and outgoing_owner is not None
+                        else self._matching_confirmation_timestamp(binding, ga, raw, is_outgoing=is_outgoing)
+                    )
                 if may_consume:
                     is_outbound_confirmation, logical_value, action_context, write_order = self._consume_outbound_confirmation(
                         binding,
                         ga,
                         raw,
                         is_outgoing=is_outgoing,
+                        owned_write=outgoing_owner[3] if is_outgoing and outgoing_owner is not None else None,
                     )
                 else:
                     is_outbound_confirmation, logical_value, action_context, write_order = False, None, False, None
@@ -840,22 +847,22 @@ class KnxAdapter(AdapterBase):
         suppress_action_triggers: bool = False,
         action_context: ConfirmationActionContext | None = None,
         write_order: ConfirmationWriteOrder | None = None,
-    ) -> None:
+    ) -> tuple[Any, ...]:
         """Remember a BOTH-binding write so its immediate confirmation can be recognized."""
         key = (str(binding.id), ga)
         now = self._monotonic() if written_at is None else written_at
         self._prune_recent_writes(now)
         recent_writes = self._recent_writes.setdefault(key, deque())
-        recent_writes.append(
-            (
-                now,
-                bytes(raw),
-                logical_value,
-                action_context if action_context is not None else suppress_action_triggers,
-                self._confirmation_binding_signature(binding),
-                write_order,
-            )
+        recent_write = (
+            now,
+            bytes(raw),
+            logical_value,
+            action_context if action_context is not None else suppress_action_triggers,
+            self._confirmation_binding_signature(binding),
+            write_order,
         )
+        recent_writes.append(recent_write)
+        return recent_write
 
     def _activate_outbound_write(self, telegram: Any, ga: str, raw: bytes) -> None:
         """Start confirmation windows after XKNX has transmitted a queued telegram."""
@@ -878,8 +885,7 @@ class KnxAdapter(AdapterBase):
         if write_order is not None:
             write_order.activate()
         written_at = self._monotonic()
-        self._outgoing_confirmation_owners[id(telegram)] = (str(binding.id), written_at, telegram)
-        self._remember_outbound_write(
+        command_write = self._remember_outbound_write(
             binding,
             command_ga,
             written_raw,
@@ -889,6 +895,7 @@ class KnxAdapter(AdapterBase):
             action_context=None if isinstance(action_context, bool) else action_context,
             write_order=write_order,
         )
+        self._outgoing_confirmation_owners[id(telegram)] = (str(binding.id), written_at, telegram, command_write)
         if state_ga and state_ga != command_ga:
             state_action_context = (
                 action_context if isinstance(action_context, ConfirmationActionContext) and action_context.shares_action_token else True
@@ -946,7 +953,7 @@ class KnxAdapter(AdapterBase):
             else:
                 self._recent_writes.pop(key, None)
         owner_cutoff = current - ECHO_SUPPRESSION_WINDOW_S
-        for telegram_id, (_, transmitted_at, _) in list(self._outgoing_confirmation_owners.items()):
+        for telegram_id, (_, transmitted_at, _, _) in list(self._outgoing_confirmation_owners.items()):
             if transmitted_at < owner_cutoff:
                 self._outgoing_confirmation_owners.pop(telegram_id, None)
 
@@ -1017,6 +1024,7 @@ class KnxAdapter(AdapterBase):
         raw: bytes,
         *,
         is_outgoing: bool,
+        owned_write: tuple[Any, ...] | None = None,
     ) -> tuple[bool, Any, ConfirmationActionContext | bool, ConfirmationWriteOrder | None]:
         """Consume and return the logical value for one matching recent write."""
         self._prune_recent_writes()
@@ -1050,7 +1058,7 @@ class KnxAdapter(AdapterBase):
             return False, None, False, None
         for index, recent_write in enumerate(recent_writes):
             _, written_raw, logical_value, action_context, *_ = recent_write
-            if written_raw != raw:
+            if (owned_write is not None and recent_write is not owned_write) or written_raw != raw:
                 continue
             write_order = recent_write[5] if len(recent_write) > 5 else None
             del recent_writes[index]
