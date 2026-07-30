@@ -148,6 +148,14 @@
     "createModal": "Neues Objekt",
     "deleteTitle": "Objekt löschen",
     "deleteWithBindings": "'{name}' und alle Verknüpfungen löschen?",
+    "duplicate": {
+      "action": "Duplizieren",
+      "title": "Objekt duplizieren",
+      "hint": "Alle Eigenschaften und Adapter-Verknüpfungen werden kopiert. Aktuelle Werte und Historie werden nicht übernommen.",
+      "defaultName": "Kopie von {name}",
+      "saving": "Wird dupliziert …",
+      "error": "Das Objekt konnte nicht dupliziert werden."
+    },
     "quality": {
       "good": "Gut",
       "uncertain": "Unbekannt",
