@@ -1272,16 +1272,54 @@ class TestKnxReadWrite:
         )
         fast_telegram = fast_xknx.telegrams.put.call_args[0][0]
 
-        slow_adapter._on_telegram_transmitted(slow_telegram)
-        await slow_adapter._on_telegram(slow_telegram)
-        mock_bus.publish.assert_not_awaited()
-
         fast_adapter._on_telegram_transmitted(fast_telegram)
         await fast_adapter._on_telegram(fast_telegram)
+        slow_adapter._on_telegram_transmitted(slow_telegram)
+        await slow_adapter._on_telegram(slow_telegram)
 
         mock_bus.publish.assert_awaited_once()
         event = mock_bus.publish.call_args.args[0]
         assert event.value == 210.0
+
+    @pytest.mark.asyncio
+    async def test_abandoned_newer_queue_does_not_reject_transmitted_confirmation(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        adapter._ga_source_map["1/2/3"] = [
+            (binding, DPTRegistry.get("DPT9.001")),
+        ]
+        order_tracker = ConfirmationOrderTracker()
+        older_order = order_tracker.issue(binding.datapoint_id)
+
+        await adapter.write_with_context(
+            binding,
+            20.0,
+            logical_value=200.0,
+            confirmation_write_order=older_order,
+        )
+        older_telegram = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(older_telegram)
+
+        newer_order = order_tracker.issue(binding.datapoint_id)
+        await adapter.write_with_context(
+            binding,
+            21.0,
+            logical_value=210.0,
+            confirmation_write_order=newer_order,
+        )
+        adapter._pending_transmissions.clear()  # reconnect drops the unsent queue
+
+        await adapter._on_telegram(older_telegram)
+
+        event = mock_bus.publish.call_args.args[0]
+        assert event.value == 200.0
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

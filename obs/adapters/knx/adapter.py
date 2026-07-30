@@ -832,6 +832,8 @@ class KnxAdapter(AdapterBase):
 
         suppress_action_triggers = action_context if isinstance(action_context, bool) else action_context.suppress_actions_at_transmission()
         write_order = None if isinstance(action_context, bool) else action_context.write_order
+        if write_order is not None:
+            write_order.activate()
         written_at = self._monotonic()
         self._outgoing_confirmation_owners[id(telegram)] = (str(binding.id), written_at)
         self._remember_outbound_write(
@@ -1079,8 +1081,6 @@ class KnxAdapter(AdapterBase):
             except Exception:
                 self._pending_transmissions.pop(id(telegram), None)
                 raise
-            if binding.direction == "BOTH" and confirmation_write_order is not None:
-                confirmation_write_order.activate()
             logger.info("KNX write: GA=%s value=%s raw=%s", bc.group_address, value, raw.hex())
             return binding.direction == "BOTH"
         except Exception:

@@ -283,7 +283,7 @@ async def test_direct_write_shares_one_action_token_across_knx_confirmations(mon
 
 
 @pytest.mark.asyncio
-async def test_newer_router_write_invalidates_older_confirmation_order(monkeypatch):
+async def test_router_defers_confirmation_order_activation_to_adapter_transmission(monkeypatch):
     binding = _binding(adapter_type="KNX", direction="BOTH")
     instance = _ContextInstance()
     router = _make_router([{"id": str(binding.id)}])
@@ -304,7 +304,7 @@ async def test_newer_router_write_invalidates_older_confirmation_order(monkeypat
     older_order, newer_order = instance.confirmation_write_orders
     assert older_order is not None
     assert newer_order is not None
-    assert older_order.accept_confirmation() is False
+    assert older_order.accept_confirmation() is True
     assert newer_order.accept_confirmation() is True
 
 
