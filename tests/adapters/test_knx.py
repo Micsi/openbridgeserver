@@ -20,7 +20,7 @@ from xknx.telegram.address import GroupAddress
 from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
 from xknx.telegram.telegram import TelegramDirection
 
-from obs.adapters.base import ConfirmationActionToken
+from obs.adapters.base import ConfirmationActionToken, ConfirmationOrderTracker
 from obs.adapters.knx.adapter import (
     ECHO_SUPPRESSION_WINDOW_S,
     STATE_CONFIRMATION_WINDOW_S,
@@ -964,6 +964,48 @@ class TestOnBindingsReloaded:
 
         assert adapter._recent_writes == {}
         assert adapter._pending_transmissions == {}
+        assert adapter._invalidated_transmissions == {123: None}
+
+    @pytest.mark.asyncio
+    async def test_reload_tombstones_changed_binding_telegram_until_dispatch(self, mock_bus):
+        original = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        replacement = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.2",
+        )
+        replacement.id = original.id
+        replacement.datapoint_id = original.datapoint_id
+        replacement.enabled = original.enabled
+        adapter = self._make_adapter(mock_bus, [replacement])
+        dpt = DPTRegistry.get("DPT9.001")
+        raw = dpt.encoder(5.0)
+        telegram = Telegram(
+            destination_address=GroupAddress("1/2/3"),
+            direction=TelegramDirection.OUTGOING,
+            payload=GroupValueWrite(DPTArray(list(raw))),
+        )
+        adapter._pending_transmissions[id(telegram)] = (
+            original,
+            "1/2/3",
+            None,
+            bytes(raw),
+            50.0,
+            False,
+            adapter._confirmation_binding_signature(original),
+        )
+
+        await adapter._on_bindings_reloaded()
+        adapter._on_telegram_transmitted(telegram)
+        await adapter._on_telegram(telegram)
+
+        mock_bus.publish.assert_not_awaited()
+        assert adapter._pending_transmissions == {}
+        assert adapter._invalidated_transmissions == {}
 
     @pytest.mark.asyncio
     async def test_source_binding_added_to_source_map(self, mock_bus):
@@ -1194,6 +1236,54 @@ class TestKnxReadWrite:
         assert stalled_event.suppress_action_triggers is True
 
     @pytest.mark.asyncio
+    async def test_write_order_rejects_stale_confirmation_from_other_adapter(self, mock_bus):
+        slow_adapter, slow_xknx = self._make_adapter_with_xknx(mock_bus)
+        fast_adapter, fast_xknx = self._make_adapter_with_xknx(mock_bus)
+        slow_binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        fast_binding = make_binding(
+            {"group_address": "1/2/4", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        fast_binding.datapoint_id = slow_binding.datapoint_id
+        dpt = DPTRegistry.get("DPT9.001")
+        slow_adapter._ga_source_map["1/2/3"] = [(slow_binding, dpt)]
+        fast_adapter._ga_source_map["1/2/4"] = [(fast_binding, dpt)]
+        order_tracker = ConfirmationOrderTracker()
+        older_order = order_tracker.issue(slow_binding.datapoint_id)
+        newer_order = order_tracker.issue(slow_binding.datapoint_id)
+
+        await slow_adapter.write_with_context(
+            slow_binding,
+            20.0,
+            logical_value=200.0,
+            confirmation_write_order=older_order,
+        )
+        slow_telegram = slow_xknx.telegrams.put.call_args[0][0]
+        await fast_adapter.write_with_context(
+            fast_binding,
+            21.0,
+            logical_value=210.0,
+            confirmation_write_order=newer_order,
+        )
+        fast_telegram = fast_xknx.telegrams.put.call_args[0][0]
+
+        slow_adapter._on_telegram_transmitted(slow_telegram)
+        await slow_adapter._on_telegram(slow_telegram)
+        mock_bus.publish.assert_not_awaited()
+
+        fast_adapter._on_telegram_transmitted(fast_telegram)
+        await fast_adapter._on_telegram(fast_telegram)
+
+        mock_bus.publish.assert_awaited_once()
+        event = mock_bus.publish.call_args.args[0]
+        assert event.value == 210.0
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("value_formula", "value_map"),
         [
@@ -1422,7 +1512,7 @@ class TestKnxReadWrite:
         adapter._remember_outbound_write(binding, "1/2/4", raw_six, 60.0)
         adapter._remember_outbound_write(binding, "1/2/4", raw_five, 55.0)
 
-        matched, logical_value, suppress_actions = adapter._consume_outbound_confirmation(
+        matched, logical_value, suppress_actions, write_order = adapter._consume_outbound_confirmation(
             binding,
             "1/2/4",
             raw_five,
@@ -1432,8 +1522,9 @@ class TestKnxReadWrite:
         assert matched is True
         assert logical_value == 55.0
         assert suppress_actions is False
+        assert write_order is None
         remaining = adapter._recent_writes[(str(binding.id), "1/2/4")]
-        assert [(raw, value) for _, raw, value, _, _ in remaining] == [
+        assert [(recent_write[1], recent_write[2]) for recent_write in remaining] == [
             (raw_six, 60.0),
             (raw_five, 55.0),
         ]
@@ -1452,7 +1543,7 @@ class TestKnxReadWrite:
             50.0,
         )
 
-        matched, logical_value, suppress_actions = adapter._consume_outbound_confirmation(
+        matched, logical_value, suppress_actions, write_order = adapter._consume_outbound_confirmation(
             binding,
             "1/2/3",
             dpt.encoder(6.0),
@@ -1462,6 +1553,7 @@ class TestKnxReadWrite:
         assert matched is False
         assert logical_value is None
         assert suppress_actions is False
+        assert write_order is None
         assert len(adapter._recent_writes[(str(binding.id), "1/2/3")]) == 1
 
     def test_confirmation_matching_rejects_wrong_telegram_direction(self, mock_bus):
@@ -1491,8 +1583,8 @@ class TestKnxReadWrite:
             is_outgoing=True,
         )
 
-        assert incoming_command == (False, None, False)
-        assert outgoing_state == (False, None, False)
+        assert incoming_command == (False, None, False, None)
+        assert outgoing_state == (False, None, False, None)
         assert len(adapter._recent_writes) == 2
 
     @pytest.mark.asyncio

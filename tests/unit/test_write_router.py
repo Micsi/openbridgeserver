@@ -35,6 +35,7 @@ class _ContextInstance:
     def __init__(self, *, confirmation_queued: bool = True):
         self.writes: list[tuple[object, object, bool]] = []
         self.confirmation_action_tokens: list[object | None] = []
+        self.confirmation_write_orders: list[object | None] = []
         self.confirmation_queued = confirmation_queued
 
     async def write_with_context(
@@ -45,9 +46,11 @@ class _ContextInstance:
         logical_value,
         suppress_confirmation_actions=False,
         confirmation_action_token=None,
+        confirmation_write_order=None,
     ):
         self.writes.append((value, logical_value, suppress_confirmation_actions))
         self.confirmation_action_tokens.append(confirmation_action_token)
+        self.confirmation_write_orders.append(confirmation_write_order)
         return self.confirmation_queued
 
 
@@ -275,6 +278,34 @@ async def test_direct_write_shares_one_action_token_across_knx_confirmations(mon
     ]
     assert instance.confirmation_action_tokens[0] is not None
     assert instance.confirmation_action_tokens[1] is instance.confirmation_action_tokens[0]
+    assert instance.confirmation_write_orders[0] is not None
+    assert instance.confirmation_write_orders[1] is instance.confirmation_write_orders[0]
+
+
+@pytest.mark.asyncio
+async def test_newer_router_write_invalidates_older_confirmation_order(monkeypatch):
+    binding = _binding(adapter_type="KNX", direction="BOTH")
+    instance = _ContextInstance()
+    router = _make_router([{"id": str(binding.id)}])
+    _patch_registry(monkeypatch, binding, instance)
+    dp_id = uuid.uuid4()
+
+    await router._write_to_dest_bindings(
+        dp_id,
+        50.0,
+        skip_binding_id=None,
+    )
+    await router._write_to_dest_bindings(
+        dp_id,
+        60.0,
+        skip_binding_id=None,
+    )
+
+    older_order, newer_order = instance.confirmation_write_orders
+    assert older_order is not None
+    assert newer_order is not None
+    assert older_order.accept_confirmation() is False
+    assert newer_order.accept_confirmation() is True
 
 
 @pytest.mark.asyncio

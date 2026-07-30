@@ -136,6 +136,9 @@ class WriteRouter:
         self._last_sent: dict[uuid.UUID, float] = {}
         # binding_id → last successfully sent value (for on-change / delta checks)
         self._last_value: dict[uuid.UUID, Any] = {}
+        from obs.adapters.base import ConfirmationOrderTracker
+
+        self._confirmation_order_tracker = ConfirmationOrderTracker()
 
     # ------------------------------------------------------------------
     # Path 1 — inbound MQTT dp/{uuid}/set
@@ -272,7 +275,7 @@ class WriteRouter:
         suppress_confirmation_actions: bool = False,
     ) -> None:
         from obs.adapters import registry as adapter_registry
-        from obs.adapters.base import ConfirmationActionToken
+        from obs.adapters.base import ConfirmationActionToken, ConfirmationOrderTracker
         from obs.adapters.registry import _row_to_binding
 
         rows = await self._db.fetchall(
@@ -286,6 +289,11 @@ class WriteRouter:
 
         logger.info("WriteRouter: %d writable binding(s) for dp %s", len(rows), dp_id)
         confirmation_action_token = None if suppress_confirmation_actions else ConfirmationActionToken()
+        confirmation_order_tracker = getattr(self, "_confirmation_order_tracker", None)
+        if confirmation_order_tracker is None:
+            confirmation_order_tracker = ConfirmationOrderTracker()
+            self._confirmation_order_tracker = confirmation_order_tracker
+        confirmation_write_order = confirmation_order_tracker.issue(dp_id)
         for row in rows:
             try:
                 binding = _row_to_binding(row)
@@ -405,6 +413,7 @@ class WriteRouter:
                         logical_value=value,
                         suppress_confirmation_actions=suppress_confirmation_actions,
                         confirmation_action_token=confirmation_action_token,
+                        confirmation_write_order=confirmation_write_order,
                     )
                 else:
                     await instance.write(binding, write_value)
