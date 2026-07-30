@@ -346,6 +346,97 @@ def test_datapoint_event_only_sends_notification_on_its_own_branch() -> None:
     assert outputs["notify3"]["sent"] is False
 
 
+def test_manual_execution_still_sends_cached_notification_branches() -> None:
+    manager = _make_manager()
+    datapoint_id = uuid.uuid4()
+    manager._registry.get_value.return_value = MagicMock(value="manual alert")
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [edge("read", "notify", "value", "message")],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {})
+
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once_with(
+        message="manual alert",
+        providers=[{"provider": "telegram", "target": "alerts"}],
+        title=None,
+        priority=0,
+    )
+
+
+def test_notification_requires_fresh_truthy_trigger_when_message_is_cached() -> None:
+    message_datapoint_id = uuid.uuid4()
+    condition_datapoint_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node("condition_read", "datapoint_read", {"datapoint_id": str(condition_datapoint_id)}),
+            node("condition", "compare", {"operator": ">", "operand": 10}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("message_read", "notify", "value", "message"),
+            edge("condition_read", "condition", "value", "in1"),
+            edge("condition", "notify", "out", "trigger"),
+        ],
+    )
+
+    for condition_value, should_send in ((5, False), (15, True)):
+        manager = _make_manager()
+        manager._registry.get_value.side_effect = {
+            message_datapoint_id: MagicMock(value="cached alert"),
+            condition_datapoint_id: MagicMock(value=0),
+        }.get
+        adapter = MagicMock(adapter_type="MESSAGE")
+        adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+        with (
+            patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(
+                manager,
+                flow,
+                {"condition_read": {"value": condition_value, "changed": True}},
+            )
+
+        assert outputs["notify"]["sent"] is should_send
+        if should_send:
+            adapter.send_notification.assert_awaited_once_with(
+                message="cached alert",
+                providers=[{"provider": "telegram", "target": "alerts"}],
+                title=None,
+                priority=0,
+            )
+        else:
+            adapter.send_notification.assert_not_awaited()
+
+
 def test_generic_notification_reports_target_failure() -> None:
     manager = _make_manager()
     flow = _flow(

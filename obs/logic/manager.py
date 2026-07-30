@@ -125,6 +125,23 @@ def _downstream_closure(start: set[str], edges: list[Any]) -> set[str]:
     return reached
 
 
+def _fresh_input_handles(overrides: dict[str, dict[str, Any]], edges: list[Any]) -> dict[str, set[str]]:
+    """Input handles that receive values downstream of explicit overrides."""
+    fresh_inputs = {node_id: set(values) for node_id, values in overrides.items()}
+    reached = set(overrides)
+    grew = True
+    while grew:
+        grew = False
+        for edge in edges:
+            if edge.source not in reached:
+                continue
+            fresh_inputs.setdefault(edge.target, set()).add(edge.targetHandle or "in")
+            if edge.target not in reached:
+                reached.add(edge.target)
+                grew = True
+    return fresh_inputs
+
+
 _ICAL_MAX_BYTES = 1_048_576
 _ICAL_MAX_REDIRECTS = 5
 _ICAL_ALLOWED_CONTENT_TYPES = ("text/calendar", "application/ics", "application/octet-stream", "text/plain")
@@ -1808,11 +1825,11 @@ class LogicManager:
         graph_state = self._node_state.setdefault(graph_id, {})
         # Event-driven executions still evaluate the full graph so unrelated
         # datapoint_read nodes can contribute their latest registry values.
-        # Those seeded values are context, not fresh triggers: side-effect
-        # nodes on disconnected branches must not act on them (issue #1090).
-        # An execution without explicit overrides is a manual/full-sheet run
-        # and intentionally keeps the existing all-branches behaviour.
-        triggered_node_closure = _downstream_closure(set(overrides), flow.edges) if overrides else None
+        # Track which input handles descend from the explicit event overrides:
+        # cached inputs are context, not fresh notification triggers. An
+        # execution without overrides is a manual/full-sheet run and keeps the
+        # existing all-inputs behaviour.
+        event_fresh_inputs = _fresh_input_handles(overrides, flow.edges) if overrides else None
         debug_overrides = debug_overrides or {}
         capture_debug_inputs = debug_input_capture is not None
         if not capture_debug_inputs:
@@ -3381,12 +3398,25 @@ class LogicManager:
 
         triggered_notify_nodes: set[str] = set()
 
+        input_sources = {(edge.target, edge.targetHandle or "in"): (edge.source, edge.sourceHandle or "out") for edge in flow.edges}
+
+        def _current_input_value(node_id: str, handle: str) -> Any:
+            node_overrides = {**aug_overrides.get(node_id, {}), **debug_overrides.get(node_id, {})}
+            if handle in node_overrides:
+                return node_overrides[handle]
+            source_id, source_handle = input_sources.get((node_id, handle), ("", ""))
+            return GraphExecutor._get_output_value(outputs.get(source_id, {}), source_handle)
+
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
-            if triggered_node_closure is not None and node.id not in triggered_node_closure:
-                return False
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
                 return False
+            if event_fresh_inputs is not None:
+                fresh_handles = event_fresh_inputs.get(node.id, set())
+                fresh_message = "message" in fresh_handles and out.get("_message") is not None
+                fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node.id, "trigger"))
+                if not (fresh_message or fresh_trigger):
+                    return False
 
             if node.type == "notify_message":
                 instance_id = str(node.data.get("adapter_instance_id") or "").strip()
