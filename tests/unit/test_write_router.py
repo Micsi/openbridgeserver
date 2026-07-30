@@ -34,6 +34,7 @@ class _FakeInstance:
 class _ContextInstance:
     def __init__(self, *, confirmation_queued: bool = True):
         self.writes: list[tuple[object, object, bool]] = []
+        self.confirmation_action_tokens: list[object | None] = []
         self.confirmation_queued = confirmation_queued
 
     async def write_with_context(
@@ -43,8 +44,10 @@ class _ContextInstance:
         *,
         logical_value,
         suppress_confirmation_actions=False,
+        confirmation_action_token=None,
     ):
         self.writes.append((value, logical_value, suppress_confirmation_actions))
+        self.confirmation_action_tokens.append(confirmation_action_token)
         return self.confirmation_queued
 
 
@@ -241,7 +244,7 @@ async def test_router_passes_pre_transform_logical_value_to_context_writer(monke
 
 
 @pytest.mark.asyncio
-async def test_direct_write_allows_only_one_actionable_knx_confirmation(monkeypatch):
+async def test_direct_write_shares_one_action_token_across_knx_confirmations(monkeypatch):
     first = _binding(adapter_type="KNX", direction="BOTH")
     second = _binding(adapter_type="KNX", direction="BOTH")
     bindings = {
@@ -268,12 +271,14 @@ async def test_direct_write_allows_only_one_actionable_knx_confirmation(monkeypa
 
     assert instance.writes == [
         (50.0, 50.0, False),
-        (50.0, 50.0, True),
+        (50.0, 50.0, False),
     ]
+    assert instance.confirmation_action_tokens[0] is not None
+    assert instance.confirmation_action_tokens[1] is instance.confirmation_action_tokens[0]
 
 
 @pytest.mark.asyncio
-async def test_direct_write_reserves_action_slot_until_confirmation_is_queued(monkeypatch):
+async def test_direct_write_does_not_reserve_action_slot_when_confirmation_is_queued(monkeypatch):
     first_instance_id = uuid.uuid4()
     second_instance_id = uuid.uuid4()
     first = _binding(adapter_type="KNX", direction="BOTH", adapter_instance_id=first_instance_id)
@@ -305,6 +310,8 @@ async def test_direct_write_reserves_action_slot_until_confirmation_is_queued(mo
 
     assert instances[first_instance_id].writes == [(50.0, 50.0, False)]
     assert instances[second_instance_id].writes == [(50.0, 50.0, False)]
+    assert instances[first_instance_id].confirmation_action_tokens[0] is not None
+    assert instances[second_instance_id].confirmation_action_tokens[0] is instances[first_instance_id].confirmation_action_tokens[0]
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,39 @@ from typing import Any
 from pydantic import BaseModel
 
 
+class ConfirmationActionToken:
+    """Allow exactly one outbound confirmation to trigger actions."""
+
+    def __init__(self) -> None:
+        self._claimed = False
+
+    def claim(self) -> bool:
+        if self._claimed:
+            return False
+        self._claimed = True
+        return True
+
+
+class ConfirmationActionContext:
+    """Resolve action suppression when an adapter actually transmits."""
+
+    def __init__(
+        self,
+        *,
+        suppress: bool,
+        token: ConfirmationActionToken | None,
+    ) -> None:
+        self._suppress = suppress
+        self._token = token
+
+    def suppress_actions_at_transmission(self) -> bool:
+        if self._suppress:
+            return True
+        if self._token is None:
+            return False
+        return not self._token.claim()
+
+
 class AdapterBase(ABC):
     """Abstract base class for all protocol adapters.
 
@@ -108,6 +141,7 @@ class AdapterBase(ABC):
         *,
         logical_value: Any,
         suppress_confirmation_actions: bool = False,
+        confirmation_action_token: ConfirmationActionToken | None = None,
     ) -> bool:
         """Write a transformed value while retaining its pre-transform logical value."""
         await self.write(binding, value)

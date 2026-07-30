@@ -42,7 +42,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from obs.adapters.base import AdapterBase
+from obs.adapters.base import (
+    AdapterBase,
+    ConfirmationActionContext,
+    ConfirmationActionToken,
+)
 from obs.adapters.knx.dpt_registry import DPTRegistry
 from obs.adapters.registry import register
 from obs.core.event_bus import DataValueEvent
@@ -149,7 +153,7 @@ class KnxAdapter(AdapterBase):
         ] = {}
         self._pending_transmissions: dict[
             int,
-            tuple[Any, str, str | None, bytes, Any, bool, tuple[Any, ...]],
+            tuple[Any, str, str | None, bytes, Any, ConfirmationActionContext | bool, tuple[Any, ...]],
         ] = {}
         self._outgoing_confirmation_owners: dict[int, tuple[str, float]] = {}
         self._local_read_responses: dict[int, float | None] = {}
@@ -798,7 +802,7 @@ class KnxAdapter(AdapterBase):
         if pending is None:
             return
 
-        binding, command_ga, state_ga, written_raw, logical_value, suppress_action_triggers, _ = pending
+        binding, command_ga, state_ga, written_raw, logical_value, action_context, _ = pending
         if ga != command_ga or written_raw != bytes(raw):
             logger.warning(
                 "KNX transmitted telegram differs from queued write: GA=%s expected_GA=%s",
@@ -807,6 +811,7 @@ class KnxAdapter(AdapterBase):
             )
             return
 
+        suppress_action_triggers = action_context if isinstance(action_context, bool) else action_context.suppress_actions_at_transmission()
         written_at = self._monotonic()
         self._outgoing_confirmation_owners[id(telegram)] = (str(binding.id), written_at)
         self._remember_outbound_write(
@@ -997,6 +1002,7 @@ class KnxAdapter(AdapterBase):
         *,
         logical_value: Any,
         suppress_confirmation_actions: bool = False,
+        confirmation_action_token: ConfirmationActionToken | None = None,
     ) -> bool:
         if not self._xknx:
             return False
@@ -1027,7 +1033,10 @@ class KnxAdapter(AdapterBase):
                     bc.state_group_address,
                     bytes(raw),
                     logical_value,
-                    suppress_confirmation_actions,
+                    ConfirmationActionContext(
+                        suppress=suppress_confirmation_actions,
+                        token=confirmation_action_token,
+                    ),
                     self._confirmation_binding_signature(binding),
                 )
             try:

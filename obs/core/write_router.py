@@ -272,6 +272,7 @@ class WriteRouter:
         suppress_confirmation_actions: bool = False,
     ) -> None:
         from obs.adapters import registry as adapter_registry
+        from obs.adapters.base import ConfirmationActionToken
         from obs.adapters.registry import _row_to_binding
 
         rows = await self._db.fetchall(
@@ -284,7 +285,7 @@ class WriteRouter:
             return
 
         logger.info("WriteRouter: %d writable binding(s) for dp %s", len(rows), dp_id)
-        actionable_confirmation_available = not suppress_confirmation_actions
+        confirmation_action_token = None if suppress_confirmation_actions else ConfirmationActionToken()
         for row in rows:
             try:
                 binding = _row_to_binding(row)
@@ -397,17 +398,14 @@ class WriteRouter:
             try:
                 context_writer = getattr(type(instance), "write_with_context", None)
                 if callable(context_writer):
-                    can_confirm = binding.adapter_type == "KNX" and binding.direction == "BOTH"
-                    suppress_binding_confirmation_actions = suppress_confirmation_actions or not actionable_confirmation_available
-                    confirmation_queued = await context_writer(
+                    await context_writer(
                         instance,
                         binding,
                         write_value,
                         logical_value=value,
-                        suppress_confirmation_actions=suppress_binding_confirmation_actions,
+                        suppress_confirmation_actions=suppress_confirmation_actions,
+                        confirmation_action_token=confirmation_action_token,
                     )
-                    if can_confirm and confirmation_queued is True:
-                        actionable_confirmation_available = False
                 else:
                     await instance.write(binding, write_value)
                 self._last_sent[binding.id] = time.monotonic()

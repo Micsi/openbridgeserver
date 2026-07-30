@@ -20,6 +20,7 @@ from xknx.telegram.address import GroupAddress
 from xknx.telegram.apci import GroupValueRead, GroupValueResponse, GroupValueWrite
 from xknx.telegram.telegram import TelegramDirection
 
+from obs.adapters.base import ConfirmationActionToken
 from obs.adapters.knx.adapter import (
     ECHO_SUPPRESSION_WINDOW_S,
     STATE_CONFIRMATION_WINDOW_S,
@@ -1147,6 +1148,50 @@ class TestKnxReadWrite:
         assert mock_xknx.telegrams.put.called
         telegram = mock_xknx.telegrams.put.call_args[0][0]
         assert isinstance(telegram.payload.value, DPTArray)
+
+    @pytest.mark.asyncio
+    async def test_action_token_is_claimed_by_first_transmitted_confirmation(self, mock_bus):
+        stalled_adapter, stalled_xknx = self._make_adapter_with_xknx(mock_bus)
+        healthy_adapter, healthy_xknx = self._make_adapter_with_xknx(mock_bus)
+        stalled_binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+        healthy_binding = make_binding(
+            {"group_address": "1/2/4", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        stalled_adapter._ga_source_map["1/2/3"] = [(stalled_binding, dpt)]
+        healthy_adapter._ga_source_map["1/2/4"] = [(healthy_binding, dpt)]
+        action_token = ConfirmationActionToken()
+
+        await stalled_adapter.write_with_context(
+            stalled_binding,
+            5.0,
+            logical_value=50.0,
+            confirmation_action_token=action_token,
+        )
+        stalled_telegram = stalled_xknx.telegrams.put.call_args[0][0]
+        await healthy_adapter.write_with_context(
+            healthy_binding,
+            5.0,
+            logical_value=50.0,
+            confirmation_action_token=action_token,
+        )
+        healthy_telegram = healthy_xknx.telegrams.put.call_args[0][0]
+
+        healthy_adapter._on_telegram_transmitted(healthy_telegram)
+        await healthy_adapter._on_telegram(healthy_telegram)
+
+        healthy_event = mock_bus.publish.call_args_list[-1].args[0]
+        assert healthy_event.suppress_action_triggers is False
+
+        stalled_adapter._on_telegram_transmitted(stalled_telegram)
+        await stalled_adapter._on_telegram(stalled_telegram)
+
+        stalled_event = mock_bus.publish.call_args_list[-1].args[0]
+        assert stalled_event.suppress_action_triggers is True
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
