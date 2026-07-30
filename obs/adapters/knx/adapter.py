@@ -644,6 +644,7 @@ class KnxAdapter(AdapterBase):
             )
             outgoing_owner = self._outgoing_confirmation_owners.get(id(telegram))
             consumed_confirmation_datapoints: set[str] = set()
+            events: list[DataValueEvent] = []
             for binding, dpt in entries:
                 datapoint_id = str(binding.datapoint_id)
                 suppress_peer_confirmation = datapoint_id in confirmation_datapoint_ids
@@ -662,8 +663,6 @@ class KnxAdapter(AdapterBase):
                     )
                 else:
                     is_outbound_confirmation, logical_value, action_context, write_order = False, None, False, None
-                if is_outbound_confirmation:
-                    consumed_confirmation_datapoints.add(datapoint_id)
                 if suppress_peer_confirmation and not is_outbound_confirmation:
                     logger.debug(
                         "KNX duplicate peer confirmation ignored: GA=%s binding=%s",
@@ -689,6 +688,7 @@ class KnxAdapter(AdapterBase):
                         continue
                     if confirmation_at is not None:
                         self._latest_confirmation_at[datapoint_id] = confirmation_at
+                    consumed_confirmation_datapoints.add(datapoint_id)
                     logger.debug(
                         "KNX outbound confirmation: GA=%s binding=%s raw=%s",
                         ga,
@@ -729,7 +729,7 @@ class KnxAdapter(AdapterBase):
 
                     value = apply_value_map(value, binding.value_map)
                 logger.info("KNX value: GA=%s → dp=%s value=%s", ga, binding.datapoint_id, value)
-                await self._bus.publish(
+                events.append(
                     DataValueEvent(
                         datapoint_id=binding.datapoint_id,
                         value=value,
@@ -742,6 +742,8 @@ class KnxAdapter(AdapterBase):
                 )
             if is_outgoing:
                 self._outgoing_confirmation_owners.pop(id(telegram), None)
+            for event in events:
+                await self._bus.publish(event)
         except Exception:
             logger.exception("KNX _on_telegram unhandled exception")
 

@@ -1946,6 +1946,43 @@ class TestKnxReadWrite:
         assert confirmation.value == 50.0
 
     @pytest.mark.asyncio
+    async def test_command_owner_is_consumed_before_awaiting_unrelated_peer_publish(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        owner = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        peer = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="SOURCE",
+        )
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/3"] = [(peer, dpt), (owner, dpt)]
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+
+        async def delayed_publish(_event):
+            now[0] += ECHO_SUPPRESSION_WINDOW_S + 0.1
+
+        mock_bus.publish.side_effect = delayed_publish
+        await adapter.write_with_context(owner, 5.0, logical_value=50.0)
+        telegram = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(telegram)
+
+        await adapter._on_telegram(telegram)
+
+        peer_event, owner_event = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert peer_event.binding_id == peer.id
+        assert owner_event.binding_id == owner.id
+        assert owner_event.value == 50.0
+        assert owner_event.suppress_write_propagation is True
+        assert owner_event.suppress_action_triggers is False
+
+    @pytest.mark.asyncio
     async def test_state_confirmation_skips_same_datapoint_peer_duplicate(self, mock_bus):
         adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
         both_binding = make_binding(
@@ -2031,6 +2068,68 @@ class TestKnxReadWrite:
 
         assert not any(ga == "1/2/4" for _, ga in adapter._recent_writes)
         assert mock_bus.publish.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_shared_state_telegram_tries_newer_owner_after_stale_candidate(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        older_binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        newer_binding = make_binding(
+            {
+                "group_address": "1/2/5",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        newer_binding.datapoint_id = older_binding.datapoint_id
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map["1/2/4"] = [
+            (older_binding, dpt),
+            (newer_binding, dpt),
+        ]
+        order_tracker = ConfirmationOrderTracker()
+        older_order = order_tracker.issue(older_binding.datapoint_id)
+        newer_order = order_tracker.issue(newer_binding.datapoint_id)
+
+        await adapter.write_with_context(
+            older_binding,
+            5.0,
+            logical_value=50.0,
+            confirmation_write_order=older_order,
+        )
+        older_command = mock_xknx.telegrams.put.call_args.args[0]
+        await adapter.write_with_context(
+            newer_binding,
+            5.0,
+            logical_value=60.0,
+            confirmation_write_order=newer_order,
+        )
+        newer_command = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._on_telegram_transmitted(older_command)
+        adapter._on_telegram_transmitted(newer_command)
+        state_confirmation = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=newer_command.payload,
+        )
+
+        await adapter._on_telegram(state_confirmation)
+
+        mock_bus.publish.assert_awaited_once()
+        event = mock_bus.publish.call_args.args[0]
+        assert event.binding_id == newer_binding.id
+        assert event.value == 60.0
+        assert event.suppress_write_propagation is True
 
     @pytest.mark.asyncio
     async def test_state_confirmation_does_not_suppress_different_datapoint_peer(self, mock_bus):
