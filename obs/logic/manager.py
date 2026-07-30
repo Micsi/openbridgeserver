@@ -135,8 +135,11 @@ def _fresh_input_handles(
     fresh_inputs = {node_id: set(values) for node_id, values in overrides.items()}
     reached = set(overrides)
     blocked_sources = blocked_sources or set()
-    outgoing: dict[str, list[Any]] = {}
+    effective_edges: dict[tuple[str, str], Any] = {}
     for edge in edges:
+        effective_edges[(edge.target, edge.targetHandle or "in")] = edge
+    outgoing: dict[str, list[Any]] = {}
+    for edge in effective_edges.values():
         outgoing.setdefault(edge.source, []).append(edge)
     pending = deque(reached)
     while pending:
@@ -2187,6 +2190,8 @@ class LogicManager:
                         cron_reachable.add(_ce.target)
                         _cq.append(_ce.target)
 
+        executed_host_check_nodes: set[str] = set()
+
         async def _run_host_check_node(node: Any, target_set: set[str], log_suffix: str = "") -> bool:
             out = outputs.get(node.id, {})
             hyst_hc = hyst.setdefault(node.id, {})
@@ -2225,6 +2230,7 @@ class LogicManager:
                 outputs[node.id]["reachable"] = reachable
                 outputs[node.id]["latency_ms"] = latency_ms
                 target_set.add(node.id)
+                executed_host_check_nodes.add(node.id)
                 logger.info(
                     "Graph %s: host_check%s %s → reachable=%s latency=%s ms",
                     graph_id[:8],
@@ -3427,7 +3433,7 @@ class LogicManager:
                 return None
             blocked_sources = {node.id for node in flow.nodes if node.type == "memory"}
             blocked_sources.update(api_client_ids - triggered_api_clients)
-            blocked_sources.update(host_check_ids - triggered_host_check_nodes)
+            blocked_sources.update(host_check_ids - executed_host_check_nodes)
             blocked_sources.update(message_archive_ids - replayed_message_archive_nodes)
             blocked_sources.update(notify_ids - replayed_notify_nodes)
             blocked_sources.update(node.id for node in flow.nodes if node.type == "wake_on_lan" and node.id not in triggered_wol_nodes)

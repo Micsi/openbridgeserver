@@ -76,6 +76,23 @@ def test_fresh_input_traversal_handles_reverse_edges_and_converging_paths() -> N
     assert handles["target"] == {"message", "trigger"}
 
 
+def test_fresh_input_traversal_uses_last_edge_for_duplicate_input_handle() -> None:
+    edges = _flow(
+        [],
+        [
+            edge("fresh_source", "target", "value", "message"),
+            edge("cached_source", "target", "value", "message"),
+        ],
+    ).edges
+
+    handles = _fresh_input_handles(
+        {"fresh_source": {"value": "fresh"}},
+        edges,
+    )
+
+    assert "target" not in handles
+
+
 def test_message_archive_node_type_is_registered() -> None:
     node_type = get_node_type("message_archive")
 
@@ -747,6 +764,99 @@ def test_untriggered_random_value_does_not_become_a_coerced_fresh_message() -> N
     assert outputs["notify"]["_message"] == " prefix"
     assert outputs["notify"]["sent"] is False
     adapter.send_notification.assert_not_awaited()
+
+
+def test_duplicate_input_edges_do_not_send_cached_effective_message() -> None:
+    fresh_datapoint_id = uuid.uuid4()
+    cached_datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {
+        fresh_datapoint_id: MagicMock(value="fresh"),
+        cached_datapoint_id: MagicMock(value="cached"),
+    }.get
+    flow = _flow(
+        [
+            node("fresh_read", "datapoint_read", {"datapoint_id": str(fresh_datapoint_id)}),
+            node("cached_read", "datapoint_read", {"datapoint_id": str(cached_datapoint_id)}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("fresh_read", "notify", "value", "message"),
+            edge("cached_read", "notify", "value", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(
+            manager,
+            flow,
+            {"fresh_read": {"value": "fresh", "changed": True}},
+        )
+
+    assert outputs["notify"]["_message"] == "cached"
+    assert outputs["notify"]["sent"] is False
+    adapter.send_notification.assert_not_awaited()
+
+
+def test_cached_host_check_result_does_not_resend_notification() -> None:
+    datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node("condition", "compare", {"operator": ">", "operand": 10}),
+            node("host", "host_check", {"host": "192.0.2.1", "timeout_s": 1, "count": 1}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "condition", "value", "in1"),
+            edge("condition", "host", "out", "trigger"),
+            edge("host", "notify", "reachable", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 2.0)) as mock_ping,
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        first_outputs = _run(
+            manager,
+            flow,
+            {"read": {"value": 11, "changed": True}},
+        )
+        second_outputs = _run(
+            manager,
+            flow,
+            {"read": {"value": 12, "changed": True}},
+        )
+
+    assert first_outputs["notify"]["sent"] is True
+    assert second_outputs["host"]["reachable"] is True
+    assert second_outputs["notify"]["sent"] is False
+    assert mock_ping.await_count == 1
+    assert adapter.send_notification.await_count == 1
 
 
 def test_notification_chain_waits_for_sent_output_replay() -> None:
