@@ -2544,6 +2544,33 @@ class LogicManager:
                     # again this session.
                     if _target_type == "memory":
                         continue
+                    # A "gate" (Freigabe) node closed by a RESOLVED enable
+                    # input is the same kind of boundary: while closed, its
+                    # output is either the retained last-enabled value or a
+                    # fixed default_value — either way, entirely independent
+                    # of "in" this pass. Only applies to a tainted edge
+                    # targeting "in" specifically; if the taint instead comes
+                    # through "enable" itself, the closed state can't be
+                    # trusted and must still propagate normally.
+                    if _target_type == "gate" and (_te.targetHandle or "in") == "in":
+                        _gate_data = (_target_node.data or {}) if _target_node is not None else {}
+                        _enable_edge = next(
+                            (e for e in flow.edges if e.target == _te.target and (e.targetHandle or "in") == "enable"),
+                            None,
+                        )
+                        if _enable_edge is None or _enable_edge.source not in _tainted:
+                            _enable_src = outputs if _enable_edge is not None and _enable_edge.source in async_replay_source_ids else _src
+                            _enable_v = (
+                                False
+                                if _enable_edge is None
+                                else GraphExecutor._to_bool(
+                                    GraphExecutor._get_output_value(_enable_src.get(_enable_edge.source, {}), _enable_edge.sourceHandle or "out")
+                                )
+                            )
+                            if _gate_data.get("negate_enable"):
+                                _enable_v = not _enable_v
+                            if not _enable_v:
+                                continue
                     _tainted.add(_te.target)
                     _tq.append(_te.target)
             return {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _tainted}
@@ -2684,6 +2711,31 @@ class LogicManager:
             target_type = get_node_type(_node_type_by_id.get(edge.target))
             if not target_type:
                 return True
+            # A "gate" (Freigabe/relay) node closed by its (already-resolved,
+            # since this only runs after `outputs` is populated) enable input
+            # is not a pure relay while closed: its output is the retained
+            # last-enabled value or a fixed default_value, entirely
+            # independent of "in" — a pulse arriving at "in" has no effect
+            # on the gate's output at all and must not be treated as having
+            # propagated through it.
+            if target_type.type == "gate" and (edge.targetHandle or "in") == "in":
+                gate_node = _node_by_id_early.get(edge.target)
+                gdata = (gate_node.data or {}) if gate_node is not None else {}
+                enable_edge = next(
+                    (e for e in flow.edges if e.target == edge.target and (e.targetHandle or "in") == "enable"),
+                    None,
+                )
+                enable_v = (
+                    False
+                    if enable_edge is None
+                    else GraphExecutor._to_bool(
+                        GraphExecutor._get_output_value(outputs.get(enable_edge.source, {}), enable_edge.sourceHandle or "out")
+                    )
+                )
+                if gdata.get("negate_enable"):
+                    enable_v = not enable_v
+                if not enable_v:
+                    return False
             trigger_port_ids = {p.id for p in target_type.inputs if p.type == "trigger"}
             if not trigger_port_ids:
                 return True

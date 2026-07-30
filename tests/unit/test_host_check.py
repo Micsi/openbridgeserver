@@ -504,6 +504,45 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 3
 
+    def test_change_filter_pulse_does_not_bypass_dedup_through_a_closed_gate(self):
+        """Regression: a "gate" (Freigabe/relay) node closed by a resolved
+        enable input (here: left unwired, resolving to closed) is not a
+        pure pulse relay while closed — its output is a fixed
+        default_value, entirely independent of change_filter.changed. A
+        pulse arriving at "in" has no effect on the gate's output, so a
+        host_check downstream of the gate must see an ordinary sustained
+        (constant) trigger and be deduplicated normally, pinging only
+        once — not on every execution just because change_filter.changed
+        happened to fire behind the (irrelevant) gate."""
+        nodes = [
+            node("cf", "change_filter"),
+            node("gate1", "gate", {"closed_behavior": "default_value", "default_value": "1"}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf", "gate1", "changed", "in"),
+                # enable is intentionally left unwired -> resolves to closed
+                edge("gate1", "hc", "out", "trigger"),
+            ],
+        )
+
+        manager = _make_manager()
+        graph_id = "g-cf-closed-gate-dedup"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_ping.await_count == 1
+
     def test_async_driven_sustained_trigger_pings_only_once(self):
         """api_client→hc: HC with async trigger doesn't re-ping when trigger stays True (rising-edge deferred clear)."""
         nodes = [
@@ -899,6 +938,175 @@ class TestHostCheckRisingEdge:
 
         assert outputs["cf"]["changed"] is True
         assert outputs["cf"]["out"] is False
+
+    def test_change_filter_is_not_held_behind_a_closed_relay_gate(self):
+        """Regression: a "gate" (Freigabe/relay) node closed by a RESOLVED
+        enable input is a boundary just like memory — while closed, its
+        output is either the retained last-enabled value or a fixed
+        default_value, entirely independent of "in". An unseeded Read
+        Object feeding only the gate's "in" port (enable left unwired,
+        which resolves to a deterministic closed state) must not hold a
+        downstream change_filter hostage to that unrelated, never-resolving
+        read — the gate's real, retained output already fully decides the
+        filter's comparison."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("relay_gate", "gate", {}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "relay_gate", "value", "in"),
+                # enable is intentionally left unwired -> resolves to closed
+                edge("relay_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-gate-closed-boundary"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"relay_gate": 99, "cf": {"value": 42}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["relay_gate"]["out"] == 99
+        assert outputs["cf"]["changed"] is True
+        assert outputs["cf"]["out"] == 99
+
+    def test_change_filter_stays_held_when_gate_enable_itself_is_unresolved(self):
+        """The closed-gate boundary exception only applies when the gate's
+        OWN enable state is itself resolved — if "enable" is fed by the
+        same unresolved Read Object, the gate's closed/open state can't be
+        trusted yet either, so taint must still propagate through it
+        normally (matching the pre-exception behavior)."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("relay_gate", "gate", {}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "relay_gate", "value", "in"),
+                edge("unseeded_read", "relay_gate", "changed", "enable"),
+                edge("relay_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-gate-enable-unresolved"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["cf"]["changed"] is False
+        assert manager._hysteresis[graph_id]["cf"] == {"value": True}
+
+    def test_change_filter_stays_held_when_gate_is_open_via_a_resolved_enable(self):
+        """The closed-gate boundary exception must not apply when the gate
+        is OPEN (enable resolves to True): an open gate genuinely passes
+        its unresolved "in" value straight through as "out", so a
+        downstream change_filter must still be held — same as if the gate
+        weren't there at all."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("enable_src", "const_value", {"value": "true", "data_type": "bool"}),
+            node("relay_gate", "gate", {}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "relay_gate", "value", "in"),
+                edge("enable_src", "relay_gate", "value", "enable"),
+                edge("relay_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-gate-open-resolved-enable"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["cf"]["changed"] is False
+        assert manager._hysteresis[graph_id]["cf"] == {"value": True}
+
+    def test_change_filter_is_not_held_behind_a_gate_closed_via_negated_enable(self):
+        """Same closed-gate boundary as the unwired-enable case, but closed
+        via negate_enable flipping a resolved True into an effective False
+        — exercises the negate_enable branch of the hold-computation's own
+        gate check specifically (the pulse-carrying check's negate_enable
+        branch is covered separately)."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("enable_src", "const_value", {"value": "true", "data_type": "bool"}),
+            node("relay_gate", "gate", {"negate_enable": True}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "relay_gate", "value", "in"),
+                edge("enable_src", "relay_gate", "value", "enable"),
+                edge("relay_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-gate-closed-negated-enable"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"relay_gate": 99, "cf": {"value": 42}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["relay_gate"]["out"] == 99
+        assert outputs["cf"]["changed"] is True
+        assert outputs["cf"]["out"] == 99
+
+    def test_change_filter_pulse_retriggers_through_an_open_gate_with_negated_enable(self):
+        """Complements the closed-gate dedup test: an OPEN gate (here,
+        opened via negate_enable flipping a resolved False into True) truly
+        passes change_filter.changed through as a real, discrete pulse each
+        time — host_check downstream must retrigger on every execution,
+        exactly as if the gate weren't there. Also exercises negate_enable
+        in the pulse-carrying check."""
+        nodes = [
+            node("cf", "change_filter"),
+            node("enable_src", "const_value", {"value": "false", "data_type": "bool"}),
+            node("gate1", "gate", {"negate_enable": True}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf", "gate1", "changed", "in"),
+                edge("enable_src", "gate1", "value", "enable"),
+                edge("gate1", "hc", "out", "trigger"),
+            ],
+        )
+
+        manager = _make_manager()
+        graph_id = "g-cf-open-gate-negated-enable-dedup"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_ping.await_count == 3
 
     def test_taint_analysis_survives_malformed_gate_input_count(self):
         """Regression: a malformed input_count (e.g. an imported/legacy
