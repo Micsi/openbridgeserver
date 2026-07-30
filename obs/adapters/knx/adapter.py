@@ -165,9 +165,10 @@ class KnxAdapter(AdapterBase):
             int,
             tuple[Any, str, str | None, bytes, Any, ConfirmationActionContext | bool, tuple[Any, ...]],
         ] = {}
-        self._outgoing_confirmation_owners: dict[int, tuple[str, float]] = {}
-        self._local_read_responses: dict[int, tuple[str, float | None]] = {}
-        self._invalidated_transmissions: dict[int, tuple[str, float | None]] = {}
+        self._pending_telegram_refs: dict[int, Any] = {}
+        self._outgoing_confirmation_owners: dict[int, tuple[str, float, Any]] = {}
+        self._local_read_responses: dict[int, tuple[Any, str, float | None]] = {}
+        self._invalidated_transmissions: dict[int, tuple[Any, str, float | None]] = {}
         self._latest_confirmation_at: dict[str, float] = {}
         self._value_getter: Any = None
         self._reconnect_task: asyncio.Task | None = None
@@ -222,6 +223,7 @@ class KnxAdapter(AdapterBase):
             except Exception:
                 logger.exception("KNX cleanup of previous instance failed")
             self._pending_transmissions.clear()
+            self._pending_telegram_refs.clear()
             self._outgoing_confirmation_owners.clear()
             self._local_read_responses.clear()
             self._invalidated_transmissions.clear()
@@ -475,6 +477,7 @@ class KnxAdapter(AdapterBase):
         self._sniffer = None
         self._recent_writes.clear()
         self._pending_transmissions.clear()
+        self._pending_telegram_refs.clear()
         self._outgoing_confirmation_owners.clear()
         self._local_read_responses.clear()
         self._invalidated_transmissions.clear()
@@ -511,18 +514,19 @@ class KnxAdapter(AdapterBase):
                 self._recent_writes[key] = retained
             else:
                 self._recent_writes.pop(key, None)
-        for telegram_id, (binding_id, _) in list(self._outgoing_confirmation_owners.items()):
+        for telegram_id, (binding_id, _, telegram) in list(self._outgoing_confirmation_owners.items()):
             datapoint_id = invalidated_confirmation_datapoints.get(binding_id)
             if datapoint_id is None:
                 continue
             self._outgoing_confirmation_owners.pop(telegram_id, None)
-            self._invalidated_transmissions[telegram_id] = (datapoint_id, self._monotonic())
+            self._invalidated_transmissions[telegram_id] = (telegram, datapoint_id, self._monotonic())
         for telegram_id, pending in list(self._pending_transmissions.items()):
             binding, command_ga, state_ga, raw, logical_value, suppress_actions, signature = pending
             replacement = bindings_by_id.get(str(binding.id))
             if replacement is None or self._confirmation_binding_signature(replacement) != signature:
                 self._pending_transmissions.pop(telegram_id, None)
-                self._invalidated_transmissions[telegram_id] = (str(signature[0]), None)
+                telegram = self._pending_telegram_refs.pop(telegram_id, None)
+                self._invalidated_transmissions[telegram_id] = (telegram, str(signature[0]), None)
                 continue
             self._pending_transmissions[telegram_id] = (
                 replacement,
@@ -626,15 +630,17 @@ class KnxAdapter(AdapterBase):
 
             suppressed_local_datapoint_id = None
             if is_outgoing and isinstance(telegram.payload, GroupValueResponse):
-                local_response = self._local_read_responses.pop(id(telegram), None)
-                if local_response is not None:
-                    suppressed_local_datapoint_id = local_response[0]
+                local_response = self._local_read_responses.get(id(telegram))
+                if local_response is not None and local_response[0] is telegram:
+                    self._local_read_responses.pop(id(telegram), None)
+                    suppressed_local_datapoint_id = local_response[1]
                     logger.debug("KNX local read response owner ignored: GA=%s dp=%s", ga, suppressed_local_datapoint_id)
 
             if is_outgoing:
-                invalidated_transmission = self._invalidated_transmissions.pop(id(telegram), None)
-                if invalidated_transmission is not None:
-                    suppressed_local_datapoint_id = invalidated_transmission[0]
+                invalidated_transmission = self._invalidated_transmissions.get(id(telegram))
+                if invalidated_transmission is not None and invalidated_transmission[0] is telegram:
+                    self._invalidated_transmissions.pop(id(telegram), None)
+                    suppressed_local_datapoint_id = invalidated_transmission[1]
                     logger.debug("KNX invalidated write owner ignored: GA=%s dp=%s", ga, suppressed_local_datapoint_id)
 
             entries = self._ga_source_map.get(ga)
@@ -787,7 +793,7 @@ class KnxAdapter(AdapterBase):
                     destination_address=GroupAddress(ga),
                     payload=GroupValueResponse(payload_value),
                 )
-                self._local_read_responses[id(telegram)] = (str(binding.datapoint_id), None)
+                self._local_read_responses[id(telegram)] = (telegram, str(binding.datapoint_id), None)
                 try:
                     await self._xknx.telegrams.put(telegram)
                 except Exception:
@@ -854,12 +860,13 @@ class KnxAdapter(AdapterBase):
     def _activate_outbound_write(self, telegram: Any, ga: str, raw: bytes) -> None:
         """Start confirmation windows after XKNX has transmitted a queued telegram."""
         pending = self._pending_transmissions.pop(id(telegram), None)
+        self._pending_telegram_refs.pop(id(telegram), None)
         if pending is None:
             return
 
         binding, command_ga, state_ga, written_raw, logical_value, action_context, _ = pending
         if ga != command_ga or written_raw != bytes(raw):
-            self._invalidated_transmissions[id(telegram)] = (str(binding.datapoint_id), self._monotonic())
+            self._invalidated_transmissions[id(telegram)] = (telegram, str(binding.datapoint_id), self._monotonic())
             logger.warning(
                 "KNX transmitted telegram differs from queued write: GA=%s expected_GA=%s",
                 ga,
@@ -871,7 +878,7 @@ class KnxAdapter(AdapterBase):
         if write_order is not None:
             write_order.activate()
         written_at = self._monotonic()
-        self._outgoing_confirmation_owners[id(telegram)] = (str(binding.id), written_at)
+        self._outgoing_confirmation_owners[id(telegram)] = (str(binding.id), written_at, telegram)
         self._remember_outbound_write(
             binding,
             command_ga,
@@ -901,13 +908,15 @@ class KnxAdapter(AdapterBase):
         """Activate confirmation expectations after XKNX successfully sends a telegram."""
         if getattr(getattr(telegram, "direction", None), "name", None) != "OUTGOING":
             return
-        if id(telegram) in self._local_read_responses:
-            datapoint_id, _ = self._local_read_responses[id(telegram)]
-            self._local_read_responses[id(telegram)] = (datapoint_id, self._monotonic())
+        local_response = self._local_read_responses.get(id(telegram))
+        if local_response is not None and local_response[0] is telegram:
+            _, datapoint_id, _ = local_response
+            self._local_read_responses[id(telegram)] = (telegram, datapoint_id, self._monotonic())
             return
-        if id(telegram) in self._invalidated_transmissions:
-            datapoint_id, _ = self._invalidated_transmissions[id(telegram)]
-            self._invalidated_transmissions[id(telegram)] = (datapoint_id, self._monotonic())
+        invalidated_transmission = self._invalidated_transmissions.get(id(telegram))
+        if invalidated_transmission is not None and invalidated_transmission[0] is telegram:
+            _, datapoint_id, _ = invalidated_transmission
+            self._invalidated_transmissions[id(telegram)] = (telegram, datapoint_id, self._monotonic())
             return
         self._activate_outbound_write(
             telegram,
@@ -937,17 +946,17 @@ class KnxAdapter(AdapterBase):
             else:
                 self._recent_writes.pop(key, None)
         owner_cutoff = current - ECHO_SUPPRESSION_WINDOW_S
-        for telegram_id, (_, transmitted_at) in list(self._outgoing_confirmation_owners.items()):
+        for telegram_id, (_, transmitted_at, _) in list(self._outgoing_confirmation_owners.items()):
             if transmitted_at < owner_cutoff:
                 self._outgoing_confirmation_owners.pop(telegram_id, None)
 
     def _prune_local_read_responses(self, now: float | None = None) -> None:
         """Remove transmitted read responses not dispatched to the sniffer."""
         cutoff = (self._monotonic() if now is None else now) - ECHO_SUPPRESSION_WINDOW_S
-        for telegram_id, (_, tracked_at) in list(self._local_read_responses.items()):
+        for telegram_id, (_, _, tracked_at) in list(self._local_read_responses.items()):
             if tracked_at is not None and tracked_at < cutoff:
                 self._local_read_responses.pop(telegram_id, None)
-        for telegram_id, (_, tracked_at) in list(self._invalidated_transmissions.items()):
+        for telegram_id, (_, _, tracked_at) in list(self._invalidated_transmissions.items()):
             if tracked_at is not None and tracked_at < cutoff:
                 self._invalidated_transmissions.pop(telegram_id, None)
 
@@ -1119,10 +1128,12 @@ class KnxAdapter(AdapterBase):
                     ),
                     self._confirmation_binding_signature(binding),
                 )
+                self._pending_telegram_refs[id(telegram)] = telegram
             try:
                 await self._xknx.telegrams.put(telegram)
             except Exception:
                 self._pending_transmissions.pop(id(telegram), None)
+                self._pending_telegram_refs.pop(id(telegram), None)
                 raise
             logger.info("KNX write: GA=%s value=%s raw=%s", bc.group_address, value, raw.hex())
             return binding.direction == "BOTH"

@@ -965,7 +965,7 @@ class TestOnBindingsReloaded:
         assert adapter._recent_writes == {}
         assert adapter._pending_transmissions == {}
         assert adapter._invalidated_transmissions == {
-            123: (str(binding.datapoint_id), None),
+            123: (None, str(binding.datapoint_id), None),
         }
 
     @pytest.mark.asyncio
@@ -1000,6 +1000,7 @@ class TestOnBindingsReloaded:
             False,
             adapter._confirmation_binding_signature(original),
         )
+        adapter._pending_telegram_refs[id(telegram)] = telegram
 
         await adapter._on_bindings_reloaded()
         adapter._on_telegram_transmitted(telegram)
@@ -1045,6 +1046,7 @@ class TestOnBindingsReloaded:
             False,
             adapter._confirmation_binding_signature(original),
         )
+        adapter._pending_telegram_refs[id(telegram)] = telegram
 
         await adapter._on_bindings_reloaded()
         adapter._on_telegram_transmitted(telegram)
@@ -1088,6 +1090,7 @@ class TestOnBindingsReloaded:
             False,
             adapter._confirmation_binding_signature(original),
         )
+        adapter._pending_telegram_refs[id(telegram)] = telegram
         adapter._on_telegram_transmitted(telegram)
 
         await adapter._on_bindings_reloaded()
@@ -2546,6 +2549,33 @@ class TestHandleReadRequest:
         assert adapter._local_read_responses == {}
 
     @pytest.mark.asyncio
+    async def test_stale_read_response_marker_requires_same_telegram_identity(self, mock_bus):
+        adapter, mock_xknx = self._make_adapter(mock_bus)
+        binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+
+        await adapter.write_with_context(binding, 5.0, logical_value=50.0)
+        command = mock_xknx.telegrams.put.call_args.args[0]
+        stale_response = Telegram(
+            destination_address=command.destination_address,
+            direction=TelegramDirection.OUTGOING,
+            payload=GroupValueResponse(command.payload.value),
+        )
+        adapter._local_read_responses[id(command)] = (
+            stale_response,
+            str(binding.datapoint_id),
+            100.0,
+        )
+
+        adapter._on_telegram_transmitted(command)
+
+        assert adapter._pending_transmissions == {}
+        assert id(command) in adapter._outgoing_confirmation_owners
+        assert adapter._recent_writes
+
+    @pytest.mark.asyncio
     async def test_outgoing_read_request_does_not_trigger_local_response(self, mock_bus):
         from unittest.mock import MagicMock
 
@@ -2992,7 +3022,8 @@ class TestKnxAdapterExceptionPaths:
             False,
             (),
         )
-        adapter._local_read_responses[456] = ("datapoint", None)
+        adapter._pending_telegram_refs[123] = object()
+        adapter._local_read_responses[456] = (object(), "datapoint", None)
 
         new_xknx = MagicMock()
         new_xknx.start = AsyncMock()
@@ -3006,6 +3037,7 @@ class TestKnxAdapterExceptionPaths:
 
         old_xknx.stop.assert_called_once()
         assert adapter._pending_transmissions == {}
+        assert adapter._pending_telegram_refs == {}
         assert adapter._local_read_responses == {}
 
     @pytest.mark.asyncio
