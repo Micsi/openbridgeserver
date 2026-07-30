@@ -41,6 +41,12 @@ describe('GenericNode — label from NODE_DEFS', () => {
     await flushPromises()
     expect(w.find('.gn-title').text()).toBe('mystery_node')
   })
+
+  it('exposes the full heading when its fixed-width display is truncated', async () => {
+    const w = await mountGN('substring_extractor')
+    await flushPromises()
+    expect(w.find('.gn-title').attributes('title')).toBe(w.find('.gn-title').text())
+  })
 })
 
 describe('GenericNode — handles', () => {
@@ -120,6 +126,7 @@ describe('GenericNode — summary', () => {
     const w = await mountGN('math_formula', { formula: 'a * 2' })
     await flushPromises()
     expect(w.find('.gn-summary').text()).toContain('a * 2')
+    expect(w.find('.gn-summary').attributes('title')).toBe('a * 2')
   })
 
   it('shows compare summary: A > B by default', async () => {
@@ -214,11 +221,12 @@ describe('GenericNode — summary', () => {
 })
 
 describe('GenericNode — debug band', () => {
-  it('shows debug band when data._dbg is set', async () => {
-    const w = await mountGN('and', { _dbg: 'true' })
+  it('shows the compact debug band when data._dbg is set', async () => {
+    const w = await mountGN('and', { _dbg: 'true', _dbg_title: 'out=true' })
     await flushPromises()
-    expect(w.find('[data-testid="debug-band"]').exists()).toBe(true)
-    expect(w.find('[data-testid="debug-band"]').text()).toBe('true')
+    const band = w.find('[data-testid="debug-band"]')
+    expect(band.text()).toBe('true')
+    expect(band.attributes('title')).toBe('out=true')
   })
 
   it('hides debug band when no _dbg', async () => {
