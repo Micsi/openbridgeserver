@@ -3311,6 +3311,24 @@ class LogicManager:
                     _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                     _pwol_exec = _executor(_pwol_hyst)
                     _pwol_out = _execute_pass(_pwol_exec, _pwol_merged)
+                    # A downstream async node (e.g. a chained wake_on_lan)
+                    # newly reachable within this replay's own outputs may
+                    # still be only "triggered, not yet actually run" — its
+                    # own output here is a placeholder, same as every other
+                    # replay branch. A change_filter reachable through it —
+                    # or through a still-unseeded Read Object — must stay
+                    # held rather than commit that placeholder and let a
+                    # further downstream host_check irreversibly ping. Redo
+                    # the replay with suppression applied if this reveals
+                    # anything new.
+                    _pwol_late_pending = _still_unresolved_source_ids(_pwol_out)
+                    _pwol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _pwol_late_pending, _pwol_out)
+                    if _pwol_late_cf_hold_ids:
+                        for _pwol_late_cf_id in _pwol_late_cf_hold_ids:
+                            _pwol_merged.setdefault(_pwol_late_cf_id, {})["_suppress_change_filter"] = True
+                        _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                        _pwol_exec = _executor(_pwol_hyst)
+                        _pwol_out = _execute_pass(_pwol_exec, _pwol_merged)
                     _pwol_desc: set[str] = set()
                     _pwol_dq: list[str] = list(_pwol_src)
                     while _pwol_dq:

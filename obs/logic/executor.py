@@ -739,6 +739,22 @@ class GraphExecutor:
                 # tick.
                 if via_normalizing_path:
                     out_value = copy.deepcopy(state["value"])
+                    if state.get("_recovered_str"):
+                        # A live value just confirmed the persisted, legacy
+                        # restart-recovered representation via ORDINARY
+                        # equality (not the str()-recovery fallback below) —
+                        # e.g. a source that genuinely emits the literal
+                        # string "10:30:00" live, matching a persisted
+                        # string tagged "_recovered_str" from before this
+                        # format existed. That resolves the ambiguity this
+                        # marker exists for: this source evidently emits
+                        # this representation live, not a datetime/date/time
+                        # object that only happens to str()-match it. Clear
+                        # the marker now so a LATER genuine type transition
+                        # (e.g. to a real datetime.time) is reported as a
+                        # real change instead of being silently swallowed by
+                        # the recovery fallback forever.
+                        self.hysteresis_state[node.id] = {"value": out_value}
                 else:
                     # Equality here only held through the legacy
                     # str()-recovery fallback: state["value"] is still the

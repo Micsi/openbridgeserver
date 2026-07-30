@@ -3367,6 +3367,54 @@ class TestReplayOrderingFixes:
         assert outputs["wol1"]["sent"] is True
         assert outputs["cf"]["changed"] is False
 
+    def test_post_wol_host_check_replay_holds_change_filter_behind_pending_second_wol(self):
+        """Regression (P1): the "Post-WoL host_check pass" replay (distinct
+        from the dedicated WoL replay above, and from the other replay
+        sites already fixed in prior rounds) registered change_filter
+        pulses without recomputing late-pending async descendants first.
+        For wol1.sent -> host_check1 -> wol2.trigger -> change_filter ->
+        host_check2: host_check1 fires for real off wol1's real send, and
+        its real "reachable" newly triggers wol2 within THIS replay — but
+        wol2 hasn't actually sent yet (its own output here is still a
+        placeholder). host_check2 must not ping off that placeholder;
+        since wol2 never actually resolves within this same tick, it must
+        never ping at all."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("wol1", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+            node("hc1", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+            node("wol2", "wake_on_lan", {"mac_address": "11:22:33:44:55:66"}),
+            node("cf", "change_filter"),
+            node("hc2", "host_check", {"host": "192.168.1.2", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "wol1", "value", "trigger"),
+                edge("wol1", "hc1", "sent", "trigger"),
+                edge("hc1", "wol2", "reachable", "trigger"),
+                edge("wol2", "cf", "sent", "in"),
+                edge("cf", "hc2", "changed", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-post-wol-hc-chain-holds-cf"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        mock_ping.assert_awaited_once()
+        assert mock_ping.await_args.args[0] == "192.168.1.1"
+        assert outputs["wol1"]["sent"] is True
+        assert outputs["cf"]["changed"] is False
+
     def test_wol_hc_propagates_to_downstream_node(self):
         """wol → hc → gate: HC reachable result must be replayed to downstream nodes."""
         nodes = [

@@ -1283,6 +1283,31 @@ class TestChangeFilterNode:
 
         assert state["cf"] == {"value": time(10, 30, 0)}
 
+    def test_recovered_str_marker_is_cleared_after_a_live_string_match(self):
+        """Regression: when a LIVE value confirms the persisted, restart-
+        recovered string via ORDINARY equality (e.g. a source that
+        genuinely emits the literal string "10:30:00" itself, not a
+        datetime.time), the "unchanged" branch previously left
+        "_recovered_str" set on the persisted state. A later GENUINE type
+        transition to datetime.time(10, 30) would then still take the
+        str()-recovery fallback (since the marker survived) and incorrectly
+        report changed=False, instead of the real change it is. Confirming
+        the string live resolves the marker's ambiguity — this source
+        evidently emits plain strings — so it must be cleared then, not
+        left to swallow a later real transition forever."""
+        from datetime import time
+
+        state = {"cf": {"value": "10:30:00", "_recovered_str": True}}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+
+        out1 = exc.execute({"cf": {"in": "10:30:00"}})
+        assert out1["cf"]["changed"] is False
+        assert state["cf"] == {"value": "10:30:00"}
+
+        out2 = exc.execute({"cf": {"in": time(10, 30, 0)}})
+        assert out2["cf"]["changed"] is True
+
     def test_live_string_matching_a_temporal_repr_is_not_treated_as_recovered(self):
         """Regression: a source that legitimately emits the literal string
         "10:30:00" *live*, this session — never round-tripped through DB
