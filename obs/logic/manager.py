@@ -3036,6 +3036,24 @@ class LogicManager:
                 wol_second_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 wol_second_executor = _executor(wol_second_hyst)
                 wol_second_outputs = _execute_pass(wol_second_executor, wol_merged)
+                # A downstream async node (e.g. a second, chained
+                # wake_on_lan) newly reachable within this replay's own
+                # outputs may still be only "triggered, not yet actually
+                # run" — its own output here is a placeholder, same as the
+                # api_client/host_check/_replay_async_descendants replay
+                # branches. A change_filter reachable through it — or
+                # through a still-unseeded Read Object — must stay held
+                # rather than commit that placeholder and let a further
+                # downstream host_check irreversibly ping. Redo the replay
+                # with suppression applied if this reveals anything new.
+                _wol_late_pending = _still_unresolved_source_ids(wol_second_outputs)
+                _wol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _wol_late_pending)
+                if _wol_late_cf_hold_ids:
+                    for _wol_late_cf_id in _wol_late_cf_hold_ids:
+                        wol_merged.setdefault(_wol_late_cf_id, {})["_suppress_change_filter"] = True
+                    wol_second_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                    wol_second_executor = _executor(wol_second_hyst)
+                    wol_second_outputs = _execute_pass(wol_second_executor, wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
                 # their descendants are updated, leaving unrelated nodes intact.
                 wol_descendants: set[str] = set()
