@@ -1222,6 +1222,8 @@ class LogicManager:
     # ── Event Handler ─────────────────────────────────────────────────────
 
     async def _on_value_event(self, event: Any) -> None:
+        if getattr(event, "suppress_action_triggers", False) is True:
+            return
         dp_id = str(event.datapoint_id)
         now = datetime.now(UTC)
         logic_depth = int(getattr(event, "logic_depth", 0) or 0)
