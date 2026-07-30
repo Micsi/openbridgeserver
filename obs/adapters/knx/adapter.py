@@ -168,7 +168,7 @@ class KnxAdapter(AdapterBase):
         self._pending_telegram_refs: dict[int, Any] = {}
         self._outgoing_confirmation_owners: dict[int, tuple[str, float, Any, tuple[Any, ...]]] = {}
         self._local_read_responses: dict[int, tuple[Any, str, float | None]] = {}
-        self._invalidated_transmissions: dict[int, tuple[Any, str, float | None]] = {}
+        self._invalidated_transmissions: dict[int, tuple[Any, str, str, float | None]] = {}
         self._latest_confirmation_at: dict[str, float] = {}
         self._value_getter: Any = None
         self._reconnect_task: asyncio.Task | None = None
@@ -519,14 +519,24 @@ class KnxAdapter(AdapterBase):
             if datapoint_id is None:
                 continue
             self._outgoing_confirmation_owners.pop(telegram_id, None)
-            self._invalidated_transmissions[telegram_id] = (telegram, datapoint_id, self._monotonic())
+            self._invalidated_transmissions[telegram_id] = (
+                telegram,
+                binding_id,
+                datapoint_id,
+                self._monotonic(),
+            )
         for telegram_id, pending in list(self._pending_transmissions.items()):
             binding, command_ga, state_ga, raw, logical_value, suppress_actions, signature = pending
             replacement = bindings_by_id.get(str(binding.id))
             if replacement is None or self._confirmation_binding_signature(replacement) != signature:
                 self._pending_transmissions.pop(telegram_id, None)
                 telegram = self._pending_telegram_refs.pop(telegram_id, None)
-                self._invalidated_transmissions[telegram_id] = (telegram, str(signature[0]), None)
+                self._invalidated_transmissions[telegram_id] = (
+                    telegram,
+                    str(binding.id),
+                    str(signature[0]),
+                    None,
+                )
                 continue
             self._pending_transmissions[telegram_id] = (
                 replacement,
@@ -628,6 +638,7 @@ class KnxAdapter(AdapterBase):
             if not isinstance(telegram.payload, (GroupValueWrite, GroupValueResponse)):
                 return
 
+            suppressed_local_binding_id = None
             suppressed_local_datapoint_id = None
             if is_outgoing and isinstance(telegram.payload, GroupValueResponse):
                 local_response = self._local_read_responses.get(id(telegram))
@@ -640,8 +651,14 @@ class KnxAdapter(AdapterBase):
                 invalidated_transmission = self._invalidated_transmissions.get(id(telegram))
                 if invalidated_transmission is not None and invalidated_transmission[0] is telegram:
                     self._invalidated_transmissions.pop(id(telegram), None)
-                    suppressed_local_datapoint_id = invalidated_transmission[1]
-                    logger.debug("KNX invalidated write owner ignored: GA=%s dp=%s", ga, suppressed_local_datapoint_id)
+                    suppressed_local_binding_id = invalidated_transmission[1]
+                    suppressed_local_datapoint_id = invalidated_transmission[2]
+                    logger.debug(
+                        "KNX invalidated write owner ignored: GA=%s binding=%s dp=%s",
+                        ga,
+                        suppressed_local_binding_id,
+                        suppressed_local_datapoint_id,
+                    )
 
             entries = self._ga_source_map.get(ga)
             if not entries:
@@ -662,7 +679,7 @@ class KnxAdapter(AdapterBase):
             events: list[DataValueEvent] = []
             for binding, dpt in entries:
                 datapoint_id = str(binding.datapoint_id)
-                if datapoint_id == suppressed_local_datapoint_id:
+                if str(binding.id) == suppressed_local_binding_id or datapoint_id == suppressed_local_datapoint_id:
                     continue
                 suppress_peer_confirmation = datapoint_id in confirmation_datapoint_ids
                 may_consume = (
@@ -695,9 +712,14 @@ class KnxAdapter(AdapterBase):
                     )
                     continue
                 if is_outbound_confirmation:
-                    if write_order is not None and not write_order.accept_confirmation():
+                    if write_order is not None and self._has_newer_matching_confirmation(
+                        datapoint_id,
+                        ga,
+                        raw,
+                        write_order,
+                    ):
                         logger.debug(
-                            "KNX globally stale confirmation ignored: GA=%s binding=%s",
+                            "KNX superseded confirmation ignored: GA=%s binding=%s",
                             ga,
                             binding.id,
                         )
@@ -710,6 +732,15 @@ class KnxAdapter(AdapterBase):
                             binding.id,
                         )
                         continue
+                    if write_order is not None:
+                        write_order.activate()
+                        if not write_order.accept_confirmation():
+                            logger.debug(
+                                "KNX globally stale confirmation ignored: GA=%s binding=%s",
+                                ga,
+                                binding.id,
+                            )
+                            continue
                     if confirmation_at is not None:
                         self._latest_confirmation_at[datapoint_id] = confirmation_at
                     consumed_confirmation_datapoints.add(datapoint_id)
@@ -873,7 +904,12 @@ class KnxAdapter(AdapterBase):
 
         binding, command_ga, state_ga, written_raw, logical_value, action_context, _ = pending
         if ga != command_ga or written_raw != bytes(raw):
-            self._invalidated_transmissions[id(telegram)] = (telegram, str(binding.datapoint_id), self._monotonic())
+            self._invalidated_transmissions[id(telegram)] = (
+                telegram,
+                str(binding.id),
+                str(binding.datapoint_id),
+                self._monotonic(),
+            )
             logger.warning(
                 "KNX transmitted telegram differs from queued write: GA=%s expected_GA=%s",
                 ga,
@@ -882,8 +918,6 @@ class KnxAdapter(AdapterBase):
             return
 
         write_order = None if isinstance(action_context, bool) else action_context.write_order
-        if write_order is not None:
-            write_order.activate()
         written_at = self._monotonic()
         command_write = self._remember_outbound_write(
             binding,
@@ -922,8 +956,13 @@ class KnxAdapter(AdapterBase):
             return
         invalidated_transmission = self._invalidated_transmissions.get(id(telegram))
         if invalidated_transmission is not None and invalidated_transmission[0] is telegram:
-            _, datapoint_id, _ = invalidated_transmission
-            self._invalidated_transmissions[id(telegram)] = (telegram, datapoint_id, self._monotonic())
+            _, binding_id, datapoint_id, _ = invalidated_transmission
+            self._invalidated_transmissions[id(telegram)] = (
+                telegram,
+                binding_id,
+                datapoint_id,
+                self._monotonic(),
+            )
             return
         self._activate_outbound_write(
             telegram,
@@ -963,7 +1002,7 @@ class KnxAdapter(AdapterBase):
         for telegram_id, (_, _, tracked_at) in list(self._local_read_responses.items()):
             if tracked_at is not None and tracked_at < cutoff:
                 self._local_read_responses.pop(telegram_id, None)
-        for telegram_id, (_, _, tracked_at) in list(self._invalidated_transmissions.items()):
+        for telegram_id, (_, _, _, tracked_at) in list(self._invalidated_transmissions.items()):
             if tracked_at is not None and tracked_at < cutoff:
                 self._invalidated_transmissions.pop(telegram_id, None)
 
@@ -1016,6 +1055,32 @@ class KnxAdapter(AdapterBase):
                 if not is_outgoing and ga == state_ga and state_ga != command_ga:
                     datapoint_ids.add(str(signature[0]))
         return datapoint_ids
+
+    def _has_newer_matching_confirmation(
+        self,
+        datapoint_id: str,
+        ga: str,
+        raw: bytes,
+        write_order: ConfirmationWriteOrder,
+    ) -> bool:
+        """Return whether this adapter can publish a newer matching state confirmation."""
+        for (_, key_ga), recent_writes in self._recent_writes.items():
+            if key_ga != ga:
+                continue
+            for recent_write in recent_writes:
+                signature = recent_write[4]
+                candidate_order = recent_write[5] if len(recent_write) > 5 else None
+                config = signature[3]
+                if (
+                    str(signature[0]) == datapoint_id
+                    and recent_write[1] == raw
+                    and config.get("state_group_address") == ga
+                    and config.get("group_address") != ga
+                    and candidate_order is not None
+                    and candidate_order.is_newer_than(write_order)
+                ):
+                    return True
+        return False
 
     def _consume_outbound_confirmation(
         self,

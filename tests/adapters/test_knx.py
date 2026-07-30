@@ -965,7 +965,7 @@ class TestOnBindingsReloaded:
         assert adapter._recent_writes == {}
         assert adapter._pending_transmissions == {}
         assert adapter._invalidated_transmissions == {
-            123: (None, str(binding.datapoint_id), None),
+            123: (None, str(binding.id), str(binding.datapoint_id), None),
         }
 
     @pytest.mark.asyncio
@@ -1056,6 +1056,46 @@ class TestOnBindingsReloaded:
         event = mock_bus.publish.call_args.args[0]
         assert event.binding_id == peer.id
         assert event.suppress_write_propagation is False
+        assert adapter._invalidated_transmissions == {}
+
+    @pytest.mark.asyncio
+    async def test_invalidated_write_suppresses_reassigned_binding(self, mock_bus):
+        original = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.1",
+        )
+        replacement = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+            value_formula="x * 0.2",
+        )
+        replacement.id = original.id
+        replacement.enabled = original.enabled
+        adapter = self._make_adapter(mock_bus, [replacement])
+        dpt = DPTRegistry.get("DPT9.001")
+        raw = dpt.encoder(5.0)
+        telegram = Telegram(
+            destination_address=GroupAddress("1/2/3"),
+            direction=TelegramDirection.OUTGOING,
+            payload=GroupValueWrite(DPTArray(list(raw))),
+        )
+        adapter._pending_transmissions[id(telegram)] = (
+            original,
+            "1/2/3",
+            None,
+            bytes(raw),
+            50.0,
+            False,
+            adapter._confirmation_binding_signature(original),
+        )
+        adapter._pending_telegram_refs[id(telegram)] = telegram
+
+        await adapter._on_bindings_reloaded()
+        adapter._on_telegram_transmitted(telegram)
+        await adapter._on_telegram(telegram)
+
+        mock_bus.publish.assert_not_awaited()
         assert adapter._invalidated_transmissions == {}
 
     @pytest.mark.asyncio
@@ -1452,6 +1492,53 @@ class TestKnxReadWrite:
 
         event = mock_bus.publish.call_args.args[0]
         assert event.value == 200.0
+
+    @pytest.mark.asyncio
+    async def test_unpublishable_newer_transmission_does_not_reject_older_confirmation(
+        self,
+        mock_bus,
+    ):
+        healthy_adapter, healthy_xknx = self._make_adapter_with_xknx(mock_bus)
+        stalled_adapter, stalled_xknx = self._make_adapter_with_xknx(mock_bus)
+        healthy_binding = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+        stalled_binding = make_binding(
+            {"group_address": "1/2/4", "dpt_id": "DPT9.001"},
+            direction="BOTH",
+        )
+        stalled_binding.datapoint_id = healthy_binding.datapoint_id
+        healthy_adapter._ga_source_map["1/2/3"] = [
+            (healthy_binding, DPTRegistry.get("DPT9.001")),
+        ]
+        order_tracker = ConfirmationOrderTracker()
+        older_order = order_tracker.issue(healthy_binding.datapoint_id)
+        newer_order = order_tracker.issue(healthy_binding.datapoint_id)
+
+        await healthy_adapter.write_with_context(
+            healthy_binding,
+            5.0,
+            logical_value=50.0,
+            confirmation_write_order=older_order,
+        )
+        older_telegram = healthy_xknx.telegrams.put.call_args.args[0]
+        await stalled_adapter.write_with_context(
+            stalled_binding,
+            6.0,
+            logical_value=60.0,
+            confirmation_write_order=newer_order,
+        )
+        newer_telegram = stalled_xknx.telegrams.put.call_args.args[0]
+
+        healthy_adapter._on_telegram_transmitted(older_telegram)
+        stalled_adapter._on_telegram_transmitted(newer_telegram)
+        await healthy_adapter._on_telegram(older_telegram)
+
+        mock_bus.publish.assert_awaited_once()
+        event = mock_bus.publish.call_args.args[0]
+        assert event.value == 50.0
+        assert event.suppress_write_propagation is True
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

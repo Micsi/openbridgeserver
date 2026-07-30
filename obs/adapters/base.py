@@ -73,6 +73,10 @@ class ConfirmationWriteOrder:
     def accept_confirmation(self) -> bool:
         return self._tracker.accept(self._datapoint_id, self._sequence)
 
+    def is_newer_than(self, other: ConfirmationWriteOrder) -> bool:
+        """Return whether this order supersedes another order from the same router."""
+        return self._tracker is other._tracker and self._sequence > other._sequence
+
 
 class ConfirmationActionContext:
     """Resolve action suppression when an adapter publishes a confirmation."""
