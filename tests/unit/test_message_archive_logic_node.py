@@ -583,6 +583,59 @@ def test_closed_gate_default_value_is_a_fresh_message() -> None:
     )
 
 
+def test_closed_default_gate_ignores_fresh_data_input() -> None:
+    message_datapoint_id = uuid.uuid4()
+    enable_datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {
+        message_datapoint_id: MagicMock(value="cached alert"),
+        enable_datapoint_id: MagicMock(value=False),
+    }.get
+    flow = _flow(
+        [
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node("enable_read", "datapoint_read", {"datapoint_id": str(enable_datapoint_id)}),
+            node(
+                "gate",
+                "gate",
+                {
+                    "closed_behavior": "default_value",
+                    "default_value": "default alert",
+                },
+            ),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("message_read", "gate", "value", "in"),
+            edge("enable_read", "gate", "value", "enable"),
+            edge("gate", "notify", "out", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(
+            manager,
+            flow,
+            {"message_read": {"value": "fresh but blocked", "changed": True}},
+        )
+
+    assert outputs["notify"]["_message"] == "default alert"
+    assert outputs["notify"]["sent"] is False
+    adapter.send_notification.assert_not_awaited()
+
+
 def test_gate_freshness_is_recomputed_after_async_replay() -> None:
     archive_datapoint_id = uuid.uuid4()
     message_datapoint_id = uuid.uuid4()

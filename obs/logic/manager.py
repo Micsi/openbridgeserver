@@ -3445,10 +3445,22 @@ class LogicManager:
                 and node.data.get("closed_behavior", "retain") == "retain"
                 and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
             )
-            cache_key = frozenset(blocked_sources)
-            if cache_key not in freshness_cache:
-                freshness_cache[cache_key] = _fresh_input_handles(overrides, flow.edges, blocked_sources)
-            return freshness_cache[cache_key]
+            while True:
+                cache_key = frozenset(blocked_sources)
+                if cache_key not in freshness_cache:
+                    freshness_cache[cache_key] = _fresh_input_handles(overrides, flow.edges, blocked_sources)
+                event_fresh_inputs = freshness_cache[cache_key]
+                newly_blocked_default_gates = {
+                    node.id
+                    for node in flow.nodes
+                    if node.type == "gate"
+                    and node.data.get("closed_behavior", "retain") == "default_value"
+                    and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
+                    and "enable" not in event_fresh_inputs.get(node.id, set())
+                } - blocked_sources
+                if not newly_blocked_default_gates:
+                    return event_fresh_inputs
+                blocked_sources.update(newly_blocked_default_gates)
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()
