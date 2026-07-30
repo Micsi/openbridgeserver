@@ -490,6 +490,120 @@ def test_closed_gate_does_not_make_retained_message_fresh() -> None:
     adapter.send_notification.assert_not_awaited()
 
 
+def test_closed_gate_default_value_is_a_fresh_message() -> None:
+    message_datapoint_id = uuid.uuid4()
+    enable_datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {
+        message_datapoint_id: MagicMock(value="cached alert"),
+        enable_datapoint_id: MagicMock(value=True),
+    }.get
+    flow = _flow(
+        [
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node("enable_read", "datapoint_read", {"datapoint_id": str(enable_datapoint_id)}),
+            node(
+                "gate",
+                "gate",
+                {
+                    "closed_behavior": "default_value",
+                    "default_value": "default alert",
+                },
+            ),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("message_read", "gate", "value", "in"),
+            edge("enable_read", "gate", "value", "enable"),
+            edge("gate", "notify", "out", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(
+            manager,
+            flow,
+            {"enable_read": {"value": False, "changed": True}},
+        )
+
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once_with(
+        message="default alert",
+        providers=[{"provider": "telegram", "target": "alerts"}],
+        title=None,
+        priority=0,
+    )
+
+
+def test_gate_freshness_is_recomputed_after_async_replay() -> None:
+    archive_datapoint_id = uuid.uuid4()
+    message_datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {
+        archive_datapoint_id: MagicMock(value="archive event"),
+        message_datapoint_id: MagicMock(value="cached alert"),
+    }.get
+    flow = _flow(
+        [
+            node("archive_read", "datapoint_read", {"datapoint_id": str(archive_datapoint_id)}),
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node("archive", "message_archive", {"archive_id": "Alerts"}),
+            node("gate", "gate", {"closed_behavior": "retain"}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("archive_read", "archive", "value", "message"),
+            edge("message_read", "gate", "value", "in"),
+            edge("archive", "gate", "stored", "enable"),
+            edge("gate", "notify", "out", "message"),
+        ],
+    )
+    service = MagicMock()
+    service.record = AsyncMock(return_value={"id": "entry-1"})
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(
+            manager,
+            flow,
+            {"archive_read": {"value": "archive event", "changed": True}},
+        )
+
+    service.record.assert_awaited_once()
+    assert outputs["archive"]["stored"] is True
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once_with(
+        message="cached alert",
+        providers=[{"provider": "telegram", "target": "alerts"}],
+        title=None,
+        priority=0,
+    )
+
+
 def test_memory_output_is_not_fresh_during_its_input_tick() -> None:
     datapoint_id = uuid.uuid4()
     manager = _make_manager()

@@ -3411,18 +3411,24 @@ class LogicManager:
             source_id, source_handle = input_sources.get((node_id, handle), ("", ""))
             return GraphExecutor._get_output_value(outputs.get(source_id, {}), source_handle)
 
-        blocked_freshness_sources = {node.id for node in flow.nodes if node.type == "memory"}
-        blocked_freshness_sources.update(
-            node.id
-            for node in flow.nodes
-            if node.type == "gate" and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
-        )
-        event_fresh_inputs = _fresh_input_handles(overrides, flow.edges, blocked_freshness_sources) if overrides else None
+        def _event_fresh_inputs() -> dict[str, set[str]] | None:
+            if not overrides:
+                return None
+            blocked_sources = {node.id for node in flow.nodes if node.type == "memory"}
+            blocked_sources.update(
+                node.id
+                for node in flow.nodes
+                if node.type == "gate"
+                and node.data.get("closed_behavior", "retain") == "retain"
+                and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
+            )
+            return _fresh_input_handles(overrides, flow.edges, blocked_sources)
 
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
                 return False
+            event_fresh_inputs = _event_fresh_inputs()
             if event_fresh_inputs is not None:
                 fresh_handles = event_fresh_inputs.get(node.id, set())
                 fresh_message = "message" in fresh_handles and out.get("_message") is not None
