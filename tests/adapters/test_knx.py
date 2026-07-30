@@ -877,8 +877,21 @@ class TestKnxAdapterConnectDisconnect:
             telegram,
             recent_write,
         )
-        adapter._local_read_responses[1] = (object(), str(binding.datapoint_id), 100.0)
-        adapter._local_read_responses[2] = (object(), str(binding.datapoint_id), None)
+        signature = adapter._confirmation_binding_signature(binding)
+        adapter._local_read_responses[1] = (
+            object(),
+            str(binding.id),
+            str(binding.datapoint_id),
+            signature,
+            100.0,
+        )
+        adapter._local_read_responses[2] = (
+            object(),
+            str(binding.id),
+            str(binding.datapoint_id),
+            signature,
+            None,
+        )
         adapter._invalidated_transmissions[3] = (
             object(),
             str(binding.id),
@@ -1915,6 +1928,77 @@ class TestKnxReadWrite:
         assert event.suppress_write_propagation is True
 
     @pytest.mark.asyncio
+    async def test_ordered_state_confirmations_ignore_transmission_timestamp_order(
+        self,
+        mock_bus,
+    ):
+        adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
+        older_binding = make_binding(
+            {
+                "group_address": "1/2/3",
+                "state_group_address": "1/2/4",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        newer_binding = make_binding(
+            {
+                "group_address": "1/2/5",
+                "state_group_address": "1/2/6",
+                "dpt_id": "DPT9.001",
+            },
+            direction="BOTH",
+        )
+        newer_binding.datapoint_id = older_binding.datapoint_id
+        dpt = DPTRegistry.get("DPT9.001")
+        adapter._ga_source_map = {
+            "1/2/4": [(older_binding, dpt)],
+            "1/2/6": [(newer_binding, dpt)],
+        }
+        now = [100.0]
+        adapter._monotonic = lambda: now[0]
+        order_tracker = ConfirmationOrderTracker()
+        older_order = order_tracker.issue(older_binding.datapoint_id)
+        newer_order = order_tracker.issue(newer_binding.datapoint_id)
+
+        await adapter.write_with_context(
+            older_binding,
+            5.0,
+            logical_value=50.0,
+            confirmation_write_order=older_order,
+        )
+        older_command = mock_xknx.telegrams.put.call_args.args[0]
+        await adapter.write_with_context(
+            newer_binding,
+            6.0,
+            logical_value=60.0,
+            confirmation_write_order=newer_order,
+        )
+        newer_command = mock_xknx.telegrams.put.call_args.args[0]
+
+        adapter._on_telegram_transmitted(newer_command)
+        now[0] += 1.0
+        adapter._on_telegram_transmitted(older_command)
+        older_confirmation = Telegram(
+            destination_address=GroupAddress("1/2/4"),
+            direction=TelegramDirection.INCOMING,
+            payload=older_command.payload,
+        )
+        newer_confirmation = Telegram(
+            destination_address=GroupAddress("1/2/6"),
+            direction=TelegramDirection.INCOMING,
+            payload=newer_command.payload,
+        )
+
+        await adapter._on_telegram(older_confirmation)
+        await adapter._on_telegram(newer_confirmation)
+
+        older_event, newer_event = [call.args[0] for call in mock_bus.publish.call_args_list]
+        assert older_event.value == 50.0
+        assert newer_event.value == 60.0
+        assert newer_event.suppress_write_propagation is True
+
+    @pytest.mark.asyncio
     async def test_rapid_write_confirmations_can_arrive_out_of_order(self, mock_bus):
         adapter, mock_xknx = self._make_adapter_with_xknx(mock_bus)
         binding = make_binding(
@@ -2939,6 +3023,49 @@ class TestHandleReadRequest:
         assert adapter._local_read_responses == {}
 
     @pytest.mark.asyncio
+    async def test_queued_read_response_tombstones_reassigned_binding(self, mock_bus):
+        from unittest.mock import MagicMock
+
+        adapter, mock_xknx = self._make_adapter(mock_bus)
+        dpt = DPTRegistry.get("DPT9.001")
+        original = make_binding(
+            {
+                "group_address": "1/2/3",
+                "dpt_id": "DPT9.001",
+                "respond_to_read": True,
+            },
+            direction="SOURCE",
+        )
+        replacement = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="SOURCE",
+            value_formula="x * 0.2",
+        )
+        replacement.id = original.id
+        replacement.enabled = original.enabled
+        peer = make_binding(
+            {"group_address": "1/2/3", "dpt_id": "DPT9.001"},
+            direction="SOURCE",
+        )
+        adapter._ga_respond_map["1/2/3"] = [(original, dpt)]
+        adapter.set_value_getter(lambda _: MagicMock(quality="good", value=50.0))
+
+        await adapter._handle_read_request("1/2/3")
+        response = mock_xknx.telegrams.put.call_args.args[0]
+        adapter._bindings = [replacement, peer]
+        adapter._xknx = None
+        await adapter._on_bindings_reloaded()
+        adapter._on_telegram_transmitted(response)
+        await adapter._on_telegram(response)
+
+        mock_bus.publish.assert_awaited_once()
+        event = mock_bus.publish.call_args.args[0]
+        assert event.binding_id == peer.id
+        assert event.value == 50.0
+        assert adapter._local_read_responses == {}
+        assert adapter._invalidated_transmissions == {}
+
+    @pytest.mark.asyncio
     async def test_stale_read_response_marker_requires_same_telegram_identity(self, mock_bus):
         adapter, mock_xknx = self._make_adapter(mock_bus)
         binding = make_binding(
@@ -2955,7 +3082,9 @@ class TestHandleReadRequest:
         )
         adapter._local_read_responses[id(command)] = (
             stale_response,
+            str(binding.id),
             str(binding.datapoint_id),
+            adapter._confirmation_binding_signature(binding),
             100.0,
         )
 
@@ -3413,7 +3542,13 @@ class TestKnxAdapterExceptionPaths:
             (),
         )
         adapter._pending_telegram_refs[123] = object()
-        adapter._local_read_responses[456] = (object(), "datapoint", None)
+        adapter._local_read_responses[456] = (
+            object(),
+            "binding",
+            "datapoint",
+            ("datapoint",),
+            None,
+        )
 
         new_xknx = MagicMock()
         new_xknx.start = AsyncMock()
