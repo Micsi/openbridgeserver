@@ -4325,3 +4325,7 @@ class TestStartCronTasks:
 
         assert sleep_calls == [60, 60]
         assert mgr._execute_graph.await_count == 2
+        assert [entry.args[3] for entry in mgr._execute_graph.await_args_list] == [
+            {"i1": {}},
+            {"i1": {}},
+        ]

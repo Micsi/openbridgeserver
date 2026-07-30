@@ -21,6 +21,7 @@ import re
 import socket
 import stat
 import uuid
+from collections import deque
 from datetime import UTC, date, datetime, time
 from pathlib import Path
 from time import perf_counter
@@ -123,6 +124,38 @@ def _downstream_closure(start: set[str], edges: list[Any]) -> set[str]:
                 reached.add(edge.target)
                 grew = True
     return reached
+
+
+def _fresh_input_handles(
+    overrides: dict[str, dict[str, Any]],
+    edges: list[Any],
+    blocked_sources: set[str] | None = None,
+    blocked_outputs: set[tuple[str, str]] | None = None,
+) -> dict[str, set[str]]:
+    """Input handles that receive values downstream of explicit overrides."""
+    fresh_inputs = {node_id: set(values) for node_id, values in overrides.items()}
+    reached = set(overrides)
+    blocked_sources = blocked_sources or set()
+    blocked_outputs = blocked_outputs or set()
+    effective_edges: dict[tuple[str, str], Any] = {}
+    for edge in edges:
+        effective_edges[(edge.target, edge.targetHandle or "in")] = edge
+    outgoing: dict[str, list[Any]] = {}
+    for edge in effective_edges.values():
+        outgoing.setdefault(edge.source, []).append(edge)
+    pending = deque(reached)
+    while pending:
+        source = pending.popleft()
+        if source in blocked_sources:
+            continue
+        for edge in outgoing.get(source, []):
+            if (source, edge.sourceHandle or "out") in blocked_outputs:
+                continue
+            fresh_inputs.setdefault(edge.target, set()).add(edge.targetHandle or "in")
+            if edge.target not in reached:
+                reached.add(edge.target)
+                pending.append(edge.target)
+    return fresh_inputs
 
 
 _ICAL_MAX_BYTES = 1_048_576
@@ -1186,7 +1219,7 @@ class LogicManager:
                 entry = self._graphs.get(graph_id)
                 if entry and entry[1]:  # still exists and enabled
                     g_name, _, flow = entry
-                    await self._execute_graph(graph_id, g_name, flow, {})
+                    await self._execute_graph(graph_id, g_name, flow, {node_id: {}})
                     logger.debug("iCal graph %s (%s) node %s refreshed", graph_id[:8], g_name, node_id[:8])
 
                 await asyncio.sleep(refresh_min * 60)
@@ -1808,6 +1841,12 @@ class LogicManager:
         execute_now = datetime.now(UTC)
         execution_started = perf_counter()
         graph_state = self._node_state.setdefault(graph_id, {})
+        # Event-driven executions still evaluate the full graph so unrelated
+        # datapoint_read nodes can contribute their latest registry values.
+        # Track which input handles descend from the explicit event overrides:
+        # cached inputs are context, not fresh notification triggers. An
+        # execution without overrides is a manual/full-sheet run and keeps the
+        # existing all-inputs behaviour.
         debug_overrides = debug_overrides or {}
         capture_debug_inputs = debug_input_capture is not None
         if not capture_debug_inputs:
@@ -1881,6 +1920,7 @@ class LogicManager:
 
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
+        ical_ids = {node.id for node in flow.nodes if node.type == "ical"}
         message_archive_ids = {node.id for node in flow.nodes if node.type == "message_archive"}
         notify_ids = {node.id for node in flow.nodes if node.type in {"notify_message", "notify_pushover", "notify_sms"}}
         operating_hour_ids = {node.id for node in flow.nodes if node.type == "operating_hours"}
@@ -1901,6 +1941,7 @@ class LogicManager:
 
         # ── Pre-fetch iCal URLs (refresh only when cache is stale) ───────────
         hyst = self._hysteresis.setdefault(graph_id, {})
+        refreshed_ical_nodes: set[str] = set()
         for node in flow.nodes:
             if node.type != "ical":
                 continue
@@ -1996,6 +2037,7 @@ class LogicManager:
                         hyst_node["raw"] = _raw_text
                         hyst_node["fetched_url"] = url
                         hyst_node["last_fetch_ts"] = execute_now.timestamp()
+                        refreshed_ical_nodes.add(node.id)
                         logger.info("Graph %s: iCal fetched from %s (%d bytes)", graph_id[:8], current_url, len(_resp_bytes))
                         break
                 except Exception:
@@ -2155,6 +2197,8 @@ class LogicManager:
                         cron_reachable.add(_ce.target)
                         _cq.append(_ce.target)
 
+        executed_host_check_nodes: set[str] = set()
+
         async def _run_host_check_node(node: Any, target_set: set[str], log_suffix: str = "") -> bool:
             out = outputs.get(node.id, {})
             hyst_hc = hyst.setdefault(node.id, {})
@@ -2193,6 +2237,7 @@ class LogicManager:
                 outputs[node.id]["reachable"] = reachable
                 outputs[node.id]["latency_ms"] = latency_ms
                 target_set.add(node.id)
+                executed_host_check_nodes.add(node.id)
                 logger.info(
                     "Graph %s: host_check%s %s → reachable=%s latency=%s ms",
                     graph_id[:8],
@@ -3336,10 +3381,13 @@ class LogicManager:
 
         # ── Handle message_archive ────────────────────────────────────────────
         triggered_message_archive_nodes: set[str] = set()
+        replayed_message_archive_nodes: set[str] = set()
 
         async def _run_message_archive_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
+                return False
+            if not _has_fresh_firing_input(node.id, out):
                 return False
 
             archive_id = (node.data.get("archive_id") or "").strip().lower()
@@ -3375,10 +3423,82 @@ class LogicManager:
                 return False
 
         triggered_notify_nodes: set[str] = set()
+        replayed_notify_nodes: set[str] = set()
+
+        input_sources = {(edge.target, edge.targetHandle or "in"): (edge.source, edge.sourceHandle or "out") for edge in flow.edges}
+        freshness_cache: dict[tuple[frozenset[str], frozenset[tuple[str, str]]], dict[str, set[str]]] = {}
+
+        def _current_input_value(node_id: str, handle: str) -> Any:
+            node_overrides = {**aug_overrides.get(node_id, {}), **debug_overrides.get(node_id, {})}
+            if handle in node_overrides:
+                return node_overrides[handle]
+            source_id, source_handle = input_sources.get((node_id, handle), ("", ""))
+            return GraphExecutor._get_output_value(outputs.get(source_id, {}), source_handle)
+
+        def _event_fresh_inputs() -> dict[str, set[str]] | None:
+            if not overrides:
+                return None
+            event_sources = {node_id: dict(values) for node_id, values in overrides.items()}
+            for node_id in refreshed_ical_nodes:
+                event_sources.setdefault(node_id, {})
+            blocked_sources = {node.id for node in flow.nodes if node.type == "memory"}
+            blocked_sources.update(api_client_ids - triggered_api_clients)
+            blocked_sources.update(host_check_ids - executed_host_check_nodes)
+            blocked_sources.update(ical_ids - refreshed_ical_nodes)
+            blocked_sources.update(message_archive_ids - replayed_message_archive_nodes)
+            blocked_sources.update(notify_ids - replayed_notify_nodes)
+            blocked_sources.update(node.id for node in flow.nodes if node.type == "wake_on_lan" and node.id not in triggered_wol_nodes)
+            blocked_sources.update(node.id for node in flow.nodes if node.type == "random_value" and outputs.get(node.id, {}).get("value") is None)
+            blocked_sources.update(
+                node.id
+                for node in flow.nodes
+                if node.type == "gate"
+                and node.data.get("closed_behavior", "retain") == "retain"
+                and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
+            )
+            no_result_mapping_ids = {
+                node.id
+                for node in flow.nodes
+                if node.type == "value_mapping"
+                and not GraphExecutor._to_bool(node.data.get("has_default"))
+                and outputs.get(node.id, {}).get("result") is None
+            }
+            blocked_outputs = {
+                (edge.source, edge.sourceHandle or "out")
+                for edge in flow.edges
+                if edge.source in no_result_mapping_ids and (edge.sourceHandle or "out") in {"out", "result"}
+            }
+            while True:
+                cache_key = (frozenset(blocked_sources), frozenset(blocked_outputs))
+                if cache_key not in freshness_cache:
+                    freshness_cache[cache_key] = _fresh_input_handles(event_sources, flow.edges, blocked_sources, blocked_outputs)
+                event_fresh_inputs = freshness_cache[cache_key]
+                newly_blocked_default_gates = {
+                    node.id
+                    for node in flow.nodes
+                    if node.type == "gate"
+                    and node.data.get("closed_behavior", "retain") == "default_value"
+                    and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
+                    and ("enable" not in event_fresh_inputs.get(node.id, set()) or graph_state.get(node.id, {}).get("gate_prev_open") is False)
+                } - blocked_sources
+                if not newly_blocked_default_gates:
+                    return event_fresh_inputs
+                blocked_sources.update(newly_blocked_default_gates)
+
+        def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
+            event_fresh_inputs = _event_fresh_inputs()
+            if event_fresh_inputs is None:
+                return True
+            fresh_handles = event_fresh_inputs.get(node_id, set())
+            fresh_message = "message" in fresh_handles and out.get("_message") is not None
+            fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger"))
+            return fresh_message or fresh_trigger
 
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
+                return False
+            if not _has_fresh_firing_input(node.id, out):
                 return False
 
             if node.type == "notify_message":
@@ -3607,12 +3727,11 @@ class LogicManager:
                     elif node.type == "message_archive" and node.id not in triggered_message_archive_nodes:
                         if await _run_message_archive_node(node, newly_triggered):
                             triggered_message_archive_nodes.add(node.id)
-                    elif (
-                        node.type in {"notify_message", "notify_pushover", "notify_sms"}
-                        and node.id not in triggered_notify_nodes
-                        and (await _run_notify_node(node, newly_triggered) or GraphExecutor._to_bool(outputs.get(node.id, {}).get("_trigger")))
-                    ):
-                        triggered_notify_nodes.add(node.id)
+                    elif node.type in {"notify_message", "notify_pushover", "notify_sms"} and node.id not in triggered_notify_nodes:
+                        out = outputs.get(node.id, {})
+                        if GraphExecutor._to_bool(out.get("_trigger")) and _has_fresh_firing_input(node.id, out):
+                            await _run_notify_node(node, newly_triggered)
+                            triggered_notify_nodes.add(node.id)
                 if not newly_triggered:
                     break
                 _add_resolved_outputs(newly_triggered)
@@ -3620,6 +3739,8 @@ class LogicManager:
                     newly_triggered,
                     skip_node_ids=_triggered_side_effect_ids(),
                 )
+                replayed_message_archive_nodes.update(newly_triggered & triggered_message_archive_nodes)
+                replayed_notify_nodes.update(newly_triggered & triggered_notify_nodes)
 
         for node in flow.nodes:
             if node.type != "message_archive":
@@ -3635,6 +3756,7 @@ class LogicManager:
                 | triggered_wol_nodes
                 | triggered_host_check_nodes,
             )
+            replayed_message_archive_nodes.update(triggered_message_archive_nodes)
             await _run_replay_triggered_side_effects(message_archive_descendants)
 
         # ── Handle notify_pushover ────────────────────────────────────────
@@ -3671,6 +3793,7 @@ class LogicManager:
                 | triggered_wol_nodes
                 | triggered_host_check_nodes,
             )
+            replayed_notify_nodes.update(triggered_notify_nodes)
             await _run_replay_triggered_side_effects(notify_descendants)
 
         # Deferred hc_prev_trigger=False: clear only for HC nodes that did NOT
@@ -3762,6 +3885,12 @@ class LogicManager:
             current_condition = self._sequence_conditions.get((graph_id, node.id), condition)
             if current_condition:
                 self._start_value_sequence(graph_id, node, current_condition, logic_depth, flow.model_dump_json())
+
+        for node in flow.nodes:
+            if node.type == "gate":
+                graph_state.setdefault(node.id, {})["gate_prev_open"] = GraphExecutor._to_bool(_current_input_value(node.id, "enable")) != bool(
+                    node.data.get("negate_enable")
+                )
 
         # ── Persist node state (statistics / hysteresis) to DB ───────────
         await self._persist_node_state(graph_id)
