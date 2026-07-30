@@ -309,6 +309,52 @@ async def test_newer_router_write_invalidates_older_confirmation_order(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_skipped_router_write_does_not_invalidate_queued_confirmation(monkeypatch):
+    binding = _binding(
+        adapter_type="KNX",
+        direction="BOTH",
+        send_on_change=True,
+    )
+    instance = _ContextInstance()
+    router = _make_router([{"id": str(binding.id)}])
+    _patch_registry(monkeypatch, binding, instance)
+    dp_id = uuid.uuid4()
+
+    await router._write_to_dest_bindings(
+        dp_id,
+        50.0,
+        skip_binding_id=None,
+    )
+    await router._write_to_dest_bindings(
+        dp_id,
+        50.0,
+        skip_binding_id=None,
+    )
+
+    assert len(instance.confirmation_write_orders) == 1
+    queued_order = instance.confirmation_write_orders[0]
+    assert queued_order is not None
+    assert queued_order.accept_confirmation() is True
+
+
+@pytest.mark.asyncio
+async def test_failed_confirmation_queue_does_not_invalidate_older_order(monkeypatch):
+    binding = _binding(adapter_type="KNX", direction="BOTH")
+    instance = _ContextInstance()
+    router = _make_router([{"id": str(binding.id)}])
+    _patch_registry(monkeypatch, binding, instance)
+    dp_id = uuid.uuid4()
+
+    await router._write_to_dest_bindings(dp_id, 50.0, skip_binding_id=None)
+    queued_order = instance.confirmation_write_orders[0]
+    instance.confirmation_queued = False
+    await router._write_to_dest_bindings(dp_id, 60.0, skip_binding_id=None)
+
+    assert queued_order is not None
+    assert queued_order.accept_confirmation() is True
+
+
+@pytest.mark.asyncio
 async def test_direct_write_does_not_reserve_action_slot_when_confirmation_is_queued(monkeypatch):
     first_instance_id = uuid.uuid4()
     second_instance_id = uuid.uuid4()

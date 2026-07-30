@@ -406,7 +406,7 @@ class WriteRouter:
             try:
                 context_writer = getattr(type(instance), "write_with_context", None)
                 if callable(context_writer):
-                    await context_writer(
+                    confirmation_queued = await context_writer(
                         instance,
                         binding,
                         write_value,
@@ -415,6 +415,8 @@ class WriteRouter:
                         confirmation_action_token=confirmation_action_token,
                         confirmation_write_order=confirmation_write_order,
                     )
+                    if binding.adapter_type == "KNX" and binding.direction == "BOTH" and confirmation_queued is True:
+                        confirmation_write_order.activate()
                 else:
                     await instance.write(binding, write_value)
                 self._last_sent[binding.id] = time.monotonic()

@@ -33,20 +33,24 @@ class ConfirmationOrderTracker:
 
     def __init__(self) -> None:
         self._next_sequence = 0
-        self._latest_issued: dict[str, int] = {}
+        self._latest_activated: dict[str, int] = {}
 
     def issue(self, datapoint_id: Any) -> ConfirmationWriteOrder:
         self._next_sequence += 1
         datapoint_key = str(datapoint_id)
-        self._latest_issued[datapoint_key] = self._next_sequence
         return ConfirmationWriteOrder(
             tracker=self,
             datapoint_id=datapoint_key,
             sequence=self._next_sequence,
         )
 
+    def activate(self, datapoint_id: str, sequence: int) -> None:
+        latest = self._latest_activated.get(datapoint_id)
+        if latest is None or sequence > latest:
+            self._latest_activated[datapoint_id] = sequence
+
     def accept(self, datapoint_id: str, sequence: int) -> bool:
-        return sequence >= self._latest_issued.get(datapoint_id, sequence)
+        return sequence >= self._latest_activated.get(datapoint_id, sequence)
 
 
 class ConfirmationWriteOrder:
@@ -62,6 +66,9 @@ class ConfirmationWriteOrder:
         self._tracker = tracker
         self._datapoint_id = datapoint_id
         self._sequence = sequence
+
+    def activate(self) -> None:
+        self._tracker.activate(self._datapoint_id, self._sequence)
 
     def accept_confirmation(self) -> bool:
         return self._tracker.accept(self._datapoint_id, self._sequence)

@@ -1079,6 +1079,8 @@ class KnxAdapter(AdapterBase):
             except Exception:
                 self._pending_transmissions.pop(id(telegram), None)
                 raise
+            if binding.direction == "BOTH" and confirmation_write_order is not None:
+                confirmation_write_order.activate()
             logger.info("KNX write: GA=%s value=%s raw=%s", bc.group_address, value, raw.hex())
             return binding.direction == "BOTH"
         except Exception:
