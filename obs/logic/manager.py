@@ -3456,10 +3456,17 @@ class LogicManager:
                 and node.data.get("closed_behavior", "retain") == "retain"
                 and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
             )
+            no_result_mapping_ids = {
+                node.id
+                for node in flow.nodes
+                if node.type == "value_mapping"
+                and not GraphExecutor._to_bool(node.data.get("has_default"))
+                and outputs.get(node.id, {}).get("result") is None
+            }
             blocked_outputs = {
                 (edge.source, edge.sourceHandle or "out")
                 for edge in flow.edges
-                if GraphExecutor._get_output_value(outputs.get(edge.source, {}), edge.sourceHandle or "out") is None
+                if edge.source in no_result_mapping_ids and (edge.sourceHandle or "out") in {"out", "result"}
             }
             while True:
                 cache_key = (frozenset(blocked_sources), frozenset(blocked_outputs))

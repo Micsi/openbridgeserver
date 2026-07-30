@@ -929,6 +929,59 @@ def test_empty_value_mapping_result_does_not_become_a_coerced_fresh_message() ->
     adapter.send_notification.assert_not_awaited()
 
 
+def test_fresh_null_reaches_value_mapping_default() -> None:
+    datapoint_id = uuid.uuid4()
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node(
+                "mapping",
+                "value_mapping",
+                {
+                    "output_type": "string",
+                    "rules": [{"operator": "eq", "value": "alert", "result": "mapped alert"}],
+                    "has_default": True,
+                    "default_value": "cleared",
+                },
+            ),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "mapping", "value", "value"),
+            edge("mapping", "notify", "result", "message"),
+        ],
+    )
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(
+            manager,
+            flow,
+            {"read": {"value": None, "changed": True}},
+        )
+
+    assert outputs["mapping"]["result"] == "cleared"
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once_with(
+        message="cleared",
+        providers=[{"provider": "telegram", "target": "alerts"}],
+        title=None,
+        priority=0,
+    )
+
+
 def test_failed_scheduled_ical_refresh_does_not_send_cached_calendar() -> None:
     manager = _make_manager()
     url = "https://example.com/calendar.ics"
