@@ -818,6 +818,112 @@ async def test_change_filter_taint_survives_malformed_gate_input_count_during_in
 
 
 @pytest.mark.asyncio
+async def test_change_filter_state_committed_through_a_closed_gate_during_initialization():
+    """Regression: a "gate" (Freigabe/relay) node closed by a RESOLVED
+    enable input (here: left unwired, resolving to closed) is a boundary
+    just like a decisive AND/OR gate — while closed, its output is either
+    the retained last-enabled value or a fixed default_value, entirely
+    independent of "in". An unseeded Read Object feeding only the gate's
+    "in" port must not discard a downstream Change Filter's deterministic,
+    fully computed baseline just because it's structurally reachable from
+    that unrelated, never-resolving read."""
+    seeded_id, unseeded_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r_seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "r_unseeded", "type": "datapoint_read", "data": {"datapoint_id": unseeded_id}},
+            {"id": "relay_gate", "type": "gate", "data": {}},
+            {"id": "add1", "type": "math_formula", "data": {"formula": "a + b"}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r_unseeded", "sourceHandle": "value", "target": "relay_gate", "targetHandle": "in"},
+            # enable is intentionally left unwired -> resolves to closed
+            {"source": "r_seeded", "sourceHandle": "value", "target": "add1", "targetHandle": "in1"},
+            {"source": "relay_gate", "sourceHandle": "out", "target": "add1", "targetHandle": "in2"},
+            {"source": "add1", "sourceHandle": "result", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "out", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: 10})
+    mgr._hysteresis["g1"] = {"relay_gate": 5, "cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": 15}
+
+
+@pytest.mark.asyncio
+async def test_change_filter_stays_tainted_when_gate_enable_itself_is_unresolved_during_initialization():
+    """The closed-gate boundary exception only applies when the gate's OWN
+    enable state is itself resolved — if "enable" is fed by the same
+    unresolved Read Object, the gate's closed/open state can't be trusted
+    yet either, so taint must still propagate through it normally."""
+    seeded_id, unseeded_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r_seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "r_unseeded", "type": "datapoint_read", "data": {"datapoint_id": unseeded_id}},
+            {"id": "relay_gate", "type": "gate", "data": {}},
+            {"id": "add1", "type": "math_formula", "data": {"formula": "a + b"}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r_unseeded", "sourceHandle": "value", "target": "relay_gate", "targetHandle": "in"},
+            {"source": "r_unseeded", "sourceHandle": "value", "target": "relay_gate", "targetHandle": "enable"},
+            {"source": "r_seeded", "sourceHandle": "value", "target": "add1", "targetHandle": "in1"},
+            {"source": "relay_gate", "sourceHandle": "out", "target": "add1", "targetHandle": "in2"},
+            {"source": "add1", "sourceHandle": "result", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "out", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: 10})
+    mgr._hysteresis["g1"] = {"relay_gate": 5, "cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": "stale"}
+
+
+@pytest.mark.asyncio
+async def test_change_filter_stays_tainted_when_gate_is_open_via_a_resolved_enable_during_initialization():
+    """The closed-gate boundary exception must not apply when the gate is
+    OPEN (enable resolves to True): an open gate genuinely passes its
+    unresolved "in" value straight through as "out", so a downstream
+    change_filter must still be tainted — same as if the gate weren't
+    there. Also exercises negate_enable (flipping a resolved False into
+    True) alongside the open-gate check."""
+    seeded_id, unseeded_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r_seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "r_unseeded", "type": "datapoint_read", "data": {"datapoint_id": unseeded_id}},
+            {"id": "enable_src", "type": "const_value", "data": {"value": "false", "data_type": "bool"}},
+            {"id": "relay_gate", "type": "gate", "data": {"negate_enable": True}},
+            {"id": "add1", "type": "math_formula", "data": {"formula": "a + b"}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r_unseeded", "sourceHandle": "value", "target": "relay_gate", "targetHandle": "in"},
+            {"source": "enable_src", "sourceHandle": "value", "target": "relay_gate", "targetHandle": "enable"},
+            {"source": "r_seeded", "sourceHandle": "value", "target": "add1", "targetHandle": "in1"},
+            {"source": "relay_gate", "sourceHandle": "out", "target": "add1", "targetHandle": "in2"},
+            {"source": "add1", "sourceHandle": "result", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "out", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: 10})
+    mgr._hysteresis["g1"] = {"relay_gate": 5, "cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": "stale"}
+
+
+@pytest.mark.asyncio
 async def test_unrelated_read_of_target_does_not_skip_write():
     """Read A → Write B plus an independent Read B (no path back to the
     write) is not a feedback loop — B must still be initialized."""
@@ -1274,6 +1380,36 @@ async def test_changed_handle_branch_is_not_initialized():
     await mgr.initialize_graph("g1")
 
     mgr._event_bus.publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_change_filter_changed_handle_branch_is_not_initialized():
+    """Regression: a change_filter's "changed" port is the same kind of
+    discrete event pulse as Read.changed — on a save/startup pseudo-
+    execution it reports a synthetic first-value True (or, after a restart
+    with restored state, a synthetic False), never a real DataValueEvent.
+    A Write descending from Read -> ChangeFilter.in -> ChangeFilter.changed
+    must not be published, exactly like the direct Read.changed case above
+    — even though the change_filter's own baseline is still seeded and
+    committed."""
+    src_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r1", "type": "datapoint_read", "data": {"datapoint_id": src_id}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+        ],
+        [
+            {"source": "r1", "sourceHandle": "value", "target": "cf1", "targetHandle": "in"},
+            {"source": "cf1", "sourceHandle": "changed", "target": "w1", "targetHandle": "value"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={src_id: 42})
+
+    await mgr.initialize_graph("g1")
+
+    mgr._event_bus.publish.assert_not_awaited()
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": 42}
 
 
 @pytest.mark.asyncio

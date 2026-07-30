@@ -543,6 +543,143 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 1
 
+    def test_change_filter_pulse_does_not_bypass_dedup_through_an_intermediate_change_filter(self):
+        """Regression: the pulse-carrying check only restricted the INITIAL
+        seed to a change_filter's "changed" handle, not every subsequent hop
+        of the transitive traversal. For cf1.changed -> cf2.in, cf2.out ->
+        host_check.trigger: cf1 retriggers on every real change, so cf2
+        receives the same boolean True each time — cf2 itself only changes
+        once (its first value), and its "out" afterward is sustained,
+        unchanged data, not a discrete pulse. The traversal must not walk
+        cf2's "out" as if it inherited cf1's pulse just because cf2 became
+        cron_reachable through its own "changed" — host_check must see an
+        ordinary sustained trigger and dedupe normally, pinging only once."""
+        nodes = [
+            node("cf1", "change_filter"),
+            node("cf2", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf1", "cf2", "changed", "in"),
+                edge("cf2", "hc", "out", "trigger"),
+            ],
+        )
+
+        manager = _make_manager()
+        graph_id = "g-cf-chain-intermediate-out-dedup"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf1": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf1": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf1": {"in": 3}}))
+
+        assert mock_ping.await_count == 1
+
+    def test_change_filter_pulse_does_not_bypass_dedup_through_memory(self):
+        """Regression: memory's "reset" port is trigger-typed, so a
+        change_filter.changed pulse legitimately reaches it — but memory is
+        an explicit tick boundary (per its own node description): its "out"
+        this pass is whatever was already committed at the end of a
+        *previous* tick, entirely independent of the reset just delivered
+        (that only takes effect for the *next* tick, via the deferred
+        commit_memory_inputs). The pulse must not be treated as having
+        propagated through to memory's own descendants — a host_check fed
+        by memory.out must see an ordinary sustained trigger and dedupe
+        normally, pinging only once, not on every real cf change."""
+        nodes = [
+            node("cf", "change_filter"),
+            # initial_value must be truthy: a reset commits this value for
+            # the *next* tick's read, so without a truthy default the very
+            # first reset would make every later tick read a falsy None —
+            # never triggering host_check at all and hiding the bug this
+            # test exists to catch.
+            node("mem", "memory", {"initial_value": "1", "data_type": "number"}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf", "mem", "changed", "reset"),
+                edge("mem", "hc", "out", "trigger"),
+            ],
+        )
+
+        manager = _make_manager()
+        graph_id = "g-cf-memory-reset-dedup"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"mem": {"value": 1}}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_ping.await_count == 1
+
+    def test_change_filter_pulse_via_async_replay_does_not_bypass_dedup_through_memory(self):
+        """Same memory tick-boundary stop as above, but for the pulse only
+        discovered via the api_client async replay (_register_change_filter_
+        pulses' own traversal, not the main preamble's) — a change_filter
+        downstream of api_client only learns its real "changed" value after
+        replay, so this exercises that second registration path
+        specifically."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET", "response_type": "text/plain"}),
+            node("cf", "change_filter"),
+            node("mem", "memory", {"initial_value": "1", "data_type": "number"}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "cf", "response", "in"),
+                edge("cf", "mem", "changed", "reset"),
+                edge("mem", "hc", "out", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-async-memory-reset-dedup"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"mem": {"value": 1}}
+
+        responses = iter(["A", "B", "C"])
+
+        async def _next_response(*args, **kwargs):
+            return _MockResponse(200, text=next(responses))
+
+        patcher = patch("obs.logic.manager.httpx.AsyncClient")
+        mock_client_cls = patcher.start()
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(side_effect=_next_response)
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            ):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
+
+        assert mock_ping.await_count == 1
+
     def test_async_driven_sustained_trigger_pings_only_once(self):
         """api_client→hc: HC with async trigger doesn't re-ping when trigger stays True (rising-edge deferred clear)."""
         nodes = [
@@ -1332,6 +1469,35 @@ class TestHostCheckRisingEdge:
             asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
 
         assert manager._hysteresis[graph_id]["mem"]["value"]["count"] == 1
+
+    def test_correction_replay_survives_a_non_deepcopyable_unrelated_output(self):
+        """Regression: every node OUTSIDE a held change_filter's descendant
+        island is placed into known_outputs so the correction replay reuses
+        this pass's already-computed real output for it instead of
+        re-evaluating it. A completely unrelated python_script (a permitted
+        node type) can legitimately return a non-deepcopyable value like a
+        generator expression — copy.deepcopy() used to raise TypeError on
+        that single node's output and abort the entire replay (and with it
+        the graph's remaining writes/state persistence), even though that
+        output has nothing to do with the held branch. Must complete
+        normally instead."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("cf", "change_filter"),
+            node("script_unrelated", "python_script", {"script": "result = (x for x in range(3))"}),
+        ]
+        flow = _flow(nodes, [edge("unseeded_read", "cf", "value", "in")])
+        manager = _make_manager()
+        graph_id = "g-known-outputs-non-copyable"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["cf"]["changed"] is False
+        assert manager._hysteresis[graph_id]["cf"] == {"value": True}
 
     def test_change_filter_is_not_held_when_or_gate_is_already_true_from_a_seeded_branch(self):
         """Regression: an OR gate combining an unseeded Read Object with a

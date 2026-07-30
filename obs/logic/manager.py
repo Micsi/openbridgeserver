@@ -1681,9 +1681,20 @@ class LogicManager:
         #   target DataPoint (e.g. a separate status branch) keep the write
         #   eligible.
         read_node_ids = {node.id for node in flow.nodes if node.type == "datapoint_read"}
-        changed_targets = {e.target for e in flow.edges if e.source in read_node_ids and e.sourceHandle == "changed"}
-        excluded_ids = {node.id for node in flow.nodes if node.type in _INIT_EXCLUDED_NODE_TYPES}
         node_type_by_id = {node.id: node.type for node in flow.nodes}
+        # A change_filter's "changed" port is the same kind of discrete
+        # event pulse as a Read Object's "changed" handle — on a save/
+        # startup pseudo-execution it reports a synthetic first-value
+        # True (or, after a restart with restored state, a synthetic
+        # False), never a real DataValueEvent. A Write descending from it
+        # must not be published, exactly like the direct Read.changed
+        # case just above.
+        changed_targets = {
+            e.target
+            for e in flow.edges
+            if e.sourceHandle == "changed" and (e.source in read_node_ids or node_type_by_id.get(e.source) == "change_filter")
+        }
+        excluded_ids = {node.id for node in flow.nodes if node.type in _INIT_EXCLUDED_NODE_TYPES}
         value_edges = [
             e for e in flow.edges if (e.targetHandle or "") not in _INIT_CONTROL_INPUT_HANDLES.get(node_type_by_id.get(e.target, ""), frozenset())
         ]
@@ -1929,6 +1940,34 @@ class LogicManager:
                     _ctype = _ctarget.type if _ctarget is not None else None
                     if _ctype in _decisive_gate_value_init and _gate_taint_absorbed_init(_ce.target, _ctype):
                         continue
+                    # A "gate" (Freigabe) node closed by a RESOLVED enable
+                    # input is the same kind of boundary as a decisive
+                    # AND/OR gate above — matches the closed-gate exception
+                    # in _execute_graph's own _compute_cf_hold_ids. While
+                    # closed, its output is either the retained last-enabled
+                    # value or a fixed default_value, either way entirely
+                    # independent of "in" this pass. Only applies to a
+                    # tainted edge targeting "in" specifically; if the taint
+                    # instead comes through "enable" itself, the closed
+                    # state can't be trusted and must still propagate.
+                    if _ctype == "gate" and (_ce.targetHandle or "in") == "in":
+                        _gate_data = (_ctarget.data or {}) if _ctarget is not None else {}
+                        _enable_edge = next(
+                            (e for e in flow.edges if e.target == _ce.target and (e.targetHandle or "in") == "enable"),
+                            None,
+                        )
+                        if _enable_edge is None or _enable_edge.source not in cf_tainted:
+                            _enable_v = (
+                                False
+                                if _enable_edge is None
+                                else GraphExecutor._to_bool(
+                                    GraphExecutor._get_output_value(outputs.get(_enable_edge.source, {}), _enable_edge.sourceHandle or "out")
+                                )
+                            )
+                            if _gate_data.get("negate_enable"):
+                                _enable_v = not _enable_v
+                            if not _enable_v:
+                                continue
                     cf_tainted.add(_ce.target)
                     _cfq.append(_ce.target)
 
@@ -2750,6 +2789,19 @@ class LogicManager:
             # separate trigger is unrelated and sustained — e.g.
             # change_filter.changed → api_client.body must not exempt
             # whatever api_client.success drives from rising-edge dedup.
+            #
+            # Symmetric restriction on the SOURCE side: a change_filter's
+            # "out" handle carries the held/passthrough value — sustained
+            # data, not a discrete pulse — exactly like the seed-selection
+            # above already restricts to "changed". Without this check here
+            # too, a chain like cf1.changed → cf2.in → cf2.out →
+            # host_check.trigger would let the transitive traversal walk
+            # cf2's sustained "out" as if it were a pulse, the moment cf2
+            # itself becomes cron_reachable through cf1's real "changed"
+            # pulse — bypassing rising-edge dedup on every execution even
+            # though cf2 itself did not change.
+            if _node_type_by_id.get(edge.source) == "change_filter" and (edge.sourceHandle or "out") != "changed":
+                return False
             target_type = get_node_type(_node_type_by_id.get(edge.target))
             if not target_type:
                 return True
@@ -2806,6 +2858,18 @@ class LogicManager:
             _cq: list[str] = list(cron_reachable)
             while _cq:
                 _cn = _cq.pop()
+                # memory is an explicit tick boundary: a pulse legitimately
+                # reaches its trigger-typed "reset" port (added to
+                # cron_reachable above/below like any other trigger-typed
+                # target), but memory's "out" this pass is whatever was
+                # already committed at the end of a *previous* tick,
+                # entirely independent of the reset/in this pulse just
+                # delivered — that only takes effect via the deferred
+                # commit_memory_inputs, for the *next* tick. The pulse must
+                # not be treated as having propagated through to memory's
+                # own descendants.
+                if _node_type_by_id.get(_cn) == "memory":
+                    continue
                 for _ce in flow.edges:
                     if _ce.source == _cn and _ce.target not in cron_reachable and _edge_carries_pulse(_ce):
                         cron_reachable.add(_ce.target)
@@ -2842,6 +2906,11 @@ class LogicManager:
                     _pq.append(_pe.target)
             while _pq:
                 _pn = _pq.pop()
+                # Same memory tick-boundary stop as the preamble traversal
+                # above — a pulse reaching memory's "reset" must not be
+                # treated as having propagated through to its descendants.
+                if _node_type_by_id.get(_pn) == "memory":
+                    continue
                 for _pe2 in flow.edges:
                     if _pe2.source == _pn and _pe2.target not in cron_reachable and _edge_carries_pulse(_pe2):
                         cron_reachable.add(_pe2.target)

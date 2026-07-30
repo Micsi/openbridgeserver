@@ -137,8 +137,15 @@ class GraphExecutor:
                 # that mutation corrupt the original pass's outputs entry
                 # for the *same* node, which the caller (and any later
                 # correction pass reusing that same outputs dict) still
-                # relies on being untouched.
-                outputs[node.id] = copy.deepcopy(known_outputs[node.id])
+                # relies on being untouched. Snapshotting per output port
+                # (via the same failure-safe fallback chain used for debug
+                # capture) rather than the whole dict in one deepcopy call
+                # means a single non-deepcopyable value on a completely
+                # unrelated node — e.g. a permitted python_script legitimately
+                # returning a generator — degrades only that one port instead
+                # of raising TypeError and aborting this entire replay before
+                # the executor's own per-node exception boundary ever runs.
+                outputs[node.id] = {port: _snapshot_debug_value(val) for port, val in known_outputs[node.id].items()}
                 continue
 
             # Resolve inputs for this node
