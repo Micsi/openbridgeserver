@@ -1108,6 +1108,41 @@ async def test_change_filter_persists_and_restores_nested_opaque_baseline_withou
     assert outputs["cf1"]["changed"] is False
 
 
+@pytest.mark.asyncio
+async def test_load_graphs_restores_state_when_a_node_id_collides_with_the_persist_tag():
+    """Regression: a stateful node whose own (unrestricted) string id is
+    exactly "__obs_persisted_type__" makes _escape_persist_collision wrap
+    the ENTIRE top-level state mapping in its escape envelope — that
+    mapping is itself just a dict that "contains the reserved tag key",
+    same as any other. _load_graphs used to decode each *value* of
+    saved_raw["state"] without first decoding the container itself, so it
+    iterated the envelope's own "__obs_persisted_type__"/"value" keys as
+    though they were node ids, losing every real node's state after a
+    restart instead of restoring it."""
+    import json
+
+    from obs.logic.manager import _PERSIST_TYPE_TAG
+
+    flow = _flow([{"id": _PERSIST_TYPE_TAG, "type": "change_filter"}, {"id": "other", "type": "change_filter"}])
+
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {_PERSIST_TYPE_TAG: {"value": 1}, "other": {"value": 2}}
+    await mgr._persist_node_state("g1")
+    saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
+    saved = json.loads(saved_json)
+    # The whole state mapping got escape-wrapped, not just the one node.
+    assert saved["state"][_PERSIST_TYPE_TAG] == "escaped"
+    assert saved["state"]["value"] == {_PERSIST_TYPE_TAG: {"value": 1}, "other": {"value": 2}}
+
+    mgr2 = _make_manager({})
+    mgr2._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": saved_json}]
+    )
+    await mgr2._load_graphs()
+
+    assert mgr2._hysteresis["g1"] == {_PERSIST_TYPE_TAG: {"value": 1}, "other": {"value": 2}}
+
+
 class TestPersistDefaultAndDecode:
     """Direct tests for the _persist_default/_decode_persisted_value pair
     (issue #1087 Codex finding: "Preserve non-JSON value types in persisted

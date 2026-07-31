@@ -2349,6 +2349,15 @@ class LogicManager:
         # treatment, not just api_client/host_check/message_archive/notify.
         async_replay_source_ids = api_client_ids | host_check_ids | wake_on_lan_ids | message_archive_ids | notify_ids
         needs_async_replay_snapshot = any(edge.source in async_replay_source_ids for edge in flow.edges)
+        # random_value.value is None whenever its own trigger is false this
+        # pass — structurally identical to an unseeded Read Object, not a
+        # genuine value. A change_filter fed by one must be held exactly
+        # like an unresolved async source, so a snapshot must exist to roll
+        # back to on any pass where that turns out to be the case — decided
+        # here from the flow topology alone since (like async sources) the
+        # node's actual output isn't known until after _execute_pass runs.
+        random_value_ids = {node.id for node in flow.nodes if node.type == "random_value"}
+        needs_random_value_snapshot = any(edge.source in random_value_ids for edge in flow.edges)
 
         # ── Pre-compute operating_hours values to inject as overrides ─────
         for node in flow.nodes:
@@ -2572,7 +2581,7 @@ class LogicManager:
         # to roll a change_filter back to its state from before this pass —
         # both the async-replay machinery further down and the change_filter
         # correction immediately below can require it.
-        _needs_pre_execute_snapshot = needs_async_replay_snapshot or bool(unseeded_read_ids)
+        _needs_pre_execute_snapshot = needs_async_replay_snapshot or bool(unseeded_read_ids) or needs_random_value_snapshot
 
         executor = _executor(hyst)
         try:
@@ -2632,7 +2641,14 @@ class LogicManager:
         _chained_unresolved_async_ids = async_replay_source_ids & (
             _downstream_closure(_directly_triggered_async_ids, flow.edges) - _directly_triggered_async_ids
         )
-        _unresolved_source_ids: set[str] = unseeded_read_ids | _directly_triggered_async_ids | _chained_unresolved_async_ids
+        # Unlike the async sources above, an inactive random_value's None
+        # this pass isn't "about to resolve" via a later replay — it's
+        # simply this pass's real, final output until its own trigger next
+        # fires. It still must not be committed as a genuine change_filter
+        # baseline though, so it's folded in here alongside unseeded_read_ids
+        # rather than as part of the async-chain machinery above.
+        _inactive_random_ids = {nid for nid in random_value_ids if outputs.get(nid, {}).get("value") is None}
+        _unresolved_source_ids: set[str] = unseeded_read_ids | _directly_triggered_async_ids | _chained_unresolved_async_ids | _inactive_random_ids
 
         _node_by_id_early = {n.id: n for n in flow.nodes}
         _decisive_gate_value = {"or": True, "and": False}
@@ -3187,7 +3203,9 @@ class LogicManager:
             nonlocal api_replay_overrides
             if api_replay_overrides is None:
                 return
-            _current_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _still_unresolved_source_ids(outputs_source), outputs_source)
+            _current_cf_hold_ids = _compute_cf_hold_ids(
+                unseeded_read_ids | _inactive_random_ids | _still_unresolved_source_ids(outputs_source), outputs_source
+            )
             _refreshed: dict[str, dict[str, Any]] = {}
             for _nid, _vals in api_replay_overrides.items():
                 if "_suppress_change_filter" in _vals and _nid not in _current_cf_hold_ids:
@@ -3248,7 +3266,7 @@ class LogicManager:
             # Redo the replay with suppression applied if this reveals
             # anything new.
             _late_pending = _still_unresolved_source_ids(replay_outputs)
-            _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending, replay_outputs)
+            _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _late_pending, replay_outputs)
             if _late_cf_hold_ids:
                 for _late_cf_id in _late_cf_hold_ids:
                     replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3306,7 +3324,7 @@ class LogicManager:
             # host_check irreversibly ping. Redo the replay with
             # suppression applied if this reveals anything new.
             _hc_late_pending = _still_unresolved_source_ids(hc_second_outputs)
-            _hc_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _hc_late_pending, hc_second_outputs)
+            _hc_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _hc_late_pending, hc_second_outputs)
             if _hc_late_cf_hold_ids:
                 for _hc_late_cf_id in _hc_late_cf_hold_ids:
                     hc_merged.setdefault(_hc_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3448,7 +3466,7 @@ class LogicManager:
                 # downstream host_check irreversibly ping. Redo the replay
                 # with suppression applied if this reveals anything new.
                 _wol_late_pending = _still_unresolved_source_ids(wol_second_outputs)
-                _wol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _wol_late_pending, wol_second_outputs)
+                _wol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _wol_late_pending, wol_second_outputs)
                 if _wol_late_cf_hold_ids:
                     for _wol_late_cf_id in _wol_late_cf_hold_ids:
                         wol_merged.setdefault(_wol_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3526,7 +3544,7 @@ class LogicManager:
                     # the replay with suppression applied if this reveals
                     # anything new.
                     _pwol_late_pending = _still_unresolved_source_ids(_pwol_out)
-                    _pwol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _pwol_late_pending, _pwol_out)
+                    _pwol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _pwol_late_pending, _pwol_out)
                     if _pwol_late_cf_hold_ids:
                         for _pwol_late_cf_id in _pwol_late_cf_hold_ids:
                             _pwol_merged.setdefault(_pwol_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3818,7 +3836,7 @@ class LogicManager:
                     # committed just because this pass happened to be an
                     # API replay.
                     _late_pending = _still_unresolved_source_ids(second_outputs)
-                    _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _late_pending, second_outputs)
+                    _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _late_pending, second_outputs)
                     if _late_cf_hold_ids:
                         for _late_cf_id in _late_cf_hold_ids:
                             replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3908,7 +3926,7 @@ class LogicManager:
             # consistency with every other replay site, in case a future
             # change decouples pat_base_overrides from that inheritance.
             _pat_late_pending = _still_unresolved_source_ids(pat_outputs)
-            _pat_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _pat_late_pending, pat_outputs)
+            _pat_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _pat_late_pending, pat_outputs)
             if _pat_late_cf_hold_ids:
                 for _pat_late_cf_id in _pat_late_cf_hold_ids:
                     pat_merged.setdefault(_pat_late_cf_id, {})["_suppress_change_filter"] = True
@@ -4013,7 +4031,7 @@ class LogicManager:
                 # value. Redo with suppression applied if this reveals
                 # anything new.
                 _pawol_late_pending = _still_unresolved_source_ids(post_api_wol_outputs)
-                _pawol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _pawol_late_pending, post_api_wol_outputs)
+                _pawol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _pawol_late_pending, post_api_wol_outputs)
                 if _pawol_late_cf_hold_ids:
                     for _pawol_late_cf_id in _pawol_late_cf_hold_ids:
                         post_api_wol_merged.setdefault(_pawol_late_cf_id, {})["_suppress_change_filter"] = True
@@ -5349,7 +5367,20 @@ class LogicManager:
                             # it here would wrongly suppress a real
                             # string→datetime type transition on a source
                             # that legitimately persisted a native string).
-                            saved = {nid: _decode_persisted_value(s) for nid, s in saved_raw["state"].items()}
+                            # Decode the *whole* state container first, not
+                            # just each value: if some stateful node's own
+                            # unrestricted string id happens to be exactly
+                            # _PERSIST_TYPE_TAG, _escape_persist_collision
+                            # wraps this entire top-level mapping in an
+                            # escape envelope (since it, too, is just a dict
+                            # that "contains the reserved tag key"). Decoding
+                            # per-value here would then iterate that
+                            # envelope's own _PERSIST_TYPE_TAG/"value" keys
+                            # as though they were node ids instead of
+                            # unwrapping it — _decode_persisted_value already
+                            # knows how to reverse exactly this wrapper.
+                            _decoded_state = _decode_persisted_value(saved_raw["state"])
+                            saved = _decoded_state if isinstance(_decoded_state, dict) else {}
                             # _persist_default's catch-all for an otherwise
                             # unrecognized type (e.g. a python_script's
                             # complex-number/custom-object baseline) tags it
@@ -5435,5 +5466,14 @@ class LogicManager:
     def update_cached_graph(self, graph_id: str, name: str, enabled: bool, flow: FlowData) -> None:
         """Apply a layout-only save without interrupting active sequences."""
         if graph_id in self._graphs:
+            # `flow` here is the request body straight from the API layer,
+            # which reads its pre-edit copy from the DB row (still holding
+            # any legacy api_client field names) rather than from this
+            # manager's already-migrated in-memory cache. Without this, a
+            # layout-only save (e.g. dragging a node) would overwrite the
+            # migrated cached flow with the legacy one, silently losing the
+            # configured headers/bearer-token file until the next full
+            # _load_graphs() reload.
+            _migrate_legacy_api_client_field_names(flow)
             self._graphs[graph_id] = (name, enabled, flow)
             self._sequence_graph_signatures[graph_id] = flow.model_dump_json()

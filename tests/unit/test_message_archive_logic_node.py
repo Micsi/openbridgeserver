@@ -1663,6 +1663,34 @@ def test_sms_missing_credentials_releases_held_change_filter() -> None:
     assert outputs["cf"]["changed"] is True
 
 
+def test_inactive_random_value_does_not_flip_change_filter_baseline() -> None:
+    """Regression: random_value.value is None whenever its own trigger is
+    false this pass — not a genuine value. An unrelated event that
+    re-evaluates the whole graph without triggering the random node must
+    not let that None overwrite the change_filter's real baseline (e.g.
+    spuriously firing a downstream host_check/Wake-on-LAN)."""
+    manager = _make_manager()
+    flow = _flow(
+        [node("rnd", "random_value", {"min": 1, "max": 1}), node("cf", "change_filter")],
+        [edge("rnd", "cf", "value", "in")],
+    )
+    graph_id = "rnd-graph"
+    manager._graphs[graph_id] = ("Graph", True, flow)
+    manager._node_state[graph_id] = {}
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        first = asyncio.run(manager._execute_graph(graph_id, "Graph", flow, {"rnd": {"trigger": True}}))
+        assert first["cf"]["out"] == 1
+        assert first["cf"]["changed"] is True
+
+        # A second, unrelated event re-evaluates the graph without
+        # triggering "rnd" — its value is None this pass.
+        second = asyncio.run(manager._execute_graph(graph_id, "Graph", flow, {}))
+
+    assert second["cf"]["out"] == 1
+    assert second["cf"]["changed"] is False
+
+
 def test_notify_sent_output_replays_downstream_notify() -> None:
     manager = _make_manager()
     flow = _flow(

@@ -210,6 +210,33 @@ class TestMigrateLegacyApiClientFieldNames:
 
         assert flow.nodes[0].data == {"headers_secret_file": "/run/secrets/hdr"}
 
+    def test_update_cached_graph_migrates_legacy_fields_on_layout_only_save(self):
+        # A layout-only save (e.g. dragging a node) resubmits the flow_data
+        # exactly as GET returned it — which reads the raw, unmigrated DB
+        # row, not this manager's already-migrated in-memory cache. Without
+        # migrating again here, update_cached_graph() would overwrite the
+        # migrated cache with the legacy field names and silently drop the
+        # configured headers/bearer-token file until the next full reload.
+        manager = _make_manager()
+        graph_id = "g1"
+        manager._graphs[graph_id] = ("Graph", True, self._flow_with_legacy_fields())
+
+        legacy_flow = self._flow_with_legacy_fields()
+        manager.update_cached_graph(graph_id, "Graph", True, legacy_flow)
+
+        _, _, cached_flow = manager._graphs[graph_id]
+        assert cached_flow.nodes[0].data == {"headers_value_file": "/run/secrets/hdr", "auth_value_file": "/run/secrets/tok"}
+
+    @staticmethod
+    def _flow_with_legacy_fields() -> FlowData:
+        return FlowData(
+            nodes=[
+                TestMigrateLegacyApiClientFieldNames._node(
+                    "api_client", {"headers_secret_file": "/run/secrets/hdr", "auth_token_file": "/run/secrets/tok"}
+                )
+            ]
+        )
+
 
 class TestApiClientFetchTarget:
     """Unit tests for DNS-pinned api_client fetch target construction."""
