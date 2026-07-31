@@ -1015,6 +1015,50 @@ class TestHostCheckRisingEdge:
         assert outputs["cf"]["changed"] is True
         assert outputs["cf"]["out"] == 5
 
+    def test_held_change_filter_does_not_taint_a_downstream_change_filter(self):
+        """Regression: once a change_filter (cf1) is itself tainted/held
+        behind an unresolved Read Object, its held output is fully
+        deterministic for this pass (the executor's _suppress_change_filter
+        handling returns its persisted baseline, changed=False) — exactly
+        like memory's own tick-boundary output. But the forward taint BFS
+        used to keep propagating past a held change_filter too, so a
+        SEPARATE, live Read feeding an Add together with cf1.out had its
+        genuine transition lost: downstream cf2 was held and suppressed
+        just because cf1 (feeding the same Add) happened to be unresolved,
+        even though cf1's contribution to that Add is a known, fixed value
+        this pass."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {}),  # no datapoint_id: always unseeded
+            node("live_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("cf1", "change_filter"),
+            node("add", "math_formula", {"formula": "a + b"}),
+            node("cf2", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "cf1", "value", "in"),
+                edge("cf1", "add", "out", "in1"),
+                edge("live_read", "add", "value", "in2"),
+                edge("add", "cf2", "result", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-hold-does-not-taint-downstream-cf"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf1": {"value": 5}, "cf2": {"value": 6}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"live_read": {"value": 2, "changed": True}}))
+
+        # cf1 stays correctly held behind the unrelated unseeded read.
+        assert outputs["cf1"] == {"out": 5, "changed": False}
+        # cf2 must see the real Add result (5 + 2 = 7) and report the
+        # genuine transition from its persisted baseline of 6 — not be held
+        # hostage to cf1's own, unrelated unresolved upstream.
+        assert outputs["cf2"] == {"out": 7, "changed": True}
+
     def test_change_filter_is_not_held_when_read_is_resolved_via_debug_override(self):
         """Regression: a manual/debug execution (the debug-inspector "run"
         feature) that supplies debug_overrides={read_id: {"value": ...}}
@@ -3456,6 +3500,67 @@ class TestReplayOrderingFixes:
             patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
         ):
             outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        mock_ping.assert_awaited_once()
+        assert mock_ping.await_args.args[0] == "192.168.1.1"
+        assert outputs["wol1"]["sent"] is True
+        assert outputs["cf"]["changed"] is False
+
+    def test_post_api_wol_replay_holds_change_filter_behind_pending_second_wol(self):
+        """Regression (P1): the "post-api WoL replay" (post_api_wol_merged/
+        post_api_wol_outputs — distinct from the dedicated WoL replay and
+        the "Post-WoL host_check pass" above, and from every other replay
+        site already fixed in prior rounds) registered change_filter pulses
+        without recomputing late-pending async descendants first. For
+        api_client -> host_check1 -> wol1 -> wol2 -> change_filter ->
+        host_check2: host_check1 fires for real off api_client's real
+        result, its real "reachable" triggers wol1 within the post-api-WoL
+        section, wol1 actually sends and its real "sent" newly triggers
+        wol2 within THIS SAME replay — but wol2 hasn't actually sent yet
+        (its own output here is still a placeholder). host_check2 must not
+        ping off that placeholder; since wol2 never actually resolves
+        within this same tick, it must never ping at all."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET", "response_type": "text/plain"}),
+            node("hc1", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+            node("wol1", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
+            node("wol2", "wake_on_lan", {"mac_address": "11:22:33:44:55:66"}),
+            node("cf", "change_filter"),
+            node("hc2", "host_check", {"host": "192.168.1.2", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "hc1", "success", "trigger"),
+                edge("hc1", "wol1", "reachable", "trigger"),
+                edge("wol1", "wol2", "sent", "trigger"),
+                edge("wol2", "cf", "sent", "in"),
+                edge("cf", "hc2", "changed", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-post-api-wol-chain-holds-cf"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        patcher = patch("obs.logic.manager.httpx.AsyncClient")
+        mock_client_cls = patcher.start()
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(return_value=_MockResponse(200, text="OK"))
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
 
         mock_ping.assert_awaited_once()
         assert mock_ping.await_args.args[0] == "192.168.1.1"

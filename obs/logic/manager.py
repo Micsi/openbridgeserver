@@ -2653,6 +2653,18 @@ class LogicManager:
                             if not _enable_v:
                                 continue
                     _tainted.add(_te.target)
+                    if _target_type == "change_filter":
+                        # A change_filter that becomes tainted/held here is,
+                        # for THIS pass, fully deterministic: the executor's
+                        # _suppress_change_filter handling returns its
+                        # previous baseline as "out" and changed=False — a
+                        # known, resolved value, not an unresolved one.
+                        # Continuing the BFS past it would taint (and
+                        # unnecessarily suppress) every downstream
+                        # change_filter too, even though nothing downstream
+                        # actually depends on anything still unresolved — only
+                        # on this filter's own deterministic held output.
+                        continue
                     _tq.append(_te.target)
             return {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _tainted}
 
@@ -3842,6 +3854,24 @@ class LogicManager:
                 _pawol_hyst_snap = copy.deepcopy(hyst)
                 post_api_wol_executor = _executor(_pawol_hyst_snap)
                 post_api_wol_outputs = _execute_pass(post_api_wol_executor, post_api_wol_merged)
+                # This WoL send can itself newly reveal — only once visible in
+                # this pass's OWN outputs — that a further downstream async
+                # node (e.g. a second, chained wake_on_lan or host_check) is
+                # triggered but hasn't actually run yet: its own output here
+                # is still a placeholder, exactly like every other replay
+                # site. A change_filter reachable only through that node must
+                # stay held rather than commit — and let a downstream
+                # host_check irreversibly ping — using this still-wrong
+                # value. Redo with suppression applied if this reveals
+                # anything new.
+                _pawol_late_pending = _still_unresolved_source_ids(post_api_wol_outputs)
+                _pawol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _pawol_late_pending, post_api_wol_outputs)
+                if _pawol_late_cf_hold_ids:
+                    for _pawol_late_cf_id in _pawol_late_cf_hold_ids:
+                        post_api_wol_merged.setdefault(_pawol_late_cf_id, {})["_suppress_change_filter"] = True
+                    _pawol_hyst_snap = copy.deepcopy(hyst)
+                    post_api_wol_executor = _executor(_pawol_hyst_snap)
+                    post_api_wol_outputs = _execute_pass(post_api_wol_executor, post_api_wol_merged)
                 post_api_wol_descendants: set[str] = set()
                 post_api_wol_queue = list(post_api_wol_nodes)
                 while post_api_wol_queue:
@@ -4789,7 +4819,21 @@ class LogicManager:
             was_triggered = state.get("sequence_prev_trigger", False)
             state["sequence_prev_trigger"] = triggered
             cron_triggered = any(
-                edge.target == node.id and (edge.targetHandle or "in") == "trigger" and edge.source in cron_reachable for edge in flow.edges
+                edge.target == node.id
+                and (edge.targetHandle or "in") == "trigger"
+                and edge.source in cron_reachable
+                # A pulse reaching a Memory node (e.g. change_filter.changed
+                # -> memory.reset) puts memory itself in cron_reachable, but
+                # memory is an explicit tick boundary: its "out" this pass is
+                # whatever was already committed at the end of a *previous*
+                # tick, unaffected by the reset/in this pulse just delivered
+                # (that only takes effect via the deferred
+                # commit_memory_inputs, for the *next* tick). Memory being
+                # reachable must not be read as "my trigger input just
+                # pulsed" — only a non-Memory source directly in
+                # cron_reachable genuinely means that.
+                and (node_by_id[edge.source].type != "memory" if edge.source in node_by_id else True)
+                for edge in flow.edges
             )
             pulse_sources = [node.id]
             pulse_seen: set[str] = set()
@@ -4799,6 +4843,18 @@ class LogicManager:
                 if target_id in pulse_seen:
                     continue
                 pulse_seen.add(target_id)
+                # Memory is an explicit tick boundary — mirrors cron_reachable's
+                # forward traversal above (see its own "memory" comment): its
+                # "out" this pass is whatever was already committed at the end
+                # of a *previous* tick, entirely independent of whatever pulse
+                # just reached its "in"/"reset" this tick — that only takes
+                # effect via the deferred commit_memory_inputs, for the *next*
+                # tick. A change_filter feeding memory.reset must not be
+                # treated as if it drove memory.out itself, so this reverse
+                # trace must not walk past memory to inspect what fed it.
+                _target_node = node_by_id.get(target_id)
+                if _target_node is not None and _target_node.type == "memory":
+                    continue
                 for edge in flow.edges:
                     if edge.target != target_id:
                         continue

@@ -598,6 +598,48 @@ def test_change_filter_wired_to_condition_does_not_retrigger_sequence() -> None:
     asyncio.run(exercise())
 
 
+def test_change_filter_pulse_through_memory_reset_does_not_retrigger_sustained_sequence() -> None:
+    """Regression: the value_sequence's own reverse pulse-trace (used to
+    decide whether an upstream change_filter pulse should bypass the
+    sustained-trigger dedup) did not stop at Memory nodes, unlike the
+    forward cron_reachable traversal. With change_filter.changed ->
+    memory.reset and a retained memory.out -> value_sequence.trigger that
+    stays truthy across the tick, a change_filter pulse merely resetting
+    memory (which only takes effect on the *next* tick, via the executor's
+    deferred commit_memory_inputs) must not be treated as if it drove
+    memory.out itself — the sequence must stay deduped as "sustained", not
+    restart on every filter pulse."""
+
+    async def exercise() -> None:
+        manager = _manager()
+        target = uuid.uuid4()
+        flow = FlowData.model_validate(
+            {
+                "nodes": [
+                    node("cf", "change_filter"),
+                    node("mem", "memory", {"initial_value": "0", "data_type": "number"}),
+                    node("sequence", "value_sequence", {"restart_policy": "queue", "steps": [{"datapoint_id": str(target), "value": 1}]}),
+                ],
+                "edges": [
+                    edge("cf", "mem", "changed", "reset"),
+                    edge("mem", "sequence", "out", "trigger"),
+                ],
+            },
+        )
+        manager._graphs["graph"] = ("Graph", True, flow)
+        manager._hysteresis["graph"] = {"mem": {"value": 1}, "cf": {"value": 1}}
+        manager._node_state["graph"] = {"sequence": {"sequence_prev_trigger": True}}
+
+        await manager._execute_graph("graph", "Graph", flow, {"cf": {"in": 2}})
+        task = manager._sequence_tasks.get(("graph", "sequence"))
+        if task is not None:
+            await task
+
+        assert manager._event_bus.publish.await_count == 0
+
+    asyncio.run(exercise())
+
+
 def test_cancelling_a_restart_also_cancels_its_original_sequence() -> None:
     async def exercise() -> None:
         manager = _manager()
