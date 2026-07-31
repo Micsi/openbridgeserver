@@ -4703,15 +4703,59 @@ class TestStartCronTasks:
             assert not mgr._ical_fetch_locks[("g1", "i1")].locked()
 
             await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+            assert "_ical_last_attempt_ts" in mgr._hysteresis["g1"]["i1"]
 
-        assert fetch_count == 2
-        assert "_ical_last_attempt_ts" in mgr._hysteresis["g1"]["i1"]
+            hyst_node = mgr._hysteresis["g1"]["i1"]
+            for key in ("raw", "_ical_last_attempt_url", "_ical_last_attempt_limit", "_ical_last_attempt_ts"):
+                hyst_node.pop(key, None)
+            mgr._ical_result_caches["g1"].clear()
+            real_to_thread = asyncio.to_thread
+
+            async def _cancel_precompute(func, *args):
+                if getattr(func, "__name__", "") == "_eval_node":
+                    func(*args)
+                    raise asyncio.CancelledError()
+                return await real_to_thread(func, *args)
+
+            with (
+                patch("obs.logic.manager.asyncio.to_thread", side_effect=_cancel_precompute),
+                pytest.raises(asyncio.CancelledError),
+            ):
+                await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+
+            assert "_ical_precompute_token" not in hyst_node
+            assert mgr._ical_result_caches["g1"] == {}
+            hyst_node.pop("raw", None)
+
+            async def _cancel_after_precompute(func, *args):
+                if getattr(func, "__name__", "") == "_eval_node":
+                    func(*args)
+                    mgr._graphs["g1"] = ("G1", False, flow)
+                    mgr._hysteresis["g1"].clear()
+                    mgr._ical_result_caches["g1"].clear()
+                    raise asyncio.CancelledError()
+                return await real_to_thread(func, *args)
+
+            with (
+                patch("obs.logic.manager.asyncio.to_thread", side_effect=_cancel_after_precompute),
+                pytest.raises(asyncio.CancelledError),
+            ):
+                await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+
+        assert fetch_count == 4
+        assert mgr._ical_result_caches["g1"] == {}
 
     @pytest.mark.asyncio
-    async def test_ical_result_cache_is_not_copied_into_async_replay_snapshots(self):
-        class _NotCopyable:
+    async def test_ical_result_cache_is_copied_off_event_loop_for_async_replay(self):
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        copy_threads = []
+
+        class _CopyAware:
             def __deepcopy__(self, _memo):
-                raise AssertionError("runtime iCalendar cache was snapshotted")
+                copy_threads.append(threading.get_ident())
+                return self
 
         flow = _make_flow(
             nodes=[
@@ -4730,7 +4774,7 @@ class TestStartCronTasks:
         )
         mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
         db.execute_and_commit = AsyncMock()
-        sentinel = _NotCopyable()
+        sentinel = _CopyAware()
         mgr._ical_result_caches["g1"] = {"i1": sentinel}
 
         with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
@@ -4738,6 +4782,8 @@ class TestStartCronTasks:
             await mgr._execute_graph("g1", "G1", flow, {})
 
         assert mgr._ical_result_caches["g1"]["i1"] is sentinel
+        assert copy_threads
+        assert all(thread_id != event_loop_thread for thread_id in copy_threads)
 
     @pytest.mark.asyncio
     async def test_ical_graph_can_reenter_during_datapoint_publication(self):

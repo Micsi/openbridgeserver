@@ -78,6 +78,7 @@ class GraphExecutor:
         app_config: dict[str, Any] | None = None,
         input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
         ical_result_cache: dict[str, Any] | None = None,
+        ical_cache_outputs_owned: bool = False,
     ):
         self.flow = flow
         # NOTE: use `is not None` instead of `or {}` — an empty dict {} is falsy,
@@ -90,6 +91,7 @@ class GraphExecutor:
         # separate from hysteresis state, which LogicManager deep-copies for
         # async replay passes.
         self.ical_result_cache = ical_result_cache if ical_result_cache is not None else {}
+        self.ical_cache_outputs_owned = ical_cache_outputs_owned
 
     def execute(
         self,
@@ -1345,7 +1347,8 @@ class GraphExecutor:
                         and cached.get("key") == cache_key
                         and isinstance(cached.get("outputs"), dict)
                     ):
-                        out.update(copy.deepcopy(cached["outputs"]))
+                        cached_outputs = cached["outputs"]
+                        out.update(cached_outputs if self.ical_cache_outputs_owned else copy.deepcopy(cached_outputs))
                         return out
 
                     tomorrow = today + _dt_ic.timedelta(days=1)

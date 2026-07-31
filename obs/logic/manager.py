@@ -36,6 +36,7 @@ from obs.logic.models import FlowData
 from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
+_copy_ical_cache_in_worker = asyncio.to_thread
 
 
 def _msg_to_str(v: object) -> str:
@@ -903,6 +904,7 @@ class LogicManager:
             "_ical_last_attempt_url",
             "_ical_last_attempt_limit",
             "_ical_last_attempt_ts",
+            "_ical_precompute_token",
         }
         for graph_id, (_, enabled, flow) in self._graphs.items():
             active_ical_ids = {
@@ -917,6 +919,8 @@ class LogicManager:
             graph_hysteresis = self._hysteresis.get(graph_id)
             if graph_hysteresis is not None:
                 for node_id, node_state in list(graph_hysteresis.items()):
+                    if isinstance(node_state, dict):
+                        node_state.pop("_ical_precompute_token", None)
                     if node_id not in active_ical_ids and isinstance(node_state, dict) and not ical_runtime_keys.isdisjoint(node_state):
                         graph_hysteresis.pop(node_id, None)
             for key in [key for key in self._ical_fetch_locks if key[0] == graph_id and key[1] not in active_ical_ids]:
@@ -1931,9 +1935,16 @@ class LogicManager:
                 capture_incoming_overrides=candidate,
             )
 
-        def _executor(state: dict[str, Any]) -> GraphExecutor:
+        async def _executor(state: dict[str, Any]) -> GraphExecutor:
+            pass_ical_cache = await _copy_ical_cache_in_worker(copy.deepcopy, ical_result_cache) if ical_result_cache else {}
             if not capture_debug_inputs:
-                return GraphExecutor(flow, state, self._app_config, ical_result_cache=ical_result_cache)
+                return GraphExecutor(
+                    flow,
+                    state,
+                    self._app_config,
+                    ical_result_cache=pass_ical_cache,
+                    ical_cache_outputs_owned=True,
+                )
 
             run_inputs: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -1946,7 +1957,14 @@ class LogicManager:
                     debug_input_runs.append((dict(run_outputs), run_inputs))
                     return run_outputs
 
-            return CapturingGraphExecutor(flow, state, self._app_config, run_inputs, ical_result_cache)
+            return CapturingGraphExecutor(
+                flow,
+                state,
+                self._app_config,
+                run_inputs,
+                pass_ical_cache,
+                ical_cache_outputs_owned=True,
+            )
 
         # ── Seed all datapoint_read nodes from registry ───────────────────
         # In event-driven execution only the triggered node(s) have overrides.
@@ -2126,13 +2144,23 @@ class LogicManager:
                         if active_client is not None:
                             await active_client.aclose()
                         if node.id in refreshed_ical_nodes:
+                            precomputed_cache: dict[str, Any] = {}
+                            precompute_token = object()
+                            hyst_node["_ical_precompute_token"] = precompute_token
                             precompute_executor = GraphExecutor(
                                 flow,
                                 hyst,
                                 self._app_config,
-                                ical_result_cache=ical_result_cache,
+                                ical_result_cache=precomputed_cache,
                             )
-                            await asyncio.to_thread(precompute_executor._eval_node, node, {})
+                            try:
+                                await asyncio.to_thread(precompute_executor._eval_node, node, {})
+                            except BaseException:
+                                if hyst_node.get("_ical_precompute_token") is precompute_token:
+                                    hyst_node.pop("_ical_precompute_token", None)
+                                raise
+                            if hyst_node.pop("_ical_precompute_token", None) is precompute_token:
+                                ical_result_cache[node.id] = precomputed_cache[node.id]
                         if attempt_completed:
                             hyst_node["_ical_last_attempt_url"] = url
                             hyst_node["_ical_last_attempt_limit"] = payload_limit
@@ -2239,7 +2267,7 @@ class LogicManager:
             except Exception:
                 logger.exception("Graph %s: heating_circuit history pre-fill failed", graph_id[:8])
 
-        executor = _executor(hyst)
+        executor = await _executor(hyst)
         try:
             pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
             pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
@@ -2369,7 +2397,7 @@ class LogicManager:
                         outputs.get(_re.source, {}), _re.sourceHandle or "out"
                     )
 
-        def _replay_async_descendants(node_ids: set[str], *, skip_node_ids: set[str] | None = None) -> set[str]:
+        async def _replay_async_descendants(node_ids: set[str], *, skip_node_ids: set[str] | None = None) -> set[str]:
             descendants: set[str] = set()
             queue: list[str] = list(node_ids)
             while queue:
@@ -2399,7 +2427,7 @@ class LogicManager:
                 replay_overrides.setdefault(edge.target, {})[target_handle] = source_value
 
             replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            replay_executor = _executor(replay_hyst)
+            replay_executor = await _executor(replay_hyst)
             replay_outputs = _execute_pass(replay_executor, replay_overrides)
             blocked_ids = skip_node_ids or set()
             for nid, vals in replay_outputs.items():
@@ -2439,7 +2467,7 @@ class LogicManager:
             for nid, vals in hc_downstream_overrides.items():
                 hc_merged.setdefault(nid, {}).update(vals)
             hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            hc_second_executor = _executor(hc_hyst_snapshot)
+            hc_second_executor = await _executor(hc_hyst_snapshot)
             hc_second_outputs = _execute_pass(hc_second_executor, hc_merged)
             hc_descendants: set[str] = set()
             hc_queue: list[str] = list(replay_sources)
@@ -2544,7 +2572,7 @@ class LogicManager:
                 # avg_multi, …) don't accumulate a second sample just because
                 # a WoL edge is present — we only want their *outputs*, not
                 # a second mutation of their persisted state.
-                wol_second_executor = _executor(copy.deepcopy(hyst))
+                wol_second_executor = await _executor(copy.deepcopy(hyst))
                 wol_second_outputs = _execute_pass(wol_second_executor, wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
                 # their descendants are updated, leaving unrelated nodes intact.
@@ -2601,7 +2629,7 @@ class LogicManager:
                     for nid, vals in _pwol_dn_ovr.items():
                         _pwol_merged.setdefault(nid, {}).update(vals)
                     _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                    _pwol_exec = _executor(_pwol_hyst)
+                    _pwol_exec = await _executor(_pwol_hyst)
                     _pwol_out = _execute_pass(_pwol_exec, _pwol_merged)
                     _pwol_desc: set[str] = set()
                     _pwol_dq: list[str] = list(_pwol_src)
@@ -2860,7 +2888,7 @@ class LogicManager:
                 api_replay_overrides = {nid: dict(vals) for nid, vals in replay_overrides.items()}
                 if pre_execute_hyst is not None:
                     replay_hyst = copy.deepcopy(pre_execute_hyst)
-                    second_executor = _executor(replay_hyst)
+                    second_executor = await _executor(replay_hyst)
                     second_outputs = _execute_pass(second_executor, replay_overrides)
                     # Compute transitive descendants of triggered api_clients so that
                     # only their subtree is updated. This prevents the api_client
@@ -2916,7 +2944,7 @@ class LogicManager:
             for nid, vals in pat_hc_overrides.items():
                 pat_merged.setdefault(nid, {}).update(vals)
             pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            pat_executor = _executor(pat_hyst_snapshot)
+            pat_executor = await _executor(pat_hyst_snapshot)
             pat_outputs = _execute_pass(pat_executor, pat_merged)
             pat_descendants: set[str] = set()
             pat_queue: list[str] = list(replay_sources)
@@ -3002,7 +3030,7 @@ class LogicManager:
                 for nid, vals in post_api_wol_overrides.items():
                     post_api_wol_merged.setdefault(nid, {}).update(vals)
                 _pawol_hyst_snap = copy.deepcopy(hyst)
-                post_api_wol_executor = _executor(_pawol_hyst_snap)
+                post_api_wol_executor = await _executor(_pawol_hyst_snap)
                 post_api_wol_outputs = _execute_pass(post_api_wol_executor, post_api_wol_merged)
                 post_api_wol_descendants: set[str] = set()
                 post_api_wol_queue = list(post_api_wol_nodes)
@@ -3049,7 +3077,7 @@ class LogicManager:
                         for nid, vals in _pawol_dn_ovr.items():
                             _pawol_merged.setdefault(nid, {}).update(vals)
                         _pawol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        _pawol_exec = _executor(_pawol_hyst)
+                        _pawol_exec = await _executor(_pawol_hyst)
                         _pawol_out = _execute_pass(_pawol_exec, _pawol_merged)
                         _pawol_desc: set[str] = set()
                         _pawol_dq: list[str] = list(_pawol_replay_src)
@@ -3275,7 +3303,7 @@ class LogicManager:
                     tgt_handle = e.targetHandle or "in"
                     replay_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs.get(e.source, {}), src_handle)
                 replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                api_executor = _executor(replay_hyst)
+                api_executor = await _executor(replay_hyst)
                 api_outputs = _execute_pass(api_executor, replay_overrides)
                 for nid, vals in api_outputs.items():
                     if nid not in api_client_ids and nid in api_descendants:
@@ -3331,7 +3359,7 @@ class LogicManager:
                                 src_handle,
                             )
                         final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        final_hc_executor = _executor(final_hc_hyst)
+                        final_hc_executor = await _executor(final_hc_hyst)
                         final_hc_outputs = _execute_pass(final_hc_executor, final_hc_merged)
                         for nid, vals in final_hc_outputs.items():
                             if nid in final_hc_descendants and nid not in triggered_api_clients:
@@ -3403,7 +3431,7 @@ class LogicManager:
                 for nid, vals in _fwol_dn_ovr.items():
                     _fwol_merged.setdefault(nid, {}).update(vals)
                 _fwol_hyst_snap = copy.deepcopy(hyst)
-                _fwol_exec = _executor(_fwol_hyst_snap)
+                _fwol_exec = await _executor(_fwol_hyst_snap)
                 _fwol_out = _execute_pass(_fwol_exec, _fwol_merged)
                 _fwol_desc: set[str] = set()
                 _fwol_q: list[str] = list(_final_wol_candidates)
@@ -3448,7 +3476,7 @@ class LogicManager:
                         for nid, vals in _fwolhc_dn_ovr.items():
                             _fwolhc_mrgd.setdefault(nid, {}).update(vals)
                         _fwolhc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        _fwolhc_exec = _executor(_fwolhc_hyst)
+                        _fwolhc_exec = await _executor(_fwolhc_hyst)
                         _fwolhc_out = _execute_pass(_fwolhc_exec, _fwolhc_mrgd)
                         _fwolhc_desc: set[str] = set()
                         _fwolhc_dq: list[str] = list(_fwolhc_srcs)
@@ -3829,7 +3857,7 @@ class LogicManager:
                 if not newly_triggered:
                     break
                 _add_resolved_outputs(newly_triggered)
-                pending_candidates = _replay_async_descendants(
+                pending_candidates = await _replay_async_descendants(
                     newly_triggered,
                     skip_node_ids=_triggered_side_effect_ids(),
                 )
@@ -3842,7 +3870,7 @@ class LogicManager:
             await _run_message_archive_node(node, triggered_message_archive_nodes)
         if triggered_message_archive_nodes:
             _add_resolved_outputs(triggered_message_archive_nodes)
-            message_archive_descendants = _replay_async_descendants(
+            message_archive_descendants = await _replay_async_descendants(
                 triggered_message_archive_nodes,
                 skip_node_ids=triggered_message_archive_nodes
                 | triggered_notify_nodes
@@ -3879,7 +3907,7 @@ class LogicManager:
 
         if triggered_notify_nodes:
             _add_resolved_outputs(triggered_notify_nodes)
-            notify_descendants = _replay_async_descendants(
+            notify_descendants = await _replay_async_descendants(
                 triggered_notify_nodes,
                 skip_node_ids=triggered_message_archive_nodes
                 | triggered_notify_nodes
@@ -4071,6 +4099,7 @@ class LogicManager:
                                 "_ical_last_attempt_url",
                                 "_ical_last_attempt_limit",
                                 "_ical_last_attempt_ts",
+                                "_ical_precompute_token",
                             }
                         }
                     else:

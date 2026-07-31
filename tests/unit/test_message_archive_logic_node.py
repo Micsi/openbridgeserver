@@ -226,7 +226,8 @@ def test_message_archive_replay_runs_downstream_host_check_and_wol() -> None:
 
     service.record.assert_awaited_once()
     mock_ping.assert_awaited_once()
-    mock_to_thread.assert_awaited_once()
+    wol_calls = [call for call in mock_to_thread.await_args_list if call.args and call.args[0].__name__ == "_send_wol_packet"]
+    assert len(wol_calls) == 1
     assert outputs["hc"]["reachable"] is True
     assert outputs["wol"]["sent"] is True
 
