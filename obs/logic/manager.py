@@ -1993,6 +1993,7 @@ class LogicManager:
             candidate: dict[str, dict[str, Any]],
             *,
             commit_memory: bool = False,
+            executor_lock_held: bool = False,
         ) -> dict[str, dict[str, Any]]:
             execute_args = partial(
                 executor.execute,
@@ -2003,21 +2004,26 @@ class LogicManager:
             if not has_python_scripts:
                 result = execute_args()
             else:
-                execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
-                async with execution_lock:
+
+                async def _run_worker() -> dict[str, dict[str, Any]]:
                     worker = asyncio.create_task(_run_graph_executor_in_worker(execute_args))
                     try:
-                        result = await asyncio.shield(worker)
+                        return await asyncio.shield(worker)
                     except asyncio.CancelledError:
-                        # Cancelling to_thread() cannot stop code already running
-                        # in its worker. Keep the per-graph lock until that code
-                        # has exited so a replacement scheduler cannot mutate the
-                        # same state concurrently with this obsolete pass.
+                        # Cancelling to_thread() cannot stop code already running.
+                        # The caller retains the per-graph lock while this drains.
                         try:
                             await worker
                         except Exception:
                             logger.exception("Graph %s: cancelled Python-script worker failed while draining", graph_id)
                         raise
+
+                if executor_lock_held:
+                    result = await _run_worker()
+                else:
+                    execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
+                    async with execution_lock:
+                        result = await _run_worker()
             if self._ical_cache_generations.get(graph_id) is not ical_generation:
                 raise _ObsoleteGraphExecution
             return result
@@ -2106,12 +2112,24 @@ class LogicManager:
             for ical_node in ical_nodes:
                 precompute_lock = self._ical_precompute_locks.setdefault((graph_id, ical_node.id), asyncio.Lock())
                 async with precompute_lock:
-                    if self._ical_cache_generations.get(graph_id) is ical_generation:
-                        latest_entry = self._ical_result_caches.get(graph_id, {}).get(ical_node.id)
-                        if latest_entry is not None and latest_entry is not execution_ical_sources.get(ical_node.id):
-                            pass_ical_cache[ical_node.id] = latest_entry
-                            execution_ical_sources[ical_node.id] = latest_entry
-                    publication = await asyncio.to_thread(_precompute_ical_node, ical_node)
+                    if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                        raise _ObsoleteGraphExecution
+                    latest_entry = self._ical_result_caches.get(graph_id, {}).get(ical_node.id)
+                    if latest_entry is not None and latest_entry is not execution_ical_sources.get(ical_node.id):
+                        pass_ical_cache[ical_node.id] = latest_entry
+                        execution_ical_sources[ical_node.id] = latest_entry
+                    worker = asyncio.create_task(asyncio.to_thread(_precompute_ical_node, ical_node))
+                    try:
+                        publication = await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        # A running thread cannot be canceled.  Retain the
+                        # per-node lock until it exits so a replacement graph
+                        # cannot start a second large recurrence parse beside it.
+                        try:
+                            await worker
+                        except Exception:
+                            logger.exception("Graph %s: cancelled iCalendar precompute failed while draining", graph_id)
+                        raise
                     if publication is not None and self._ical_cache_generations.get(graph_id) is ical_generation:
                         self._ical_result_caches[graph_id] = {
                             **self._ical_result_caches.get(graph_id, {}),
@@ -2414,20 +2432,29 @@ class LogicManager:
         # the first pass against an isolated snapshot so a worker made
         # obsolete by a concurrent save cannot leak state into the replacement
         # graph.  Commit only after the pass proves its generation is current.
-        execution_hyst = copy.deepcopy(hyst) if has_python_scripts else hyst
-        executor = await _executor(execution_hyst)
-        # A semantic save/removal may complete while recurrence expansion is
-        # running in the worker.  Do not execute the captured old flow after
-        # its cache generation has been replaced.
-        if self._ical_cache_generations.get(graph_id) is not ical_generation:
-            return {}
         try:
-            pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
-            pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
-            outputs = await _execute_pass(executor, aug_overrides)
-            if execution_hyst is not hyst:
-                hyst.clear()
-                hyst.update(execution_hyst)
+            if has_python_scripts:
+                execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
+                async with execution_lock:
+                    # Snapshot and commit inside the same critical section so
+                    # overlapping executions observe the preceding pass's
+                    # committed state instead of overwriting it from a stale copy.
+                    execution_hyst = copy.deepcopy(hyst)
+                    executor = await _executor(execution_hyst)
+                    if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                        raise _ObsoleteGraphExecution
+                    pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
+                    pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
+                    outputs = await _execute_pass(executor, aug_overrides, executor_lock_held=True)
+                    hyst.clear()
+                    hyst.update(execution_hyst)
+            else:
+                executor = await _executor(hyst)
+                if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                    raise _ObsoleteGraphExecution
+                pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
+                pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
+                outputs = await _execute_pass(executor, aug_overrides)
         except _ObsoleteGraphExecution:
             raise
         except Exception:

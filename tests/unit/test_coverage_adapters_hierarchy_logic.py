@@ -4354,6 +4354,55 @@ class TestLogicManagerExecuteGraph:
         assert mgr._hysteresis["g1"]["stats"] == original_state
 
     @pytest.mark.asyncio
+    async def test_concurrent_python_executions_snapshot_state_under_lock(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                },
+                {"id": "stats", "type": "statistics", "position": {"x": 200, "y": 0}, "data": {}},
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        first_worker_started = asyncio.Event()
+        release_first_worker = asyncio.Event()
+        worker_calls = 0
+
+        async def _controlled_worker(func):
+            nonlocal worker_calls
+            worker_calls += 1
+            if worker_calls == 1:
+                first_worker_started.set()
+                await release_first_worker.wait()
+            return func()
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            first = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"stats": {"value": 2.0}}))
+            await first_worker_started.wait()
+            second = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"stats": {"value": 4.0}}))
+            await asyncio.sleep(0)
+            release_first_worker.set()
+            await asyncio.gather(first, second)
+
+        assert worker_calls == 2
+        assert mgr._hysteresis["g1"]["stats"] == {
+            "s_min": 2.0,
+            "s_max": 4.0,
+            "s_sum": 6.0,
+            "s_count": 2,
+        }
+
+    @pytest.mark.asyncio
     async def test_obsolete_python_replay_stops_before_datapoint_write(self):
         write_dp_id = uuid.uuid4()
         flow = _make_flow(
@@ -4990,6 +5039,86 @@ class TestStartCronTasks:
 
         assert fetch_count == 1
         assert not mgr._ical_fetch_locks[("g1", "i1")].locked()
+
+    @pytest.mark.asyncio
+    async def test_obsolete_ical_precompute_waiter_aborts_before_parsing(self):
+        import asyncio
+
+        flow = _make_flow(nodes=[{"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        first_precompute_started = asyncio.Event()
+        release_first_precompute = asyncio.Event()
+        precompute_calls = 0
+        real_to_thread = asyncio.to_thread
+
+        async def _controlled_to_thread(func, *args):
+            nonlocal precompute_calls
+            if getattr(func, "__name__", "") == "_precompute_ical_node":
+                precompute_calls += 1
+                first_precompute_started.set()
+                await release_first_precompute.wait()
+                return func(*args)
+            return await real_to_thread(func, *args)
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=_controlled_to_thread),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            first = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await first_precompute_started.wait()
+            waiter = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await asyncio.sleep(0)
+            mgr.invalidate_cache("g1")
+            release_first_precompute.set()
+            results = await asyncio.gather(first, waiter)
+
+        assert precompute_calls == 1
+        assert results == [{}, {}]
+
+    @pytest.mark.asyncio
+    async def test_cancelled_ical_precompute_keeps_lock_until_worker_exits(self):
+        import asyncio
+
+        flow = _make_flow(nodes=[{"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        first_precompute_started = asyncio.Event()
+        release_first_precompute = asyncio.Event()
+        precompute_calls = 0
+        real_to_thread = asyncio.to_thread
+
+        async def _controlled_to_thread(func, *args):
+            nonlocal precompute_calls
+            if getattr(func, "__name__", "") == "_precompute_ical_node":
+                precompute_calls += 1
+                if precompute_calls == 1:
+                    first_precompute_started.set()
+                    await release_first_precompute.wait()
+                return func(*args)
+            return await real_to_thread(func, *args)
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=_controlled_to_thread),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            cancelled = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await first_precompute_started.wait()
+            cancelled.cancel()
+            replacement = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await asyncio.sleep(0)
+
+            assert precompute_calls == 1
+            assert mgr._ical_precompute_locks[("g1", "i1")].locked()
+
+            release_first_precompute.set()
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled
+            await replacement
+
+        assert precompute_calls == 2
 
     @pytest.mark.asyncio
     async def test_cancelled_ical_fetch_does_not_suppress_replacement_refresh(self):
