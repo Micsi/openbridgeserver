@@ -1341,6 +1341,21 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": "{'a': 1}"}})
         assert out["cf"]["changed"] is True
 
+    def test_non_deepcopyable_value_does_not_error_the_node(self):
+        """Regression: a permitted python_script legitimately returning a
+        generator (or any other value with a failing __deepcopy__/__reduce__
+        hook) previously raised out of copy.deepcopy() while snapshotting
+        the comparison baseline, turning the node's whole output into
+        {"__error__": ...} instead of emitting the value with changed=True."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": (x for x in [1, 2, 3])}})
+
+        assert "__error__" not in out["cf"]
+        assert out["cf"]["changed"] is True
+
 
 # ===========================================================================
 # math_formula node

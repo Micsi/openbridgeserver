@@ -2016,6 +2016,53 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 3
 
+    def test_change_filter_downstream_of_host_check_sees_real_value_after_settling(self):
+        """Regression: api_client -> host_check -> change_filter. The
+        api_client replay stage correctly discovers host_check is chained
+        but hasn't actually pinged yet, and holds change_filter with
+        _suppress_change_filter for that pass. That hold used to be baked
+        into api_replay_overrides permanently and reused, unmodified, as
+        the base for the later "Post-api-replay host_check pass" that
+        actually pings host_check for real — so even once the real ping
+        settled host_check and fed change_filter its real reachable=True
+        value, the stale hold kept suppressing change_filter forever and
+        the genuine reachability transition was never reported."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET", "response_type": "text/plain"}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "hc", "success", "trigger"),
+                edge("hc", "cf", "reachable", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-downstream-of-hc-settling"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        patcher = patch("obs.logic.manager.httpx.AsyncClient")
+        mock_client_cls = patcher.start()
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_client.request = AsyncMock(return_value=_MockResponse(200, text="OK"))
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)),
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
+
+        assert outputs["cf"] == {"out": True, "changed": True}
+
     def test_change_filter_pulse_retrigger_reaches_host_check_through_intermediate_node(self):
         """Regression: cron_reachable's forward closure for a change_filter
         pulse discovered via async replay must extend through intermediate

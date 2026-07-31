@@ -2994,6 +2994,49 @@ class LogicManager:
         # the api_client processing block populates it.
         triggered_api_clients: set[str] = set()
 
+        # Declared here (rather than where it's first assigned, in the
+        # api_client stage below) so _add_resolved_outputs — called from
+        # over a dozen sites throughout this function, both before and
+        # after the api_client stage — can always safely read/refresh it
+        # via `nonlocal` without an UnboundLocalError on the calls that
+        # happen first.
+        api_replay_overrides: dict[str, dict[str, Any]] | None = None
+
+        def _refresh_api_replay_hold_overrides(outputs_source: dict[str, dict[str, Any]] | None = None) -> None:
+            """Keep api_replay_overrides' `_suppress_change_filter` holds in
+            sync with the current _settled_async_ids/_still_unresolved_source_ids
+            state.
+
+            api_replay_overrides is reused, unmodified, as the base overrides
+            for several LATER, independent replay stages (post-api host_check,
+            post-api WoL, ...), not all of which recompute their own holds
+            from scratch. Baking a hold in once and never touching it again
+            would let it survive in api_replay_overrides forever — even after
+            the exact async source it was protecting against settles for real
+            via _add_resolved_outputs — so every later stage reusing it as a
+            base would keep suppressing a change_filter long after the real
+            value it was waiting on is already known. Recomputed wholesale
+            (not merely added-to) each time, so a hold whose source has since
+            settled is dropped here, not just left un-renewed.
+
+            `outputs_source` mirrors _still_unresolved_source_ids' own param
+            for the same reason: a caller that just ran its own fresher
+            replay pass (e.g. second_outputs) must pass that pass's results,
+            not rely on the stale outer `outputs` snapshot.
+            """
+            nonlocal api_replay_overrides
+            if api_replay_overrides is None:
+                return
+            _current_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _still_unresolved_source_ids(outputs_source), outputs_source)
+            _refreshed: dict[str, dict[str, Any]] = {}
+            for _nid, _vals in api_replay_overrides.items():
+                if "_suppress_change_filter" in _vals and _nid not in _current_cf_hold_ids:
+                    _vals = {k: v for k, v in _vals.items() if k != "_suppress_change_filter"}
+                _refreshed[_nid] = _vals
+            for _nid in _current_cf_hold_ids:
+                _refreshed.setdefault(_nid, {})["_suppress_change_filter"] = True
+            api_replay_overrides = _refreshed
+
         def _add_resolved_outputs(node_ids: set[str]) -> None:
             _settled_async_ids.update(node_ids & async_replay_source_ids)
             for _re in flow.edges:
@@ -3001,6 +3044,7 @@ class LogicManager:
                     resolved_async_edge_overrides.setdefault(_re.target, {})[_re.targetHandle or "in"] = GraphExecutor._get_output_value(
                         outputs.get(_re.source, {}), _re.sourceHandle or "out"
                     )
+            _refresh_api_replay_hold_overrides()
 
         def _replay_async_descendants(node_ids: set[str], *, skip_node_ids: set[str] | None = None) -> set[str]:
             descendants: set[str] = set()
@@ -3557,7 +3601,8 @@ class LogicManager:
         # success=False. Now that we have the real HTTP results, we re-run the
         # executor for those downstream nodes using input overrides so their
         # outputs (and downstream datapoint writes, etc.) reflect the real values.
-        api_replay_overrides: dict[str, dict[str, Any]] | None = None
+        # (api_replay_overrides itself is declared earlier, alongside
+        # _refresh_api_replay_hold_overrides — see the comment there.)
         if triggered_api_clients:
             downstream_node_ids: set[str] = set()
             pending_sources = list(triggered_api_clients)
@@ -3617,7 +3662,17 @@ class LogicManager:
                     if _late_cf_hold_ids:
                         for _late_cf_id in _late_cf_hold_ids:
                             replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
-                        api_replay_overrides = {nid: dict(vals) for nid, vals in replay_overrides.items()}
+                        # Refresh (not overwrite-and-forget) api_replay_overrides
+                        # from this pass's own fresher second_outputs — see
+                        # _refresh_api_replay_hold_overrides. A plain
+                        # dict-copy-from-replay_overrides here would bake this
+                        # hold into api_replay_overrides permanently, since
+                        # nothing downstream ever removes a key it didn't add —
+                        # the later post-api host_check/WoL stages reuse
+                        # api_replay_overrides as their base and would then keep
+                        # suppressing this change_filter even after the async
+                        # source it's guarding against settles for real.
+                        _refresh_api_replay_hold_overrides(second_outputs)
                         replay_hyst = copy.deepcopy(pre_execute_hyst)
                         second_executor = _executor(replay_hyst)
                         second_outputs = _execute_pass(second_executor, replay_overrides)

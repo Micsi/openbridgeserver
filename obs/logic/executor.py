@@ -715,7 +715,14 @@ class GraphExecutor:
                 # alone would miss that. A deepcopy of a genuinely atomic
                 # value (int/str/bool/None/float/datetime/date/time/bytes)
                 # is a cheap no-op, so there's no cost to doing this always.
-                baseline = copy.deepcopy(value)
+                # Use the same failure-safe fallback chain as known_outputs
+                # replay snapshotting (json round-trip, then str()) rather
+                # than a bare copy.deepcopy(): a permitted python_script
+                # legitimately returning a generator, or any other value
+                # with a failing __deepcopy__/__reduce__ hook, must degrade
+                # this node's own baseline instead of raising and turning
+                # the whole node into "__error__" on its very first input.
+                baseline = _snapshot_debug_value(value)
                 if not has_prev:
                     self.hysteresis_state[node.id] = {"value": baseline}
                     return {"out": value, "changed": True}
