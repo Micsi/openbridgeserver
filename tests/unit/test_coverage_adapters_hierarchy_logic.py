@@ -4121,15 +4121,15 @@ class TestLogicManagerHelpers:
         # 192.168.x.x is private
         assert evaluate_url_target("http://192.168.1.1", allow_loopback=True).allowed is False
 
-    def test_read_secret_file_empty_path(self):
-        from obs.logic.manager import _read_secret_file
+    def test_load_external_value_file_empty_path(self):
+        from obs.logic.manager import _load_external_value_file
 
-        assert _read_secret_file("") == ""
+        assert _load_external_value_file("") == ""
 
-    def test_read_secret_file_nonexistent(self):
-        from obs.logic.manager import _read_secret_file
+    def test_load_external_value_file_nonexistent(self):
+        from obs.logic.manager import _load_external_value_file
 
-        assert _read_secret_file("/nonexistent/path/secret.txt") == ""
+        assert _load_external_value_file("/nonexistent/path/secret.txt") == ""
 
     def test_cookie_domain_matches(self):
         from obs.logic.manager import _cookie_domain_matches

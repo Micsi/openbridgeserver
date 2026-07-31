@@ -4149,7 +4149,7 @@ class TestPostApiHcApiEdgePaths:
             with (
                 patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
                 patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)),
-                patch("obs.logic.manager._read_secret_file", return_value='{"X-Custom": "value"}'),
+                patch("obs.logic.manager._load_external_value_file", return_value='{"X-Custom": "value"}'),
             ):
                 outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
         finally:
@@ -4183,7 +4183,7 @@ class TestPostApiHcApiEdgePaths:
             with (
                 patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
                 patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)),
-                patch("obs.logic.manager._read_secret_file", return_value="my-bearer-token"),
+                patch("obs.logic.manager._load_external_value_file", return_value="my-bearer-token"),
             ):
                 outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
         finally:

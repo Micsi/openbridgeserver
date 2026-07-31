@@ -25,9 +25,9 @@ from obs.logic.manager import (
     LogicManager,
     _api_client_value_to_string,
     _build_api_client_fetch_targets,
+    _load_external_value_file,
     _make_api_client_variable_resolver,
     _normalise_api_client_variables,
-    _read_secret_file,
     _replace_api_client_placeholders,
     _replace_api_client_url_placeholders,
 )
@@ -116,7 +116,7 @@ class TestApiClientSecretFileGuard:
         secret_file.write_text(" secret-token \n", encoding="utf-8")
         monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(root))
 
-        assert _read_secret_file(str(secret_file)) == "secret-token"
+        assert _load_external_value_file(str(secret_file)) == "secret-token"
 
     def test_rejects_file_outside_secret_root(self, tmp_path, monkeypatch):
         root = tmp_path / "secrets"
@@ -125,14 +125,14 @@ class TestApiClientSecretFileGuard:
         outside_file.write_text("outside", encoding="utf-8")
         monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(root))
 
-        assert _read_secret_file(str(outside_file)) == ""
+        assert _load_external_value_file(str(outside_file)) == ""
 
     def test_rejects_non_regular_file(self, tmp_path, monkeypatch):
         root = tmp_path / "secrets"
         root.mkdir()
         monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(root))
 
-        assert _read_secret_file(str(root)) == ""
+        assert _load_external_value_file(str(root)) == ""
 
     def test_rejects_fifo_without_blocking(self, tmp_path, monkeypatch):
         if not hasattr(os, "mkfifo"):
@@ -143,7 +143,7 @@ class TestApiClientSecretFileGuard:
         os.mkfifo(secret_pipe)
         monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(root))
 
-        assert _read_secret_file(str(secret_pipe)) == ""
+        assert _load_external_value_file(str(secret_pipe)) == ""
 
     def test_rejects_oversized_file(self, tmp_path, monkeypatch):
         root = tmp_path / "secrets"
@@ -152,7 +152,7 @@ class TestApiClientSecretFileGuard:
         secret_file.write_text("x" * 8193, encoding="utf-8")
         monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(root))
 
-        assert _read_secret_file(str(secret_file)) == ""
+        assert _load_external_value_file(str(secret_file)) == ""
 
     def test_rejects_invalid_utf8(self, tmp_path, monkeypatch):
         root = tmp_path / "secrets"
@@ -161,7 +161,22 @@ class TestApiClientSecretFileGuard:
         secret_file.write_bytes(b"\xff")
         monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(root))
 
-        assert _read_secret_file(str(secret_file)) == ""
+        assert _load_external_value_file(str(secret_file)) == ""
+
+    def test_rejects_file_that_grows_between_fstat_and_read(self, tmp_path, monkeypatch):
+        # fstat() reports a small, allowed size, but the underlying read()
+        # call itself returns more bytes than the size limit (e.g. because
+        # the file grew between the two syscalls) — this must still be
+        # rejected by the post-read size double-check, not just trusted
+        # because the earlier fstat-based check already passed.
+        root = tmp_path / "secrets"
+        root.mkdir()
+        secret_file = root / "growing-token"
+        secret_file.write_text("small", encoding="utf-8")
+        monkeypatch.setenv("OBS_SECRET_FILE_DIR", str(root))
+
+        with patch("os.read", return_value=b"x" * 8193):
+            assert _load_external_value_file(str(secret_file)) == ""
 
 
 class TestApiClientFetchTarget:
