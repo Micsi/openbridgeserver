@@ -4234,6 +4234,56 @@ class TestLogicManagerExecuteGraph:
         assert all(thread_id != event_loop_thread for thread_id in copy_threads)
 
     @pytest.mark.asyncio
+    async def test_cancelled_python_script_keeps_lock_until_worker_exits(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                }
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        first_worker_started = asyncio.Event()
+        release_first_worker = asyncio.Event()
+        worker_calls = 0
+
+        async def _controlled_worker(func):
+            nonlocal worker_calls
+            worker_calls += 1
+            if worker_calls == 1:
+                first_worker_started.set()
+                await release_first_worker.wait()
+            return func()
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            obsolete = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await first_worker_started.wait()
+            obsolete.cancel()
+            replacement = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await asyncio.sleep(0)
+
+            assert worker_calls == 1
+            assert mgr._graph_executor_locks["g1"].locked()
+
+            release_first_worker.set()
+            with pytest.raises(asyncio.CancelledError):
+                await obsolete
+            result = await replacement
+
+        assert worker_calls == 2
+        assert result["script"]["result"] == 1
+
+    @pytest.mark.asyncio
     async def test_execute_graph_writes_datapoint(self):
         """Test that datapoint_write nodes publish events."""
         write_dp_id = uuid.uuid4()

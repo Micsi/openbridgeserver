@@ -1970,7 +1970,19 @@ class LogicManager:
                 return execute_args()
             execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
             async with execution_lock:
-                return await _run_graph_executor_in_worker(execute_args)
+                worker = asyncio.create_task(_run_graph_executor_in_worker(execute_args))
+                try:
+                    return await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    # Cancelling to_thread() cannot stop code already running
+                    # in its worker. Keep the per-graph lock until that code
+                    # has exited so a replacement scheduler cannot mutate the
+                    # same state concurrently with this obsolete pass.
+                    try:
+                        await worker
+                    except Exception:
+                        logger.exception("Graph %s: cancelled Python-script worker failed while draining", graph_id)
+                    raise
 
         async def _executor(state: dict[str, Any]) -> GraphExecutor:
             nonlocal execution_ical_cache, execution_ical_prepared
