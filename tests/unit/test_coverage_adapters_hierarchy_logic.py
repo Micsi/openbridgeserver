@@ -3580,10 +3580,47 @@ class TestLogicManagerBasics:
         import asyncio
 
         mgr, db, _, _ = _make_logic_manager()
-        db.fetchall = AsyncMock(return_value=[])
+        live_flow = _make_flow(
+            nodes=[
+                {
+                    "id": "remaining",
+                    "type": "const_value",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"value": 1},
+                },
+                {
+                    "id": "current-ical",
+                    "type": "ical",
+                    "position": {"x": 200, "y": 0},
+                    "data": {},
+                },
+            ]
+        )
+        db.fetchall = AsyncMock(
+            return_value=[
+                {
+                    "id": "live",
+                    "name": "Live",
+                    "enabled": 0,
+                    "flow_data": live_flow.model_dump_json(),
+                    "node_state": "{}",
+                }
+            ]
+        )
         mgr._hysteresis["removed"] = {"i1": {"raw": "large body"}}
         mgr._ical_result_caches["removed"] = {"i1": {"outputs": {"events": []}}}
         mgr._ical_fetch_locks[("removed", "i1")] = asyncio.Lock()
+        mgr._hysteresis["live"] = {
+            "remaining": {"counter": 1},
+            "current-ical": {"raw": "current body"},
+            "deleted-ical": {"raw": "large body"},
+        }
+        mgr._ical_result_caches["live"] = {
+            "current-ical": {"outputs": {"events": ["current"]}},
+            "deleted-ical": {"outputs": {"events": []}},
+        }
+        mgr._ical_fetch_locks[("live", "current-ical")] = asyncio.Lock()
+        mgr._ical_fetch_locks[("live", "deleted-ical")] = asyncio.Lock()
         task = MagicMock()
         task.cancel = MagicMock()
         mgr._cron_tasks[("g1", "n1")] = task
@@ -3592,6 +3629,13 @@ class TestLogicManagerBasics:
         assert "removed" not in mgr._hysteresis
         assert "removed" not in mgr._ical_result_caches
         assert ("removed", "i1") not in mgr._ical_fetch_locks
+        assert "deleted-ical" not in mgr._hysteresis["live"]
+        assert "deleted-ical" not in mgr._ical_result_caches["live"]
+        assert ("live", "deleted-ical") not in mgr._ical_fetch_locks
+        assert mgr._hysteresis["live"]["remaining"] == {"counter": 1}
+        assert mgr._hysteresis["live"]["current-ical"]["raw"] == "current body"
+        assert mgr._ical_result_caches["live"]["current-ical"]["outputs"]["events"] == ["current"]
+        assert ("live", "current-ical") in mgr._ical_fetch_locks
 
     def test_invalidate_cache(self):
         mgr, _, _, _ = _make_logic_manager()
