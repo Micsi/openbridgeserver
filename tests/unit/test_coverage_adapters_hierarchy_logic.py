@@ -3699,7 +3699,7 @@ class TestLogicManagerBasics:
         assert mgr._ical_result_caches["live"]["current-ical"]["outputs"]["events"] == ["current"]
         assert mgr._ical_result_caches["live"] is not live_cache_before_reload
         assert "deleted-ical" in live_cache_before_reload
-        assert mgr._ical_cache_generations["live"] is not live_generation_before_reload
+        assert mgr._ical_cache_generations["live"] is live_generation_before_reload
         assert ("live", "current-ical") in mgr._ical_fetch_locks
         assert ("live", "current-ical") in mgr._ical_precompute_locks
 
@@ -4202,6 +4202,34 @@ class TestLogicManagerHelpers:
 
 class TestLogicManagerExecuteGraph:
     @pytest.mark.asyncio
+    async def test_reload_preserves_generation_for_unchanged_graphs(self):
+        unchanged_flow = _make_flow(nodes=[{"id": "constant", "type": "constant", "position": {"x": 0, "y": 0}, "data": {"value": 1}}])
+        changed_before = _make_flow(nodes=[{"id": "constant", "type": "constant", "position": {"x": 0, "y": 0}, "data": {"value": 1}}])
+        changed_after = _make_flow(nodes=[{"id": "constant", "type": "constant", "position": {"x": 0, "y": 0}, "data": {"value": 2}}])
+        mgr, _, _, _ = _make_logic_manager(
+            graphs={
+                "unchanged": ("Old name", True, unchanged_flow),
+                "changed": ("Changed", True, changed_before),
+            }
+        )
+        unchanged_generation = mgr._ical_cache_generations.setdefault("unchanged", object())
+        changed_generation = mgr._ical_cache_generations.setdefault("changed", object())
+
+        async def _load_updated_graphs():
+            mgr._graphs = {
+                "unchanged": ("New name only", True, unchanged_flow),
+                "changed": ("Changed", True, changed_after),
+            }
+
+        mgr._load_graphs = AsyncMock(side_effect=_load_updated_graphs)
+        mgr._start_cron_tasks = MagicMock()
+
+        await mgr.reload()
+
+        assert mgr._ical_cache_generations["unchanged"] is unchanged_generation
+        assert mgr._ical_cache_generations["changed"] is not changed_generation
+
+    @pytest.mark.asyncio
     async def test_python_script_input_clone_runs_off_event_loop(self):
         import threading
 
@@ -4282,6 +4310,107 @@ class TestLogicManagerExecuteGraph:
 
         assert worker_calls == 2
         assert result["script"]["result"] == 1
+
+    @pytest.mark.asyncio
+    async def test_obsolete_python_worker_discards_hysteresis_mutations(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                },
+                {"id": "stats", "type": "statistics", "position": {"x": 200, "y": 0}, "data": {}},
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        original_state = {"s_min": 2.0, "s_max": 2.0, "s_sum": 2.0, "s_count": 1}
+        mgr._hysteresis["g1"] = {"stats": dict(original_state)}
+        worker_mutated_snapshot = asyncio.Event()
+        release_worker = asyncio.Event()
+
+        async def _controlled_worker(func):
+            result = func()
+            worker_mutated_snapshot.set()
+            await release_worker.wait()
+            return result
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            execution = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"stats": {"value": 9.0}}))
+            await worker_mutated_snapshot.wait()
+            mgr.invalidate_cache("g1")
+            release_worker.set()
+            result = await execution
+
+        assert result == {}
+        assert mgr._hysteresis["g1"]["stats"] == original_state
+
+    @pytest.mark.asyncio
+    async def test_obsolete_python_replay_stops_before_datapoint_write(self):
+        write_dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 100},
+                    "data": {"script": "result = 1"},
+                },
+                {
+                    "id": "host",
+                    "type": "host_check",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"host": "example.com"},
+                },
+                {
+                    "id": "write",
+                    "type": "datapoint_write",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"datapoint_id": str(write_dp_id)},
+                },
+            ],
+            edges=[
+                {
+                    "id": "host-write",
+                    "source": "host",
+                    "target": "write",
+                    "sourceHandle": "reachable",
+                    "targetHandle": "value",
+                }
+            ],
+        )
+        mgr, db, event_bus, registry = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        registry.get_value = MagicMock(return_value=None)
+        worker_calls = 0
+
+        async def _invalidate_during_replay(func):
+            nonlocal worker_calls
+            worker_calls += 1
+            result = func()
+            if worker_calls == 2:
+                mgr.invalidate_cache("g1")
+            return result
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_invalidate_during_replay),
+            patch("obs.logic.manager._ping_host", new=AsyncMock(return_value=(True, 1.0))),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            result = await mgr._execute_graph("g1", "G1", flow, {"host": {"trigger": True}})
+
+        assert worker_calls == 2
+        assert result == {}
+        event_bus.publish.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_execute_graph_writes_datapoint(self):

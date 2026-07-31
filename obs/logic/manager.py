@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 _run_graph_executor_in_worker = asyncio.to_thread
 
 
+class _ObsoleteGraphExecution(Exception):
+    """Stop a pass whose captured graph generation has been replaced."""
+
+
 def _msg_to_str(v: object) -> str:
     """Convert any node output value to a message string.
 
@@ -900,13 +904,20 @@ class LogicManager:
 
     async def reload(self) -> None:
         """Reload graph cache from DB and restart cron schedulers."""
-        for graph_id in set(self._graphs) | set(self._ical_result_caches):
-            self._ical_cache_generations[graph_id] = object()
+        previous_graphs = self._graphs
         for task in list(self._cron_tasks.values()):
             task.cancel()
         self._cron_tasks.clear()
         await self._load_graphs()
         live_graph_ids = set(self._graphs)
+        # A reload restarts all schedulers, but it must not invalidate work for
+        # unrelated graphs.  Rotate only configurations that actually changed
+        # (or disappeared); save paths that called invalidate_cache() already
+        # have a fresh generation and are absent from ``previous_graphs``.
+        for graph_id, previous_entry in previous_graphs.items():
+            current_entry = self._graphs.get(graph_id)
+            if current_entry is None or previous_entry[1:] != current_entry[1:]:
+                self._ical_cache_generations[graph_id] = object()
         for graph_id in set(self._ical_result_caches) - live_graph_ids:
             self._ical_result_caches.pop(graph_id, None)
             self._ical_cache_generations.pop(graph_id, None)
@@ -1919,6 +1930,29 @@ class LogicManager:
         debug_overrides: dict[str, dict[str, Any]] | None = None,
         debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
+        try:
+            return await self._execute_graph_impl(
+                graph_id,
+                name,
+                flow,
+                overrides,
+                logic_depth,
+                debug_overrides,
+                debug_input_capture,
+            )
+        except _ObsoleteGraphExecution:
+            return {}
+
+    async def _execute_graph_impl(
+        self,
+        graph_id: str,
+        name: str,
+        flow: FlowData,
+        overrides: dict[str, dict[str, Any]],
+        logic_depth: int = 0,
+        debug_overrides: dict[str, dict[str, Any]] | None = None,
+        debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
         execute_now = datetime.now(UTC)
         execution_started = perf_counter()
         ical_app_config = dict(self._app_config)
@@ -1967,22 +2001,26 @@ class LogicManager:
                 capture_incoming_overrides=candidate,
             )
             if not has_python_scripts:
-                return execute_args()
-            execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
-            async with execution_lock:
-                worker = asyncio.create_task(_run_graph_executor_in_worker(execute_args))
-                try:
-                    return await asyncio.shield(worker)
-                except asyncio.CancelledError:
-                    # Cancelling to_thread() cannot stop code already running
-                    # in its worker. Keep the per-graph lock until that code
-                    # has exited so a replacement scheduler cannot mutate the
-                    # same state concurrently with this obsolete pass.
+                result = execute_args()
+            else:
+                execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
+                async with execution_lock:
+                    worker = asyncio.create_task(_run_graph_executor_in_worker(execute_args))
                     try:
-                        await worker
-                    except Exception:
-                        logger.exception("Graph %s: cancelled Python-script worker failed while draining", graph_id)
-                    raise
+                        result = await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        # Cancelling to_thread() cannot stop code already running
+                        # in its worker. Keep the per-graph lock until that code
+                        # has exited so a replacement scheduler cannot mutate the
+                        # same state concurrently with this obsolete pass.
+                        try:
+                            await worker
+                        except Exception:
+                            logger.exception("Graph %s: cancelled Python-script worker failed while draining", graph_id)
+                        raise
+            if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                raise _ObsoleteGraphExecution
+            return result
 
         async def _executor(state: dict[str, Any]) -> GraphExecutor:
             nonlocal execution_ical_cache, execution_ical_prepared
@@ -2372,7 +2410,12 @@ class LogicManager:
             except Exception:
                 logger.exception("Graph %s: heating_circuit history pre-fill failed", graph_id[:8])
 
-        executor = await _executor(hyst)
+        # Executor nodes mutate their hysteresis mapping synchronously.  Run
+        # the first pass against an isolated snapshot so a worker made
+        # obsolete by a concurrent save cannot leak state into the replacement
+        # graph.  Commit only after the pass proves its generation is current.
+        execution_hyst = copy.deepcopy(hyst) if has_python_scripts else hyst
+        executor = await _executor(execution_hyst)
         # A semantic save/removal may complete while recurrence expansion is
         # running in the worker.  Do not execute the captured old flow after
         # its cache generation has been replaced.
@@ -2382,8 +2425,11 @@ class LogicManager:
             pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
             pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
             outputs = await _execute_pass(executor, aug_overrides)
-            if self._ical_cache_generations.get(graph_id) is not ical_generation:
-                return {}
+            if execution_hyst is not hyst:
+                hyst.clear()
+                hyst.update(execution_hyst)
+        except _ObsoleteGraphExecution:
+            raise
         except Exception:
             logger.exception("Graph %s (%s) execution error", graph_id, name)
             return {}
