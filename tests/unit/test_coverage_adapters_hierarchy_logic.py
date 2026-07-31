@@ -4410,6 +4410,36 @@ class TestLogicManagerExecuteGraph:
         assert mgr._ical_result_caches["g1"]["i1"]["key"][0] == '[{"pattern":"holiday"}]'
 
     @pytest.mark.asyncio
+    async def test_ical_precompute_error_is_isolated_to_its_node(self):
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    # Malformed persisted configuration must not escape the
+                    # worker precompute and abort the full graph.
+                    "data": {"filters": ["not", "json"]},
+                },
+                {
+                    "id": "constant",
+                    "type": "const_value",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"value": 7},
+                },
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.broadcast = AsyncMock()
+            result = await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert "strip" in result["i1"]["__error__"]
+        assert result["constant"]["value"] == 7.0
+
+    @pytest.mark.asyncio
     async def test_execute_graph_executor_error_returns_empty_dict(self):
         """If GraphExecutor.execute() itself raises, _execute_graph logs the
         failure and returns an empty dict rather than propagating."""
@@ -4862,16 +4892,9 @@ class TestStartCronTasks:
     @pytest.mark.asyncio
     async def test_ical_snapshot_survives_concurrent_reload_eviction(self):
         import asyncio
-        import threading
 
-        copy_started = threading.Event()
-        release_copy = threading.Event()
-
-        class _BlockingCopy:
-            def __deepcopy__(self, _memo):
-                copy_started.set()
-                assert release_copy.wait(timeout=5)
-                return self
+        precompute_started = asyncio.Event()
+        release_precompute = asyncio.Event()
 
         flow = _make_flow(
             nodes=[
@@ -4880,16 +4903,26 @@ class TestStartCronTasks:
         )
         mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
         db.execute_and_commit = AsyncMock()
-        old_cache = {"i1": _BlockingCopy()}
+        old_cache = {"i1": object()}
         mgr._ical_result_caches["g1"] = old_cache
 
-        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+        real_to_thread = asyncio.to_thread
+
+        async def _pause_precompute(func, *args):
+            if getattr(func, "__name__", "") == "_precompute_ical_node":
+                precompute_started.set()
+                await release_precompute.wait()
+            return await real_to_thread(func, *args)
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=_pause_precompute),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
             mock_ws.return_value.broadcast = AsyncMock()
             execution = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
-            while not copy_started.is_set():
-                await asyncio.sleep(0)
+            await precompute_started.wait()
             await mgr.reload()
-            release_copy.set()
+            release_precompute.set()
             await execution
 
         assert "g1" not in mgr._ical_result_caches
@@ -4956,15 +4989,13 @@ class TestStartCronTasks:
         assert "g1" not in mgr._ical_cache_generations
 
     @pytest.mark.asyncio
-    async def test_ical_result_cache_is_copied_off_event_loop_for_async_replay(self):
-        import threading
-
-        event_loop_thread = threading.get_ident()
-        copy_threads = []
+    async def test_ical_result_cache_is_shared_without_copy_for_async_replay(self):
+        copy_count = 0
 
         class _CopyAware:
             def __deepcopy__(self, _memo):
-                copy_threads.append(threading.get_ident())
+                nonlocal copy_count
+                copy_count += 1
                 return self
 
         flow = _make_flow(
@@ -4992,8 +5023,7 @@ class TestStartCronTasks:
             await mgr._execute_graph("g1", "G1", flow, {})
 
         assert mgr._ical_result_caches["g1"]["i1"] is sentinel
-        assert len(copy_threads) == 1
-        assert all(thread_id != event_loop_thread for thread_id in copy_threads)
+        assert copy_count == 0
 
     @pytest.mark.asyncio
     async def test_ical_graph_can_reenter_during_datapoint_publication(self):

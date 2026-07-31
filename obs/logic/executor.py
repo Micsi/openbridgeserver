@@ -141,6 +141,11 @@ class GraphExecutor:
                         for port in inputs
                     }
 
+                # Python scripts are the only node type that can arbitrarily
+                # mutate their inputs.  Keep upstream outputs (including shared
+                # iCalendar cache entries) immutable across replay passes.
+                if node.type == "python_script":
+                    inputs = copy.deepcopy(inputs)
                 result = self._eval_node(node, inputs)
             except Exception as exc:
                 logger.exception("Node %s (%s) error", node.id, node.type)

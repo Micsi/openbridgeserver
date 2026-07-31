@@ -36,7 +36,6 @@ from obs.logic.models import FlowData
 from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
-_copy_ical_cache_in_worker = asyncio.to_thread
 
 
 def _msg_to_str(v: object) -> str:
@@ -1968,7 +1967,10 @@ class LogicManager:
                     self._ical_result_caches.get(graph_id, {}) if self._ical_cache_generations.get(graph_id) is ical_generation else ical_result_cache
                 )
                 execution_ical_sources.update(source_ical_cache)
-                execution_ical_cache = await _copy_ical_cache_in_worker(copy.deepcopy, source_ical_cache) if source_ical_cache else {}
+                # Cache entries are immutable once published.  Snapshot only
+                # the small mapping so concurrent executions can share large
+                # parsed calendar outputs without retaining full copies.
+                execution_ical_cache = dict(source_ical_cache)
             pass_ical_cache = execution_ical_cache
             precompute_state: dict[str, Any] = {}
             for ical_node in ical_nodes:
@@ -2018,7 +2020,19 @@ class LogicManager:
                     ical_cache_outputs_owned=True,
                 )
                 previous = pass_ical_cache.get(ical_node.id)
-                precompute_executor._eval_node(ical_node, {})
+                try:
+                    precompute_executor._eval_node(ical_node, {})
+                except Exception:
+                    # The normal executor isolates errors to their node.  The
+                    # worker precompute must preserve that contract rather than
+                    # failing the entire graph before execute() gets a chance
+                    # to produce the node's diagnostic output.
+                    logger.exception(
+                        "Graph %s: iCalendar precompute failed for node %s",
+                        graph_id,
+                        ical_node.id,
+                    )
+                    return None
                 current = pass_ical_cache.get(ical_node.id)
                 if current is not None and current is not previous:
                     # The execution owns its entry; publish a separate copy so
@@ -2032,7 +2046,7 @@ class LogicManager:
                     if self._ical_cache_generations.get(graph_id) is ical_generation:
                         latest_entry = self._ical_result_caches.get(graph_id, {}).get(ical_node.id)
                         if latest_entry is not None and latest_entry is not execution_ical_sources.get(ical_node.id):
-                            pass_ical_cache[ical_node.id] = await _copy_ical_cache_in_worker(copy.deepcopy, latest_entry)
+                            pass_ical_cache[ical_node.id] = latest_entry
                             execution_ical_sources[ical_node.id] = latest_entry
                     publication = await asyncio.to_thread(_precompute_ical_node, ical_node)
                     if publication is not None and self._ical_cache_generations.get(graph_id) is ical_generation:
