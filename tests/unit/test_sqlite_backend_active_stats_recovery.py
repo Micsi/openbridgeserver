@@ -65,20 +65,27 @@ async def test_append_updates_active_stats_without_full_segment_scan(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_cancelled_append_finishes_stats_after_segment_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+async def test_repeatedly_cancelled_append_finishes_stats_after_segment_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = tmp_path / "root"
     store = SqliteSegmentStore(root)
     await store.open()
     original_commit = store._active_conn.commit
+    original_rollback = store._active_conn.rollback
     segment_committed = asyncio.Event()
     release_commit = asyncio.Event()
+    rollback_started = asyncio.Event()
 
     async def commit_then_pause() -> None:
         await original_commit()
         segment_committed.set()
         await release_commit.wait()
 
+    async def rollback_with_signal() -> None:
+        rollback_started.set()
+        await original_rollback()
+
     monkeypatch.setattr(store._active_conn, "commit", commit_then_pause)
+    monkeypatch.setattr(store._active_conn, "rollback", rollback_with_signal)
     append_task = asyncio.create_task(store.append([_event(1, "2026-03-01T10:00:05.000Z")]))
 
     try:
@@ -86,6 +93,12 @@ async def test_cancelled_append_finishes_stats_after_segment_commit(tmp_path: Pa
         append_task.cancel()
         await asyncio.sleep(0)
         assert not append_task.done()
+
+        append_task.cancel()
+        await asyncio.sleep(0)
+        assert append_task.cancelling() == 2
+        assert not append_task.done()
+        assert not rollback_started.is_set()
 
         release_commit.set()
         with pytest.raises(asyncio.CancelledError):

@@ -1234,8 +1234,14 @@ class SqliteSegmentStore(RingBufferStore):
             except asyncio.CancelledError:
                 # aiosqlite kann den Worker-Commit nach Task-Cancellation noch
                 # abschließen. Dann muss auch das Post-Commit-Bookkeeping fertig
-                # werden, bevor die Cancellation weiterpropagiert.
-                await asyncio.shield(finalize_task)
+                # werden, bevor die Cancellation weiterpropagiert. Weitere
+                # cancel()-Aufrufe dürfen dieses Warten ebenfalls nicht abbrechen.
+                while not finalize_task.done():
+                    try:
+                        await asyncio.shield(finalize_task)
+                    except asyncio.CancelledError:
+                        pass
+                finalize_task.result()
                 raise
         except BaseException:
             # Scheitert ein Insert mitten im Batch (z.B. nicht serialisierbare Metadaten
