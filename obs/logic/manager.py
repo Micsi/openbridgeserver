@@ -38,10 +38,27 @@ from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
 _run_graph_executor_in_worker = asyncio.to_thread
+_MISSING_STATE = object()
 
 
 class _ObsoleteGraphExecution(Exception):
     """Stop a pass whose captured graph generation has been replaced."""
+
+
+def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: dict[str, Any]) -> None:
+    """Apply worker changes without erasing state updated concurrently."""
+    for key in base.keys() - updated.keys():
+        if target.get(key, _MISSING_STATE) == base[key]:
+            target.pop(key, None)
+    for key, updated_value in updated.items():
+        base_value = base.get(key, _MISSING_STATE)
+        if base_value is not _MISSING_STATE and updated_value == base_value:
+            continue
+        target_value = target.get(key, _MISSING_STATE)
+        if isinstance(base_value, dict) and isinstance(updated_value, dict) and isinstance(target_value, dict):
+            _merge_worker_state(base_value, updated_value, target_value)
+        elif target_value is _MISSING_STATE or target_value == base_value:
+            target[key] = copy.deepcopy(updated_value)
 
 
 def _msg_to_str(v: object) -> str:
@@ -920,7 +937,10 @@ class LogicManager:
                 self._ical_cache_generations[graph_id] = object()
         for graph_id in set(self._ical_result_caches) - live_graph_ids:
             self._ical_result_caches.pop(graph_id, None)
+        for graph_id in set(self._ical_cache_generations) - live_graph_ids:
             self._ical_cache_generations.pop(graph_id, None)
+        for graph_id in set(self._graph_executor_locks) - live_graph_ids:
+            self._prune_graph_executor_lock(graph_id)
         for graph_id in set(self._hysteresis) - live_graph_ids:
             self._hysteresis.pop(graph_id, None)
         for key in [key for key in self._ical_fetch_locks if key[0] not in live_graph_ids]:
@@ -1981,6 +2001,7 @@ class LogicManager:
         execution_ical_sources: dict[str, Any] = {}
         execution_ical_prepared = False
         has_python_scripts = any(node.type == "python_script" for node in flow.nodes)
+        run_executor_in_worker = has_python_scripts or capture_debug_inputs
 
         def _debug_run_overrides(candidate: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             merged = {node_id: dict(values) for node_id, values in candidate.items()}
@@ -2001,7 +2022,7 @@ class LogicManager:
                 commit_memory=commit_memory,
                 capture_incoming_overrides=candidate,
             )
-            if not has_python_scripts:
+            if not run_executor_in_worker:
                 result = execute_args()
             else:
 
@@ -2022,8 +2043,11 @@ class LogicManager:
                     result = await _run_worker()
                 else:
                     execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
-                    async with execution_lock:
-                        result = await _run_worker()
+                    try:
+                        async with execution_lock:
+                            result = await _run_worker()
+                    finally:
+                        self._prune_graph_executor_lock(graph_id)
             if self._ical_cache_generations.get(graph_id) is not ical_generation:
                 raise _ObsoleteGraphExecution
             return result
@@ -2109,7 +2133,31 @@ class LogicManager:
                     return copy.deepcopy(current)
                 return None
 
+            def _ical_precompute_needed(ical_node: Any) -> bool:
+                raw_text = precompute_state[ical_node.id].get("raw", "")
+                if not raw_text:
+                    return False
+                filters_value = ical_node.data.get("filters") or "[]"
+                if not isinstance(filters_value, str):
+                    return True
+                try:
+                    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+                    timezone_name = ical_app_config.get("timezone", "Europe/Zurich")
+                    cache_key = (filters_value.strip(), timezone_name, datetime.now(ZoneInfo(timezone_name)).date().isoformat())
+                except (TypeError, ValueError, ZoneInfoNotFoundError):
+                    return True
+                cached = pass_ical_cache.get(ical_node.id)
+                return not (
+                    isinstance(cached, dict)
+                    and cached.get("raw") is raw_text
+                    and cached.get("key") == cache_key
+                    and isinstance(cached.get("outputs"), dict)
+                )
+
             for ical_node in ical_nodes:
+                if not _ical_precompute_needed(ical_node):
+                    continue
                 precompute_lock = self._ical_precompute_locks.setdefault((graph_id, ical_node.id), asyncio.Lock())
                 async with precompute_lock:
                     if self._ical_cache_generations.get(graph_id) is not ical_generation:
@@ -2118,6 +2166,8 @@ class LogicManager:
                     if latest_entry is not None and latest_entry is not execution_ical_sources.get(ical_node.id):
                         pass_ical_cache[ical_node.id] = latest_entry
                         execution_ical_sources[ical_node.id] = latest_entry
+                    if not _ical_precompute_needed(ical_node):
+                        continue
                     worker = asyncio.create_task(asyncio.to_thread(_precompute_ical_node, ical_node))
                     try:
                         publication = await asyncio.shield(worker)
@@ -2433,21 +2483,24 @@ class LogicManager:
         # obsolete by a concurrent save cannot leak state into the replacement
         # graph.  Commit only after the pass proves its generation is current.
         try:
-            if has_python_scripts:
+            if run_executor_in_worker:
                 execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
-                async with execution_lock:
-                    # Snapshot and commit inside the same critical section so
-                    # overlapping executions observe the preceding pass's
-                    # committed state instead of overwriting it from a stale copy.
-                    execution_hyst = copy.deepcopy(hyst)
-                    executor = await _executor(execution_hyst)
-                    if self._ical_cache_generations.get(graph_id) is not ical_generation:
-                        raise _ObsoleteGraphExecution
-                    pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
-                    pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
-                    outputs = await _execute_pass(executor, aug_overrides, executor_lock_held=True)
-                    hyst.clear()
-                    hyst.update(execution_hyst)
+                try:
+                    async with execution_lock:
+                        # Snapshot and commit inside the same critical section so
+                        # overlapping executions observe the preceding pass's
+                        # committed state instead of overwriting it from a stale copy.
+                        base_hyst = copy.deepcopy(hyst)
+                        execution_hyst = copy.deepcopy(base_hyst)
+                        executor = await _executor(execution_hyst)
+                        if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                            raise _ObsoleteGraphExecution
+                        pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
+                        pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
+                        outputs = await _execute_pass(executor, aug_overrides, executor_lock_held=True)
+                        _merge_worker_state(base_hyst, execution_hyst, hyst)
+                finally:
+                    self._prune_graph_executor_lock(graph_id)
             else:
                 executor = await _executor(hyst)
                 if self._ical_cache_generations.get(graph_id) is not ical_generation:
@@ -4443,6 +4496,12 @@ class LogicManager:
             self._cron_tasks[k].cancel()
             del self._cron_tasks[k]
 
+    def _prune_graph_executor_lock(self, graph_id: str) -> None:
+        """Release an idle worker lock after its graph has disappeared."""
+        lock = self._graph_executor_locks.get(graph_id)
+        if graph_id not in self._graphs and lock is not None and not lock.locked():
+            self._graph_executor_locks.pop(graph_id, None)
+
     def remove_graph(self, graph_id: str) -> None:
         """Invalidate a deleted graph and release all of its runtime data."""
         self.invalidate_cache(graph_id)
@@ -4453,6 +4512,7 @@ class LogicManager:
             self._ical_fetch_locks.pop(key, None)
         for key in [key for key in self._ical_precompute_locks if key[0] == graph_id]:
             self._ical_precompute_locks.pop(key, None)
+        self._prune_graph_executor_lock(graph_id)
 
     def update_cached_graph_name(self, graph_id: str, name: str) -> None:
         """Refresh metadata without invalidating active graph execution."""
