@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1035,6 +1035,43 @@ async def test_persist_node_state_serializes_non_json_native_values():
     assert saved["state"] == {"cf": {"value": {"__obs_persisted_type__": "time", "value": "14:30:00"}}, "other": {"value": 1}}
 
 
+@pytest.mark.asyncio
+async def test_change_filter_persists_and_restores_opaque_baseline_without_spurious_pulse():
+    """Regression (issue #1087 Codex finding): a change_filter's comparison
+    baseline is not always JSON-native or one of _persist_default's
+    specifically recognized types — e.g. a permitted python_script result
+    like a complex number. Persisting it used to fall back to a bare,
+    untagged str(v), indistinguishable from a genuine string after restart;
+    _load_graphs would restore that as a plain string, and a live value of
+    the original type compared against it would report a spurious
+    changed=True forever. The catch-all is now tagged "opaque_str" and
+    restored with an "_opaque_recovered_str" marker so an ordinary live
+    value of the original type is still recognized as unchanged."""
+    import json
+
+    flow = _flow([{"id": "cf1", "type": "change_filter"}])
+
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {"cf1": {"value": 3 + 4j}}
+    await mgr._persist_node_state("g1")
+    saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
+    saved = json.loads(saved_json)
+    assert saved["state"]["cf1"]["value"] == {"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"}
+
+    mgr2 = _make_manager({})
+    mgr2._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": saved_json}]
+    )
+    await mgr2._load_graphs()
+
+    assert mgr2._hysteresis["g1"] == {"cf1": {"value": "(3+4j)", "_opaque_recovered_str": True}}
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        outputs = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": 3 + 4j}})
+
+    assert outputs["cf1"]["changed"] is False
+
+
 class TestPersistDefaultAndDecode:
     """Direct tests for the _persist_default/_decode_persisted_value pair
     (issue #1087 Codex finding: "Preserve non-JSON value types in persisted
@@ -1053,10 +1090,21 @@ class TestPersistDefaultAndDecode:
             "value": "2026-01-01T12:30:00+00:00",
         }
 
-    def test_persist_default_falls_back_to_str_for_unrecognized_types(self):
+    def test_persist_default_tags_str_fallback_for_unrecognized_types(self):
+        """Regression: an untagged bare str(v) fallback here would violate
+        the version-2 envelope's own guarantee that every non-JSON-native
+        value is fully tagged — _load_graphs would restore this as an
+        indistinguishable genuine string, and a change_filter comparing a
+        live value of the original type (e.g. a python_script's complex
+        number) against it would report a spurious changed=True forever."""
         from obs.logic.manager import _persist_default
 
-        assert _persist_default(3 + 4j) == str(3 + 4j)
+        assert _persist_default(3 + 4j) == {"__obs_persisted_type__": "opaque_str", "value": str(3 + 4j)}
+
+    def test_decode_persisted_value_restores_opaque_str_as_plain_string(self):
+        from obs.logic.manager import _decode_persisted_value
+
+        assert _decode_persisted_value({"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"}) == "(3+4j)"
 
     def test_persist_default_tags_set_and_frozenset(self):
         from obs.logic.manager import _persist_default

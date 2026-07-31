@@ -40,6 +40,26 @@ def _snapshot_debug_value(value: Any) -> Any:
             return str(value)
 
 
+def _replay_known_output_value(value: Any) -> Any:
+    """Isolate a known_outputs value from in-place mutation by a downstream
+    node re-executed during a replay, without changing its type when that
+    isn't possible.
+
+    Unlike _snapshot_debug_value (used for pure debug capture, where only a
+    human-readable snapshot matters), a known_outputs value can be
+    genuinely CONSUMED by a downstream node inside the replayed island —
+    degrading its type to a JSON/str fallback there could replace that
+    consumer's own valid output with "__error__" instead of merely
+    misrepresenting it in a debug log. Falls back to the ORIGINAL reference
+    (accepting the narrow mutation risk the deep copy exists to avoid, for
+    this one value only) rather than a lossy snapshot.
+    """
+    try:
+        return copy.deepcopy(value)
+    except Exception:  # noqa: BLE001 - a value with a failing copy hook must still reach downstream consumers unmutated in type
+        return value
+
+
 _COMPARE_OPS = {
     ">": operator.gt,
     "gt": operator.gt,
@@ -138,14 +158,19 @@ class GraphExecutor:
                 # for the *same* node, which the caller (and any later
                 # correction pass reusing that same outputs dict) still
                 # relies on being untouched. Snapshotting per output port
-                # (via the same failure-safe fallback chain used for debug
-                # capture) rather than the whole dict in one deepcopy call
-                # means a single non-deepcopyable value on a completely
-                # unrelated node — e.g. a permitted python_script legitimately
-                # returning a generator — degrades only that one port instead
-                # of raising TypeError and aborting this entire replay before
-                # the executor's own per-node exception boundary ever runs.
-                outputs[node.id] = {port: _snapshot_debug_value(val) for port, val in known_outputs[node.id].items()}
+                # rather than the whole dict in one deepcopy call means a
+                # single non-deepcopyable value on a completely unrelated
+                # node — e.g. a permitted python_script legitimately
+                # returning a generator — degrades only that one port
+                # instead of raising TypeError and aborting this entire
+                # replay before the executor's own per-node exception
+                # boundary ever runs. Uses _replay_known_output_value, NOT
+                # _snapshot_debug_value: a value here may be genuinely
+                # CONSUMED by a downstream node inside the replayed island,
+                # so a lossy JSON/str fallback (fine for pure debug capture)
+                # would silently replace that consumer's valid output with
+                # "__error__" instead of merely misrepresenting it in a log.
+                outputs[node.id] = {port: _replay_known_output_value(val) for port, val in known_outputs[node.id].items()}
                 continue
 
             # Resolve inputs for this node
@@ -425,17 +450,19 @@ class GraphExecutor:
         return dec if dec.is_finite() else None
 
     @classmethod
-    def _compare_values(cls, left: Any, right: Any, *, right_is_recovered_str: bool = False) -> tuple[bool, bool]:
+    def _compare_values(
+        cls, left: Any, right: Any, *, right_is_recovered_str: bool = False, right_is_opaque_recovered_str: bool = False
+    ) -> tuple[bool, bool]:
         """Return (are_equal, via_normalizing_path).
 
         via_normalizing_path is True when equality was decided by a
         normalizing equivalence — boolean/int/decimal aliasing, or
-        structural dict/list `==` — and False when it fell through to the
-        temporal str()-recovery path below. That path can equate a live
-        value with a persisted, JSON-lossy string left over from
-        `default=str` (e.g. a datetime.time vs. "10:30:00"), so a caller
-        that wants to keep emitting one side's own representation on an
-        "equal" result needs to know whether doing so is safe.
+        structural dict/list `==` — and False when it fell through to one of
+        the str()-recovery paths below. Those paths can equate a live value
+        with a persisted, JSON-lossy string left over from `default=str`
+        (e.g. a datetime.time vs. "10:30:00"), so a caller that wants to
+        keep emitting one side's own representation on an "equal" result
+        needs to know whether doing so is safe.
 
         `right_is_recovered_str` must be set only when `right` (always the
         previously-held/persisted side at the change_filter call site, per
@@ -444,6 +471,20 @@ class GraphExecutor:
         a source that legitimately emits the literal string "10:30:00" and
         later emits datetime.time(10, 30) would have its genuine type
         transition swallowed by the recovery path below.
+
+        `right_is_opaque_recovered_str` is the analogous flag for a value
+        _persist_default had to fall back to str() for because it recognized
+        no more specific type (e.g. a python_script's complex-number/custom-
+        object result) — LogicManager._load_graphs sets it from that state's
+        own "opaque_str" persistence tag. Unlike `right_is_recovered_str`
+        (deliberately restricted to date/time `left` types, since a LEGACY
+        pre-tag row could have flattened literally anything, including a
+        list/dict that might coincidentally str()-match), this tag is
+        unambiguous by construction: every JSON-native and specifically-
+        recognized type (list/dict/tuple/set/frozenset/bytes/date/time/
+        datetime) is tagged on its own, so an "opaque_str"-tagged value can
+        never have originally been one of those — a broader match here
+        carries none of that collision risk.
         """
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
@@ -468,6 +509,14 @@ class GraphExecutor:
         # not a persistence artifact, so it must not be treated as
         # "unchanged".
         if right_is_recovered_str and isinstance(right, str) and isinstance(left, (_date, _time)):
+            return str(left) == right, False
+        # See the docstring above: an "opaque_str" tag unambiguously means
+        # `right` is a lossy str() of some type _persist_default didn't
+        # otherwise recognize, so any `left` type may safely be compared via
+        # str() here — except dict/list, excluded defensively for the same
+        # coincidental-repr reason as above, even though a dict/list could
+        # never actually be the type this tag was generated from.
+        if right_is_opaque_recovered_str and isinstance(right, str) and not isinstance(left, (dict, list)):
             return str(left) == right, False
         return left == right, True
 
@@ -726,7 +775,12 @@ class GraphExecutor:
                 if not has_prev:
                     self.hysteresis_state[node.id] = {"value": baseline}
                     return {"out": value, "changed": True}
-                equal, via_normalizing_path = self._compare_values(value, state["value"], right_is_recovered_str=bool(state.get("_recovered_str")))
+                equal, via_normalizing_path = self._compare_values(
+                    value,
+                    state["value"],
+                    right_is_recovered_str=bool(state.get("_recovered_str")),
+                    right_is_opaque_recovered_str=bool(state.get("_opaque_recovered_str")),
+                )
                 if not equal:
                     self.hysteresis_state[node.id] = {"value": baseline}
                     return {"out": value, "changed": True}
@@ -746,35 +800,37 @@ class GraphExecutor:
                 # tick.
                 if via_normalizing_path:
                     out_value = copy.deepcopy(state["value"])
-                    if state.get("_recovered_str"):
-                        # A live value just confirmed the persisted, legacy
+                    if state.get("_recovered_str") or state.get("_opaque_recovered_str"):
+                        # A live value just confirmed the persisted,
                         # restart-recovered representation via ORDINARY
-                        # equality (not the str()-recovery fallback below) —
-                        # e.g. a source that genuinely emits the literal
-                        # string "10:30:00" live, matching a persisted
-                        # string tagged "_recovered_str" from before this
-                        # format existed. That resolves the ambiguity this
-                        # marker exists for: this source evidently emits
-                        # this representation live, not a datetime/date/time
-                        # object that only happens to str()-match it. Clear
-                        # the marker now so a LATER genuine type transition
-                        # (e.g. to a real datetime.time) is reported as a
-                        # real change instead of being silently swallowed by
-                        # the recovery fallback forever.
+                        # equality (not either str()-recovery fallback
+                        # above) — e.g. a source that genuinely emits the
+                        # literal string "10:30:00" live, matching a
+                        # persisted string tagged "_recovered_str" from
+                        # before tagged persistence existed, or a live value
+                        # matching an "_opaque_recovered_str"-tagged string.
+                        # That resolves the ambiguity whichever marker
+                        # exists for: this source evidently emits this
+                        # representation live, not some other type that
+                        # only happens to str()-match it. Clear the marker
+                        # now so a LATER genuine type transition is reported
+                        # as a real change instead of being silently
+                        # swallowed by a recovery fallback forever.
                         self.hysteresis_state[node.id] = {"value": out_value}
                 else:
-                    # Equality here only held through the legacy
-                    # str()-recovery fallback: state["value"] is still the
-                    # pre-migration persisted string and "_recovered_str" is
-                    # still set. Migrate stored state to the live, typed
-                    # value now (dropping the marker) so the *next* persist
-                    # writes it properly tagged under the version-2
-                    # envelope — otherwise a future restart's loader (which
-                    # only re-applies the recovery heuristic to untagged
-                    # legacy strings, never to an already-migrated value)
-                    # would keep comparing this same unmigrated string
-                    # against a live value on every restart and report a
-                    # spurious changed=True each time.
+                    # Equality here only held through one of the str()-
+                    # recovery fallbacks above: state["value"] is still the
+                    # pre-migration persisted string (or the "opaque_str"-
+                    # tagged one) and its marker is still set. Migrate
+                    # stored state to the live, typed value now (dropping
+                    # the marker) so the *next* persist writes it properly
+                    # tagged under the version-2 envelope — otherwise a
+                    # future restart's loader (which only re-applies a
+                    # recovery heuristic to an untagged legacy string or an
+                    # "opaque_str"-tagged one, never to an already-migrated
+                    # value) would keep comparing this same unmigrated
+                    # value against a live value on every restart and
+                    # report a spurious changed=True each time.
                     out_value = value
                     self.hysteresis_state[node.id] = {"value": baseline}
                 return {"out": out_value, "changed": False}

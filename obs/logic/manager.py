@@ -32,7 +32,7 @@ from urllib.parse import quote, unquote, urljoin, urlparse, urlunparse
 import httpx
 
 from obs.core.json import jsonable
-from obs.logic.executor import GraphExecutor
+from obs.logic.executor import GraphExecutor, _snapshot_debug_value
 from obs.logic.models import FlowData
 from obs.logic.node_types import get_node_type
 from obs.security.url_targets import resolve_url_target
@@ -190,7 +190,17 @@ def _persist_default(v: Any) -> Any:
         return {_PERSIST_TYPE_TAG: "frozenset", "value": [_escape_persist_collision(item) for item in v]}
     if isinstance(v, set):
         return {_PERSIST_TYPE_TAG: "set", "value": [_escape_persist_collision(item) for item in v]}
-    return str(v)
+    # Catch-all for any other unrecognized type (e.g. a permitted
+    # python_script result like a complex number or a custom object) — MUST
+    # still be tagged, not a bare str(v): this row is otherwise saved under
+    # the version-2 envelope, whose whole contract (see
+    # _PERSIST_STATE_VERSION above) is that a bare string surviving decode is
+    # guaranteed a genuine string, never a lossy stand-in for something else.
+    # An untagged fallback here would violate that guarantee — _load_graphs
+    # would restore this as a plain string, and a change_filter comparing a
+    # live value of the original type against it would report a spurious
+    # changed=True forever, since nothing marks the string as recovered.
+    return {_PERSIST_TYPE_TAG: "opaque_str", "value": str(v)}
 
 
 def _escape_persist_collision(v: Any) -> Any:
@@ -264,6 +274,15 @@ def _decode_persisted_value(v: Any) -> Any:
                 return bytes.fromhex(v.get("value", ""))
             except (TypeError, ValueError):
                 return v
+        if tag == "opaque_str":
+            # _persist_default's catch-all for a type it doesn't otherwise
+            # recognize — the original type can't be reconstructed, only its
+            # str() survives. The caller (_load_graphs) still needs to know
+            # THIS specific string is such a lossy stand-in, so it can mark
+            # the containing change_filter state "_opaque_recovered_str" —
+            # done there, not here, since decoding is per-value and that
+            # marker lives on the enclosing node-state dict.
+            return v.get("value")
         if tag == "tuple":
             inner = v.get("value")
             if isinstance(inner, list):
@@ -292,6 +311,25 @@ def _decode_persisted_value(v: Any) -> Any:
     if isinstance(v, list):
         return [_decode_persisted_value(item) for item in v]
     return v
+
+
+def _safe_deepcopy_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Deep-copy a per-node state dict (hyst/graph_state) without letting one
+    node's non-deep-copyable stored value (e.g. a Memory node holding a
+    permitted python_script's generator/complex-object result) raise and
+    take down the whole snapshot. A pre-execution snapshot failing here
+    previously propagated out of the caller's broad try/except, aborting
+    this entire graph execution — including every otherwise-independent
+    branch and its writes — just because ONE unrelated stateful node held
+    such a value. Falls back to the executor's own per-node failure-safe
+    chain (deepcopy, then json round-trip, then str()) only for the
+    specific node whose value doesn't survive a plain deepcopy; every
+    other node's state is still copied exactly.
+    """
+    try:
+        return copy.deepcopy(state)
+    except Exception:  # noqa: BLE001 - a stateful node's stored value may hold a runtime object with a failing copy hook
+        return {nid: _snapshot_debug_value(val) for nid, val in state.items()}
 
 
 def _fresh_input_handles(
@@ -2457,8 +2495,8 @@ class LogicManager:
 
         executor = _executor(hyst)
         try:
-            pre_execute_hyst = copy.deepcopy(hyst) if _needs_pre_execute_snapshot else None
-            pre_execute_node_state = copy.deepcopy(graph_state) if _needs_pre_execute_snapshot else None
+            pre_execute_hyst = _safe_deepcopy_state(hyst) if _needs_pre_execute_snapshot else None
+            pre_execute_node_state = _safe_deepcopy_state(graph_state) if _needs_pre_execute_snapshot else None
             outputs = _execute_pass(executor, aug_overrides)
         except Exception:
             logger.exception("Graph %s (%s) execution error", graph_id, name)
@@ -2676,6 +2714,20 @@ class LogicManager:
         # yet actually executed".
         _settled_async_ids: set[str] = set()
 
+        # message_archive/notify nodes settled specifically via the
+        # freshness-skip path (a truthy but STALE _trigger — see
+        # _run_message_archive_node/_run_notify_node) — tracked separately
+        # from _settled_async_ids/_still_unresolved_source_ids' general
+        # recompute, which reads the outer `outputs` and can drift for
+        # unrelated reasons this late in the tick (e.g. an intermediate
+        # host_check/WoL replay updating a chained node's own _trigger
+        # reading). The late release pass near the end of this function
+        # only ever subtracts this explicit set from the ORIGINAL, frozen
+        # _unresolved_source_ids seed — never recomputes it wholesale — so
+        # it can only release what this specific settling caused, nothing
+        # else.
+        _freshness_settled_async_ids: set[str] = set()
+
         def _still_unresolved_source_ids(outputs_source: dict[str, dict[str, Any]] | None = None) -> set[str]:
             """Recompute the async-chain part of _unresolved_source_ids
             using `outputs_source` (defaults to the outer `outputs`) and
@@ -2812,8 +2864,23 @@ class LogicManager:
             # itself becomes cron_reachable through cf1's real "changed"
             # pulse — bypassing rising-edge dedup on every execution even
             # though cf2 itself did not change.
-            if _node_type_by_id.get(edge.source) == "change_filter" and (edge.sourceHandle or "out") != "changed":
-                return False
+            if _node_type_by_id.get(edge.source) == "change_filter":
+                if (edge.sourceHandle or "out") != "changed":
+                    return False
+                # The "changed" handle carries a real pulse only when this
+                # SPECIFIC change_filter actually fired this pass — not
+                # merely whenever its "in" happens to be fed by an upstream
+                # pulse. E.g. cf1.changed -> cf2.in -> cf2.changed ->
+                # NOT -> host_check: cf1 pulsing only means cf2's "in" was
+                # fed a discrete value this tick, not that cf2 itself
+                # reported changed=True (its new "in" may already equal its
+                # own persisted baseline). Without this check, a downstream
+                # host_check reachable through cf2's "changed" edge would be
+                # treated as pulse-reachable — and have its rising-edge
+                # dedup bypassed — on every cf1 event, even on ticks where
+                # cf2 itself did not change.
+                if not GraphExecutor._to_bool(outputs.get(edge.source, {}).get("changed")):
+                    return False
             target_type = get_node_type(_node_type_by_id.get(edge.target))
             if not target_type:
                 return True
@@ -4355,6 +4422,16 @@ class LogicManager:
             if not GraphExecutor._to_bool(out.get("_trigger")):
                 return False
             if not _has_fresh_firing_input(node.id, out):
+                # A truthy but STALE _trigger (e.g. left over from a previous
+                # tick that hasn't gone false yet) means this action will not
+                # actually run this tick — its final output IS this current,
+                # inactive `out`, not a still-pending placeholder. Without
+                # settling it here, a downstream change_filter reachable only
+                # through this node would stay held hostage to it for the
+                # rest of the tick for no reason — see the late release pass
+                # near the end of this function and _freshness_settled_async_ids.
+                _add_resolved_outputs({node.id})
+                _freshness_settled_async_ids.add(node.id)
                 return False
 
             archive_id = (node.data.get("archive_id") or "").strip().lower()
@@ -4468,6 +4545,17 @@ class LogicManager:
             if not GraphExecutor._to_bool(out.get("_trigger")):
                 return False
             if not _has_fresh_firing_input(node.id, out):
+                # See _run_message_archive_node's identical check: a truthy
+                # but STALE _trigger means this notification will not
+                # actually fire this tick, so its final output IS this
+                # current, inactive `out` — settle it now (see the late
+                # release pass near the end of this function and
+                # _freshness_settled_async_ids) so a downstream change_filter
+                # isn't held hostage to this node for the rest of the tick
+                # just because it never reaches the success path below (the
+                # only other place that settles it).
+                _add_resolved_outputs({node.id})
+                _freshness_settled_async_ids.add(node.id)
                 return False
 
             if node.type == "notify_message":
@@ -4772,6 +4860,47 @@ class LogicManager:
             )
             replayed_notify_nodes.update(triggered_notify_nodes)
             await _run_replay_triggered_side_effects(notify_descendants)
+
+        # ── Late release of change_filters held only by a now-settled
+        # message_archive/notify node ───────────────────────────────────
+        # A message_archive/notify node with a truthy but STALE _trigger
+        # (see _run_message_archive_node/_run_notify_node's freshness-skip
+        # branch above) is only settled here, well after the very first
+        # _cf_hold_ids correction already ran and may have suppressed a
+        # change_filter reachable through it. Recompute the hold set with
+        # exactly those nodes subtracted from the ORIGINAL, frozen
+        # _unresolved_source_ids seed, and redo that same correction if
+        # anything is no longer tainted — reusing _cf_hold_ids' original
+        # island as the redo scope (safe: only removing seeds can only
+        # shrink reachability, never reveal a node outside that island).
+        # Deliberately NOT a general _still_unresolved_source_ids()
+        # recompute here: by this point in the tick, the outer `outputs`
+        # has been updated by many unrelated intermediate replays (host_check/
+        # WoL chains that reached a new, still-unresolved link without ever
+        # "settling" it) — recomputing the whole seed from that drifted
+        # snapshot could incorrectly release a change_filter that must stay
+        # held for one of those unrelated, still-genuinely-pending reasons.
+        if _cf_hold_ids:
+            _late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_source_ids - _freshness_settled_async_ids)
+            if _late_cf_hold_ids != _cf_hold_ids:
+                _late_cf_hold_overrides: dict[str, dict[str, Any]] = {nid: dict(vals) for nid, vals in aug_overrides.items()}
+                for _nid, _vals in resolved_async_edge_overrides.items():
+                    _late_cf_hold_overrides.setdefault(_nid, {}).update(_vals)
+                for _cf_id in _late_cf_hold_ids:
+                    _late_cf_hold_overrides.setdefault(_cf_id, {})["_suppress_change_filter"] = True
+                _late_cf_hold_known_outputs = {nid: vals for nid, vals in outputs.items() if nid not in _cf_hold_island}
+                _late_cf_hold_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                _late_cf_hold_outputs = _execute_pass(
+                    _executor(_late_cf_hold_hyst), _late_cf_hold_overrides, known_outputs=_late_cf_hold_known_outputs
+                )
+                for _nid, _vals in _late_cf_hold_outputs.items():
+                    if _nid in _cf_hold_island:
+                        outputs[_nid] = _vals
+                        if _nid in _late_cf_hold_hyst:
+                            hyst[_nid] = _late_cf_hold_hyst[_nid]
+                        else:
+                            hyst.pop(_nid, None)
+                _register_change_filter_pulses(_cf_hold_island)
 
         # Deferred hc_prev_trigger=False: clear only for HC nodes that did NOT
         # fire in any async pass. Clearing inside _run_host_check_node was wrong
@@ -5130,6 +5259,31 @@ class LogicManager:
                             # string→datetime type transition on a source
                             # that legitimately persisted a native string).
                             saved = {nid: _decode_persisted_value(s) for nid, s in saved_raw["state"].items()}
+                            # _persist_default's catch-all for an otherwise
+                            # unrecognized type (e.g. a python_script's
+                            # complex-number/custom-object baseline) tags it
+                            # "opaque_str" — a genuinely lossy str() stand-in,
+                            # unlike every other string in this envelope.
+                            # Mark it "_opaque_recovered_str" so
+                            # GraphExecutor._compare_values can still
+                            # recognize a live value matching that
+                            # representation as "unchanged", while a later,
+                            # genuine type transition still clears the marker
+                            # and reports a real change — same self-clearing
+                            # mechanism as the legacy "_recovered_str" below,
+                            # just detected from this version's own tag
+                            # instead of inferred from "any string".
+                            _cf_ids_v2 = {n.id for n in flow.nodes if n.type == "change_filter"}
+                            for _nid_v2 in _cf_ids_v2:
+                                _raw_state_v2 = saved_raw["state"].get(_nid_v2)
+                                _decoded_state_v2 = saved.get(_nid_v2)
+                                if (
+                                    isinstance(_raw_state_v2, dict)
+                                    and isinstance(_raw_state_v2.get("value"), dict)
+                                    and _raw_state_v2["value"].get(_PERSIST_TYPE_TAG) == "opaque_str"
+                                    and isinstance(_decoded_state_v2, dict)
+                                ):
+                                    _decoded_state_v2["_opaque_recovered_str"] = True
                         elif isinstance(saved_raw, dict) and saved_raw:
                             # Legacy row (saved before tagged persistence
                             # existed): plain default=str, no version

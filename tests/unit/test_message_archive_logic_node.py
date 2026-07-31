@@ -518,6 +518,112 @@ def test_notification_requires_fresh_truthy_trigger_when_message_is_cached() -> 
             adapter.send_notification.assert_not_awaited()
 
 
+def test_freshness_skipped_notify_settles_instead_of_holding_downstream_change_filter() -> None:
+    """Regression (P2, issue #1087): a notify node with a truthy but STALE
+    _trigger (message cached from a previous tick, not fed by THIS tick's
+    event) is correctly skipped by _has_fresh_firing_input, but was never
+    settled — a change_filter combining its output with a genuinely live
+    input stayed held for the rest of the tick, hostage to a node that was
+    never actually going to do anything, and the live input's genuine
+    change was lost until some unrelated future tick happened to also
+    settle it."""
+    message_datapoint_id = uuid.uuid4()
+    live_datapoint_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+            node("live_read", "datapoint_read", {"datapoint_id": str(live_datapoint_id)}),
+            node("add", "math_formula", {"formula": "a + b"}),
+            node("cf", "change_filter"),
+        ],
+        [
+            edge("message_read", "notify", "value", "message"),
+            edge("notify", "add", "sent", "in1"),
+            edge("live_read", "add", "value", "in2"),
+            edge("add", "cf", "result", "in"),
+        ],
+    )
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {
+        message_datapoint_id: MagicMock(value="cached alert"),
+        live_datapoint_id: MagicMock(value=1),
+    }.get
+    # Previous tick's committed state: notify.sent(False=0) + live_read(1) = 1.
+    manager._hysteresis["archive-graph"] = {"cf": {"value": 1}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"live_read": {"value": 2, "changed": True}})
+
+    # The cached message is stale for THIS event — notify must not fire.
+    assert outputs["notify"]["sent"] is False
+    adapter.send_notification.assert_not_awaited()
+    # But the change_filter must still see the real Add result
+    # (0 + 2 = 2) and report the genuine transition from its persisted
+    # baseline of 1 — not stay held hostage to notify's own irrelevant,
+    # never-going-to-fire trigger.
+    assert outputs["cf"] == {"out": 2.0, "changed": True}
+
+
+def test_freshness_skipped_notify_release_does_not_affect_a_separately_held_filter() -> None:
+    """Regression: the late release pass (see test above) must only release
+    a change_filter that was held SOLELY by the now-settled notify node —
+    a SEPARATE change_filter still tainted by a genuinely unresolved,
+    unrelated Read Object must stay held, proving the late release
+    recomputes the hold set precisely rather than releasing everything in
+    the original island indiscriminately. cf2 also starts with no prior
+    persisted state at all, exercising the late release's own "clear the
+    uncorrected first pass's wrongly-committed placeholder" branch (a
+    held/suppressed filter never commits new state, mirroring the
+    equivalent branch in the very first _cf_hold_ids correction)."""
+    message_datapoint_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+            node("cf1", "change_filter"),
+            node("unseeded_read", "datapoint_read", {}),  # no datapoint_id: always unseeded
+            node("cf2", "change_filter"),
+        ],
+        [
+            edge("message_read", "notify", "value", "message"),
+            edge("notify", "cf1", "sent", "in"),
+            edge("unseeded_read", "cf2", "value", "in"),
+        ],
+    )
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {message_datapoint_id: MagicMock(value="cached alert")}.get
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"live_unused": {"value": 1, "changed": True}})
+
+    adapter.send_notification.assert_not_awaited()
+    # cf1 was held only by notify's stale trigger — released once notify
+    # settles, committing its first real value (notify never actually sent).
+    assert outputs["cf1"] == {"out": False, "changed": True}
+    # cf2 is tainted by a genuinely unresolved, unrelated Read Object and
+    # must stay held (no prior state, so its held output is None) regardless.
+    assert outputs["cf2"] == {"out": None, "changed": False}
+
+
 def test_closed_gate_does_not_make_retained_message_fresh() -> None:
     message_datapoint_id = uuid.uuid4()
     enable_datapoint_id = uuid.uuid4()

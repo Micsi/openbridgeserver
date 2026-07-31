@@ -1059,6 +1059,41 @@ class TestHostCheckRisingEdge:
         # hostage to cf1's own, unrelated unresolved upstream.
         assert outputs["cf2"] == {"out": 7, "changed": True}
 
+    def test_pre_execute_snapshot_survives_a_non_deepcopyable_memory_value(self):
+        """Regression (P2): the pre-execution hyst/graph_state snapshot is
+        enabled whenever ANY unseeded Read Object exists in the graph,
+        regardless of which node actually needs the correction it enables.
+        If some totally UNRELATED stateful node (e.g. a Memory node holding
+        a permitted python_script's generator result) can't be deep-copied,
+        the bare copy.deepcopy(hyst) raised, and the broad try/except around
+        this whole first pass returned {} — aborting the entire graph
+        execution, including every otherwise-independent branch and its
+        writes, not just the change_filter correction that actually needed
+        the snapshot."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {}),  # no datapoint_id: always unseeded
+            node("cf", "change_filter"),
+            node("mem", "memory"),
+            node("other_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "cf", "value", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-pre-execute-snapshot-non-copyable"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"mem": {"value": (x for x in [1, 2, 3])}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"other_read": {"value": 42, "changed": True}}))
+
+        assert outputs != {}
+        assert outputs["other_read"] == {"value": 42, "changed": True}
+
     def test_change_filter_is_not_held_when_read_is_resolved_via_debug_override(self):
         """Regression: a manual/debug execution (the debug-inspector "run"
         feature) that supplies debug_overrides={read_id: {"value": ...}}
@@ -1542,6 +1577,46 @@ class TestHostCheckRisingEdge:
 
         assert outputs["cf"]["changed"] is False
         assert manager._hysteresis[graph_id]["cf"] == {"value": True}
+
+    def test_correction_replay_preserves_type_of_a_non_deepcopyable_known_output(self):
+        """Regression: the known_outputs replay-population (see test above)
+        ran every reused output through _snapshot_debug_value's failure-safe
+        fallback chain — fine for pure debug capture, but a known_outputs
+        value can be genuinely CONSUMED by a downstream node INSIDE the
+        held island, not just displayed. A non-deepcopyable value (e.g. a
+        permitted python_script's generator result) degraded to its str()
+        repr there, silently changing its type for that consumer.
+
+        len() distinguishes the two without needing any disallowed
+        script builtin: a generator has no len() (raises TypeError inside
+        the script, surfacing as this node's own "__error__" output),
+        while its stringified repr does (returns a plain int, no error) —
+        so an "__error__" result here proves the real generator reached
+        the consumer, not a lossy string standing in for it."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("cf", "change_filter"),
+            node("gen_script", "python_script", {"script": "result = (x for x in range(3))"}),
+            node("consumer_script", "python_script", {"script": "result = len(inputs['gen'])"}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "cf", "value", "in"),
+                edge("cf", "consumer_script", "changed", "in1"),
+                edge("gen_script", "consumer_script", "result", "gen"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-known-outputs-preserve-type"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert "no len()" in outputs["consumer_script"].get("__error__", "")
 
     def test_change_filter_is_not_held_when_or_gate_is_already_true_from_a_seeded_branch(self):
         """Regression: an OR gate combining an unseeded Read Object with a
