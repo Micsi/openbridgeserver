@@ -708,6 +708,32 @@ async def test_persist_node_state_excludes_persist_state_false_nodes():
 
 
 @pytest.mark.asyncio
+async def test_persist_node_state_excludes_runtime_ical_body_and_result_cache():
+    import json
+
+    flow = _flow([{"id": "i1", "type": "ical", "data": {}}])
+    mgr = _make_manager({"g1": ("G", True, flow)})
+    mgr._hysteresis["g1"] = {
+        "i1": {
+            "raw": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+            "_ical_result_cache": {"raw": object(), "outputs": {"f0_array": []}},
+            "fetched_url": "https://example.com/calendar.ics",
+            "last_fetch_ts": 123.0,
+        }
+    }
+
+    await mgr._persist_node_state("g1")
+
+    saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
+    assert saved == {
+        "i1": {
+            "fetched_url": "https://example.com/calendar.ics",
+            "last_fetch_ts": 123.0,
+        }
+    }
+
+
+@pytest.mark.asyncio
 async def test_persist_node_state_without_graph_entry_saves_everything():
     import json
 

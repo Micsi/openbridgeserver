@@ -4219,6 +4219,14 @@ class TestLogicManagerExecuteGraph:
         )
         mgr, db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
         db.execute_and_commit = AsyncMock()
+        # Persisted fetch metadata intentionally has no runtime-only body.
+        # A restart must fetch even though the previous timestamp is fresh.
+        mgr._hysteresis["g1"] = {
+            "i1": {
+                "fetched_url": "https://example.com/cal.ics",
+                "last_fetch_ts": 4_102_444_800.0,
+            }
+        }
         read_body = AsyncMock(return_value=b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n")
 
         with (

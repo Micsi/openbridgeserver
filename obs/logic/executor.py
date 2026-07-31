@@ -1315,6 +1315,7 @@ class GraphExecutor:
                         out[f"f{i}_today"] = False
                     return out
 
+                cache_key: tuple[str, str, str] | None = None
                 try:
                     import datetime as _dt_ic
                     from zoneinfo import ZoneInfo as _ZI
@@ -1330,7 +1331,18 @@ class GraphExecutor:
 
                     tz_name = self.app_config.get("timezone", "Europe/Zurich")
                     tz = _ZI(tz_name)
-                    today = _dt_ic.datetime.now(tz).date()
+                    today = _datetime.now(tz).date()
+                    cache_key = (filters_json, tz_name, today.isoformat())
+                    cached = hyst_node.get("_ical_result_cache")
+                    if (
+                        isinstance(cached, dict)
+                        and cached.get("raw") is raw_text
+                        and cached.get("key") == cache_key
+                        and isinstance(cached.get("outputs"), dict)
+                    ):
+                        out.update(cached["outputs"])
+                        return out
+
                     tomorrow = today + _dt_ic.timedelta(days=1)
                     window_end = today + _dt_ic.timedelta(days=365)
 
@@ -1449,6 +1461,12 @@ class GraphExecutor:
                         out.setdefault(f"f{i}_today", False)
                         out.setdefault(f"f{i}_tomorrow", False)
 
+                if cache_key is not None:
+                    hyst_node["_ical_result_cache"] = {
+                        "raw": raw_text,
+                        "key": cache_key,
+                        "outputs": {key: value for key, value in out.items() if key != "raw"},
+                    }
                 return out
 
             case _:

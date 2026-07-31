@@ -1965,7 +1965,7 @@ class LogicManager:
             hyst_node = hyst.setdefault(node.id, {})
             last_fetch: float | None = hyst_node.get("last_fetch_ts")
             url_changed = hyst_node.get("fetched_url") != url
-            needs_fetch = url_changed or last_fetch is None or (execute_now.timestamp() - last_fetch) >= refresh_min * 60
+            needs_fetch = not hyst_node.get("raw") or url_changed or last_fetch is None or (execute_now.timestamp() - last_fetch) >= refresh_min * 60
             if needs_fetch:
                 active_client: httpx.AsyncClient | None = None
                 try:
@@ -3976,7 +3976,15 @@ class LogicManager:
             if graph_entry:
                 _, _, _flow = graph_entry
                 no_persist = {n.id for n in _flow.nodes if n.data.get("persist_state") is False}
-                state_to_save = {nid: s for nid, s in hyst.items() if nid not in no_persist}
+                ical_nodes = {n.id for n in _flow.nodes if n.type == "ical"}
+                state_to_save = {}
+                for node_id, node_state in hyst.items():
+                    if node_id in no_persist:
+                        continue
+                    if node_id in ical_nodes and isinstance(node_state, dict):
+                        state_to_save[node_id] = {key: value for key, value in node_state.items() if key not in {"raw", "_ical_result_cache"}}
+                    else:
+                        state_to_save[node_id] = node_state
             else:
                 state_to_save = hyst
             await self._db.execute_and_commit(
