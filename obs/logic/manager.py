@@ -846,6 +846,10 @@ class LogicManager:
         # Parsed/filtered calendar results must stay outside hysteresis state:
         # async replay paths deep-copy that state several times per execution.
         self._ical_result_caches: dict[str, dict[str, Any]] = {}
+        # Replacing this token invalidates cache/fetch work that started against
+        # an older graph configuration.  Cache dictionaries are likewise
+        # replaced, rather than mutated, so worker snapshots remain race-free.
+        self._ical_cache_generations: dict[str, object] = {}
         # Running value sequences, keyed per graph/node.  They are deliberately
         # separate from cron tasks because they are short-lived and user-triggered.
         self._sequence_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
@@ -887,6 +891,8 @@ class LogicManager:
 
     async def reload(self) -> None:
         """Reload graph cache from DB and restart cron schedulers."""
+        for graph_id in set(self._graphs) | set(self._ical_result_caches):
+            self._ical_cache_generations[graph_id] = object()
         for task in list(self._cron_tasks.values()):
             task.cancel()
         self._cron_tasks.clear()
@@ -894,6 +900,7 @@ class LogicManager:
         live_graph_ids = set(self._graphs)
         for graph_id in set(self._ical_result_caches) - live_graph_ids:
             self._ical_result_caches.pop(graph_id, None)
+            self._ical_cache_generations.pop(graph_id, None)
         for graph_id in set(self._hysteresis) - live_graph_ids:
             self._hysteresis.pop(graph_id, None)
         for key in [key for key in self._ical_fetch_locks if key[0] not in live_graph_ids]:
@@ -914,8 +921,8 @@ class LogicManager:
             }
             result_cache = self._ical_result_caches.get(graph_id)
             if result_cache is not None:
-                for node_id in set(result_cache) - active_ical_ids:
-                    result_cache.pop(node_id, None)
+                self._ical_result_caches[graph_id] = {node_id: entry for node_id, entry in result_cache.items() if node_id in active_ical_ids}
+            self._ical_cache_generations.setdefault(graph_id, object())
             graph_hysteresis = self._hysteresis.get(graph_id)
             if graph_hysteresis is not None:
                 for node_id, node_state in list(graph_hysteresis.items()):
@@ -1166,7 +1173,11 @@ class LogicManager:
 
     def update_app_config(self, config: dict[str, Any]) -> None:
         """Hot-update app config (called by settings API on PUT /system/settings)."""
+        previous_timezone = self._app_config.get("timezone")
         self._app_config.update(config)
+        if self._app_config.get("timezone") != previous_timezone:
+            for graph_id in set(self._graphs) | set(self._ical_result_caches):
+                self._ical_cache_generations[graph_id] = object()
         logger.info("LogicManager: app_config updated: %s", config)
 
     # ── Cron Scheduler ────────────────────────────────────────────────────
@@ -1876,6 +1887,7 @@ class LogicManager:
         """
         self._hysteresis.pop(graph_id, None)
         self._ical_result_caches.pop(graph_id, None)
+        self._ical_cache_generations[graph_id] = object()
         self._node_state.pop(graph_id, None)
         try:
             # node_state is TEXT NOT NULL DEFAULT '{}' — reset to the empty
@@ -1896,7 +1908,9 @@ class LogicManager:
     ) -> dict[str, Any]:
         execute_now = datetime.now(UTC)
         execution_started = perf_counter()
+        ical_app_config = dict(self._app_config)
         graph_state = self._node_state.setdefault(graph_id, {})
+        ical_generation = self._ical_cache_generations.setdefault(graph_id, object())
         ical_result_cache = self._ical_result_caches.setdefault(graph_id, {})
         # Event-driven executions still evaluate the full graph so unrelated
         # datapoint_read nodes can contribute their latest registry values.
@@ -1936,35 +1950,76 @@ class LogicManager:
             )
 
         async def _executor(state: dict[str, Any]) -> GraphExecutor:
-            pass_ical_cache = await _copy_ical_cache_in_worker(copy.deepcopy, ical_result_cache) if ical_result_cache else {}
+            ical_nodes = [node for node in flow.nodes if node.type == "ical"]
+            source_ical_cache = (
+                self._ical_result_caches.get(graph_id, {}) if self._ical_cache_generations.get(graph_id) is ical_generation else ical_result_cache
+            )
+            pass_ical_cache = await _copy_ical_cache_in_worker(copy.deepcopy, source_ical_cache) if source_ical_cache else {}
+            precompute_state: dict[str, Any] = {}
+            for ical_node in ical_nodes:
+                state.setdefault(ical_node.id, {})
+                precompute_state[ical_node.id] = {
+                    "raw": state[ical_node.id].get("raw", ""),
+                }
             if not capture_debug_inputs:
-                return GraphExecutor(
+                executor: GraphExecutor = GraphExecutor(
                     flow,
                     state,
-                    self._app_config,
+                    ical_app_config,
                     ical_result_cache=pass_ical_cache,
                     ical_cache_outputs_owned=True,
                 )
 
-            run_inputs: dict[str, dict[str, dict[str, Any]]] = {}
+            else:
+                run_inputs: dict[str, dict[str, dict[str, Any]]] = {}
 
-            class CapturingGraphExecutor(GraphExecutor):
-                def execute(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-                    run_outputs = super().execute(*args, **kwargs)
-                    # ``outputs`` is updated in place as async replay results are
-                    # merged. A shallow copy preserves each node output object's
-                    # identity while isolating the pass's top-level mapping.
-                    debug_input_runs.append((dict(run_outputs), run_inputs))
-                    return run_outputs
+                class CapturingGraphExecutor(GraphExecutor):
+                    def execute(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                        run_outputs = super().execute(*args, **kwargs)
+                        # ``outputs`` is updated in place as async replay results are
+                        # merged. A shallow copy preserves each node output object's
+                        # identity while isolating the pass's top-level mapping.
+                        debug_input_runs.append((dict(run_outputs), run_inputs))
+                        return run_outputs
 
-            return CapturingGraphExecutor(
-                flow,
-                state,
-                self._app_config,
-                run_inputs,
-                pass_ical_cache,
-                ical_cache_outputs_owned=True,
-            )
+                executor = CapturingGraphExecutor(
+                    flow,
+                    state,
+                    ical_app_config,
+                    run_inputs,
+                    pass_ical_cache,
+                    ical_cache_outputs_owned=True,
+                )
+
+            if not ical_nodes:
+                return executor
+
+            def _precompute_ical_misses() -> dict[str, Any]:
+                publications: dict[str, Any] = {}
+                precompute_executor = GraphExecutor(
+                    flow,
+                    precompute_state,
+                    ical_app_config,
+                    ical_result_cache=pass_ical_cache,
+                    ical_cache_outputs_owned=True,
+                )
+                for ical_node in ical_nodes:
+                    previous = pass_ical_cache.get(ical_node.id)
+                    precompute_executor._eval_node(ical_node, {})
+                    current = pass_ical_cache.get(ical_node.id)
+                    if current is not None and current is not previous:
+                        # The execution owns its entry; publish a separate copy
+                        # so downstream output handling cannot mutate the cache.
+                        publications[ical_node.id] = copy.deepcopy(current)
+                return publications
+
+            publications = await asyncio.to_thread(_precompute_ical_misses)
+            if publications and self._ical_cache_generations.get(graph_id) is ical_generation:
+                self._ical_result_caches[graph_id] = {
+                    **self._ical_result_caches.get(graph_id, {}),
+                    **publications,
+                }
+            return executor
 
         # ── Seed all datapoint_read nodes from registry ───────────────────
         # In event-driven execution only the triggered node(s) have overrides.
@@ -1992,13 +2047,15 @@ class LogicManager:
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
         ical_ids = {node.id for node in flow.nodes if node.type == "ical"}
-        for stale_node_id in set(ical_result_cache) - ical_ids:
-            ical_result_cache.pop(stale_node_id, None)
+        normalized_ical_cache = {node_id: entry for node_id, entry in ical_result_cache.items() if node_id in ical_ids}
         for node_id in ical_ids:
             hyst_node = self._hysteresis.setdefault(graph_id, {}).setdefault(node_id, {})
             legacy_cache = hyst_node.pop("_ical_result_cache", None)
-            if node_id not in ical_result_cache and isinstance(legacy_cache, dict):
-                ical_result_cache[node_id] = legacy_cache
+            if node_id not in normalized_ical_cache and isinstance(legacy_cache, dict):
+                normalized_ical_cache[node_id] = legacy_cache
+        ical_result_cache = normalized_ical_cache
+        if self._ical_cache_generations.get(graph_id) is ical_generation:
+            self._ical_result_caches[graph_id] = normalized_ical_cache
         message_archive_ids = {node.id for node in flow.nodes if node.type == "message_archive"}
         notify_ids = {node.id for node in flow.nodes if node.type in {"notify_message", "notify_pushover", "notify_sms"}}
         operating_hour_ids = {node.id for node in flow.nodes if node.type == "operating_hours"}
@@ -2128,10 +2185,11 @@ class LogicManager:
                                 _raw_text = _resp_bytes.decode("latin-1")
                         if not _raw_text.lstrip().startswith("BEGIN:VCALENDAR"):
                             raise ValueError(f"Response is not an iCal file (starts with {_raw_text[:60]!r})")
-                        hyst_node["raw"] = _raw_text
-                        hyst_node["fetched_url"] = url
-                        hyst_node["last_fetch_ts"] = execute_now.timestamp()
-                        refreshed_ical_nodes.add(node.id)
+                        if self._ical_cache_generations.get(graph_id) is ical_generation:
+                            hyst_node["raw"] = _raw_text
+                            hyst_node["fetched_url"] = url
+                            hyst_node["last_fetch_ts"] = execute_now.timestamp()
+                            refreshed_ical_nodes.add(node.id)
                         logger.info("Graph %s: iCal fetched from %s (%d bytes)", graph_id[:8], current_url, len(_resp_bytes))
                         break
                 except Exception:
@@ -2143,25 +2201,7 @@ class LogicManager:
                     try:
                         if active_client is not None:
                             await active_client.aclose()
-                        if node.id in refreshed_ical_nodes:
-                            precomputed_cache: dict[str, Any] = {}
-                            precompute_token = object()
-                            hyst_node["_ical_precompute_token"] = precompute_token
-                            precompute_executor = GraphExecutor(
-                                flow,
-                                hyst,
-                                self._app_config,
-                                ical_result_cache=precomputed_cache,
-                            )
-                            try:
-                                await asyncio.to_thread(precompute_executor._eval_node, node, {})
-                            except BaseException:
-                                if hyst_node.get("_ical_precompute_token") is precompute_token:
-                                    hyst_node.pop("_ical_precompute_token", None)
-                                raise
-                            if hyst_node.pop("_ical_precompute_token", None) is precompute_token:
-                                ical_result_cache[node.id] = precomputed_cache[node.id]
-                        if attempt_completed:
+                        if attempt_completed and self._ical_cache_generations.get(graph_id) is ical_generation:
                             hyst_node["_ical_last_attempt_url"] = url
                             hyst_node["_ical_last_attempt_limit"] = payload_limit
                             hyst_node["_ical_last_attempt_ts"] = datetime.now(UTC).timestamp()
@@ -4241,6 +4281,7 @@ class LogicManager:
                 logger.exception("Failed to parse graph %s", row["id"])
 
     def invalidate_cache(self, graph_id: str) -> None:
+        self._ical_cache_generations[graph_id] = object()
         self._graphs.pop(graph_id, None)
         # NOTE: _hysteresis is intentionally NOT cleared here.
         # When a graph is saved (PUT/PATCH), invalidate_cache + reload() are called.
@@ -4261,6 +4302,7 @@ class LogicManager:
         self.invalidate_cache(graph_id)
         self._hysteresis.pop(graph_id, None)
         self._ical_result_caches.pop(graph_id, None)
+        self._ical_cache_generations.pop(graph_id, None)
         for key in [key for key in self._ical_fetch_locks if key[0] == graph_id]:
             self._ical_fetch_locks.pop(key, None)
 
