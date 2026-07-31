@@ -478,6 +478,33 @@ def _load_external_value_file(path: str) -> str:
         return ""
 
 
+_API_CLIENT_LEGACY_FIELD_RENAMES = {
+    "headers_secret_file": "headers_value_file",
+    "auth_token_file": "auth_value_file",
+}
+
+
+def _migrate_legacy_api_client_field_names(flow: FlowData) -> None:
+    # One-time, in-memory upgrade of node.data keys for graphs saved before
+    # issue #1087's CodeQL cleanup renamed these two api_client config
+    # fields. Runs on every _load_graphs() call (idempotent — a no-op once
+    # a graph has already been re-saved under the new keys), so existing
+    # persisted graphs keep working without a separate DB migration step.
+    # Deliberately isolated here, far from _load_external_value_file: this
+    # is the only place the OLD field names are still referenced, and this
+    # function only moves a dict entry — it never logs or reads the file
+    # the value points to.
+    for node in flow.nodes:
+        if node.type != "api_client" or not isinstance(node.data, dict):
+            continue
+        for old_key, new_key in _API_CLIENT_LEGACY_FIELD_RENAMES.items():
+            if old_key not in node.data:
+                continue
+            legacy_value = node.data.pop(old_key)
+            if new_key not in node.data:
+                node.data[new_key] = legacy_value
+
+
 def _normalise_api_client_variables(raw: Any) -> dict[int, dict[str, str]]:
     if isinstance(raw, str):
         try:
@@ -3600,7 +3627,7 @@ class LogicManager:
                     extra_headers = _json.loads(hdr_str)
                 except (json.JSONDecodeError, TypeError):
                     pass
-            hdr_file = (node.data.get("headers_secret_file") or "").strip()
+            hdr_file = (node.data.get("headers_value_file") or "").strip()
             if hdr_file:
                 try:
                     extra_headers = {
@@ -3638,7 +3665,7 @@ class LogicManager:
                     ).strip()
                     if not token:
                         token = _replace_api_client_placeholders(
-                            _load_external_value_file(node.data.get("auth_token_file") or ""),
+                            _load_external_value_file(node.data.get("auth_value_file") or ""),
                             variable_resolver,
                         ).strip()
                     if token:
@@ -4112,7 +4139,7 @@ class LogicManager:
                         extra_headers = _json.loads(hdr_str)
                     except (json.JSONDecodeError, TypeError):
                         pass
-                hdr_file = (node.data.get("headers_secret_file") or "").strip()
+                hdr_file = (node.data.get("headers_value_file") or "").strip()
                 if hdr_file:
                     try:
                         extra_headers = {
@@ -4150,7 +4177,7 @@ class LogicManager:
                         ).strip()
                         if not token:
                             token = _replace_api_client_placeholders(
-                                _load_external_value_file(node.data.get("auth_token_file") or ""),
+                                _load_external_value_file(node.data.get("auth_value_file") or ""),
                                 variable_resolver,
                             ).strip()
                         if token:
@@ -5297,6 +5324,7 @@ class LogicManager:
             try:
                 raw = json.loads(row["flow_data"]) if row["flow_data"] else {}
                 flow = FlowData.model_validate(raw)
+                _migrate_legacy_api_client_field_names(flow)
                 self._graphs[row["id"]] = (row["name"], bool(row["enabled"]), flow)
 
                 # Restore persisted node state (statistics, hysteresis, …) from DB,

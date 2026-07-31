@@ -4129,7 +4129,7 @@ class TestLogicManagerHelpers:
     def test_load_external_value_file_nonexistent(self):
         from obs.logic.manager import _load_external_value_file
 
-        assert _load_external_value_file("/nonexistent/path/secret.txt") == ""
+        assert _load_external_value_file("/nonexistent/path/value.txt") == ""
 
     def test_cookie_domain_matches(self):
         from obs.logic.manager import _cookie_domain_matches

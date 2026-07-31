@@ -1075,7 +1075,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
                 "default": "",
                 "label": "Header (JSON-Objekt, optional)",
             },
-            "headers_secret_file": {
+            "headers_value_file": {
                 "type": "string",
                 "default": "",
                 "label": "Header-Datei (/run/secrets)",
@@ -1109,7 +1109,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
                 "label": "Bearer Token",
                 "subtype": "password",
             },
-            "auth_token_file": {
+            "auth_value_file": {
                 "type": "string",
                 "default": "",
                 "label": "Bearer-Token-Datei (/run/secrets)",

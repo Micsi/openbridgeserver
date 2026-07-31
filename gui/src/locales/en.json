@@ -2303,13 +2303,13 @@
         "response_type": "Response Content-Type",
         "verify_ssl": "Verify SSL certificate",
         "headers": "Headers (JSON object, optional)",
-        "headers_secret_file": "Headers from secret file (optional)",
+        "headers_value_file": "Headers from file (optional)",
         "timeout_s": "Timeout (s)",
         "auth_type": "Authentication",
         "auth_username": "Username (Basic/Digest)",
         "auth_password": "Password (Basic/Digest)",
         "auth_token": "Bearer token",
-        "auth_token_file": "Bearer token from secret file"
+        "auth_value_file": "Bearer token from file"
       },
       "math_formula": {
         "formula": "Formula",

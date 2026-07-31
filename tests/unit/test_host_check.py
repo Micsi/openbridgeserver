@@ -4122,10 +4122,10 @@ class TestPostApiHcApiEdgePaths:
         assert outputs["ac2"]["success"] is False
         assert "OBS1" in str(outputs["ac2"]["response"])
 
-    def test_headers_secret_file_json_parse_failure(self):
-        """Post-api-hc api_client: nonexistent headers_secret_file → JSONDecodeError swallowed (lines 2050, 2055-2056)."""
+    def test_headers_value_file_json_parse_failure(self):
+        """Post-api-hc api_client: nonexistent headers_value_file → JSONDecodeError swallowed (lines 2050, 2055-2056)."""
         flow, manager, graph_id = _setup_post_api_hc_ac2_graph(
-            {"url": "http://93.184.216.34/two", "method": "GET", "headers_secret_file": "/run/secrets/nonexistent"}
+            {"url": "http://93.184.216.34/two", "method": "GET", "headers_value_file": "/run/secrets/nonexistent"}
         )
         mock_client_cls = _patch_api_success()
         try:
@@ -4139,10 +4139,10 @@ class TestPostApiHcApiEdgePaths:
         # Request still completes (exception in headers file is swallowed)
         assert outputs["ac2"]["success"] is True
 
-    def test_headers_secret_file_success(self):
-        """Post-api-hc api_client: headers_secret_file returns valid JSON (line 2051)."""
+    def test_headers_value_file_success(self):
+        """Post-api-hc api_client: headers_value_file returns valid JSON (line 2051)."""
         flow, manager, graph_id = _setup_post_api_hc_ac2_graph(
-            {"url": "http://93.184.216.34/two", "method": "GET", "headers_secret_file": "/run/secrets/hdr"}
+            {"url": "http://93.184.216.34/two", "method": "GET", "headers_value_file": "/run/secrets/hdr"}
         )
         mock_client_cls = _patch_api_success()
         try:
@@ -4174,9 +4174,9 @@ class TestPostApiHcApiEdgePaths:
         assert "OBS1" in str(outputs["ac2"]["response"])
 
     def test_bearer_token_from_file(self):
-        """Post-api-hc api_client: empty auth_token falls back to auth_token_file (line 2085)."""
+        """Post-api-hc api_client: empty auth_token falls back to auth_value_file (line 2085)."""
         flow, manager, graph_id = _setup_post_api_hc_ac2_graph(
-            {"url": "http://93.184.216.34/two", "method": "GET", "auth_type": "bearer", "auth_token": "", "auth_token_file": "/run/secrets/tok"}
+            {"url": "http://93.184.216.34/two", "method": "GET", "auth_type": "bearer", "auth_token": "", "auth_value_file": "/run/secrets/tok"}
         )
         mock_client_cls = _patch_api_success()
         try:
