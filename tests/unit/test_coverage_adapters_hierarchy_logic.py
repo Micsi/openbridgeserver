@@ -3644,6 +3644,7 @@ class TestLogicManagerBasics:
         mgr._hysteresis["removed"] = {"i1": {"raw": "large body"}}
         mgr._ical_result_caches["removed"] = {"i1": {"outputs": {"events": []}}}
         mgr._ical_fetch_locks[("removed", "i1")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("removed", "i1")] = asyncio.Lock()
         mgr._hysteresis["live"] = {
             "remaining": {"counter": 1},
             "current-ical": {"raw": "current body"},
@@ -3664,6 +3665,9 @@ class TestLogicManagerBasics:
         mgr._ical_fetch_locks[("live", "invalid-url-ical")] = asyncio.Lock()
         mgr._ical_fetch_locks[("live", "deleted-ical")] = asyncio.Lock()
         mgr._ical_fetch_locks[("disabled", "disabled-ical")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("live", "current-ical")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("live", "deleted-ical")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("disabled", "disabled-ical")] = asyncio.Lock()
         live_cache_before_reload = mgr._ical_result_caches["live"]
         live_generation_before_reload = mgr._ical_cache_generations.setdefault("live", object())
         task = MagicMock()
@@ -3675,9 +3679,11 @@ class TestLogicManagerBasics:
         assert "removed" not in mgr._hysteresis
         assert "removed" not in mgr._ical_result_caches
         assert ("removed", "i1") not in mgr._ical_fetch_locks
+        assert ("removed", "i1") not in mgr._ical_precompute_locks
         assert "deleted-ical" not in mgr._hysteresis["live"]
         assert "deleted-ical" not in mgr._ical_result_caches["live"]
         assert ("live", "deleted-ical") not in mgr._ical_fetch_locks
+        assert ("live", "deleted-ical") not in mgr._ical_precompute_locks
         assert "url-less-ical" not in mgr._hysteresis["live"]
         assert "url-less-ical" not in mgr._ical_result_caches["live"]
         assert ("live", "url-less-ical") not in mgr._ical_fetch_locks
@@ -3687,6 +3693,7 @@ class TestLogicManagerBasics:
         assert "disabled-ical" not in mgr._hysteresis["disabled"]
         assert "disabled-ical" not in mgr._ical_result_caches["disabled"]
         assert ("disabled", "disabled-ical") not in mgr._ical_fetch_locks
+        assert ("disabled", "disabled-ical") not in mgr._ical_precompute_locks
         assert mgr._hysteresis["live"]["remaining"] == {"counter": 1}
         assert mgr._hysteresis["live"]["current-ical"]["raw"] == "current body"
         assert mgr._ical_result_caches["live"]["current-ical"]["outputs"]["events"] == ["current"]
@@ -3694,6 +3701,7 @@ class TestLogicManagerBasics:
         assert "deleted-ical" in live_cache_before_reload
         assert mgr._ical_cache_generations["live"] is not live_generation_before_reload
         assert ("live", "current-ical") in mgr._ical_fetch_locks
+        assert ("live", "current-ical") in mgr._ical_precompute_locks
 
     def test_invalidate_cache(self):
         mgr, _, _, _ = _make_logic_manager()
@@ -3720,6 +3728,7 @@ class TestLogicManagerBasics:
         mgr._hysteresis["g1"] = {"i1": {"raw": "large body"}}
         mgr._ical_result_caches["g1"] = {"i1": {"outputs": {"events": []}}}
         mgr._ical_fetch_locks[("g1", "i1")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("g1", "i1")] = asyncio.Lock()
 
         mgr.remove_graph("g1")
 
@@ -3727,6 +3736,7 @@ class TestLogicManagerBasics:
         assert "g1" not in mgr._hysteresis
         assert "g1" not in mgr._ical_result_caches
         assert ("g1", "i1") not in mgr._ical_fetch_locks
+        assert ("g1", "i1") not in mgr._ical_precompute_locks
 
     @pytest.mark.asyncio
     async def test_execute_graph_missing(self):
@@ -4558,6 +4568,8 @@ class TestStartCronTasks:
         refresh attempts."""
         import asyncio
 
+        from icalendar import Calendar
+
         class _Headers(dict):
             def get_list(self, _key):
                 return []
@@ -4601,6 +4613,13 @@ class TestStartCronTasks:
         release_first = asyncio.Event()
         fetch_count = 0
         fail_fetch = False
+        parse_count = 0
+        original_from_ical = Calendar.from_ical
+
+        def _count_parse(*args, **kwargs):
+            nonlocal parse_count
+            parse_count += 1
+            return original_from_ical(*args, **kwargs)
 
         async def _read_body(*_args):
             nonlocal fetch_count
@@ -4618,6 +4637,7 @@ class TestStartCronTasks:
             ),
             patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
             patch("obs.logic.manager._read_limited_response_body", side_effect=_read_body),
+            patch.object(Calendar, "from_ical", side_effect=_count_parse),
             patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
         ):
             mock_ws.return_value.broadcast = AsyncMock()
@@ -4630,6 +4650,7 @@ class TestStartCronTasks:
             await asyncio.gather(scheduler_run, event_task)
 
             assert fetch_count == 1
+            assert parse_count == 1
 
             fail_fetch = True
             first_started = asyncio.Event()
@@ -4655,6 +4676,79 @@ class TestStartCronTasks:
         assert mgr._hysteresis["g1"]["i1"]["_ical_last_attempt_limit"] == 8 * 1_048_576
         assert "removed-node" not in mgr._ical_result_caches["g1"]
         assert "_ical_result_cache" not in mgr._hysteresis["g1"]["i1"]
+
+    @pytest.mark.asyncio
+    async def test_obsolete_ical_fetch_waiter_stops_after_generation_change(self):
+        import asyncio
+
+        class _Headers(dict):
+            def get_list(self, _key):
+                return []
+
+        class _Response:
+            status_code = 200
+            headers = _Headers({"content-type": "text/calendar"})
+
+            def raise_for_status(self):
+                return None
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Response()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class _Client:
+            def stream(self, *_args, **_kwargs):
+                return _Stream()
+
+            async def aclose(self):
+                return None
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/cal.ics"},
+                },
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        fetch_count = 0
+
+        async def _read_body(*_args):
+            nonlocal fetch_count
+            fetch_count += 1
+            first_started.set()
+            await release_first.wait()
+            return b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+
+        with (
+            patch(
+                "obs.logic.manager._build_ical_fetch_targets",
+                return_value=(["https://93.184.216.34/cal.ics"], {"Host": "example.com"}, {}),
+            ),
+            patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
+            patch("obs.logic.manager._read_limited_response_body", side_effect=_read_body),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            first = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"i1": {}}))
+            await first_started.wait()
+            waiter = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"i1": {}}))
+            await asyncio.sleep(0)
+            mgr.invalidate_cache("g1")
+            release_first.set()
+            await asyncio.gather(first, waiter)
+
+        assert fetch_count == 1
+        assert not mgr._ical_fetch_locks[("g1", "i1")].locked()
 
     @pytest.mark.asyncio
     async def test_cancelled_ical_fetch_does_not_suppress_replacement_refresh(self):
@@ -4737,7 +4831,7 @@ class TestStartCronTasks:
             real_to_thread = asyncio.to_thread
 
             async def _cancel_precompute(func, *args):
-                if getattr(func, "__name__", "") == "_precompute_ical_misses":
+                if getattr(func, "__name__", "") == "_precompute_ical_node":
                     func(*args)
                     raise asyncio.CancelledError()
                 return await real_to_thread(func, *args)
@@ -4751,7 +4845,7 @@ class TestStartCronTasks:
             assert mgr._ical_result_caches["g1"] == {}
 
             async def _invalidate_after_precompute(func, *args):
-                if getattr(func, "__name__", "") == "_precompute_ical_misses":
+                if getattr(func, "__name__", "") == "_precompute_ical_node":
                     result = func(*args)
                     mgr.invalidate_cache("g1")
                     mgr._hysteresis.pop("g1", None)
@@ -4898,7 +4992,7 @@ class TestStartCronTasks:
             await mgr._execute_graph("g1", "G1", flow, {})
 
         assert mgr._ical_result_caches["g1"]["i1"] is sentinel
-        assert copy_threads
+        assert len(copy_threads) == 1
         assert all(thread_id != event_loop_thread for thread_id in copy_threads)
 
     @pytest.mark.asyncio

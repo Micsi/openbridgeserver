@@ -843,6 +843,10 @@ class LogicManager:
         # scoped to the fetch itself: graph execution may synchronously publish
         # an event that re-enters the same graph.
         self._ical_fetch_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Coalesce recurrence parsing independently from network refreshes.
+        # A queued execution rechecks the shared cache after acquiring this
+        # lock so only one worker expands a given node/key generation.
+        self._ical_precompute_locks: dict[tuple[str, str], asyncio.Lock] = {}
         # Parsed/filtered calendar results must stay outside hysteresis state:
         # async replay paths deep-copy that state several times per execution.
         self._ical_result_caches: dict[str, dict[str, Any]] = {}
@@ -905,6 +909,8 @@ class LogicManager:
             self._hysteresis.pop(graph_id, None)
         for key in [key for key in self._ical_fetch_locks if key[0] not in live_graph_ids]:
             self._ical_fetch_locks.pop(key, None)
+        for key in [key for key in self._ical_precompute_locks if key[0] not in live_graph_ids]:
+            self._ical_precompute_locks.pop(key, None)
         ical_runtime_keys = {
             "raw",
             "_ical_result_cache",
@@ -932,6 +938,8 @@ class LogicManager:
                         graph_hysteresis.pop(node_id, None)
             for key in [key for key in self._ical_fetch_locks if key[0] == graph_id and key[1] not in active_ical_ids]:
                 self._ical_fetch_locks.pop(key, None)
+            for key in [key for key in self._ical_precompute_locks if key[0] == graph_id and key[1] not in active_ical_ids]:
+                self._ical_precompute_locks.pop(key, None)
         # A config import/reset can remove graphs without first calling
         # invalidate_cache().  Cancel only sequences whose graph no longer
         # exists or is disabled; unrelated live graphs keep running.
@@ -1930,6 +1938,9 @@ class LogicManager:
                 logger.debug("WebSocket debug subscriber lookup unavailable", exc_info=True)
         debug_inputs: dict[str, dict[str, dict[str, Any]]] = {}
         debug_input_runs: list[tuple[dict[str, Any], dict[str, dict[str, dict[str, Any]]]]] = []
+        execution_ical_cache: dict[str, Any] | None = None
+        execution_ical_sources: dict[str, Any] = {}
+        execution_ical_prepared = False
 
         def _debug_run_overrides(candidate: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             merged = {node_id: dict(values) for node_id, values in candidate.items()}
@@ -1950,11 +1961,15 @@ class LogicManager:
             )
 
         async def _executor(state: dict[str, Any]) -> GraphExecutor:
+            nonlocal execution_ical_cache, execution_ical_prepared
             ical_nodes = [node for node in flow.nodes if node.type == "ical"]
-            source_ical_cache = (
-                self._ical_result_caches.get(graph_id, {}) if self._ical_cache_generations.get(graph_id) is ical_generation else ical_result_cache
-            )
-            pass_ical_cache = await _copy_ical_cache_in_worker(copy.deepcopy, source_ical_cache) if source_ical_cache else {}
+            if execution_ical_cache is None:
+                source_ical_cache = (
+                    self._ical_result_caches.get(graph_id, {}) if self._ical_cache_generations.get(graph_id) is ical_generation else ical_result_cache
+                )
+                execution_ical_sources.update(source_ical_cache)
+                execution_ical_cache = await _copy_ical_cache_in_worker(copy.deepcopy, source_ical_cache) if source_ical_cache else {}
+            pass_ical_cache = execution_ical_cache
             precompute_state: dict[str, Any] = {}
             for ical_node in ical_nodes:
                 state.setdefault(ical_node.id, {})
@@ -1991,11 +2006,10 @@ class LogicManager:
                     ical_cache_outputs_owned=True,
                 )
 
-            if not ical_nodes:
+            if not ical_nodes or execution_ical_prepared:
                 return executor
 
-            def _precompute_ical_misses() -> dict[str, Any]:
-                publications: dict[str, Any] = {}
+            def _precompute_ical_node(ical_node: Any) -> Any:
                 precompute_executor = GraphExecutor(
                     flow,
                     precompute_state,
@@ -2003,22 +2017,31 @@ class LogicManager:
                     ical_result_cache=pass_ical_cache,
                     ical_cache_outputs_owned=True,
                 )
-                for ical_node in ical_nodes:
-                    previous = pass_ical_cache.get(ical_node.id)
-                    precompute_executor._eval_node(ical_node, {})
-                    current = pass_ical_cache.get(ical_node.id)
-                    if current is not None and current is not previous:
-                        # The execution owns its entry; publish a separate copy
-                        # so downstream output handling cannot mutate the cache.
-                        publications[ical_node.id] = copy.deepcopy(current)
-                return publications
+                previous = pass_ical_cache.get(ical_node.id)
+                precompute_executor._eval_node(ical_node, {})
+                current = pass_ical_cache.get(ical_node.id)
+                if current is not None and current is not previous:
+                    # The execution owns its entry; publish a separate copy so
+                    # downstream output handling cannot mutate the shared cache.
+                    return copy.deepcopy(current)
+                return None
 
-            publications = await asyncio.to_thread(_precompute_ical_misses)
-            if publications and self._ical_cache_generations.get(graph_id) is ical_generation:
-                self._ical_result_caches[graph_id] = {
-                    **self._ical_result_caches.get(graph_id, {}),
-                    **publications,
-                }
+            for ical_node in ical_nodes:
+                precompute_lock = self._ical_precompute_locks.setdefault((graph_id, ical_node.id), asyncio.Lock())
+                async with precompute_lock:
+                    if self._ical_cache_generations.get(graph_id) is ical_generation:
+                        latest_entry = self._ical_result_caches.get(graph_id, {}).get(ical_node.id)
+                        if latest_entry is not None and latest_entry is not execution_ical_sources.get(ical_node.id):
+                            pass_ical_cache[ical_node.id] = await _copy_ical_cache_in_worker(copy.deepcopy, latest_entry)
+                            execution_ical_sources[ical_node.id] = latest_entry
+                    publication = await asyncio.to_thread(_precompute_ical_node, ical_node)
+                    if publication is not None and self._ical_cache_generations.get(graph_id) is ical_generation:
+                        self._ical_result_caches[graph_id] = {
+                            **self._ical_result_caches.get(graph_id, {}),
+                            ical_node.id: publication,
+                        }
+                        execution_ical_sources[ical_node.id] = publication
+            execution_ical_prepared = True
             return executor
 
         # ── Seed all datapoint_read nodes from registry ───────────────────
@@ -2092,6 +2115,9 @@ class LogicManager:
             if needs_fetch:
                 fetch_lock = self._ical_fetch_locks.setdefault((graph_id, node.id), asyncio.Lock())
                 await fetch_lock.acquire()
+                if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                    fetch_lock.release()
+                    continue
                 # Another execution may have refreshed this node while this one
                 # waited.  Re-check the shared attempt metadata under the lock;
                 # a failed attempt also satisfies queued callers.
@@ -4305,6 +4331,8 @@ class LogicManager:
         self._ical_cache_generations.pop(graph_id, None)
         for key in [key for key in self._ical_fetch_locks if key[0] == graph_id]:
             self._ical_fetch_locks.pop(key, None)
+        for key in [key for key in self._ical_precompute_locks if key[0] == graph_id]:
+            self._ical_precompute_locks.pop(key, None)
 
     def update_cached_graph_name(self, graph_id: str, name: str) -> None:
         """Refresh metadata without invalidating active graph execution."""
