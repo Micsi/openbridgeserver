@@ -3577,13 +3577,21 @@ class TestLogicManagerBasics:
 
     @pytest.mark.asyncio
     async def test_reload(self):
+        import asyncio
+
         mgr, db, _, _ = _make_logic_manager()
         db.fetchall = AsyncMock(return_value=[])
+        mgr._hysteresis["removed"] = {"i1": {"raw": "large body"}}
+        mgr._ical_result_caches["removed"] = {"i1": {"outputs": {"events": []}}}
+        mgr._ical_fetch_locks[("removed", "i1")] = asyncio.Lock()
         task = MagicMock()
         task.cancel = MagicMock()
         mgr._cron_tasks[("g1", "n1")] = task
         await mgr.reload()
         task.cancel.assert_called_once()
+        assert "removed" not in mgr._hysteresis
+        assert "removed" not in mgr._ical_result_caches
+        assert ("removed", "i1") not in mgr._ical_fetch_locks
 
     def test_invalidate_cache(self):
         mgr, _, _, _ = _make_logic_manager()
@@ -3601,6 +3609,22 @@ class TestLogicManagerBasics:
         task.cancel.assert_called_once()
         assert ("g1", "n1") not in mgr._cron_tasks
         assert ("g2", "n1") in mgr._cron_tasks
+
+    def test_remove_graph_discards_ical_runtime_state(self):
+        import asyncio
+
+        mgr, _, _, _ = _make_logic_manager()
+        mgr._graphs["g1"] = ("G1", True, _make_flow())
+        mgr._hysteresis["g1"] = {"i1": {"raw": "large body"}}
+        mgr._ical_result_caches["g1"] = {"i1": {"outputs": {"events": []}}}
+        mgr._ical_fetch_locks[("g1", "i1")] = asyncio.Lock()
+
+        mgr.remove_graph("g1")
+
+        assert "g1" not in mgr._graphs
+        assert "g1" not in mgr._hysteresis
+        assert "g1" not in mgr._ical_result_caches
+        assert ("g1", "i1") not in mgr._ical_fetch_locks
 
     @pytest.mark.asyncio
     async def test_execute_graph_missing(self):
@@ -4492,7 +4516,12 @@ class TestStartCronTasks:
             release_first.set()
             await asyncio.gather(first_failed_run, queued_run)
 
-        assert fetch_count == 2
+            fail_fetch = False
+            flow.nodes[0].data["max_payload_size_mb"] = 8
+            await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+
+        assert fetch_count == 3
+        assert mgr._hysteresis["g1"]["i1"]["_ical_last_attempt_limit"] == 8 * 1_048_576
         assert "removed-node" not in mgr._ical_result_caches["g1"]
         assert "_ical_result_cache" not in mgr._hysteresis["g1"]["i1"]
 

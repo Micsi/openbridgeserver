@@ -890,6 +890,13 @@ class LogicManager:
             task.cancel()
         self._cron_tasks.clear()
         await self._load_graphs()
+        live_graph_ids = set(self._graphs)
+        for graph_id in set(self._ical_result_caches) - live_graph_ids:
+            self._ical_result_caches.pop(graph_id, None)
+        for graph_id in set(self._hysteresis) - live_graph_ids:
+            self._hysteresis.pop(graph_id, None)
+        for key in [key for key in self._ical_fetch_locks if key[0] not in live_graph_ids]:
+            self._ical_fetch_locks.pop(key, None)
         # A config import/reset can remove graphs without first calling
         # invalidate_cache().  Cancel only sequences whose graph no longer
         # exists or is disabled; unrelated live graphs keep running.
@@ -1977,10 +1984,11 @@ class LogicManager:
             if not url:
                 continue
             refresh_min = float(node.data.get("refresh_interval_min") or 60)
+            payload_limit = _ical_payload_limit_bytes(node.data)
             hyst_node = hyst.setdefault(node.id, {})
             last_attempt: float | None = hyst_node.get("_ical_last_attempt_ts")
-            attempt_url_changed = hyst_node.get("_ical_last_attempt_url") != url
-            needs_fetch = attempt_url_changed or last_attempt is None or (execute_now.timestamp() - last_attempt) >= refresh_min * 60
+            attempt_config_changed = hyst_node.get("_ical_last_attempt_url") != url or hyst_node.get("_ical_last_attempt_limit") != payload_limit
+            needs_fetch = attempt_config_changed or last_attempt is None or (execute_now.timestamp() - last_attempt) >= refresh_min * 60
             if needs_fetch:
                 fetch_lock = self._ical_fetch_locks.setdefault((graph_id, node.id), asyncio.Lock())
                 await fetch_lock.acquire()
@@ -1988,8 +1996,8 @@ class LogicManager:
                 # waited.  Re-check the shared attempt metadata under the lock;
                 # a failed attempt also satisfies queued callers.
                 last_attempt = hyst_node.get("_ical_last_attempt_ts")
-                attempt_url_changed = hyst_node.get("_ical_last_attempt_url") != url
-                needs_fetch = attempt_url_changed or last_attempt is None or (datetime.now(UTC).timestamp() - last_attempt) >= refresh_min * 60
+                attempt_config_changed = hyst_node.get("_ical_last_attempt_url") != url or hyst_node.get("_ical_last_attempt_limit") != payload_limit
+                needs_fetch = attempt_config_changed or last_attempt is None or (datetime.now(UTC).timestamp() - last_attempt) >= refresh_min * 60
                 if not needs_fetch:
                     fetch_lock.release()
                     continue
@@ -2035,7 +2043,7 @@ class LogicManager:
                                     _ct = _resp.headers.get("content-type", "").lower()
                                     _resp_bytes = await _read_limited_response_body(
                                         _resp,
-                                        _ical_payload_limit_bytes(node.data),
+                                        payload_limit,
                                     )
                                     break
                             except httpx.RequestError as req_exc:
@@ -2086,6 +2094,7 @@ class LogicManager:
                     logger.exception("Graph %s: iCal fetch failed for node %s (%s)", graph_id[:8], node.id[:8], url)
                 finally:
                     hyst_node["_ical_last_attempt_url"] = url
+                    hyst_node["_ical_last_attempt_limit"] = payload_limit
                     hyst_node["_ical_last_attempt_ts"] = datetime.now(UTC).timestamp()
                     try:
                         if active_client is not None:
@@ -4017,7 +4026,14 @@ class LogicManager:
                         state_to_save[node_id] = {
                             key: value
                             for key, value in node_state.items()
-                            if key not in {"raw", "_ical_result_cache", "_ical_last_attempt_url", "_ical_last_attempt_ts"}
+                            if key
+                            not in {
+                                "raw",
+                                "_ical_result_cache",
+                                "_ical_last_attempt_url",
+                                "_ical_last_attempt_limit",
+                                "_ical_last_attempt_ts",
+                            }
                         }
                     else:
                         state_to_save[node_id] = node_state
@@ -4172,6 +4188,14 @@ class LogicManager:
         for k in to_remove:
             self._cron_tasks[k].cancel()
             del self._cron_tasks[k]
+
+    def remove_graph(self, graph_id: str) -> None:
+        """Invalidate a deleted graph and release all of its runtime data."""
+        self.invalidate_cache(graph_id)
+        self._hysteresis.pop(graph_id, None)
+        self._ical_result_caches.pop(graph_id, None)
+        for key in [key for key in self._ical_fetch_locks if key[0] == graph_id]:
+            self._ical_fetch_locks.pop(key, None)
 
     def update_cached_graph_name(self, graph_id: str, name: str) -> None:
         """Refresh metadata without invalidating active graph execution."""

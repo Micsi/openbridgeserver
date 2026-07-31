@@ -718,6 +718,7 @@ async def test_persist_node_state_excludes_runtime_ical_body_and_result_cache():
             "raw": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
             "_ical_result_cache": {"raw": object(), "outputs": {"f0_array": []}},
             "_ical_last_attempt_url": "https://example.com/calendar.ics",
+            "_ical_last_attempt_limit": 50 * 1_048_576,
             "_ical_last_attempt_ts": 124.0,
             "fetched_url": "https://example.com/calendar.ics",
             "last_fetch_ts": 123.0,
