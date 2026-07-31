@@ -905,17 +905,17 @@ class LogicManager:
             "_ical_last_attempt_ts",
         }
         for graph_id, (_, _, flow) in self._graphs.items():
-            current_ical_ids = {node.id for node in flow.nodes if node.type == "ical"}
+            active_ical_ids = {node.id for node in flow.nodes if node.type == "ical" and (node.data.get("url") or "").strip()}
             result_cache = self._ical_result_caches.get(graph_id)
             if result_cache is not None:
-                for node_id in set(result_cache) - current_ical_ids:
+                for node_id in set(result_cache) - active_ical_ids:
                     result_cache.pop(node_id, None)
             graph_hysteresis = self._hysteresis.get(graph_id)
             if graph_hysteresis is not None:
                 for node_id, node_state in list(graph_hysteresis.items()):
-                    if node_id not in current_ical_ids and isinstance(node_state, dict) and not ical_runtime_keys.isdisjoint(node_state):
+                    if node_id not in active_ical_ids and isinstance(node_state, dict) and not ical_runtime_keys.isdisjoint(node_state):
                         graph_hysteresis.pop(node_id, None)
-            for key in [key for key in self._ical_fetch_locks if key[0] == graph_id and key[1] not in current_ical_ids]:
+            for key in [key for key in self._ical_fetch_locks if key[0] == graph_id and key[1] not in active_ical_ids]:
                 self._ical_fetch_locks.pop(key, None)
         # A config import/reset can remove graphs without first calling
         # invalidate_cache().  Cancel only sequences whose graph no longer

@@ -3592,7 +3592,13 @@ class TestLogicManagerBasics:
                     "id": "current-ical",
                     "type": "ical",
                     "position": {"x": 200, "y": 0},
-                    "data": {},
+                    "data": {"url": "https://example.com/current.ics"},
+                },
+                {
+                    "id": "url-less-ical",
+                    "type": "ical",
+                    "position": {"x": 400, "y": 0},
+                    "data": {"url": ""},
                 },
             ]
         )
@@ -3613,13 +3619,16 @@ class TestLogicManagerBasics:
         mgr._hysteresis["live"] = {
             "remaining": {"counter": 1},
             "current-ical": {"raw": "current body"},
+            "url-less-ical": {"raw": "stale body"},
             "deleted-ical": {"raw": "large body"},
         }
         mgr._ical_result_caches["live"] = {
             "current-ical": {"outputs": {"events": ["current"]}},
+            "url-less-ical": {"outputs": {"events": ["stale"]}},
             "deleted-ical": {"outputs": {"events": []}},
         }
         mgr._ical_fetch_locks[("live", "current-ical")] = asyncio.Lock()
+        mgr._ical_fetch_locks[("live", "url-less-ical")] = asyncio.Lock()
         mgr._ical_fetch_locks[("live", "deleted-ical")] = asyncio.Lock()
         task = MagicMock()
         task.cancel = MagicMock()
@@ -3632,6 +3641,9 @@ class TestLogicManagerBasics:
         assert "deleted-ical" not in mgr._hysteresis["live"]
         assert "deleted-ical" not in mgr._ical_result_caches["live"]
         assert ("live", "deleted-ical") not in mgr._ical_fetch_locks
+        assert "url-less-ical" not in mgr._hysteresis["live"]
+        assert "url-less-ical" not in mgr._ical_result_caches["live"]
+        assert ("live", "url-less-ical") not in mgr._ical_fetch_locks
         assert mgr._hysteresis["live"]["remaining"] == {"counter": 1}
         assert mgr._hysteresis["live"]["current-ical"]["raw"] == "current body"
         assert mgr._ical_result_caches["live"]["current-ical"]["outputs"]["events"] == ["current"]
