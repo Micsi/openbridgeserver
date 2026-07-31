@@ -1143,6 +1143,77 @@ async def test_load_graphs_restores_state_when_a_node_id_collides_with_the_persi
     assert mgr2._hysteresis["g1"] == {_PERSIST_TYPE_TAG: {"value": 1}, "other": {"value": 2}}
 
 
+@pytest.mark.asyncio
+async def test_load_graphs_marks_opaque_recovery_even_when_a_node_id_collides_with_the_persist_tag():
+    """Regression: the opaque-tag detection above used the same raw
+    saved_raw["state"] container as before the collision-unwrap fix — when
+    a node id collides with _PERSIST_TYPE_TAG, that container is still the
+    escape wrapper, so looking up ANY node's raw state by id (including
+    well-behaved ones in the same graph) found nothing, and no
+    change_filter in that graph ever got its _opaque_recovered_str marker
+    restored. An unchanged opaque baseline (e.g. a python_script
+    complex-number result) would then report a spurious changed=True on
+    every restart."""
+    import json
+
+    from obs.logic.manager import _PERSIST_TYPE_TAG
+
+    flow = _flow([{"id": _PERSIST_TYPE_TAG, "type": "change_filter"}, {"id": "cf2", "type": "change_filter"}])
+
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {_PERSIST_TYPE_TAG: {"value": 3 + 4j}, "cf2": {"value": 5 + 6j}}
+    await mgr._persist_node_state("g1")
+    saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
+    saved = json.loads(saved_json)
+    assert saved["state"][_PERSIST_TYPE_TAG] == "escaped"
+
+    mgr2 = _make_manager({})
+    mgr2._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": saved_json}]
+    )
+    await mgr2._load_graphs()
+
+    assert mgr2._hysteresis["g1"] == {
+        _PERSIST_TYPE_TAG: {"value": "(3+4j)", "_opaque_recovered_str": True},
+        "cf2": {"value": "(5+6j)", "_opaque_recovered_str": True},
+    }
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        outputs = await mgr2._execute_graph("g1", "G", flow, {_PERSIST_TYPE_TAG: {"in": 3 + 4j}, "cf2": {"in": 5 + 6j}})
+
+    assert outputs[_PERSIST_TYPE_TAG]["changed"] is False
+    assert outputs["cf2"]["changed"] is False
+
+
+@pytest.mark.asyncio
+async def test_load_graphs_survives_a_malformed_escape_envelope_in_raw_state():
+    """An "escaped"-tagged state container whose "value" isn't a dict can
+    only come from a corrupted/hand-edited row — _escape_persist_collision
+    itself never produces that shape (mirrors
+    test_decode_persisted_value_keeps_malformed_tagged_escape_as_is below,
+    but for the raw-container unwrap used for opaque-tag detection).
+    Must not crash; the opaque-tag lookup simply finds nothing to restore."""
+    import json
+
+    from obs.logic.manager import _PERSIST_STATE_VERSION, _PERSIST_STATE_VERSION_KEY, _PERSIST_TYPE_TAG
+
+    flow = _flow([{"id": "cf1", "type": "change_filter"}])
+    node_state = json.dumps({_PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION, "state": {_PERSIST_TYPE_TAG: "escaped", "value": "not-a-dict"}})
+
+    mgr = _make_manager({})
+    mgr._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": node_state}]
+    )
+
+    await mgr._load_graphs()
+
+    # _decode_persisted_value's own malformed-escape recovery (see
+    # test_decode_persisted_value_keeps_malformed_tagged_escape_as_is)
+    # returns the tagged dict unchanged rather than crashing — nothing here
+    # actually restores per-node state from it, but nothing raises either.
+    assert mgr._hysteresis["g1"] == {_PERSIST_TYPE_TAG: "escaped", "value": "not-a-dict"}
+
+
 class TestPersistDefaultAndDecode:
     """Direct tests for the _persist_default/_decode_persisted_value pair
     (issue #1087 Codex finding: "Preserve non-JSON value types in persisted

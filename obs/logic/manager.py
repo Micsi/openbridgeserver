@@ -5395,9 +5395,24 @@ class LogicManager:
                             # mechanism as the legacy "_recovered_str" below,
                             # just detected from this version's own tag
                             # instead of inferred from "any string".
+                            # Same unwrap as above, but keeping the RAW
+                            # (not yet _decode_persisted_value-processed)
+                            # shape _contains_opaque_tag expects: if a node
+                            # id collided with _PERSIST_TYPE_TAG, the whole
+                            # container above is the escape wrapper, and its
+                            # own top-level keys ("__obs_persisted_type__",
+                            # "value") are not node ids — looking those up
+                            # directly would find nothing for every node in
+                            # this graph, silently skipping the
+                            # _opaque_recovered_str marker for all of them.
+                            _raw_state_container = saved_raw["state"]
+                            if isinstance(_raw_state_container, dict) and _raw_state_container.get(_PERSIST_TYPE_TAG) == _PERSIST_ESCAPED_TAG:
+                                _unwrapped_raw_state = _raw_state_container.get("value")
+                                if isinstance(_unwrapped_raw_state, dict):
+                                    _raw_state_container = _unwrapped_raw_state
                             _cf_ids_v2 = {n.id for n in flow.nodes if n.type == "change_filter"}
                             for _nid_v2 in _cf_ids_v2:
-                                _raw_state_v2 = saved_raw["state"].get(_nid_v2)
+                                _raw_state_v2 = _raw_state_container.get(_nid_v2)
                                 _decoded_state_v2 = saved.get(_nid_v2)
                                 if (
                                     isinstance(_raw_state_v2, dict)
