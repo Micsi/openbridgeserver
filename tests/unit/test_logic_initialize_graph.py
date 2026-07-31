@@ -1072,6 +1072,42 @@ async def test_change_filter_persists_and_restores_opaque_baseline_without_spuri
     assert outputs["cf1"]["changed"] is False
 
 
+@pytest.mark.asyncio
+async def test_change_filter_persists_and_restores_nested_opaque_baseline_without_spurious_pulse():
+    """Regression: the opaque-recovery detection only recognized an
+    "opaque_str" tag placed directly at state["value"] itself — a baseline
+    like [3 + 4j] persists as a LIST holding one opaque-tagged item,
+    decoded to ['(3+4j)'] (a list, not a dict), so the direct check never
+    noticed it and never set "_opaque_recovered_str". The live [3 + 4j]
+    then compared unequal against that lossy stand-in — plain list
+    equality has no way to recognize the nested recovery — reporting a
+    spurious changed=True on every restart despite nothing having
+    actually changed."""
+    import json
+
+    flow = _flow([{"id": "cf1", "type": "change_filter"}])
+
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {"cf1": {"value": [3 + 4j]}}
+    await mgr._persist_node_state("g1")
+    saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
+    saved = json.loads(saved_json)
+    assert saved["state"]["cf1"]["value"] == [{"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"}]
+
+    mgr2 = _make_manager({})
+    mgr2._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": saved_json}]
+    )
+    await mgr2._load_graphs()
+
+    assert mgr2._hysteresis["g1"] == {"cf1": {"value": ["(3+4j)"], "_opaque_recovered_str": True}}
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        outputs = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": [3 + 4j]}})
+
+    assert outputs["cf1"]["changed"] is False
+
+
 class TestPersistDefaultAndDecode:
     """Direct tests for the _persist_default/_decode_persisted_value pair
     (issue #1087 Codex finding: "Preserve non-JSON value types in persisted
@@ -1105,6 +1141,15 @@ class TestPersistDefaultAndDecode:
         from obs.logic.manager import _decode_persisted_value
 
         assert _decode_persisted_value({"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"}) == "(3+4j)"
+
+    def test_contains_opaque_tag_recurses_into_an_untagged_dict(self):
+        """An application dict without its own _PERSIST_TYPE_TAG (e.g. a
+        python_script baseline like {"a": 3 + 4j}) must still be walked
+        recursively for a nested opaque_str tag — not just a list."""
+        from obs.logic.manager import _contains_opaque_tag
+
+        assert _contains_opaque_tag({"a": {"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"}}) is True
+        assert _contains_opaque_tag({"a": 1, "b": "text"}) is False
 
     def test_persist_default_tags_set_and_frozenset(self):
         from obs.logic.manager import _persist_default

@@ -498,6 +498,17 @@ class GraphExecutor:
         if dec_left is not None and dec_right is not None:
             return dec_left == dec_right, True
         if isinstance(left, (dict, list)) and isinstance(right, (dict, list)):
+            if right_is_opaque_recovered_str and left != right:
+                # An opaque_str tag can be nested arbitrarily deep inside a
+                # persisted container (e.g. a python_script's [3 + 4j]
+                # baseline persists as a list holding one opaque-tagged
+                # item, decoded to ['(3+4j)']) — plain structural equality
+                # would never match the live [3+4j] against that lossy
+                # stand-in. _opaque_aware_container_equal applies the same
+                # unambiguous str()-fallback recursively at every leaf,
+                # exactly like the scalar case below does for a top-level
+                # opaque value.
+                return cls._opaque_aware_container_equal(left, right), False
             return left == right, True
         # A persisted datetime.date/time/datetime (e.g. a KNX DPT10/11 value)
         # survives a restart only as its str() form (`default=str` in
@@ -519,6 +530,30 @@ class GraphExecutor:
         if right_is_opaque_recovered_str and isinstance(right, str) and not isinstance(left, (dict, list)):
             return str(left) == right, False
         return left == right, True
+
+    @classmethod
+    def _opaque_aware_container_equal(cls, left: Any, right: Any) -> bool:
+        """Structural equality for a dict/list, like plain `==`, but at any
+        leaf position also accepts a match via str(left) == right when
+        `right` there is a string — the same unambiguous "opaque_str"
+        persist fallback `_compare_values` applies at the top level (see
+        its own docstring), extended recursively so a value nested inside
+        a persisted container (e.g. a python_script's [3 + 4j] baseline)
+        is still recognized as unchanged instead of reporting a spurious
+        change purely because of how it had to survive persistence.
+
+        Deliberately does NOT recurse through `_compare_values` itself —
+        that would also pull in its bool/int/decimal aliasing (e.g.
+        1 == "1") for every nested element, silently loosening ordinary
+        (non-opaque) list/dict equality far beyond what this fix needs.
+        """
+        if isinstance(left, dict) and isinstance(right, dict):
+            return left.keys() == right.keys() and all(cls._opaque_aware_container_equal(left[k], right[k]) for k in left)
+        if isinstance(left, list) and isinstance(right, list):
+            return len(left) == len(right) and all(cls._opaque_aware_container_equal(le, ri) for le, ri in zip(left, right))
+        if left == right:
+            return True
+        return isinstance(right, str) and not isinstance(left, (dict, list)) and str(left) == right
 
     @classmethod
     def _values_equal(cls, left: Any, right: Any) -> bool:

@@ -313,6 +313,46 @@ def _decode_persisted_value(v: Any) -> Any:
     return v
 
 
+def _contains_opaque_tag(v: Any) -> bool:
+    """Walk a RAW (json-decoded, but not yet `_decode_persisted_value`-
+    processed) persisted value for an "opaque_str" tag at any nesting
+    depth — not just one placed directly at the top level.
+
+    A python_script baseline like `[3 + 4j]` persists as a list containing
+    an opaque-tagged item, decoded by `_decode_persisted_value` into
+    `['(3+4j)']` — a plain list, not a dict, so a caller checking only
+    "is state['value'] itself an opaque_str tag dict" never notices the
+    nested one and never flags the surrounding state as opaque-recovered.
+    Mirrors the same tag structure `_decode_persisted_value` recognizes,
+    without actually decoding — this only needs a yes/no answer.
+    """
+    if isinstance(v, dict):
+        tag = v.get(_PERSIST_TYPE_TAG)
+        if tag == "opaque_str":
+            return True
+        if tag == _PERSIST_ESCAPED_TAG:
+            inner = v.get("value")
+            return isinstance(inner, dict) and any(_contains_opaque_tag(val) for val in inner.values())
+        if tag == "dict_nonstr_keys":
+            inner = v.get("value")
+            return isinstance(inner, list) and any(
+                isinstance(pair, list) and len(pair) == 2 and (_contains_opaque_tag(pair[0]) or _contains_opaque_tag(pair[1])) for pair in inner
+            )
+        if tag in ("tuple", "set", "frozenset"):
+            inner = v.get("value")
+            return isinstance(inner, list) and any(_contains_opaque_tag(item) for item in inner)
+        if tag is not None:
+            # bytes/datetime/date/time: "value" is a plain isoformat/hex
+            # string, never a further container — nothing to recurse into.
+            return False
+        # Untagged dict: application data (e.g. change_filter's own
+        # {"value": ...} wrapper) — walk its values.
+        return any(_contains_opaque_tag(val) for val in v.values())
+    if isinstance(v, list):
+        return any(_contains_opaque_tag(item) for item in v)
+    return False
+
+
 def _safe_deepcopy_state(state: dict[str, Any]) -> dict[str, Any]:
     """Deep-copy a per-node state dict (hyst/graph_state) without letting one
     node's non-deep-copyable stored value (e.g. a Memory node holding a
@@ -390,11 +430,18 @@ def _secret_file_root() -> Path:
 
 
 def _read_secret_file(path: str) -> str:
-    # Local variable names deliberately avoid the substring "secret" (path
-    # location only, never file content) — CodeQL's py/clear-text-logging-
-    # sensitive-data query flags any logged expression whose name merely
-    # *contains* "secret", regardless of what it actually holds; these vars
-    # only ever carry a filesystem path, never the secret's contents.
+    # These logger.warning() calls only ever log a filesystem PATH — never
+    # the secret FILE CONTENT (the local below named `data`, which is never
+    # logged anywhere in this function). CodeQL's py/clear-text-logging-
+    # sensitive-data query still flags them: its taint source for this rule
+    # isn't limited to a locally-named variable, it also treats a value
+    # returned from (or a parameter of) a function whose OWN name contains
+    # "secret" as sensitive — true here regardless of what any local is
+    # called, since this function is named _read_secret_file and calls
+    # _secret_file_root(). Renaming locals alone (raw_path/allowed_root/
+    # resolved_path below) does not change that. These are confirmed false
+    # positives — suppressed inline with the reason, rather than renaming
+    # the widely-used public function/helper names themselves.
     raw_path = (path or "").strip()
     if not raw_path:
         return ""
@@ -403,7 +450,7 @@ def _read_secret_file(path: str) -> str:
         allowed_root = _secret_file_root()
         resolved_path = Path(raw_path).resolve(strict=True)
         if not resolved_path.is_relative_to(allowed_root):
-            logger.warning("Refusing to read secret file outside %s: %s", allowed_root, resolved_path)
+            logger.warning("Refusing to read secret file outside %s: %s", allowed_root, resolved_path)  # lgtm[py/clear-text-logging-sensitive-data]
             return ""
 
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
@@ -411,21 +458,21 @@ def _read_secret_file(path: str) -> str:
         try:
             file_stat = os.fstat(fd)
             if not stat.S_ISREG(file_stat.st_mode):
-                logger.warning("Refusing to read non-regular secret file: %s", resolved_path)
+                logger.warning("Refusing to read non-regular secret file: %s", resolved_path)  # lgtm[py/clear-text-logging-sensitive-data]
                 return ""
             if file_stat.st_size > _SECRET_FILE_MAX_BYTES:
-                logger.warning("Refusing to read oversized secret file: %s", resolved_path)
+                logger.warning("Refusing to read oversized secret file: %s", resolved_path)  # lgtm[py/clear-text-logging-sensitive-data]
                 return ""
             data = os.read(fd, _SECRET_FILE_MAX_BYTES + 1)
         finally:
             os.close(fd)
 
         if len(data) > _SECRET_FILE_MAX_BYTES:
-            logger.warning("Refusing to read oversized secret file: %s", resolved_path)
+            logger.warning("Refusing to read oversized secret file: %s", resolved_path)  # lgtm[py/clear-text-logging-sensitive-data]
             return ""
         return data.decode("utf-8").strip()
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        logger.warning("Could not read secret file %s: %s", raw_path, exc)
+        logger.warning("Could not read secret file %s: %s", raw_path, exc)  # lgtm[py/clear-text-logging-sensitive-data]
         return ""
 
 
@@ -4906,6 +4953,15 @@ class LogicManager:
                         else:
                             hyst.pop(_nid, None)
                 _register_change_filter_pulses(_cf_hold_island)
+                # This release can produce a change_filter's first genuine
+                # changed=True pulse — but every host_check/WoL/api_client/
+                # archive/notify execution loop above has already finished
+                # for this tick, so simply updating `outputs` here never
+                # actually runs any of them. Without this, an action fed by
+                # that pulse (e.g. change_filter.changed -> host_check)
+                # would have its new baseline committed silently, losing
+                # the action until the next real, unrelated change.
+                await _run_replay_triggered_side_effects(_cf_hold_island)
 
         # Deferred hc_prev_trigger=False: clear only for HC nodes that did NOT
         # fire in any async pass. Clearing inside _run_host_check_node was wrong
@@ -5284,8 +5340,7 @@ class LogicManager:
                                 _decoded_state_v2 = saved.get(_nid_v2)
                                 if (
                                     isinstance(_raw_state_v2, dict)
-                                    and isinstance(_raw_state_v2.get("value"), dict)
-                                    and _raw_state_v2["value"].get(_PERSIST_TYPE_TAG) == "opaque_str"
+                                    and _contains_opaque_tag(_raw_state_v2.get("value"))
                                     and isinstance(_decoded_state_v2, dict)
                                 ):
                                     _decoded_state_v2["_opaque_recovered_str"] = True

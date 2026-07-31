@@ -574,6 +574,64 @@ def test_freshness_skipped_notify_settles_instead_of_holding_downstream_change_f
     assert outputs["cf"] == {"out": 2.0, "changed": True}
 
 
+def test_freshness_skipped_notify_release_runs_downstream_host_check() -> None:
+    """Regression (P2, issue #1087): the late release above updates
+    `outputs` for the released change_filter and its descendants, but
+    every host_check/WoL/api_client/archive/notify execution loop has
+    already finished for this tick — merely registering pulse reachability
+    never actually PINGS anything. A change_filter's first genuine
+    changed=True pulse, revealed only by this late release, must still run
+    the side effect it feeds (host_check.trigger) — not commit the new
+    baseline while silently losing the action until some unrelated later
+    tick happens to fire it."""
+    message_datapoint_id = uuid.uuid4()
+    live_datapoint_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+            node("live_read", "datapoint_read", {"datapoint_id": str(live_datapoint_id)}),
+            node("add", "math_formula", {"formula": "a + b"}),
+            node("cf", "change_filter"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ],
+        [
+            edge("message_read", "notify", "value", "message"),
+            edge("notify", "add", "sent", "in1"),
+            edge("live_read", "add", "value", "in2"),
+            edge("add", "cf", "result", "in"),
+            edge("cf", "hc", "changed", "trigger"),
+        ],
+    )
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {
+        message_datapoint_id: MagicMock(value="cached alert"),
+        live_datapoint_id: MagicMock(value=1),
+    }.get
+    # Previous tick's committed state: notify.sent(False=0) + live_read(1) = 1.
+    manager._hysteresis["archive-graph"] = {"cf": {"value": 1}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+    ):
+        outputs = _run(manager, flow, {"live_read": {"value": 2, "changed": True}})
+
+    adapter.send_notification.assert_not_awaited()
+    # The Add result really changed (0 + 2 = 2, persisted baseline was 1),
+    # so host_check must actually fire off that real, newly-released pulse.
+    assert outputs["cf"] == {"out": 2.0, "changed": True}
+    mock_ping.assert_awaited_once()
+    assert outputs["hc"]["reachable"] is True
+
+
 def test_freshness_skipped_notify_release_does_not_affect_a_separately_held_filter() -> None:
     """Regression: the late release pass (see test above) must only release
     a change_filter that was held SOLELY by the now-settled notify node —

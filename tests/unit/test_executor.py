@@ -1308,6 +1308,30 @@ class TestChangeFilterNode:
         out2 = exc.execute({"cf": {"in": time(10, 30, 0)}})
         assert out2["cf"]["changed"] is True
 
+    def test_opaque_recovery_matches_nested_dict_baseline(self):
+        """The opaque-str recovery fallback must recurse into a dict-shaped
+        baseline too, not just a list — a python_script result like
+        {"a": 3 + 4j} persists with the complex number opaque-tagged at
+        that nested key."""
+        state = {"cf": {"value": {"a": "(3+4j)"}, "_opaque_recovered_str": True}}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": {"a": 3 + 4j}}})
+        assert out["cf"]["changed"] is False
+
+    def test_opaque_recovery_matches_a_mix_of_recovered_and_ordinary_leaves(self):
+        """A container can hold both a genuinely opaque-recovered leaf
+        (needing the str() fallback) and an ordinary already-identical
+        leaf (matching via plain equality) side by side — both must be
+        recognized as unchanged together."""
+        state = {"cf": {"value": ["(3+4j)", "unchanged"], "_opaque_recovered_str": True}}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [3 + 4j, "unchanged"]}})
+        assert out["cf"]["changed"] is False
+
     def test_live_string_matching_a_temporal_repr_is_not_treated_as_recovered(self):
         """Regression: a source that legitimately emits the literal string
         "10:30:00" *live*, this session — never round-tripped through DB
