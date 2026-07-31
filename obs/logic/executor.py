@@ -1340,7 +1340,7 @@ class GraphExecutor:
                         and cached.get("key") == cache_key
                         and isinstance(cached.get("outputs"), dict)
                     ):
-                        out.update(cached["outputs"])
+                        out.update(copy.deepcopy(cached["outputs"]))
                         return out
 
                     tomorrow = today + _dt_ic.timedelta(days=1)
@@ -1465,7 +1465,7 @@ class GraphExecutor:
                     hyst_node["_ical_result_cache"] = {
                         "raw": raw_text,
                         "key": cache_key,
-                        "outputs": {key: value for key, value in out.items() if key != "raw"},
+                        "outputs": copy.deepcopy({key: value for key, value in out.items() if key != "raw"}),
                     }
                 return out
 

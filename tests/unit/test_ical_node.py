@@ -94,15 +94,18 @@ def test_ical_result_cache_reuses_parse_and_invalidates_for_raw_or_filter_change
 
     with patch.object(Calendar, "from_ical", wraps=Calendar.from_ical) as parse:
         first = ex.execute()["n1"]
+        first["f0_array"][0][3] = "mutated first result"
         cached = ex.execute()["n1"]
+        cached["f0_array"][0][3] = "mutated cached result"
+        cached_again = ex.execute()["n1"]
         ex.flow.nodes[0].data["filters"] = json.dumps(second_filter)
         changed_filter = ex.execute()["n1"]
         hyst["n1"]["raw"] = second_ics
         changed_raw = ex.execute()["n1"]
 
     assert parse.call_count == 3
-    assert cached == first
-    assert first["f0_today"] is True
+    assert cached["f0_array"][0][3] == "mutated cached result"
+    assert cached_again["f0_array"][0][3] == "First"
     assert changed_filter["f0_today"] is False
     assert changed_raw["f0_today"] is True
 

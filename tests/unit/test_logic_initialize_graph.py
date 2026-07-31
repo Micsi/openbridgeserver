@@ -719,7 +719,11 @@ async def test_persist_node_state_excludes_runtime_ical_body_and_result_cache():
             "_ical_result_cache": {"raw": object(), "outputs": {"f0_array": []}},
             "fetched_url": "https://example.com/calendar.ics",
             "last_fetch_ts": 123.0,
-        }
+        },
+        "removed-ical": {
+            "raw": "large removed body",
+            "_ical_result_cache": {"raw": object()},
+        },
     }
 
     await mgr._persist_node_state("g1")

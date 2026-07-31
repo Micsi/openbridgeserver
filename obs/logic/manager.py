@@ -838,10 +838,10 @@ class LogicManager:
         self._bulk_init_pending: set[str] = set()
         # cron tasks: (graph_id, node_id) → asyncio.Task
         self._cron_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
-        # One immediate iCalendar scheduler exists per node, but each scheduler
-        # executes the whole graph. Serialize those executions per graph so
-        # concurrent startup loops cannot download every calendar repeatedly.
-        self._ical_loop_locks: dict[str, asyncio.Lock] = {}
+        # Serialize every execution path for graphs containing iCalendar nodes.
+        # Scheduler loops and datapoint events can otherwise observe stale fetch
+        # metadata concurrently and duplicate large calendar downloads.
+        self._ical_graph_locks: dict[str, asyncio.Lock] = {}
         # Running value sequences, keyed per graph/node.  They are deliberately
         # separate from cron tasks because they are short-lived and user-triggered.
         self._sequence_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
@@ -1235,18 +1235,9 @@ class LogicManager:
             try:
                 entry = self._graphs.get(graph_id)
                 if entry and entry[1]:  # still exists and enabled
-                    lock = self._ical_loop_locks.setdefault(graph_id, asyncio.Lock())
-                    refreshed = False
-                    async with lock:
-                        # Re-read after waiting: reload/delete may have replaced
-                        # the graph while another node's startup refresh ran.
-                        entry = self._graphs.get(graph_id)
-                        if entry and entry[1]:
-                            g_name, _, flow = entry
-                            await self._execute_graph(graph_id, g_name, flow, {node_id: {}})
-                            refreshed = True
-                    if refreshed:
-                        logger.debug("iCal graph %s (%s) node %s refreshed", graph_id[:8], g_name, node_id[:8])
+                    g_name, _, flow = entry
+                    await self._execute_graph(graph_id, g_name, flow, {node_id: {}})
+                    logger.debug("iCal graph %s (%s) node %s refreshed", graph_id[:8], g_name, node_id[:8])
 
                 await asyncio.sleep(refresh_min * 60)
 
@@ -1855,6 +1846,38 @@ class LogicManager:
             logger.exception("Graph %s: failed to reset node_state", graph_id[:8])
 
     async def _execute_graph(
+        self,
+        graph_id: str,
+        name: str,
+        flow: FlowData,
+        overrides: dict[str, dict[str, Any]],
+        logic_depth: int = 0,
+        debug_overrides: dict[str, dict[str, Any]] | None = None,
+        debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
+        if not any(node.type == "ical" for node in flow.nodes):
+            return await self._execute_graph_unlocked(
+                graph_id,
+                name,
+                flow,
+                overrides,
+                logic_depth,
+                debug_overrides,
+                debug_input_capture,
+            )
+        lock = self._ical_graph_locks.setdefault(graph_id, asyncio.Lock())
+        async with lock:
+            return await self._execute_graph_unlocked(
+                graph_id,
+                name,
+                flow,
+                overrides,
+                logic_depth,
+                debug_overrides,
+                debug_input_capture,
+            )
+
+    async def _execute_graph_unlocked(
         self,
         graph_id: str,
         name: str,
@@ -3988,11 +4011,12 @@ class LogicManager:
             graph_entry = self._graphs.get(graph_id)
             if graph_entry:
                 _, _, _flow = graph_entry
+                current_nodes = {node.id: node for node in _flow.nodes}
                 no_persist = {n.id for n in _flow.nodes if n.data.get("persist_state") is False}
                 ical_nodes = {n.id for n in _flow.nodes if n.type == "ical"}
                 state_to_save = {}
                 for node_id, node_state in hyst.items():
-                    if node_id in no_persist:
+                    if node_id not in current_nodes or node_id in no_persist:
                         continue
                     if node_id in ical_nodes and isinstance(node_state, dict):
                         state_to_save[node_id] = {key: value for key, value in node_state.items() if key not in {"raw", "_ical_result_cache"}}

@@ -4412,12 +4412,12 @@ class TestStartCronTasks:
         mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
         first_started = asyncio.Event()
         release_first = asyncio.Event()
-        second_finished = asyncio.Event()
+        all_finished = asyncio.Event()
         calls: list[dict] = []
         active = 0
         max_active = 0
 
-        async def _execute(_graph_id, _name, _flow, overrides):
+        async def _execute(_graph_id, _name, _flow, overrides, *_args):
             nonlocal active, max_active
             active += 1
             max_active = max(max_active, active)
@@ -4426,25 +4426,33 @@ class TestStartCronTasks:
                 first_started.set()
                 await release_first.wait()
             active -= 1
-            if len(calls) == 2:
-                second_finished.set()
+            if len(calls) == 3:
+                all_finished.set()
             return {}
 
-        mgr._execute_graph = _execute
-        tasks = [
+        mgr._execute_graph_unlocked = _execute
+        loop_tasks = [
             asyncio.create_task(mgr._ical_loop("g1", "i1", 60)),
             asyncio.create_task(mgr._ical_loop("g1", "i2", 60)),
         ]
+        event_task = None
         try:
             await first_started.wait()
             await asyncio.sleep(0)
             assert calls == [{"i1": {}}]
+            event_task = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"event-node": {"value": 1}}))
+            await asyncio.sleep(0)
+            assert calls == [{"i1": {}}]
             release_first.set()
-            await second_finished.wait()
+            await all_finished.wait()
         finally:
-            for task in tasks:
+            for task in loop_tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*loop_tasks, return_exceptions=True)
+            if event_task is not None:
+                await event_task
 
         assert max_active == 1
-        assert calls == [{"i1": {}}, {"i2": {}}]
+        assert calls[0] == {"i1": {}}
+        assert {"i2": {}} in calls[1:]
+        assert {"event-node": {"value": 1}} in calls[1:]
