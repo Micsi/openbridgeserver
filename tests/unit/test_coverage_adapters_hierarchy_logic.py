@@ -4398,9 +4398,9 @@ class TestStartCronTasks:
         ]
 
     @pytest.mark.asyncio
-    async def test_concurrent_ical_graph_executions_coalesce_each_node_fetch(self):
-        """Scheduler and event executions may overlap, but each stale calendar
-        must be downloaded only once."""
+    async def test_concurrent_ical_graph_executions_coalesce_fetch_outcomes(self):
+        """Scheduler and event executions share both successful and failed
+        refresh attempts."""
         import asyncio
 
         class _Headers(dict):
@@ -4440,15 +4440,20 @@ class TestStartCronTasks:
         )
         mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
         db.execute_and_commit = AsyncMock()
+        mgr._ical_result_caches["g1"] = {"removed-node": {"outputs": {}}}
+        mgr._hysteresis["g1"] = {"i1": {"_ical_result_cache": {"outputs": {}}}}
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         fetch_count = 0
+        fail_fetch = False
 
         async def _read_body(*_args):
             nonlocal fetch_count
             fetch_count += 1
             first_started.set()
             await release_first.wait()
+            if fail_fetch:
+                raise RuntimeError("endpoint unavailable")
             return b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
 
         with (
@@ -4469,7 +4474,59 @@ class TestStartCronTasks:
             release_first.set()
             await asyncio.gather(scheduler_run, event_task)
 
-        assert fetch_count == 1
+            assert fetch_count == 1
+
+            fail_fetch = True
+            first_started = asyncio.Event()
+            release_first = asyncio.Event()
+            hyst_node = mgr._hysteresis["g1"]["i1"]
+            hyst_node.pop("raw")
+            hyst_node.pop("_ical_last_attempt_url")
+            hyst_node.pop("_ical_last_attempt_ts")
+
+            first_failed_run = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"i1": {}}))
+            await first_started.wait()
+            queued_run = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"event-node": {"value": 2}}))
+            await asyncio.sleep(0)
+            assert fetch_count == 2
+            release_first.set()
+            await asyncio.gather(first_failed_run, queued_run)
+
+        assert fetch_count == 2
+        assert "removed-node" not in mgr._ical_result_caches["g1"]
+        assert "_ical_result_cache" not in mgr._hysteresis["g1"]["i1"]
+
+    @pytest.mark.asyncio
+    async def test_ical_result_cache_is_not_copied_into_async_replay_snapshots(self):
+        class _NotCopyable:
+            def __deepcopy__(self, _memo):
+                raise AssertionError("runtime iCalendar cache was snapshotted")
+
+        flow = _make_flow(
+            nodes=[
+                {"id": "api", "type": "api_client", "position": {"x": 0, "y": 0}, "data": {}},
+                {"id": "i1", "type": "ical", "position": {"x": 200, "y": 0}, "data": {}},
+            ],
+            edges=[
+                {
+                    "id": "api-i1",
+                    "source": "api",
+                    "target": "i1",
+                    "sourceHandle": "response",
+                    "targetHandle": "in",
+                }
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        sentinel = _NotCopyable()
+        mgr._ical_result_caches["g1"] = {"i1": sentinel}
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.broadcast = AsyncMock()
+            await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert mgr._ical_result_caches["g1"]["i1"] is sentinel
 
     @pytest.mark.asyncio
     async def test_ical_graph_can_reenter_during_datapoint_publication(self):

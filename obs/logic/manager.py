@@ -842,6 +842,9 @@ class LogicManager:
         # scoped to the fetch itself: graph execution may synchronously publish
         # an event that re-enters the same graph.
         self._ical_fetch_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Parsed/filtered calendar results must stay outside hysteresis state:
+        # async replay paths deep-copy that state several times per execution.
+        self._ical_result_caches: dict[str, dict[str, Any]] = {}
         # Running value sequences, keyed per graph/node.  They are deliberately
         # separate from cron tasks because they are short-lived and user-triggered.
         self._sequence_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
@@ -1858,6 +1861,7 @@ class LogicManager:
         execute_now = datetime.now(UTC)
         execution_started = perf_counter()
         graph_state = self._node_state.setdefault(graph_id, {})
+        ical_result_cache = self._ical_result_caches.setdefault(graph_id, {})
         # Event-driven executions still evaluate the full graph so unrelated
         # datapoint_read nodes can contribute their latest registry values.
         # Track which input handles descend from the explicit event overrides:
@@ -1897,7 +1901,7 @@ class LogicManager:
 
         def _executor(state: dict[str, Any]) -> GraphExecutor:
             if not capture_debug_inputs:
-                return GraphExecutor(flow, state, self._app_config)
+                return GraphExecutor(flow, state, self._app_config, ical_result_cache=ical_result_cache)
 
             run_inputs: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -1910,7 +1914,7 @@ class LogicManager:
                     debug_input_runs.append((dict(run_outputs), run_inputs))
                     return run_outputs
 
-            return CapturingGraphExecutor(flow, state, self._app_config, run_inputs)
+            return CapturingGraphExecutor(flow, state, self._app_config, run_inputs, ical_result_cache)
 
         # ── Seed all datapoint_read nodes from registry ───────────────────
         # In event-driven execution only the triggered node(s) have overrides.
@@ -1938,6 +1942,13 @@ class LogicManager:
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
         ical_ids = {node.id for node in flow.nodes if node.type == "ical"}
+        for stale_node_id in set(ical_result_cache) - ical_ids:
+            ical_result_cache.pop(stale_node_id, None)
+        for node_id in ical_ids:
+            hyst_node = self._hysteresis.setdefault(graph_id, {}).setdefault(node_id, {})
+            legacy_cache = hyst_node.pop("_ical_result_cache", None)
+            if node_id not in ical_result_cache and isinstance(legacy_cache, dict):
+                ical_result_cache[node_id] = legacy_cache
         message_archive_ids = {node.id for node in flow.nodes if node.type == "message_archive"}
         notify_ids = {node.id for node in flow.nodes if node.type in {"notify_message", "notify_pushover", "notify_sms"}}
         operating_hour_ids = {node.id for node in flow.nodes if node.type == "operating_hours"}
@@ -1967,19 +1978,18 @@ class LogicManager:
                 continue
             refresh_min = float(node.data.get("refresh_interval_min") or 60)
             hyst_node = hyst.setdefault(node.id, {})
-            last_fetch: float | None = hyst_node.get("last_fetch_ts")
-            url_changed = hyst_node.get("fetched_url") != url
-            needs_fetch = not hyst_node.get("raw") or url_changed or last_fetch is None or (execute_now.timestamp() - last_fetch) >= refresh_min * 60
+            last_attempt: float | None = hyst_node.get("_ical_last_attempt_ts")
+            attempt_url_changed = hyst_node.get("_ical_last_attempt_url") != url
+            needs_fetch = attempt_url_changed or last_attempt is None or (execute_now.timestamp() - last_attempt) >= refresh_min * 60
             if needs_fetch:
                 fetch_lock = self._ical_fetch_locks.setdefault((graph_id, node.id), asyncio.Lock())
                 await fetch_lock.acquire()
                 # Another execution may have refreshed this node while this one
-                # waited.  Re-check the shared runtime cache under the lock.
-                last_fetch = hyst_node.get("last_fetch_ts")
-                url_changed = hyst_node.get("fetched_url") != url
-                needs_fetch = (
-                    not hyst_node.get("raw") or url_changed or last_fetch is None or (datetime.now(UTC).timestamp() - last_fetch) >= refresh_min * 60
-                )
+                # waited.  Re-check the shared attempt metadata under the lock;
+                # a failed attempt also satisfies queued callers.
+                last_attempt = hyst_node.get("_ical_last_attempt_ts")
+                attempt_url_changed = hyst_node.get("_ical_last_attempt_url") != url
+                needs_fetch = attempt_url_changed or last_attempt is None or (datetime.now(UTC).timestamp() - last_attempt) >= refresh_min * 60
                 if not needs_fetch:
                     fetch_lock.release()
                     continue
@@ -2075,6 +2085,8 @@ class LogicManager:
                 except Exception:
                     logger.exception("Graph %s: iCal fetch failed for node %s (%s)", graph_id[:8], node.id[:8], url)
                 finally:
+                    hyst_node["_ical_last_attempt_url"] = url
+                    hyst_node["_ical_last_attempt_ts"] = datetime.now(UTC).timestamp()
                     try:
                         if active_client is not None:
                             await active_client.aclose()
@@ -4002,7 +4014,11 @@ class LogicManager:
                     if node_id not in current_nodes or node_id in no_persist:
                         continue
                     if node_id in ical_nodes and isinstance(node_state, dict):
-                        state_to_save[node_id] = {key: value for key, value in node_state.items() if key not in {"raw", "_ical_result_cache"}}
+                        state_to_save[node_id] = {
+                            key: value
+                            for key, value in node_state.items()
+                            if key not in {"raw", "_ical_result_cache", "_ical_last_attempt_url", "_ical_last_attempt_ts"}
+                        }
                     else:
                         state_to_save[node_id] = node_state
             else:

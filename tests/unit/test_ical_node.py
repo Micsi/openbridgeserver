@@ -108,6 +108,8 @@ def test_ical_result_cache_reuses_parse_and_invalidates_for_raw_or_filter_change
     assert cached_again["f0_array"][0][3] == "First"
     assert changed_filter["f0_today"] is False
     assert changed_raw["f0_today"] is True
+    assert "_ical_result_cache" not in hyst["n1"]
+    assert "n1" in ex.ical_result_cache
 
 
 # ---------------------------------------------------------------------------

@@ -77,6 +77,7 @@ class GraphExecutor:
         hysteresis_state: dict[str, Any] | None = None,
         app_config: dict[str, Any] | None = None,
         input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
+        ical_result_cache: dict[str, Any] | None = None,
     ):
         self.flow = flow
         # NOTE: use `is not None` instead of `or {}` — an empty dict {} is falsy,
@@ -85,6 +86,10 @@ class GraphExecutor:
         self.hysteresis_state = hysteresis_state if hysteresis_state is not None else {}
         self.app_config = app_config or {}
         self.input_capture = input_capture
+        # Parsed/filtered calendar results are runtime-only and intentionally
+        # separate from hysteresis state, which LogicManager deep-copies for
+        # async replay passes.
+        self.ical_result_cache = ical_result_cache if ical_result_cache is not None else {}
 
     def execute(
         self,
@@ -1333,7 +1338,7 @@ class GraphExecutor:
                     tz = _ZI(tz_name)
                     today = _datetime.now(tz).date()
                     cache_key = (filters_json, tz_name, today.isoformat())
-                    cached = hyst_node.get("_ical_result_cache")
+                    cached = self.ical_result_cache.get(node.id)
                     if (
                         isinstance(cached, dict)
                         and cached.get("raw") is raw_text
@@ -1462,7 +1467,7 @@ class GraphExecutor:
                         out.setdefault(f"f{i}_tomorrow", False)
 
                 if cache_key is not None:
-                    hyst_node["_ical_result_cache"] = {
+                    self.ical_result_cache[node.id] = {
                         "raw": raw_text,
                         "key": cache_key,
                         "outputs": copy.deepcopy({key: value for key, value in out.items() if key != "raw"}),
