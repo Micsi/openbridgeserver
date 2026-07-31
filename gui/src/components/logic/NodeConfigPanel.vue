@@ -1355,6 +1355,20 @@ const MESSAGE_TYPE_OPTIONS = ['automation', 'notification', 'system', 'security'
 const MESSAGE_SEVERITY_OPTIONS = ['info', 'success', 'warning', 'error', 'critical']
 const ICAL_PAYLOAD_SIZE_SCHEMA = { type: 'integer', min: 1, max: 50 }
 
+function normaliseIcalPayloadSize(rawValue) {
+  if (typeof rawValue === 'boolean' || rawValue === null || rawValue === undefined) return 2
+  let value
+  if (typeof rawValue === 'number') {
+    value = rawValue
+  } else if (typeof rawValue === 'string' && /^[+-]?\d+$/.test(rawValue.trim())) {
+    value = Number(rawValue)
+  } else {
+    return 2
+  }
+  if (!Number.isFinite(value)) return 2
+  return Math.min(50, Math.max(1, Math.trunc(value)))
+}
+
 const CONDITION_OPERATOR_OPTIONS = computed(() => [
   { value: 'eq',          label: t('logic.nodeConfig.rules.operators.eq') },
   { value: 'ne',          label: t('logic.nodeConfig.rules.operators.ne') },
@@ -2144,8 +2158,8 @@ watch(() => props.node, (n) => {
     if (n.type === 'api_client' && !localData.value.auth_type) {
       localData.value.auth_type = 'none'
     }
-    if (n.type === 'ical' && localData.value.max_payload_size_mb == null) {
-      localData.value.max_payload_size_mb = 2
+    if (n.type === 'ical') {
+      localData.value.max_payload_size_mb = normaliseIcalPayloadSize(localData.value.max_payload_size_mb)
     }
     if (n.type === 'api_client') {
       localData.value.variables = normaliseApiVariables(localData.value.variables)
@@ -2472,6 +2486,11 @@ function onSchemaFieldChange(key, schema) {
 }
 
 function emitBoundedUpdate(key, schema) {
+  if (key === 'max_payload_size_mb') {
+    localData.value[key] = normaliseIcalPayloadSize(localData.value[key])
+    emitUpdate()
+    return
+  }
   const rawValue = localData.value[key]
   if (rawValue === '' || rawValue === null || rawValue === undefined) {
     emitUpdate()

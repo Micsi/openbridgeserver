@@ -92,7 +92,7 @@ describe('NodeConfigPanel ical — URL field', () => {
   it.each([
     ['100', 50],
     ['0', 1],
-    ['1.9', 2],
+    ['1.9', 1],
   ])('normalizes payload size %s to %s MiB before emitting', async (input, expected) => {
     const w = await mountIcal()
     await flushPromises()
@@ -104,6 +104,24 @@ describe('NodeConfigPanel ical — URL field', () => {
 
     expect(w.emitted('update').at(-1)[0].max_payload_size_mb).toBe(expected)
     expect(sizeInput.element.value).toBe(String(expected))
+    w.unmount()
+  })
+
+  it.each([
+    [100, '50'],
+    [0, '1'],
+    [1.9, '1'],
+    ['8', '8'],
+    ['invalid', '2'],
+    [{}, '2'],
+    [null, '2'],
+    [true, '2'],
+    [Number.POSITIVE_INFINITY, '2'],
+  ])('normalizes imported payload size %s when opening the panel', async (value, expected) => {
+    const w = await mountIcal({ max_payload_size_mb: value })
+    await flushPromises()
+
+    expect(w.find('[data-testid="ical-max-payload-size"]').element.value).toBe(expected)
     w.unmount()
   })
 })

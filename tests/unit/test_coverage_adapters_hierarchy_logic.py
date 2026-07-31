@@ -4236,6 +4236,138 @@ class TestLogicManagerExecuteGraph:
         assert mgr._ical_cache_generations["changed"] is not changed_generation
 
     @pytest.mark.asyncio
+    async def test_reload_retains_locked_ical_precompute_lock_until_worker_drains(self):
+        import asyncio
+
+        active_flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/calendar.ics"},
+                }
+            ]
+        )
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, active_flow)})
+        lock = asyncio.Lock()
+        await lock.acquire()
+        mgr._ical_precompute_locks[("g1", "i1")] = lock
+
+        async def _load_disabled_graph():
+            mgr._graphs = {"g1": ("G1", False, active_flow)}
+
+        mgr._load_graphs = AsyncMock(side_effect=_load_disabled_graph)
+        mgr._start_cron_tasks = MagicMock()
+        await mgr.reload()
+
+        assert mgr._ical_precompute_locks[("g1", "i1")] is lock
+        mgr._graphs["g1"] = ("G1", True, active_flow)
+        assert mgr._ical_precompute_locks.setdefault(("g1", "i1"), asyncio.Lock()) is lock
+
+        mgr._graphs.pop("g1")
+        lock.release()
+        mgr._prune_ical_precompute_lock(("g1", "i1"), lock)
+        assert ("g1", "i1") not in mgr._ical_precompute_locks
+
+    @pytest.mark.asyncio
+    async def test_ical_precompute_lock_pruning_guards_active_and_replaced_locks(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/calendar.ics"},
+                }
+            ]
+        )
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        key = ("g1", "i1")
+        lock = asyncio.Lock()
+        mgr._ical_precompute_locks[key] = lock
+
+        mgr._prune_ical_precompute_lock(("missing", "i1"))
+        mgr._prune_ical_precompute_lock(key, asyncio.Lock())
+        mgr._prune_ical_precompute_lock(key, lock)
+        assert mgr._ical_precompute_locks[key] is lock
+
+        mgr._graphs["g1"] = ("G1", False, flow)
+        await lock.acquire()
+        mgr._prune_ical_precompute_lock(key, lock)
+        assert mgr._ical_precompute_locks[key] is lock
+
+        lock.release()
+        mgr._prune_ical_precompute_lock(key, lock)
+        assert key not in mgr._ical_precompute_locks
+
+    @pytest.mark.asyncio
+    async def test_graph_worker_state_snapshot_runs_off_event_loop(self):
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        copy_threads = []
+
+        class _CopyAware:
+            def __deepcopy__(self, _memo):
+                copy_threads.append(threading.get_ident())
+                return self
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                }
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        mgr._hysteresis["g1"] = {"large-state": _CopyAware()}
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert copy_threads
+        assert all(thread_id != event_loop_thread for thread_id in copy_threads)
+
+    @pytest.mark.asyncio
+    async def test_logic_debug_serialization_runs_off_event_loop(self):
+        import asyncio
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        serialization_threads = []
+        real_to_thread = asyncio.to_thread
+
+        async def _tracked_worker(func, *args):
+            def _run():
+                serialization_threads.append(threading.get_ident())
+                return func(*args)
+
+            return await real_to_thread(_run)
+
+        flow = _make_flow(nodes=[{"id": "constant", "type": "constant", "position": {"x": 0, "y": 0}, "data": {"value": 1}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with (
+            patch("obs.logic.manager._run_logic_debug_serialization_in_worker", side_effect=_tracked_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = True
+            mock_ws.return_value.broadcast_logic_debug = AsyncMock()
+            await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert serialization_threads
+        assert all(thread_id != event_loop_thread for thread_id in serialization_threads)
+
+    @pytest.mark.asyncio
     async def test_python_script_input_clone_runs_off_event_loop(self):
         import threading
 

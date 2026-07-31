@@ -38,6 +38,8 @@ from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
 _run_graph_executor_in_worker = asyncio.to_thread
+_run_graph_state_copy_in_worker = asyncio.to_thread
+_run_logic_debug_serialization_in_worker = asyncio.to_thread
 _MISSING_STATE = object()
 
 
@@ -58,7 +60,36 @@ def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: d
         if isinstance(base_value, dict) and isinstance(updated_value, dict) and isinstance(target_value, dict):
             _merge_worker_state(base_value, updated_value, target_value)
         elif target_value is _MISSING_STATE or target_value == base_value:
-            target[key] = copy.deepcopy(updated_value)
+            # ``updated`` is an isolated worker snapshot that is discarded
+            # after this commit, so ownership can safely move to ``target``.
+            target[key] = updated_value
+
+
+def _copy_graph_worker_state(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create the worker baseline and mutable state away from the event loop."""
+    base = copy.deepcopy(state)
+    return base, copy.deepcopy(base)
+
+
+def _serialize_logic_debug_payload(
+    graph_id: str,
+    outputs: dict[str, Any],
+    debug_inputs: dict[str, Any],
+    debug_overrides: dict[str, Any],
+    execution_started: float,
+) -> dict[str, Any]:
+    """Build the potentially large websocket snapshot in a worker thread."""
+    return {
+        "action": "logic_run",
+        "graph_id": graph_id,
+        "outputs": json.loads(json.dumps(jsonable(outputs), default=str)),
+        "inputs": json.loads(json.dumps(jsonable(debug_inputs), default=str)),
+        "debug": {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "duration_ms": round((perf_counter() - execution_started) * 1000, 2),
+            "used_overrides": bool(debug_overrides),
+        },
+    }
 
 
 def _msg_to_str(v: object) -> str:
@@ -946,7 +977,7 @@ class LogicManager:
         for key in [key for key in self._ical_fetch_locks if key[0] not in live_graph_ids]:
             self._ical_fetch_locks.pop(key, None)
         for key in [key for key in self._ical_precompute_locks if key[0] not in live_graph_ids]:
-            self._ical_precompute_locks.pop(key, None)
+            self._prune_ical_precompute_lock(key)
         ical_runtime_keys = {
             "raw",
             "_ical_result_cache",
@@ -975,7 +1006,7 @@ class LogicManager:
             for key in [key for key in self._ical_fetch_locks if key[0] == graph_id and key[1] not in active_ical_ids]:
                 self._ical_fetch_locks.pop(key, None)
             for key in [key for key in self._ical_precompute_locks if key[0] == graph_id and key[1] not in active_ical_ids]:
-                self._ical_precompute_locks.pop(key, None)
+                self._prune_ical_precompute_lock(key)
         # A config import/reset can remove graphs without first calling
         # invalidate_cache().  Cancel only sequences whose graph no longer
         # exists or is disabled; unrelated live graphs keep running.
@@ -2160,34 +2191,38 @@ class LogicManager:
             for ical_node in ical_nodes:
                 if not _ical_precompute_needed(ical_node):
                     continue
-                precompute_lock = self._ical_precompute_locks.setdefault((graph_id, ical_node.id), asyncio.Lock())
-                async with precompute_lock:
-                    if self._ical_cache_generations.get(graph_id) is not ical_generation:
-                        raise _ObsoleteGraphExecution
-                    latest_entry = self._ical_result_caches.get(graph_id, {}).get(ical_node.id)
-                    if latest_entry is not None and latest_entry is not execution_ical_sources.get(ical_node.id):
-                        pass_ical_cache[ical_node.id] = latest_entry
-                        execution_ical_sources[ical_node.id] = latest_entry
-                    if not _ical_precompute_needed(ical_node):
-                        continue
-                    worker = asyncio.create_task(asyncio.to_thread(_precompute_ical_node, ical_node))
-                    try:
-                        publication = await asyncio.shield(worker)
-                    except asyncio.CancelledError:
-                        # A running thread cannot be canceled.  Retain the
-                        # per-node lock until it exits so a replacement graph
-                        # cannot start a second large recurrence parse beside it.
+                precompute_key = (graph_id, ical_node.id)
+                precompute_lock = self._ical_precompute_locks.setdefault(precompute_key, asyncio.Lock())
+                try:
+                    async with precompute_lock:
+                        if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                            raise _ObsoleteGraphExecution
+                        latest_entry = self._ical_result_caches.get(graph_id, {}).get(ical_node.id)
+                        if latest_entry is not None and latest_entry is not execution_ical_sources.get(ical_node.id):
+                            pass_ical_cache[ical_node.id] = latest_entry
+                            execution_ical_sources[ical_node.id] = latest_entry
+                        if not _ical_precompute_needed(ical_node):
+                            continue
+                        worker = asyncio.create_task(asyncio.to_thread(_precompute_ical_node, ical_node))
                         try:
-                            await worker
-                        except Exception:
-                            logger.exception("Graph %s: cancelled iCalendar precompute failed while draining", graph_id)
-                        raise
-                    if publication is not None and self._ical_cache_generations.get(graph_id) is ical_generation:
-                        self._ical_result_caches[graph_id] = {
-                            **self._ical_result_caches.get(graph_id, {}),
-                            ical_node.id: publication,
-                        }
-                        execution_ical_sources[ical_node.id] = publication
+                            publication = await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            # A running thread cannot be canceled.  Retain the
+                            # per-node lock until it exits so a replacement graph
+                            # cannot start a second large recurrence parse beside it.
+                            try:
+                                await worker
+                            except Exception:
+                                logger.exception("Graph %s: cancelled iCalendar precompute failed while draining", graph_id)
+                            raise
+                        if publication is not None and self._ical_cache_generations.get(graph_id) is ical_generation:
+                            self._ical_result_caches[graph_id] = {
+                                **self._ical_result_caches.get(graph_id, {}),
+                                ical_node.id: publication,
+                            }
+                            execution_ical_sources[ical_node.id] = publication
+                finally:
+                    self._prune_ical_precompute_lock(precompute_key, precompute_lock)
             execution_ical_prepared = True
             return executor
 
@@ -2492,8 +2527,7 @@ class LogicManager:
                         # Snapshot and commit inside the same critical section so
                         # overlapping executions observe the preceding pass's
                         # committed state instead of overwriting it from a stale copy.
-                        base_hyst = copy.deepcopy(hyst)
-                        execution_hyst = copy.deepcopy(base_hyst)
+                        base_hyst, execution_hyst = await _run_graph_state_copy_in_worker(_copy_graph_worker_state, hyst)
                         executor = await _executor(execution_hyst)
                         if self._ical_cache_generations.get(graph_id) is not ical_generation:
                             raise _ObsoleteGraphExecution
@@ -4287,20 +4321,15 @@ class LogicManager:
             if not ws_manager.has_logic_debug_subscribers(graph_id):
                 return outputs
 
-            await ws_manager.broadcast_logic_debug(
+            payload = await _run_logic_debug_serialization_in_worker(
+                _serialize_logic_debug_payload,
                 graph_id,
-                {
-                    "action": "logic_run",
-                    "graph_id": graph_id,
-                    "outputs": json.loads(json.dumps(jsonable(outputs), default=str)),
-                    "inputs": json.loads(json.dumps(jsonable(debug_inputs or {}), default=str)),
-                    "debug": {
-                        "timestamp": datetime.now(UTC).isoformat(),
-                        "duration_ms": round((perf_counter() - execution_started) * 1000, 2),
-                        "used_overrides": bool(debug_overrides),
-                    },
-                },
+                outputs,
+                debug_inputs or {},
+                debug_overrides,
+                execution_started,
             )
+            await ws_manager.broadcast_logic_debug(graph_id, payload)
         except Exception:
             logger.exception("Graph %s: WS broadcast failed — ignoring (non-critical)", graph_id[:8])
 
@@ -4504,6 +4533,24 @@ class LogicManager:
         if graph_id not in self._graphs and lock is not None and not lock.locked():
             self._graph_executor_locks.pop(graph_id, None)
 
+    def _prune_ical_precompute_lock(self, key: tuple[str, str], expected_lock: asyncio.Lock | None = None) -> None:
+        """Drop an inactive node's lock only after its worker has drained."""
+        lock = self._ical_precompute_locks.get(key)
+        if lock is None or (expected_lock is not None and lock is not expected_lock):
+            return
+        graph_id, node_id = key
+        graph = self._graphs.get(graph_id)
+        active = bool(
+            graph
+            and graph[1]
+            and any(
+                node.id == node_id and node.type == "ical" and isinstance(node.data.get("url"), str) and node.data["url"].strip()
+                for node in graph[2].nodes
+            )
+        )
+        if not active and not lock.locked():
+            self._ical_precompute_locks.pop(key, None)
+
     def remove_graph(self, graph_id: str) -> None:
         """Invalidate a deleted graph and release all of its runtime data."""
         self.invalidate_cache(graph_id)
@@ -4513,7 +4560,7 @@ class LogicManager:
         for key in [key for key in self._ical_fetch_locks if key[0] == graph_id]:
             self._ical_fetch_locks.pop(key, None)
         for key in [key for key in self._ical_precompute_locks if key[0] == graph_id]:
-            self._ical_precompute_locks.pop(key, None)
+            self._prune_ical_precompute_lock(key)
         self._prune_graph_executor_lock(graph_id)
 
     def update_cached_graph_name(self, graph_id: str, name: str) -> None:
