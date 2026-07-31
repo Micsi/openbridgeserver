@@ -980,11 +980,13 @@ async def test_bulk_initialization_runs_each_graph_once():
 async def test_reset_node_state_clears_memory_and_db():
     mgr = _make_manager({})
     mgr._hysteresis["g1"] = {"h1": True}
+    mgr._ical_result_caches["g1"] = {"i1": {"outputs": {"events": ["stale"]}}}
     mgr._node_state["g1"] = {"r1": {"last_value": 5}}
 
     await mgr.reset_node_state("g1")
 
     assert "g1" not in mgr._hysteresis
+    assert "g1" not in mgr._ical_result_caches
     assert "g1" not in mgr._node_state
     # node_state is TEXT NOT NULL — the reset must write '{}', not NULL
     call = mgr._db.execute_and_commit.await_args

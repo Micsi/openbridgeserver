@@ -1867,6 +1867,7 @@ class LogicManager:
         reused node ids must not leak into the restored one.
         """
         self._hysteresis.pop(graph_id, None)
+        self._ical_result_caches.pop(graph_id, None)
         self._node_state.pop(graph_id, None)
         try:
             # node_state is TEXT NOT NULL DEFAULT '{}' — reset to the empty
@@ -2022,6 +2023,7 @@ class LogicManager:
                     fetch_lock.release()
                     continue
                 active_client: httpx.AsyncClient | None = None
+                attempt_completed = False
                 try:
                     current_url = url
                     active_origin: tuple[str, str, int] | None = None
@@ -2111,14 +2113,18 @@ class LogicManager:
                         logger.info("Graph %s: iCal fetched from %s (%d bytes)", graph_id[:8], current_url, len(_resp_bytes))
                         break
                 except Exception:
+                    attempt_completed = True
                     logger.exception("Graph %s: iCal fetch failed for node %s (%s)", graph_id[:8], node.id[:8], url)
+                else:
+                    attempt_completed = True
                 finally:
-                    hyst_node["_ical_last_attempt_url"] = url
-                    hyst_node["_ical_last_attempt_limit"] = payload_limit
-                    hyst_node["_ical_last_attempt_ts"] = datetime.now(UTC).timestamp()
                     try:
                         if active_client is not None:
                             await active_client.aclose()
+                        if attempt_completed:
+                            hyst_node["_ical_last_attempt_url"] = url
+                            hyst_node["_ical_last_attempt_limit"] = payload_limit
+                            hyst_node["_ical_last_attempt_ts"] = datetime.now(UTC).timestamp()
                     finally:
                         fetch_lock.release()
 
