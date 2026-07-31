@@ -838,6 +838,10 @@ class LogicManager:
         self._bulk_init_pending: set[str] = set()
         # cron tasks: (graph_id, node_id) → asyncio.Task
         self._cron_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
+        # One immediate iCalendar scheduler exists per node, but each scheduler
+        # executes the whole graph. Serialize those executions per graph so
+        # concurrent startup loops cannot download every calendar repeatedly.
+        self._ical_loop_locks: dict[str, asyncio.Lock] = {}
         # Running value sequences, keyed per graph/node.  They are deliberately
         # separate from cron tasks because they are short-lived and user-triggered.
         self._sequence_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
@@ -1231,9 +1235,18 @@ class LogicManager:
             try:
                 entry = self._graphs.get(graph_id)
                 if entry and entry[1]:  # still exists and enabled
-                    g_name, _, flow = entry
-                    await self._execute_graph(graph_id, g_name, flow, {node_id: {}})
-                    logger.debug("iCal graph %s (%s) node %s refreshed", graph_id[:8], g_name, node_id[:8])
+                    lock = self._ical_loop_locks.setdefault(graph_id, asyncio.Lock())
+                    refreshed = False
+                    async with lock:
+                        # Re-read after waiting: reload/delete may have replaced
+                        # the graph while another node's startup refresh ran.
+                        entry = self._graphs.get(graph_id)
+                        if entry and entry[1]:
+                            g_name, _, flow = entry
+                            await self._execute_graph(graph_id, g_name, flow, {node_id: {}})
+                            refreshed = True
+                    if refreshed:
+                        logger.debug("iCal graph %s (%s) node %s refreshed", graph_id[:8], g_name, node_id[:8])
 
                 await asyncio.sleep(refresh_min * 60)
 

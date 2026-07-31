@@ -4396,3 +4396,55 @@ class TestStartCronTasks:
             {"i1": {}},
             {"i1": {}},
         ]
+
+    @pytest.mark.asyncio
+    async def test_ical_loops_serialize_whole_graph_startup_refreshes(self):
+        """Concurrent per-node schedulers must not execute the same graph in
+        parallel and duplicate every calendar download."""
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
+                {"id": "i2", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
+            ]
+        )
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        second_finished = asyncio.Event()
+        calls: list[dict] = []
+        active = 0
+        max_active = 0
+
+        async def _execute(_graph_id, _name, _flow, overrides):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            calls.append(overrides)
+            if len(calls) == 1:
+                first_started.set()
+                await release_first.wait()
+            active -= 1
+            if len(calls) == 2:
+                second_finished.set()
+            return {}
+
+        mgr._execute_graph = _execute
+        tasks = [
+            asyncio.create_task(mgr._ical_loop("g1", "i1", 60)),
+            asyncio.create_task(mgr._ical_loop("g1", "i2", 60)),
+        ]
+        try:
+            await first_started.wait()
+            await asyncio.sleep(0)
+            assert calls == [{"i1": {}}]
+            release_first.set()
+            await second_finished.wait()
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        assert max_active == 1
+        assert calls == [{"i1": {}}, {"i2": {}}]
