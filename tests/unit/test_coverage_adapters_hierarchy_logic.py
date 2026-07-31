@@ -4398,61 +4398,114 @@ class TestStartCronTasks:
         ]
 
     @pytest.mark.asyncio
-    async def test_ical_loops_serialize_whole_graph_startup_refreshes(self):
-        """Concurrent per-node schedulers must not execute the same graph in
-        parallel and duplicate every calendar download."""
+    async def test_concurrent_ical_graph_executions_coalesce_each_node_fetch(self):
+        """Scheduler and event executions may overlap, but each stale calendar
+        must be downloaded only once."""
         import asyncio
+
+        class _Headers(dict):
+            def get_list(self, _key):
+                return []
+
+        class _Response:
+            status_code = 200
+            headers = _Headers({"content-type": "text/calendar"})
+
+            def raise_for_status(self):
+                return None
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Response()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class _Client:
+            def stream(self, *_args, **_kwargs):
+                return _Stream()
+
+            async def aclose(self):
+                return None
 
         flow = _make_flow(
             nodes=[
-                {"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
-                {"id": "i2", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/cal.ics"},
+                },
             ]
         )
-        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
         first_started = asyncio.Event()
         release_first = asyncio.Event()
-        all_finished = asyncio.Event()
-        calls: list[dict] = []
-        active = 0
-        max_active = 0
+        fetch_count = 0
 
-        async def _execute(_graph_id, _name, _flow, overrides, *_args):
-            nonlocal active, max_active
-            active += 1
-            max_active = max(max_active, active)
-            calls.append(overrides)
-            if len(calls) == 1:
-                first_started.set()
-                await release_first.wait()
-            active -= 1
-            if len(calls) == 3:
-                all_finished.set()
-            return {}
+        async def _read_body(*_args):
+            nonlocal fetch_count
+            fetch_count += 1
+            first_started.set()
+            await release_first.wait()
+            return b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
 
-        mgr._execute_graph_unlocked = _execute
-        loop_tasks = [
-            asyncio.create_task(mgr._ical_loop("g1", "i1", 60)),
-            asyncio.create_task(mgr._ical_loop("g1", "i2", 60)),
-        ]
-        event_task = None
-        try:
+        with (
+            patch(
+                "obs.logic.manager._build_ical_fetch_targets",
+                return_value=(["https://93.184.216.34/cal.ics"], {"Host": "example.com"}, {}),
+            ),
+            patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
+            patch("obs.logic.manager._read_limited_response_body", side_effect=_read_body),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            scheduler_run = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"i1": {}}))
             await first_started.wait()
-            await asyncio.sleep(0)
-            assert calls == [{"i1": {}}]
             event_task = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"event-node": {"value": 1}}))
             await asyncio.sleep(0)
-            assert calls == [{"i1": {}}]
+            assert fetch_count == 1
             release_first.set()
-            await all_finished.wait()
-        finally:
-            for task in loop_tasks:
-                task.cancel()
-            await asyncio.gather(*loop_tasks, return_exceptions=True)
-            if event_task is not None:
-                await event_task
+            await asyncio.gather(scheduler_run, event_task)
 
-        assert max_active == 1
-        assert calls[0] == {"i1": {}}
-        assert {"i2": {}} in calls[1:]
-        assert {"event-node": {"value": 1}} in calls[1:]
+        assert fetch_count == 1
+
+    @pytest.mark.asyncio
+    async def test_ical_graph_can_reenter_during_datapoint_publication(self):
+        """Publishing a write may synchronously invoke the same graph again;
+        iCalendar synchronization must not lock the whole execution."""
+        import asyncio
+
+        write_dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
+                {
+                    "id": "n_write",
+                    "type": "datapoint_write",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"datapoint_id": str(write_dp_id)},
+                },
+            ]
+        )
+        mgr, db, event_bus, registry = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        registry.get_value = MagicMock(return_value=None)
+        publish_count = 0
+
+        async def _publish_and_reenter(_event):
+            nonlocal publish_count
+            publish_count += 1
+            if publish_count == 1:
+                await mgr._execute_graph("g1", "G1", flow, {})
+
+        event_bus.publish.side_effect = _publish_and_reenter
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.broadcast = AsyncMock()
+            await asyncio.wait_for(
+                mgr._execute_graph("g1", "G1", flow, {"n_write": {"value": 42.0}}),
+                timeout=1,
+            )
+
+        assert publish_count == 1

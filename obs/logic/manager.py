@@ -838,10 +838,10 @@ class LogicManager:
         self._bulk_init_pending: set[str] = set()
         # cron tasks: (graph_id, node_id) → asyncio.Task
         self._cron_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
-        # Serialize every execution path for graphs containing iCalendar nodes.
-        # Scheduler loops and datapoint events can otherwise observe stale fetch
-        # metadata concurrently and duplicate large calendar downloads.
-        self._ical_graph_locks: dict[str, asyncio.Lock] = {}
+        # Coalesce concurrent refreshes per iCalendar node.  Keep this lock
+        # scoped to the fetch itself: graph execution may synchronously publish
+        # an event that re-enters the same graph.
+        self._ical_fetch_locks: dict[tuple[str, str], asyncio.Lock] = {}
         # Running value sequences, keyed per graph/node.  They are deliberately
         # separate from cron tasks because they are short-lived and user-triggered.
         self._sequence_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
@@ -1855,38 +1855,6 @@ class LogicManager:
         debug_overrides: dict[str, dict[str, Any]] | None = None,
         debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
-        if not any(node.type == "ical" for node in flow.nodes):
-            return await self._execute_graph_unlocked(
-                graph_id,
-                name,
-                flow,
-                overrides,
-                logic_depth,
-                debug_overrides,
-                debug_input_capture,
-            )
-        lock = self._ical_graph_locks.setdefault(graph_id, asyncio.Lock())
-        async with lock:
-            return await self._execute_graph_unlocked(
-                graph_id,
-                name,
-                flow,
-                overrides,
-                logic_depth,
-                debug_overrides,
-                debug_input_capture,
-            )
-
-    async def _execute_graph_unlocked(
-        self,
-        graph_id: str,
-        name: str,
-        flow: FlowData,
-        overrides: dict[str, dict[str, Any]],
-        logic_depth: int = 0,
-        debug_overrides: dict[str, dict[str, Any]] | None = None,
-        debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
-    ) -> dict[str, Any]:
         execute_now = datetime.now(UTC)
         execution_started = perf_counter()
         graph_state = self._node_state.setdefault(graph_id, {})
@@ -2003,6 +1971,18 @@ class LogicManager:
             url_changed = hyst_node.get("fetched_url") != url
             needs_fetch = not hyst_node.get("raw") or url_changed or last_fetch is None or (execute_now.timestamp() - last_fetch) >= refresh_min * 60
             if needs_fetch:
+                fetch_lock = self._ical_fetch_locks.setdefault((graph_id, node.id), asyncio.Lock())
+                await fetch_lock.acquire()
+                # Another execution may have refreshed this node while this one
+                # waited.  Re-check the shared runtime cache under the lock.
+                last_fetch = hyst_node.get("last_fetch_ts")
+                url_changed = hyst_node.get("fetched_url") != url
+                needs_fetch = (
+                    not hyst_node.get("raw") or url_changed or last_fetch is None or (datetime.now(UTC).timestamp() - last_fetch) >= refresh_min * 60
+                )
+                if not needs_fetch:
+                    fetch_lock.release()
+                    continue
                 active_client: httpx.AsyncClient | None = None
                 try:
                     current_url = url
@@ -2095,8 +2075,11 @@ class LogicManager:
                 except Exception:
                     logger.exception("Graph %s: iCal fetch failed for node %s (%s)", graph_id[:8], node.id[:8], url)
                 finally:
-                    if active_client is not None:
-                        await active_client.aclose()
+                    try:
+                        if active_client is not None:
+                            await active_client.aclose()
+                    finally:
+                        fetch_lock.release()
 
         # ── Pre-fill heating_circuit missing slots from history ───────────────────────
         # For each heating_circuit node: when a slot (T1/T2/T3) is missing for today
