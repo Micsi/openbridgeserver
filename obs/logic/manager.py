@@ -23,6 +23,7 @@ import stat
 import uuid
 from collections import deque
 from datetime import UTC, date, datetime, time
+from functools import partial
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -36,6 +37,7 @@ from obs.logic.models import FlowData
 from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
+_run_graph_executor_in_worker = asyncio.to_thread
 
 
 def _msg_to_str(v: object) -> str:
@@ -846,6 +848,10 @@ class LogicManager:
         # A queued execution rechecks the shared cache after acquiring this
         # lock so only one worker expands a given node/key generation.
         self._ical_precompute_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Python-script GraphExecutor passes run in a worker so large mutable
+        # inputs are cloned off the event loop. Serialize passes that share
+        # per-graph state while they run concurrently with the loop.
+        self._graph_executor_locks: dict[str, asyncio.Lock] = {}
         # Parsed/filtered calendar results must stay outside hysteresis state:
         # async replay paths deep-copy that state several times per execution.
         self._ical_result_caches: dict[str, dict[str, Any]] = {}
@@ -1940,6 +1946,7 @@ class LogicManager:
         execution_ical_cache: dict[str, Any] | None = None
         execution_ical_sources: dict[str, Any] = {}
         execution_ical_prepared = False
+        has_python_scripts = any(node.type == "python_script" for node in flow.nodes)
 
         def _debug_run_overrides(candidate: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             merged = {node_id: dict(values) for node_id, values in candidate.items()}
@@ -1947,17 +1954,23 @@ class LogicManager:
                 merged.setdefault(node_id, {}).update(values)
             return merged
 
-        def _execute_pass(
+        async def _execute_pass(
             executor: GraphExecutor,
             candidate: dict[str, dict[str, Any]],
             *,
             commit_memory: bool = False,
         ) -> dict[str, dict[str, Any]]:
-            return executor.execute(
+            execute_args = partial(
+                executor.execute,
                 _debug_run_overrides(candidate),
                 commit_memory=commit_memory,
                 capture_incoming_overrides=candidate,
             )
+            if not has_python_scripts:
+                return execute_args()
+            execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
+            async with execution_lock:
+                return await _run_graph_executor_in_worker(execute_args)
 
         async def _executor(state: dict[str, Any]) -> GraphExecutor:
             nonlocal execution_ical_cache, execution_ical_prepared
@@ -2348,10 +2361,17 @@ class LogicManager:
                 logger.exception("Graph %s: heating_circuit history pre-fill failed", graph_id[:8])
 
         executor = await _executor(hyst)
+        # A semantic save/removal may complete while recurrence expansion is
+        # running in the worker.  Do not execute the captured old flow after
+        # its cache generation has been replaced.
+        if self._ical_cache_generations.get(graph_id) is not ical_generation:
+            return {}
         try:
             pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
             pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
-            outputs = _execute_pass(executor, aug_overrides)
+            outputs = await _execute_pass(executor, aug_overrides)
+            if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                return {}
         except Exception:
             logger.exception("Graph %s (%s) execution error", graph_id, name)
             return {}
@@ -2508,7 +2528,7 @@ class LogicManager:
 
             replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             replay_executor = await _executor(replay_hyst)
-            replay_outputs = _execute_pass(replay_executor, replay_overrides)
+            replay_outputs = await _execute_pass(replay_executor, replay_overrides)
             blocked_ids = skip_node_ids or set()
             for nid, vals in replay_outputs.items():
                 if nid in descendants and nid not in blocked_ids:
@@ -2548,7 +2568,7 @@ class LogicManager:
                 hc_merged.setdefault(nid, {}).update(vals)
             hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             hc_second_executor = await _executor(hc_hyst_snapshot)
-            hc_second_outputs = _execute_pass(hc_second_executor, hc_merged)
+            hc_second_outputs = await _execute_pass(hc_second_executor, hc_merged)
             hc_descendants: set[str] = set()
             hc_queue: list[str] = list(replay_sources)
             while hc_queue:
@@ -2653,7 +2673,7 @@ class LogicManager:
                 # a WoL edge is present — we only want their *outputs*, not
                 # a second mutation of their persisted state.
                 wol_second_executor = await _executor(copy.deepcopy(hyst))
-                wol_second_outputs = _execute_pass(wol_second_executor, wol_merged)
+                wol_second_outputs = await _execute_pass(wol_second_executor, wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
                 # their descendants are updated, leaving unrelated nodes intact.
                 wol_descendants: set[str] = set()
@@ -2710,7 +2730,7 @@ class LogicManager:
                         _pwol_merged.setdefault(nid, {}).update(vals)
                     _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                     _pwol_exec = await _executor(_pwol_hyst)
-                    _pwol_out = _execute_pass(_pwol_exec, _pwol_merged)
+                    _pwol_out = await _execute_pass(_pwol_exec, _pwol_merged)
                     _pwol_desc: set[str] = set()
                     _pwol_dq: list[str] = list(_pwol_src)
                     while _pwol_dq:
@@ -2969,7 +2989,7 @@ class LogicManager:
                 if pre_execute_hyst is not None:
                     replay_hyst = copy.deepcopy(pre_execute_hyst)
                     second_executor = await _executor(replay_hyst)
-                    second_outputs = _execute_pass(second_executor, replay_overrides)
+                    second_outputs = await _execute_pass(second_executor, replay_overrides)
                     # Compute transitive descendants of triggered api_clients so that
                     # only their subtree is updated. This prevents the api_client
                     # second pass from overwriting WoL-propagated outputs that were
@@ -3025,7 +3045,7 @@ class LogicManager:
                 pat_merged.setdefault(nid, {}).update(vals)
             pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             pat_executor = await _executor(pat_hyst_snapshot)
-            pat_outputs = _execute_pass(pat_executor, pat_merged)
+            pat_outputs = await _execute_pass(pat_executor, pat_merged)
             pat_descendants: set[str] = set()
             pat_queue: list[str] = list(replay_sources)
             while pat_queue:
@@ -3111,7 +3131,7 @@ class LogicManager:
                     post_api_wol_merged.setdefault(nid, {}).update(vals)
                 _pawol_hyst_snap = copy.deepcopy(hyst)
                 post_api_wol_executor = await _executor(_pawol_hyst_snap)
-                post_api_wol_outputs = _execute_pass(post_api_wol_executor, post_api_wol_merged)
+                post_api_wol_outputs = await _execute_pass(post_api_wol_executor, post_api_wol_merged)
                 post_api_wol_descendants: set[str] = set()
                 post_api_wol_queue = list(post_api_wol_nodes)
                 while post_api_wol_queue:
@@ -3158,7 +3178,7 @@ class LogicManager:
                             _pawol_merged.setdefault(nid, {}).update(vals)
                         _pawol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         _pawol_exec = await _executor(_pawol_hyst)
-                        _pawol_out = _execute_pass(_pawol_exec, _pawol_merged)
+                        _pawol_out = await _execute_pass(_pawol_exec, _pawol_merged)
                         _pawol_desc: set[str] = set()
                         _pawol_dq: list[str] = list(_pawol_replay_src)
                         while _pawol_dq:
@@ -3384,7 +3404,7 @@ class LogicManager:
                     replay_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs.get(e.source, {}), src_handle)
                 replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 api_executor = await _executor(replay_hyst)
-                api_outputs = _execute_pass(api_executor, replay_overrides)
+                api_outputs = await _execute_pass(api_executor, replay_overrides)
                 for nid, vals in api_outputs.items():
                     if nid not in api_client_ids and nid in api_descendants:
                         outputs[nid] = vals
@@ -3440,7 +3460,7 @@ class LogicManager:
                             )
                         final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         final_hc_executor = await _executor(final_hc_hyst)
-                        final_hc_outputs = _execute_pass(final_hc_executor, final_hc_merged)
+                        final_hc_outputs = await _execute_pass(final_hc_executor, final_hc_merged)
                         for nid, vals in final_hc_outputs.items():
                             if nid in final_hc_descendants and nid not in triggered_api_clients:
                                 outputs[nid] = vals
@@ -3512,7 +3532,7 @@ class LogicManager:
                     _fwol_merged.setdefault(nid, {}).update(vals)
                 _fwol_hyst_snap = copy.deepcopy(hyst)
                 _fwol_exec = await _executor(_fwol_hyst_snap)
-                _fwol_out = _execute_pass(_fwol_exec, _fwol_merged)
+                _fwol_out = await _execute_pass(_fwol_exec, _fwol_merged)
                 _fwol_desc: set[str] = set()
                 _fwol_q: list[str] = list(_final_wol_candidates)
                 while _fwol_q:
@@ -3557,7 +3577,7 @@ class LogicManager:
                             _fwolhc_mrgd.setdefault(nid, {}).update(vals)
                         _fwolhc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         _fwolhc_exec = await _executor(_fwolhc_hyst)
-                        _fwolhc_out = _execute_pass(_fwolhc_exec, _fwolhc_mrgd)
+                        _fwolhc_out = await _execute_pass(_fwolhc_exec, _fwolhc_mrgd)
                         _fwolhc_desc: set[str] = set()
                         _fwolhc_dq: list[str] = list(_fwolhc_srcs)
                         while _fwolhc_dq:
@@ -4158,34 +4178,35 @@ class LogicManager:
         if not hyst:
             return
         try:
+            ical_runtime_keys = {
+                "raw",
+                "_ical_result_cache",
+                "_ical_last_attempt_url",
+                "_ical_last_attempt_limit",
+                "_ical_last_attempt_ts",
+                "_ical_precompute_token",
+            }
+
+            def _without_ical_runtime(node_state: Any) -> Any:
+                if not isinstance(node_state, dict):
+                    return node_state
+                return {key: value for key, value in node_state.items() if key not in ical_runtime_keys}
+
             graph_entry = self._graphs.get(graph_id)
             if graph_entry:
                 _, _, _flow = graph_entry
                 current_nodes = {node.id: node for node in _flow.nodes}
                 no_persist = {n.id for n in _flow.nodes if n.data.get("persist_state") is False}
-                ical_nodes = {n.id for n in _flow.nodes if n.type == "ical"}
                 state_to_save = {}
                 for node_id, node_state in hyst.items():
                     if node_id not in current_nodes or node_id in no_persist:
                         continue
-                    if node_id in ical_nodes and isinstance(node_state, dict):
-                        state_to_save[node_id] = {
-                            key: value
-                            for key, value in node_state.items()
-                            if key
-                            not in {
-                                "raw",
-                                "_ical_result_cache",
-                                "_ical_last_attempt_url",
-                                "_ical_last_attempt_limit",
-                                "_ical_last_attempt_ts",
-                                "_ical_precompute_token",
-                            }
-                        }
-                    else:
-                        state_to_save[node_id] = node_state
+                    state_to_save[node_id] = _without_ical_runtime(node_state)
             else:
-                state_to_save = hyst
+                # During a semantic save, invalidate_cache() briefly removes
+                # the graph entry before reload() restores it.  Never let that
+                # cache gap serialize large calendar bodies or attempt metadata.
+                state_to_save = {node_id: _without_ical_runtime(node_state) for node_id, node_state in hyst.items()}
             await self._db.execute_and_commit(
                 "UPDATE logic_graphs SET node_state = ? WHERE id = ?",
                 (json.dumps(state_to_save), graph_id),

@@ -4202,6 +4202,38 @@ class TestLogicManagerHelpers:
 
 class TestLogicManagerExecuteGraph:
     @pytest.mark.asyncio
+    async def test_python_script_input_clone_runs_off_event_loop(self):
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        copy_threads = []
+
+        class _CopyAware:
+            def __deepcopy__(self, _memo):
+                copy_threads.append(threading.get_ident())
+                return self
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = inputs['value']"},
+                }
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            await mgr._execute_graph("g1", "G1", flow, {"script": {"value": _CopyAware()}})
+
+        assert copy_threads
+        assert all(thread_id != event_loop_thread for thread_id in copy_threads)
+
+    @pytest.mark.asyncio
     async def test_execute_graph_writes_datapoint(self):
         """Test that datapoint_write nodes publish events."""
         write_dp_id = uuid.uuid4()
@@ -4888,6 +4920,43 @@ class TestStartCronTasks:
 
         assert fetch_count == 3
         assert mgr._ical_result_caches.get("g1", {}) == {}
+
+    @pytest.mark.asyncio
+    async def test_obsolete_execution_stops_after_ical_precompute(self):
+        import asyncio
+
+        write_dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
+                {
+                    "id": "write",
+                    "type": "datapoint_write",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"datapoint_id": str(write_dp_id)},
+                },
+            ]
+        )
+        mgr, db, event_bus, registry = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        registry.get_value = MagicMock(return_value=None)
+        real_to_thread = asyncio.to_thread
+
+        async def _invalidate_after_precompute(func, *args):
+            result = await real_to_thread(func, *args)
+            if getattr(func, "__name__", "") == "_precompute_ical_node":
+                mgr.invalidate_cache("g1")
+            return result
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=_invalidate_after_precompute),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            result = await mgr._execute_graph("g1", "G1", flow, {"write": {"value": 42.0}})
+
+        assert result == {}
+        event_bus.publish.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_ical_snapshot_survives_concurrent_reload_eviction(self):
