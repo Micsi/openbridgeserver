@@ -4533,6 +4533,81 @@ class TestLogicManagerExecuteGraph:
         event_bus.publish.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_obsolete_queued_python_replay_skips_worker(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 100},
+                    "data": {"script": "result = 1"},
+                },
+                {
+                    "id": "host",
+                    "type": "host_check",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"host": "example.com"},
+                },
+                {
+                    "id": "formula",
+                    "type": "math_formula",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"formula": "a"},
+                },
+            ],
+            edges=[
+                {
+                    "id": "host-formula",
+                    "source": "host",
+                    "target": "formula",
+                    "sourceHandle": "reachable",
+                    "targetHandle": "a",
+                }
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        ping_started = asyncio.Event()
+        release_ping = asyncio.Event()
+        second_worker_started = asyncio.Event()
+        release_second_worker = asyncio.Event()
+        worker_calls = 0
+
+        async def _controlled_ping(*_args):
+            ping_started.set()
+            await release_ping.wait()
+            return True, 1.0
+
+        async def _controlled_worker(func):
+            nonlocal worker_calls
+            worker_calls += 1
+            if worker_calls == 2:
+                second_worker_started.set()
+                await release_second_worker.wait()
+            return func()
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.logic.manager._ping_host", side_effect=_controlled_ping),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            replaying = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"host": {"trigger": True}}))
+            await ping_started.wait()
+            blocker = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await second_worker_started.wait()
+            release_ping.set()
+            await asyncio.sleep(0)
+            mgr.invalidate_cache("g1")
+            release_second_worker.set()
+            results = await asyncio.gather(replaying, blocker)
+
+        assert worker_calls == 2
+        assert results == [{}, {}]
+
+    @pytest.mark.asyncio
     async def test_execute_graph_writes_datapoint(self):
         """Test that datapoint_write nodes publish events."""
         write_dp_id = uuid.uuid4()

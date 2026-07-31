@@ -2045,6 +2045,8 @@ class LogicManager:
                     execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
                     try:
                         async with execution_lock:
+                            if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                                raise _ObsoleteGraphExecution
                             result = await _run_worker()
                     finally:
                         self._prune_graph_executor_lock(graph_id)
