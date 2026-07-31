@@ -904,8 +904,12 @@ class LogicManager:
             "_ical_last_attempt_limit",
             "_ical_last_attempt_ts",
         }
-        for graph_id, (_, _, flow) in self._graphs.items():
-            active_ical_ids = {node.id for node in flow.nodes if node.type == "ical" and (node.data.get("url") or "").strip()}
+        for graph_id, (_, enabled, flow) in self._graphs.items():
+            active_ical_ids = {
+                node.id
+                for node in flow.nodes
+                if enabled and node.type == "ical" and isinstance(node.data.get("url"), str) and node.data["url"].strip()
+            }
             result_cache = self._ical_result_caches.get(graph_id)
             if result_cache is not None:
                 for node_id in set(result_cache) - active_ical_ids:
@@ -2121,6 +2125,14 @@ class LogicManager:
                     try:
                         if active_client is not None:
                             await active_client.aclose()
+                        if node.id in refreshed_ical_nodes:
+                            precompute_executor = GraphExecutor(
+                                flow,
+                                hyst,
+                                self._app_config,
+                                ical_result_cache=ical_result_cache,
+                            )
+                            await asyncio.to_thread(precompute_executor._eval_node, node, {})
                         if attempt_completed:
                             hyst_node["_ical_last_attempt_url"] = url
                             hyst_node["_ical_last_attempt_limit"] = payload_limit

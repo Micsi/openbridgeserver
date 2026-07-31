@@ -3600,6 +3600,22 @@ class TestLogicManagerBasics:
                     "position": {"x": 400, "y": 0},
                     "data": {"url": ""},
                 },
+                {
+                    "id": "invalid-url-ical",
+                    "type": "ical",
+                    "position": {"x": 600, "y": 0},
+                    "data": {"url": 123},
+                },
+            ]
+        )
+        disabled_flow = _make_flow(
+            nodes=[
+                {
+                    "id": "disabled-ical",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/disabled.ics"},
+                }
             ]
         )
         db.fetchall = AsyncMock(
@@ -3607,10 +3623,17 @@ class TestLogicManagerBasics:
                 {
                     "id": "live",
                     "name": "Live",
-                    "enabled": 0,
+                    "enabled": 1,
                     "flow_data": live_flow.model_dump_json(),
                     "node_state": "{}",
-                }
+                },
+                {
+                    "id": "disabled",
+                    "name": "Disabled",
+                    "enabled": 0,
+                    "flow_data": disabled_flow.model_dump_json(),
+                    "node_state": "{}",
+                },
             ]
         )
         mgr._hysteresis["removed"] = {"i1": {"raw": "large body"}}
@@ -3620,19 +3643,26 @@ class TestLogicManagerBasics:
             "remaining": {"counter": 1},
             "current-ical": {"raw": "current body"},
             "url-less-ical": {"raw": "stale body"},
+            "invalid-url-ical": {"raw": "invalid body"},
             "deleted-ical": {"raw": "large body"},
         }
+        mgr._hysteresis["disabled"] = {"disabled-ical": {"raw": "disabled body"}}
         mgr._ical_result_caches["live"] = {
             "current-ical": {"outputs": {"events": ["current"]}},
             "url-less-ical": {"outputs": {"events": ["stale"]}},
+            "invalid-url-ical": {"outputs": {"events": ["invalid"]}},
             "deleted-ical": {"outputs": {"events": []}},
         }
+        mgr._ical_result_caches["disabled"] = {"disabled-ical": {"outputs": {"events": ["disabled"]}}}
         mgr._ical_fetch_locks[("live", "current-ical")] = asyncio.Lock()
         mgr._ical_fetch_locks[("live", "url-less-ical")] = asyncio.Lock()
+        mgr._ical_fetch_locks[("live", "invalid-url-ical")] = asyncio.Lock()
         mgr._ical_fetch_locks[("live", "deleted-ical")] = asyncio.Lock()
+        mgr._ical_fetch_locks[("disabled", "disabled-ical")] = asyncio.Lock()
         task = MagicMock()
         task.cancel = MagicMock()
         mgr._cron_tasks[("g1", "n1")] = task
+        mgr._start_cron_tasks = MagicMock()
         await mgr.reload()
         task.cancel.assert_called_once()
         assert "removed" not in mgr._hysteresis
@@ -3644,6 +3674,12 @@ class TestLogicManagerBasics:
         assert "url-less-ical" not in mgr._hysteresis["live"]
         assert "url-less-ical" not in mgr._ical_result_caches["live"]
         assert ("live", "url-less-ical") not in mgr._ical_fetch_locks
+        assert "invalid-url-ical" not in mgr._hysteresis["live"]
+        assert "invalid-url-ical" not in mgr._ical_result_caches["live"]
+        assert ("live", "invalid-url-ical") not in mgr._ical_fetch_locks
+        assert "disabled-ical" not in mgr._hysteresis["disabled"]
+        assert "disabled-ical" not in mgr._ical_result_caches["disabled"]
+        assert ("disabled", "disabled-ical") not in mgr._ical_fetch_locks
         assert mgr._hysteresis["live"]["remaining"] == {"counter": 1}
         assert mgr._hysteresis["live"]["current-ical"]["raw"] == "current body"
         assert mgr._ical_result_caches["live"]["current-ical"]["outputs"]["events"] == ["current"]
@@ -4259,6 +4295,10 @@ class TestLogicManagerExecuteGraph:
 
     @pytest.mark.asyncio
     async def test_execute_graph_ical_uses_configured_payload_limit(self):
+        import threading
+
+        from obs.logic.executor import GraphExecutor
+
         class _Headers(dict):
             def get_list(self, _key):
                 return []
@@ -4308,6 +4348,14 @@ class TestLogicManagerExecuteGraph:
             }
         }
         read_body = AsyncMock(return_value=b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n")
+        event_loop_thread = threading.get_ident()
+        ical_eval_threads = []
+        original_eval_node = GraphExecutor._eval_node
+
+        def _record_eval_thread(executor, node, inputs):
+            if node.type == "ical":
+                ical_eval_threads.append(threading.get_ident())
+            return original_eval_node(executor, node, inputs)
 
         with (
             patch(
@@ -4316,6 +4364,7 @@ class TestLogicManagerExecuteGraph:
             ),
             patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
             patch("obs.logic.manager._read_limited_response_body", read_body),
+            patch.object(GraphExecutor, "_eval_node", _record_eval_thread),
             patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
         ):
             mock_ws.return_value.broadcast = AsyncMock()
@@ -4323,6 +4372,7 @@ class TestLogicManagerExecuteGraph:
 
         assert isinstance(result, dict)
         assert read_body.await_args.args[1] == 8 * 1_048_576
+        assert ical_eval_threads[0] != event_loop_thread
 
     @pytest.mark.asyncio
     async def test_execute_graph_executor_error_returns_empty_dict(self):
