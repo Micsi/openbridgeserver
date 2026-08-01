@@ -680,6 +680,45 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 1
 
+    def test_random_value_triggered_by_async_replay_is_not_frozen_as_inactive(self):
+        """Regression: api_client.success -> random_value.trigger -> change_filter.
+        On the first pass api_client's own result is still an unresolved
+        placeholder (success=False), so random_value reads as inactive
+        (value=None) that pass too. The async-replay machinery's "late hold"
+        recomputation used to reuse that FROZEN first-pass "inactive"
+        determination for every later replay instead of recomputing it from
+        each replay's own fresh outputs — permanently suppressing the
+        change_filter even once random_value genuinely produced a real
+        value once api_client's real success propagated."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET", "response_type": "text/plain"}),
+            node("rnd", "random_value", {"min": 1, "max": 1}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "rnd", "success", "trigger"),
+                edge("rnd", "cf", "value", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-random-via-async-replay"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        patcher = _patch_api_success()
+        try:
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
+
+        assert outputs["cf"]["out"] == 1
+        assert outputs["cf"]["changed"] is True
+
     def test_async_driven_sustained_trigger_pings_only_once(self):
         """api_client→hc: HC with async trigger doesn't re-ping when trigger stays True (rising-edge deferred clear)."""
         nodes = [

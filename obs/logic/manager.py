@@ -2641,13 +2641,24 @@ class LogicManager:
         _chained_unresolved_async_ids = async_replay_source_ids & (
             _downstream_closure(_directly_triggered_async_ids, flow.edges) - _directly_triggered_async_ids
         )
-        # Unlike the async sources above, an inactive random_value's None
-        # this pass isn't "about to resolve" via a later replay — it's
-        # simply this pass's real, final output until its own trigger next
-        # fires. It still must not be committed as a genuine change_filter
-        # baseline though, so it's folded in here alongside unseeded_read_ids
-        # rather than as part of the async-chain machinery above.
-        _inactive_random_ids = {nid for nid in random_value_ids if outputs.get(nid, {}).get("value") is None}
+
+        # An inactive random_value's None this pass CAN still resolve via a
+        # later async replay — e.g. api_client.success -> random_value.trigger
+        # -> change_filter: random_value reads as inactive on the first pass
+        # (api_client's placeholder success=False), then genuinely fires once
+        # the real api_client result propagates. Every one of the "late hold"
+        # recomputations below therefore needs this recomputed from that
+        # replay's own outputs_source, not a single value frozen from this
+        # first pass — see _inactive_random_ids_from just below. This
+        # first-pass value is still needed once, though: as part of the
+        # initial _unresolved_source_ids seed for the very first
+        # _compute_cf_hold_ids(_unresolved_source_ids) correction, before any
+        # replay has run at all.
+        def _inactive_random_ids_from(outputs_source: dict[str, dict[str, Any]] | None = None) -> set[str]:
+            _src = outputs_source if outputs_source is not None else outputs
+            return {nid for nid in random_value_ids if _src.get(nid, {}).get("value") is None}
+
+        _inactive_random_ids = _inactive_random_ids_from()
         _unresolved_source_ids: set[str] = unseeded_read_ids | _directly_triggered_async_ids | _chained_unresolved_async_ids | _inactive_random_ids
 
         _node_by_id_early = {n.id: n for n in flow.nodes}
@@ -3204,7 +3215,7 @@ class LogicManager:
             if api_replay_overrides is None:
                 return
             _current_cf_hold_ids = _compute_cf_hold_ids(
-                unseeded_read_ids | _inactive_random_ids | _still_unresolved_source_ids(outputs_source), outputs_source
+                unseeded_read_ids | _inactive_random_ids_from(outputs_source) | _still_unresolved_source_ids(outputs_source), outputs_source
             )
             _refreshed: dict[str, dict[str, Any]] = {}
             for _nid, _vals in api_replay_overrides.items():
@@ -3266,7 +3277,7 @@ class LogicManager:
             # Redo the replay with suppression applied if this reveals
             # anything new.
             _late_pending = _still_unresolved_source_ids(replay_outputs)
-            _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _late_pending, replay_outputs)
+            _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids_from(replay_outputs) | _late_pending, replay_outputs)
             if _late_cf_hold_ids:
                 for _late_cf_id in _late_cf_hold_ids:
                     replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3324,7 +3335,9 @@ class LogicManager:
             # host_check irreversibly ping. Redo the replay with
             # suppression applied if this reveals anything new.
             _hc_late_pending = _still_unresolved_source_ids(hc_second_outputs)
-            _hc_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _hc_late_pending, hc_second_outputs)
+            _hc_late_cf_hold_ids = _compute_cf_hold_ids(
+                unseeded_read_ids | _inactive_random_ids_from(hc_second_outputs) | _hc_late_pending, hc_second_outputs
+            )
             if _hc_late_cf_hold_ids:
                 for _hc_late_cf_id in _hc_late_cf_hold_ids:
                     hc_merged.setdefault(_hc_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3466,7 +3479,9 @@ class LogicManager:
                 # downstream host_check irreversibly ping. Redo the replay
                 # with suppression applied if this reveals anything new.
                 _wol_late_pending = _still_unresolved_source_ids(wol_second_outputs)
-                _wol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _wol_late_pending, wol_second_outputs)
+                _wol_late_cf_hold_ids = _compute_cf_hold_ids(
+                    unseeded_read_ids | _inactive_random_ids_from(wol_second_outputs) | _wol_late_pending, wol_second_outputs
+                )
                 if _wol_late_cf_hold_ids:
                     for _wol_late_cf_id in _wol_late_cf_hold_ids:
                         wol_merged.setdefault(_wol_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3544,7 +3559,9 @@ class LogicManager:
                     # the replay with suppression applied if this reveals
                     # anything new.
                     _pwol_late_pending = _still_unresolved_source_ids(_pwol_out)
-                    _pwol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _pwol_late_pending, _pwol_out)
+                    _pwol_late_cf_hold_ids = _compute_cf_hold_ids(
+                        unseeded_read_ids | _inactive_random_ids_from(_pwol_out) | _pwol_late_pending, _pwol_out
+                    )
                     if _pwol_late_cf_hold_ids:
                         for _pwol_late_cf_id in _pwol_late_cf_hold_ids:
                             _pwol_merged.setdefault(_pwol_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3836,7 +3853,9 @@ class LogicManager:
                     # committed just because this pass happened to be an
                     # API replay.
                     _late_pending = _still_unresolved_source_ids(second_outputs)
-                    _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _late_pending, second_outputs)
+                    _late_cf_hold_ids = _compute_cf_hold_ids(
+                        unseeded_read_ids | _inactive_random_ids_from(second_outputs) | _late_pending, second_outputs
+                    )
                     if _late_cf_hold_ids:
                         for _late_cf_id in _late_cf_hold_ids:
                             replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
@@ -3926,7 +3945,7 @@ class LogicManager:
             # consistency with every other replay site, in case a future
             # change decouples pat_base_overrides from that inheritance.
             _pat_late_pending = _still_unresolved_source_ids(pat_outputs)
-            _pat_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _pat_late_pending, pat_outputs)
+            _pat_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids_from(pat_outputs) | _pat_late_pending, pat_outputs)
             if _pat_late_cf_hold_ids:
                 for _pat_late_cf_id in _pat_late_cf_hold_ids:
                     pat_merged.setdefault(_pat_late_cf_id, {})["_suppress_change_filter"] = True
@@ -4031,7 +4050,9 @@ class LogicManager:
                 # value. Redo with suppression applied if this reveals
                 # anything new.
                 _pawol_late_pending = _still_unresolved_source_ids(post_api_wol_outputs)
-                _pawol_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids | _pawol_late_pending, post_api_wol_outputs)
+                _pawol_late_cf_hold_ids = _compute_cf_hold_ids(
+                    unseeded_read_ids | _inactive_random_ids_from(post_api_wol_outputs) | _pawol_late_pending, post_api_wol_outputs
+                )
                 if _pawol_late_cf_hold_ids:
                     for _pawol_late_cf_id in _pawol_late_cf_hold_ids:
                         post_api_wol_merged.setdefault(_pawol_late_cf_id, {})["_suppress_change_filter"] = True
