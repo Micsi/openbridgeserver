@@ -2064,6 +2064,8 @@
         "urlLabel": "iCal-URL",
         "refreshLabel": "Aktualisierungsintervall (Minuten)",
         "refreshHint": "Kalender wird höchstens alle N Minuten neu geladen.",
+        "maxPayloadSizeLabel": "Maximale Kalendergrösse (MiB)",
+        "maxPayloadSizeHint": "Downloads, die diesen Wert überschreiten, werden abgebrochen (1–50 MiB).",
         "rawInfo": "Der RAW-Ausgang liefert immer den rohen iCal-Text. Für erweiterte Auswertungen können Filter hinzugefügt werden.",
         "filtersSection": "Filter / Instanzen",
         "addFilter": "+ Filter hinzufügen",
@@ -2087,6 +2089,7 @@
         "descriptionPlaceholder": "z.B. Biotonne",
         "url": "iCal-URL",
         "refresh_interval_min": "Aktualisierungsintervall (Minuten)",
+        "max_payload_size_mb": "Maximale Kalendergrösse (MiB)",
         "filter_count": "Anzahl Filter",
         "filters": "Filter (JSON)"
       },

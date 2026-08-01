@@ -69,7 +69,7 @@ def test_execute_captures_configured_string_values_and_override_precedence():
     }
 
 
-def test_execute_snapshots_mutable_inputs_before_python_script_mutation():
+def test_execute_isolates_mutable_inputs_from_python_script_mutation():
     mutable = {"x": 1}
     base = make_executor(
         [node("target", "python_script", {"script": "inputs['a']['x'] = 2; result = inputs['a']"})],
@@ -82,13 +82,45 @@ def test_execute_snapshots_mutable_inputs_before_python_script_mutation():
         capture_incoming_overrides={"target": {"a": mutable}},
     )
 
-    assert mutable == {"x": 2}
+    assert mutable == {"x": 1}
     assert outputs["target"]["result"] == {"x": 2}
     assert captured["target"]["a"] == {
         "incoming": {"x": 1},
         "effective": {"x": 1},
         "overridden": True,
     }
+
+
+def test_python_script_cannot_mutate_shared_ical_outputs_between_replays():
+    today = datetime.now(UTC).strftime("%Y%m%d")
+    raw = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:{today}\r\nSUMMARY:Original\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    base = make_executor(
+        [
+            node("calendar", "ical", {"filters": '[{"pattern": "Original"}]'}),
+            node(
+                "script",
+                "python_script",
+                {"script": "inputs['events'][0][3] = 'mutated'; result = inputs['events']"},
+            ),
+        ],
+        [edge("calendar", "script", "f0_array", "events")],
+    )
+    cache = {}
+    executor = GraphExecutor(
+        base.flow,
+        {"calendar": {"raw": raw}},
+        {"timezone": "UTC"},
+        ical_result_cache=cache,
+        ical_cache_outputs_owned=True,
+    )
+
+    first = executor.execute()
+    second = executor.execute()
+
+    assert first["script"]["result"][0][3] == "mutated"
+    assert first["calendar"]["f0_array"][0][3] == "Original"
+    assert second["calendar"]["f0_array"][0][3] == "Original"
+    assert cache["calendar"]["outputs"]["f0_array"][0][3] == "Original"
 
 
 def test_invalid_configured_string_input_count_is_isolated_to_its_node():

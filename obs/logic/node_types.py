@@ -996,6 +996,13 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
                 "default": 60,
                 "label": "Aktualisierungsintervall (Minuten)",
             },
+            "max_payload_size_mb": {
+                "type": "integer",
+                "default": 2,
+                "min": 1,
+                "max": 50,
+                "label": "Maximale Kalendergrösse (MiB)",
+            },
             "filter_count": {
                 "type": "integer",
                 "default": 0,
