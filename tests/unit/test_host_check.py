@@ -1687,7 +1687,16 @@ class TestHostCheckRisingEdge:
         time during the replay, on top of the mutation the main pass
         already made, silently corrupting a value that never existed in
         the real pass (here: memory's own persisted state, since memory's
-        "out" and its hysteresis_state["value"] are the same object)."""
+        "out" and its hysteresis_state["value"] are the same object).
+
+        GraphExecutor now isolates EVERY python_script's inputs (not just
+        ones reused via known_outputs across a replay) from in-place
+        mutation, the same protection also needed for shared iCalendar
+        cache entries — a strictly safer contract than "only the replay
+        pass is protected". "count" therefore never advances via this
+        in-place-mutation backdoor at all, on the real pass or a replay;
+        memory's own documented "in"/"reset" ports remain the only real
+        way to update its persisted state."""
         nodes = [
             node("unseeded_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
             node("not_gate", "not"),
@@ -1713,7 +1722,7 @@ class TestHostCheckRisingEdge:
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
             asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
 
-        assert manager._hysteresis[graph_id]["mem"]["value"]["count"] == 1
+        assert manager._hysteresis[graph_id]["mem"]["value"]["count"] == 0
 
     def test_correction_replay_survives_a_non_deepcopyable_unrelated_output(self):
         """Regression: every node OUTSIDE a held change_filter's descendant

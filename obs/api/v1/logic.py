@@ -303,7 +303,7 @@ async def delete_graph(
     try:
         from obs.logic.manager import get_logic_manager
 
-        get_logic_manager().invalidate_cache(graph_id)
+        get_logic_manager().remove_graph(graph_id)
     except Exception:
         logger.exception("Failed to invalidate logic manager cache after deleting graph %s", graph_id)
 

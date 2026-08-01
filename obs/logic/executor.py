@@ -100,6 +100,8 @@ class GraphExecutor:
         hysteresis_state: dict[str, Any] | None = None,
         app_config: dict[str, Any] | None = None,
         input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
+        ical_result_cache: dict[str, Any] | None = None,
+        ical_cache_outputs_owned: bool = False,
     ):
         self.flow = flow
         # NOTE: use `is not None` instead of `or {}` — an empty dict {} is falsy,
@@ -108,6 +110,11 @@ class GraphExecutor:
         self.hysteresis_state = hysteresis_state if hysteresis_state is not None else {}
         self.app_config = app_config or {}
         self.input_capture = input_capture
+        # Parsed/filtered calendar results are runtime-only and intentionally
+        # separate from hysteresis state, which LogicManager deep-copies for
+        # async replay passes.
+        self.ical_result_cache = ical_result_cache if ical_result_cache is not None else {}
+        self.ical_cache_outputs_owned = ical_cache_outputs_owned
 
     def execute(
         self,
@@ -197,6 +204,19 @@ class GraphExecutor:
                         for port in inputs
                     }
 
+                # Python scripts are the only node type that can arbitrarily
+                # mutate their inputs.  Keep upstream outputs (including shared
+                # iCalendar cache entries) immutable across replay passes.
+                # Per-value (not a single dict-wide deepcopy): an upstream
+                # non-deepcopyable value (e.g. another permitted
+                # python_script's own generator/complex-object result)
+                # would otherwise make the WHOLE deepcopy raise, turning
+                # this node into "__error__" even though only one of its
+                # inputs is actually a problem — _replay_known_output_value
+                # isolates each input independently, falling back to the
+                # original reference only for that one value.
+                if node.type == "python_script":
+                    inputs = {port: _replay_known_output_value(val) for port, val in inputs.items()}
                 result = self._eval_node(node, inputs)
             except Exception as exc:
                 logger.exception("Node %s (%s) error", node.id, node.type)
@@ -1753,6 +1773,7 @@ class GraphExecutor:
                         out[f"f{i}_today"] = False
                     return out
 
+                cache_key: tuple[str, str, str] | None = None
                 try:
                     import datetime as _dt_ic
                     from zoneinfo import ZoneInfo as _ZI
@@ -1768,7 +1789,19 @@ class GraphExecutor:
 
                     tz_name = self.app_config.get("timezone", "Europe/Zurich")
                     tz = _ZI(tz_name)
-                    today = _dt_ic.datetime.now(tz).date()
+                    today = _datetime.now(tz).date()
+                    cache_key = (filters_json, tz_name, today.isoformat())
+                    cached = self.ical_result_cache.get(node.id)
+                    if (
+                        isinstance(cached, dict)
+                        and cached.get("raw") is raw_text
+                        and cached.get("key") == cache_key
+                        and isinstance(cached.get("outputs"), dict)
+                    ):
+                        cached_outputs = cached["outputs"]
+                        out.update(cached_outputs if self.ical_cache_outputs_owned else copy.deepcopy(cached_outputs))
+                        return out
+
                     tomorrow = today + _dt_ic.timedelta(days=1)
                     window_end = today + _dt_ic.timedelta(days=365)
 
@@ -1887,6 +1920,12 @@ class GraphExecutor:
                         out.setdefault(f"f{i}_today", False)
                         out.setdefault(f"f{i}_tomorrow", False)
 
+                if cache_key is not None:
+                    self.ical_result_cache[node.id] = {
+                        "raw": raw_text,
+                        "key": cache_key,
+                        "outputs": copy.deepcopy({key: value for key, value in out.items() if key != "raw"}),
+                    }
                 return out
 
             case _:

@@ -984,16 +984,56 @@ async def test_persist_node_state_excludes_persist_state_false_nodes():
 
 
 @pytest.mark.asyncio
-async def test_persist_node_state_without_graph_entry_saves_everything():
+async def test_persist_node_state_excludes_runtime_ical_body_and_result_cache():
     import json
 
-    mgr = _make_manager({})
-    mgr._hysteresis["g1"] = {"h1": False}
+    flow = _flow([{"id": "i1", "type": "ical", "data": {}}])
+    mgr = _make_manager({"g1": ("G", True, flow)})
+    mgr._hysteresis["g1"] = {
+        "i1": {
+            "raw": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+            "_ical_result_cache": {"raw": object(), "outputs": {"f0_array": []}},
+            "_ical_last_attempt_url": "https://example.com/calendar.ics",
+            "_ical_last_attempt_limit": 50 * 1_048_576,
+            "_ical_last_attempt_ts": 124.0,
+            "fetched_url": "https://example.com/calendar.ics",
+            "last_fetch_ts": 123.0,
+        },
+        "removed-ical": {
+            "raw": "large removed body",
+            "_ical_result_cache": {"raw": object()},
+        },
+    }
 
     await mgr._persist_node_state("g1")
 
     saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
-    assert saved["state"] == {"h1": False}
+    assert saved["state"] == {
+        "i1": {
+            "fetched_url": "https://example.com/calendar.ics",
+            "last_fetch_ts": 123.0,
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_persist_node_state_without_graph_entry_strips_ical_runtime_data():
+    import json
+
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {
+        "h1": False,
+        "i1": {
+            "raw": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+            "_ical_last_attempt_url": "https://example.com/calendar.ics",
+            "fetched_url": "https://example.com/calendar.ics",
+        },
+    }
+
+    await mgr._persist_node_state("g1")
+
+    saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
+    assert saved["state"] == {"h1": False, "i1": {"fetched_url": "https://example.com/calendar.ics"}}
 
 
 @pytest.mark.asyncio
@@ -1920,11 +1960,13 @@ async def test_bulk_initialization_runs_each_graph_once():
 async def test_reset_node_state_clears_memory_and_db():
     mgr = _make_manager({})
     mgr._hysteresis["g1"] = {"h1": True}
+    mgr._ical_result_caches["g1"] = {"i1": {"outputs": {"events": ["stale"]}}}
     mgr._node_state["g1"] = {"r1": {"last_value": 5}}
 
     await mgr.reset_node_state("g1")
 
     assert "g1" not in mgr._hysteresis
+    assert "g1" not in mgr._ical_result_caches
     assert "g1" not in mgr._node_state
     # node_state is TEXT NOT NULL — the reset must write '{}', not NULL
     call = mgr._db.execute_and_commit.await_args
