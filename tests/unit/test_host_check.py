@@ -1319,6 +1319,28 @@ class TestHostCheckRisingEdge:
         assert outputs != {}
         assert outputs["other_read"] == {"value": 42, "changed": True}
 
+    def test_unseeded_read_without_reachable_change_filter_skips_rollback_snapshots(self):
+        flow = _flow(
+            [
+                node("unseeded_read", "datapoint_read", {}),
+                node("stats", "statistics"),
+            ],
+            [edge("unseeded_read", "stats", "value", "value")],
+        )
+        manager = _make_manager()
+        graph_id = "g-no-cf-rollback-snapshot"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._safe_deepcopy_state") as snapshot,
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert "stats" in outputs
+        snapshot.assert_not_called()
+
     def test_change_filter_is_not_held_when_read_is_resolved_via_debug_override(self):
         """Regression: a manual/debug execution (the debug-inspector "run"
         feature) that supplies debug_overrides={read_id: {"value": ...}}

@@ -3004,7 +3004,14 @@ class LogicManager:
         # to roll a change_filter back to its state from before this pass —
         # both the async-replay machinery further down and the change_filter
         # correction immediately below can require it.
-        _needs_pre_execute_snapshot = needs_async_replay_snapshot or bool(unseeded_read_ids) or needs_random_value_snapshot
+        _effective_edge_by_target: dict[tuple[str, str], Any] = {}
+        for _e in flow.edges:
+            _effective_edge_by_target[(_e.target, _e.targetHandle or "in")] = _e
+        _effective_edges = list(_effective_edge_by_target.values())
+        _change_filter_ids = {n.id for n in flow.nodes if n.type == "change_filter"}
+        _rollback_source_ids = unseeded_read_ids | (random_value_ids if needs_random_value_snapshot else set())
+        _rollback_reaches_change_filter = bool(_change_filter_ids & _downstream_closure(_rollback_source_ids, _effective_edges))
+        _needs_pre_execute_snapshot = needs_async_replay_snapshot or _rollback_reaches_change_filter
         _pulse_hysteresis_prior: dict[str, Any] = {}
 
         # Executor nodes mutate their hysteresis mapping synchronously.  Run
@@ -3115,6 +3122,7 @@ class LogicManager:
 
         _node_by_id_early = {n.id: n for n in flow.nodes}
         _decisive_gate_value = {"or": True, "and": False}
+
         # GraphExecutor._build_edge_map() resolves multiple edges into the
         # same (target, targetHandle) pair with "last edge wins" — the same
         # semantics _fresh_input_handles already applies for its own
@@ -3125,11 +3133,6 @@ class LogicManager:
         # live source — the executor only ever consumes the live one, so
         # tainting through the shadowed edge too would hold a downstream
         # change_filter hostage to a source nothing actually reads from.
-        _effective_edge_by_target: dict[tuple[str, str], Any] = {}
-        for _e in flow.edges:
-            _effective_edge_by_target[(_e.target, _e.targetHandle or "in")] = _e
-        _effective_edges = list(_effective_edge_by_target.values())
-
         def _compute_cf_hold_ids(seed_ids: set[str], outputs_source: dict[str, dict[str, Any]] | None = None) -> set[str]:
             """Taint-BFS from `seed_ids` (unresolved sources), returning the
             change_filter node ids that must be held this pass. Factored out
