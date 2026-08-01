@@ -1214,6 +1214,51 @@ async def test_load_graphs_survives_a_malformed_escape_envelope_in_raw_state():
     assert mgr._hysteresis["g1"] == {_PERSIST_TYPE_TAG: "escaped", "value": "not-a-dict"}
 
 
+@pytest.mark.asyncio
+async def test_load_graphs_disambiguates_legacy_state_colliding_with_the_envelope_shape():
+    """Regression: a legacy row (saved before the version-2 envelope
+    existed) is a flat {node_id: state} mapping with no wrapping — an
+    imported graph's unrestricted node ids could coincidentally BE
+    "__obs_node_state_version__" (with a stored value of literal int 2)
+    and "state" (with a dict-shaped stored value), exactly shape-matching
+    the tagged envelope. Naively trusting that shape match would then
+    treat only the "state" node's own inner dict as the WHOLE state
+    mapping, losing both nodes' baselines. Cross-checking against the
+    graph's actual current node ids must resolve this in the legacy
+    row's favor instead."""
+    import json
+
+    from obs.logic.manager import _PERSIST_STATE_VERSION, _PERSIST_STATE_VERSION_KEY
+
+    flow = _flow(
+        [
+            {"id": _PERSIST_STATE_VERSION_KEY, "type": "change_filter"},
+            {"id": "state", "type": "change_filter"},
+        ]
+    )
+    # A genuine legacy row: no envelope wrapping, keys are the two nodes'
+    # own real ids, one holding a bare int and the other a dict — exactly
+    # the shape a tagged envelope also has.
+    node_state = json.dumps({_PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION, "state": {"value": "kept"}})
+
+    mgr = _make_manager({})
+    mgr._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": node_state}]
+    )
+
+    await mgr._load_graphs()
+
+    # Confirms the legacy path was taken (not the tagged-envelope path,
+    # which would have discarded the _PERSIST_STATE_VERSION_KEY-named
+    # node's own state entirely): the legacy branch's own string-value
+    # recovery marking additionally applies here, same as any other
+    # legacy row's string state.
+    assert mgr._hysteresis["g1"] == {
+        _PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION,
+        "state": {"value": "kept", "_recovered_str": True},
+    }
+
+
 class TestPersistDefaultAndDecode:
     """Direct tests for the _persist_default/_decode_persisted_value pair
     (issue #1087 Codex finding: "Preserve non-JSON value types in persisted

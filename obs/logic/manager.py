@@ -5414,10 +5414,27 @@ class LogicManager:
                 if row["id"] not in self._hysteresis:
                     try:
                         saved_raw = json.loads(row["node_state"] or "{}")
+                        # A legacy row (saved before this version envelope
+                        # existed) is a flat {node_id: state} mapping with
+                        # no wrapping at all — its keys are literal node
+                        # ids from an imported graph's own unrestricted
+                        # string ids, which could coincidentally BE
+                        # "__obs_node_state_version__"/"state" with values
+                        # that happen to shape-match the envelope (an int 2
+                        # and a dict, respectively). _persist_node_state
+                        # itself never writes anything but these exact two
+                        # top-level keys, so cross-checking against this
+                        # row's OWN current node ids resolves the ambiguity
+                        # in the legacy row's favor whenever either
+                        # reserved key could plausibly be one of its real
+                        # per-node entries instead of the version marker.
+                        _flow_node_ids = {n.id for n in flow.nodes}
                         is_tagged_envelope = (
                             isinstance(saved_raw, dict)
                             and saved_raw.get(_PERSIST_STATE_VERSION_KEY) == _PERSIST_STATE_VERSION
                             and isinstance(saved_raw.get("state"), dict)
+                            and _PERSIST_STATE_VERSION_KEY not in _flow_node_ids
+                            and "state" not in _flow_node_ids
                         )
                         if is_tagged_envelope:
                             # Restore any value _persist_node_state had to tag
