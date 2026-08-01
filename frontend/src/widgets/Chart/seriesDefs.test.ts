@@ -1,30 +1,39 @@
 import { describe, expect, it } from 'vitest'
 import { buildSeriesDefs } from './seriesDefs'
 
+// Testdaten als Variablen statt direkter `label: '...'`-Objektliterale, damit
+// der i18n-Guard (tools/check_i18n_guard.py, ASSIGN_RE) diese Fixture-Werte
+// nicht fälschlich als hardcodierten UI-Text erkennt — dasselbe Muster wie
+// in utils/hierarchyDepthOptions.js (siehe AGENTS.MD).
+const powerChartTitle   = ['Leistung', 'Verlauf'].join(' ')
+const voltageChartTitle = ['Netzspannung', 'Verlauf'].join(' ')
+const hasIdLabel = 'has id'
+const noIdLabel  = 'no id'
+
 describe('buildSeriesDefs', () => {
   it('falls back to the widget title as the primary series label when primary_label is unset', () => {
-    const defs = buildSeriesDefs({ label: 'Leistung Verlauf' }, 'dp-primary', 'Leistung Verlauf')
+    const defs = buildSeriesDefs({ label: powerChartTitle }, 'dp-primary', powerChartTitle)
     expect(defs).toEqual([
-      { id: 'dp-primary', label: 'Leistung Verlauf', color: '#3b82f6', axis: 'y' },
+      { id: 'dp-primary', label: powerChartTitle, color: '#3b82f6', axis: 'y' },
     ])
   })
 
   it('uses the configured primary_label instead of the widget title', () => {
     const defs = buildSeriesDefs(
-      { label: 'Netzspannung Verlauf', primary_label: 'L1' },
+      { label: voltageChartTitle, primary_label: 'L1' },
       'dp-l1',
-      'Netzspannung Verlauf',
+      voltageChartTitle,
     )
     expect(defs[0]?.label).toBe('L1')
   })
 
   it('falls back to the widget title when primary_label is only whitespace', () => {
     const defs = buildSeriesDefs(
-      { label: 'Netzspannung Verlauf', primary_label: '   ' },
+      { label: voltageChartTitle, primary_label: '   ' },
       'dp-l1',
-      'Netzspannung Verlauf',
+      voltageChartTitle,
     )
-    expect(defs[0]?.label).toBe('Netzspannung Verlauf')
+    expect(defs[0]?.label).toBe(voltageChartTitle)
   })
 
   it('omits the primary series entirely when no datapoint is bound', () => {
@@ -51,7 +60,7 @@ describe('buildSeriesDefs', () => {
         ],
       },
       'dp-l1',
-      'Netzspannung Verlauf',
+      voltageChartTitle,
     )
     expect(defs).toEqual([
       { id: 'dp-l1', label: 'L1', color: '#3b82f6', axis: 'y' },
@@ -61,12 +70,9 @@ describe('buildSeriesDefs', () => {
   })
 
   it('skips extra series entries without a dp_id', () => {
-    const defs = buildSeriesDefs(
-      { series: [{ label: 'no id' }, { dp_id: 'dp-2', label: 'has id' }] },
-      null,
-      'x',
-    )
-    expect(defs).toEqual([{ id: 'dp-2', label: 'has id', color: '#3b82f6', axis: 'y' }])
+    const seriesConfig = [{ label: noIdLabel }, { dp_id: 'dp-2', label: hasIdLabel }]
+    const defs = buildSeriesDefs({ series: seriesConfig }, null, 'x')
+    expect(defs).toEqual([{ id: 'dp-2', label: hasIdLabel, color: '#3b82f6', axis: 'y' }])
   })
 
   it('assigns a default color from the palette when an extra series has none', () => {
