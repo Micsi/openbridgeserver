@@ -2876,6 +2876,63 @@ class TestHostCheckPostApiExtraPaths:
         assert outputs["hc1"]["reachable"] is True
         assert outputs["hc2"]["reachable"] is True
 
+    def test_final_hc_replay_holds_change_filter_behind_a_not_yet_run_api_client(self):
+        """Regression: cv->ac1->hc1->ac2->hc2->ac3->cf. hc2 is only triggered
+        from within the "final host-check replay" section (ac2's real,
+        replayed success), and ac3 — newly reachable from hc2 — is never
+        actually run this tick (no further pass follows this one). Without
+        a late-hold correction in that section, change_filter would commit
+        ac3's placeholder success=False as a real value. With it, the
+        filter must stay held instead."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac1", "api_client", {"url": "http://93.184.216.34/one", "method": "GET"}),
+            node("hc1", "host_check", {"host": "one.local", "timeout_s": 1, "count": 1}),
+            node("ac2", "api_client", {"url": "http://93.184.216.34/two", "method": "GET"}),
+            node("hc2", "host_check", {"host": "two.local", "timeout_s": 1, "count": 1}),
+            node("ac3", "api_client", {"url": "http://93.184.216.34/three", "method": "GET"}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac1", "value", "trigger"),
+                edge("ac1", "hc1", "success", "trigger"),
+                edge("hc1", "ac2", "reachable", "trigger"),
+                edge("ac2", "hc2", "success", "trigger"),
+                edge("hc2", "ac3", "reachable", "trigger"),
+                edge("ac3", "cf", "success", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-final-hc-holds-cf"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        # ac3's unresolved placeholder success reads False — seed a
+        # baseline of True so an incorrect commit of that placeholder is
+        # observable as a (wrong) changed=True, not masked by coincidence.
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch(
+                    "obs.logic.manager._ping_host",
+                    new_callable=AsyncMock,
+                    side_effect=[(True, 1.0), (True, 2.0)],
+                ),
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        assert outputs["hc1"]["reachable"] is True
+        assert outputs["hc2"]["reachable"] is True
+        # ac3 was never actually run this tick — cf must stay held, not
+        # commit ac3's placeholder success=False as a real change.
+        assert outputs["cf"]["changed"] is False
+
     def test_post_api_wol_downstream_propagation(self):
         """WoL fired by post-api HC propagates its sent=True to a downstream const_value node (lines 1826-1847)."""
         nodes = [
@@ -4556,6 +4613,70 @@ class TestFinalWolReplayExtended:
         assert mock_ping.await_count == 2
         assert outputs["wol"]["sent"] is True
         assert outputs["hc2"]["reachable"] is True
+
+    def test_final_wol_replay_holds_change_filter_behind_a_not_yet_sent_second_wol(self):
+        """Regression: cv->ac1->hc1->ac2->hc2->wol1->wol2->cf. wol1 is only
+        discovered and sent from within the final-WoL pass (via the final
+        host-check replay above resolving hc2 late); wol2's trigger only
+        becomes true from wol1's OWN downstream-propagation pass here, so
+        wol2 itself is never actually sent this tick (no further pass
+        follows this one) — its "sent" stays an unresolved placeholder.
+        Without a late-hold correction in this section, change_filter would
+        commit that placeholder as a real value. With it, the filter must
+        stay held. (The extra hc2 hop — vs. wol1 fed directly by ac2 — is
+        needed so wol1 is discovered late enough to actually reach this
+        specific final-WoL code path instead of the earlier primary WoL
+        loop.)"""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac1", "api_client", {"url": "http://93.184.216.34/one", "method": "GET"}),
+            node("hc1", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+            node("ac2", "api_client", {"url": "http://93.184.216.34/two", "method": "GET"}),
+            node("hc2", "host_check", {"host": "192.168.1.2", "timeout_s": 1, "count": 1}),
+            node("wol1", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:01"}),
+            node("wol2", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:02"}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac1", "value", "trigger"),
+                edge("ac1", "hc1", "success", "trigger"),
+                edge("hc1", "ac2", "reachable", "trigger"),
+                edge("ac2", "hc2", "success", "trigger"),
+                edge("hc2", "wol1", "reachable", "trigger"),
+                edge("wol1", "wol2", "sent", "trigger"),
+                edge("wol2", "cf", "sent", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-final-wol-holds-cf"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        # wol2's unresolved placeholder "sent" reads False — seed a baseline
+        # of True so an incorrect commit of that placeholder is observable
+        # as a (wrong) changed=True, not masked by coincidence.
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch(
+                    "obs.logic.manager._ping_host",
+                    new_callable=AsyncMock,
+                    side_effect=[(True, 1.0), (True, 2.0)],
+                ),
+                patch("obs.logic.manager.asyncio.to_thread", new_callable=AsyncMock),
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        assert outputs["wol1"]["sent"] is True
+        # wol2 was never actually sent this tick — cf must stay held, not
+        # commit wol2's placeholder sent=False as a real change.
+        assert outputs["cf"]["changed"] is False
 
     def test_final_wol_hc_downstream_replay(self):
         """cv→ac1→hc1→ac2→wol→hc2→gate: HC downstream of final WoL has its descendants replayed (Fix 4)."""

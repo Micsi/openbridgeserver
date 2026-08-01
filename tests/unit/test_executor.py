@@ -1380,6 +1380,28 @@ class TestChangeFilterNode:
         assert "__error__" not in out["cf"]
         assert out["cf"]["changed"] is True
 
+    def test_non_deepcopyable_value_baseline_does_not_change_type(self):
+        """Regression: after the fix above stopped the crash, the fallback
+        used to snapshot the baseline as a lossy str() (_snapshot_debug_value,
+        meant for pure debug capture), permanently changing the comparison
+        baseline's type. If the same source (e.g. Memory) repeatedly emits
+        the same non-deep-copyable object — one generator instance — every
+        pass, the next pass compared that live generator against the
+        unmarked string stand-in, never equal, reporting changed=True again
+        on every unrelated execution. The baseline must instead fall back to
+        the ORIGINAL reference (_replay_known_output_value's behavior), so
+        the same object compared against itself is recognized as unchanged."""
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        same_generator = (x for x in [1, 2, 3])
+
+        first = exc.execute({"cf": {"in": same_generator}})
+        second = exc.execute({"cf": {"in": same_generator}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is False
+
 
 # ===========================================================================
 # math_formula node

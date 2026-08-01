@@ -4390,6 +4390,24 @@ class LogicManager:
                         final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         final_hc_executor = _executor(final_hc_hyst)
                         final_hc_outputs = _execute_pass(final_hc_executor, final_hc_merged)
+                        # Same late-hold guard as every earlier replay stage
+                        # (see _hc_late_pending/_hc_late_cf_hold_ids above):
+                        # this replay can itself newly activate another
+                        # async node (e.g. a chained api_client) that hasn't
+                        # actually run yet — its output here is a
+                        # placeholder, and there is no further pass after
+                        # this one to correct a change_filter that already
+                        # committed it.
+                        _final_hc_late_pending = _still_unresolved_source_ids(final_hc_outputs)
+                        _final_hc_late_cf_hold_ids = _compute_cf_hold_ids(
+                            unseeded_read_ids | _inactive_random_ids_from(final_hc_outputs) | _final_hc_late_pending, final_hc_outputs
+                        )
+                        if _final_hc_late_cf_hold_ids:
+                            for _final_hc_late_cf_id in _final_hc_late_cf_hold_ids:
+                                final_hc_merged.setdefault(_final_hc_late_cf_id, {})["_suppress_change_filter"] = True
+                            final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                            final_hc_executor = _executor(final_hc_hyst)
+                            final_hc_outputs = _execute_pass(final_hc_executor, final_hc_merged)
                         for nid, vals in final_hc_outputs.items():
                             if nid in final_hc_descendants and nid not in triggered_api_clients:
                                 outputs[nid] = vals
@@ -4463,6 +4481,22 @@ class LogicManager:
                 _fwol_hyst_snap = copy.deepcopy(hyst)
                 _fwol_exec = _executor(_fwol_hyst_snap)
                 _fwol_out = _execute_pass(_fwol_exec, _fwol_merged)
+                # Same late-hold guard as every earlier replay stage (see
+                # _hc_late_pending/_hc_late_cf_hold_ids above): this final-WoL
+                # replay can itself newly activate another async node whose
+                # output here is still only a placeholder, and there is no
+                # further pass after this one to correct a change_filter
+                # that already committed it.
+                _fwol_late_pending = _still_unresolved_source_ids(_fwol_out)
+                _fwol_late_cf_hold_ids = _compute_cf_hold_ids(
+                    unseeded_read_ids | _inactive_random_ids_from(_fwol_out) | _fwol_late_pending, _fwol_out
+                )
+                if _fwol_late_cf_hold_ids:
+                    for _fwol_late_cf_id in _fwol_late_cf_hold_ids:
+                        _fwol_merged.setdefault(_fwol_late_cf_id, {})["_suppress_change_filter"] = True
+                    _fwol_hyst_snap = copy.deepcopy(hyst)
+                    _fwol_exec = _executor(_fwol_hyst_snap)
+                    _fwol_out = _execute_pass(_fwol_exec, _fwol_merged)
                 _fwol_desc: set[str] = set()
                 _fwol_q: list[str] = list(_final_wol_candidates)
                 while _fwol_q:

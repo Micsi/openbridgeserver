@@ -799,14 +799,21 @@ class GraphExecutor:
                 # alone would miss that. A deepcopy of a genuinely atomic
                 # value (int/str/bool/None/float/datetime/date/time/bytes)
                 # is a cheap no-op, so there's no cost to doing this always.
-                # Use the same failure-safe fallback chain as known_outputs
-                # replay snapshotting (json round-trip, then str()) rather
-                # than a bare copy.deepcopy(): a permitted python_script
-                # legitimately returning a generator, or any other value
-                # with a failing __deepcopy__/__reduce__ hook, must degrade
-                # this node's own baseline instead of raising and turning
-                # the whole node into "__error__" on its very first input.
-                baseline = _snapshot_debug_value(value)
+                # A bare copy.deepcopy() would raise for a permitted
+                # python_script legitimately returning a generator, or any
+                # other value with a failing __deepcopy__/__reduce__ hook,
+                # turning this node into "__error__" on its very first
+                # input. Use _replay_known_output_value's fallback (keep the
+                # ORIGINAL reference on a copy failure), not
+                # _snapshot_debug_value's (json round-trip, then str()):
+                # this baseline is semantic persisted state compared again
+                # on every future pass, not a one-off debug capture — a
+                # string stand-in here would permanently change its type,
+                # so a live value of the original (non-copyable) type could
+                # never compare equal to it again, reporting changed=True
+                # forever and repeating downstream side effects on every
+                # unrelated execution.
+                baseline = _replay_known_output_value(value)
                 if not has_prev:
                     self.hysteresis_state[node.id] = {"value": baseline}
                     return {"out": value, "changed": True}
@@ -832,9 +839,16 @@ class GraphExecutor:
                 # reasoning as the baseline above, since state["value"] is
                 # otherwise the exact object (or container of objects) this
                 # filter keeps comparing against on every future "unchanged"
-                # tick.
+                # tick. Same _replay_known_output_value fallback as the
+                # baseline store above, for the same reason: state["value"]
+                # can now genuinely be a non-deepcopyable object (e.g. a
+                # generator a repeatedly-identical Memory source emits) once
+                # its baseline is no longer forced through a lossy str()
+                # snapshot — a bare copy.deepcopy() here would raise on the
+                # very next "unchanged" tick instead of just handing out the
+                # same reference again.
                 if via_normalizing_path:
-                    out_value = copy.deepcopy(state["value"])
+                    out_value = _replay_known_output_value(state["value"])
                     if state.get("_recovered_str") or state.get("_opaque_recovered_str"):
                         # A live value just confirmed the persisted,
                         # restart-recovered representation via ORDINARY
