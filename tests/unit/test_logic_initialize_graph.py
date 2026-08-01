@@ -855,6 +855,32 @@ async def test_change_filter_state_committed_through_a_closed_gate_during_initia
 
 
 @pytest.mark.asyncio
+async def test_change_filter_state_commits_past_resolved_hysteresis_during_initialization():
+    seeded_id, unseeded_id = str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r_seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "r_unseeded", "type": "datapoint_read", "data": {"datapoint_id": unseeded_id}},
+            {"id": "hyst", "type": "hysteresis", "data": {"threshold_on": 40, "threshold_off": 20}},
+            {"id": "add", "type": "math_formula", "data": {"formula": "a + b"}},
+            {"id": "cf", "type": "change_filter", "data": {}},
+        ],
+        [
+            {"source": "r_unseeded", "sourceHandle": "value", "target": "hyst", "targetHandle": "value"},
+            {"source": "r_seeded", "sourceHandle": "value", "target": "add", "targetHandle": "in1"},
+            {"source": "hyst", "sourceHandle": "out", "target": "add", "targetHandle": "in2"},
+            {"source": "add", "sourceHandle": "result", "target": "cf", "targetHandle": "in"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: 10})
+    mgr._hysteresis["g1"] = {"hyst": True, "cf": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf"] == {"value": 11}
+
+
+@pytest.mark.asyncio
 async def test_change_filter_stays_tainted_when_gate_enable_itself_is_unresolved_during_initialization():
     """The closed-gate boundary exception only applies when the gate's OWN
     enable state is itself resolved — if "enable" is fed by the same

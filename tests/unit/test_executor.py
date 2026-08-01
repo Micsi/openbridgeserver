@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import math
 import time
 from datetime import UTC, datetime
 from typing import ClassVar
@@ -1008,6 +1009,17 @@ class TestChangeFilterNode:
         exc.execute({"cf": {"in": "foo"}})
         out = exc.execute({"cf": {"in": "foo"}})
         assert out["cf"] == {"out": "foo", "changed": False}
+
+    def test_repeated_nan_value_is_suppressed(self):
+        state = {}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+        exc.execute({"cf": {"in": float("nan")}})
+
+        out = exc.execute({"cf": {"in": float("nan")}})
+
+        assert math.isnan(out["cf"]["out"])
+        assert out["cf"]["changed"] is False
 
     def test_differing_value_is_reported_as_changed(self):
         state = {}

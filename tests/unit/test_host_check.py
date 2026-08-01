@@ -543,6 +543,65 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 1
 
+    def test_change_filter_pulse_stops_at_unchanged_hysteresis_output(self):
+        nodes = [
+            node("cf", "change_filter"),
+            node("hyst", "hysteresis", {"threshold_on": 0.5, "threshold_off": 0.0}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf", "hyst", "changed", "value"),
+                edge("hyst", "hc", "out", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-unchanged-hysteresis-dedup"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_ping.await_count == 1
+
+    def test_shadowed_change_filter_edge_does_not_make_host_check_pulse_reachable(self):
+        nodes = [
+            node("cf", "change_filter"),
+            node("false", "const_value", {"value": "false", "data_type": "bool"}),
+            node("not1", "not"),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf", "not1", "changed", "in"),
+                # Last edge wins for not1.in, shadowing the pulse edge above.
+                edge("false", "not1", "value", "in"),
+                edge("not1", "hc", "out", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-shadowed-pulse-edge"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_ping.await_count == 1
+
     def test_change_filter_pulse_does_not_bypass_dedup_through_an_intermediate_change_filter(self):
         """Regression: the pulse-carrying check only restricted the INITIAL
         seed to a change_filter's "changed" handle, not every subsequent hop

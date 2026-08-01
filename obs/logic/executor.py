@@ -506,6 +506,12 @@ class GraphExecutor:
         never have originally been one of those — a broader match here
         carries none of that collision risk.
         """
+        # IEEE NaN deliberately compares unequal to every value, including
+        # itself.  For change detection, however, two repeated invalid sensor
+        # readings are the same retained reading and must not emit a fresh
+        # pulse on every graph execution.
+        if isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right):
+            return True, True
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
             return bool_left == bool_right, True

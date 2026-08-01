@@ -2245,6 +2245,14 @@ class LogicManager:
                     _ctype = _ctarget.type if _ctarget is not None else None
                     if _ctype in _decisive_gate_value_init and _gate_taint_absorbed_init(_ce.target, _ctype):
                         continue
+                    # An unseeded Read feeding hysteresis.value resolves to
+                    # the node's retained prior state, not a placeholder.
+                    # Stop initialization taint at that fully resolved state,
+                    # matching the live-execution taint traversal below.
+                    if _ctype == "hysteresis" and (_ce.targetHandle or "in") == "value":
+                        _hyst_value = GraphExecutor._get_output_value(outputs.get(_ce.source, {}), _ce.sourceHandle or "out")
+                        if _hyst_value is None:
+                            continue
                     # A "gate" (Freigabe) node closed by a RESOLVED enable
                     # input is the same kind of boundary as a decisive
                     # AND/OR gate above — matches the closed-gate exception
@@ -2997,6 +3005,7 @@ class LogicManager:
         # both the async-replay machinery further down and the change_filter
         # correction immediately below can require it.
         _needs_pre_execute_snapshot = needs_async_replay_snapshot or bool(unseeded_read_ids) or needs_random_value_snapshot
+        _pulse_hysteresis_prior: dict[str, Any] = {}
 
         # Executor nodes mutate their hysteresis mapping synchronously.  Run
         # the first pass against an isolated snapshot so a worker made
@@ -3011,6 +3020,7 @@ class LogicManager:
                         # overlapping executions observe the preceding pass's
                         # committed state instead of overwriting it from a stale copy.
                         base_hyst, execution_hyst = await _run_graph_state_copy_in_worker(_copy_graph_worker_state, hyst)
+                        _pulse_hysteresis_prior = {n.id: execution_hyst.get(n.id, False) for n in flow.nodes if n.type == "hysteresis"}
                         executor = await _executor(execution_hyst)
                         if self._ical_cache_generations.get(graph_id) is not ical_generation:
                             raise _ObsoleteGraphExecution
@@ -3021,6 +3031,7 @@ class LogicManager:
                 finally:
                     self._prune_graph_executor_lock(graph_id)
             else:
+                _pulse_hysteresis_prior = {n.id: hyst.get(n.id, False) for n in flow.nodes if n.type == "hysteresis"}
                 executor = await _executor(hyst)
                 if self._ical_cache_generations.get(graph_id) is not ical_generation:
                     raise _ObsoleteGraphExecution
@@ -3490,6 +3501,14 @@ class LogicManager:
                     enable_v = not enable_v
                 if not enable_v:
                     return False
+            # Hysteresis is stateful rather than a pure relay.  A pulse on
+            # its value input reaches descendants only when the node's
+            # output actually switched during this execution.
+            if target_type.type == "hysteresis":
+                previous = _pulse_hysteresis_prior.get(edge.target, False)
+                current = GraphExecutor._get_output_value(outputs.get(edge.target, {}), "out")
+                if current == previous:
+                    return False
             trigger_port_ids = {p.id for p in target_type.inputs if p.type == "trigger"}
             if not trigger_port_ids:
                 return True
@@ -3511,7 +3530,7 @@ class LogicManager:
         # Seed only the targets reached via each pulsing change_filter's
         # "changed" handle — its "out" handle carries the held/passthrough
         # value, not a discrete pulse, and must not bypass rising-edge dedup.
-        for _cfe in flow.edges:
+        for _cfe in _effective_edges:
             if _cfe.source in change_filter_pulse_ids and (_cfe.sourceHandle or "out") == "changed" and _edge_carries_pulse(_cfe):
                 cron_reachable.add(_cfe.target)
         if cron_reachable:
@@ -3530,7 +3549,7 @@ class LogicManager:
                 # own descendants.
                 if _node_type_by_id.get(_cn) == "memory":
                     continue
-                for _ce in flow.edges:
+                for _ce in _effective_edges:
                     if _ce.source == _cn and _ce.target not in cron_reachable and _edge_carries_pulse(_ce):
                         cron_reachable.add(_ce.target)
                         _cq.append(_ce.target)
@@ -3555,7 +3574,7 @@ class LogicManager:
             if not _new_pulses:
                 return
             _pq: list[str] = []
-            for _pe in flow.edges:
+            for _pe in _effective_edges:
                 if (
                     _pe.source in _new_pulses
                     and (_pe.sourceHandle or "out") == "changed"
@@ -3571,7 +3590,7 @@ class LogicManager:
                 # treated as having propagated through to its descendants.
                 if _node_type_by_id.get(_pn) == "memory":
                     continue
-                for _pe2 in flow.edges:
+                for _pe2 in _effective_edges:
                     if _pe2.source == _pn and _pe2.target not in cron_reachable and _edge_carries_pulse(_pe2):
                         cron_reachable.add(_pe2.target)
                         _pq.append(_pe2.target)
