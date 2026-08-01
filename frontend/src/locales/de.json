@@ -444,7 +444,8 @@
       "selectTimeRange": "Zeitbereich wählen",
       "editorPlaceholder": "Verlaufs-Chart",
       "seriesFallback": "Serie {n}",
-      "primaryLabel": "Bezeichnung (optional)"
+      "primaryLabel": "Bezeichnung (optional)",
+      "labelPlaceholder": "z.B. Temperaturverlauf"
     },
     "energiefluss": {
       "title": "Energiefluss",

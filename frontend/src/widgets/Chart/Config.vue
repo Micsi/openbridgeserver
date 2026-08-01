@@ -82,7 +82,7 @@ function removeSeries(i: number) {
       <input
         v-model="cfg.label"
         type="text"
-        placeholder="z.B. Temperaturverlauf"
+        :placeholder="$t('widgets.chart.labelPlaceholder')"
         class="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
       />
     </div>
