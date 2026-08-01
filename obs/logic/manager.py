@@ -5454,9 +5454,33 @@ class LogicManager:
 
             pending_candidates = set(candidate_ids)
             while pending_candidates:
+                # Settle side effects in dependency layers.  A downstream
+                # action must not run until every pending upstream action has
+                # had its real result replayed through the graph; otherwise
+                # it consumes that action's first-pass placeholder.
+                ready_candidates: set[str] = set()
+                for candidate_id in pending_candidates:
+                    seen = {candidate_id}
+                    upstream = [candidate_id]
+                    has_pending_predecessor = False
+                    while upstream and not has_pending_predecessor:
+                        target_id = upstream.pop()
+                        for candidate_edge in _effective_edges:
+                            if candidate_edge.target != target_id or candidate_edge.source in seen:
+                                continue
+                            if candidate_edge.source in pending_candidates:
+                                has_pending_predecessor = True
+                                break
+                            seen.add(candidate_edge.source)
+                            upstream.append(candidate_edge.source)
+                    if not has_pending_predecessor:
+                        ready_candidates.add(candidate_id)
+                if not ready_candidates:
+                    break
+
                 newly_triggered: set[str] = set()
                 for node in flow.nodes:
-                    if node.id not in pending_candidates:
+                    if node.id not in ready_candidates:
                         continue
                     if node.type == "host_check" and node.id not in triggered_host_check_nodes:
                         if await _run_host_check_node(node, newly_triggered, " (message-archive replay)"):
@@ -5475,12 +5499,15 @@ class LogicManager:
                         if GraphExecutor._to_bool(out.get("_trigger")) and _has_fresh_firing_input(node.id, out):
                             await _run_notify_node(node, newly_triggered)
                             triggered_notify_nodes.add(node.id)
+                pending_candidates.difference_update(ready_candidates)
                 if not newly_triggered:
-                    break
+                    continue
                 _add_resolved_outputs(newly_triggered)
-                pending_candidates = await _replay_async_descendants(
-                    newly_triggered,
-                    skip_node_ids=_triggered_side_effect_ids(),
+                pending_candidates.update(
+                    await _replay_async_descendants(
+                        newly_triggered,
+                        skip_node_ids=_triggered_side_effect_ids(),
+                    )
                 )
                 replayed_message_archive_nodes.update(newly_triggered & triggered_message_archive_nodes)
                 replayed_notify_nodes.update(newly_triggered & triggered_notify_nodes)

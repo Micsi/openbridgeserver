@@ -200,6 +200,52 @@ def test_message_archive_replay_runs_downstream_api_client() -> None:
     assert outputs["api"]["success"] is True
 
 
+def test_message_archive_replay_propagates_api_result_before_downstream_notification() -> None:
+    manager = _make_manager()
+    flow = _flow(
+        [
+            node("ma", "message_archive", {"archive_id": "Alerts", "message": "Stored"}),
+            node("api", "api_client", {"url": "http://93.184.216.34/hook", "method": "GET"}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("ma", "api", "stored", "trigger"),
+            edge("api", "notify", "success", "message"),
+        ],
+    )
+    service = MagicMock()
+    service.record = AsyncMock(return_value={"id": "entry-1"})
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+    patcher, _mock_client = _patch_api_success()
+
+    try:
+        with (
+            patch("obs.message_archive.get_message_archive_service", return_value=service),
+            patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            outputs = _run(manager, flow, {"ma": {"trigger": True}})
+    finally:
+        patcher.stop()
+
+    assert outputs["api"]["success"] is True
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once_with(
+        providers=[{"provider": "telegram", "target": "alerts"}],
+        title=None,
+        message="True",
+        priority=0,
+    )
+
+
 def test_message_archive_replay_runs_downstream_host_check_and_wol() -> None:
     manager = _make_manager()
     flow = _flow(
