@@ -87,9 +87,13 @@ function buildSeriesDefs(): SeriesDef[] {
 
   const primaryColor = (props.config.primary_color as string | undefined) ?? COLORS[0]
   const primaryAxis  = (props.config.primary_axis  as string | undefined) === 'right' ? 'y1' : 'y'
+  // Optionales eigenes Label für die Primär-Serie (Legende) — fällt auf den
+  // Chart-Titel zurück, wenn nicht gesetzt (Abwärtskompatibilität mit
+  // bestehenden Chart-Widgets, die primary_label nicht konfiguriert haben).
+  const primaryLabel = (props.config.primary_label as string | undefined)?.trim() || label.value
 
   if (props.datapointId) {
-    result.push({ id: props.datapointId, label: label.value, color: primaryColor, axis: primaryAxis })
+    result.push({ id: props.datapointId, label: primaryLabel, color: primaryColor, axis: primaryAxis })
   }
 
   const extra = (props.config.series as Array<{

@@ -443,7 +443,8 @@
       "defaultTimeRange": "Default time range",
       "selectTimeRange": "Select time range",
       "editorPlaceholder": "History chart",
-      "seriesFallback": "Series {n}"
+      "seriesFallback": "Series {n}",
+      "primaryLabel": "Label (optional)"
     },
     "energiefluss": {
       "title": "Energy flow",
