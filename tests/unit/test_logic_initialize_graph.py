@@ -1109,6 +1109,49 @@ async def test_change_filter_persists_and_restores_nested_opaque_baseline_withou
 
 
 @pytest.mark.asyncio
+async def test_change_filter_restores_a_named_zoneinfo_datetime_baseline():
+    """Regression (Codex finding): a Change Filter holding an aware
+    datetime whose tzinfo is a named ZoneInfo (e.g. "Europe/Zurich")
+    persists via isoformat(), which only records the CURRENT numeric UTC
+    offset. _load_graphs used to restore that as a fixed-offset datetime
+    via datetime.fromisoformat() alone — comparing == True against a live
+    matching instant either way, so change_filter's own comparison stayed
+    correct, but the RESTORED value handed to downstream nodes carried the
+    wrong tzinfo type, silently breaking any DST-aware date arithmetic
+    performed on it after a restart."""
+    import json
+    from zoneinfo import ZoneInfo
+
+    flow = _flow([{"id": "cf1", "type": "change_filter"}])
+    aware = datetime(2026, 7, 1, 12, 30, tzinfo=ZoneInfo("Europe/Zurich"))
+
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {"cf1": {"value": aware}}
+    await mgr._persist_node_state("g1")
+    saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
+    saved = json.loads(saved_json)
+    assert saved["state"]["cf1"]["value"]["tz"] == "Europe/Zurich"
+
+    mgr2 = _make_manager({})
+    mgr2._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": saved_json}]
+    )
+    await mgr2._load_graphs()
+
+    restored = mgr2._hysteresis["g1"]["cf1"]["value"]
+    assert restored == aware
+    assert isinstance(restored.tzinfo, ZoneInfo)
+    assert restored.tzinfo.key == "Europe/Zurich"
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        outputs = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": aware}})
+
+    assert outputs["cf1"]["changed"] is False
+    assert isinstance(outputs["cf1"]["out"].tzinfo, ZoneInfo)
+    assert outputs["cf1"]["out"].tzinfo.key == "Europe/Zurich"
+
+
+@pytest.mark.asyncio
 async def test_change_filter_reports_changed_instead_of_silently_losing_a_colliding_opaque_key():
     """Documents a known, accepted limitation (see
     _opaque_aware_container_equal's length-check comment in executor.py):
@@ -1392,6 +1435,23 @@ class TestPersistDefaultAndDecode:
             "value": "2026-01-01T12:30:00+00:00",
         }
 
+    def test_persist_default_tags_a_named_zoneinfo_datetime_with_its_zone_key(self):
+        """Regression: isoformat() only records the current numeric UTC
+        offset (e.g. "+02:00"), not a named zone like "Europe/Zurich" — the
+        zone key must be captured separately here so _decode_persisted_value
+        can reconstruct the actual named zone, not a fixed-offset stand-in
+        that silently mishandles DST-boundary arithmetic downstream."""
+        from zoneinfo import ZoneInfo
+
+        from obs.logic.manager import _persist_default
+
+        aware = datetime(2026, 7, 1, 12, 30, tzinfo=ZoneInfo("Europe/Zurich"))
+        assert _persist_default(aware) == {
+            "__obs_persisted_type__": "datetime",
+            "value": aware.isoformat(),
+            "tz": "Europe/Zurich",
+        }
+
     def test_persist_default_tags_str_fallback_for_unrecognized_types(self):
         """Regression: an untagged bare str(v) fallback here would violate
         the version-2 envelope's own guarantee that every non-JSON-native
@@ -1507,6 +1567,31 @@ class TestPersistDefaultAndDecode:
 
         decoded = _decode_persisted_value({"value": [{"__obs_persisted_type__": "date", "value": "2026-01-01"}, 1]})
         assert decoded == {"value": [date(2026, 1, 1), 1]}
+
+    def test_decode_persisted_value_reconstructs_a_named_zoneinfo_datetime(self):
+        """Regression: restoring a "tz"-tagged datetime must produce the
+        ORIGINAL named ZoneInfo zone, not the fixed-offset tzinfo
+        datetime.fromisoformat() alone would reconstruct — verified via
+        .tzinfo identity/key, not just == (which compares equal for either
+        tzinfo representation of the same instant, masking the bug)."""
+        from zoneinfo import ZoneInfo
+
+        from obs.logic.manager import _decode_persisted_value
+
+        decoded = _decode_persisted_value({"__obs_persisted_type__": "datetime", "value": "2026-07-01T12:30:00+02:00", "tz": "Europe/Zurich"})
+        assert decoded == datetime(2026, 7, 1, 12, 30, tzinfo=ZoneInfo("Europe/Zurich"))
+        assert isinstance(decoded.tzinfo, ZoneInfo)
+        assert decoded.tzinfo.key == "Europe/Zurich"
+
+    def test_decode_persisted_value_falls_back_when_the_named_zone_is_unknown(self):
+        """A zone no longer known on this host (e.g. a tzdata update/removal
+        since the value was persisted) must not crash the whole graph
+        load — fall back to the plain fixed-offset decode instead."""
+        from obs.logic.manager import _decode_persisted_value
+
+        decoded = _decode_persisted_value({"__obs_persisted_type__": "datetime", "value": "2026-07-01T12:30:00+02:00", "tz": "Not/AZone"})
+        assert decoded == datetime.fromisoformat("2026-07-01T12:30:00+02:00")
+        assert decoded.isoformat() == "2026-07-01T12:30:00+02:00"
 
     def test_decode_persisted_value_keeps_malformed_tagged_bytes_as_is(self):
         """A corrupted DB row (e.g. hand-edited or from a future format)

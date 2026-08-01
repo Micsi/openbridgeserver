@@ -1181,6 +1181,50 @@ class TestHostCheckRisingEdge:
         # hostage to cf1's own, unrelated unresolved upstream.
         assert outputs["cf2"] == {"out": 7, "changed": True}
 
+    def test_taint_bfs_ignores_a_shadowed_edge_replaced_by_a_later_one(self):
+        """Regression: GraphExecutor._build_edge_map() resolves multiple
+        edges into the same (target, targetHandle) pair with "last edge
+        wins" — an imported/legacy flow can have a stale edge from an
+        unseeded Read Object into add.in1 that a LATER edge to the same
+        handle has replaced with a live source. The executor only ever
+        consumes the live (winning) edge's value, but the taint-BFS used
+        to walk every edge unconditionally, tainting `add` (and holding
+        its downstream change_filter) via the shadowed, never-actually-read
+        unseeded edge — discarding the live source's genuine change."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {}),  # no datapoint_id: always unseeded
+            node("live_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("c2", "const_value", {"value": "10", "data_type": "number"}),
+            node("add", "math_formula", {"formula": "a + b"}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                # Both edges target add's "in1" handle — the LATER one
+                # (live_read) is the one _build_edge_map/the executor
+                # actually uses; the FIRST (unseeded_read) is shadowed.
+                edge("unseeded_read", "add", "value", "in1"),
+                edge("live_read", "add", "value", "in1"),
+                edge("c2", "add", "value", "in2"),
+                edge("add", "cf", "result", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-shadowed-edge-taint"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": 999}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"live_read": {"value": 5, "changed": True}}))
+
+        # add.in1 is really fed by live_read (5), not the shadowed
+        # unseeded_read edge — cf must see the real result (5 + 10 = 15)
+        # and report the genuine transition, not stay held.
+        assert outputs["add"]["result"] == 15
+        assert outputs["cf"] == {"out": 15, "changed": True}
+
     def test_pre_execute_snapshot_survives_a_non_deepcopyable_memory_value(self):
         """Regression (P2): the pre-execution hyst/graph_state snapshot is
         enabled whenever ANY unseeded Read Object exists in the graph,
@@ -3015,6 +3059,61 @@ class TestHostCheckPostApiExtraPaths:
         # ac3 was never actually run this tick — cf must stay held, not
         # commit ac3's placeholder success=False as a real change.
         assert outputs["cf"]["changed"] is False
+
+    def test_post_api_hc_replay_settles_a_downstream_api_client_with_an_empty_url(self):
+        """Regression: cv->ac1->hc1->ac2->cf, where hc1's trigger only
+        becomes true from ac1's OWN post-api replay (not the initial
+        pass), so hc1 is discovered exclusively by the "Post-api-replay
+        host_check pass" (post_api_triggered_hc) — and ac2 (triggered from
+        hc1.reachable) is therefore reached exclusively by that pass's own
+        post_api_hc_api_clients loop. ac2's resolved URL is empty —
+        genuinely, finally INACTIVE, not merely "not yet run". That loop's
+        empty-URL branch used to just `continue` without marking ac2
+        settled (unlike its sibling error branches just below it, and
+        unlike _run_api_client_node's own empty-URL path), so
+        _still_unresolved_source_ids kept treating it as pending forever —
+        holding cf even though ac2's real, final state is already fully
+        known."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac1", "api_client", {"url": "http://93.184.216.34/one", "method": "GET"}),
+            node("hc1", "host_check", {"host": "one.local", "timeout_s": 1, "count": 1}),
+            node("ac2", "api_client", {"url": "", "method": "GET"}),  # empty URL: never actually runs
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac1", "value", "trigger"),
+                edge("ac1", "hc1", "success", "trigger"),
+                edge("hc1", "ac2", "reachable", "trigger"),
+                edge("ac2", "cf", "success", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-post-api-hc-settles-empty-url-ac"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        # ac2.success is (and will always stay) False — seed a baseline of
+        # True so the genuine settle-and-release is observable as a real
+        # changed=True, not masked by coincidence.
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)),
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        assert outputs["hc1"]["reachable"] is True
+        # ac2 is genuinely, finally inactive (empty URL) — cf must settle
+        # and reflect that real transition, not stay held forever.
+        assert outputs["cf"]["changed"] is True
+        assert outputs["cf"]["out"] is False
 
     def test_post_api_wol_downstream_propagation(self):
         """WoL fired by post-api HC propagates its sent=True to a downstream const_value node (lines 1826-1847)."""

@@ -28,6 +28,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, urlunparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -165,7 +166,19 @@ _PERSIST_STATE_VERSION_KEY = "__obs_node_state_version__"
 def _persist_default(v: Any) -> Any:
     """`json.dumps(..., default=...)` hook: tag recognized non-JSON types."""
     if isinstance(v, datetime):
-        return {_PERSIST_TYPE_TAG: "datetime", "value": v.isoformat()}
+        # isoformat() only ever records the CURRENT numeric UTC offset, not
+        # a named zone — datetime.fromisoformat() on restore reconstructs a
+        # fixed-offset tzinfo, not the original ZoneInfo. Two datetimes for
+        # the same instant still compare == regardless of tzinfo type (this
+        # doesn't affect change_filter's own comparison), but downstream
+        # date arithmetic across a DST boundary silently produces different
+        # results with a fixed offset than with the original named zone —
+        # so the zone key is captured here whenever tzinfo is a ZoneInfo,
+        # and used to reconstruct the named zone on decode below.
+        _tag: dict[str, Any] = {_PERSIST_TYPE_TAG: "datetime", "value": v.isoformat()}
+        if isinstance(v.tzinfo, ZoneInfo):
+            _tag["tz"] = v.tzinfo.key
+        return _tag
     if isinstance(v, date):
         return {_PERSIST_TYPE_TAG: "date", "value": v.isoformat()}
     if isinstance(v, time):
@@ -304,9 +317,22 @@ def _decode_persisted_value(v: Any) -> Any:
             return v
         if tag in _PERSIST_ISOFORMAT_TYPES:
             try:
-                return _PERSIST_ISOFORMAT_TYPES[tag](v.get("value", ""))
+                _decoded = _PERSIST_ISOFORMAT_TYPES[tag](v.get("value", ""))
             except (TypeError, ValueError):
                 return v
+            _tz_name = v.get("tz")
+            if tag == "datetime" and isinstance(_tz_name, str):
+                # Reconstruct the ORIGINAL named zone instead of the
+                # fixed-offset tzinfo fromisoformat() produces (see
+                # _persist_default's comment above) — fall back to the
+                # fixed-offset decode if the zone is no longer known (e.g.
+                # a tzdata update/removal on this host since it was
+                # persisted) rather than losing the value entirely.
+                try:
+                    return _decoded.replace(tzinfo=ZoneInfo(_tz_name))
+                except (ZoneInfoNotFoundError, ValueError):
+                    return _decoded
+            return _decoded
         return {k: _decode_persisted_value(val) for k, val in v.items()}
     if isinstance(v, list):
         return [_decode_persisted_value(item) for item in v]
@@ -2663,6 +2689,20 @@ class LogicManager:
 
         _node_by_id_early = {n.id: n for n in flow.nodes}
         _decisive_gate_value = {"or": True, "and": False}
+        # GraphExecutor._build_edge_map() resolves multiple edges into the
+        # same (target, targetHandle) pair with "last edge wins" — the same
+        # semantics _fresh_input_handles already applies for its own
+        # traversal above. The taint-BFS below must follow the SAME
+        # effective edge for consistency: an imported/legacy flow can have
+        # a stale, shadowed edge (e.g. from an unseeded Read Object into
+        # add.in1) that a LATER edge to the same handle has replaced with a
+        # live source — the executor only ever consumes the live one, so
+        # tainting through the shadowed edge too would hold a downstream
+        # change_filter hostage to a source nothing actually reads from.
+        _effective_edge_by_target: dict[tuple[str, str], Any] = {}
+        for _e in flow.edges:
+            _effective_edge_by_target[(_e.target, _e.targetHandle or "in")] = _e
+        _effective_edges = list(_effective_edge_by_target.values())
 
         def _compute_cf_hold_ids(seed_ids: set[str], outputs_source: dict[str, dict[str, Any]] | None = None) -> set[str]:
             """Taint-BFS from `seed_ids` (unresolved sources), returning the
@@ -2709,7 +2749,7 @@ class LogicManager:
                 for i in range(1, count + 1):
                     handle = f"in{i}"
                     src_edge = next(
-                        (e for e in flow.edges if e.target == gate_id and (e.targetHandle or "in") == handle),
+                        (e for e in _effective_edges if e.target == gate_id and (e.targetHandle or "in") == handle),
                         None,
                     )
                     if src_edge is not None and src_edge.source in _tainted:
@@ -2751,7 +2791,7 @@ class LogicManager:
             _tq: list[str] = list(_tainted)
             while _tq:
                 _tn = _tq.pop()
-                for _te in flow.edges:
+                for _te in _effective_edges:
                     if _te.source != _tn or _te.target in _tainted:
                         continue
                     _target_node = _node_by_id_early.get(_te.target)
@@ -2800,7 +2840,7 @@ class LogicManager:
                     if _target_type == "gate" and (_te.targetHandle or "in") == "in":
                         _gate_data = (_target_node.data or {}) if _target_node is not None else {}
                         _enable_edge = next(
-                            (e for e in flow.edges if e.target == _te.target and (e.targetHandle or "in") == "enable"),
+                            (e for e in _effective_edges if e.target == _te.target and (e.targetHandle or "in") == "enable"),
                             None,
                         )
                         if _enable_edge is None or _enable_edge.source not in _tainted:
@@ -4167,6 +4207,19 @@ class LogicManager:
                         variable_resolver,
                     ).strip()
                     if not url:
+                        # Matches _run_api_client_node's own empty-URL path
+                        # (target_set.add + return False there): this node
+                        # is genuinely, finally inactive — not still
+                        # pending — so it must be marked settled here too.
+                        # Without this, _still_unresolved_source_ids keeps
+                        # treating it as pending forever (its own _trigger
+                        # reads True, but it's never added to
+                        # _settled_async_ids via _add_resolved_outputs
+                        # below), holding every change_filter downstream of
+                        # it hostage indefinitely across every future
+                        # execution of this chain.
+                        post_api_hc_api_clients.add(node.id)
+                        triggered_api_clients.add(node.id)
                         continue
                 except _ApiClientVariableError as exc:
                     logger.warning("Graph %s: api_client variable error: %s", graph_id[:8], exc)
