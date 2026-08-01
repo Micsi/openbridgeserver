@@ -564,6 +564,44 @@ def test_notify_message_does_not_fire_on_an_unchanged_change_filter_pulse() -> N
     adapter.send_notification.assert_awaited_once()
 
 
+def test_notify_message_fires_on_a_false_value_from_an_ordinary_boolean_source() -> None:
+    """Regression: the false-pulse suppression above must be scoped
+    strictly to an edge whose source is a change_filter's own "changed"
+    output — an ORDINARY boolean source (e.g. a Read Object) wired
+    directly into Notify.message must still fire on a freshly delivered
+    False value, since the evaluator treats every non-None message,
+    including False, as a valid incoming message from any other source."""
+    read_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "notify", "value", "message"),
+        ],
+    )
+    manager = _make_manager()
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"read": {"value": False, "changed": True}})
+
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once()
+
+
 def test_freshness_skipped_notify_settles_instead_of_holding_downstream_change_filter() -> None:
     """Regression (P2, issue #1087): a notify node with a truthy but STALE
     _trigger (message cached from a previous tick, not fed by THIS tick's

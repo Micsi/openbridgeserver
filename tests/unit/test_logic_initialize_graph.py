@@ -1215,17 +1215,65 @@ async def test_load_graphs_survives_a_malformed_escape_envelope_in_raw_state():
 
 
 @pytest.mark.asyncio
-async def test_load_graphs_disambiguates_legacy_state_colliding_with_the_envelope_shape():
-    """Regression: a legacy row (saved before the version-2 envelope
-    existed) is a flat {node_id: state} mapping with no wrapping — an
-    imported graph's unrestricted node ids could coincidentally BE
-    "__obs_node_state_version__" (with a stored value of literal int 2)
-    and "state" (with a dict-shaped stored value), exactly shape-matching
-    the tagged envelope. Naively trusting that shape match would then
-    treat only the "state" node's own inner dict as the WHOLE state
-    mapping, losing both nodes' baselines. Cross-checking against the
-    graph's actual current node ids must resolve this in the legacy
-    row's favor instead."""
+async def test_load_graphs_recognizes_a_genuine_envelope_for_a_graph_with_reserved_node_ids():
+    """Regression: a graph containing a node whose id happens to be
+    "state" or "__obs_node_state_version__" (reachable by importing a
+    hand-crafted flow_data, unlike node_state itself, which the app never
+    lets a client set directly) must still have its GENUINE, correctly
+    written version-2 envelope recognized as such. _persist_node_state
+    always writes exactly {_PERSIST_STATE_VERSION_KEY: 2, "state": {...}}
+    at the top level regardless of what any real node's id is — real
+    per-node entries live one level deeper, inside "state", never at this
+    level — so this must not be misread as an ambiguous legacy row just
+    because a real node happens to share one of these reserved ids."""
+    import json
+
+    from obs.logic.manager import _PERSIST_STATE_VERSION, _PERSIST_STATE_VERSION_KEY, _persist_default
+
+    flow = _flow(
+        [
+            {"id": _PERSIST_STATE_VERSION_KEY, "type": "change_filter"},
+            {"id": "state", "type": "change_filter"},
+            {"id": "other", "type": "change_filter"},
+        ]
+    )
+    envelope = {
+        _PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION,
+        "state": {_PERSIST_STATE_VERSION_KEY: {"value": 1}, "state": {"value": 2}, "other": {"value": 3}},
+    }
+    node_state = json.dumps(envelope, default=_persist_default)
+
+    mgr = _make_manager({})
+    mgr._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": node_state}]
+    )
+
+    await mgr._load_graphs()
+
+    assert mgr._hysteresis["g1"] == {
+        _PERSIST_STATE_VERSION_KEY: {"value": 1},
+        "state": {"value": 2},
+        "other": {"value": 3},
+    }
+
+
+@pytest.mark.asyncio
+async def test_load_graphs_accepts_a_pathological_legacy_two_node_collision_as_an_envelope():
+    """Documents a known, accepted limitation: a legacy (pre-envelope) row
+    is indistinguishable from a genuine version-2 envelope purely from its
+    raw JSON shape when it happens to have EXACTLY two node entries whose
+    ids are literally "__obs_node_state_version__" (stored value: bare int
+    2) and "state" (stored value: a dict) — the exact same shape
+    _persist_node_state itself always writes. Resolving this exact
+    collision in the legacy row's favor was tried (cross-checking the
+    row's node ids against the graph's current flow.nodes) but that broke
+    genuine envelopes for any graph simply containing a node named "state"
+    (see test_load_graphs_recognizes_a_genuine_envelope_for_a_graph_with_reserved_node_ids
+    above) — a real, ongoing regression for a real, reachable scenario
+    (importing a hand-crafted flow_data), traded off here against a
+    one-time legacy-row collision that requires directly tampering with
+    the node_state DB column, which the application itself never exposes
+    a way to do (only flow_data is client-settable via graph import)."""
     import json
 
     from obs.logic.manager import _PERSIST_STATE_VERSION, _PERSIST_STATE_VERSION_KEY
@@ -1236,9 +1284,6 @@ async def test_load_graphs_disambiguates_legacy_state_colliding_with_the_envelop
             {"id": "state", "type": "change_filter"},
         ]
     )
-    # A genuine legacy row: no envelope wrapping, keys are the two nodes'
-    # own real ids, one holding a bare int and the other a dict — exactly
-    # the shape a tagged envelope also has.
     node_state = json.dumps({_PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION, "state": {"value": "kept"}})
 
     mgr = _make_manager({})
@@ -1248,14 +1293,41 @@ async def test_load_graphs_disambiguates_legacy_state_colliding_with_the_envelop
 
     await mgr._load_graphs()
 
-    # Confirms the legacy path was taken (not the tagged-envelope path,
-    # which would have discarded the _PERSIST_STATE_VERSION_KEY-named
-    # node's own state entirely): the legacy branch's own string-value
-    # recovery marking additionally applies here, same as any other
-    # legacy row's string state.
+    assert mgr._hysteresis["g1"] == {"value": "kept"}
+
+
+@pytest.mark.asyncio
+async def test_load_graphs_treats_a_legacy_row_with_extra_nodes_as_legacy():
+    """A legacy row with MORE than the envelope's own two keys (i.e. a
+    third real node beyond the two coincidentally reserved-looking ids)
+    can no longer be mistaken for the envelope shape at all — the exact
+    top-level key count check added above resolves this more common case
+    (an ordinary legacy graph with more than exactly two nodes) without
+    needing the node-id cross-check that regressed genuine envelopes."""
+    import json
+
+    from obs.logic.manager import _PERSIST_STATE_VERSION, _PERSIST_STATE_VERSION_KEY
+
+    flow = _flow(
+        [
+            {"id": _PERSIST_STATE_VERSION_KEY, "type": "change_filter"},
+            {"id": "state", "type": "change_filter"},
+            {"id": "extra", "type": "change_filter"},
+        ]
+    )
+    node_state = json.dumps({_PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION, "state": {"value": "kept"}, "extra": {"value": "also-kept"}})
+
+    mgr = _make_manager({})
+    mgr._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": node_state}]
+    )
+
+    await mgr._load_graphs()
+
     assert mgr._hysteresis["g1"] == {
         _PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION,
         "state": {"value": "kept", "_recovered_str": True},
+        "extra": {"value": "also-kept", "_recovered_str": True},
     }
 
 

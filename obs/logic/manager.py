@@ -4685,20 +4685,31 @@ class LogicManager:
                     return event_fresh_inputs
                 blocked_sources.update(newly_blocked_default_gates)
 
+        # The "message" port also accepts a trigger-typed pulse (e.g.
+        # change_filter.changed wired directly into Notify.message) — a
+        # literal `False` there means "no pulse", not "a real message",
+        # unlike any other falsy-but-real message (0, "", an ordinary bool
+        # source, ...), which must still count as delivered. Only an edge
+        # whose SOURCE is actually a change_filter's own "changed" output
+        # gets this treatment — restricted structurally here (not by value
+        # alone) so a plain boolean source wired to "message" is unaffected.
+        _cf_changed_message_targets = {
+            edge.target
+            for edge in flow.edges
+            if (edge.targetHandle or "in") == "message"
+            and (edge.sourceHandle or "out") == "changed"
+            and _node_by_id_early.get(edge.source) is not None
+            and _node_by_id_early[edge.source].type == "change_filter"
+        }
+
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()
             if event_fresh_inputs is None:
                 return True
             fresh_handles = event_fresh_inputs.get(node_id, set())
-            # The "message" port also accepts a trigger-typed pulse (e.g.
-            # change_filter.changed wired directly into Notify.message) —
-            # `is not None` alone treats a literal `False` the same as any
-            # real message content, so an unchanged event (changed=False)
-            # still counts as "fresh" and fires a bogus "False" notification.
-            # A bool False specifically means "no pulse" here; every other
-            # falsy-but-real message (0, "", etc.) still legitimately fires.
             _msg = out.get("_message")
-            fresh_message = "message" in fresh_handles and _msg is not None and _msg is not False
+            _is_false_cf_pulse = _msg is False and node_id in _cf_changed_message_targets
+            fresh_message = "message" in fresh_handles and _msg is not None and not _is_false_cf_pulse
             fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger"))
             return fresh_message or fresh_trigger
 
@@ -5414,27 +5425,33 @@ class LogicManager:
                 if row["id"] not in self._hysteresis:
                     try:
                         saved_raw = json.loads(row["node_state"] or "{}")
-                        # A legacy row (saved before this version envelope
-                        # existed) is a flat {node_id: state} mapping with
-                        # no wrapping at all — its keys are literal node
-                        # ids from an imported graph's own unrestricted
-                        # string ids, which could coincidentally BE
-                        # "__obs_node_state_version__"/"state" with values
-                        # that happen to shape-match the envelope (an int 2
-                        # and a dict, respectively). _persist_node_state
-                        # itself never writes anything but these exact two
-                        # top-level keys, so cross-checking against this
-                        # row's OWN current node ids resolves the ambiguity
-                        # in the legacy row's favor whenever either
-                        # reserved key could plausibly be one of its real
-                        # per-node entries instead of the version marker.
-                        _flow_node_ids = {n.id for n in flow.nodes}
+                        # _persist_node_state ALWAYS writes exactly these
+                        # two top-level keys, unconditionally, regardless of
+                        # how many real nodes the graph has or what any of
+                        # their ids are — every real per-node entry lives
+                        # one level deeper, inside "state", never colliding
+                        # with the envelope's own two reserved keys at this
+                        # level. A cross-check against this row's current
+                        # node ids was tried here to also guard a legacy
+                        # (pre-envelope, unwrapped) row whose own node ids
+                        # coincidentally collided with these two reserved
+                        # strings — but that guard could not tell a genuine
+                        # collision apart from an ordinary graph that
+                        # simply CONTAINS a node named "state" (reachable
+                        # via importing a hand-crafted flow_data, unlike a
+                        # node_state collision, which needs direct DB
+                        # tampering that the app itself never does), and so
+                        # rejected every genuine envelope for such a graph
+                        # instead. Requiring exactly these two top-level
+                        # keys (nothing else) still narrows the legacy
+                        # collision to graphs with exactly two real nodes
+                        # matching both reserved ids, without that
+                        # regression.
                         is_tagged_envelope = (
                             isinstance(saved_raw, dict)
                             and saved_raw.get(_PERSIST_STATE_VERSION_KEY) == _PERSIST_STATE_VERSION
                             and isinstance(saved_raw.get("state"), dict)
-                            and _PERSIST_STATE_VERSION_KEY not in _flow_node_ids
-                            and "state" not in _flow_node_ids
+                            and len(saved_raw) == 2
                         )
                         if is_tagged_envelope:
                             # Restore any value _persist_node_state had to tag
