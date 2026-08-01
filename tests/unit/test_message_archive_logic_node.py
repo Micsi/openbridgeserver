@@ -518,6 +518,52 @@ def test_notification_requires_fresh_truthy_trigger_when_message_is_cached() -> 
             adapter.send_notification.assert_not_awaited()
 
 
+def test_notify_message_does_not_fire_on_an_unchanged_change_filter_pulse() -> None:
+    """Regression: change_filter.changed (a bool) wired directly into
+    Notify.message is a trigger-typed pulse, not literal text — a False
+    "no change" value must not be treated by the freshness check as "a
+    message arrived", or every identical repeated event fires a bogus
+    "False" notification (Read.value -> Change Filter.in -> Notify.message).
+    Message Archive shares the same _has_fresh_firing_input check."""
+    read_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
+            node("cf", "change_filter"),
+            node(
+                "notify",
+                "notify_message",
+                {
+                    "adapter_instance_id": "message-1",
+                    "providers": [{"provider": "telegram", "target": "alerts"}],
+                },
+            ),
+        ],
+        [
+            edge("read", "cf", "value", "in"),
+            edge("cf", "notify", "changed", "message"),
+        ],
+    )
+    manager = _make_manager()
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        first = _run(manager, flow, {"read": {"value": 1, "changed": True}})
+        second = _run(manager, flow, {"read": {"value": 1, "changed": True}})
+
+    assert first["cf"]["changed"] is True
+    assert first["notify"]["sent"] is True
+    # Same value again -> change_filter correctly reports changed=False;
+    # that False must not itself be mistaken for a fresh "message arrived".
+    assert second["cf"]["changed"] is False
+    assert second["notify"]["sent"] is False
+    adapter.send_notification.assert_awaited_once()
+
+
 def test_freshness_skipped_notify_settles_instead_of_holding_downstream_change_filter() -> None:
     """Regression (P2, issue #1087): a notify node with a truthy but STALE
     _trigger (message cached from a previous tick, not fed by THIS tick's

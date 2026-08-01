@@ -548,7 +548,37 @@ class GraphExecutor:
         (non-opaque) list/dict equality far beyond what this fix needs.
         """
         if isinstance(left, dict) and isinstance(right, dict):
-            return left.keys() == right.keys() and all(cls._opaque_aware_container_equal(left[k], right[k]) for k in left)
+            # A non-string dict KEY (e.g. 3+4j) persists the same lossy way
+            # a leaf VALUE does: encoded via _persist_default's opaque_str
+            # fallback, decoded back as a plain string ("(3+4j)"). Plain
+            # `left.keys() == right.keys()` set equality would never match
+            # the live complex key against that recovered string key,
+            # short-circuiting the whole dict to unequal before the
+            # per-value opaque comparison below ever runs. Match each left
+            # key to a right key by identity/equality first, falling back
+            # to the same str(left) == right check leaf values use — each
+            # right key consumed at most once, so two left keys can't both
+            # claim the same recovered string key.
+            if len(left) != len(right):
+                return False
+            remaining_right = dict(right)
+            for lk, lv in left.items():
+                if lk in remaining_right:
+                    rk = lk
+                else:
+                    rk = next(
+                        (
+                            candidate
+                            for candidate in remaining_right
+                            if isinstance(candidate, str) and not isinstance(lk, (dict, list)) and str(lk) == candidate
+                        ),
+                        None,
+                    )
+                    if rk is None:
+                        return False
+                if not cls._opaque_aware_container_equal(lv, remaining_right.pop(rk)):
+                    return False
+            return True
         if isinstance(left, list) and isinstance(right, list):
             return len(left) == len(right) and all(cls._opaque_aware_container_equal(le, ri) for le, ri in zip(left, right))
         if left == right:

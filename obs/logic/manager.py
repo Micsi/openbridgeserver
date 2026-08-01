@@ -4690,7 +4690,15 @@ class LogicManager:
             if event_fresh_inputs is None:
                 return True
             fresh_handles = event_fresh_inputs.get(node_id, set())
-            fresh_message = "message" in fresh_handles and out.get("_message") is not None
+            # The "message" port also accepts a trigger-typed pulse (e.g.
+            # change_filter.changed wired directly into Notify.message) —
+            # `is not None` alone treats a literal `False` the same as any
+            # real message content, so an unchanged event (changed=False)
+            # still counts as "fresh" and fires a bogus "False" notification.
+            # A bool False specifically means "no pulse" here; every other
+            # falsy-but-real message (0, "", etc.) still legitimately fires.
+            _msg = out.get("_message")
+            fresh_message = "message" in fresh_handles and _msg is not None and _msg is not False
             fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger"))
             return fresh_message or fresh_trigger
 

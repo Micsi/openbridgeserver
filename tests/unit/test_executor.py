@@ -1332,6 +1332,37 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": [3 + 4j, "unchanged"]}})
         assert out["cf"]["changed"] is False
 
+    def test_opaque_recovery_matches_a_recovered_dict_key(self):
+        """Regression: a non-string dict KEY (e.g. 3+4j in {3+4j: "x"})
+        persists the same lossy opaque-str way a leaf VALUE does — decoded
+        back as the plain string key "(3+4j)". Plain `left.keys() ==
+        right.keys()` set equality never matches the live complex key
+        against that recovered string key, short-circuiting the whole dict
+        to "changed" before the per-value opaque comparison ever runs."""
+        state = {"cf": {"value": {"(3+4j)": "x"}, "_opaque_recovered_str": True}}
+        n1 = node("cf", "change_filter")
+        exc = make_executor([n1], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": {3 + 4j: "x"}}})
+        assert out["cf"]["changed"] is False
+
+    def test_opaque_dict_key_recovery_rejects_different_length_dicts(self):
+        """Direct unit test for _opaque_aware_container_equal's dict branch:
+        a different key count can never match, regardless of any opaque
+        key/value recovery."""
+        assert GraphExecutor._opaque_aware_container_equal({3 + 4j: "x"}, {"(3+4j)": "x", "extra": "y"}) is False
+
+    def test_opaque_dict_key_recovery_rejects_an_unmatched_key(self):
+        """Direct unit test: same key count, but no right-side key —
+        neither an exact match nor an opaque str(left)-recovered match —
+        corresponds to a given left key."""
+        assert GraphExecutor._opaque_aware_container_equal({3 + 4j: "x"}, {"totally-unrelated": "x"}) is False
+
+    def test_opaque_dict_key_recovery_rejects_a_matched_key_with_different_value(self):
+        """Direct unit test: the key recovers/matches, but the associated
+        value differs — the dict as a whole must still report unequal."""
+        assert GraphExecutor._opaque_aware_container_equal({3 + 4j: "x"}, {"(3+4j)": "y"}) is False
+
     def test_live_string_matching_a_temporal_repr_is_not_treated_as_recovered(self):
         """Regression: a source that legitimately emits the literal string
         "10:30:00" *live*, this session — never round-tripped through DB
