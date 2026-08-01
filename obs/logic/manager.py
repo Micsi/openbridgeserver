@@ -2771,6 +2771,24 @@ class LogicManager:
                     # again this session.
                     if _target_type == "memory":
                         continue
+                    # A "hysteresis" node whose "value" input reads None this
+                    # pass (e.g. fed by a still-unseeded Read Object) returns
+                    # its real prior state unmutated — the executor's own
+                    # `if val is None: return {"out": prev}` branch, a fully
+                    # resolved output, not a placeholder awaiting this
+                    # source's eventual real value. Unlike an async
+                    # replay source, an unseeded Read Object has no later
+                    # resolution coming THIS tick, so there is nothing left
+                    # to correct for. Propagating taint past it would hold a
+                    # downstream change_filter hostage to that unrelated,
+                    # possibly-never-seeded source indefinitely, discarding
+                    # every genuine change from any OTHER live input combined
+                    # with this hysteresis output along the way.
+                    if _target_type == "hysteresis" and (_te.targetHandle or "in") == "value":
+                        _hv_src = outputs if _te.source in async_replay_source_ids else _src
+                        _hyst_value = GraphExecutor._get_output_value(_hv_src.get(_te.source, {}), _te.sourceHandle or "out")
+                        if _hyst_value is None:
+                            continue
                     # A "gate" (Freigabe) node closed by a RESOLVED enable
                     # input is the same kind of boundary: while closed, its
                     # output is either the retained last-enabled value or a

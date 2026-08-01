@@ -559,6 +559,28 @@ class GraphExecutor:
             # to the same str(left) == right check leaf values use — each
             # right key consumed at most once, so two left keys can't both
             # claim the same recovered string key.
+            # This length check is also what makes a lossy KEY COLLISION
+            # safe rather than silently wrong: if the persisted dict had
+            # BOTH an opaque-tagged key (e.g. 3+4j) and a genuine string
+            # key equal to that key's own recovered representation (e.g.
+            # "(3+4j)"), _decode_persisted_value's dict comprehension can
+            # only keep one of the two entries — a Python dict cannot hold
+            # duplicate keys, and decoding necessarily happens before this
+            # comparison ever runs, so the two original identities are
+            # already unrecoverable by the time `right` gets here. Every
+            # such collision strictly reduces len(right) below len(left)
+            # (never increases or preserves it), so this same length check
+            # reports "changed" instead of silently matching the live
+            # (still fully intact) dict against the collision-shrunk one.
+            # A fully lossless fix would mean never materializing the
+            # persisted side into a plain dict at all — carrying its raw,
+            # possibly-duplicate-keyed [key, value] pairs through decoding
+            # and this comparison instead — which is a materially larger
+            # change than this narrow, safety-net-only length check;
+            # not undertaken given how rare the trigger is (a python_script
+            # or similar custom node whose own dict-shaped result has both
+            # a non-JSON-native key AND a genuine string key that happens
+            # to exactly match that key's own str() representation).
             if len(left) != len(right):
                 return False
             remaining_right = dict(right)

@@ -1054,6 +1054,89 @@ class TestHostCheckRisingEdge:
         assert outputs["cf"]["changed"] is True
         assert outputs["cf"]["out"] == 5
 
+    def test_change_filter_is_not_held_when_fed_through_hysteresis_from_an_unseeded_read(self):
+        """Regression: a hysteresis node whose "value" input reads None this
+        pass (fed by a still-unseeded Read Object) returns its real prior
+        state unmutated — the executor's own `if val is None: return
+        {"out": prev}` branch, a fully resolved output, not a placeholder
+        awaiting that source's eventual real value (unlike an async source,
+        an unseeded Read Object has no later resolution coming this tick).
+        Propagating taint through it would hold a downstream change_filter
+        hostage to that unrelated source indefinitely, discarding every
+        genuine change from a separate, live Read combined with the
+        hysteresis output along the way."""
+        nodes = [
+            node("unseeded_read", "datapoint_read", {}),  # no datapoint_id: always unseeded
+            node("hyst", "hysteresis"),
+            node("live_read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+            node("add", "math_formula", {"formula": "a + b"}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "hyst", "value", "value"),
+                edge("hyst", "add", "out", "in1"),
+                edge("live_read", "add", "value", "in2"),
+                edge("add", "cf", "result", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-hysteresis-boundary"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"hyst": True}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"live_read": {"value": 5, "changed": True}}))
+
+        assert outputs["cf"]["changed"] is True
+        assert outputs["cf"]["out"] == 6
+
+    def test_change_filter_stays_held_through_hysteresis_fed_by_an_unresolved_async_placeholder(self):
+        """Regression companion to the unseeded-read absorption above: the
+        hysteresis boundary must NOT absorb taint when its "value" input is
+        a genuine (non-None) placeholder from a still-unresolved async
+        source (e.g. api_client.success, which defaults to False, not
+        None, before the real HTTP call completes) — that source WILL
+        resolve later this same tick, unlike an unseeded Read Object, so a
+        downstream change_filter must stay held until hysteresis re-runs
+        against the real resolved value."""
+        nodes = [
+            node("cv", "const_value", {"value": "true", "data_type": "bool"}),
+            node("ac", "api_client", {"url": "http://93.184.216.34/", "method": "GET", "response_type": "text/plain"}),
+            node("hyst", "hysteresis", {"threshold_on": 0.5, "threshold_off": 0.4}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cv", "ac", "value", "trigger"),
+                edge("ac", "hyst", "success", "value"),
+                edge("hyst", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-hysteresis-async-placeholder"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"hyst": False}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        # ac.success genuinely resolves True this tick (threshold_on=0.5),
+        # so hyst.out becomes True for real — cf must reflect THAT, not
+        # ac's initial False placeholder having been prematurely absorbed
+        # and committed as hyst's "final" output.
+        assert outputs["hyst"]["out"] is True
+        assert outputs["cf"]["out"] is True
+        assert outputs["cf"]["changed"] is True
+
     def test_held_change_filter_does_not_taint_a_downstream_change_filter(self):
         """Regression: once a change_filter (cf1) is itself tainted/held
         behind an unresolved Read Object, its held output is fully

@@ -1109,6 +1109,49 @@ async def test_change_filter_persists_and_restores_nested_opaque_baseline_withou
 
 
 @pytest.mark.asyncio
+async def test_change_filter_reports_changed_instead_of_silently_losing_a_colliding_opaque_key():
+    """Documents a known, accepted limitation (see
+    _opaque_aware_container_equal's length-check comment in executor.py):
+    a persisted dict holding BOTH an opaque-tagged key (e.g. 3+4j) and a
+    genuine string key equal to that key's own recovered representation
+    ("(3+4j)") cannot survive a restart without _decode_persisted_value's
+    dict comprehension collapsing one of the two entries — a Python dict
+    cannot hold duplicate keys, and this is unrecoverable by the time
+    comparison runs. The safety net is that this always reports "changed"
+    (a live, still-intact 2-entry dict differs in length from the
+    collision-shrunk 1-entry persisted one) rather than silently matching
+    and losing the discrepancy forever — the safe fallback for an
+    otherwise fundamentally lossy persistence format, not a fully
+    lossless fix (which would mean never materializing the persisted side
+    into a plain dict at all, carrying its raw, possibly-duplicate-keyed
+    pairs through decoding and comparison instead)."""
+    flow = _flow([{"id": "cf1", "type": "change_filter"}])
+    live_value = {3 + 4j: "complex", "(3+4j)": "string"}
+
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {"cf1": {"value": live_value}}
+    await mgr._persist_node_state("g1")
+    saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
+
+    mgr2 = _make_manager({})
+    mgr2._db.fetchall = AsyncMock(
+        return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": saved_json}]
+    )
+    await mgr2._load_graphs()
+
+    # Only one of the two entries survives the round trip.
+    assert mgr2._hysteresis["g1"] == {"cf1": {"value": {"(3+4j)": "string"}, "_opaque_recovered_str": True}}
+
+    with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+        outputs = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": live_value}})
+
+    # Safe (if noisy) outcome: reports changed rather than silently
+    # matching a baseline that actually lost one of the two entries.
+    assert outputs["cf1"]["changed"] is True
+    assert outputs["cf1"]["out"] == live_value
+
+
+@pytest.mark.asyncio
 async def test_load_graphs_restores_state_when_a_node_id_collides_with_the_persist_tag():
     """Regression: a stateful node whose own (unrestricted) string id is
     exactly "__obs_persisted_type__" makes _escape_persist_collision wrap
