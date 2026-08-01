@@ -1492,6 +1492,30 @@ class TestPersistDefaultAndDecode:
             "tz": "Europe/Zurich",
         }
 
+    def test_persist_default_tags_the_second_occurrence_of_an_ambiguous_dst_time_with_fold(self):
+        """Regression: isoformat() does not preserve `fold` — during a DST
+        "fall back", the same wall-clock time (e.g. 2:30 in Europe/Zurich)
+        occurs TWICE, an hour apart in real UTC terms; fold=1 marks the
+        SECOND occurrence. The numeric offset in isoformat() alone (e.g.
+        "+01:00") is not restored back into a decoded named-zone datetime
+        by a plain replace(tzinfo=...), so fold must be captured
+        separately here whenever it is set."""
+        from zoneinfo import ZoneInfo
+
+        from obs.logic.manager import _persist_default
+
+        second_occurrence = datetime(2025, 10, 26, 2, 30, tzinfo=ZoneInfo("Europe/Zurich"), fold=1)
+        assert _persist_default(second_occurrence) == {
+            "__obs_persisted_type__": "datetime",
+            "value": second_occurrence.isoformat(),
+            "tz": "Europe/Zurich",
+            "fold": 1,
+        }
+        # The first (default) occurrence needs no extra "fold" key — fold=0
+        # is what replace() already re-derives on decode without it.
+        first_occurrence = datetime(2025, 10, 26, 2, 30, tzinfo=ZoneInfo("Europe/Zurich"))
+        assert "fold" not in _persist_default(first_occurrence)
+
     def test_persist_default_tags_str_fallback_for_unrecognized_types(self):
         """Regression: an untagged bare str(v) fallback here would violate
         the version-2 envelope's own guarantee that every non-JSON-native
@@ -1622,6 +1646,32 @@ class TestPersistDefaultAndDecode:
         assert decoded == datetime(2026, 7, 1, 12, 30, tzinfo=ZoneInfo("Europe/Zurich"))
         assert isinstance(decoded.tzinfo, ZoneInfo)
         assert decoded.tzinfo.key == "Europe/Zurich"
+
+    def test_decode_persisted_value_restores_the_second_occurrence_of_an_ambiguous_dst_time(self):
+        """Regression: without restoring "fold" explicitly, replace() on the
+        fixed-offset-parsed datetime re-derives fold=0 from the wall-clock
+        numbers alone — for the SECOND occurrence of an ambiguous DST
+        "fall back" wall-clock time, that reconstructs an instant ONE HOUR
+        EARLIER than the original, even though the wall-clock numbers and
+        zone name both look correct. Verified via .timestamp() (the actual
+        UTC instant), which fold alone determines here — .replace()-derived
+        fold=0 vs the correct fold=1 both produce a datetime object that
+        looks identical when printed, but represents a different moment."""
+        from zoneinfo import ZoneInfo
+
+        from obs.logic.manager import _decode_persisted_value
+
+        second_occurrence = datetime(2025, 10, 26, 2, 30, tzinfo=ZoneInfo("Europe/Zurich"), fold=1)
+        decoded = _decode_persisted_value(
+            {
+                "__obs_persisted_type__": "datetime",
+                "value": second_occurrence.isoformat(),
+                "tz": "Europe/Zurich",
+                "fold": 1,
+            }
+        )
+        assert decoded.fold == 1
+        assert decoded.timestamp() == second_occurrence.timestamp()
 
     def test_decode_persisted_value_falls_back_when_the_named_zone_is_unknown(self):
         """A zone no longer known on this host (e.g. a tzdata update/removal

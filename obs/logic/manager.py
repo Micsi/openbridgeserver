@@ -232,6 +232,20 @@ def _persist_default(v: Any) -> Any:
         _tag: dict[str, Any] = {_PERSIST_TYPE_TAG: "datetime", "value": v.isoformat()}
         if isinstance(v.tzinfo, ZoneInfo):
             _tag["tz"] = v.tzinfo.key
+            # isoformat() also loses `fold`: during a DST "fall back", the
+            # same wall-clock time (e.g. 2:30 in Europe/Zurich) occurs
+            # TWICE, representing two DIFFERENT UTC instants an hour apart
+            # — fold=0 for the first, fold=1 for the second. The ISO string
+            # DOES capture the numeric offset that disambiguates which one
+            # (e.g. "+02:00" vs "+01:00"), but reconstructing via
+            # fromisoformat() + replace(tzinfo=named_zone) discards that
+            # and re-derives fold=0 from the wall-clock numbers alone,
+            # silently producing the WRONG instant (one hour off) whenever
+            # the original was fold=1. Persisting fold explicitly and
+            # replacing it back in on decode (see below) avoids re-deriving
+            # it at all.
+            if v.fold:
+                _tag["fold"] = v.fold
         return _tag
     if isinstance(v, date):
         return {_PERSIST_TYPE_TAG: "date", "value": v.isoformat()}
@@ -383,7 +397,12 @@ def _decode_persisted_value(v: Any) -> Any:
                 # a tzdata update/removal on this host since it was
                 # persisted) rather than losing the value entirely.
                 try:
-                    return _decoded.replace(tzinfo=ZoneInfo(_tz_name))
+                    # fold: see _persist_default's comment above — restore
+                    # it explicitly rather than letting replace() re-derive
+                    # fold=0 from the wall-clock numbers alone, which is
+                    # wrong for the second occurrence of an ambiguous DST
+                    # "fall back" wall-clock time.
+                    return _decoded.replace(tzinfo=ZoneInfo(_tz_name), fold=v.get("fold", 0))
                 except (ZoneInfoNotFoundError, ValueError):
                     return _decoded
             return _decoded
