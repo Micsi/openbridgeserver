@@ -73,7 +73,14 @@ class _OpaqueRecoveredDict:
 
 
 def _is_nan(value: Any) -> bool:
-    return (isinstance(value, float) and math.isnan(value)) or (isinstance(value, Decimal) and value.is_nan())
+    try:
+        if isinstance(value, float):
+            return bool(math.isnan(value))
+        if isinstance(value, Decimal):
+            return bool(value.is_nan())
+    except Exception:  # noqa: BLE001 - numeric subclasses may fail classification or truth conversion arbitrarily
+        return False
+    return False
 
 
 def _snapshot_debug_value(value: Any) -> Any:
@@ -1092,12 +1099,51 @@ class GraphExecutor:
         return True
 
     @classmethod
-    def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
+    def _ambiguous_opaque_dictionary_entries_equal(
+        cls,
+        left_items: list[tuple[Any, Any]],
+        right_items: list[tuple[Any, Any]],
+        seen: set[tuple[int, int]],
+        *,
+        allow_unmarked: bool,
+    ) -> bool:
+        """Polynomial matching for recovered dictionaries with ambiguous keys."""
+        adjacency: list[list[int]] = []
+        for left_key, left_value in left_items:
+            candidates = []
+            for index, (right_key, right_value) in enumerate(right_items):
+                if cls._opaque_aware_container_equal(
+                    left_key,
+                    right_key,
+                    allow_unmarked=allow_unmarked,
+                    _seen_pairs=seen,
+                ) and cls._opaque_aware_container_equal(
+                    left_value,
+                    right_value,
+                    allow_unmarked=allow_unmarked,
+                    _seen_pairs=seen,
+                ):
+                    candidates.append(index)
+            if not candidates:
+                return False
+            adjacency.append(candidates)
+        return cls._has_perfect_bipartite_matching(adjacency)
+
+    @classmethod
+    def _opaque_aware_container_equal(
+        cls,
+        left: Any,
+        right: Any,
+        *,
+        allow_unmarked: bool = False,
+        _seen_pairs: set[tuple[int, int]] | None = None,
+    ) -> bool:
         """Compare recovered opaque containers without Python call-stack recursion."""
-        states: list[tuple[list[tuple[str, Any, Any]], set[tuple[int, int]]]] = [([("pair", left, right)], set())]
+        states: list[tuple[list[tuple[str, Any, Any]], set[tuple[int, int]]]] = [
+            ([("pair", left, right)], set() if _seen_pairs is None else set(_seen_pairs))
+        ]
         while states:
             work, seen = states.pop()
-            branched = False
             while work:
                 kind, current_left, current_right = work.pop()
                 if kind == "dict":
@@ -1105,18 +1151,14 @@ class GraphExecutor:
                     right_items = current_right
                     if not left_items:
                         continue
-                    left_key, left_value = left_items[0]
-                    branches = []
-                    for index, (right_key, right_value) in enumerate(right_items):
-                        if not cls._opaque_aware_container_equal(left_key, right_key, allow_unmarked=allow_unmarked):
-                            continue
-                        branch_work = list(work)
-                        branch_work.append(("dict", left_items[1:], right_items[:index] + right_items[index + 1 :]))
-                        branch_work.append(("pair", left_value, right_value))
-                        branches.append((branch_work, set(seen)))
-                    states.extend(branches)
-                    branched = True
-                    break
+                    if not cls._ambiguous_opaque_dictionary_entries_equal(
+                        left_items,
+                        right_items,
+                        seen,
+                        allow_unmarked=allow_unmarked,
+                    ):
+                        break
+                    continue
                 if kind == "set":
                     left_items = current_left
                     right_items = current_right
@@ -1182,8 +1224,6 @@ class GraphExecutor:
                     break
             else:
                 return True
-            if branched:
-                continue
         return False
 
     @classmethod

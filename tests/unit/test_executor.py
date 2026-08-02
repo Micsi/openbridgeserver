@@ -1465,6 +1465,27 @@ class TestChangeFilterNode:
         assert second["cf"]["changed"] is True
         assert "__error__" not in second["cf"]
 
+    @pytest.mark.parametrize("mode", ["raises", "unsafe_truth"])
+    def test_decimal_subclass_with_unsafe_nan_classification_uses_safe_comparison(self, mode):
+        class UnsafeTruth:
+            def __bool__(self):
+                raise RuntimeError("truth conversion unavailable")
+
+        class UnsafeNanDecimal(Decimal):
+            def is_nan(self):
+                if mode == "raises":
+                    raise RuntimeError("NaN classification unavailable")
+                return UnsafeTruth()
+
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state={})
+
+        first = exc.execute({"cf": {"in": UnsafeNanDecimal("1.25")}})
+        second = exc.execute({"cf": {"in": UnsafeNanDecimal("2.5")}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is True
+        assert "__error__" not in second["cf"]
+
     def test_container_subclass_with_ambiguous_equality_is_safe(self):
         class UnsafeTruth:
             def __bool__(self):
@@ -1858,6 +1879,16 @@ class TestChangeFilterNode:
         )
 
         assert GraphExecutor._opaque_aware_container_equal(live, recovered) is False
+
+    def test_ambiguous_recovered_opaque_dictionary_mismatch_is_bounded(self):
+        class SameRepresentation:
+            def __str__(self):
+                return "same"
+
+        live = {SameRepresentation(): "match" for _ in range(10)}
+        recovered = _OpaqueRecoveredDict([("same", "match") for _ in range(9)] + [("same", "different")])
+
+        assert GraphExecutor._opaque_aware_container_equal(live, recovered, allow_unmarked=True) is False
 
     def test_absent_missing_node_output_stays_unresolved_through_not(self):
         nodes = [node("missing", "missing_node"), node("invert", "not"), node("cf", "change_filter")]
