@@ -1454,6 +1454,43 @@ class TestHostCheckRisingEdge:
         assert outputs["invert"]["out"] is True
         assert manager._hysteresis[graph_id]["memory"] == {"value": 7.0}
 
+    def test_transformed_no_change_pulse_rolls_back_synchronous_trigger_consumers(self):
+        flow = _flow(
+            [
+                node("constant", "const_value", {"value": "1", "data_type": "number"}),
+                node("sample", "const_value", {"value": "5", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("invert", "not"),
+                node("stats", "statistics"),
+                node("hours", "operating_hours"),
+                node("random", "random_value"),
+            ],
+            [
+                edge("constant", "cf", "value", "in"),
+                edge("cf", "invert", "changed", "in1"),
+                edge("invert", "stats", "out", "reset"),
+                edge("sample", "stats", "value", "value"),
+                edge("invert", "hours", "out", "reset"),
+                edge("invert", "random", "out", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-no-pulse-synchronous-triggers"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {"hours": {"accumulated_hours": 5.0, "last_start": None}}
+        manager._hysteresis[graph_id] = {
+            "cf": {"value": 1.0},
+            "stats": {"s_min": 2.0, "s_max": 4.0, "s_sum": 6.0, "s_count": 2},
+        }
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["invert"]["out"] is True
+        assert outputs["stats"]["count"] == 3
+        assert manager._node_state[graph_id]["hours"]["accumulated_hours"] == 5.0
+        assert outputs["random"]["value"] is None
+
     def test_transformed_no_change_pulse_does_not_trigger_datapoint_write(self):
         target_id = uuid.uuid4()
         flow = _flow(

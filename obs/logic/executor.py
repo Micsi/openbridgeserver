@@ -621,7 +621,13 @@ class GraphExecutor:
             left_aware = left.tzinfo is not None and left.utcoffset() is not None
             right_aware = right.tzinfo is not None and right.utcoffset() is not None
             if left_aware and right_aware:
-                return left.astimezone(_UTC) == right.astimezone(_UTC), True
+                try:
+                    return left.astimezone(_UTC) == right.astimezone(_UTC), True
+                except (OverflowError, ValueError):
+                    try:
+                        return bool(left == right), True
+                    except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail equality
+                        return False, True
             if not left_aware and not right_aware and left.fold != right.fold:
                 return False, True
         if isinstance(left, _time) and isinstance(right, _time):
@@ -716,7 +722,13 @@ class GraphExecutor:
             left_aware = left.tzinfo is not None and left.utcoffset() is not None
             right_aware = right.tzinfo is not None and right.utcoffset() is not None
             if left_aware and right_aware:
-                return left.astimezone(_UTC) == right.astimezone(_UTC)
+                try:
+                    return left.astimezone(_UTC) == right.astimezone(_UTC)
+                except (OverflowError, ValueError):
+                    try:
+                        return bool(left == right)
+                    except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail equality
+                        return False
             if not left_aware and not right_aware and left.fold != right.fold:
                 return False
         if isinstance(left, _time) and isinstance(right, _time):
@@ -755,16 +767,18 @@ class GraphExecutor:
                 return False
             remaining = list(right.items())
             for left_key, left_value in left.items():
-                match = next(
-                    (
-                        index
-                        for index, (right_key, right_value) in enumerate(remaining)
-                        if cls._nan_aware_equal(left_key, right_key, seen) and cls._nan_aware_equal(left_value, right_value, seen)
-                    ),
-                    None,
-                )
+                match = None
+                matched_seen: set[tuple[int, int]] | None = None
+                for index, (right_key, right_value) in enumerate(remaining):
+                    candidate_seen = set(seen)
+                    if cls._nan_aware_equal(left_key, right_key, candidate_seen) and cls._nan_aware_equal(left_value, right_value, candidate_seen):
+                        match = index
+                        matched_seen = candidate_seen
+                        break
                 if match is None:
                     return False
+                if matched_seen is not None:
+                    seen.update(matched_seen)
                 remaining.pop(match)
             return True
         if isinstance(left, (list, tuple)) and isinstance(right, type(left)):
@@ -774,9 +788,18 @@ class GraphExecutor:
                 return False
             remaining = list(right)
             for left_item in left:
-                match = next((i for i, right_item in enumerate(remaining) if cls._nan_aware_equal(left_item, right_item, seen)), None)
+                match = None
+                matched_seen = None
+                for index, right_item in enumerate(remaining):
+                    candidate_seen = set(seen)
+                    if cls._nan_aware_equal(left_item, right_item, candidate_seen):
+                        match = index
+                        matched_seen = candidate_seen
+                        break
                 if match is None:
                     return False
+                if matched_seen is not None:
+                    seen.update(matched_seen)
                 remaining.pop(match)
             return True
         try:

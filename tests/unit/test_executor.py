@@ -1065,6 +1065,22 @@ class TestChangeFilterNode:
 
         assert out["cf"] == {"out": [second], "changed": True}
 
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_aware_datetime_utc_overflow_falls_back_safely(self, nested):
+        from datetime import datetime as datetime_type
+        from datetime import timedelta, timezone
+
+        value = datetime_type.min.replace(tzinfo=timezone(timedelta(hours=14)))
+        baseline = [value] if nested else value
+        state = {"cf": {"value": baseline}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        current = [value] if nested else value
+        out = exc.execute({"cf": {"in": current}})
+
+        assert out["cf"]["changed"] is False
+        assert "__error__" not in out["cf"]
+
     def test_naive_datetime_fold_transitions_are_changes(self):
         first = datetime(2025, 10, 26, 2, 30, fold=0)  # noqa: DTZ001 - specifically tests naive fold metadata
         second = datetime(2025, 10, 26, 2, 30, fold=1)  # noqa: DTZ001 - specifically tests naive fold metadata
@@ -1390,6 +1406,17 @@ class TestChangeFilterNode:
 
         assert out["cf"]["changed"] is True
         assert "__error__" not in out["cf"]
+
+    def test_dictionary_candidate_matching_isolates_visited_pairs(self):
+        retained = {float("nan"): [2], float("nan"): [1]}
+        shared = [1]
+        live = {float("nan"): shared, float("nan"): shared}
+        state = {"cf": {"value": retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is True
 
     def test_scalar_opaque_recovery_handles_failing_string_conversion(self):
         class FailingString:

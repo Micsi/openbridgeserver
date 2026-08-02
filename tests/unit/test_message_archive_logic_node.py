@@ -690,6 +690,7 @@ def test_fresh_sibling_input_at_mixed_relay_is_not_suppressed_by_unchanged_filte
     flow = _flow(
         [
             node("constant", "const_value", {"value": "1", "data_type": "number"}),
+            node("debug_source", "const_value", {"value": "false", "data_type": "boolean"}),
             node("cf", "change_filter"),
             node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
             node("compare", "compare", {"operator": "="}),
@@ -876,6 +877,53 @@ def test_debug_message_override_replaces_change_filter_provenance() -> None:
         )
 
     assert outputs["cf"]["changed"] is False
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once()
+
+
+def test_debug_fan_in_override_is_independently_fresh() -> None:
+    flow = _flow(
+        [
+            node("constant", "const_value", {"value": "1", "data_type": "number"}),
+            node("cf", "change_filter"),
+            node("relay", "or", {"input_count": 2}),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+        ],
+        [
+            edge("constant", "cf", "value", "in"),
+            edge("cf", "relay", "changed", "in1"),
+            edge("debug_source", "relay", "value", "in2"),
+            edge("relay", "notify", "out", "message"),
+        ],
+    )
+    manager = _make_manager()
+    graph_id = "debug-fan-in-override"
+    manager._graphs[graph_id] = ("Debug Fan-in", True, flow)
+    manager._node_state[graph_id] = {}
+    manager._hysteresis[graph_id] = {"cf": {"value": 1.0}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = asyncio.run(
+            manager._execute_graph(
+                graph_id,
+                "Debug Fan-in",
+                flow,
+                {},
+                debug_overrides={"relay": {"in2": True}},
+            )
+        )
+
+    assert outputs["cf"]["changed"] is False
+    assert outputs["relay"]["out"] is True
     assert outputs["notify"]["sent"] is True
     adapter.send_notification.assert_awaited_once()
 

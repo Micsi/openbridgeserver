@@ -3112,7 +3112,7 @@ class LogicManager:
         _change_filter_ids = {n.id for n in flow.nodes if n.type == "change_filter"}
         _rollback_source_ids = unseeded_read_ids | (random_value_ids if needs_random_value_snapshot else set())
         _rollback_reaches_change_filter = bool(_change_filter_ids & _downstream_closure(_rollback_source_ids, _effective_edges))
-        _needs_pre_execute_snapshot = needs_async_replay_snapshot or _rollback_reaches_change_filter
+        _needs_pre_execute_snapshot = needs_async_replay_snapshot or _rollback_reaches_change_filter or bool(_change_filter_ids)
         _pulse_hysteresis_prior: dict[str, Any] = {}
 
         # Executor nodes mutate their hysteresis mapping synchronously.  Run
@@ -3689,9 +3689,14 @@ class LogicManager:
                         if edge.target == pulse_edge.target
                         and edge is not pulse_edge
                         and not (_node_type_by_id.get(edge.target) == "gate" and (edge.targetHandle or "in") == "enable")
-                        and event_fresh is not None
-                        and (edge.targetHandle or "in") in event_fresh.get(edge.target, set())
-                        and bool(fresh_origins.get(edge.source, set()) - pulse_fresh_origins)
+                        and (
+                            (edge.targetHandle or "in") in debug_overrides.get(edge.target, {})
+                            or (
+                                event_fresh is not None
+                                and (edge.targetHandle or "in") in event_fresh.get(edge.target, set())
+                                and bool(fresh_origins.get(edge.source, set()) - pulse_fresh_origins)
+                            )
+                        )
                     ]
                     if other_fresh_edges:
                         continue
@@ -3729,6 +3734,40 @@ class LogicManager:
                     target_output["_triggered"] = False
 
         _suppress_missing_cf_trigger_pulses()
+
+        synchronous_trigger_types = {"statistics", "operating_hours", "random_value"}
+        missing_synchronous_targets = {
+            target_id
+            for target_id, origins in _cf_changed_trigger_origins.items()
+            if _node_type_by_id.get(target_id) in synchronous_trigger_types
+            and not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins)
+        }
+        if missing_synchronous_targets:
+            synchronous_descendants = missing_synchronous_targets | _downstream_closure(missing_synchronous_targets, _effective_edges)
+            synchronous_overrides = {node_id: dict(values) for node_id, values in aug_overrides.items()}
+            for target_id in missing_synchronous_targets:
+                target_type = get_node_type(_node_type_by_id.get(target_id))
+                if target_type is None:
+                    continue
+                target_overrides = synchronous_overrides.setdefault(target_id, {})
+                for port in target_type.inputs:
+                    if port.type == "trigger":
+                        target_overrides[port.id] = False
+            synchronous_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+            synchronous_known_outputs = {node_id: values for node_id, values in outputs.items() if node_id not in synchronous_descendants}
+            synchronous_outputs = await _execute_pass(
+                await _executor(synchronous_hyst),
+                synchronous_overrides,
+                known_outputs=synchronous_known_outputs,
+            )
+            for node_id in synchronous_descendants:
+                if node_id in synchronous_outputs:
+                    outputs[node_id] = synchronous_outputs[node_id]
+                if node_id in synchronous_hyst:
+                    hyst[node_id] = synchronous_hyst[node_id]
+                else:
+                    hyst.pop(node_id, None)
+            _apply_operating_hours_state(synchronous_descendants, pre_execute_node_state)
 
         cron_node_ids = {n.id for n in flow.nodes if n.type == "timer_cron"}
         # A change_filter's "changed" pulse is a discrete edge just like a
