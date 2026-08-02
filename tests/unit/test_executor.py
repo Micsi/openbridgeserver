@@ -1684,6 +1684,20 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is False
         assert "__error__" not in out["cf"]
 
+    def test_deeply_nested_nan_dictionaries_compare_without_recursion_error(self):
+        retained: dict = {"leaf": float("nan")}
+        live: dict = {"leaf": float("nan")}
+        for _ in range(1100):
+            retained = {"nested": retained}
+            live = {"nested": live}
+        state = {"cf": {"value": retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is False
+        assert "__error__" not in out["cf"]
+
     def test_deeply_nested_ambiguous_nan_dictionary_keys_backtrack(self):
         retained: list = []
         live: list = []

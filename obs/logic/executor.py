@@ -816,24 +816,7 @@ class GraphExecutor:
             except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing equality
                 return False
         if isinstance(left, dict) and isinstance(right, dict):
-            if len(left) != len(right):
-                return False
-            remaining = list(right.items())
-            for left_key, left_value in left.items():
-                match = None
-                matched_seen: set[tuple[int, int]] | None = None
-                for index, (right_key, right_value) in enumerate(remaining):
-                    candidate_seen = set(seen)
-                    if cls._nan_aware_equal(left_key, right_key, candidate_seen) and cls._nan_aware_equal(left_value, right_value, candidate_seen):
-                        match = index
-                        matched_seen = candidate_seen
-                        break
-                if match is None:
-                    return False
-                if matched_seen is not None:
-                    seen.update(matched_seen)
-                remaining.pop(match)
-            return True
+            return cls._nonstandard_container_equal_iterative(left, right)
         if isinstance(left, (list, tuple)) and isinstance(right, type(left)):
             try:
                 return len(left) == len(right) and all(cls._nan_aware_equal(le, re, seen) for le, re in zip(left, right))

@@ -59,8 +59,18 @@ def _state_values_equal(left: Any, right: Any) -> bool | None:
         return True if left is right else None
 
 
-def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: dict[str, Any]) -> None:
+def _merge_worker_state(
+    base: dict[str, Any],
+    updated: dict[str, Any],
+    target: dict[str, Any],
+    visited: set[tuple[int, int, int]] | None = None,
+) -> None:
     """Apply worker changes after the caller validates the graph generation."""
+    visited = set() if visited is None else visited
+    triple = (id(base), id(updated), id(target))
+    if triple in visited:
+        return
+    visited.add(triple)
     for key in base.keys() - updated.keys():
         target.pop(key, None)
     for key, updated_value in updated.items():
@@ -69,7 +79,7 @@ def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: d
             continue
         target_value = target.get(key, _MISSING_STATE)
         if isinstance(base_value, dict) and isinstance(updated_value, dict) and isinstance(target_value, dict):
-            _merge_worker_state(base_value, updated_value, target_value)
+            _merge_worker_state(base_value, updated_value, target_value, visited)
         else:
             # ``updated`` is an isolated worker snapshot that is discarded
             # after this commit, so ownership can safely move to ``target``.
@@ -3914,6 +3924,12 @@ class LogicManager:
                     } or (target_type_name == "avg_multi" and target_handle.startswith("in_"))
                     if stateful_data_handle:
                         stateful_relay_origins.setdefault(pulse_edge.target, {}).setdefault(target_handle, set()).update(source_origins)
+                        if target_type and any(port.type == "trigger" for port in target_type.inputs) and target_type_name != "memory":
+                            target_origins = relay_origins.setdefault(pulse_edge.target, set())
+                            new_origins = source_origins - target_origins
+                            if new_origins:
+                                target_origins.update(new_origins)
+                                queue.append(pulse_edge.target)
                     if target_type and any(port.type == "trigger" for port in target_type.inputs):
                         continue
                     pulse_fresh_origins = fresh_origins.get(pulse_edge.source, set())

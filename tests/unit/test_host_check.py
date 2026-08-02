@@ -1449,6 +1449,26 @@ class TestHostCheckRisingEdge:
         assert "__error__" not in outputs["cf"]
         assert manager._hysteresis[graph_id]["cf"]["value"].label == "new"
 
+    def test_worker_state_merge_handles_self_referential_dictionary(self):
+        flow = _flow(
+            [node("script", "python_script", {"script": "result = {}; result['self'] = result"}), node("cf", "change_filter")],
+            [edge("script", "cf", "result", "in")],
+        )
+        manager = _make_manager()
+        graph_id = "g-worker-merge-cyclic-dict"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            second = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is False
+        assert "__error__" not in second["cf"]
+        retained = manager._hysteresis[graph_id]["cf"]["value"]
+        assert retained["self"] is retained
+
     def test_worker_state_merge_commits_past_non_reflexive_old_state(self):
         class NonReflexiveOldState:
             def __init__(self, value):
@@ -1713,6 +1733,33 @@ class TestHostCheckRisingEdge:
         assert repeated["stats"]["count"] == 1
         assert repeated["stats"]["avg"] == 1.0
         assert manager._hysteresis[graph_id]["stats"]["s_count"] == 1
+
+    def test_missing_statistics_pulse_does_not_republish_retained_count(self):
+        target_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("cf", "change_filter"),
+                node("stats", "statistics"),
+                node("write", "datapoint_write", {"datapoint_id": str(target_id)}),
+            ],
+            [
+                edge("cf", "stats", "changed", "value"),
+                edge("stats", "write", "count", "value"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-missing-statistics-pulse-write"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+
+        assert first["write"]["_write_value"] == 1
+        assert repeated["stats"]["count"] == 1
+        assert repeated["write"]["_write_value"] is None
+        assert manager._event_bus.publish.await_count == 1
 
     @pytest.mark.parametrize(
         ("node_type", "node_data", "target_handle"),
