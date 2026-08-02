@@ -71,8 +71,8 @@ def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: d
 
 def _copy_graph_worker_state(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Create the worker baseline and mutable state away from the event loop."""
-    base = copy.deepcopy(state)
-    return base, copy.deepcopy(base)
+    base = _safe_deepcopy_state(state)
+    return base, _safe_deepcopy_state(base)
 
 
 def _serialize_logic_debug_payload(
@@ -3366,19 +3366,23 @@ class LogicManager:
                     # trusted and must still propagate normally.
                     if _target_type == "gate" and (_te.targetHandle or "in") == "in":
                         _gate_data = (_target_node.data or {}) if _target_node is not None else {}
+                        _enable_override = debug_overrides.get(_te.target, {}).get("enable", _MISSING_STATE)
                         _enable_edge = next(
                             (e for e in _effective_edges if e.target == _te.target and (e.targetHandle or "in") == "enable"),
                             None,
                         )
-                        if _enable_edge is None or _enable_edge.source not in _tainted:
-                            _enable_src = outputs if _enable_edge is not None and _enable_edge.source in async_replay_source_ids else _src
-                            _enable_v = (
-                                False
-                                if _enable_edge is None
-                                else GraphExecutor._to_bool(
-                                    GraphExecutor._get_output_value(_enable_src.get(_enable_edge.source, {}), _enable_edge.sourceHandle or "out")
+                        if _enable_override is not _MISSING_STATE or _enable_edge is None or _enable_edge.source not in _tainted:
+                            if _enable_override is not _MISSING_STATE:
+                                _enable_v = GraphExecutor._to_bool(_enable_override)
+                            else:
+                                _enable_src = outputs if _enable_edge is not None and _enable_edge.source in async_replay_source_ids else _src
+                                _enable_v = (
+                                    False
+                                    if _enable_edge is None
+                                    else GraphExecutor._to_bool(
+                                        GraphExecutor._get_output_value(_enable_src.get(_enable_edge.source, {}), _enable_edge.sourceHandle or "out")
+                                    )
                                 )
-                            )
                             if _gate_data.get("negate_enable"):
                                 _enable_v = not _enable_v
                             if not _enable_v:
@@ -5334,7 +5338,13 @@ class LogicManager:
                     if edge.target == _pulse_edge.target
                     and edge is not _pulse_edge
                     and not (_node_type_by_id.get(edge.target) == "gate" and (edge.targetHandle or "in") == "enable")
-                    and (_event_fresh_for_provenance is None or (edge.targetHandle or "in") in _event_fresh_for_provenance.get(edge.target, set()))
+                    and (
+                        (_event_fresh_for_provenance is None and _node_type_by_id.get(edge.source) != "const_value")
+                        or (
+                            _event_fresh_for_provenance is not None
+                            and (edge.targetHandle or "in") in _event_fresh_for_provenance.get(edge.target, set())
+                        )
+                    )
                 ]
                 if _other_data_edges:
                     # At a fan-in relay, an independently fresh input may be

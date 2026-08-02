@@ -834,6 +834,43 @@ def test_manual_run_does_not_send_false_change_filter_message() -> None:
     adapter.send_notification.assert_awaited_once()
 
 
+def test_manual_run_keeps_no_change_provenance_through_static_fan_in() -> None:
+    flow = _flow(
+        [
+            node("constant", "const_value", {"value": "1", "data_type": "number"}),
+            node("cf", "change_filter"),
+            node("enabled", "const_value", {"value": "true", "data_type": "bool"}),
+            node("relay", "and", {"input_count": 2}),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+        ],
+        [
+            edge("constant", "cf", "value", "in"),
+            edge("cf", "relay", "changed", "in1"),
+            edge("enabled", "relay", "value", "in2"),
+            edge("relay", "notify", "out", "message"),
+        ],
+    )
+    manager = _make_manager()
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        first = _run(manager, flow, {})
+        second = _run(manager, flow, {})
+
+    assert first["notify"]["sent"] is True
+    assert second["relay"]["out"] is False
+    assert second["notify"]["sent"] is False
+    adapter.send_notification.assert_awaited_once()
+
+
 def test_shadowed_change_filter_message_edge_does_not_suppress_false_message() -> None:
     """Only the effective last edge determines whether False is a
     change-filter no-pulse or an ordinary delivered boolean message."""

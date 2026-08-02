@@ -1328,6 +1328,23 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is True
         assert "__error__" not in out["cf"]
 
+    def test_recursive_container_leaf_with_ambiguous_equality_is_safe(self):
+        class UnsafeTruth:
+            def __bool__(self):
+                raise ValueError("ambiguous truth")
+
+        class AmbiguousValue:
+            def __eq__(self, other):
+                return UnsafeTruth()
+
+        state = {"cf": {"value": [float("nan"), AmbiguousValue()]}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [float("nan"), AmbiguousValue()]}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
     def test_scalar_opaque_recovery_handles_failing_string_conversion(self):
         class FailingString:
             def __eq__(self, other):

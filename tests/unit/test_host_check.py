@@ -1380,6 +1380,27 @@ class TestHostCheckRisingEdge:
         assert outputs != {}
         assert outputs["other_read"] == {"value": 42, "changed": True}
 
+    def test_worker_snapshot_survives_retained_non_deepcopyable_filter_value(self):
+        flow = _flow(
+            [
+                node("script", "python_script", {"script": "result = (x for x in range(3))"}),
+                node("cf", "change_filter"),
+            ],
+            [edge("script", "cf", "result", "in")],
+        )
+        manager = _make_manager()
+        graph_id = "g-worker-snapshot-non-copyable"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            second = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is True
+        assert "__error__" not in second["cf"]
+
     def test_unseeded_read_without_reachable_change_filter_skips_rollback_snapshots(self):
         flow = _flow(
             [
@@ -1453,6 +1474,41 @@ class TestHostCheckRisingEdge:
 
         assert outputs["invert"]["out"] is True
         assert outputs["cf"] == {"out": True, "changed": True}
+
+    def test_debug_override_can_close_gate_with_unresolved_wired_enable(self):
+        nodes = [
+            node("data_read", "datapoint_read", {}),
+            node("enable_read", "datapoint_read", {}),
+            node("relay_gate", "gate", {"closed_behavior": "default_value", "default_value": "9"}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("data_read", "relay_gate", "value", "in"),
+                edge("enable_read", "relay_gate", "value", "enable"),
+                edge("relay_gate", "cf", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-gate-debug-closed-unresolved-enable"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": 1}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(
+                manager._execute_graph(
+                    graph_id,
+                    "test",
+                    flow,
+                    {},
+                    debug_overrides={"relay_gate": {"enable": False}},
+                )
+            )
+
+        assert outputs["relay_gate"]["out"] == 9.0
+        assert outputs["cf"] == {"out": 9.0, "changed": True}
 
     def test_change_filter_is_not_held_when_and_gate_has_an_unconnected_resolved_input(self):
         """Regression: the AND gate's per-input taint-absorption check

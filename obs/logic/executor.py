@@ -746,7 +746,7 @@ class GraphExecutor:
                 remaining.pop(match)
             return True
         try:
-            return left == right
+            return bool(left == right)
         except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing equality
             return False
 
