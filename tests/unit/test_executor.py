@@ -1756,6 +1756,44 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is True
         assert "__error__" not in out["cf"]
 
+    def test_plain_iterative_fallback_rejects_structural_and_equality_failures(self):
+        class RaisingEquality:
+            def __hash__(self):
+                return 1
+
+            def __eq__(self, _other):
+                raise RuntimeError("equality unavailable")
+
+        assert GraphExecutor._plain_container_equal_iterative([], ()) is False
+        assert GraphExecutor._plain_container_equal_iterative([1], [1, 2]) is False
+        assert GraphExecutor._plain_container_equal_iterative({"left": 1}, {}) is False
+        assert GraphExecutor._plain_container_equal_iterative({"left": 1}, {"right": 1}) is False
+        assert GraphExecutor._plain_container_equal_iterative({RaisingEquality(): 1}, {RaisingEquality(): 1}) is False
+        assert GraphExecutor._plain_container_equal_iterative({1}, {1}) is True
+        assert GraphExecutor._plain_container_equal_iterative({1}, {2}) is False
+        assert GraphExecutor._plain_container_equal_iterative({RaisingEquality()}, {RaisingEquality()}) is False
+        assert GraphExecutor._plain_container_equal_iterative([1], [2]) is False
+        assert GraphExecutor._plain_container_equal_iterative([RaisingEquality()], [RaisingEquality()]) is False
+
+        left_cycle: list = []
+        right_cycle: list = []
+        left_cycle.append(left_cycle)
+        right_cycle.append(right_cycle)
+        assert GraphExecutor._nan_aware_equal(left_cycle, right_cycle) is True
+
+    def test_nonstandard_iterative_set_matching_branches(self):
+        assert GraphExecutor._nonstandard_container_equal_iterative(set(), set()) is True
+        assert GraphExecutor._nonstandard_container_equal_iterative({1}, {1}) is True
+        assert GraphExecutor._nonstandard_container_equal_iterative({1}, {2}) is False
+        assert GraphExecutor._nonstandard_container_equal_iterative({1}, {1, 2}) is False
+        assert (
+            GraphExecutor._nonstandard_container_equal_iterative(
+                {float("nan"), float("nan")},
+                {float("nan"), float("nan")},
+            )
+            is True
+        )
+
     def test_ambiguous_nan_dictionary_mismatch_is_bounded(self):
         retained = {float("nan"): float("nan") for _ in range(10)}
         live = {float("nan"): float("nan") for _ in range(9)}
