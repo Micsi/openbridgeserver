@@ -2351,6 +2351,34 @@ class TestChangeFilterNode:
         assert out["cf"]["out"] == time(10, 30, 0)
         assert isinstance(out["cf"]["out"], time)
 
+    def test_legacy_date_recovery_with_failing_string_conversion_is_a_safe_change(self):
+        from datetime import date
+
+        class UnsafeStringDate(date):
+            def __str__(self):
+                raise RuntimeError("string conversion unavailable")
+
+        state = {"cf": {"value": "2026-01-01", "_recovered_str": True}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": UnsafeStringDate(2026, 1, 2)}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
+    def test_mapping_with_failing_items_traversal_is_a_safe_change(self):
+        class UnsafeItemsDict(dict):
+            def items(self):
+                raise RuntimeError("mapping traversal unavailable")
+
+        state = {"cf": {"value": {"value": 1}}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": UnsafeItemsDict(value=2)}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
     def test_equal_via_str_fallback_migrates_persisted_state_to_typed_value(self):
         """Regression: matching via the legacy str()-recovery path emitted
         the correct typed "out" (test above) but left the persisted state

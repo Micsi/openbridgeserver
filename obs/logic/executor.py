@@ -768,7 +768,10 @@ class GraphExecutor:
         # not a persistence artifact, so it must not be treated as
         # "unchanged".
         if right_is_recovered_str and isinstance(right, str) and isinstance(left, (_date, _time)):
-            return str(left) == right, False
+            try:
+                return str(left) == right, False
+            except Exception:  # noqa: BLE001 - date/time subclasses may fail legacy string recovery arbitrarily
+                right_is_recovered_str = False
         # See the docstring above: an "opaque_str" tag unambiguously means
         # `right` is a lossy str() of some type _persist_default didn't
         # otherwise recognize, so any `left` type may safely be compared via
@@ -939,10 +942,16 @@ class GraphExecutor:
                     continue
                 visited.add(id(current))
                 if isinstance(current, dict):
-                    for key, item in current.items():
-                        pending.extend((key, item))
+                    try:
+                        for key, item in current.items():
+                            pending.extend((key, item))
+                    except Exception:  # noqa: BLE001 - custom mappings may fail traversal arbitrarily
+                        return True
                 else:
-                    pending.extend(current)
+                    try:
+                        pending.extend(current)
+                    except Exception:  # noqa: BLE001 - custom containers may fail traversal arbitrarily
+                        return True
         return False
 
     @classmethod
@@ -1074,9 +1083,14 @@ class GraphExecutor:
                     work.extend(("pair", left_item, right_item) for left_item, right_item in zip(current_left, current_right))
                     continue
                 if isinstance(current_left, dict):
-                    if len(current_left) != len(current_right):
+                    try:
+                        if len(current_left) != len(current_right):
+                            break
+                        left_items = list(current_left.items())
+                        right_items = list(current_right.items())
+                    except Exception:  # noqa: BLE001 - custom mappings may fail sizing or traversal arbitrarily
                         break
-                    work.append(("dict", list(current_left.items()), list(current_right.items())))
+                    work.append(("dict", left_items, right_items))
                     continue
                 if isinstance(current_left, (set, frozenset)):
                     if len(current_left) != len(current_right):
