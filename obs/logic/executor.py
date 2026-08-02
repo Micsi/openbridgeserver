@@ -225,6 +225,12 @@ class GraphExecutor:
                 # Change Filter would then commit. Keep the output absent so
                 # the missing state propagates through every intermediate hop.
                 unresolved = [item for item in missing_inputs if item[0] not in node_overrides and "__error__" in outputs.get(item[1], {})]
+                if node.type == "hysteresis":
+                    # An absent value deliberately means "emit retained
+                    # state" for Hysteresis, making it a taint boundary just
+                    # like Memory. Do not turn that defined fallback into an
+                    # error merely because a downstream Change Filter exists.
+                    unresolved = [item for item in unresolved if item[0] != "value"]
                 if unresolved and node.id in change_filter_ancestors and node.type not in {"change_filter", "memory"}:
                     details = ", ".join(f"{handle} <- {src_id}.{src_handle}" for handle, src_id, src_handle in unresolved)
                     raise ExecutionError(f"Missing upstream output: {details}")
@@ -638,6 +644,21 @@ class GraphExecutor:
             right_aware = right.tzinfo is not None and right.utcoffset() is not None
             if left_aware and right_aware:
                 return left.astimezone(_UTC) == right.astimezone(_UTC)
+        container_types = (dict, list, tuple, set, frozenset)
+        # Keep ordinary JSON/container comparisons linear. Recursive
+        # matching is only needed when a leaf has deliberately unusual
+        # equality (NaN or an aware datetime whose DST fold Python's
+        # same-tzinfo comparison can hide).
+        if (
+            isinstance(left, container_types)
+            and isinstance(right, container_types)
+            and not cls._contains_nonstandard_equality_leaf(left)
+            and not cls._contains_nonstandard_equality_leaf(right)
+        ):
+            try:
+                return left == right
+            except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing equality
+                return False
         if isinstance(left, dict) and isinstance(right, dict):
             if len(left) != len(right):
                 return False
@@ -671,6 +692,18 @@ class GraphExecutor:
             return left == right
         except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing equality
             return False
+
+    @classmethod
+    def _contains_nonstandard_equality_leaf(cls, value: Any) -> bool:
+        if _is_nan(value):
+            return True
+        if isinstance(value, _datetime):
+            return value.tzinfo is not None and value.utcoffset() is not None
+        if isinstance(value, dict):
+            return any(cls._contains_nonstandard_equality_leaf(key) or cls._contains_nonstandard_equality_leaf(item) for key, item in value.items())
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return any(cls._contains_nonstandard_equality_leaf(item) for item in value)
+        return False
 
     @classmethod
     def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
@@ -768,9 +801,16 @@ class GraphExecutor:
                     return False
                 remaining.pop(match)
             return True
-        if left == right:
+        try:
+            equal = bool(left == right)
+        except Exception:  # noqa: BLE001 - opaque runtime values may define failing/non-scalar equality
+            equal = False
+        if equal:
             return True
-        return (isinstance(right, _OpaqueRecoveredStr) or (allow_unmarked and isinstance(right, str))) and str(left) == right
+        try:
+            return (isinstance(right, _OpaqueRecoveredStr) or (allow_unmarked and isinstance(right, str))) and str(left) == right
+        except Exception:  # noqa: BLE001 - opaque runtime values may also define failing string conversion
+            return False
 
     @classmethod
     def _values_equal(cls, left: Any, right: Any) -> bool:

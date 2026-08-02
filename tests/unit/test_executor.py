@@ -1074,6 +1074,27 @@ class TestChangeFilterNode:
         assert out["cf"] == {"out": [1], "changed": True}
         assert state == {"cf": {"value": [1]}}
 
+    def test_ordinary_large_mapping_uses_linear_equality_fast_path(self):
+        class Key:
+            comparisons = 0
+
+            def __init__(self, value):
+                self.value = value
+
+            def __hash__(self):
+                return hash(self.value)
+
+            def __eq__(self, other):
+                type(self).comparisons += 1
+                return isinstance(other, Key) and self.value == other.value
+
+        size = 500
+        left = {Key(i): i for i in range(size)}
+        right = {Key(i): i for i in reversed(range(size))}
+
+        assert GraphExecutor._nan_aware_equal(left, right) is True
+        assert Key.comparisons <= size * 2
+
     @pytest.mark.parametrize("value", [[float("nan")], {"value": float("nan")}, (float("nan"),), {float("nan")}])
     def test_repeated_nested_nan_value_is_suppressed(self, value):
         state = {}
@@ -1160,6 +1181,32 @@ class TestChangeFilterNode:
         assert "__error__" in out["invert"]
         assert out["cf"] == {"out": False, "changed": False}
         assert state == {"cf": {"value": False}}
+
+    def test_missing_producer_output_stops_at_retained_hysteresis(self):
+        state = {"h": False, "cf": {"value": False}}
+        nodes = [
+            node("producer", "python_script", {"script": "raise RuntimeError('boom')"}),
+            node("h", "hysteresis", {"threshold_on": 25.0, "threshold_off": 20.0}),
+            node("cf", "change_filter"),
+        ]
+        edges = [edge("producer", "h", "result", "value"), edge("h", "cf", "out", "in")]
+
+        out = make_executor(nodes, edges, hysteresis_state=state).execute()
+
+        assert "__error__" in out["producer"]
+        assert out["h"] == {"out": False}
+        assert out["cf"] == {"out": False, "changed": False}
+        assert state == {"h": False, "cf": {"value": False}}
+
+        recovered_nodes = [
+            node("producer", "python_script", {"script": "result = 10"}),
+            node("h", "hysteresis", {"threshold_on": 25.0, "threshold_off": 20.0}),
+            node("cf", "change_filter"),
+        ]
+        recovered = make_executor(recovered_nodes, edges, hysteresis_state=state).execute()
+
+        assert recovered["h"] == {"out": False}
+        assert recovered["cf"] == {"out": False, "changed": False}
 
     def test_large_integers_compared_without_precision_loss(self):
         """Regression: float round-trip must not equate distinct 64-bit values."""
@@ -1511,6 +1558,28 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": live}})
 
         assert out["cf"]["changed"] is False
+
+    def test_opaque_recovery_handles_a_live_value_with_raising_equality(self):
+        class RaisingEquality:
+            def __eq__(self, other):
+                raise RuntimeError("comparison unavailable")
+
+            def __str__(self):
+                return "opaque-value"
+
+        live = RaisingEquality()
+        state = {
+            "cf": {
+                "value": _OpaqueRecoveredStr("opaque-value"),
+                "_opaque_recovered_str": True,
+            }
+        }
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is False
+        assert isinstance(out["cf"]["out"], RaisingEquality)
 
     def test_opaque_recovery_fallback_is_limited_to_tagged_leaf_positions(self):
         state = {
