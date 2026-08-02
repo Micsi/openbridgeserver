@@ -60,10 +60,9 @@ def _state_values_equal(left: Any, right: Any) -> bool | None:
 
 
 def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: dict[str, Any]) -> None:
-    """Apply worker changes without erasing state updated concurrently."""
+    """Apply worker changes after the caller validates the graph generation."""
     for key in base.keys() - updated.keys():
-        if _state_values_equal(target.get(key, _MISSING_STATE), base[key]) is not False:
-            target.pop(key, None)
+        target.pop(key, None)
     for key, updated_value in updated.items():
         base_value = base.get(key, _MISSING_STATE)
         if base_value is not _MISSING_STATE and _state_values_equal(updated_value, base_value) is True:
@@ -71,9 +70,14 @@ def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: d
         target_value = target.get(key, _MISSING_STATE)
         if isinstance(base_value, dict) and isinstance(updated_value, dict) and isinstance(target_value, dict):
             _merge_worker_state(base_value, updated_value, target_value)
-        elif target_value is _MISSING_STATE or _state_values_equal(target_value, base_value) is not False:
+        else:
             # ``updated`` is an isolated worker snapshot that is discarded
             # after this commit, so ownership can safely move to ``target``.
+            # The per-graph execution lock serializes worker passes and
+            # _execute_pass validates the graph generation immediately before
+            # this merge. Comparing target to a deep-copied baseline cannot
+            # reliably detect concurrency: legitimate non-reflexive retained
+            # values compare unequal solely because they were copied.
             target[key] = updated_value
 
 
@@ -3643,9 +3647,10 @@ class LogicManager:
 
         def _build_cf_pulse_origins(
             event_fresh: dict[str, set[str]] | None, fresh_seed_origins: dict[str, str]
-        ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+        ) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict[str, set[str]]]]:
             message_origins: dict[str, set[str]] = {}
             trigger_origins: dict[str, set[str]] = {}
+            trigger_handle_origins: dict[str, dict[str, set[str]]] = {}
             fresh_origins = {node_id: {origin} for node_id, origin in fresh_seed_origins.items()}
             if event_fresh is not None:
                 changed = True
@@ -3679,6 +3684,9 @@ class LogicManager:
                     trigger_ports = {port.id for port in target_type.inputs if port.type == "trigger"} if target_type else set()
                     if (pulse_edge.targetHandle or "in") in trigger_ports:
                         trigger_origins.setdefault(pulse_edge.target, set()).update(source_origins)
+                        trigger_handle_origins.setdefault(pulse_edge.target, {}).setdefault(pulse_edge.targetHandle or "in", set()).update(
+                            source_origins
+                        )
                         continue
                     if target_type and any(port.type == "trigger" for port in target_type.inputs):
                         continue
@@ -3706,7 +3714,7 @@ class LogicManager:
                         if new_origins:
                             target_origins.update(new_origins)
                             queue.append(pulse_edge.target)
-            return message_origins, trigger_origins
+            return message_origins, trigger_origins, trigger_handle_origins
 
         _initial_event_fresh = (
             _fresh_input_handles({node_id: dict(values) for node_id, values in overrides.items()}, flow.edges) if overrides else None
@@ -3717,7 +3725,7 @@ class LogicManager:
             datapoint_id = (event_node.data or {}).get("datapoint_id") if event_node is not None and event_node.type == "datapoint_read" else None
             return f"datapoint:{datapoint_id}" if datapoint_id else node_id
 
-        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(
+        _cf_changed_message_origins, _cf_changed_trigger_origins, _cf_changed_trigger_handle_origins = _build_cf_pulse_origins(
             _initial_event_fresh, {node_id: _event_origin(node_id) for node_id in overrides}
         )
 
@@ -3736,23 +3744,24 @@ class LogicManager:
         _suppress_missing_cf_trigger_pulses()
 
         synchronous_trigger_types = {"statistics", "operating_hours", "random_value"}
-        missing_synchronous_targets = {
-            target_id
-            for target_id, origins in _cf_changed_trigger_origins.items()
+        missing_synchronous_handles = {
+            target_id: {
+                handle
+                for handle, origins in handle_origins.items()
+                if not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins)
+            }
+            for target_id, handle_origins in _cf_changed_trigger_handle_origins.items()
             if _node_type_by_id.get(target_id) in synchronous_trigger_types
-            and not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins)
         }
+        missing_synchronous_handles = {target_id: handles for target_id, handles in missing_synchronous_handles.items() if handles}
+        missing_synchronous_targets = set(missing_synchronous_handles)
         if missing_synchronous_targets:
             synchronous_descendants = missing_synchronous_targets | _downstream_closure(missing_synchronous_targets, _effective_edges)
             synchronous_overrides = {node_id: dict(values) for node_id, values in aug_overrides.items()}
-            for target_id in missing_synchronous_targets:
-                target_type = get_node_type(_node_type_by_id.get(target_id))
-                if target_type is None:
-                    continue
+            for target_id, missing_handles in missing_synchronous_handles.items():
                 target_overrides = synchronous_overrides.setdefault(target_id, {})
-                for port in target_type.inputs:
-                    if port.type == "trigger":
-                        target_overrides[port.id] = False
+                for handle in missing_handles:
+                    target_overrides[handle] = False
             synchronous_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             synchronous_known_outputs = {node_id: values for node_id, values in outputs.items() if node_id not in synchronous_descendants}
             synchronous_outputs = await _execute_pass(
@@ -5455,7 +5464,7 @@ class LogicManager:
         # gets this treatment, including effective pure-relay paths. Keeping
         # provenance structural (not value-based) leaves ordinary boolean
         # sources wired to "message" unaffected.
-        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(
+        _cf_changed_message_origins, _cf_changed_trigger_origins, _cf_changed_trigger_handle_origins = _build_cf_pulse_origins(
             _event_fresh_inputs(), {node_id: _event_origin(node_id) for node_id in set(overrides) | refreshed_ical_nodes}
         )
 

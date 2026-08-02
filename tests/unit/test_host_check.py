@@ -1428,6 +1428,31 @@ class TestHostCheckRisingEdge:
         assert "__error__" not in outputs["cf"]
         assert manager._hysteresis[graph_id]["cf"]["value"].label == "new"
 
+    def test_worker_state_merge_commits_past_non_reflexive_old_state(self):
+        class NonReflexiveOldState:
+            def __init__(self, value):
+                self.value = value
+
+            def __eq__(self, other):
+                if not isinstance(other, NonReflexiveOldState) or self.value == 0 or other.value == 0:
+                    return False
+                return self.value == other.value
+
+        flow = _flow([node("script", "python_script", {"script": "result = 1"}), node("cf", "change_filter")])
+        manager = _make_manager()
+        graph_id = "g-worker-merge-non-reflexive-old-state"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": NonReflexiveOldState(0)}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": NonReflexiveOldState(1)}}))
+            second = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": NonReflexiveOldState(1)}}))
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is False
+        assert manager._hysteresis[graph_id]["cf"]["value"].value == 1
+
     def test_transformed_no_change_pulse_does_not_reset_memory(self):
         flow = _flow(
             [
@@ -1459,6 +1484,7 @@ class TestHostCheckRisingEdge:
             [
                 node("constant", "const_value", {"value": "1", "data_type": "number"}),
                 node("sample", "const_value", {"value": "5", "data_type": "number"}),
+                node("active", "const_value", {"value": "true", "data_type": "boolean"}),
                 node("cf", "change_filter"),
                 node("invert", "not"),
                 node("stats", "statistics"),
@@ -1471,6 +1497,7 @@ class TestHostCheckRisingEdge:
                 edge("invert", "stats", "out", "reset"),
                 edge("sample", "stats", "value", "value"),
                 edge("invert", "hours", "out", "reset"),
+                edge("active", "hours", "value", "active"),
                 edge("invert", "random", "out", "trigger"),
             ],
         )
@@ -1489,6 +1516,7 @@ class TestHostCheckRisingEdge:
         assert outputs["invert"]["out"] is True
         assert outputs["stats"]["count"] == 3
         assert manager._node_state[graph_id]["hours"]["accumulated_hours"] == 5.0
+        assert manager._node_state[graph_id]["hours"]["last_start"] is not None
         assert outputs["random"]["value"] is None
 
     def test_transformed_no_change_pulse_does_not_trigger_datapoint_write(self):

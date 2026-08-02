@@ -1230,7 +1230,7 @@ async def test_persist_node_state_skips_cyclic_node_but_saves_unrelated_state():
 
 
 @pytest.mark.asyncio
-async def test_change_filter_persists_and_restores_opaque_baseline_without_spurious_pulse():
+async def test_change_filter_replaces_lossy_opaque_baseline_on_first_live_value():
     """Regression (issue #1087 Codex finding): a change_filter's comparison
     baseline is not always JSON-native or one of _persist_default's
     specifically recognized types — e.g. a permitted python_script result
@@ -1238,9 +1238,9 @@ async def test_change_filter_persists_and_restores_opaque_baseline_without_spuri
     untagged str(v), indistinguishable from a genuine string after restart;
     _load_graphs would restore that as a plain string, and a live value of
     the original type compared against it would report a spurious
-    changed=True forever. The catch-all is now tagged "opaque_str" and
-    restored with an "_opaque_recovered_str" marker so an ordinary live
-    value of the original type is still recognized as unchanged."""
+    changed=True forever. The catch-all is tagged "opaque_str" so the first
+    live value is conservatively emitted once and replaces the lossy stand-in;
+    subsequent comparisons use the real in-memory value."""
     import json
 
     flow = _flow([{"id": "cf1", "type": "change_filter"}])
@@ -1266,21 +1266,22 @@ async def test_change_filter_persists_and_restores_opaque_baseline_without_spuri
 
     with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
         outputs = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": 3 + 4j}})
+        repeated = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": 3 + 4j}})
 
-    assert outputs["cf1"]["changed"] is False
+    assert outputs["cf1"]["changed"] is True
+    assert repeated["cf1"]["changed"] is False
 
 
 @pytest.mark.asyncio
-async def test_change_filter_persists_and_restores_nested_opaque_baseline_without_spurious_pulse():
+async def test_change_filter_replaces_nested_lossy_opaque_baseline_on_first_live_value():
     """Regression: the opaque-recovery detection only recognized an
     "opaque_str" tag placed directly at state["value"] itself — a baseline
     like [3 + 4j] persists as a LIST holding one opaque-tagged item,
     decoded to ['(3+4j)'] (a list, not a dict), so the direct check never
     noticed it and never set "_opaque_recovered_str". The live [3 + 4j]
-    then compared unequal against that lossy stand-in — plain list
-    equality has no way to recognize the nested recovery — reporting a
-    spurious changed=True on every restart despite nothing having
-    actually changed."""
+    then compared unequal against that lossy stand-in. The precise marker
+    ensures that this uncertainty emits once and is replaced by the real
+    nested value rather than trusting a non-injective string form."""
     import json
 
     flow = _flow([{"id": "cf1", "type": "change_filter"}])
@@ -1302,8 +1303,10 @@ async def test_change_filter_persists_and_restores_nested_opaque_baseline_withou
 
     with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
         outputs = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": [3 + 4j]}})
+        repeated = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": [3 + 4j]}})
 
-    assert outputs["cf1"]["changed"] is False
+    assert outputs["cf1"]["changed"] is True
+    assert repeated["cf1"]["changed"] is False
 
 
 @pytest.mark.asyncio
@@ -1376,7 +1379,7 @@ async def test_change_filter_preserves_colliding_opaque_and_string_keys():
     with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
         outputs = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": live_value}})
 
-    assert outputs["cf1"]["changed"] is False
+    assert outputs["cf1"]["changed"] is True
     assert outputs["cf1"]["out"] == live_value
     assert mgr2._hysteresis["g1"]["cf1"] == {"value": live_value}
 
@@ -1454,8 +1457,8 @@ async def test_load_graphs_marks_opaque_recovery_even_when_a_node_id_collides_wi
     with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
         outputs = await mgr2._execute_graph("g1", "G", flow, {_PERSIST_TYPE_TAG: {"in": 3 + 4j}, "cf2": {"in": 5 + 6j}})
 
-    assert outputs[_PERSIST_TYPE_TAG]["changed"] is False
-    assert outputs["cf2"]["changed"] is False
+    assert outputs[_PERSIST_TYPE_TAG]["changed"] is True
+    assert outputs["cf2"]["changed"] is True
 
 
 @pytest.mark.asyncio
@@ -1781,7 +1784,7 @@ class TestPersistDefaultAndDecode:
 
         out = exc.execute({"cf": {"in": {3 + 4j, "(3+4j)"}}})
 
-        assert out["cf"]["changed"] is False
+        assert out["cf"]["changed"] is True
         assert state["cf"] == {"value": {3 + 4j, "(3+4j)"}}
 
     def test_decode_preserves_opaque_and_genuine_string_dict_key_collision(self):
@@ -1806,7 +1809,7 @@ class TestPersistDefaultAndDecode:
         live = {3 + 4j: "complex", "(3+4j)": "string"}
         out = exc.execute({"cf": {"in": live}})
 
-        assert out["cf"]["changed"] is False
+        assert out["cf"]["changed"] is True
         assert state["cf"] == {"value": live}
 
     def test_persist_default_recursively_escapes_set_members(self):

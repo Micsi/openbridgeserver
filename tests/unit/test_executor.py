@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, tzinfo
 from decimal import Decimal
 from typing import ClassVar
 from zoneinfo import ZoneInfo
@@ -1081,6 +1081,27 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is False
         assert "__error__" not in out["cf"]
 
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_datetime_awareness_probe_failure_falls_back_safely(self, nested):
+        class RaisingTimezone(tzinfo):
+            def utcoffset(self, _dt):
+                raise RuntimeError("offset unavailable")
+
+            def dst(self, _dt):
+                return timedelta(0)
+
+        retained = datetime(2025, 1, 1, tzinfo=RaisingTimezone())
+        live = retained
+        retained_value = [retained] if nested else retained
+        live_value = [live] if nested else live
+        state = {"cf": {"value": retained_value}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live_value}})
+
+        assert out["cf"]["changed"] is False
+        assert "__error__" not in out["cf"]
+
     def test_naive_datetime_fold_transitions_are_changes(self):
         first = datetime(2025, 10, 26, 2, 30, fold=0)  # noqa: DTZ001 - specifically tests naive fold metadata
         second = datetime(2025, 10, 26, 2, 30, fold=1)  # noqa: DTZ001 - specifically tests naive fold metadata
@@ -1470,6 +1491,31 @@ class TestChangeFilterNode:
 
         assert out["cf"]["changed"] is True
 
+    def test_opaque_recovery_treats_same_type_same_string_as_changed_once(self):
+        class Reading:
+            def __init__(self, value):
+                self.value = value
+
+            def __eq__(self, other):
+                return isinstance(other, Reading) and self.value == other.value
+
+            def __str__(self):
+                return "reading"
+
+        state = {
+            "cf": {
+                "value": _OpaqueRecoveredStr("reading", f"{Reading.__module__}.{Reading.__qualname__}"),
+                "_opaque_recovered_str": True,
+            }
+        }
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        first = exc.execute({"cf": {"in": Reading(2)}})
+        second = exc.execute({"cf": {"in": Reading(2)}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is False
+
     def test_self_referential_containers_compare_without_recursion_error(self):
         first = []
         first.append(first)
@@ -1832,8 +1878,10 @@ class TestChangeFilterNode:
         exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
 
         out = exc.execute({"cf": {"in": live}})
+        repeated = exc.execute({"cf": {"in": live}})
 
-        assert out["cf"]["changed"] is False
+        assert out["cf"]["changed"] is True
+        assert repeated["cf"]["changed"] is False
 
     def test_opaque_recovery_handles_a_live_value_with_raising_equality(self):
         class RaisingEquality:
@@ -1854,7 +1902,7 @@ class TestChangeFilterNode:
 
         out = exc.execute({"cf": {"in": live}})
 
-        assert out["cf"]["changed"] is False
+        assert out["cf"]["changed"] is True
         assert isinstance(out["cf"]["out"], RaisingEquality)
 
     def test_opaque_recovery_fallback_is_limited_to_tagged_leaf_positions(self):

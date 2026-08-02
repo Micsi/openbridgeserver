@@ -40,16 +40,15 @@ class _OpaqueRecoveredStr(str):
         return instance
 
 
-def _opaque_type_name(value: Any) -> str:
-    return f"{type(value).__module__}.{type(value).__qualname__}"
-
-
 def _opaque_recovered_matches(left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
     if isinstance(right, _OpaqueRecoveredStr):
-        if isinstance(left, str):
-            return False
-        if right.type_name and _opaque_type_name(left) != right.type_name:
-            return False
+        # ``opaque_str`` is deliberately a lossy persistence fallback.  Even
+        # the fully-qualified runtime type plus str(value) cannot prove that
+        # the restored value equals the next live instance: distinct objects
+        # of one type may share the same string representation. Treat the
+        # first live value after restore as changed and migrate to a lossless
+        # in-memory baseline for subsequent executions.
+        return False
     elif not (allow_unmarked and isinstance(right, str)):
         return False
     try:
@@ -618,8 +617,14 @@ class GraphExecutor:
         if _is_nan(left) or _is_nan(right):
             return False, True
         if isinstance(left, _datetime) and isinstance(right, _datetime):
-            left_aware = left.tzinfo is not None and left.utcoffset() is not None
-            right_aware = right.tzinfo is not None and right.utcoffset() is not None
+            try:
+                left_aware = left.tzinfo is not None and left.utcoffset() is not None
+                right_aware = right.tzinfo is not None and right.utcoffset() is not None
+            except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail awareness probing
+                try:
+                    return bool(left == right), True
+                except Exception:  # noqa: BLE001 - the same tzinfo may also fail datetime equality
+                    return False, True
             if left_aware and right_aware:
                 try:
                     return left.astimezone(_UTC) == right.astimezone(_UTC), True
@@ -719,8 +724,14 @@ class GraphExecutor:
         if _is_nan(left) or _is_nan(right):
             return False
         if isinstance(left, _datetime) and isinstance(right, _datetime):
-            left_aware = left.tzinfo is not None and left.utcoffset() is not None
-            right_aware = right.tzinfo is not None and right.utcoffset() is not None
+            try:
+                left_aware = left.tzinfo is not None and left.utcoffset() is not None
+                right_aware = right.tzinfo is not None and right.utcoffset() is not None
+            except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail awareness probing
+                try:
+                    return bool(left == right)
+                except Exception:  # noqa: BLE001 - the same tzinfo may also fail datetime equality
+                    return False
             if left_aware and right_aware:
                 try:
                     return left.astimezone(_UTC) == right.astimezone(_UTC)
@@ -812,7 +823,10 @@ class GraphExecutor:
         if _is_nan(value):
             return True
         if isinstance(value, _datetime):
-            return (value.tzinfo is not None and value.utcoffset() is not None) or bool(value.fold)
+            try:
+                return (value.tzinfo is not None and value.utcoffset() is not None) or bool(value.fold)
+            except Exception:  # noqa: BLE001 - force arbitrary failing tzinfo through the guarded recursive path
+                return True
         if isinstance(value, _time):
             return value.tzinfo is not None or bool(value.fold)
         if isinstance(value, (dict, list, tuple, set, frozenset)):
