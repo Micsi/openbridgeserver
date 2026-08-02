@@ -2032,6 +2032,41 @@ class TestHostCheckRisingEdge:
         assert client.request.await_args_list[0].kwargs["content"] == "true"
         assert client.request.await_args_list[1].kwargs["content"] == "null"
 
+    def test_independently_triggered_api_success_is_not_tainted_by_missing_filter_body(self):
+        trigger_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("cf", "change_filter"),
+                node("trigger", "datapoint_read", {"datapoint_id": str(trigger_id)}),
+                node("api", "api_client", {"url": "http://93.184.216.34/", "method": "POST"}),
+                node("write", "datapoint_write", {"datapoint_id": str(target_id)}),
+            ],
+            [
+                edge("cf", "api", "changed", "body"),
+                edge("trigger", "api", "value", "trigger"),
+                edge("api", "write", "success", "value"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-independent-api-success"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.logic.manager.httpx.AsyncClient") as client_cls:
+            client = AsyncMock()
+            client_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+            client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            client.request = AsyncMock(return_value=_MockResponse(200))
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "trigger": {"value": True}}))
+                repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "trigger": {"value": True}}))
+
+        assert client.request.await_count == 2
+        assert client.request.await_args_list[1].kwargs["content"] == "null"
+        assert repeated["write"]["_write_value"] is True
+        assert manager._event_bus.publish.await_count == 2
+
     @pytest.mark.parametrize(
         ("target_type", "target_handle", "output_handle"),
         [

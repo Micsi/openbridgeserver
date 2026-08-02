@@ -3877,6 +3877,35 @@ class LogicManager:
             }
             _fan_in_probe = GraphExecutor(flow, {}, ical_app_config)
 
+            def _has_independent_fresh_trigger(target_id: str, trigger_ports: set[str], missing_origins: set[str]) -> bool:
+                target_fresh_handles = event_fresh.get(target_id, set()) if event_fresh is not None else set()
+                for trigger_handle in trigger_ports:
+                    if trigger_handle in debug_overrides.get(target_id, {}):
+                        if GraphExecutor._to_bool(debug_overrides[target_id][trigger_handle]):
+                            return True
+                        continue
+                    trigger_edge = next(
+                        (edge for edge in _effective_edges if edge.target == target_id and (edge.targetHandle or "in") == trigger_handle),
+                        None,
+                    )
+                    if trigger_edge is None:
+                        if (
+                            event_fresh is not None
+                            and trigger_handle in target_fresh_handles
+                            and GraphExecutor._to_bool(outputs.get(target_id, {}).get("_trigger"))
+                        ):
+                            return True
+                        continue
+                    trigger_value = GraphExecutor._get_output_value(outputs.get(trigger_edge.source, {}), trigger_edge.sourceHandle or "out")
+                    if not GraphExecutor._to_bool(trigger_value):
+                        continue
+                    independent_origin = trigger_edge.source not in relay_origins or bool(
+                        fresh_origins.get(trigger_edge.source, set()) - missing_origins
+                    )
+                    if independent_origin and (event_fresh is None or trigger_handle in target_fresh_handles):
+                        return True
+                return False
+
             def _fresh_fan_in_preserves_output(pulse_edge: Any) -> bool:
                 target_node = _node_by_id_early.get(pulse_edge.target)
                 if target_node is None or target_node.type not in _pure_fan_in_types:
@@ -3958,7 +3987,12 @@ class LogicManager:
                     } or (target_type_name == "avg_multi" and target_handle.startswith("in_"))
                     if stateful_data_handle:
                         stateful_relay_origins.setdefault(pulse_edge.target, {}).setdefault(target_handle, set()).update(source_origins)
-                        if target_type and any(port.type == "trigger" for port in target_type.inputs) and target_type_name != "memory":
+                        if (
+                            target_type
+                            and trigger_ports
+                            and target_type_name != "memory"
+                            and not _has_independent_fresh_trigger(pulse_edge.target, trigger_ports, source_origins)
+                        ):
                             target_origins = relay_origins.setdefault(pulse_edge.target, set())
                             new_origins = source_origins - target_origins
                             if new_origins:
