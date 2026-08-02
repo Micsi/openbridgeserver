@@ -320,39 +320,73 @@ def _escape_persist_collision(v: Any) -> Any:
     here — encoded as a [key, value] pair list (which can hold a key of
     any JSON-representable type) instead of a native JSON object.
     """
-    if isinstance(v, _OpaqueRecoveredStr):
-        tag = {_PERSIST_TYPE_TAG: "opaque_str", "value": str(v)}
-        if v.type_name:
-            tag["type"] = v.type_name
-        return tag
-    if isinstance(v, _OpaqueRecoveredSet):
-        return {
-            _PERSIST_TYPE_TAG: "frozenset" if v.frozen else "set",
-            "value": [_escape_persist_collision(item) for item in v.items],
-        }
-    if isinstance(v, _OpaqueRecoveredDict):
-        return {
-            _PERSIST_TYPE_TAG: "dict_nonstr_keys",
-            "value": [[_escape_persist_collision(key), _escape_persist_collision(item)] for key, item in v.items],
-        }
-    if isinstance(v, dict):
-        if any(not isinstance(k, str) or isinstance(k, _OpaqueRecoveredStr) for k in v):
-            return {
-                _PERSIST_TYPE_TAG: "dict_nonstr_keys",
-                "value": [[_escape_persist_collision(k), _escape_persist_collision(val)] for k, val in v.items()],
+    results: list[Any] = []
+    active: set[int] = set()
+    work: list[tuple[str, Any]] = [("visit", v)]
+    while work:
+        operation, current = work.pop()
+        if operation == "visit":
+            if isinstance(current, _OpaqueRecoveredStr):
+                tag = {_PERSIST_TYPE_TAG: "opaque_str", "value": str(current)}
+                if current.type_name:
+                    tag["type"] = current.type_name
+                results.append(tag)
+                continue
+
+            kind: str | None = None
+            children: list[Any] = []
+            if isinstance(current, _OpaqueRecoveredSet):
+                kind = "opaque_set"
+                children = list(current.items)
+            elif isinstance(current, _OpaqueRecoveredDict):
+                kind = "opaque_dict"
+                children = [item for pair in current.items for item in pair]
+            elif isinstance(current, dict):
+                kind = "dict_nonstr" if any(not isinstance(k, str) or isinstance(k, _OpaqueRecoveredStr) for k in current) else "dict"
+                children = [item for pair in current.items() for item in pair] if kind == "dict_nonstr" else list(current.values())
+            elif isinstance(current, tuple):
+                kind = "tuple"
+                children = list(current)
+            elif isinstance(current, list):
+                kind = "list"
+                children = list(current)
+            if kind is None:
+                results.append(current)
+                continue
+
+            identity = id(current)
+            if identity in active:
+                raise ValueError("cyclic node state cannot be persisted")
+            active.add(identity)
+            work.append(("finish", (kind, current, len(children), identity)))
+            work.extend(("visit", child) for child in reversed(children))
+            continue
+
+        kind, original, child_count, identity = current
+        children = results[-child_count:] if child_count else []
+        if child_count:
+            del results[-child_count:]
+        active.remove(identity)
+        if kind == "list":
+            escaped: Any = children
+        elif kind == "tuple":
+            escaped = {_PERSIST_TYPE_TAG: "tuple", "value": children}
+        elif kind == "dict":
+            escaped_dict = dict(zip(original.keys(), children))
+            escaped = {_PERSIST_TYPE_TAG: _PERSIST_ESCAPED_TAG, "value": escaped_dict} if _PERSIST_TYPE_TAG in escaped_dict else escaped_dict
+        elif kind in {"dict_nonstr", "opaque_dict"}:
+            pairs = [[children[index], children[index + 1]] for index in range(0, len(children), 2)]
+            escaped = {_PERSIST_TYPE_TAG: "dict_nonstr_keys", "value": pairs}
+        else:
+            escaped = {
+                _PERSIST_TYPE_TAG: "frozenset" if original.frozen else "set",
+                "value": children,
             }
-        escaped = {k: _escape_persist_collision(val) for k, val in v.items()}
-        if _PERSIST_TYPE_TAG in escaped:
-            return {_PERSIST_TYPE_TAG: _PERSIST_ESCAPED_TAG, "value": escaped}
-        return escaped
-    if isinstance(v, tuple):
-        return {_PERSIST_TYPE_TAG: "tuple", "value": [_escape_persist_collision(item) for item in v]}
-    if isinstance(v, list):
-        return [_escape_persist_collision(item) for item in v]
-    return v
+        results.append(escaped)
+    return results[0]
 
 
-def _decode_persisted_value(v: Any) -> Any:
+def _decode_persisted_value_recursive(v: Any) -> Any:
     """Reverse of `_persist_default`/`_escape_persist_collision`, applied
     recursively after json.loads.
 
@@ -457,6 +491,96 @@ def _decode_persisted_value(v: Any) -> Any:
     return v
 
 
+def _decode_persisted_value(v: Any) -> Any:
+    """Iterative counterpart of the legacy recursive decoder above."""
+    results: list[Any] = []
+    work: list[tuple[str, Any]] = [("visit", v)]
+    while work:
+        operation, current = work.pop()
+        if operation == "visit":
+            if not isinstance(current, (dict, list)):
+                results.append(current)
+                continue
+            if isinstance(current, list):
+                work.append(("finish", ("list", current, len(current))))
+                work.extend(("visit", item) for item in reversed(current))
+                continue
+
+            tag = current.get(_PERSIST_TYPE_TAG)
+            if tag in {"bytes", "decimal", "opaque_str", *tuple(_PERSIST_ISOFORMAT_TYPES)}:
+                results.append(_decode_persisted_value_recursive(current))
+                continue
+            if tag == _PERSIST_ESCAPED_TAG:
+                inner = current.get("value")
+                if not isinstance(inner, dict):
+                    results.append(current)
+                    continue
+                work.append(("finish", ("dict", inner, len(inner))))
+                work.extend(("visit", item) for item in reversed(list(inner.values())))
+                continue
+            if tag == "tuple":
+                inner = current.get("value")
+                if not isinstance(inner, list):
+                    results.append(current)
+                    continue
+                work.append(("finish", ("tuple", current, len(inner))))
+                work.extend(("visit", item) for item in reversed(inner))
+                continue
+            if tag in {"set", "frozenset"}:
+                inner = current.get("value")
+                if not isinstance(inner, list):
+                    results.append(current)
+                    continue
+                work.append(("finish", (tag, current, len(inner))))
+                work.extend(("visit", item) for item in reversed(inner))
+                continue
+            if tag == "dict_nonstr_keys":
+                inner = current.get("value")
+                if not isinstance(inner, list) or any(not isinstance(pair, list) or len(pair) != 2 for pair in inner):
+                    results.append(current)
+                    continue
+                children = [item for pair in inner for item in pair]
+                work.append(("finish", ("dict_nonstr_keys", current, len(children))))
+                work.extend(("visit", item) for item in reversed(children))
+                continue
+
+            # Untagged application dictionaries and unknown tag dictionaries
+            # are both preserved structurally while their values are decoded.
+            work.append(("finish", ("dict", current, len(current))))
+            work.extend(("visit", item) for item in reversed(list(current.values())))
+            continue
+
+        kind, original, child_count = current
+        children = results[-child_count:] if child_count else []
+        if child_count:
+            del results[-child_count:]
+        if kind == "list":
+            decoded: Any = children
+        elif kind == "dict":
+            decoded = dict(zip(original.keys(), children))
+        elif kind == "tuple":
+            decoded = tuple(children)
+        elif kind in {"set", "frozenset"}:
+            if any(GraphExecutor._contains_opaque_recovered_leaf(item) for item in children):
+                decoded = _OpaqueRecoveredSet(children, frozen=kind == "frozenset")
+            else:
+                try:
+                    decoded = frozenset(children) if kind == "frozenset" else set(children)
+                except TypeError:
+                    decoded = original
+        else:
+            decoded_items = [(children[index], children[index + 1]) for index in range(0, len(children), 2)]
+            try:
+                if any(GraphExecutor._contains_opaque_recovered_leaf(key) for key, _value in decoded_items):
+                    decoded = _OpaqueRecoveredDict(decoded_items)
+                else:
+                    decoded = dict(decoded_items)
+            except (TypeError, ValueError):
+                decoded = original
+        results.append(decoded)
+    return results[0]
+
+
 def _contains_opaque_tag(v: Any) -> bool:
     """Walk a RAW (json-decoded, but not yet `_decode_persisted_value`-
     processed) persisted value for an "opaque_str" tag at any nesting
@@ -470,30 +594,32 @@ def _contains_opaque_tag(v: Any) -> bool:
     Mirrors the same tag structure `_decode_persisted_value` recognizes,
     without actually decoding — this only needs a yes/no answer.
     """
-    if isinstance(v, dict):
-        tag = v.get(_PERSIST_TYPE_TAG)
-        if tag == "opaque_str":
-            return True
-        if tag == _PERSIST_ESCAPED_TAG:
-            inner = v.get("value")
-            return isinstance(inner, dict) and any(_contains_opaque_tag(val) for val in inner.values())
-        if tag == "dict_nonstr_keys":
-            inner = v.get("value")
-            return isinstance(inner, list) and any(
-                isinstance(pair, list) and len(pair) == 2 and (_contains_opaque_tag(pair[0]) or _contains_opaque_tag(pair[1])) for pair in inner
-            )
-        if tag in ("tuple", "set", "frozenset"):
-            inner = v.get("value")
-            return isinstance(inner, list) and any(_contains_opaque_tag(item) for item in inner)
-        if tag is not None:
-            # bytes/datetime/date/time: "value" is a plain isoformat/hex
-            # string, never a further container — nothing to recurse into.
-            return False
-        # Untagged dict: application data (e.g. change_filter's own
-        # {"value": ...} wrapper) — walk its values.
-        return any(_contains_opaque_tag(val) for val in v.values())
-    if isinstance(v, list):
-        return any(_contains_opaque_tag(item) for item in v)
+    pending = [v]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            tag = current.get(_PERSIST_TYPE_TAG)
+            if tag == "opaque_str":
+                return True
+            if tag == _PERSIST_ESCAPED_TAG:
+                inner = current.get("value")
+                if isinstance(inner, dict):
+                    pending.extend(inner.values())
+                continue
+            if tag == "dict_nonstr_keys":
+                inner = current.get("value")
+                if isinstance(inner, list):
+                    pending.extend(item for pair in inner if isinstance(pair, list) and len(pair) == 2 for item in pair)
+                continue
+            if tag in ("tuple", "set", "frozenset"):
+                inner = current.get("value")
+                if isinstance(inner, list):
+                    pending.extend(inner)
+                continue
+            if tag is None:
+                pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
     return False
 
 
@@ -3769,6 +3895,14 @@ class LogicManager:
                             source_origins
                         )
                         continue
+                    target_type_name = _node_type_by_id.get(pulse_edge.target)
+                    target_handle = pulse_edge.targetHandle or "in"
+                    # Statistics has a separate reset trigger, but its value
+                    # input is still stateful.  A missing Change Filter pulse
+                    # must therefore roll its accumulator back/replay it with
+                    # no value instead of committing the False placeholder.
+                    if target_type_name == "statistics" and target_handle == "value":
+                        stateful_relay_origins.setdefault(pulse_edge.target, {}).setdefault(target_handle, set()).update(source_origins)
                     if target_type and any(port.type == "trigger" for port in target_type.inputs):
                         continue
                     pulse_fresh_origins = fresh_origins.get(pulse_edge.source, set())
@@ -3815,8 +3949,6 @@ class LogicManager:
                     if other_fresh_edges and _fresh_fan_in_preserves_output(pulse_edge):
                         continue
                     if _edge_carries_pulse(pulse_edge, require_fired_change_filter=False):
-                        target_type_name = _node_type_by_id.get(pulse_edge.target)
-                        target_handle = pulse_edge.targetHandle or "in"
                         stateful_handle = (target_type_name == "gate" and target_handle == "in") or (
                             target_type_name == "hysteresis" and target_handle == "value"
                         )
@@ -3939,12 +4071,20 @@ class LogicManager:
             stateful_descendants = missing_stateful_relay_targets | _downstream_closure(missing_stateful_relay_targets, _effective_edges)
             stateful_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             stateful_known_outputs = {node_id: values for node_id, values in outputs.items() if node_id not in stateful_descendants}
+            stateful_overrides = {node_id: dict(values) for node_id, values in aug_overrides.items()}
             for target_id in missing_stateful_relay_targets:
-                prior_value = stateful_hyst.get(target_id, False) if _node_type_by_id.get(target_id) == "hysteresis" else stateful_hyst.get(target_id)
-                stateful_known_outputs[target_id] = {"out": prior_value}
+                target_type_name = _node_type_by_id.get(target_id)
+                if target_type_name in {"gate", "hysteresis"}:
+                    prior_value = stateful_hyst.get(target_id, False) if target_type_name == "hysteresis" else stateful_hyst.get(target_id)
+                    stateful_known_outputs[target_id] = {"out": prior_value}
+                else:
+                    target_overrides = stateful_overrides.setdefault(target_id, {})
+                    for handle, origins in _cf_changed_stateful_relay_origins[target_id].items():
+                        if not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
+                            target_overrides[handle] = None
             stateful_outputs = await _execute_pass(
                 await _executor(stateful_hyst),
-                aug_overrides,
+                stateful_overrides,
                 known_outputs=stateful_known_outputs,
             )
             for node_id in stateful_descendants:

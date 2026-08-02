@@ -1640,6 +1640,28 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is False
         assert "__error__" not in out["cf"]
 
+    def test_deeply_nested_nan_fallback_preserves_scalar_python_equality(self):
+        retained: list = []
+        live: list = []
+        retained_cursor = retained
+        live_cursor = live
+        for _ in range(1100):
+            retained_child: list = []
+            live_child: list = []
+            retained_cursor.append(retained_child)
+            live_cursor.append(live_child)
+            retained_cursor = retained_child
+            live_cursor = live_child
+        retained_cursor.extend([float("nan"), 1])
+        live_cursor.extend([float("nan"), 1.0])
+        state = {"cf": {"value": retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is False
+        assert "__error__" not in out["cf"]
+
     def test_deeply_nested_nan_dictionary_keys_compare_equal(self):
         retained: list = []
         live: list = []

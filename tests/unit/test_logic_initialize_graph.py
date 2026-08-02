@@ -1850,6 +1850,45 @@ class TestPersistDefaultAndDecode:
 
         assert restored == {"cf": {"value": {(1, 2)}}}
 
+    @pytest.mark.asyncio
+    async def test_deep_change_filter_state_persists_and_restores_iteratively(self):
+        import json
+
+        flow = _flow([{"id": "cf", "type": "change_filter"}])
+        retained: list = []
+        cursor = retained
+        for _ in range(1100):
+            child: list = []
+            cursor.append(child)
+            cursor = child
+        cursor.append("leaf")
+
+        mgr = _make_manager({})
+        mgr._graphs["g1"] = ("G", True, flow)
+        mgr._hysteresis["g1"] = {"cf": {"value": retained}}
+        await mgr._persist_node_state("g1")
+        saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
+        assert "cf" in json.loads(saved_json)["state"]
+
+        mgr2 = _make_manager({})
+        mgr2._db.fetchall = AsyncMock(
+            return_value=[{"id": "g1", "name": "G", "enabled": 1, "flow_data": flow.model_dump_json(), "node_state": saved_json}]
+        )
+        await mgr2._load_graphs()
+
+        live: list = []
+        cursor = live
+        for _ in range(1100):
+            child = []
+            cursor.append(child)
+            cursor = child
+        cursor.append("leaf")
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = await mgr2._execute_graph("g1", "G", flow, {"cf": {"in": live}})
+
+        assert outputs["cf"]["changed"] is False
+        assert "__error__" not in outputs["cf"]
+
     def test_decode_persisted_value_restores_set_and_frozenset(self):
         from obs.logic.manager import _decode_persisted_value
 

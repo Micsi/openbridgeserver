@@ -964,9 +964,15 @@ class GraphExecutor:
                     if not (_is_nan(current_left) and _is_nan(current_right)):
                         break
                     continue
-                if type(current_left) is not type(current_right):
+                left_is_container = isinstance(current_left, (list, tuple, dict, set, frozenset))
+                right_is_container = isinstance(current_right, (list, tuple, dict, set, frozenset))
+                # Container kinds are structural and must match exactly, but
+                # scalar leaves retain ordinary Python equality semantics.
+                # In particular, 1 == 1.0 at shallow nesting and must remain
+                # equal when recursion depth selects this iterative fallback.
+                if (left_is_container or right_is_container) and type(current_left) is not type(current_right):
                     break
-                if isinstance(current_left, (list, tuple, dict, set, frozenset)):
+                if left_is_container:
                     pair = (id(current_left), id(current_right))
                     if pair in seen:
                         continue
