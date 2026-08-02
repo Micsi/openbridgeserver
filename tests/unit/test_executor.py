@@ -1311,6 +1311,44 @@ class TestChangeFilterNode:
         assert "__error__" not in out["cf"]
         assert isinstance(state["cf"]["value"], UnsafeEquality)
 
+    def test_container_subclass_with_ambiguous_equality_is_safe(self):
+        class UnsafeTruth:
+            def __bool__(self):
+                raise ValueError("ambiguous truth")
+
+        class AmbiguousList(list):
+            def __eq__(self, other):
+                return UnsafeTruth()
+
+        state = {"cf": {"value": AmbiguousList([1])}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": AmbiguousList([1])}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
+    def test_scalar_opaque_recovery_handles_failing_string_conversion(self):
+        class FailingString:
+            def __eq__(self, other):
+                return False
+
+            def __str__(self):
+                raise RuntimeError("string conversion unavailable")
+
+        state = {
+            "cf": {
+                "value": _OpaqueRecoveredStr("old opaque value"),
+                "_opaque_recovered_str": True,
+            }
+        }
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": FailingString()}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
     def test_self_referential_containers_compare_without_recursion_error(self):
         first = []
         first.append(first)

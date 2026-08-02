@@ -35,7 +35,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from obs.core.json import jsonable
-from obs.logic.executor import GraphExecutor, _OpaqueRecoveredSet, _OpaqueRecoveredStr, _replay_known_output_value
+from obs.logic.executor import GraphExecutor, _OpaqueRecoveredDict, _OpaqueRecoveredSet, _OpaqueRecoveredStr, _replay_known_output_value
 from obs.logic.models import FlowData
 from obs.logic.node_types import get_node_type
 from obs.security.url_targets import resolve_url_target
@@ -233,20 +233,10 @@ def _persist_default(v: Any) -> Any:
         _tag: dict[str, Any] = {_PERSIST_TYPE_TAG: "datetime", "value": v.isoformat()}
         if isinstance(v.tzinfo, ZoneInfo):
             _tag["tz"] = v.tzinfo.key
-            # isoformat() also loses `fold`: during a DST "fall back", the
-            # same wall-clock time (e.g. 2:30 in Europe/Zurich) occurs
-            # TWICE, representing two DIFFERENT UTC instants an hour apart
-            # — fold=0 for the first, fold=1 for the second. The ISO string
-            # DOES capture the numeric offset that disambiguates which one
-            # (e.g. "+02:00" vs "+01:00"), but reconstructing via
-            # fromisoformat() + replace(tzinfo=named_zone) discards that
-            # and re-derives fold=0 from the wall-clock numbers alone,
-            # silently producing the WRONG instant (one hour off) whenever
-            # the original was fold=1. Persisting fold explicitly and
-            # replacing it back in on decode (see below) avoids re-deriving
-            # it at all.
-            if v.fold:
-                _tag["fold"] = v.fold
+        # isoformat() also loses `fold`. Preserve it explicitly for named,
+        # fixed-offset, and naive datetimes alike.
+        if v.fold:
+            _tag["fold"] = v.fold
         return _tag
     if isinstance(v, date):
         return {_PERSIST_TYPE_TAG: "date", "value": v.isoformat()}
@@ -320,6 +310,11 @@ def _escape_persist_collision(v: Any) -> Any:
         return {
             _PERSIST_TYPE_TAG: "frozenset" if v.frozen else "set",
             "value": [_escape_persist_collision(item) for item in v.items],
+        }
+    if isinstance(v, _OpaqueRecoveredDict):
+        return {
+            _PERSIST_TYPE_TAG: "dict_nonstr_keys",
+            "value": [[_escape_persist_collision(key), _escape_persist_collision(item)] for key, item in v.items],
         }
     if isinstance(v, dict):
         if any(not isinstance(k, str) or isinstance(k, _OpaqueRecoveredStr) for k in v):
@@ -405,7 +400,10 @@ def _decode_persisted_value(v: Any) -> Any:
             inner = v.get("value")
             if isinstance(inner, list):
                 try:
-                    return {_decode_persisted_value(k): _decode_persisted_value(val) for k, val in inner}
+                    decoded_items = [(_decode_persisted_value(k), _decode_persisted_value(val)) for k, val in inner]
+                    if any(GraphExecutor._contains_opaque_recovered_leaf(key) for key, _value in decoded_items):
+                        return _OpaqueRecoveredDict(decoded_items)
+                    return dict(decoded_items)
                 except (TypeError, ValueError):
                     return v
             return v
@@ -431,7 +429,7 @@ def _decode_persisted_value(v: Any) -> Any:
                     _decoded = _decoded.replace(tzinfo=ZoneInfo(_tz_name), fold=v.get("fold", 0))
                 except (ZoneInfoNotFoundError, ValueError):
                     pass
-            if tag == "time" and v.get("fold"):
+            if tag in {"datetime", "time"} and v.get("fold"):
                 return _decoded.replace(fold=v["fold"])
             return _decoded
         return {k: _decode_persisted_value(val) for k, val in v.items()}
@@ -5305,6 +5303,8 @@ class LogicManager:
         # provenance structural (not value-based) leaves ordinary boolean
         # sources wired to "message" unaffected.
         _cf_changed_message_origins: dict[str, set[str]] = {}
+        _cf_changed_trigger_origins: dict[str, set[str]] = {}
+        _event_fresh_for_provenance = _event_fresh_inputs()
         _cf_pulse_relay_origins = {node.id: {node.id} for node in flow.nodes if node.type == "change_filter"}
         _cf_pulse_queue = list(_cf_pulse_relay_origins)
         while _cf_pulse_queue:
@@ -5319,6 +5319,10 @@ class LogicManager:
                     _cf_changed_message_origins.setdefault(_pulse_edge.target, set()).update(_source_origins)
                     continue
                 _target_type = get_node_type(_node_type_by_id.get(_pulse_edge.target))
+                _trigger_ports = {port.id for port in _target_type.inputs if port.type == "trigger"} if _target_type else set()
+                if (_pulse_edge.targetHandle or "in") in _trigger_ports:
+                    _cf_changed_trigger_origins.setdefault(_pulse_edge.target, set()).update(_source_origins)
+                    continue
                 # Only pure logic/relay nodes carry pulse identity onward.
                 # Once it enters a node with a dedicated trigger port, that
                 # node's outputs are new result data, not the original pulse.
@@ -5330,6 +5334,7 @@ class LogicManager:
                     if edge.target == _pulse_edge.target
                     and edge is not _pulse_edge
                     and not (_node_type_by_id.get(edge.target) == "gate" and (edge.targetHandle or "in") == "enable")
+                    and (_event_fresh_for_provenance is None or (edge.targetHandle or "in") in _event_fresh_for_provenance.get(edge.target, set()))
                 ]
                 if _other_data_edges:
                     # At a fan-in relay, an independently fresh input may be
@@ -5350,11 +5355,17 @@ class LogicManager:
             _is_missing_cf_pulse = bool(_pulse_origins) and not any(
                 GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in _pulse_origins
             )
+            _trigger_origins = _cf_changed_trigger_origins.get(node_id, set())
+            _is_missing_cf_trigger = bool(_trigger_origins) and not any(
+                GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in _trigger_origins
+            )
             if event_fresh_inputs is None:
-                return not _is_missing_cf_pulse
+                return not _is_missing_cf_pulse and not _is_missing_cf_trigger
             fresh_handles = event_fresh_inputs.get(node_id, set())
             fresh_message = "message" in fresh_handles and _msg is not None and not _is_missing_cf_pulse
-            fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger"))
+            fresh_trigger = (
+                "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger")) and not _is_missing_cf_trigger
+            )
             return fresh_message or fresh_trigger
 
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
@@ -5993,9 +6004,33 @@ class LogicManager:
             # node's own application data can never be misread as one of
             # those tags, and the version envelope lets _load_graphs know
             # this row is guaranteed fully tagged (see _PERSIST_STATE_VERSION).
+            escaped_state: dict[str, Any] = {}
+            for node_id, node_state in state_to_save.items():
+                try:
+                    escaped_node_state = _escape_persist_collision(node_state)
+                    # Validate each node independently before composing the
+                    # graph row. Cyclic or otherwise unencodable state from
+                    # one custom value must not prevent unrelated node state
+                    # from being saved.
+                    json.dumps(escaped_node_state, default=_persist_default)
+                except Exception:
+                    logger.warning(
+                        "Graph %s node %s: skipping unpersistable node_state",
+                        graph_id[:8],
+                        node_id,
+                        exc_info=True,
+                    )
+                    continue
+                escaped_state[node_id] = escaped_node_state
+            state_payload: dict[str, Any] = escaped_state
+            if _PERSIST_TYPE_TAG in escaped_state:
+                # Node ids are unrestricted strings. Preserve a top-level
+                # id that collides with the persistence tag without walking
+                # already-escaped node values a second time.
+                state_payload = {_PERSIST_TYPE_TAG: _PERSIST_ESCAPED_TAG, "value": escaped_state}
             envelope = {
                 _PERSIST_STATE_VERSION_KEY: _PERSIST_STATE_VERSION,
-                "state": _escape_persist_collision(state_to_save),
+                "state": state_payload,
             }
             await self._db.execute_and_commit(
                 "UPDATE logic_graphs SET node_state = ? WHERE id = ?",

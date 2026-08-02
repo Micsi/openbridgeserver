@@ -1215,6 +1215,21 @@ async def test_persist_node_state_serializes_non_json_native_values():
 
 
 @pytest.mark.asyncio
+async def test_persist_node_state_skips_cyclic_node_but_saves_unrelated_state():
+    import json
+
+    cyclic = []
+    cyclic.append(cyclic)
+    mgr = _make_manager({})
+    mgr._hysteresis["g1"] = {"cf": {"value": cyclic}, "stats": {"count": 7}}
+
+    await mgr._persist_node_state("g1")
+
+    saved = json.loads(mgr._db.execute_and_commit.await_args.args[1][0])
+    assert saved["state"] == {"stats": {"count": 7}}
+
+
+@pytest.mark.asyncio
 async def test_change_filter_persists_and_restores_opaque_baseline_without_spurious_pulse():
     """Regression (issue #1087 Codex finding): a change_filter's comparison
     baseline is not always JSON-native or one of _persist_default's
@@ -1331,22 +1346,11 @@ async def test_change_filter_restores_a_named_zoneinfo_datetime_baseline():
 
 
 @pytest.mark.asyncio
-async def test_change_filter_reports_changed_instead_of_silently_losing_a_colliding_opaque_key():
-    """Documents a known, accepted limitation (see
-    _opaque_aware_container_equal's length-check comment in executor.py):
-    a persisted dict holding BOTH an opaque-tagged key (e.g. 3+4j) and a
-    genuine string key equal to that key's own recovered representation
-    ("(3+4j)") cannot survive a restart without _decode_persisted_value's
-    dict comprehension collapsing one of the two entries — a Python dict
-    cannot hold duplicate keys, and this is unrecoverable by the time
-    comparison runs. The safety net is that this always reports "changed"
-    (a live, still-intact 2-entry dict differs in length from the
-    collision-shrunk 1-entry persisted one) rather than silently matching
-    and losing the discrepancy forever — the safe fallback for an
-    otherwise fundamentally lossy persistence format, not a fully
-    lossless fix (which would mean never materializing the persisted side
-    into a plain dict at all, carrying its raw, possibly-duplicate-keyed
-    pairs through decoding and comparison instead)."""
+async def test_change_filter_preserves_colliding_opaque_and_string_keys():
+    """Opaque and genuine string keys with the same representation remain
+    distinct until the live baseline can replace the recovery wrapper."""
+    from obs.logic.executor import _OpaqueRecoveredDict
+
     flow = _flow([{"id": "cf1", "type": "change_filter"}])
     live_value = {3 + 4j: "complex", "(3+4j)": "string"}
 
@@ -1361,16 +1365,16 @@ async def test_change_filter_reports_changed_instead_of_silently_losing_a_collid
     )
     await mgr2._load_graphs()
 
-    # Only one of the two entries survives the round trip.
-    assert mgr2._hysteresis["g1"] == {"cf1": {"value": {"(3+4j)": "string"}, "_opaque_recovered_str": True}}
+    recovered = mgr2._hysteresis["g1"]["cf1"]["value"]
+    assert isinstance(recovered, _OpaqueRecoveredDict)
+    assert len(recovered.items) == 2
 
     with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
         outputs = await mgr2._execute_graph("g1", "G", flow, {"cf1": {"in": live_value}})
 
-    # Safe (if noisy) outcome: reports changed rather than silently
-    # matching a baseline that actually lost one of the two entries.
-    assert outputs["cf1"]["changed"] is True
+    assert outputs["cf1"]["changed"] is False
     assert outputs["cf1"]["out"] == live_value
+    assert mgr2._hysteresis["g1"]["cf1"] == {"value": live_value}
 
 
 @pytest.mark.asyncio
@@ -1639,9 +1643,10 @@ class TestPersistDefaultAndDecode:
         "+01:00") is not restored back into a decoded named-zone datetime
         by a plain replace(tzinfo=...), so fold must be captured
         separately here whenever it is set."""
+        from datetime import timedelta, timezone
         from zoneinfo import ZoneInfo
 
-        from obs.logic.manager import _persist_default
+        from obs.logic.manager import _decode_persisted_value, _persist_default
 
         second_occurrence = datetime(2025, 10, 26, 2, 30, tzinfo=ZoneInfo("Europe/Zurich"), fold=1)
         assert _persist_default(second_occurrence) == {
@@ -1654,6 +1659,16 @@ class TestPersistDefaultAndDecode:
         # is what replace() already re-derives on decode without it.
         first_occurrence = datetime(2025, 10, 26, 2, 30, tzinfo=ZoneInfo("Europe/Zurich"))
         assert "fold" not in _persist_default(first_occurrence)
+
+        naive_second = datetime(2025, 10, 26, 2, 30, fold=1)  # noqa: DTZ001 - specifically tests naive persistence
+        encoded_naive = _persist_default(naive_second)
+        assert encoded_naive["fold"] == 1
+        assert _decode_persisted_value(encoded_naive).fold == 1
+
+        fixed_offset_second = datetime(2025, 10, 26, 2, 30, tzinfo=timezone(timedelta(hours=1)), fold=1)
+        encoded_fixed = _persist_default(fixed_offset_second)
+        assert encoded_fixed["fold"] == 1
+        assert _decode_persisted_value(encoded_fixed).fold == 1
 
     def test_persist_default_preserves_named_zone_and_fold_for_time(self):
         from datetime import time
@@ -1760,6 +1775,31 @@ class TestPersistDefaultAndDecode:
 
         assert out["cf"]["changed"] is False
         assert state["cf"] == {"value": {3 + 4j, "(3+4j)"}}
+
+    def test_decode_preserves_opaque_and_genuine_string_dict_key_collision(self):
+        from obs.logic.executor import GraphExecutor
+        from obs.logic.manager import _decode_persisted_value
+
+        decoded = _decode_persisted_value(
+            {
+                "__obs_persisted_type__": "dict_nonstr_keys",
+                "value": [
+                    [{"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"}, "complex"],
+                    ["(3+4j)", "string"],
+                ],
+            }
+        )
+        state = {"cf": {"value": decoded, "_opaque_recovered_str": True}}
+        exc = GraphExecutor(
+            FlowData.model_validate({"nodes": [{"id": "cf", "type": "change_filter", "position": {"x": 0, "y": 0}, "data": {}}], "edges": []}),
+            hysteresis_state=state,
+        )
+
+        live = {3 + 4j: "complex", "(3+4j)": "string"}
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is False
+        assert state["cf"] == {"value": live}
 
     def test_persist_default_recursively_escapes_set_members(self):
         """Regression: a set member that json.dumps' own encoder handles

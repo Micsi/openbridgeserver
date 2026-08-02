@@ -43,6 +43,13 @@ class _OpaqueRecoveredSet:
         self.frozen = frozen
 
 
+class _OpaqueRecoveredDict:
+    """Lossless decoded mapping entries awaiting opaque-key recovery."""
+
+    def __init__(self, items: list[tuple[Any, Any]]):
+        self.items = items
+
+
 def _is_nan(value: Any) -> bool:
     return (isinstance(value, float) and math.isnan(value)) or (isinstance(value, Decimal) and value.is_nan())
 
@@ -605,7 +612,7 @@ class GraphExecutor:
         dec_left, dec_right = cls._try_decimal(left), cls._try_decimal(right)
         if dec_left is not None and dec_right is not None:
             return dec_left == dec_right, True
-        container_types = (dict, list, tuple, set, frozenset, _OpaqueRecoveredSet)
+        container_types = (dict, list, tuple, set, frozenset, _OpaqueRecoveredSet, _OpaqueRecoveredDict)
         if isinstance(left, container_types) and isinstance(right, container_types):
             if right_is_opaque_recovered_str:
                 # An opaque_str tag can be nested arbitrarily deep inside a
@@ -642,7 +649,10 @@ class GraphExecutor:
         # coincidental-repr reason as above, even though a dict/list could
         # never actually be the type this tag was generated from.
         if right_is_opaque_recovered_str and isinstance(right, str) and not isinstance(left, container_types):
-            return str(left) == right, False
+            try:
+                return str(left) == right, False
+            except Exception:  # noqa: BLE001 - opaque runtime values may define failing string conversion
+                return False, False
         try:
             return bool(left == right), True
         except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing/non-scalar equality
@@ -658,6 +668,8 @@ class GraphExecutor:
             return any(cls._contains_opaque_recovered_leaf(item) for item in value)
         if isinstance(value, _OpaqueRecoveredSet):
             return any(cls._contains_opaque_recovered_leaf(item) for item in value.items)
+        if isinstance(value, _OpaqueRecoveredDict):
+            return any(cls._contains_opaque_recovered_leaf(key) or cls._contains_opaque_recovered_leaf(item) for key, item in value.items)
         return False
 
     @classmethod
@@ -698,7 +710,7 @@ class GraphExecutor:
             and not cls._contains_nonstandard_equality_leaf(right)
         ):
             try:
-                return left == right
+                return bool(left == right)
             except RecursionError:
                 # Cyclic containers need the visited-pair recursive path.
                 pass
@@ -835,6 +847,24 @@ class GraphExecutor:
                 if not cls._opaque_aware_container_equal(lv, remaining_right.pop(rk), allow_unmarked=allow_unmarked):
                     return False
             return True
+        if isinstance(left, dict) and isinstance(right, _OpaqueRecoveredDict):
+            if len(left) != len(right.items):
+                return False
+
+            def _match_mapping(left_items: list[tuple[Any, Any]], right_items: list[tuple[Any, Any]]) -> bool:
+                if not left_items:
+                    return True
+                left_key, left_value = left_items[0]
+                for index, (right_key, right_value) in enumerate(right_items):
+                    if (
+                        cls._opaque_aware_container_equal(left_key, right_key, allow_unmarked=allow_unmarked)
+                        and cls._opaque_aware_container_equal(left_value, right_value, allow_unmarked=allow_unmarked)
+                        and _match_mapping(left_items[1:], right_items[:index] + right_items[index + 1 :])
+                    ):
+                        return True
+                return False
+
+            return _match_mapping(list(left.items()), list(right.items))
         if isinstance(left, (list, tuple)) and isinstance(right, type(left)):
             return len(left) == len(right) and all(
                 cls._opaque_aware_container_equal(le, ri, allow_unmarked=allow_unmarked) for le, ri in zip(left, right)
