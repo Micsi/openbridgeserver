@@ -3647,10 +3647,11 @@ class LogicManager:
 
         def _build_cf_pulse_origins(
             event_fresh: dict[str, set[str]] | None, fresh_seed_origins: dict[str, str]
-        ) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict[str, set[str]]]]:
+        ) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict[str, set[str]]], dict[str, set[str]]]:
             message_origins: dict[str, set[str]] = {}
             trigger_origins: dict[str, set[str]] = {}
             trigger_handle_origins: dict[str, dict[str, set[str]]] = {}
+            downstream_filter_origins: dict[str, set[str]] = {}
             fresh_origins = {node_id: {origin} for node_id, origin in fresh_seed_origins.items()}
             if event_fresh is not None:
                 changed = True
@@ -3681,6 +3682,8 @@ class LogicManager:
                         message_origins.setdefault(pulse_edge.target, set()).update(source_origins)
                         continue
                     target_type = get_node_type(_node_type_by_id.get(pulse_edge.target))
+                    if target_type and target_type.type == "change_filter":
+                        downstream_filter_origins.setdefault(pulse_edge.target, set()).update(source_origins)
                     trigger_ports = {port.id for port in target_type.inputs if port.type == "trigger"} if target_type else set()
                     if (pulse_edge.targetHandle or "in") in trigger_ports:
                         trigger_origins.setdefault(pulse_edge.target, set()).update(source_origins)
@@ -3702,7 +3705,7 @@ class LogicManager:
                             or (
                                 event_fresh is not None
                                 and (edge.targetHandle or "in") in event_fresh.get(edge.target, set())
-                                and bool(fresh_origins.get(edge.source, set()) - pulse_fresh_origins)
+                                and (edge.source not in relay_origins or bool(fresh_origins.get(edge.source, set()) - pulse_fresh_origins))
                             )
                         )
                     ]
@@ -3714,7 +3717,7 @@ class LogicManager:
                         if new_origins:
                             target_origins.update(new_origins)
                             queue.append(pulse_edge.target)
-            return message_origins, trigger_origins, trigger_handle_origins
+            return message_origins, trigger_origins, trigger_handle_origins, downstream_filter_origins
 
         _initial_event_fresh = (
             _fresh_input_handles({node_id: dict(values) for node_id, values in overrides.items()}, flow.edges) if overrides else None
@@ -3725,9 +3728,12 @@ class LogicManager:
             datapoint_id = (event_node.data or {}).get("datapoint_id") if event_node is not None and event_node.type == "datapoint_read" else None
             return f"datapoint:{datapoint_id}" if datapoint_id else node_id
 
-        _cf_changed_message_origins, _cf_changed_trigger_origins, _cf_changed_trigger_handle_origins = _build_cf_pulse_origins(
-            _initial_event_fresh, {node_id: _event_origin(node_id) for node_id in overrides}
-        )
+        (
+            _cf_changed_message_origins,
+            _cf_changed_trigger_origins,
+            _cf_changed_trigger_handle_origins,
+            _cf_downstream_filter_origins,
+        ) = _build_cf_pulse_origins(_initial_event_fresh, {node_id: _event_origin(node_id) for node_id in overrides})
 
         def _suppress_missing_cf_trigger_pulses(node_ids: set[str] | None = None) -> None:
             for target_id, origins in _cf_changed_trigger_origins.items():
@@ -3742,6 +3748,28 @@ class LogicManager:
                     target_output["_triggered"] = False
 
         _suppress_missing_cf_trigger_pulses()
+
+        missing_downstream_filters = {
+            target_id
+            for target_id, origins in _cf_downstream_filter_origins.items()
+            if not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins)
+        }
+        if missing_downstream_filters:
+            held_descendants = missing_downstream_filters | _downstream_closure(missing_downstream_filters, _effective_edges)
+            held_overrides = {node_id: dict(values) for node_id, values in aug_overrides.items()}
+            for target_id in missing_downstream_filters:
+                held_overrides.setdefault(target_id, {})["_suppress_change_filter"] = True
+            held_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+            held_known_outputs = {node_id: values for node_id, values in outputs.items() if node_id not in held_descendants}
+            held_outputs = await _execute_pass(await _executor(held_hyst), held_overrides, known_outputs=held_known_outputs)
+            for node_id in held_descendants:
+                if node_id in held_outputs:
+                    outputs[node_id] = held_outputs[node_id]
+                if node_id in held_hyst:
+                    hyst[node_id] = held_hyst[node_id]
+                else:
+                    hyst.pop(node_id, None)
+            _apply_operating_hours_state(held_descendants, pre_execute_node_state)
 
         synchronous_trigger_types = {"statistics", "operating_hours", "random_value"}
         missing_synchronous_handles = {
@@ -5464,9 +5492,12 @@ class LogicManager:
         # gets this treatment, including effective pure-relay paths. Keeping
         # provenance structural (not value-based) leaves ordinary boolean
         # sources wired to "message" unaffected.
-        _cf_changed_message_origins, _cf_changed_trigger_origins, _cf_changed_trigger_handle_origins = _build_cf_pulse_origins(
-            _event_fresh_inputs(), {node_id: _event_origin(node_id) for node_id in set(overrides) | refreshed_ical_nodes}
-        )
+        (
+            _cf_changed_message_origins,
+            _cf_changed_trigger_origins,
+            _cf_changed_trigger_handle_origins,
+            _cf_downstream_filter_origins,
+        ) = _build_cf_pulse_origins(_event_fresh_inputs(), {node_id: _event_origin(node_id) for node_id in set(overrides) | refreshed_ical_nodes})
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()

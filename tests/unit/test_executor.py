@@ -1163,6 +1163,27 @@ class TestChangeFilterNode:
 
         assert out["cf"]["changed"] is False
 
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_time_timezone_equality_failure_is_a_safe_change(self, nested):
+        from datetime import time as datetime_time
+
+        class RaisingTimezone(tzinfo):
+            def utcoffset(self, _dt):
+                return timedelta(0)
+
+            def __eq__(self, _other):
+                raise RuntimeError("timezone equality unavailable")
+
+        retained = datetime_time(10, 30, tzinfo=RaisingTimezone())
+        live = datetime_time(10, 30, tzinfo=RaisingTimezone())
+        state = {"cf": {"value": [retained] if nested else retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [live] if nested else live}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
     def test_nested_signaling_decimal_nan_can_be_replaced(self):
         state = {"cf": {"value": [Decimal("sNaN")]}}
         exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)

@@ -928,6 +928,74 @@ def test_debug_fan_in_override_is_independently_fresh() -> None:
     adapter.send_notification.assert_awaited_once()
 
 
+def test_same_event_bypass_fan_in_is_independently_fresh() -> None:
+    read_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
+            node("cf", "change_filter"),
+            node("relay", "or", {"input_count": 2}),
+            node("notify", "notify_message", {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]}),
+        ],
+        [
+            edge("read", "cf", "value", "in"),
+            edge("cf", "relay", "changed", "in1"),
+            edge("read", "relay", "value", "in2"),
+            edge("relay", "notify", "out", "message"),
+        ],
+    )
+    manager = _make_manager()
+    manager._graphs["bypass"] = ("Bypass", True, flow)
+    manager._node_state["bypass"] = {}
+    manager._hysteresis["bypass"] = {"cf": {"value": True}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = asyncio.run(manager._execute_graph("bypass", "Bypass", flow, {"read": {"value": True, "changed": True}}))
+
+    assert outputs["cf"]["changed"] is False
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once()
+
+
+def test_transformed_no_pulse_holds_downstream_change_filter() -> None:
+    flow = _flow(
+        [
+            node("constant", "const_value", {"value": "1", "data_type": "number"}),
+            node("cf1", "change_filter"),
+            node("invert", "not"),
+            node("cf2", "change_filter"),
+            node("notify", "notify_message", {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]}),
+        ],
+        [
+            edge("constant", "cf1", "value", "in"),
+            edge("cf1", "invert", "changed", "in1"),
+            edge("invert", "cf2", "out", "in"),
+            edge("cf2", "notify", "changed", "message"),
+        ],
+    )
+    manager = _make_manager()
+    manager._graphs["nested-cf"] = ("Nested CF", True, flow)
+    manager._node_state["nested-cf"] = {}
+    manager._hysteresis["nested-cf"] = {"cf1": {"value": 1.0}, "cf2": {"value": False}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock()
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = asyncio.run(manager._execute_graph("nested-cf", "Nested CF", flow, {}))
+
+    assert outputs["cf1"]["changed"] is False
+    assert outputs["cf2"] == {"out": False, "changed": False}
+    adapter.send_notification.assert_not_awaited()
+
+
 def test_transformed_no_change_pulse_does_not_fire_trigger_input() -> None:
     read_id = uuid.uuid4()
     flow = _flow(

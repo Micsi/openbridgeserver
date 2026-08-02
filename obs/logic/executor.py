@@ -636,10 +636,13 @@ class GraphExecutor:
             if not left_aware and not right_aware and left.fold != right.fold:
                 return False, True
         if isinstance(left, _time) and isinstance(right, _time):
-            if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
-                same_tz = left.tzinfo.key == right.tzinfo.key
-            else:
-                same_tz = left.tzinfo == right.tzinfo
+            try:
+                if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
+                    same_tz = left.tzinfo.key == right.tzinfo.key
+                else:
+                    same_tz = bool(left.tzinfo == right.tzinfo)
+            except Exception:  # noqa: BLE001 - arbitrary tzinfo equality may raise or be ambiguous
+                same_tz = False
             if left.fold != right.fold or not same_tz:
                 return False, True
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
@@ -743,10 +746,13 @@ class GraphExecutor:
             if not left_aware and not right_aware and left.fold != right.fold:
                 return False
         if isinstance(left, _time) and isinstance(right, _time):
-            if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
-                same_tz = left.tzinfo.key == right.tzinfo.key
-            else:
-                same_tz = left.tzinfo == right.tzinfo
+            try:
+                if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
+                    same_tz = left.tzinfo.key == right.tzinfo.key
+                else:
+                    same_tz = bool(left.tzinfo == right.tzinfo)
+            except Exception:  # noqa: BLE001 - arbitrary tzinfo equality may raise or be ambiguous
+                same_tz = False
             if left.fold != right.fold or not same_tz:
                 return False
         container_types = (dict, list, tuple, set, frozenset)
