@@ -35,7 +35,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from obs.core.json import jsonable
-from obs.logic.executor import GraphExecutor, _OpaqueRecoveredStr, _replay_known_output_value
+from obs.logic.executor import GraphExecutor, _OpaqueRecoveredSet, _OpaqueRecoveredStr, _replay_known_output_value
 from obs.logic.models import FlowData
 from obs.logic.node_types import get_node_type
 from obs.security.url_targets import resolve_url_target
@@ -316,6 +316,11 @@ def _escape_persist_collision(v: Any) -> Any:
     """
     if isinstance(v, _OpaqueRecoveredStr):
         return {_PERSIST_TYPE_TAG: "opaque_str", "value": str(v)}
+    if isinstance(v, _OpaqueRecoveredSet):
+        return {
+            _PERSIST_TYPE_TAG: "frozenset" if v.frozen else "set",
+            "value": [_escape_persist_collision(item) for item in v.items],
+        }
     if isinstance(v, dict):
         if any(not isinstance(k, str) or isinstance(k, _OpaqueRecoveredStr) for k in v):
             return {
@@ -391,7 +396,9 @@ def _decode_persisted_value(v: Any) -> Any:
         if tag in ("set", "frozenset"):
             inner = v.get("value")
             if isinstance(inner, list):
-                decoded_items = (_decode_persisted_value(item) for item in inner)
+                decoded_items = [_decode_persisted_value(item) for item in inner]
+                if any(GraphExecutor._contains_opaque_recovered_leaf(item) for item in decoded_items):
+                    return _OpaqueRecoveredSet(decoded_items, frozen=tag == "frozenset")
                 return frozenset(decoded_items) if tag == "frozenset" else set(decoded_items)
             return v
         if tag == "dict_nonstr_keys":
@@ -5276,24 +5283,26 @@ class LogicManager:
 
         # The "message" port also accepts a trigger-typed pulse (e.g.
         # change_filter.changed wired directly into Notify.message) — a
-        # literal `False` there means "no pulse", not "a real message",
+        # a non-firing source means "no pulse", not "a real message",
         # unlike any other falsy-but-real message (0, "", an ordinary bool
         # source, ...), which must still count as delivered. Only an edge
-        # whose SOURCE is actually a change_filter's own "changed" output
-        # gets this treatment — restricted structurally here (not by value
-        # alone) so a plain boolean source wired to "message" is unaffected.
-        _cf_changed_message_targets: set[str] = set()
-        _cf_pulse_relays = {node.id for node in flow.nodes if node.type == "change_filter"}
-        _cf_pulse_queue = list(_cf_pulse_relays)
+        # whose provenance reaches a change_filter's own "changed" output
+        # gets this treatment, including effective pure-relay paths. Keeping
+        # provenance structural (not value-based) leaves ordinary boolean
+        # sources wired to "message" unaffected.
+        _cf_changed_message_origins: dict[str, set[str]] = {}
+        _cf_pulse_relay_origins = {node.id: {node.id} for node in flow.nodes if node.type == "change_filter"}
+        _cf_pulse_queue = list(_cf_pulse_relay_origins)
         while _cf_pulse_queue:
             _source_id = _cf_pulse_queue.pop()
+            _source_origins = _cf_pulse_relay_origins[_source_id]
             for _pulse_edge in _effective_edges:
                 if _pulse_edge.source != _source_id:
                     continue
                 if _node_type_by_id.get(_source_id) == "change_filter" and (_pulse_edge.sourceHandle or "out") != "changed":
                     continue
                 if (_pulse_edge.targetHandle or "in") == "message":
-                    _cf_changed_message_targets.add(_pulse_edge.target)
+                    _cf_changed_message_origins.setdefault(_pulse_edge.target, set()).update(_source_origins)
                     continue
                 _target_type = get_node_type(_node_type_by_id.get(_pulse_edge.target))
                 # Only pure logic/relay nodes carry pulse identity onward.
@@ -5301,18 +5310,24 @@ class LogicManager:
                 # node's outputs are new result data, not the original pulse.
                 if _target_type and any(port.type == "trigger" for port in _target_type.inputs):
                     continue
-                if _pulse_edge.target not in _cf_pulse_relays and _edge_carries_pulse(_pulse_edge, require_fired_change_filter=False):
-                    _cf_pulse_relays.add(_pulse_edge.target)
-                    _cf_pulse_queue.append(_pulse_edge.target)
+                if _edge_carries_pulse(_pulse_edge, require_fired_change_filter=False):
+                    _target_origins = _cf_pulse_relay_origins.setdefault(_pulse_edge.target, set())
+                    _new_origins = _source_origins - _target_origins
+                    if _new_origins:
+                        _target_origins.update(_new_origins)
+                        _cf_pulse_queue.append(_pulse_edge.target)
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()
             _msg = out.get("_message")
-            _is_false_cf_pulse = _msg is False and node_id in _cf_changed_message_targets
+            _pulse_origins = _cf_changed_message_origins.get(node_id, set())
+            _is_missing_cf_pulse = bool(_pulse_origins) and not any(
+                GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in _pulse_origins
+            )
             if event_fresh_inputs is None:
-                return not _is_false_cf_pulse
+                return not _is_missing_cf_pulse
             fresh_handles = event_fresh_inputs.get(node_id, set())
-            fresh_message = "message" in fresh_handles and _msg is not None and not _is_false_cf_pulse
+            fresh_message = "message" in fresh_handles and _msg is not None and not _is_missing_cf_pulse
             fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger"))
             return fresh_message or fresh_trigger
 

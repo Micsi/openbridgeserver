@@ -1065,6 +1065,21 @@ class TestChangeFilterNode:
 
         assert out["cf"] == {"out": [second], "changed": True}
 
+    def test_time_timezone_and_fold_transitions_are_changes(self):
+        from datetime import time as datetime_time
+
+        zurich = ZoneInfo("Europe/Zurich")
+        first = datetime_time(2, 30, tzinfo=zurich, fold=0)
+        second = datetime_time(2, 30, tzinfo=zurich, fold=1)
+        state = {"cf": {"value": first}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        fold_out = exc.execute({"cf": {"in": second}})
+        naive_out = exc.execute({"cf": {"in": datetime_time(2, 30)}})
+
+        assert fold_out["cf"]["changed"] is True
+        assert naive_out["cf"]["changed"] is True
+
     def test_nested_signaling_decimal_nan_can_be_replaced(self):
         state = {"cf": {"value": [Decimal("sNaN")]}}
         exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
@@ -1234,6 +1249,23 @@ class TestChangeFilterNode:
         assert out["logic"] == {"out": expected}
         assert out["cf"] == {"out": expected, "changed": False}
 
+    def test_missing_producer_output_is_absorbed_by_unwired_and_input(self):
+        state = {"cf": {"value": False}}
+        exc = make_executor(
+            [
+                node("producer", "python_script", {"script": "raise RuntimeError('boom')"}),
+                node("logic", "and", {"input_count": 2}),
+                node("cf", "change_filter"),
+            ],
+            [edge("producer", "logic", "result", "in1"), edge("logic", "cf", "out", "in")],
+            hysteresis_state=state,
+        )
+
+        out = exc.execute()
+
+        assert out["logic"] == {"out": False}
+        assert out["cf"] == {"out": False, "changed": False}
+
     def test_missing_producer_output_is_absorbed_by_closed_gate(self):
         state = {"gate": 42, "cf": {"value": 42}}
         exc = make_executor(
@@ -1278,6 +1310,20 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is True
         assert "__error__" not in out["cf"]
         assert isinstance(state["cf"]["value"], UnsafeEquality)
+
+    def test_self_referential_containers_compare_without_recursion_error(self):
+        first = []
+        first.append(first)
+        second = []
+        second.append(second)
+        state = {}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        exc.execute({"cf": {"in": first}})
+        out = exc.execute({"cf": {"in": second}})
+
+        assert out["cf"]["changed"] is False
+        assert "__error__" not in out["cf"]
 
     def test_large_integers_compared_without_precision_loss(self):
         """Regression: float round-trip must not equate distinct 64-bit values."""

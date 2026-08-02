@@ -35,6 +35,14 @@ class _OpaqueRecoveredStr(str):
     """String restored from an ``opaque_str`` persistence tag."""
 
 
+class _OpaqueRecoveredSet:
+    """Lossless decoded set members awaiting opaque-type recovery."""
+
+    def __init__(self, items: list[Any], *, frozen: bool):
+        self.items = items
+        self.frozen = frozen
+
+
 def _is_nan(value: Any) -> bool:
     return (isinstance(value, float) and math.isnan(value)) or (isinstance(value, Decimal) and value.is_nan())
 
@@ -241,11 +249,12 @@ class GraphExecutor:
                 elif unresolved and node.type in {"and", "or"}:
                     resolved_values: list[bool] = []
                     count = max(2, min(30, int(node.data.get("input_count", 2))))
+                    unresolved_handles = {item[0] for item in unresolved}
                     for index in range(1, count + 1):
                         port = f"in{index}"
-                        if port not in inputs:
+                        if port in unresolved_handles:
                             continue
-                        value = self._to_bool(inputs[port])
+                        value = self._to_bool(inputs.get(port))
                         if node.data.get(f"negate_{port}"):
                             value = not value
                         resolved_values.append(value)
@@ -583,6 +592,8 @@ class GraphExecutor:
             right_aware = right.tzinfo is not None and right.utcoffset() is not None
             if left_aware and right_aware:
                 return left.astimezone(_UTC) == right.astimezone(_UTC), True
+        if isinstance(left, _time) and isinstance(right, _time) and (left.fold != right.fold or left.tzinfo != right.tzinfo):
+            return False, True
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
             return bool_left == bool_right, True
@@ -594,7 +605,7 @@ class GraphExecutor:
         dec_left, dec_right = cls._try_decimal(left), cls._try_decimal(right)
         if dec_left is not None and dec_right is not None:
             return dec_left == dec_right, True
-        container_types = (dict, list, tuple, set, frozenset)
+        container_types = (dict, list, tuple, set, frozenset, _OpaqueRecoveredSet)
         if isinstance(left, container_types) and isinstance(right, container_types):
             if right_is_opaque_recovered_str:
                 # An opaque_str tag can be nested arbitrarily deep inside a
@@ -645,10 +656,12 @@ class GraphExecutor:
             return any(cls._contains_opaque_recovered_leaf(k) or cls._contains_opaque_recovered_leaf(v) for k, v in value.items())
         if isinstance(value, (list, tuple, set, frozenset)):
             return any(cls._contains_opaque_recovered_leaf(item) for item in value)
+        if isinstance(value, _OpaqueRecoveredSet):
+            return any(cls._contains_opaque_recovered_leaf(item) for item in value.items)
         return False
 
     @classmethod
-    def _nan_aware_equal(cls, left: Any, right: Any) -> bool:
+    def _nan_aware_equal(cls, left: Any, right: Any, seen: set[tuple[int, int]] | None = None) -> bool:
         """Structural equality for leaves with non-standard equality.
 
         Besides treating matching NaNs as one retained reading, compare aware
@@ -665,7 +678,15 @@ class GraphExecutor:
             right_aware = right.tzinfo is not None and right.utcoffset() is not None
             if left_aware and right_aware:
                 return left.astimezone(_UTC) == right.astimezone(_UTC)
+        if isinstance(left, _time) and isinstance(right, _time) and (left.fold != right.fold or left.tzinfo != right.tzinfo):
+            return False
         container_types = (dict, list, tuple, set, frozenset)
+        if isinstance(left, container_types) and isinstance(right, container_types):
+            seen = set() if seen is None else seen
+            pair = (id(left), id(right))
+            if pair in seen:
+                return True
+            seen.add(pair)
         # Keep ordinary JSON/container comparisons linear. Recursive
         # matching is only needed when a leaf has deliberately unusual
         # equality (NaN or an aware datetime whose DST fold Python's
@@ -678,6 +699,9 @@ class GraphExecutor:
         ):
             try:
                 return left == right
+            except RecursionError:
+                # Cyclic containers need the visited-pair recursive path.
+                pass
             except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing equality
                 return False
         if isinstance(left, dict) and isinstance(right, dict):
@@ -689,7 +713,7 @@ class GraphExecutor:
                     (
                         index
                         for index, (right_key, right_value) in enumerate(remaining)
-                        if cls._nan_aware_equal(left_key, right_key) and cls._nan_aware_equal(left_value, right_value)
+                        if cls._nan_aware_equal(left_key, right_key, seen) and cls._nan_aware_equal(left_value, right_value, seen)
                     ),
                     None,
                 )
@@ -698,13 +722,13 @@ class GraphExecutor:
                 remaining.pop(match)
             return True
         if isinstance(left, (list, tuple)) and isinstance(right, type(left)):
-            return len(left) == len(right) and all(cls._nan_aware_equal(le, re) for le, re in zip(left, right))
+            return len(left) == len(right) and all(cls._nan_aware_equal(le, re, seen) for le, re in zip(left, right))
         if isinstance(left, (set, frozenset)) and isinstance(right, type(left)):
             if len(left) != len(right):
                 return False
             remaining = list(right)
             for left_item in left:
-                match = next((i for i, right_item in enumerate(remaining) if cls._nan_aware_equal(left_item, right_item)), None)
+                match = next((i for i, right_item in enumerate(remaining) if cls._nan_aware_equal(left_item, right_item, seen)), None)
                 if match is None:
                     return False
                 remaining.pop(match)
@@ -715,15 +739,25 @@ class GraphExecutor:
             return False
 
     @classmethod
-    def _contains_nonstandard_equality_leaf(cls, value: Any) -> bool:
+    def _contains_nonstandard_equality_leaf(cls, value: Any, seen: set[int] | None = None) -> bool:
         if _is_nan(value):
             return True
         if isinstance(value, _datetime):
             return value.tzinfo is not None and value.utcoffset() is not None
+        if isinstance(value, _time):
+            return value.tzinfo is not None or bool(value.fold)
+        if isinstance(value, (dict, list, tuple, set, frozenset)):
+            seen = set() if seen is None else seen
+            if id(value) in seen:
+                return False
+            seen.add(id(value))
         if isinstance(value, dict):
-            return any(cls._contains_nonstandard_equality_leaf(key) or cls._contains_nonstandard_equality_leaf(item) for key, item in value.items())
+            return any(
+                cls._contains_nonstandard_equality_leaf(key, seen) or cls._contains_nonstandard_equality_leaf(item, seen)
+                for key, item in value.items()
+            )
         if isinstance(value, (list, tuple, set, frozenset)):
-            return any(cls._contains_nonstandard_equality_leaf(item) for item in value)
+            return any(cls._contains_nonstandard_equality_leaf(item, seen) for item in value)
         return False
 
     @classmethod
@@ -822,6 +856,22 @@ class GraphExecutor:
                     return False
                 remaining.pop(match)
             return True
+        if isinstance(left, (set, frozenset)) and isinstance(right, _OpaqueRecoveredSet):
+            if isinstance(left, frozenset) != right.frozen or len(left) != len(right.items):
+                return False
+
+            def _match_remaining(left_items: list[Any], right_items: list[Any]) -> bool:
+                if not left_items:
+                    return True
+                left_item = left_items[0]
+                for index, right_item in enumerate(right_items):
+                    if cls._opaque_aware_container_equal(left_item, right_item, allow_unmarked=allow_unmarked) and _match_remaining(
+                        left_items[1:], right_items[:index] + right_items[index + 1 :]
+                    ):
+                        return True
+                return False
+
+            return _match_remaining(list(left), list(right.items))
         try:
             equal = bool(left == right)
         except Exception:  # noqa: BLE001 - opaque runtime values may define failing/non-scalar equality

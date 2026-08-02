@@ -1728,6 +1728,30 @@ class TestPersistDefaultAndDecode:
         assert _persist_default({1, 2}) == {"__obs_persisted_type__": "set", "value": [1, 2]}
         assert _persist_default(frozenset({1, 2})) == {"__obs_persisted_type__": "frozenset", "value": [1, 2]}
 
+    def test_decode_preserves_opaque_and_genuine_string_set_collision(self):
+        from obs.logic.executor import GraphExecutor
+        from obs.logic.manager import _decode_persisted_value
+
+        decoded = _decode_persisted_value(
+            {
+                "__obs_persisted_type__": "set",
+                "value": [
+                    {"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"},
+                    "(3+4j)",
+                ],
+            }
+        )
+        state = {"cf": {"value": decoded, "_opaque_recovered_str": True}}
+        exc = GraphExecutor(
+            FlowData.model_validate({"nodes": [{"id": "cf", "type": "change_filter", "position": {"x": 0, "y": 0}, "data": {}}], "edges": []}),
+            hysteresis_state=state,
+        )
+
+        out = exc.execute({"cf": {"in": {3 + 4j, "(3+4j)"}}})
+
+        assert out["cf"]["changed"] is False
+        assert state["cf"] == {"value": {3 + 4j, "(3+4j)"}}
+
     def test_persist_default_recursively_escapes_set_members(self):
         """Regression: a set member that json.dumps' own encoder handles
         NATIVELY (a tuple) is never passed through default=, unlike a plain
