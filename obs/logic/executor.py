@@ -484,7 +484,11 @@ class GraphExecutor:
                 return True
             if s in {"false", "0", "no", "off"}:
                 return False
-            return None
+            try:
+                numeric = Decimal(s)
+            except InvalidOperation:
+                return None
+            return bool(numeric) if numeric.is_finite() and numeric in (0, 1) else None
         # Numeric 0/1 are recognized too, so equality stays transitive across
         # adapter representations: 1 == "1" == "true" must all agree.
         if isinstance(v, Decimal):
@@ -701,16 +705,26 @@ class GraphExecutor:
 
     @classmethod
     def _contains_opaque_recovered_leaf(cls, value: Any) -> bool:
-        if isinstance(value, _OpaqueRecoveredStr):
-            return True
-        if isinstance(value, dict):
-            return any(cls._contains_opaque_recovered_leaf(k) or cls._contains_opaque_recovered_leaf(v) for k, v in value.items())
-        if isinstance(value, (list, tuple, set, frozenset)):
-            return any(cls._contains_opaque_recovered_leaf(item) for item in value)
-        if isinstance(value, _OpaqueRecoveredSet):
-            return any(cls._contains_opaque_recovered_leaf(item) for item in value.items)
-        if isinstance(value, _OpaqueRecoveredDict):
-            return any(cls._contains_opaque_recovered_leaf(key) or cls._contains_opaque_recovered_leaf(item) for key, item in value.items)
+        pending = [value]
+        seen: set[int] = set()
+        while pending:
+            current = pending.pop()
+            if isinstance(current, _OpaqueRecoveredStr):
+                return True
+            if isinstance(current, (dict, list, tuple, set, frozenset, _OpaqueRecoveredSet, _OpaqueRecoveredDict)):
+                if id(current) in seen:
+                    continue
+                seen.add(id(current))
+            if isinstance(current, dict):
+                for key, item in current.items():
+                    pending.extend((key, item))
+            elif isinstance(current, (list, tuple, set, frozenset)):
+                pending.extend(current)
+            elif isinstance(current, _OpaqueRecoveredSet):
+                pending.extend(current.items)
+            elif isinstance(current, _OpaqueRecoveredDict):
+                for key, item in current.items:
+                    pending.extend((key, item))
         return False
 
     @classmethod
@@ -906,62 +920,177 @@ class GraphExecutor:
     @classmethod
     def _nonstandard_container_equal_iterative(cls, left: Any, right: Any) -> bool:
         """Compare deeply nested containers while preserving NaN semantics."""
-        pending = [(left, right)]
-        seen: set[tuple[int, int]] = set()
-        while pending:
-            current_left, current_right = pending.pop()
-            if _is_nan(current_left) or _is_nan(current_right):
-                if not (_is_nan(current_left) and _is_nan(current_right)):
-                    return False
-                continue
-            if type(current_left) is not type(current_right):
-                return False
-            if isinstance(current_left, (list, tuple)):
-                if len(current_left) != len(current_right):
-                    return False
-                pair = (id(current_left), id(current_right))
-                if pair in seen:
+        states: list[tuple[list[tuple[str, Any, Any]], set[tuple[int, int]]]] = [([("pair", left, right)], set())]
+        while states:
+            work, seen = states.pop()
+            branched = False
+            while work:
+                kind, current_left, current_right = work.pop()
+                if kind == "dict":
+                    left_items = current_left
+                    right_items = current_right
+                    if not left_items:
+                        continue
+                    left_key, left_value = left_items[0]
+                    branches = []
+                    for index, (right_key, right_value) in enumerate(right_items):
+                        if not cls._nonstandard_container_equal_iterative(left_key, right_key):
+                            continue
+                        branch_work = list(work)
+                        branch_work.append(("dict", left_items[1:], right_items[:index] + right_items[index + 1 :]))
+                        branch_work.append(("pair", left_value, right_value))
+                        branches.append((branch_work, set(seen)))
+                    states.extend(branches)
+                    branched = True
+                    break
+                if kind == "set":
+                    left_items = current_left
+                    right_items = current_right
+                    if not left_items:
+                        continue
+                    left_item = left_items[0]
+                    branches = []
+                    for index, right_item in enumerate(right_items):
+                        if not cls._nonstandard_container_equal_iterative(left_item, right_item):
+                            continue
+                        branch_work = list(work)
+                        branch_work.append(("set", left_items[1:], right_items[:index] + right_items[index + 1 :]))
+                        branches.append((branch_work, set(seen)))
+                    states.extend(branches)
+                    branched = True
+                    break
+
+                if _is_nan(current_left) or _is_nan(current_right):
+                    if not (_is_nan(current_left) and _is_nan(current_right)):
+                        break
                     continue
-                seen.add(pair)
-                pending.extend(zip(current_left, current_right))
-                continue
-            if isinstance(current_left, dict):
-                if len(current_left) != len(current_right):
-                    return False
-                pair = (id(current_left), id(current_right))
-                if pair in seen:
+                if type(current_left) is not type(current_right):
+                    break
+                if isinstance(current_left, (list, tuple, dict, set, frozenset)):
+                    pair = (id(current_left), id(current_right))
+                    if pair in seen:
+                        continue
+                    seen.add(pair)
+                if isinstance(current_left, (list, tuple)):
+                    if len(current_left) != len(current_right):
+                        break
+                    work.extend(("pair", left_item, right_item) for left_item, right_item in zip(current_left, current_right))
                     continue
-                seen.add(pair)
-                remaining = list(current_right.items())
-                for key, item in current_left.items():
-                    match = next(
-                        (index for index, (candidate, _) in enumerate(remaining) if cls._nan_aware_equal(key, candidate)),
-                        None,
-                    )
-                    if match is None:
-                        return False
-                    _, matched_item = remaining.pop(match)
-                    pending.append((item, matched_item))
+                if isinstance(current_left, dict):
+                    if len(current_left) != len(current_right):
+                        break
+                    work.append(("dict", list(current_left.items()), list(current_right.items())))
+                    continue
+                if isinstance(current_left, (set, frozenset)):
+                    if len(current_left) != len(current_right):
+                        break
+                    work.append(("set", list(current_left), list(current_right)))
+                    continue
+                if not cls._nan_aware_equal(current_left, current_right):
+                    break
+            else:
+                return True
+            if branched:
                 continue
-            if isinstance(current_left, (set, frozenset)):
-                if len(current_left) != len(current_right):
-                    return False
-                remaining = list(current_right)
-                for item in current_left:
-                    match = next(
-                        (index for index, candidate in enumerate(remaining) if cls._nan_aware_equal(item, candidate)),
-                        None,
-                    )
-                    if match is None:
-                        return False
-                    remaining.pop(match)
-                continue
-            if not cls._nan_aware_equal(current_left, current_right):
-                return False
-        return True
+        return False
 
     @classmethod
     def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
+        """Compare recovered opaque containers without Python call-stack recursion."""
+        states: list[tuple[list[tuple[str, Any, Any]], set[tuple[int, int]]]] = [([("pair", left, right)], set())]
+        while states:
+            work, seen = states.pop()
+            branched = False
+            while work:
+                kind, current_left, current_right = work.pop()
+                if kind == "dict":
+                    left_items = current_left
+                    right_items = current_right
+                    if not left_items:
+                        continue
+                    left_key, left_value = left_items[0]
+                    branches = []
+                    for index, (right_key, right_value) in enumerate(right_items):
+                        if not cls._opaque_aware_container_equal(left_key, right_key, allow_unmarked=allow_unmarked):
+                            continue
+                        branch_work = list(work)
+                        branch_work.append(("dict", left_items[1:], right_items[:index] + right_items[index + 1 :]))
+                        branch_work.append(("pair", left_value, right_value))
+                        branches.append((branch_work, set(seen)))
+                    states.extend(branches)
+                    branched = True
+                    break
+                if kind == "set":
+                    left_items = current_left
+                    right_items = current_right
+                    if not left_items:
+                        continue
+                    left_item = left_items[0]
+                    branches = []
+                    for index, right_item in enumerate(right_items):
+                        if not cls._opaque_aware_container_equal(left_item, right_item, allow_unmarked=allow_unmarked):
+                            continue
+                        branch_work = list(work)
+                        branch_work.append(("set", left_items[1:], right_items[:index] + right_items[index + 1 :]))
+                        branches.append((branch_work, set(seen)))
+                    states.extend(branches)
+                    branched = True
+                    break
+
+                if _is_nan(current_left) or _is_nan(current_right):
+                    if not (_is_nan(current_left) and _is_nan(current_right)):
+                        break
+                    continue
+                if isinstance(current_right, _OpaqueRecoveredStr):
+                    if not _opaque_recovered_matches(current_left, current_right, allow_unmarked=allow_unmarked):
+                        break
+                    continue
+                pair = (id(current_left), id(current_right))
+                if isinstance(current_left, (dict, list, tuple, set, frozenset)) and isinstance(
+                    current_right, (dict, list, tuple, set, frozenset, _OpaqueRecoveredSet, _OpaqueRecoveredDict)
+                ):
+                    if pair in seen:
+                        continue
+                    seen.add(pair)
+                if isinstance(current_left, dict) and isinstance(current_right, dict):
+                    if len(current_left) != len(current_right):
+                        break
+                    work.append(("dict", list(current_left.items()), list(current_right.items())))
+                    continue
+                if isinstance(current_left, dict) and isinstance(current_right, _OpaqueRecoveredDict):
+                    if len(current_left) != len(current_right.items):
+                        break
+                    work.append(("dict", list(current_left.items()), list(current_right.items)))
+                    continue
+                if isinstance(current_left, (list, tuple)) and isinstance(current_right, type(current_left)):
+                    if len(current_left) != len(current_right):
+                        break
+                    work.extend(("pair", left_item, right_item) for left_item, right_item in zip(current_left, current_right))
+                    continue
+                if isinstance(current_left, (set, frozenset)) and isinstance(current_right, type(current_left)):
+                    if len(current_left) != len(current_right):
+                        break
+                    work.append(("set", list(current_left), list(current_right)))
+                    continue
+                if isinstance(current_left, (set, frozenset)) and isinstance(current_right, _OpaqueRecoveredSet):
+                    if isinstance(current_left, frozenset) != current_right.frozen or len(current_left) != len(current_right.items):
+                        break
+                    work.append(("set", list(current_left), list(current_right.items)))
+                    continue
+                try:
+                    equal = bool(current_left == current_right)
+                except Exception:  # noqa: BLE001 - opaque runtime equality may fail
+                    equal = False
+                if not equal and not _opaque_recovered_matches(current_left, current_right, allow_unmarked=allow_unmarked):
+                    break
+            else:
+                return True
+            if branched:
+                continue
+        return False
+
+    @classmethod
+    def _opaque_aware_container_equal_recursive(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
         """Structural equality for a dict/list, like plain `==`, but at any
         leaf position also accepts a match via str(left) == right when
         `right` there is a string — the same unambiguous "opaque_str"

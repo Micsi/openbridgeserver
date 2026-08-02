@@ -1662,6 +1662,52 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is False
         assert "__error__" not in out["cf"]
 
+    def test_deeply_nested_ambiguous_nan_dictionary_keys_backtrack(self):
+        retained: list = []
+        live: list = []
+        retained_cursor = retained
+        live_cursor = live
+        for _ in range(1100):
+            retained_child: list = []
+            live_child: list = []
+            retained_cursor.append(retained_child)
+            live_cursor.append(live_child)
+            retained_cursor = retained_child
+            live_cursor = live_child
+        retained_cursor.append({float("nan"): "a", float("nan"): "b"})
+        live_cursor.append({float("nan"): "b", float("nan"): "a"})
+        state = {"cf": {"value": retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is False
+        assert "__error__" not in out["cf"]
+
+    def test_deeply_nested_opaque_recovery_compares_iteratively(self):
+        retained: list = []
+        live: list = []
+        retained_cursor = retained
+        live_cursor = live
+        for _ in range(1100):
+            retained_child: list = []
+            live_child: list = []
+            retained_cursor.append(retained_child)
+            live_cursor.append(live_child)
+            retained_cursor = retained_child
+            live_cursor = live_child
+        retained_cursor.append(_OpaqueRecoveredStr("(3+4j)", "builtins.complex"))
+        live_cursor.append(3 + 4j)
+        state = {"cf": {"value": retained, "_opaque_recovered_str": True}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+        repeated = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+        assert repeated["cf"]["changed"] is False
+
     def test_cyclic_dictionaries_compare_without_hanging(self):
         retained = {}
         retained["self"] = retained
@@ -1775,6 +1821,13 @@ class TestChangeFilterNode:
         exc.execute({"cf": {"in": 0}})
         out = exc.execute({"cf": {"in": "false"}})
         assert out["cf"]["changed"] is False
+
+    def test_decimal_numeric_string_and_boolean_aliases_stay_transitive(self):
+        state = {"cf": {"value": "1.0"}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        assert exc.execute({"cf": {"in": 1}})["cf"]["changed"] is False
+        assert exc.execute({"cf": {"in": "true"}})["cf"]["changed"] is False
 
     def test_decimal_boolean_aliases_stay_transitive(self):
         state = {}

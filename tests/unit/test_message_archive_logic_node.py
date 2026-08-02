@@ -644,7 +644,7 @@ def test_notify_message_does_not_fire_on_a_relayed_false_change_filter_pulse() -
         second = _run(manager, flow, {"read": {"value": 1, "changed": True}})
 
     assert first["notify"]["sent"] is True
-    assert second["relay"]["out"] is False
+    assert second["relay"]["out"] is True
     assert second["notify"]["sent"] is False
     adapter.send_notification.assert_awaited_once()
 
@@ -685,7 +685,7 @@ def test_notify_message_does_not_fire_on_a_transformed_no_change_pulse() -> None
     adapter.send_notification.assert_awaited_once()
 
 
-def test_fresh_sibling_input_at_mixed_relay_is_not_suppressed_by_unchanged_filter() -> None:
+def test_fresh_sibling_that_cannot_reproduce_mixed_relay_output_stays_suppressed() -> None:
     read_id = uuid.uuid4()
     flow = _flow(
         [
@@ -720,8 +720,8 @@ def test_fresh_sibling_input_at_mixed_relay_is_not_suppressed_by_unchanged_filte
 
     assert first["notify"]["sent"] is True
     assert second["cf"]["changed"] is False
-    assert second["notify"]["sent"] is True
-    assert adapter.send_notification.await_count == 2
+    assert second["notify"]["sent"] is False
+    assert adapter.send_notification.await_count == 1
 
 
 def test_static_sibling_input_keeps_no_change_provenance() -> None:
@@ -1142,6 +1142,41 @@ def test_event_false_fan_in_does_not_mask_no_pulse() -> None:
     adapter.send_notification.assert_not_awaited()
 
 
+def test_event_negated_fan_in_uses_effective_relay_value() -> None:
+    read_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
+            node("cf", "change_filter"),
+            node("invert", "not"),
+            node("relay", "or", {"input_count": 2, "negate_in2": True}),
+            node("notify", "notify_message", {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]}),
+        ],
+        [
+            edge("read", "cf", "value", "in"),
+            edge("cf", "invert", "changed", "in1"),
+            edge("invert", "relay", "out", "in1"),
+            edge("read", "relay", "value", "in2"),
+            edge("relay", "notify", "out", "message"),
+        ],
+    )
+    manager = _make_manager()
+    manager._graphs["negated-event"] = ("Negated Event", True, flow)
+    manager._node_state["negated-event"] = {}
+    manager._hysteresis["negated-event"] = {"cf": {"value": True}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock()
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = asyncio.run(manager._execute_graph("negated-event", "Negated Event", flow, {"read": {"value": True, "changed": True}}))
+
+    assert outputs["relay"]["out"] is True
+    adapter.send_notification.assert_not_awaited()
+
+
 def test_manual_independent_message_ignores_missing_filter_trigger() -> None:
     flow = _flow(
         [
@@ -1508,7 +1543,7 @@ def test_debug_open_gate_preserves_no_change_provenance() -> None:
         first, second = asyncio.run(execute())
 
     assert first["notify"]["sent"] is True
-    assert second["gate"]["out"] is False
+    assert second["gate"]["out"] is True
     assert second["notify"]["sent"] is False
     adapter.send_notification.assert_awaited_once()
 

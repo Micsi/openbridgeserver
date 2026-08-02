@@ -3125,11 +3125,9 @@ class LogicManager:
         _synchronous_correction_ids = {node.id for node in flow.nodes if node.type in {"statistics", "operating_hours", "random_value"}}
         _stateful_relay_correction_ids = {node.id for node in flow.nodes if node.type in {"gate", "hysteresis"}}
         _needs_cf_pulse_correction_snapshot = any(
-            bool((_downstream_closure({_cf_id}, _effective_edges) - {_cf_id}) & (_change_filter_ids | _synchronous_correction_ids))
-            or any(
-                bool((_downstream_closure({_edge.target}, _effective_edges) - {_edge.target}) & _stateful_relay_correction_ids)
-                for _edge in _effective_edges
-                if _edge.source == _cf_id and (_edge.sourceHandle or "out") == "changed"
+            bool(
+                (_downstream_closure({_cf_id}, _effective_edges) - {_cf_id})
+                & (_change_filter_ids | _synchronous_correction_ids | _stateful_relay_correction_ids)
             )
             for _cf_id in _change_filter_ids
         )
@@ -3709,14 +3707,43 @@ class LogicManager:
                             changed = True
             relay_origins = {node.id: {node.id} for node in flow.nodes if node.type == "change_filter"}
 
-            def _sibling_can_drive_target(edge: Any) -> bool:
-                sibling_value = GraphExecutor._get_output_value(outputs.get(edge.source, {}), edge.sourceHandle or "out")
-                target_type = _node_type_by_id.get(edge.target)
-                if target_type == "or":
-                    return GraphExecutor._to_bool(sibling_value)
-                if target_type == "and":
-                    return not GraphExecutor._to_bool(sibling_value)
-                return True
+            _pure_fan_in_types = {
+                "and",
+                "or",
+                "not",
+                "xor",
+                "compare",
+                "decision",
+                "value_mapping",
+                "math_formula",
+                "math_map",
+                "clamp",
+                "string_concat",
+                "json_extractor",
+                "xml_extractor",
+                "substring_extractor",
+            }
+            _fan_in_probe = GraphExecutor(flow, {}, ical_app_config)
+
+            def _fresh_fan_in_preserves_output(pulse_edge: Any) -> bool:
+                target_node = _node_by_id_early.get(pulse_edge.target)
+                if target_node is None or target_node.type not in _pure_fan_in_types:
+                    return False
+                target_inputs: dict[str, Any] = {}
+                for incoming in _effective_edges:
+                    if incoming.target != pulse_edge.target:
+                        continue
+                    target_inputs[incoming.targetHandle or "in"] = GraphExecutor._get_output_value(
+                        outputs.get(incoming.source, {}), incoming.sourceHandle or "out"
+                    )
+                target_inputs.update(debug_overrides.get(pulse_edge.target, {}))
+                target_inputs[pulse_edge.targetHandle or "in"] = None
+                try:
+                    effective_inputs = GraphExecutor._resolve_effective_inputs(target_node, target_inputs)
+                    without_pulse = _fan_in_probe._eval_node(target_node, effective_inputs)
+                    return GraphExecutor._nan_aware_equal(without_pulse, outputs.get(pulse_edge.target, {}))
+                except Exception:  # noqa: BLE001 - malformed imported relay config remains provenance-conservative
+                    return False
 
             queue = list(relay_origins)
             while queue:
@@ -3777,17 +3804,15 @@ class LogicManager:
                                     "ical",
                                 }
                                 and GraphExecutor._get_output_value(outputs.get(edge.source, {}), edge.sourceHandle or "out") is not None
-                                and _sibling_can_drive_target(edge)
                             )
                             or (
                                 event_fresh is not None
                                 and (edge.targetHandle or "in") in event_fresh.get(edge.target, set())
                                 and (edge.source not in relay_origins or bool(fresh_origins.get(edge.source, set()) - pulse_fresh_origins))
-                                and _sibling_can_drive_target(edge)
                             )
                         )
                     ]
-                    if other_fresh_edges:
+                    if other_fresh_edges and _fresh_fan_in_preserves_output(pulse_edge):
                         continue
                     if _edge_carries_pulse(pulse_edge, require_fired_change_filter=False):
                         target_type_name = _node_type_by_id.get(pulse_edge.target)
@@ -3795,7 +3820,7 @@ class LogicManager:
                         stateful_handle = (target_type_name == "gate" and target_handle == "in") or (
                             target_type_name == "hysteresis" and target_handle == "value"
                         )
-                        if stateful_handle and _node_type_by_id.get(pulse_edge.source) != "change_filter":
+                        if stateful_handle:
                             stateful_relay_origins.setdefault(pulse_edge.target, {}).setdefault(target_handle, set()).update(source_origins)
                         target_origins = relay_origins.setdefault(pulse_edge.target, set())
                         new_origins = source_origins - target_origins
