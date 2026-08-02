@@ -96,6 +96,27 @@ async def test_seeded_read_publishes_write_and_primes_filter_state():
 
 
 @pytest.mark.asyncio
+async def test_seeded_initialization_tolerates_unrelated_noncopyable_filter_baseline():
+    src_id, dst_id = str(uuid.uuid4()), str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "r1", "type": "datapoint_read", "data": {"datapoint_id": src_id}},
+            {"id": "w1", "type": "datapoint_write", "data": {"datapoint_id": dst_id}},
+            {"id": "cf", "type": "change_filter", "data": {}},
+        ],
+        [{"source": "r1", "sourceHandle": "value", "target": "w1", "targetHandle": "value"}],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={src_id: 42})
+    runtime_value = (item for item in (1, 2, 3))
+    mgr._hysteresis["g1"] = {"cf": {"value": runtime_value}}
+
+    await mgr.initialize_graph("g1")
+
+    mgr._event_bus.publish.assert_awaited_once()
+    assert mgr._hysteresis["g1"]["cf"]["value"] is runtime_value
+
+
+@pytest.mark.asyncio
 async def test_unknown_graph_is_noop():
     mgr = _make_manager({})
 

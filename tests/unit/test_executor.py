@@ -1486,6 +1486,68 @@ class TestChangeFilterNode:
         assert second["cf"]["changed"] is True
         assert "__error__" not in second["cf"]
 
+    @pytest.mark.parametrize("mode", ["raises", "unsafe_truth", "unsafe_equality"])
+    def test_decimal_subclass_with_unsafe_finiteness_or_equality_uses_safe_comparison(self, mode):
+        class UnsafeTruth:
+            def __bool__(self):
+                raise RuntimeError("truth conversion unavailable")
+
+        class UnsafeDecimal(Decimal):
+            def is_finite(self):
+                if mode == "raises":
+                    raise RuntimeError("finiteness check unavailable")
+                if mode == "unsafe_truth":
+                    return UnsafeTruth()
+                return super().is_finite()
+
+            def __eq__(self, other):
+                if mode == "unsafe_equality":
+                    raise RuntimeError("equality unavailable")
+                return super().__eq__(other)
+
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state={})
+
+        first = exc.execute({"cf": {"in": UnsafeDecimal("2.25")}})
+        second = exc.execute({"cf": {"in": UnsafeDecimal("3.5")}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is True
+        assert "__error__" not in second["cf"]
+
+    def test_int_subclass_with_failing_conversion_uses_safe_equality(self):
+        class UnsafeInt(int):
+            def __int__(self):
+                raise RuntimeError("integer conversion unavailable")
+
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state={})
+
+        first = exc.execute({"cf": {"in": UnsafeInt(2)}})
+        second = exc.execute({"cf": {"in": UnsafeInt(3)}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is True
+        assert "__error__" not in second["cf"]
+
+    @pytest.mark.parametrize("mode", ["strip", "lower"])
+    def test_string_subclass_with_failing_literal_normalization_uses_safe_equality(self, mode):
+        class UnsafeString(str):
+            def strip(self, *args):
+                if mode == "strip":
+                    raise RuntimeError("strip unavailable")
+                return self
+
+            def lower(self):
+                raise RuntimeError("lower unavailable")
+
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state={})
+
+        first = exc.execute({"cf": {"in": UnsafeString("alpha")}})
+        second = exc.execute({"cf": {"in": UnsafeString("beta")}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is True
+        assert "__error__" not in second["cf"]
+
     def test_container_subclass_with_ambiguous_equality_is_safe(self):
         class UnsafeTruth:
             def __bool__(self):

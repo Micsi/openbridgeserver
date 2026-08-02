@@ -2314,7 +2314,7 @@ class LogicManager:
                 # settled seeds must evaluate against the ORIGINAL persisted
                 # state, not the state an earlier pass derived from stale
                 # intermediate values.
-                hyst_copy = copy.deepcopy(self._hysteresis.get(graph_id, {}))
+                hyst_copy = _safe_deepcopy_state(self._hysteresis.get(graph_id, {}))
                 executor = GraphExecutor(init_flow, hyst_copy, self._app_config)
                 outputs = executor.execute(overrides, commit_memory=False)
 

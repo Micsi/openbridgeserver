@@ -498,20 +498,36 @@ class GraphExecutor:
         if isinstance(v, bool):
             return v
         if isinstance(v, str):
-            s = v.strip().lower()
+            try:
+                s = v.strip().lower()
+            except Exception:  # noqa: BLE001 - string subclasses may fail normalization arbitrarily
+                return None
             if s in {"true", "1", "yes", "on"}:
                 return True
             if s in {"false", "0", "no", "off"}:
                 return False
             try:
                 numeric = Decimal(s)
-            except InvalidOperation:
+            except Exception:  # noqa: BLE001 - normalized string subclasses may fail Decimal conversion arbitrarily
                 return None
-            return bool(numeric) if numeric.is_finite() and numeric in (0, 1) else None
+            v = numeric
         # Numeric 0/1 are recognized too, so equality stays transitive across
         # adapter representations: 1 == "1" == "true" must all agree.
         if isinstance(v, Decimal):
-            return bool(v) if v.is_finite() and v in (0, 1) else None
+            try:
+                if not bool(v.is_finite()):
+                    return None
+                equals_zero = v == 0
+                equals_one = v == 1
+            except Exception:  # noqa: BLE001 - Decimal subclasses may fail classification or equality arbitrarily
+                return None
+            if type(equals_zero) is not bool or type(equals_one) is not bool:
+                return None
+            if equals_zero:
+                return False
+            if equals_one:
+                return True
+            return None
         if isinstance(v, (int, float)):
             try:
                 equals_zero = v == 0
@@ -534,7 +550,7 @@ class GraphExecutor:
         if isinstance(v, int):
             try:
                 return int(v)
-            except (TypeError, ValueError, OverflowError):
+            except Exception:  # noqa: BLE001 - user-provided int subclasses may fail conversion arbitrarily
                 return None
         if isinstance(v, float):
             # A float that already holds a whole number carries no more
@@ -546,7 +562,10 @@ class GraphExecutor:
             except Exception:  # noqa: BLE001 - user-provided float subclasses may fail conversion arbitrarily
                 return None
         if isinstance(v, str):
-            s = v.strip()
+            try:
+                s = v.strip()
+            except Exception:  # noqa: BLE001 - string subclasses may fail normalization arbitrarily
+                return None
             try:
                 return int(s)
             except ValueError:
@@ -595,7 +614,10 @@ class GraphExecutor:
         if isinstance(v, Decimal):
             dec = v
         elif isinstance(v, int):
-            dec = Decimal(v)
+            try:
+                dec = Decimal(v)
+            except Exception:  # noqa: BLE001 - integer subclasses may fail exact Decimal conversion arbitrarily
+                return None
         elif isinstance(v, float):
             # A plain float always produces a valid Decimal literal, but a
             # float subclass may override __str__ with arbitrary behavior.
@@ -608,11 +630,14 @@ class GraphExecutor:
         elif isinstance(v, str):
             try:
                 dec = Decimal(v.strip())
-            except InvalidOperation:
+            except Exception:  # noqa: BLE001 - string subclasses may fail normalization or Decimal conversion arbitrarily
                 return None
         else:
             return None
-        return dec if dec.is_finite() else None
+        try:
+            return dec if bool(dec.is_finite()) else None
+        except Exception:  # noqa: BLE001 - Decimal subclasses may fail classification or truth conversion arbitrarily
+            return None
 
     @classmethod
     def _compare_values(
@@ -698,7 +723,10 @@ class GraphExecutor:
             return int_left == int_right, True
         dec_left, dec_right = cls._try_decimal(left), cls._try_decimal(right)
         if dec_left is not None and dec_right is not None:
-            return dec_left == dec_right, True
+            try:
+                return bool(dec_left == dec_right), True
+            except Exception:  # noqa: BLE001 - Decimal subclasses may implement unsafe equality
+                dec_left = dec_right = None
         container_types = (dict, list, tuple, set, frozenset, _OpaqueRecoveredSet, _OpaqueRecoveredDict)
         if isinstance(left, container_types) and isinstance(right, container_types):
             if right_is_opaque_recovered_str:
