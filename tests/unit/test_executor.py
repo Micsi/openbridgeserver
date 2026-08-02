@@ -1963,6 +1963,41 @@ class TestChangeFilterNode:
         assert out["cf"] == {"out": None, "changed": False}
         assert "cf" not in state
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            node("source", "memory", {"initial_value": False, "data_type": "bool"}),
+            node("source", "missing_node", {"initial_value": False, "data_type": "bool"}),
+        ],
+    )
+    def test_absent_stale_retained_source_handle_stays_unresolved(self, source):
+        nodes = [source, node("invert", "not"), node("cf", "change_filter")]
+        edges = [edge("source", "invert", "removed_output", "in1"), edge("invert", "cf", "out", "in")]
+        state = {}
+        exc = make_executor(nodes, edges, hysteresis_state=state)
+
+        out = exc.execute()
+
+        assert out["cf"] == {"out": None, "changed": False}
+        assert "cf" not in state
+
+    def test_time_subclass_with_failing_fold_access_uses_safe_equality(self):
+        from datetime import time as datetime_time
+
+        class UnsafeFoldTime(datetime_time):
+            @property
+            def fold(self):
+                raise RuntimeError("fold unavailable")
+
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state={})
+
+        first = exc.execute({"cf": {"in": UnsafeFoldTime(10, 0)}})
+        second = exc.execute({"cf": {"in": UnsafeFoldTime(11, 0)}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is True
+        assert "__error__" not in second["cf"]
+
     def test_deeply_nested_opaque_recovery_compares_iteratively(self):
         retained: list = []
         live: list = []

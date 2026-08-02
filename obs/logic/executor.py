@@ -155,6 +155,7 @@ class GraphExecutor:
         input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
         ical_result_cache: dict[str, Any] | None = None,
         ical_cache_outputs_owned: bool = False,
+        retained_boundary_handles: dict[str, set[str]] | None = None,
     ):
         self.flow = flow
         # NOTE: use `is not None` instead of `or {}` — an empty dict {} is falsy,
@@ -168,6 +169,7 @@ class GraphExecutor:
         # async replay passes.
         self.ical_result_cache = ical_result_cache if ical_result_cache is not None else {}
         self.ical_cache_outputs_owned = ical_cache_outputs_owned
+        self.retained_boundary_handles = retained_boundary_handles or {}
 
     def execute(
         self,
@@ -197,11 +199,9 @@ class GraphExecutor:
         # Build adjacency: edge target_node.handle ← source_node.handle value
         # edge_map[target_node_id][target_handle] = (source_node_id, source_handle)
         edge_map = self._build_edge_map()
-        retained_boundary_ids = {
-            node.id
-            for node in self.flow.nodes
-            if node.type == "memory" or (node.type == "missing_node" and ("initial_value" in node.data or "data_type" in node.data))
-        }
+        retained_boundary_handles = {node.id: {"out"} for node in self.flow.nodes if node.type == "memory"}
+        for node_id, handles in self.retained_boundary_handles.items():
+            retained_boundary_handles.setdefault(node_id, set()).update(handles)
         # Only failed-output paths that can influence a Change Filter need to
         # retain absence through synchronous nodes. Elsewhere, the executor's
         # longstanding missing-input/default behavior remains intentional.
@@ -274,7 +274,9 @@ class GraphExecutor:
                 # example, failed_script -> NOT becomes True) which a later
                 # Change Filter would then commit. Keep the output absent so
                 # the missing state propagates through every intermediate hop.
-                unresolved = [item for item in missing_inputs if item[0] not in node_overrides and item[1] not in retained_boundary_ids]
+                unresolved = [
+                    item for item in missing_inputs if item[0] not in node_overrides and item[2] not in retained_boundary_handles.get(item[1], set())
+                ]
                 if node.type == "hysteresis":
                     # An absent value deliberately means "emit retained
                     # state" for Hysteresis, making it a taint boundary just
@@ -688,6 +690,8 @@ class GraphExecutor:
             try:
                 left_aware = left.tzinfo is not None and left.utcoffset() is not None
                 right_aware = right.tzinfo is not None and right.utcoffset() is not None
+                left_fold = left.fold
+                right_fold = right.fold
             except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail awareness probing
                 try:
                     return bool(left == right), True
@@ -701,9 +705,17 @@ class GraphExecutor:
                         return bool(left == right), True
                     except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail equality
                         return False, True
-            if not left_aware and not right_aware and left.fold != right.fold:
+            if not left_aware and not right_aware and left_fold != right_fold:
                 return False, True
         if isinstance(left, _time) and isinstance(right, _time):
+            try:
+                left_fold = left.fold
+                right_fold = right.fold
+            except Exception:  # noqa: BLE001 - arbitrary time subclasses may fail fold classification
+                try:
+                    return bool(left == right), True
+                except Exception:  # noqa: BLE001 - the same time subclass may also fail equality
+                    return False, True
             try:
                 if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
                     same_tz = left.tzinfo.key == right.tzinfo.key
@@ -711,7 +723,7 @@ class GraphExecutor:
                     same_tz = bool(left.tzinfo == right.tzinfo)
             except Exception:  # noqa: BLE001 - arbitrary tzinfo equality may raise or be ambiguous
                 same_tz = False
-            if left.fold != right.fold or not same_tz:
+            if left_fold != right_fold or not same_tz:
                 return False, True
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
@@ -811,6 +823,8 @@ class GraphExecutor:
             try:
                 left_aware = left.tzinfo is not None and left.utcoffset() is not None
                 right_aware = right.tzinfo is not None and right.utcoffset() is not None
+                left_fold = left.fold
+                right_fold = right.fold
             except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail awareness probing
                 try:
                     return bool(left == right)
@@ -824,9 +838,17 @@ class GraphExecutor:
                         return bool(left == right)
                     except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail equality
                         return False
-            if not left_aware and not right_aware and left.fold != right.fold:
+            if not left_aware and not right_aware and left_fold != right_fold:
                 return False
         if isinstance(left, _time) and isinstance(right, _time):
+            try:
+                left_fold = left.fold
+                right_fold = right.fold
+            except Exception:  # noqa: BLE001 - arbitrary time subclasses may fail fold classification
+                try:
+                    return bool(left == right)
+                except Exception:  # noqa: BLE001 - the same time subclass may also fail equality
+                    return False
             try:
                 if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
                     same_tz = left.tzinfo.key == right.tzinfo.key
@@ -834,7 +856,7 @@ class GraphExecutor:
                     same_tz = bool(left.tzinfo == right.tzinfo)
             except Exception:  # noqa: BLE001 - arbitrary tzinfo equality may raise or be ambiguous
                 same_tz = False
-            if left.fold != right.fold or not same_tz:
+            if left_fold != right_fold or not same_tz:
                 return False
         container_types = (dict, list, tuple, set, frozenset)
         if isinstance(left, container_types) and isinstance(right, container_types):
@@ -906,7 +928,10 @@ class GraphExecutor:
                     return True
                 continue
             if isinstance(current, _time):
-                if current.tzinfo is not None or bool(current.fold):
+                try:
+                    if current.tzinfo is not None or bool(current.fold):
+                        return True
+                except Exception:  # noqa: BLE001 - force arbitrary failing time subclasses through guarded comparison
                     return True
                 continue
             if isinstance(current, (dict, list, tuple, set, frozenset)):

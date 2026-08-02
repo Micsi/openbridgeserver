@@ -2263,6 +2263,7 @@ class LogicManager:
             # subgraphs are tainted) — replace them with inert placeholders
             # for the dry run so e.g. a python_script cannot burn CPU inside
             # the save request.
+            init_retained_boundary_handles = {node.id: {"out"} for node in flow.nodes if node.type == "memory"}
             init_flow = flow
             if excluded_ids:
                 init_flow = flow.model_copy(deep=True)
@@ -2315,7 +2316,12 @@ class LogicManager:
                 # state, not the state an earlier pass derived from stale
                 # intermediate values.
                 hyst_copy = _safe_deepcopy_state(self._hysteresis.get(graph_id, {}))
-                executor = GraphExecutor(init_flow, hyst_copy, self._app_config)
+                executor = GraphExecutor(
+                    init_flow,
+                    hyst_copy,
+                    self._app_config,
+                    retained_boundary_handles=init_retained_boundary_handles,
+                )
                 outputs = executor.execute(overrides, commit_memory=False)
 
                 settled = True
