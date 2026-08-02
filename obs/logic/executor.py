@@ -628,7 +628,7 @@ class GraphExecutor:
             if left_aware and right_aware:
                 try:
                     return left.astimezone(_UTC) == right.astimezone(_UTC), True
-                except (OverflowError, ValueError):
+                except Exception:  # noqa: BLE001 - arbitrary tzinfo normalization may fail
                     try:
                         return bool(left == right), True
                     except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail equality
@@ -738,7 +738,7 @@ class GraphExecutor:
             if left_aware and right_aware:
                 try:
                     return left.astimezone(_UTC) == right.astimezone(_UTC)
-                except (OverflowError, ValueError):
+                except Exception:  # noqa: BLE001 - arbitrary tzinfo normalization may fail
                     try:
                         return bool(left == right)
                     except Exception:  # noqa: BLE001 - arbitrary tzinfo implementations may fail equality
@@ -968,19 +968,17 @@ class GraphExecutor:
         if isinstance(left, (set, frozenset)) and isinstance(right, _OpaqueRecoveredSet):
             if isinstance(left, frozenset) != right.frozen or len(left) != len(right.items):
                 return False
-
-            def _match_remaining(left_items: list[Any], right_items: list[Any]) -> bool:
-                if not left_items:
+            left_items = list(left)
+            pending: list[tuple[int, list[Any]]] = [(0, list(right.items))]
+            while pending:
+                left_index, remaining = pending.pop()
+                if left_index == len(left_items):
                     return True
-                left_item = left_items[0]
-                for index, right_item in enumerate(right_items):
-                    if cls._opaque_aware_container_equal(left_item, right_item, allow_unmarked=allow_unmarked) and _match_remaining(
-                        left_items[1:], right_items[:index] + right_items[index + 1 :]
-                    ):
-                        return True
-                return False
-
-            return _match_remaining(list(left), list(right.items))
+                left_item = left_items[left_index]
+                for right_index, right_item in enumerate(remaining):
+                    if cls._opaque_aware_container_equal(left_item, right_item, allow_unmarked=allow_unmarked):
+                        pending.append((left_index + 1, remaining[:right_index] + remaining[right_index + 1 :]))
+            return False
         if isinstance(right, _OpaqueRecoveredStr):
             return _opaque_recovered_matches(left, right, allow_unmarked=allow_unmarked)
         try:

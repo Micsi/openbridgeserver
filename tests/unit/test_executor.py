@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from obs.logic.executor import ExecutionError, GraphExecutor, _OpaqueRecoveredDict, _OpaqueRecoveredStr
+from obs.logic.executor import ExecutionError, GraphExecutor, _OpaqueRecoveredDict, _OpaqueRecoveredSet, _OpaqueRecoveredStr
 from tests.unit.conftest import edge, make_executor, node
 
 
@@ -1102,6 +1102,28 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is False
         assert "__error__" not in out["cf"]
 
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_datetime_normalization_arbitrary_failure_falls_back_safely(self, nested):
+        class StatefulTimezone(tzinfo):
+            def __init__(self):
+                self.calls = 0
+
+            def utcoffset(self, _dt):
+                self.calls += 1
+                if self.calls > 1:
+                    raise RuntimeError("normalization unavailable")
+                return timedelta(0)
+
+        retained = datetime(2025, 1, 1, tzinfo=StatefulTimezone())
+        live = datetime(2025, 1, 1, tzinfo=StatefulTimezone())
+        state = {"cf": {"value": [retained] if nested else retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [live] if nested else live}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
     def test_naive_datetime_fold_transitions_are_changes(self):
         first = datetime(2025, 10, 26, 2, 30, fold=0)  # noqa: DTZ001 - specifically tests naive fold metadata
         second = datetime(2025, 10, 26, 2, 30, fold=1)  # noqa: DTZ001 - specifically tests naive fold metadata
@@ -1541,6 +1563,17 @@ class TestChangeFilterNode:
         live = {index: index for index in range(1100)}
         live[3 + 4j] = "opaque"
         recovered = _OpaqueRecoveredDict([(index, index) for index in range(1100)] + [(_OpaqueRecoveredStr("(3+4j)", "builtins.complex"), "opaque")])
+        state = {"cf": {"value": recovered, "_opaque_recovered_str": True}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
+    def test_large_recovered_set_matches_without_recursion_error(self):
+        live = set(range(1100)) | {3 + 4j}
+        recovered = _OpaqueRecoveredSet([*range(1100), _OpaqueRecoveredStr("(3+4j)", "builtins.complex")], frozen=False)
         state = {"cf": {"value": recovered, "_opaque_recovered_str": True}}
         exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
 

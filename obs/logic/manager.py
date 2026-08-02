@@ -3725,8 +3725,9 @@ class LogicManager:
                                     "min_max_tracker",
                                     "consumption_counter",
                                     "operating_hours",
+                                    "memory",
                                 }
-                                and any(value is not None for value in outputs.get(edge.source, {}).values())
+                                and GraphExecutor._get_output_value(outputs.get(edge.source, {}), edge.sourceHandle or "out") is not None
                             )
                             or (
                                 event_fresh is not None
