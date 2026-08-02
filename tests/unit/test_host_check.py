@@ -1401,6 +1401,29 @@ class TestHostCheckRisingEdge:
         assert second["cf"]["changed"] is True
         assert "__error__" not in second["cf"]
 
+    def test_worker_state_merge_survives_raising_runtime_equality(self):
+        class UnsafeEquality:
+            def __eq__(self, other):
+                raise RuntimeError("comparison unavailable")
+
+        flow = _flow(
+            [
+                node("script", "python_script", {"script": "result = 1"}),
+                node("cf", "change_filter"),
+            ]
+        )
+        manager = _make_manager()
+        graph_id = "g-worker-merge-unsafe-equality"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": UnsafeEquality()}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": UnsafeEquality()}}))
+
+        assert outputs["cf"]["changed"] is True
+        assert "__error__" not in outputs["cf"]
+
     def test_transformed_no_change_pulse_does_not_trigger_datapoint_write(self):
         target_id = uuid.uuid4()
         flow = _flow(

@@ -599,6 +599,8 @@ class GraphExecutor:
             right_aware = right.tzinfo is not None and right.utcoffset() is not None
             if left_aware and right_aware:
                 return left.astimezone(_UTC) == right.astimezone(_UTC), True
+            if not left_aware and not right_aware and left.fold != right.fold:
+                return False, True
         if isinstance(left, _time) and isinstance(right, _time):
             if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
                 same_tz = left.tzinfo.key == right.tzinfo.key
@@ -695,8 +697,15 @@ class GraphExecutor:
             right_aware = right.tzinfo is not None and right.utcoffset() is not None
             if left_aware and right_aware:
                 return left.astimezone(_UTC) == right.astimezone(_UTC)
-        if isinstance(left, _time) and isinstance(right, _time) and (left.fold != right.fold or left.tzinfo != right.tzinfo):
-            return False
+            if not left_aware and not right_aware and left.fold != right.fold:
+                return False
+        if isinstance(left, _time) and isinstance(right, _time):
+            if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
+                same_tz = left.tzinfo.key == right.tzinfo.key
+            else:
+                same_tz = left.tzinfo == right.tzinfo
+            if left.fold != right.fold or not same_tz:
+                return False
         container_types = (dict, list, tuple, set, frozenset)
         if isinstance(left, container_types) and isinstance(right, container_types):
             seen = set() if seen is None else seen
@@ -760,7 +769,7 @@ class GraphExecutor:
         if _is_nan(value):
             return True
         if isinstance(value, _datetime):
-            return value.tzinfo is not None and value.utcoffset() is not None
+            return (value.tzinfo is not None and value.utcoffset() is not None) or bool(value.fold)
         if isinstance(value, _time):
             return value.tzinfo is not None or bool(value.fold)
         if isinstance(value, (dict, list, tuple, set, frozenset)):

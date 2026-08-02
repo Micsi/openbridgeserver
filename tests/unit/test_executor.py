@@ -1065,6 +1065,27 @@ class TestChangeFilterNode:
 
         assert out["cf"] == {"out": [second], "changed": True}
 
+    def test_naive_datetime_fold_transitions_are_changes(self):
+        first = datetime(2025, 10, 26, 2, 30, fold=0)  # noqa: DTZ001 - specifically tests naive fold metadata
+        second = datetime(2025, 10, 26, 2, 30, fold=1)  # noqa: DTZ001 - specifically tests naive fold metadata
+        state = {"cf": {"value": first}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": second}})
+
+        assert first == second
+        assert out["cf"] == {"out": second, "changed": True}
+
+    def test_nested_naive_datetime_fold_transitions_are_changes(self):
+        first = datetime(2025, 10, 26, 2, 30, fold=0)  # noqa: DTZ001 - specifically tests naive fold metadata
+        second = datetime(2025, 10, 26, 2, 30, fold=1)  # noqa: DTZ001 - specifically tests naive fold metadata
+        state = {"cf": {"value": [first]}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [second]}})
+
+        assert out["cf"] == {"out": [second], "changed": True}
+
     def test_time_timezone_and_fold_transitions_are_changes(self):
         from datetime import time as datetime_time
 
@@ -1091,6 +1112,18 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": uncached}})
 
         assert cached.tzinfo is not uncached.tzinfo
+        assert out["cf"]["changed"] is False
+
+    def test_nested_equivalent_zoneinfo_time_instances_compare_by_key(self):
+        from datetime import time as datetime_time
+
+        cached = datetime_time(10, 30, tzinfo=ZoneInfo("Europe/Zurich"))
+        uncached = datetime_time(10, 30, tzinfo=ZoneInfo.no_cache("Europe/Zurich"))
+        state = {"cf": {"value": [cached]}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [uncached]}})
+
         assert out["cf"]["changed"] is False
 
     def test_nested_signaling_decimal_nan_can_be_replaced(self):

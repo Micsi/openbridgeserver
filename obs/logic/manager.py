@@ -51,19 +51,27 @@ class _ObsoleteGraphExecution(Exception):
     """Stop a pass whose captured graph generation has been replaced."""
 
 
+def _state_values_equal(left: Any, right: Any) -> bool:
+    """Compare arbitrary retained state without trusting runtime equality."""
+    try:
+        return bool(left == right)
+    except Exception:  # noqa: BLE001 - script values may define raising or ambiguous equality
+        return left is right
+
+
 def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: dict[str, Any]) -> None:
     """Apply worker changes without erasing state updated concurrently."""
     for key in base.keys() - updated.keys():
-        if target.get(key, _MISSING_STATE) == base[key]:
+        if _state_values_equal(target.get(key, _MISSING_STATE), base[key]):
             target.pop(key, None)
     for key, updated_value in updated.items():
         base_value = base.get(key, _MISSING_STATE)
-        if base_value is not _MISSING_STATE and updated_value == base_value:
+        if base_value is not _MISSING_STATE and _state_values_equal(updated_value, base_value):
             continue
         target_value = target.get(key, _MISSING_STATE)
         if isinstance(base_value, dict) and isinstance(updated_value, dict) and isinstance(target_value, dict):
             _merge_worker_state(base_value, updated_value, target_value)
-        elif target_value is _MISSING_STATE or target_value == base_value:
+        elif target_value is _MISSING_STATE or _state_values_equal(target_value, base_value):
             # ``updated`` is an isolated worker snapshot that is discarded
             # after this commit, so ownership can safely move to ``target``.
             target[key] = updated_value
@@ -3626,9 +3634,25 @@ class LogicManager:
                 return True
             return (edge.targetHandle or "in") in trigger_port_ids
 
-        def _build_cf_pulse_origins(event_fresh: dict[str, set[str]] | None) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+        def _build_cf_pulse_origins(
+            event_fresh: dict[str, set[str]] | None, fresh_seed_ids: set[str]
+        ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
             message_origins: dict[str, set[str]] = {}
             trigger_origins: dict[str, set[str]] = {}
+            fresh_origins = {node_id: {node_id} for node_id in fresh_seed_ids}
+            if event_fresh is not None:
+                changed = True
+                while changed:
+                    changed = False
+                    for edge in _effective_edges:
+                        if (edge.targetHandle or "in") not in event_fresh.get(edge.target, set()):
+                            continue
+                        source_origins = fresh_origins.get(edge.source, set())
+                        target_origins = fresh_origins.setdefault(edge.target, set())
+                        new_origins = source_origins - target_origins
+                        if new_origins:
+                            target_origins.update(new_origins)
+                            changed = True
             relay_origins = {node.id: {node.id} for node in flow.nodes if node.type == "change_filter"}
             queue = list(relay_origins)
             while queue:
@@ -3636,6 +3660,8 @@ class LogicManager:
                 source_origins = relay_origins[source_id]
                 for pulse_edge in _effective_edges:
                     if pulse_edge.source != source_id:
+                        continue
+                    if (pulse_edge.targetHandle or "in") in debug_overrides.get(pulse_edge.target, {}):
                         continue
                     if _node_type_by_id.get(source_id) == "change_filter" and (pulse_edge.sourceHandle or "out") != "changed":
                         continue
@@ -3649,6 +3675,7 @@ class LogicManager:
                         continue
                     if target_type and any(port.type == "trigger" for port in target_type.inputs):
                         continue
+                    pulse_fresh_origins = fresh_origins.get(pulse_edge.source, set())
                     other_fresh_edges = [
                         edge
                         for edge in _effective_edges
@@ -3657,6 +3684,7 @@ class LogicManager:
                         and not (_node_type_by_id.get(edge.target) == "gate" and (edge.targetHandle or "in") == "enable")
                         and event_fresh is not None
                         and (edge.targetHandle or "in") in event_fresh.get(edge.target, set())
+                        and bool(fresh_origins.get(edge.source, set()) - pulse_fresh_origins)
                     ]
                     if other_fresh_edges:
                         continue
@@ -3671,7 +3699,7 @@ class LogicManager:
         _initial_event_fresh = (
             _fresh_input_handles({node_id: dict(values) for node_id, values in overrides.items()}, flow.edges) if overrides else None
         )
-        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(_initial_event_fresh)
+        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(_initial_event_fresh, set(overrides))
 
         def _suppress_missing_cf_trigger_pulses(node_ids: set[str] | None = None) -> None:
             for target_id, origins in _cf_changed_trigger_origins.items():
@@ -5373,7 +5401,9 @@ class LogicManager:
         # gets this treatment, including effective pure-relay paths. Keeping
         # provenance structural (not value-based) leaves ordinary boolean
         # sources wired to "message" unaffected.
-        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(_event_fresh_inputs())
+        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(
+            _event_fresh_inputs(), set(overrides) | refreshed_ical_nodes
+        )
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()
