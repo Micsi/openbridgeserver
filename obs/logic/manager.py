@@ -3123,8 +3123,14 @@ class LogicManager:
             _change_filter_ids & (_downstream_closure(_potential_no_result_mapping_ids, _effective_edges) - _potential_no_result_mapping_ids)
         )
         _synchronous_correction_ids = {node.id for node in flow.nodes if node.type in {"statistics", "operating_hours", "random_value"}}
+        _stateful_relay_correction_ids = {node.id for node in flow.nodes if node.type in {"gate", "hysteresis"}}
         _needs_cf_pulse_correction_snapshot = any(
             bool((_downstream_closure({_cf_id}, _effective_edges) - {_cf_id}) & (_change_filter_ids | _synchronous_correction_ids))
+            or any(
+                bool((_downstream_closure({_edge.target}, _effective_edges) - {_edge.target}) & _stateful_relay_correction_ids)
+                for _edge in _effective_edges
+                if _edge.source == _cf_id and (_edge.sourceHandle or "out") == "changed"
+            )
             for _cf_id in _change_filter_ids
         )
         _needs_pre_execute_snapshot = (
@@ -3675,11 +3681,18 @@ class LogicManager:
 
         def _build_cf_pulse_origins(
             event_fresh: dict[str, set[str]] | None, fresh_seed_origins: dict[str, str]
-        ) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[str, dict[str, set[str]]], dict[str, set[str]]]:
+        ) -> tuple[
+            dict[str, set[str]],
+            dict[str, set[str]],
+            dict[str, dict[str, set[str]]],
+            dict[str, set[str]],
+            dict[str, dict[str, set[str]]],
+        ]:
             message_origins: dict[str, set[str]] = {}
             trigger_origins: dict[str, set[str]] = {}
             trigger_handle_origins: dict[str, dict[str, set[str]]] = {}
             downstream_filter_origins: dict[str, set[str]] = {}
+            stateful_relay_origins: dict[str, dict[str, set[str]]] = {}
             fresh_origins = {node_id: {origin} for node_id, origin in fresh_seed_origins.items()}
             if event_fresh is not None:
                 changed = True
@@ -3770,18 +3783,26 @@ class LogicManager:
                                 event_fresh is not None
                                 and (edge.targetHandle or "in") in event_fresh.get(edge.target, set())
                                 and (edge.source not in relay_origins or bool(fresh_origins.get(edge.source, set()) - pulse_fresh_origins))
+                                and _sibling_can_drive_target(edge)
                             )
                         )
                     ]
                     if other_fresh_edges:
                         continue
                     if _edge_carries_pulse(pulse_edge, require_fired_change_filter=False):
+                        target_type_name = _node_type_by_id.get(pulse_edge.target)
+                        target_handle = pulse_edge.targetHandle or "in"
+                        stateful_handle = (target_type_name == "gate" and target_handle == "in") or (
+                            target_type_name == "hysteresis" and target_handle == "value"
+                        )
+                        if stateful_handle and _node_type_by_id.get(pulse_edge.source) != "change_filter":
+                            stateful_relay_origins.setdefault(pulse_edge.target, {}).setdefault(target_handle, set()).update(source_origins)
                         target_origins = relay_origins.setdefault(pulse_edge.target, set())
                         new_origins = source_origins - target_origins
                         if new_origins:
                             target_origins.update(new_origins)
                             queue.append(pulse_edge.target)
-            return message_origins, trigger_origins, trigger_handle_origins, downstream_filter_origins
+            return message_origins, trigger_origins, trigger_handle_origins, downstream_filter_origins, stateful_relay_origins
 
         _initial_event_fresh = (
             _fresh_input_handles({node_id: dict(values) for node_id, values in overrides.items()}, flow.edges) if overrides else None
@@ -3797,6 +3818,7 @@ class LogicManager:
             _cf_changed_trigger_origins,
             _cf_changed_trigger_handle_origins,
             _cf_downstream_filter_origins,
+            _cf_changed_stateful_relay_origins,
         ) = _build_cf_pulse_origins(_initial_event_fresh, {node_id: _event_origin(node_id) for node_id in overrides})
 
         def _suppress_missing_cf_trigger_pulses(node_ids: set[str] | None = None) -> None:
@@ -3811,7 +3833,11 @@ class LogicManager:
                 has_independent_message = target_output.get("_message") is not None and (
                     not message_origins or any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in message_origins)
                 )
-                if target_node is not None and target_node.type in {"notify_message", "notify_pushover", "notify_sms"} and has_independent_message:
+                if (
+                    target_node is not None
+                    and target_node.type in {"message_archive", "notify_message", "notify_pushover", "notify_sms"}
+                    and has_independent_message
+                ):
                     continue
                 if "_trigger" in target_output:
                     target_output["_trigger"] = False
@@ -3876,6 +3902,33 @@ class LogicManager:
                 else:
                     hyst.pop(node_id, None)
             _apply_operating_hours_state(synchronous_descendants, pre_execute_node_state)
+
+        missing_stateful_relay_targets = {
+            target_id
+            for target_id, handle_origins in _cf_changed_stateful_relay_origins.items()
+            if any(
+                not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins) for origins in handle_origins.values()
+            )
+        }
+        if missing_stateful_relay_targets:
+            stateful_descendants = missing_stateful_relay_targets | _downstream_closure(missing_stateful_relay_targets, _effective_edges)
+            stateful_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+            stateful_known_outputs = {node_id: values for node_id, values in outputs.items() if node_id not in stateful_descendants}
+            for target_id in missing_stateful_relay_targets:
+                prior_value = stateful_hyst.get(target_id, False) if _node_type_by_id.get(target_id) == "hysteresis" else stateful_hyst.get(target_id)
+                stateful_known_outputs[target_id] = {"out": prior_value}
+            stateful_outputs = await _execute_pass(
+                await _executor(stateful_hyst),
+                aug_overrides,
+                known_outputs=stateful_known_outputs,
+            )
+            for node_id in stateful_descendants:
+                if node_id in stateful_outputs:
+                    outputs[node_id] = stateful_outputs[node_id]
+                if node_id in stateful_hyst:
+                    hyst[node_id] = stateful_hyst[node_id]
+                else:
+                    hyst.pop(node_id, None)
 
         cron_node_ids = {n.id for n in flow.nodes if n.type == "timer_cron"}
         # A change_filter's "changed" pulse is a discrete edge just like a
@@ -5558,6 +5611,7 @@ class LogicManager:
             _cf_changed_trigger_origins,
             _cf_changed_trigger_handle_origins,
             _cf_downstream_filter_origins,
+            _late_cf_changed_stateful_relay_origins,
         ) = _build_cf_pulse_origins(_event_fresh_inputs(), {node_id: _event_origin(node_id) for node_id in set(overrides) | refreshed_ical_nodes})
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:

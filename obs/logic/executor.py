@@ -932,13 +932,16 @@ class GraphExecutor:
                 if pair in seen:
                     continue
                 seen.add(pair)
-                try:
-                    for key, item in current_left.items():
-                        if key not in current_right:
-                            return False
-                        pending.append((item, current_right[key]))
-                except Exception:  # noqa: BLE001 - arbitrary keys may define unsafe equality
-                    return False
+                remaining = list(current_right.items())
+                for key, item in current_left.items():
+                    match = next(
+                        (index for index, (candidate, _) in enumerate(remaining) if cls._nan_aware_equal(key, candidate)),
+                        None,
+                    )
+                    if match is None:
+                        return False
+                    _, matched_item = remaining.pop(match)
+                    pending.append((item, matched_item))
                 continue
             if isinstance(current_left, (set, frozenset)):
                 if len(current_left) != len(current_right):

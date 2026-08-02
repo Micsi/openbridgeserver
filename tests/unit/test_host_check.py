@@ -1623,6 +1623,49 @@ class TestHostCheckRisingEdge:
         assert outputs["cf"]["changed"] is False
         snapshot.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("relay_type", "relay_data", "target_handle", "prior_state", "expected_output"),
+        [
+            ("hysteresis", {"threshold_on": 0.5, "threshold_off": 0.2}, "value", False, False),
+            ("gate", {}, "in", "retained", "retained"),
+        ],
+    )
+    def test_missing_filter_pulse_does_not_mutate_stateful_relay(
+        self,
+        relay_type: str,
+        relay_data: dict,
+        target_handle: str,
+        prior_state: object,
+        expected_output: object,
+    ):
+        nodes = [
+            node("constant", "const_value", {"value": "1", "data_type": "number"}),
+            node("cf", "change_filter"),
+            node("invert", "not"),
+            node("relay", relay_type, relay_data),
+        ]
+        edges = [
+            edge("constant", "cf", "value", "in"),
+            edge("cf", "invert", "changed", "in1"),
+            edge("invert", "relay", "out", target_handle),
+        ]
+        if relay_type == "gate":
+            nodes.append(node("enable", "const_value", {"value": "true", "data_type": "boolean"}))
+            edges.append(edge("enable", "relay", "value", "enable"))
+        flow = _flow(nodes, edges)
+        manager = _make_manager()
+        graph_id = f"g-missing-pulse-{relay_type}"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": 1.0}, "relay": prior_state}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["cf"]["changed"] is False
+        assert outputs["relay"]["out"] == expected_output
+        assert manager._hysteresis[graph_id]["relay"] == prior_state
+
     def test_change_filter_is_not_held_when_read_is_resolved_via_debug_override(self):
         """Regression: a manual/debug execution (the debug-inspector "run"
         feature) that supplies debug_overrides={read_id: {"value": ...}}

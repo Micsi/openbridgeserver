@@ -1107,6 +1107,41 @@ def test_manual_false_dynamic_fan_in_does_not_mask_no_pulse() -> None:
     adapter.send_notification.assert_not_awaited()
 
 
+def test_event_false_fan_in_does_not_mask_no_pulse() -> None:
+    read_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
+            node("cf", "change_filter"),
+            node("invert", "not"),
+            node("relay", "or", {"input_count": 2}),
+            node("notify", "notify_message", {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]}),
+        ],
+        [
+            edge("read", "cf", "value", "in"),
+            edge("cf", "invert", "changed", "in1"),
+            edge("invert", "relay", "out", "in1"),
+            edge("read", "relay", "value", "in2"),
+            edge("relay", "notify", "out", "message"),
+        ],
+    )
+    manager = _make_manager()
+    manager._graphs["false-event"] = ("False Event", True, flow)
+    manager._node_state["false-event"] = {}
+    manager._hysteresis["false-event"] = {"cf": {"value": False}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock()
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = asyncio.run(manager._execute_graph("false-event", "False Event", flow, {"read": {"value": False, "changed": True}}))
+
+    assert outputs["relay"]["out"] is True
+    adapter.send_notification.assert_not_awaited()
+
+
 def test_manual_independent_message_ignores_missing_filter_trigger() -> None:
     flow = _flow(
         [
@@ -1137,6 +1172,38 @@ def test_manual_independent_message_ignores_missing_filter_trigger() -> None:
     assert outputs["cf"]["changed"] is False
     assert outputs["notify"]["sent"] is True
     adapter.send_notification.assert_awaited_once()
+
+
+def test_manual_independent_archive_message_ignores_missing_filter_trigger() -> None:
+    flow = _flow(
+        [
+            node("constant", "const_value", {"value": "1", "data_type": "number"}),
+            node("message", "const_value", {"value": "hello", "data_type": "string"}),
+            node("cf", "change_filter"),
+            node("ma", "message_archive", {"archive_id": "Alerts"}),
+        ],
+        [
+            edge("constant", "cf", "value", "in"),
+            edge("cf", "ma", "changed", "trigger"),
+            edge("message", "ma", "value", "message"),
+        ],
+    )
+    manager = _make_manager()
+    manager._graphs["independent-archive"] = ("Independent Archive", True, flow)
+    manager._node_state["independent-archive"] = {}
+    manager._hysteresis["independent-archive"] = {"cf": {"value": 1.0}}
+    service = MagicMock()
+    service.record = AsyncMock(return_value={"id": "entry-1"})
+
+    with (
+        patch("obs.message_archive.get_message_archive_service", return_value=service),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = asyncio.run(manager._execute_graph("independent-archive", "Independent Archive", flow, {}))
+
+    assert outputs["cf"]["changed"] is False
+    assert outputs["ma"]["stored"] is True
+    service.record.assert_awaited_once()
 
 
 def test_manual_completed_api_result_is_independently_fresh() -> None:
