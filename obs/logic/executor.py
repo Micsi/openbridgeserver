@@ -590,10 +590,14 @@ class GraphExecutor:
         elif isinstance(v, int):
             dec = Decimal(v)
         elif isinstance(v, float):
-            # str() of any float (finite, inf, or nan) is always a valid
-            # Decimal literal — unlike the str branch below, this can never
-            # raise InvalidOperation.
-            dec = Decimal(str(v))
+            # A plain float always produces a valid Decimal literal, but a
+            # float subclass may override __str__ with arbitrary behavior.
+            # Let comparison fall back to exception-safe equality when that
+            # conversion is unavailable.
+            try:
+                dec = Decimal(str(v))
+            except Exception:  # noqa: BLE001 - user-provided float subclasses may fail conversion arbitrarily
+                return None
         elif isinstance(v, str):
             try:
                 dec = Decimal(v.strip())

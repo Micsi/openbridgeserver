@@ -1437,6 +1437,20 @@ class TestChangeFilterNode:
         assert "__error__" not in out["cf"]
         assert isinstance(state["cf"]["value"], UnsafeEquality)
 
+    def test_float_subclass_with_failing_string_conversion_uses_safe_equality(self):
+        class FailingStringFloat(float):
+            def __str__(self):
+                raise RuntimeError("string conversion unavailable")
+
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state={})
+
+        first = exc.execute({"cf": {"in": FailingStringFloat(1.25)}})
+        second = exc.execute({"cf": {"in": FailingStringFloat(2.5)}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is True
+        assert "__error__" not in second["cf"]
+
     def test_container_subclass_with_ambiguous_equality_is_safe(self):
         class UnsafeTruth:
             def __bool__(self):
