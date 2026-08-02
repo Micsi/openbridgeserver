@@ -3883,7 +3883,7 @@ class LogicManager:
                     without_pulse = _fan_in_probe._eval_node(target_node, effective_inputs)
                     if not GraphExecutor._nan_aware_equal(without_pulse, outputs.get(pulse_edge.target, {})):
                         return False
-                    if target_node.type in {"and", "or"}:
+                    if target_node.type in {"and", "or", "xor"}:
                         # A sibling is decisive only if either possible pulse
                         # value leaves the result unchanged. Merely matching
                         # the absent-input default would wrongly call AND(True,
@@ -3937,6 +3937,7 @@ class LogicManager:
                         ("consumption_counter", "value"),
                         ("heating_circuit", "value"),
                         ("datapoint_write", "value"),
+                        ("api_client", "body"),
                         ("value_sequence", "condition"),
                     } or (target_type_name == "avg_multi" and target_handle.startswith("in_"))
                     if stateful_data_handle:
@@ -3964,6 +3965,7 @@ class LogicManager:
                                 in {
                                     "api_client",
                                     "const_value",
+                                    "datapoint_read",
                                     "host_check",
                                     "wake_on_lan",
                                     "message_archive",

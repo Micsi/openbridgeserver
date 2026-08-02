@@ -1720,6 +1720,42 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is False
         assert "__error__" not in out["cf"]
 
+    def test_ambiguous_nan_dictionary_cycles_reuse_visited_pairs(self):
+        retained = {float("nan"): None, float("nan"): None}
+        live = {float("nan"): None, float("nan"): None}
+        for key in retained:
+            retained[key] = retained
+        for key in live:
+            live[key] = live
+        state = {"cf": {"value": retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is False
+        assert "__error__" not in out["cf"]
+
+    def test_deep_plain_dictionary_key_equality_failure_is_a_safe_change(self):
+        class RaisingKey:
+            def __hash__(self):
+                return 1
+
+            def __eq__(self, _other):
+                raise RuntimeError("key equality unavailable")
+
+        retained: dict = {RaisingKey(): "leaf"}
+        live: dict = {RaisingKey(): "leaf"}
+        for _ in range(1100):
+            retained = {"nested": retained}
+            live = {"nested": live}
+        state = {"cf": {"value": retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
     def test_ambiguous_nan_dictionary_mismatch_is_bounded(self):
         retained = {float("nan"): float("nan") for _ in range(10)}
         live = {float("nan"): float("nan") for _ in range(9)}
@@ -1742,6 +1778,20 @@ class TestChangeFilterNode:
 
         assert out["cf"]["changed"] is True
         assert "__error__" not in out["cf"]
+
+    def test_ambiguous_recovered_opaque_set_mismatch_is_bounded(self):
+        class SameRepresentation:
+            def __str__(self):
+                return "same"
+
+        type_name = f"{SameRepresentation.__module__}.{SameRepresentation.__qualname__}"
+        live = {SameRepresentation() for _ in range(10)}
+        recovered = _OpaqueRecoveredSet(
+            [_OpaqueRecoveredStr("same", type_name) for _ in range(9)] + [_OpaqueRecoveredStr("different", type_name)],
+            frozen=False,
+        )
+
+        assert GraphExecutor._opaque_aware_container_equal(live, recovered) is False
 
     def test_absent_missing_node_output_stays_unresolved_through_not(self):
         nodes = [node("missing", "missing_node"), node("invert", "not"), node("cf", "change_filter")]

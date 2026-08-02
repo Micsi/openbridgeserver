@@ -1848,6 +1848,103 @@ class TestHostCheckRisingEdge:
         assert repeated["write"]["_write_value"] is True
         assert manager._event_bus.publish.await_count == 2
 
+    def test_manual_fan_in_treats_seeded_read_as_independent_input(self):
+        source_id = uuid.uuid4()
+        target_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("source", "const_value", {"value": "1", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("invert", "not"),
+                node("decisive", "datapoint_read", {"datapoint_id": str(source_id)}),
+                node("or_gate", "or", {"input_count": 2}),
+                node("write", "datapoint_write", {"datapoint_id": str(target_id)}),
+            ],
+            [
+                edge("source", "cf", "value", "in"),
+                edge("cf", "invert", "changed", "in1"),
+                edge("invert", "or_gate", "out", "in1"),
+                edge("decisive", "or_gate", "value", "in2"),
+                edge("or_gate", "write", "out", "value"),
+            ],
+        )
+        manager = _make_manager()
+        manager._registry.get_value.return_value = MagicMock(value=True)
+        graph_id = "g-manual-read-fan-in"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert repeated["or_gate"]["out"] is True
+        assert repeated["write"]["_write_value"] is True
+        assert manager._event_bus.publish.await_count == 2
+
+    def test_xor_fan_in_preserves_missing_filter_provenance(self):
+        target_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("source", "const_value", {"value": "1", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("other", "const_value", {"value": "false", "data_type": "boolean"}),
+                node("xor_gate", "xor", {"input_count": 2}),
+                node("write", "datapoint_write", {"datapoint_id": str(target_id)}),
+            ],
+            [
+                edge("source", "cf", "value", "in"),
+                edge("cf", "xor_gate", "changed", "in1"),
+                edge("other", "xor_gate", "value", "in2"),
+                edge("xor_gate", "write", "out", "value"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-xor-missing-pulse"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert first["write"]["_write_value"] is True
+        assert repeated["xor_gate"]["out"] is False
+        assert repeated["write"]["_write_value"] is None
+        assert manager._event_bus.publish.await_count == 1
+
+    def test_missing_filter_pulse_is_null_api_request_body(self):
+        trigger_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("cf", "change_filter"),
+                node("trigger", "datapoint_read", {"datapoint_id": str(trigger_id)}),
+                node("api", "api_client", {"url": "http://93.184.216.34/", "method": "POST"}),
+            ],
+            [
+                edge("cf", "api", "changed", "body"),
+                edge("trigger", "api", "value", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-api-missing-pulse-body"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.logic.manager.httpx.AsyncClient") as client_cls:
+            client = AsyncMock()
+            client_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+            client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            client.request = AsyncMock(return_value=_MockResponse(200))
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "trigger": {"value": True}}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "trigger": {"value": False}}))
+                asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "trigger": {"value": True}}))
+
+        assert client.request.await_count == 2
+        assert client.request.await_args_list[0].kwargs["content"] == "true"
+        assert client.request.await_args_list[1].kwargs["content"] == "null"
+
     def test_async_refresh_uses_final_stateful_provenance_for_memory_commit(self):
         flow = _flow(
             [

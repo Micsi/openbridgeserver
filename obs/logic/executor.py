@@ -911,7 +911,7 @@ class GraphExecutor:
                         if key not in current_right:
                             return False
                         pending.append((item, current_right[key]))
-                except (RecursionError, TypeError):
+                except Exception:  # noqa: BLE001 - arbitrary mapping keys may define unsafe equality
                     return False
                 continue
             if isinstance(current_left, (set, frozenset)):
@@ -929,9 +929,16 @@ class GraphExecutor:
         return True
 
     @classmethod
-    def _nonstandard_container_equal_iterative(cls, left: Any, right: Any) -> bool:
+    def _nonstandard_container_equal_iterative(
+        cls,
+        left: Any,
+        right: Any,
+        seen_pairs: set[tuple[int, int]] | None = None,
+    ) -> bool:
         """Compare deeply nested containers while preserving NaN semantics."""
-        states: list[tuple[list[tuple[str, Any, Any]], set[tuple[int, int]]]] = [([("pair", left, right)], set())]
+        states: list[tuple[list[tuple[str, Any, Any]], set[tuple[int, int]]]] = [
+            ([("pair", left, right)], set() if seen_pairs is None else set(seen_pairs))
+        ]
         while states:
             work, seen = states.pop()
             while work:
@@ -945,7 +952,7 @@ class GraphExecutor:
                     candidates = [
                         index
                         for index, (right_key, _right_value) in enumerate(right_items)
-                        if cls._nonstandard_container_equal_iterative(left_key, right_key)
+                        if cls._nonstandard_container_equal_iterative(left_key, right_key, seen)
                     ]
                     if not candidates:
                         break
@@ -954,7 +961,7 @@ class GraphExecutor:
                         work.append(("dict", left_items[1:], right_items[:index] + right_items[index + 1 :]))
                         work.append(("pair", left_value, right_items[index][1]))
                         continue
-                    if not cls._ambiguous_dictionary_entries_equal(left_items, right_items):
+                    if not cls._ambiguous_dictionary_entries_equal(left_items, right_items, seen):
                         break
                     continue
                 if kind == "set":
@@ -1019,14 +1026,20 @@ class GraphExecutor:
         return False
 
     @classmethod
-    def _ambiguous_dictionary_entries_equal(cls, left_items: list[tuple[Any, Any]], right_items: list[tuple[Any, Any]]) -> bool:
+    def _ambiguous_dictionary_entries_equal(
+        cls,
+        left_items: list[tuple[Any, Any]],
+        right_items: list[tuple[Any, Any]],
+        seen: set[tuple[int, int]],
+    ) -> bool:
         """Polynomial bipartite matching for dictionaries with ambiguous keys."""
         adjacency: list[list[int]] = []
         for left_key, left_value in left_items:
             candidates = []
             for index, (right_key, right_value) in enumerate(right_items):
-                if cls._nonstandard_container_equal_iterative(left_key, right_key) and cls._nonstandard_container_equal_iterative(
-                    left_value, right_value
+                candidate_seen = set(seen)
+                if cls._nonstandard_container_equal_iterative(left_key, right_key, candidate_seen) and cls._nonstandard_container_equal_iterative(
+                    left_value, right_value, candidate_seen
                 ):
                     candidates.append(index)
             if not candidates:
@@ -1105,17 +1118,17 @@ class GraphExecutor:
                     right_items = current_right
                     if not left_items:
                         continue
-                    left_item = left_items[0]
-                    branches = []
-                    for index, right_item in enumerate(right_items):
-                        if not cls._opaque_aware_container_equal(left_item, right_item, allow_unmarked=allow_unmarked):
-                            continue
-                        branch_work = list(work)
-                        branch_work.append(("set", left_items[1:], right_items[:index] + right_items[index + 1 :]))
-                        branches.append((branch_work, set(seen)))
-                    states.extend(branches)
-                    branched = True
-                    break
+                    adjacency = [
+                        [
+                            index
+                            for index, right_item in enumerate(right_items)
+                            if cls._opaque_aware_container_equal(item, right_item, allow_unmarked=allow_unmarked)
+                        ]
+                        for item in left_items
+                    ]
+                    if not cls._has_perfect_bipartite_matching(adjacency):
+                        break
+                    continue
 
                 if _is_nan(current_left) or _is_nan(current_right):
                     if not (_is_nan(current_left) and _is_nan(current_right)):
