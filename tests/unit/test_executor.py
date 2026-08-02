@@ -1451,6 +1451,20 @@ class TestChangeFilterNode:
         assert second["cf"]["changed"] is True
         assert "__error__" not in second["cf"]
 
+    def test_float_subclass_with_failing_integrality_check_uses_safe_decimal_comparison(self):
+        class FailingIntegralFloat(float):
+            def is_integer(self):
+                raise RuntimeError("integrality check unavailable")
+
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state={})
+
+        first = exc.execute({"cf": {"in": FailingIntegralFloat(1.25)}})
+        second = exc.execute({"cf": {"in": FailingIntegralFloat(2.5)}})
+
+        assert first["cf"]["changed"] is True
+        assert second["cf"]["changed"] is True
+        assert "__error__" not in second["cf"]
+
     def test_container_subclass_with_ambiguous_equality_is_safe(self):
         class UnsafeTruth:
             def __bool__(self):

@@ -536,7 +536,7 @@ class GraphExecutor:
             # which is exactly the precision loss this method exists to avoid.
             try:
                 return int(v) if v.is_integer() else None
-            except (TypeError, ValueError, OverflowError):
+            except Exception:  # noqa: BLE001 - user-provided float subclasses may fail conversion arbitrarily
                 return None
         if isinstance(v, str):
             s = v.strip()
