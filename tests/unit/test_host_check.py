@@ -1309,6 +1309,42 @@ class TestHostCheckRisingEdge:
         assert outputs["add"]["result"] == 15
         assert outputs["cf"] == {"out": 15, "changed": True}
 
+    def test_initial_async_closure_ignores_shadowed_host_check_trigger(self):
+        nodes = [
+            node("api_trigger", "const_value", {"value": "true", "data_type": "bool"}),
+            node("api", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+            node("false", "const_value", {"value": "false", "data_type": "bool"}),
+            node("hc", "host_check", {"host": "a.local", "timeout_s": 1, "count": 1}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("api_trigger", "api", "value", "trigger"),
+                edge("api", "hc", "success", "trigger"),
+                edge("false", "hc", "value", "trigger"),
+                edge("hc", "cf", "reachable", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-shadowed-async-closure"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": True}}
+
+        mock_client_cls = _patch_api_success()
+        try:
+            with (
+                patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+                patch("obs.logic.manager._ping_host", new_callable=AsyncMock) as mock_ping,
+            ):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            mock_client_cls.stop()
+
+        mock_ping.assert_not_awaited()
+        assert outputs["cf"] == {"out": False, "changed": True}
+
     def test_pre_execute_snapshot_survives_a_non_deepcopyable_memory_value(self):
         """Regression (P2): the pre-execution hyst/graph_state snapshot is
         enabled whenever ANY unseeded Read Object exists in the graph,

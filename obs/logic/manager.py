@@ -3133,7 +3133,7 @@ class LogicManager:
         # irreversibly ping — using a value derived from a still-pending
         # upstream async result, before that upstream node has even run.
         _chained_unresolved_async_ids = async_replay_source_ids & (
-            _downstream_closure(_directly_triggered_async_ids, flow.edges) - _directly_triggered_async_ids
+            _downstream_closure(_directly_triggered_async_ids, _effective_edges) - _directly_triggered_async_ids
         )
 
         # An inactive random_value's None this pass CAN still resolve via a

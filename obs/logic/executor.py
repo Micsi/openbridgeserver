@@ -592,6 +592,14 @@ class GraphExecutor:
         """Structural equality that treats matching NaN leaves as retained readings."""
         if _is_nan(left) and _is_nan(right):
             return True
+        if left == right:
+            return True
+        # Ordinary equality already decided every container without NaN.
+        # Avoid the recursive matching path (notably its mapping/set item
+        # matching) unless NaN's deliberately-non-reflexive equality is the
+        # reason structural equality could have failed.
+        if not cls._contains_nan(left) and not cls._contains_nan(right):
+            return False
         if isinstance(left, dict) and isinstance(right, dict):
             if len(left) != len(right):
                 return False
@@ -621,7 +629,17 @@ class GraphExecutor:
                     return False
                 remaining.pop(match)
             return True
-        return left == right
+        return False
+
+    @classmethod
+    def _contains_nan(cls, value: Any) -> bool:
+        if _is_nan(value):
+            return True
+        if isinstance(value, dict):
+            return any(cls._contains_nan(key) or cls._contains_nan(item) for key, item in value.items())
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return any(cls._contains_nan(item) for item in value)
+        return False
 
     @classmethod
     def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
