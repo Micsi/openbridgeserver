@@ -1054,6 +1054,26 @@ class TestChangeFilterNode:
         assert first == second  # documents Python's same-ZoneInfo fold behavior
         assert out["cf"] == {"out": second, "changed": True}
 
+    def test_nested_ambiguous_aware_datetimes_compare_by_instant(self):
+        zone = ZoneInfo("Europe/Zurich")
+        first = datetime(2025, 10, 26, 2, 30, tzinfo=zone, fold=0)
+        second = datetime(2025, 10, 26, 2, 30, tzinfo=zone, fold=1)
+        state = {"cf": {"value": [first]}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [second]}})
+
+        assert out["cf"] == {"out": [second], "changed": True}
+
+    def test_nested_signaling_decimal_nan_can_be_replaced(self):
+        state = {"cf": {"value": [Decimal("sNaN")]}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [1]}})
+
+        assert out["cf"] == {"out": [1], "changed": True}
+        assert state == {"cf": {"value": [1]}}
+
     @pytest.mark.parametrize("value", [[float("nan")], {"value": float("nan")}, (float("nan"),), {float("nan")}])
     def test_repeated_nested_nan_value_is_suppressed(self, value):
         state = {}
@@ -1121,6 +1141,25 @@ class TestChangeFilterNode:
         assert "__error__" in out["producer"]
         assert out["cf"] == {"out": None, "changed": False}
         assert state == {}
+
+    def test_missing_producer_output_propagates_through_intermediate_node(self):
+        state = {"cf": {"value": False}}
+        exc = make_executor(
+            [
+                node("producer", "python_script", {"script": "raise RuntimeError('boom')"}),
+                node("invert", "not"),
+                node("cf", "change_filter"),
+            ],
+            [edge("producer", "invert", "result", "in1"), edge("invert", "cf", "out", "in")],
+            hysteresis_state=state,
+        )
+
+        out = exc.execute()
+
+        assert "__error__" in out["producer"]
+        assert "__error__" in out["invert"]
+        assert out["cf"] == {"out": False, "changed": False}
+        assert state == {"cf": {"value": False}}
 
     def test_large_integers_compared_without_precision_loss(self):
         """Regression: float round-trip must not equate distinct 64-bit values."""

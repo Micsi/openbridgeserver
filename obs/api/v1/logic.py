@@ -73,7 +73,9 @@ def _normalized_without_positions(raw: dict) -> dict:
     freshly parsed request body carries explicitly as null — comparing raw
     dicts would misclassify a move-only save as an execution change.
     """
-    return _without_positions(json.loads(FlowData.model_validate(raw).model_dump_json()))
+    flow_data = FlowData.model_validate(raw)
+    _migrate_legacy_api_client_field_names(flow_data)
+    return _without_positions(json.loads(flow_data.model_dump_json()))
 
 
 def _row_to_out(row: dict) -> LogicGraphOut:

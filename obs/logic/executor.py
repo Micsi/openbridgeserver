@@ -153,6 +153,17 @@ class GraphExecutor:
         # Build adjacency: edge target_node.handle ← source_node.handle value
         # edge_map[target_node_id][target_handle] = (source_node_id, source_handle)
         edge_map = self._build_edge_map()
+        # Only failed-output paths that can influence a Change Filter need to
+        # retain absence through synchronous nodes. Elsewhere, the executor's
+        # longstanding missing-input/default behavior remains intentional.
+        change_filter_ancestors = {node.id for node in self.flow.nodes if node.type == "change_filter"}
+        pending_ancestors = list(change_filter_ancestors)
+        while pending_ancestors:
+            target_id = pending_ancestors.pop()
+            for source_id, _source_handle in edge_map.get(target_id, {}).values():
+                if source_id not in change_filter_ancestors:
+                    change_filter_ancestors.add(source_id)
+                    pending_ancestors.append(source_id)
 
         # Topological sort (Kahn's algorithm). Nodes left behind by the sort
         # are not executable in this single-pass DAG executor, so surface them
@@ -191,11 +202,14 @@ class GraphExecutor:
 
             # Resolve inputs for this node
             inputs: dict[str, Any] = {}
+            missing_inputs: list[tuple[str, str, str]] = []
             for handle, (src_id, src_handle) in edge_map.get(node.id, {}).items():
                 src_out = outputs.get(src_id, {})
                 has_value, value = self._try_get_output_value(src_out, src_handle)
                 if has_value:
                     inputs[handle] = value
+                else:
+                    missing_inputs.append((handle, src_id, src_handle))
 
             incoming_inputs = inputs.copy()
             incoming_inputs.update(capture_incoming_overrides.get(node.id, {}))
@@ -203,6 +217,17 @@ class GraphExecutor:
             inputs.update(node_overrides)
 
             try:
+                # A connected port that its producer did not emit is not the
+                # same thing as an unconnected/defaulted input. In particular,
+                # evaluating a synchronous node with its default here can turn
+                # an upstream failure into a plausible synthetic value (for
+                # example, failed_script -> NOT becomes True) which a later
+                # Change Filter would then commit. Keep the output absent so
+                # the missing state propagates through every intermediate hop.
+                unresolved = [item for item in missing_inputs if item[0] not in node_overrides and "__error__" in outputs.get(item[1], {})]
+                if unresolved and node.id in change_filter_ancestors and node.type not in {"change_filter", "memory"}:
+                    details = ", ".join(f"{handle} <- {src_id}.{src_handle}" for handle, src_id, src_handle in unresolved)
+                    raise ExecutionError(f"Missing upstream output: {details}")
                 inputs = self._resolve_effective_inputs(node, inputs)
 
                 if self.input_capture is not None:
@@ -597,19 +622,22 @@ class GraphExecutor:
 
     @classmethod
     def _nan_aware_equal(cls, left: Any, right: Any) -> bool:
-        """Structural equality that treats matching NaN leaves as retained readings."""
+        """Structural equality for leaves with non-standard equality.
+
+        Besides treating matching NaNs as one retained reading, compare aware
+        datetimes by UTC instant. Container ``==`` cannot be used before these
+        leaf checks: signaling Decimal NaNs may raise from it, and datetimes
+        using the same ZoneInfo can compare opposite DST folds as equal.
+        """
         if _is_nan(left) and _is_nan(right):
             return True
         if _is_nan(left) or _is_nan(right):
             return False
-        if left == right:
-            return True
-        # Ordinary equality already decided every container without NaN.
-        # Avoid the recursive matching path (notably its mapping/set item
-        # matching) unless NaN's deliberately-non-reflexive equality is the
-        # reason structural equality could have failed.
-        if not cls._contains_nan(left) and not cls._contains_nan(right):
-            return False
+        if isinstance(left, _datetime) and isinstance(right, _datetime):
+            left_aware = left.tzinfo is not None and left.utcoffset() is not None
+            right_aware = right.tzinfo is not None and right.utcoffset() is not None
+            if left_aware and right_aware:
+                return left.astimezone(_UTC) == right.astimezone(_UTC)
         if isinstance(left, dict) and isinstance(right, dict):
             if len(left) != len(right):
                 return False
@@ -639,17 +667,10 @@ class GraphExecutor:
                     return False
                 remaining.pop(match)
             return True
-        return False
-
-    @classmethod
-    def _contains_nan(cls, value: Any) -> bool:
-        if _is_nan(value):
-            return True
-        if isinstance(value, dict):
-            return any(cls._contains_nan(key) or cls._contains_nan(item) for key, item in value.items())
-        if isinstance(value, (list, tuple, set, frozenset)):
-            return any(cls._contains_nan(item) for item in value)
-        return False
+        try:
+            return left == right
+        except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing equality
+            return False
 
     @classmethod
     def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
