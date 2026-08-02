@@ -3593,15 +3593,20 @@ class LogicManager:
             if target_type.type == "gate" and (edge.targetHandle or "in") == "in":
                 gate_node = _node_by_id_early.get(edge.target)
                 gdata = (gate_node.data or {}) if gate_node is not None else {}
+                enable_override = debug_overrides.get(edge.target, {}).get("enable", _MISSING_STATE)
                 enable_edge = next(
                     (e for e in _effective_edges if e.target == edge.target and (e.targetHandle or "in") == "enable"),
                     None,
                 )
                 enable_v = (
-                    False
-                    if enable_edge is None
-                    else GraphExecutor._to_bool(
-                        GraphExecutor._get_output_value(outputs.get(enable_edge.source, {}), enable_edge.sourceHandle or "out")
+                    GraphExecutor._to_bool(enable_override)
+                    if enable_override is not _MISSING_STATE
+                    else (
+                        False
+                        if enable_edge is None
+                        else GraphExecutor._to_bool(
+                            GraphExecutor._get_output_value(outputs.get(enable_edge.source, {}), enable_edge.sourceHandle or "out")
+                        )
                     )
                 )
                 if gdata.get("negate_enable"):
@@ -3620,6 +3625,67 @@ class LogicManager:
             if not trigger_port_ids:
                 return True
             return (edge.targetHandle or "in") in trigger_port_ids
+
+        def _build_cf_pulse_origins(event_fresh: dict[str, set[str]] | None) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+            message_origins: dict[str, set[str]] = {}
+            trigger_origins: dict[str, set[str]] = {}
+            relay_origins = {node.id: {node.id} for node in flow.nodes if node.type == "change_filter"}
+            queue = list(relay_origins)
+            while queue:
+                source_id = queue.pop()
+                source_origins = relay_origins[source_id]
+                for pulse_edge in _effective_edges:
+                    if pulse_edge.source != source_id:
+                        continue
+                    if _node_type_by_id.get(source_id) == "change_filter" and (pulse_edge.sourceHandle or "out") != "changed":
+                        continue
+                    if (pulse_edge.targetHandle or "in") == "message":
+                        message_origins.setdefault(pulse_edge.target, set()).update(source_origins)
+                        continue
+                    target_type = get_node_type(_node_type_by_id.get(pulse_edge.target))
+                    trigger_ports = {port.id for port in target_type.inputs if port.type == "trigger"} if target_type else set()
+                    if (pulse_edge.targetHandle or "in") in trigger_ports:
+                        trigger_origins.setdefault(pulse_edge.target, set()).update(source_origins)
+                        continue
+                    if target_type and any(port.type == "trigger" for port in target_type.inputs):
+                        continue
+                    other_fresh_edges = [
+                        edge
+                        for edge in _effective_edges
+                        if edge.target == pulse_edge.target
+                        and edge is not pulse_edge
+                        and not (_node_type_by_id.get(edge.target) == "gate" and (edge.targetHandle or "in") == "enable")
+                        and event_fresh is not None
+                        and (edge.targetHandle or "in") in event_fresh.get(edge.target, set())
+                    ]
+                    if other_fresh_edges:
+                        continue
+                    if _edge_carries_pulse(pulse_edge, require_fired_change_filter=False):
+                        target_origins = relay_origins.setdefault(pulse_edge.target, set())
+                        new_origins = source_origins - target_origins
+                        if new_origins:
+                            target_origins.update(new_origins)
+                            queue.append(pulse_edge.target)
+            return message_origins, trigger_origins
+
+        _initial_event_fresh = (
+            _fresh_input_handles({node_id: dict(values) for node_id, values in overrides.items()}, flow.edges) if overrides else None
+        )
+        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(_initial_event_fresh)
+
+        def _suppress_missing_cf_trigger_pulses(node_ids: set[str] | None = None) -> None:
+            for target_id, origins in _cf_changed_trigger_origins.items():
+                if node_ids is not None and target_id not in node_ids:
+                    continue
+                if any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
+                    continue
+                target_output = outputs.get(target_id, {})
+                if "_trigger" in target_output:
+                    target_output["_trigger"] = False
+                if "_triggered" in target_output:
+                    target_output["_triggered"] = False
+
+        _suppress_missing_cf_trigger_pulses()
 
         cron_node_ids = {n.id for n in flow.nodes if n.type == "timer_cron"}
         # A change_filter's "changed" pulse is a discrete edge just like a
@@ -3673,6 +3739,7 @@ class LogicManager:
             # dedupe the second — silently dropping a real retrigger. Call
             # this right after any replay pass updates `outputs` for
             # `node_ids`, before anything downstream reads cron_reachable.
+            _suppress_missing_cf_trigger_pulses(node_ids)
             _new_pulses = {
                 n.id
                 for n in flow.nodes
@@ -5306,57 +5373,7 @@ class LogicManager:
         # gets this treatment, including effective pure-relay paths. Keeping
         # provenance structural (not value-based) leaves ordinary boolean
         # sources wired to "message" unaffected.
-        _cf_changed_message_origins: dict[str, set[str]] = {}
-        _cf_changed_trigger_origins: dict[str, set[str]] = {}
-        _event_fresh_for_provenance = _event_fresh_inputs()
-        _cf_pulse_relay_origins = {node.id: {node.id} for node in flow.nodes if node.type == "change_filter"}
-        _cf_pulse_queue = list(_cf_pulse_relay_origins)
-        while _cf_pulse_queue:
-            _source_id = _cf_pulse_queue.pop()
-            _source_origins = _cf_pulse_relay_origins[_source_id]
-            for _pulse_edge in _effective_edges:
-                if _pulse_edge.source != _source_id:
-                    continue
-                if _node_type_by_id.get(_source_id) == "change_filter" and (_pulse_edge.sourceHandle or "out") != "changed":
-                    continue
-                if (_pulse_edge.targetHandle or "in") == "message":
-                    _cf_changed_message_origins.setdefault(_pulse_edge.target, set()).update(_source_origins)
-                    continue
-                _target_type = get_node_type(_node_type_by_id.get(_pulse_edge.target))
-                _trigger_ports = {port.id for port in _target_type.inputs if port.type == "trigger"} if _target_type else set()
-                if (_pulse_edge.targetHandle or "in") in _trigger_ports:
-                    _cf_changed_trigger_origins.setdefault(_pulse_edge.target, set()).update(_source_origins)
-                    continue
-                # Only pure logic/relay nodes carry pulse identity onward.
-                # Once it enters a node with a dedicated trigger port, that
-                # node's outputs are new result data, not the original pulse.
-                if _target_type and any(port.type == "trigger" for port in _target_type.inputs):
-                    continue
-                _other_data_edges = [
-                    edge
-                    for edge in _effective_edges
-                    if edge.target == _pulse_edge.target
-                    and edge is not _pulse_edge
-                    and not (_node_type_by_id.get(edge.target) == "gate" and (edge.targetHandle or "in") == "enable")
-                    and (
-                        (_event_fresh_for_provenance is None and _node_type_by_id.get(edge.source) != "const_value")
-                        or (
-                            _event_fresh_for_provenance is not None
-                            and (edge.targetHandle or "in") in _event_fresh_for_provenance.get(edge.target, set())
-                        )
-                    )
-                ]
-                if _other_data_edges:
-                    # At a fan-in relay, an independently fresh input may be
-                    # what drove the output. Do not let an unchanged Change
-                    # Filter on a sibling input suppress that real message.
-                    continue
-                if _edge_carries_pulse(_pulse_edge, require_fired_change_filter=False):
-                    _target_origins = _cf_pulse_relay_origins.setdefault(_pulse_edge.target, set())
-                    _new_origins = _source_origins - _target_origins
-                    if _new_origins:
-                        _target_origins.update(_new_origins)
-                        _cf_pulse_queue.append(_pulse_edge.target)
+        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(_event_fresh_inputs())
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()

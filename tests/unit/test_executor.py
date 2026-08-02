@@ -1080,6 +1080,19 @@ class TestChangeFilterNode:
         assert fold_out["cf"]["changed"] is True
         assert naive_out["cf"]["changed"] is True
 
+    def test_equivalent_zoneinfo_time_instances_compare_by_key(self):
+        from datetime import time as datetime_time
+
+        cached = datetime_time(10, 30, tzinfo=ZoneInfo("Europe/Zurich"))
+        uncached = datetime_time(10, 30, tzinfo=ZoneInfo.no_cache("Europe/Zurich"))
+        state = {"cf": {"value": cached}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": uncached}})
+
+        assert cached.tzinfo is not uncached.tzinfo
+        assert out["cf"]["changed"] is False
+
     def test_nested_signaling_decimal_nan_can_be_replaced(self):
         state = {"cf": {"value": [Decimal("sNaN")]}}
         exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)

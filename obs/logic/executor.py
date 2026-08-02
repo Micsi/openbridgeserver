@@ -599,8 +599,13 @@ class GraphExecutor:
             right_aware = right.tzinfo is not None and right.utcoffset() is not None
             if left_aware and right_aware:
                 return left.astimezone(_UTC) == right.astimezone(_UTC), True
-        if isinstance(left, _time) and isinstance(right, _time) and (left.fold != right.fold or left.tzinfo != right.tzinfo):
-            return False, True
+        if isinstance(left, _time) and isinstance(right, _time):
+            if isinstance(left.tzinfo, _ZoneInfo) and isinstance(right.tzinfo, _ZoneInfo):
+                same_tz = left.tzinfo.key == right.tzinfo.key
+            else:
+                same_tz = left.tzinfo == right.tzinfo
+            if left.fold != right.fold or not same_tz:
+                return False, True
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
             return bool_left == bool_right, True

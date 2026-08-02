@@ -1401,6 +1401,37 @@ class TestHostCheckRisingEdge:
         assert second["cf"]["changed"] is True
         assert "__error__" not in second["cf"]
 
+    def test_transformed_no_change_pulse_does_not_trigger_datapoint_write(self):
+        target_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("constant", "const_value", {"value": "1", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("invert", "not"),
+                node("value", "const_value", {"value": "42", "data_type": "number"}),
+                node("write", "datapoint_write", {"datapoint_id": str(target_id)}),
+            ],
+            [
+                edge("constant", "cf", "value", "in"),
+                edge("cf", "invert", "changed", "in1"),
+                edge("invert", "write", "out", "trigger"),
+                edge("value", "write", "value", "value"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-no-pulse-datapoint-write"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            second = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert first["write"]["_triggered"] is False
+        assert second["invert"]["out"] is True
+        assert second["write"]["_triggered"] is False
+        manager._event_bus.publish.assert_not_awaited()
+
     def test_unseeded_read_without_reachable_change_filter_skips_rollback_snapshots(self):
         flow = _flow(
             [
