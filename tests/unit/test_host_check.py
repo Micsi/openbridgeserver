@@ -1599,6 +1599,30 @@ class TestHostCheckRisingEdge:
         assert "stats" in outputs
         snapshot.assert_not_called()
 
+    def test_unrelated_change_filter_skips_large_state_rollback_snapshots(self):
+        flow = _flow(
+            [
+                node("constant", "const_value", {"value": "1", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("large", "avg_multi", {"window_size": 100000}),
+            ],
+            [edge("constant", "cf", "value", "in")],
+        )
+        manager = _make_manager()
+        graph_id = "g-unrelated-cf-large-state"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": 1.0}, "large": {"values": list(range(100000))}}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._safe_deepcopy_state") as snapshot,
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["cf"]["changed"] is False
+        snapshot.assert_not_called()
+
     def test_change_filter_is_not_held_when_read_is_resolved_via_debug_override(self):
         """Regression: a manual/debug execution (the debug-inspector "run"
         feature) that supplies debug_overrides={read_id: {"value": ...}}

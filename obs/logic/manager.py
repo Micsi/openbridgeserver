@@ -3115,8 +3115,24 @@ class LogicManager:
         _effective_edges = list(_effective_edge_by_target.values())
         _change_filter_ids = {n.id for n in flow.nodes if n.type == "change_filter"}
         _rollback_source_ids = unseeded_read_ids | (random_value_ids if needs_random_value_snapshot else set())
+        _potential_no_result_mapping_ids = {
+            node.id for node in flow.nodes if node.type == "value_mapping" and not GraphExecutor._to_bool(node.data.get("has_default"))
+        }
         _rollback_reaches_change_filter = bool(_change_filter_ids & _downstream_closure(_rollback_source_ids, _effective_edges))
-        _needs_pre_execute_snapshot = needs_async_replay_snapshot or _rollback_reaches_change_filter or bool(_change_filter_ids)
+        _mapping_rollback_reaches_change_filter = bool(
+            _change_filter_ids & (_downstream_closure(_potential_no_result_mapping_ids, _effective_edges) - _potential_no_result_mapping_ids)
+        )
+        _synchronous_correction_ids = {node.id for node in flow.nodes if node.type in {"statistics", "operating_hours", "random_value"}}
+        _needs_cf_pulse_correction_snapshot = any(
+            bool((_downstream_closure({_cf_id}, _effective_edges) - {_cf_id}) & (_change_filter_ids | _synchronous_correction_ids))
+            for _cf_id in _change_filter_ids
+        )
+        _needs_pre_execute_snapshot = (
+            needs_async_replay_snapshot
+            or _rollback_reaches_change_filter
+            or _mapping_rollback_reaches_change_filter
+            or _needs_cf_pulse_correction_snapshot
+        )
         _pulse_hysteresis_prior: dict[str, Any] = {}
 
         # Executor nodes mutate their hysteresis mapping synchronously.  Run
@@ -3679,6 +3695,16 @@ class LogicManager:
                             target_origins.update(new_origins)
                             changed = True
             relay_origins = {node.id: {node.id} for node in flow.nodes if node.type == "change_filter"}
+
+            def _sibling_can_drive_target(edge: Any) -> bool:
+                sibling_value = GraphExecutor._get_output_value(outputs.get(edge.source, {}), edge.sourceHandle or "out")
+                target_type = _node_type_by_id.get(edge.target)
+                if target_type == "or":
+                    return GraphExecutor._to_bool(sibling_value)
+                if target_type == "and":
+                    return not GraphExecutor._to_bool(sibling_value)
+                return True
+
             queue = list(relay_origins)
             while queue:
                 source_id = queue.pop()
@@ -3718,6 +3744,13 @@ class LogicManager:
                                 event_fresh is None
                                 and _node_type_by_id.get(edge.source)
                                 in {
+                                    "api_client",
+                                    "host_check",
+                                    "wake_on_lan",
+                                    "message_archive",
+                                    "notify_message",
+                                    "notify_pushover",
+                                    "notify_sms",
                                     "random_value",
                                     "python_script",
                                     "statistics",
@@ -3731,6 +3764,7 @@ class LogicManager:
                                     "ical",
                                 }
                                 and GraphExecutor._get_output_value(outputs.get(edge.source, {}), edge.sourceHandle or "out") is not None
+                                and _sibling_can_drive_target(edge)
                             )
                             or (
                                 event_fresh is not None
@@ -3772,6 +3806,13 @@ class LogicManager:
                 if any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
                     continue
                 target_output = outputs.get(target_id, {})
+                target_node = _node_by_id_early.get(target_id)
+                message_origins = _cf_changed_message_origins.get(target_id, set())
+                has_independent_message = target_output.get("_message") is not None and (
+                    not message_origins or any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in message_origins)
+                )
+                if target_node is not None and target_node.type in {"notify_message", "notify_pushover", "notify_sms"} and has_independent_message:
+                    continue
                 if "_trigger" in target_output:
                     target_output["_trigger"] = False
                 if "_triggered" in target_output:
@@ -5531,7 +5572,9 @@ class LogicManager:
                 GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in _trigger_origins
             )
             if event_fresh_inputs is None:
-                return not _is_missing_cf_pulse and not _is_missing_cf_trigger
+                fresh_message = _msg is not None and not _is_missing_cf_pulse
+                fresh_trigger = GraphExecutor._to_bool(_current_input_value(node_id, "trigger")) and not _is_missing_cf_trigger
+                return fresh_message or fresh_trigger
             fresh_handles = event_fresh_inputs.get(node_id, set())
             fresh_message = "message" in fresh_handles and _msg is not None and not _is_missing_cf_pulse
             fresh_trigger = (

@@ -798,7 +798,10 @@ class GraphExecutor:
                 remaining.pop(match)
             return True
         if isinstance(left, (list, tuple)) and isinstance(right, type(left)):
-            return len(left) == len(right) and all(cls._nan_aware_equal(le, re, seen) for le, re in zip(left, right))
+            try:
+                return len(left) == len(right) and all(cls._nan_aware_equal(le, re, seen) for le, re in zip(left, right))
+            except RecursionError:
+                return cls._nonstandard_container_equal_iterative(left, right)
         if isinstance(left, (set, frozenset)) and isinstance(right, type(left)):
             if len(left) != len(right):
                 return False
@@ -874,6 +877,10 @@ class GraphExecutor:
             if isinstance(current_left, dict):
                 if len(current_left) != len(current_right):
                     return False
+                pair = (id(current_left), id(current_right))
+                if pair in seen:
+                    continue
+                seen.add(pair)
                 try:
                     for key, item in current_left.items():
                         if key not in current_right:
@@ -893,6 +900,60 @@ class GraphExecutor:
                 if not bool(current_left == current_right):
                     return False
             except Exception:  # noqa: BLE001 - arbitrary leaves may define unsafe equality
+                return False
+        return True
+
+    @classmethod
+    def _nonstandard_container_equal_iterative(cls, left: Any, right: Any) -> bool:
+        """Compare deeply nested containers while preserving NaN semantics."""
+        pending = [(left, right)]
+        seen: set[tuple[int, int]] = set()
+        while pending:
+            current_left, current_right = pending.pop()
+            if _is_nan(current_left) or _is_nan(current_right):
+                if not (_is_nan(current_left) and _is_nan(current_right)):
+                    return False
+                continue
+            if type(current_left) is not type(current_right):
+                return False
+            if isinstance(current_left, (list, tuple)):
+                if len(current_left) != len(current_right):
+                    return False
+                pair = (id(current_left), id(current_right))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                pending.extend(zip(current_left, current_right))
+                continue
+            if isinstance(current_left, dict):
+                if len(current_left) != len(current_right):
+                    return False
+                pair = (id(current_left), id(current_right))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                try:
+                    for key, item in current_left.items():
+                        if key not in current_right:
+                            return False
+                        pending.append((item, current_right[key]))
+                except Exception:  # noqa: BLE001 - arbitrary keys may define unsafe equality
+                    return False
+                continue
+            if isinstance(current_left, (set, frozenset)):
+                if len(current_left) != len(current_right):
+                    return False
+                remaining = list(current_right)
+                for item in current_left:
+                    match = next(
+                        (index for index, candidate in enumerate(remaining) if cls._nan_aware_equal(item, candidate)),
+                        None,
+                    )
+                    if match is None:
+                        return False
+                    remaining.pop(match)
+                continue
+            if not cls._nan_aware_equal(current_left, current_right):
                 return False
         return True
 
