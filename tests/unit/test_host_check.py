@@ -1761,6 +1761,61 @@ class TestHostCheckRisingEdge:
         assert repeated["write"]["_write_value"] is None
         assert manager._event_bus.publish.await_count == 1
 
+    def test_missing_filter_pulse_preserves_running_sequence_condition(self):
+        flow = _flow(
+            [
+                node("cf", "change_filter"),
+                node("seq", "value_sequence", {"cancel_when_condition_false": True, "steps": []}),
+            ],
+            [edge("cf", "seq", "changed", "condition")],
+        )
+        manager = _make_manager()
+        graph_id = "g-missing-pulse-sequence-condition"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            active = MagicMock()
+            active.done.return_value = False
+            manager._sequence_tasks[(graph_id, "seq")] = active
+            with patch.object(manager, "_cancel_sequence_task") as cancel:
+                repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+
+        assert repeated["seq"]["_condition"] is True
+        assert manager._sequence_conditions[(graph_id, "seq")] is True
+        cancel.assert_not_called()
+
+    def test_fan_in_probe_uses_configured_operand_when_pulse_is_absent(self):
+        target_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("read", "datapoint_read", {"datapoint_id": str(uuid.uuid4())}),
+                node("cf", "change_filter"),
+                node("compare", "compare", {"operator": "eq", "operand": "1"}),
+                node("write", "datapoint_write", {"datapoint_id": str(target_id)}),
+            ],
+            [
+                edge("read", "cf", "value", "in"),
+                edge("read", "compare", "value", "in1"),
+                edge("cf", "compare", "changed", "in2"),
+                edge("compare", "write", "out", "value"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-fan-in-configured-operand"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        override = {"read": {"value": 1, "changed": True}}
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, override))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, override))
+
+        assert repeated["compare"]["out"] is False
+        assert repeated["write"]["_write_value"] is None
+        assert manager._event_bus.publish.await_count == 1
+
     @pytest.mark.parametrize(
         ("node_type", "node_data", "target_handle"),
         [

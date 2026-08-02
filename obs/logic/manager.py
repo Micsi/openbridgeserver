@@ -3877,7 +3877,7 @@ class LogicManager:
                         outputs.get(incoming.source, {}), incoming.sourceHandle or "out"
                     )
                 target_inputs.update(debug_overrides.get(pulse_edge.target, {}))
-                target_inputs[pulse_edge.targetHandle or "in"] = None
+                target_inputs.pop(pulse_edge.targetHandle or "in", None)
                 try:
                     effective_inputs = GraphExecutor._resolve_effective_inputs(target_node, target_inputs)
                     without_pulse = _fan_in_probe._eval_node(target_node, effective_inputs)
@@ -3921,6 +3921,7 @@ class LogicManager:
                         ("consumption_counter", "value"),
                         ("heating_circuit", "value"),
                         ("datapoint_write", "value"),
+                        ("value_sequence", "condition"),
                     } or (target_type_name == "avg_multi" and target_handle.startswith("in_"))
                     if stateful_data_handle:
                         stateful_relay_origins.setdefault(pulse_edge.target, {}).setdefault(target_handle, set()).update(source_origins)
@@ -6268,7 +6269,19 @@ class LogicManager:
                 continue
             output = outputs.get(node.id, {})
             key = (graph_id, node.id)
-            condition = GraphExecutor._to_bool(output.get("_condition")) if (node.id, "condition") in wired_inputs else True
+            condition_origins = _cf_changed_stateful_relay_origins.get(node.id, {}).get("condition", set())
+            condition_missing = condition_origins and not any(
+                GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in condition_origins
+            )
+            condition = (
+                self._sequence_conditions.get(key, True)
+                if condition_missing
+                else GraphExecutor._to_bool(output.get("_condition"))
+                if (node.id, "condition") in wired_inputs
+                else True
+            )
+            if condition_missing:
+                output["_condition"] = condition
             self._sequence_conditions[key] = condition
             active = self._sequence_tasks.get(key)
             if (

@@ -190,6 +190,11 @@ class GraphExecutor:
         # Build adjacency: edge target_node.handle ← source_node.handle value
         # edge_map[target_node_id][target_handle] = (source_node_id, source_handle)
         edge_map = self._build_edge_map()
+        retained_boundary_ids = {
+            node.id
+            for node in self.flow.nodes
+            if node.type == "memory" or (node.type == "missing_node" and ("initial_value" in node.data or "data_type" in node.data))
+        }
         # Only failed-output paths that can influence a Change Filter need to
         # retain absence through synchronous nodes. Elsewhere, the executor's
         # longstanding missing-input/default behavior remains intentional.
@@ -262,7 +267,7 @@ class GraphExecutor:
                 # example, failed_script -> NOT becomes True) which a later
                 # Change Filter would then commit. Keep the output absent so
                 # the missing state propagates through every intermediate hop.
-                unresolved = [item for item in missing_inputs if item[0] not in node_overrides and "__error__" in outputs.get(item[1], {})]
+                unresolved = [item for item in missing_inputs if item[0] not in node_overrides and item[1] not in retained_boundary_ids]
                 if node.type == "hysteresis":
                     # An absent value deliberately means "emit retained
                     # state" for Hysteresis, making it a taint boundary just
@@ -938,17 +943,21 @@ class GraphExecutor:
                     if not left_items:
                         continue
                     left_key, left_value = left_items[0]
-                    branches = []
-                    for index, (right_key, right_value) in enumerate(right_items):
-                        if not cls._nonstandard_container_equal_iterative(left_key, right_key):
-                            continue
-                        branch_work = list(work)
-                        branch_work.append(("dict", left_items[1:], right_items[:index] + right_items[index + 1 :]))
-                        branch_work.append(("pair", left_value, right_value))
-                        branches.append((branch_work, set(seen)))
-                    states.extend(branches)
-                    branched = True
-                    break
+                    candidates = [
+                        index
+                        for index, (right_key, _right_value) in enumerate(right_items)
+                        if cls._nonstandard_container_equal_iterative(left_key, right_key)
+                    ]
+                    if not candidates:
+                        break
+                    if len(candidates) == 1:
+                        index = candidates[0]
+                        work.append(("dict", left_items[1:], right_items[:index] + right_items[index + 1 :]))
+                        work.append(("pair", left_value, right_items[index][1]))
+                        continue
+                    if not cls._ambiguous_dictionary_entries_equal(left_items, right_items):
+                        break
+                    continue
                 if kind == "set":
                     left_items = current_left
                     right_items = current_right
@@ -1005,6 +1014,56 @@ class GraphExecutor:
             if branched:
                 continue
         return False
+
+    @classmethod
+    def _ambiguous_dictionary_entries_equal(cls, left_items: list[tuple[Any, Any]], right_items: list[tuple[Any, Any]]) -> bool:
+        """Polynomial bipartite matching for dictionaries with ambiguous keys."""
+        adjacency: list[list[int]] = []
+        for left_key, left_value in left_items:
+            candidates = []
+            for index, (right_key, right_value) in enumerate(right_items):
+                if cls._nonstandard_container_equal_iterative(left_key, right_key) and cls._nonstandard_container_equal_iterative(
+                    left_value, right_value
+                ):
+                    candidates.append(index)
+            if not candidates:
+                return False
+            adjacency.append(candidates)
+
+        match_left: dict[int, int] = {}
+        match_right: dict[int, int] = {}
+        for start in range(len(left_items)):
+            queue = [start]
+            queue_index = 0
+            parents: dict[int, tuple[int, int]] = {}
+            seen_left = {start}
+            seen_right: set[int] = set()
+            endpoint: tuple[int, int] | None = None
+            while queue_index < len(queue) and endpoint is None:
+                left_index = queue[queue_index]
+                queue_index += 1
+                for right_index in adjacency[left_index]:
+                    if right_index in seen_right:
+                        continue
+                    seen_right.add(right_index)
+                    matched_left = match_right.get(right_index)
+                    if matched_left is None:
+                        endpoint = (left_index, right_index)
+                        break
+                    if matched_left not in seen_left:
+                        seen_left.add(matched_left)
+                        parents[matched_left] = (left_index, right_index)
+                        queue.append(matched_left)
+            if endpoint is None:
+                return False
+            left_index, right_index = endpoint
+            while True:
+                match_left[left_index] = right_index
+                match_right[right_index] = left_index
+                if left_index == start:
+                    break
+                left_index, right_index = parents[left_index]
+        return True
 
     @classmethod
     def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
