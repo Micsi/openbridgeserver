@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from obs.core.json import jsonable
-from obs.logic.executor import GraphExecutor, _snapshot_debug_value
+from obs.logic.executor import GraphExecutor, _OpaqueRecoveredStr, _replay_known_output_value
 from obs.logic.models import FlowData
 from obs.logic.node_types import get_node_type
 from obs.security.url_targets import resolve_url_target
@@ -303,6 +303,8 @@ def _escape_persist_collision(v: Any) -> Any:
     here — encoded as a [key, value] pair list (which can hold a key of
     any JSON-representable type) instead of a native JSON object.
     """
+    if isinstance(v, _OpaqueRecoveredStr):
+        return {_PERSIST_TYPE_TAG: "opaque_str", "value": str(v)}
     if isinstance(v, dict):
         if any(not isinstance(k, str) for k in v):
             return {
@@ -363,7 +365,8 @@ def _decode_persisted_value(v: Any) -> Any:
             # the containing change_filter state "_opaque_recovered_str" —
             # done there, not here, since decoding is per-value and that
             # marker lives on the enclosing node-state dict.
-            return v.get("value")
+            value = v.get("value")
+            return _OpaqueRecoveredStr(value) if isinstance(value, str) else value
         if tag == "tuple":
             inner = v.get("value")
             if isinstance(inner, list):
@@ -461,14 +464,14 @@ def _safe_deepcopy_state(state: dict[str, Any]) -> dict[str, Any]:
     this entire graph execution — including every otherwise-independent
     branch and its writes — just because ONE unrelated stateful node held
     such a value. Falls back to the executor's own per-node failure-safe
-    chain (deepcopy, then json round-trip, then str()) only for the
-    specific node whose value doesn't survive a plain deepcopy; every
-    other node's state is still copied exactly.
+    semantic fallback (the original reference) only for the specific node
+    whose value doesn't survive a plain deepcopy; every other node's state
+    is still copied exactly.
     """
     try:
         return copy.deepcopy(state)
     except Exception:  # noqa: BLE001 - a stateful node's stored value may hold a runtime object with a failing copy hook
-        return {nid: _snapshot_debug_value(val) for nid, val in state.items()}
+        return {nid: _replay_known_output_value(val) for nid, val in state.items()}
 
 
 def _fresh_input_handles(
@@ -1987,6 +1990,12 @@ class LogicManager:
         #   eligible.
         read_node_ids = {node.id for node in flow.nodes if node.type == "datapoint_read"}
         node_type_by_id = {node.id: node.type for node in flow.nodes}
+        # Match GraphExecutor._build_edge_map(): when several edges target
+        # the same input handle, the last edge is the only effective one.
+        _effective_edge_by_target_init: dict[tuple[str, str], Any] = {}
+        for _edge in flow.edges:
+            _effective_edge_by_target_init[(_edge.target, _edge.targetHandle or "in")] = _edge
+        _effective_edges_init = list(_effective_edge_by_target_init.values())
         # A change_filter's "changed" port is the same kind of discrete
         # event pulse as a Read Object's "changed" handle — on a save/
         # startup pseudo-execution it reports a synthetic first-value
@@ -1996,14 +2005,16 @@ class LogicManager:
         # case just above.
         changed_targets = {
             e.target
-            for e in flow.edges
+            for e in _effective_edges_init
             if e.sourceHandle == "changed" and (e.source in read_node_ids or node_type_by_id.get(e.source) == "change_filter")
         }
         excluded_ids = {node.id for node in flow.nodes if node.type in _INIT_EXCLUDED_NODE_TYPES}
         value_edges = [
-            e for e in flow.edges if (e.targetHandle or "") not in _INIT_CONTROL_INPUT_HANDLES.get(node_type_by_id.get(e.target, ""), frozenset())
+            e
+            for e in _effective_edges_init
+            if (e.targetHandle or "") not in _INIT_CONTROL_INPUT_HANDLES.get(node_type_by_id.get(e.target, ""), frozenset())
         ]
-        wired_inputs = {(e.target, e.targetHandle or "in") for e in flow.edges}
+        wired_inputs = {(e.target, e.targetHandle or "in") for e in _effective_edges_init}
         feedback_writes: set[str] = set()
         reach_by_read: dict[str, set[str]] = {}
         for rnode in flow.nodes:
@@ -2012,7 +2023,7 @@ class LogicManager:
             r_dp = rnode.data.get("datapoint_id")
             if not r_dp:
                 continue
-            reach = _downstream_closure({rnode.id}, flow.edges)
+            reach = _downstream_closure({rnode.id}, _effective_edges_init)
             reach_by_read[rnode.id] = reach
             feedback_writes.update(
                 wnode.id for wnode in flow.nodes if wnode.type == "datapoint_write" and wnode.id in reach and wnode.data.get("datapoint_id") == r_dp
@@ -2098,7 +2109,7 @@ class LogicManager:
                 # actuate unrelated branches like Const → Write) and must not
                 # descend from an unseeded Read Object or an excluded node
                 # type (see _INIT_EXCLUDED_NODE_TYPES).
-                tainted = _downstream_closure(unseeded | changed_targets | excluded_ids, flow.edges)
+                tainted = _downstream_closure(unseeded | changed_targets | excluded_ids, _effective_edges_init)
                 seeded_paths = _downstream_closure(set(seeds), value_edges)
                 skip_writes = {
                     node.id
@@ -2218,7 +2229,7 @@ class LogicManager:
                 for i in range(1, count + 1):
                     handle = f"in{i}"
                     src_edge = next(
-                        (e for e in flow.edges if e.target == gate_id and (e.targetHandle or "in") == handle),
+                        (e for e in _effective_edges_init if e.target == gate_id and (e.targetHandle or "in") == handle),
                         None,
                     )
                     if src_edge is not None and src_edge.source in cf_tainted:
@@ -2235,14 +2246,30 @@ class LogicManager:
                 return False
 
             cf_tainted: set[str] = set(unseeded | changed_targets | excluded_ids)
+            cf_tainted.difference_update(n.id for n in flow.nodes if n.type == "memory")
+            # A decisive seeded input can absorb taint even when the gate is
+            # itself one of the initial changed/excluded targets. Normalize
+            # those initial seeds through the same boundary used below.
+            for _initial_id in tuple(cf_tainted):
+                _initial_node = _node_by_id_init.get(_initial_id)
+                if (
+                    _initial_node is not None
+                    and _initial_node.type in _decisive_gate_value_init
+                    and _gate_taint_absorbed_init(_initial_id, _initial_node.type)
+                ):
+                    cf_tainted.discard(_initial_id)
             _cfq: list[str] = list(cf_tainted)
             while _cfq:
                 _cn = _cfq.pop()
-                for _ce in flow.edges:
+                for _ce in _effective_edges_init:
                     if _ce.source != _cn or _ce.target in cf_tainted:
                         continue
                     _ctarget = _node_by_id_init.get(_ce.target)
                     _ctype = _ctarget.type if _ctarget is not None else None
+                    # Memory publishes its retained value for this tick and
+                    # only commits its input for the next one.
+                    if _ctype == "memory":
+                        continue
                     if _ctype in _decisive_gate_value_init and _gate_taint_absorbed_init(_ce.target, _ctype):
                         continue
                     # An unseeded Read feeding hysteresis.value resolves to
@@ -2266,7 +2293,7 @@ class LogicManager:
                     if _ctype == "gate" and (_ce.targetHandle or "in") == "in":
                         _gate_data = (_ctarget.data or {}) if _ctarget is not None else {}
                         _enable_edge = next(
-                            (e for e in flow.edges if e.target == _ce.target and (e.targetHandle or "in") == "enable"),
+                            (e for e in _effective_edges_init if e.target == _ce.target and (e.targetHandle or "in") == "enable"),
                             None,
                         )
                         if _enable_edge is None or _enable_edge.source not in cf_tainted:
@@ -3347,7 +3374,7 @@ class LogicManager:
                 for _nid in async_replay_source_ids
                 if _nid not in _settled_async_ids and GraphExecutor._to_bool(_src.get(_nid, {}).get("_trigger"))
             }
-            chained_now = async_replay_source_ids & (_downstream_closure(directly_triggered_now, flow.edges) - directly_triggered_now)
+            chained_now = async_replay_source_ids & (_downstream_closure(directly_triggered_now, _effective_edges) - directly_triggered_now)
             return (directly_triggered_now | chained_now) - _settled_async_ids
 
         _cf_hold_ids: set[str] = _compute_cf_hold_ids(_unresolved_source_ids)
@@ -3408,7 +3435,7 @@ class LogicManager:
             # different draw — not the real pass's — could reach a Host
             # Check, notification, or Wake-on-LAN.
             _cf_hold_known_outputs = {nid: vals for nid, vals in outputs.items() if nid not in _cf_hold_island}
-            _cf_hold_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+            _cf_hold_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             _cf_hold_outputs = await _execute_pass(await _executor(_cf_hold_hyst), _cf_hold_overrides, known_outputs=_cf_hold_known_outputs)
             for _nid, _vals in _cf_hold_outputs.items():
                 if _nid in _cf_hold_ids or _nid in _cf_hold_desc:
@@ -3490,7 +3517,7 @@ class LogicManager:
                 gate_node = _node_by_id_early.get(edge.target)
                 gdata = (gate_node.data or {}) if gate_node is not None else {}
                 enable_edge = next(
-                    (e for e in flow.edges if e.target == edge.target and (e.targetHandle or "in") == "enable"),
+                    (e for e in _effective_edges if e.target == edge.target and (e.targetHandle or "in") == "enable"),
                     None,
                 )
                 enable_v = (
@@ -3759,7 +3786,7 @@ class LogicManager:
                 source_value = GraphExecutor._get_output_value(outputs.get(edge.source, {}), source_handle)
                 replay_overrides.setdefault(edge.target, {})[target_handle] = source_value
 
-            replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+            replay_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             replay_executor = await _executor(replay_hyst)
             replay_outputs = await _execute_pass(replay_executor, replay_overrides)
             # A downstream async node (e.g. wake_on_lan) newly reachable
@@ -3776,7 +3803,7 @@ class LogicManager:
             if _late_cf_hold_ids:
                 for _late_cf_id in _late_cf_hold_ids:
                     replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
-                replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                replay_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 replay_executor = await _executor(replay_hyst)
                 replay_outputs = await _execute_pass(replay_executor, replay_overrides)
             blocked_ids = skip_node_ids or set()
@@ -3817,7 +3844,7 @@ class LogicManager:
                 hc_merged.setdefault(nid, {}).update(vals)
             for nid, vals in hc_downstream_overrides.items():
                 hc_merged.setdefault(nid, {}).update(vals)
-            hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+            hc_hyst_snapshot = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             hc_second_executor = await _executor(hc_hyst_snapshot)
             hc_second_outputs = await _execute_pass(hc_second_executor, hc_merged)
             # A downstream async node (e.g. wake_on_lan) newly reachable
@@ -3836,7 +3863,7 @@ class LogicManager:
             if _hc_late_cf_hold_ids:
                 for _hc_late_cf_id in _hc_late_cf_hold_ids:
                     hc_merged.setdefault(_hc_late_cf_id, {})["_suppress_change_filter"] = True
-                hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                hc_hyst_snapshot = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 hc_second_executor = await _executor(hc_hyst_snapshot)
                 hc_second_outputs = await _execute_pass(hc_second_executor, hc_merged)
             hc_descendants: set[str] = set()
@@ -3960,7 +3987,7 @@ class LogicManager:
                 # output-determining comparison baseline and must be copied
                 # back, or the next tick compares against a stale baseline
                 # and silently drops the following real change.
-                wol_second_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                wol_second_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 wol_second_executor = await _executor(wol_second_hyst)
                 wol_second_outputs = await _execute_pass(wol_second_executor, wol_merged)
                 # A downstream async node (e.g. a second, chained
@@ -3980,7 +4007,7 @@ class LogicManager:
                 if _wol_late_cf_hold_ids:
                     for _wol_late_cf_id in _wol_late_cf_hold_ids:
                         wol_merged.setdefault(_wol_late_cf_id, {})["_suppress_change_filter"] = True
-                    wol_second_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                    wol_second_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                     wol_second_executor = await _executor(wol_second_hyst)
                     wol_second_outputs = await _execute_pass(wol_second_executor, wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
@@ -4040,7 +4067,7 @@ class LogicManager:
                         _pwol_merged.setdefault(nid, {}).update(vals)
                     for nid, vals in _pwol_dn_ovr.items():
                         _pwol_merged.setdefault(nid, {}).update(vals)
-                    _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                    _pwol_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                     _pwol_exec = await _executor(_pwol_hyst)
                     _pwol_out = await _execute_pass(_pwol_exec, _pwol_merged)
                     # A downstream async node (e.g. a chained wake_on_lan)
@@ -4060,7 +4087,7 @@ class LogicManager:
                     if _pwol_late_cf_hold_ids:
                         for _pwol_late_cf_id in _pwol_late_cf_hold_ids:
                             _pwol_merged.setdefault(_pwol_late_cf_id, {})["_suppress_change_filter"] = True
-                        _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                        _pwol_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         _pwol_exec = await _executor(_pwol_hyst)
                         _pwol_out = await _execute_pass(_pwol_exec, _pwol_merged)
                     _pwol_desc: set[str] = set()
@@ -4322,7 +4349,7 @@ class LogicManager:
                     replay_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs.get(e.source, {}), src_handle)
                 api_replay_overrides = {nid: dict(vals) for nid, vals in replay_overrides.items()}
                 if pre_execute_hyst is not None:
-                    replay_hyst = copy.deepcopy(pre_execute_hyst)
+                    replay_hyst = _safe_deepcopy_state(pre_execute_hyst)
                     second_executor = await _executor(replay_hyst)
                     second_outputs = await _execute_pass(second_executor, replay_overrides)
                     # api_client's real result can newly reveal — only once
@@ -4365,7 +4392,7 @@ class LogicManager:
                         # suppressing this change_filter even after the async
                         # source it's guarding against settles for real.
                         _refresh_api_replay_hold_overrides(second_outputs)
-                        replay_hyst = copy.deepcopy(pre_execute_hyst)
+                        replay_hyst = _safe_deepcopy_state(pre_execute_hyst)
                         second_executor = await _executor(replay_hyst)
                         second_outputs = await _execute_pass(second_executor, replay_overrides)
                     # Compute transitive descendants of triggered api_clients so that
@@ -4422,7 +4449,7 @@ class LogicManager:
                 pat_merged.setdefault(nid, {}).update(vals)
             for nid, vals in pat_hc_overrides.items():
                 pat_merged.setdefault(nid, {}).update(vals)
-            pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+            pat_hyst_snapshot = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             pat_executor = await _executor(pat_hyst_snapshot)
             pat_outputs = await _execute_pass(pat_executor, pat_merged)
             # A downstream async node (e.g. wake_on_lan) newly reachable
@@ -4444,7 +4471,7 @@ class LogicManager:
             if _pat_late_cf_hold_ids:
                 for _pat_late_cf_id in _pat_late_cf_hold_ids:
                     pat_merged.setdefault(_pat_late_cf_id, {})["_suppress_change_filter"] = True
-                pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                pat_hyst_snapshot = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 pat_executor = await _executor(pat_hyst_snapshot)
                 pat_outputs = await _execute_pass(pat_executor, pat_merged)
             pat_descendants: set[str] = set()
@@ -4599,7 +4626,7 @@ class LogicManager:
                             _pawol_merged.setdefault(nid, {}).update(vals)
                         for nid, vals in _pawol_dn_ovr.items():
                             _pawol_merged.setdefault(nid, {}).update(vals)
-                        _pawol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                        _pawol_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         _pawol_exec = await _executor(_pawol_hyst)
                         _pawol_out = await _execute_pass(_pawol_exec, _pawol_merged)
                         _pawol_desc: set[str] = set()
@@ -4838,7 +4865,7 @@ class LogicManager:
                     src_handle = e.sourceHandle or "out"
                     tgt_handle = e.targetHandle or "in"
                     replay_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs.get(e.source, {}), src_handle)
-                replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                replay_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 api_executor = await _executor(replay_hyst)
                 api_outputs = await _execute_pass(api_executor, replay_overrides)
                 for nid, vals in api_outputs.items():
@@ -4895,7 +4922,7 @@ class LogicManager:
                                 outputs.get(e.source, {}),
                                 src_handle,
                             )
-                        final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                        final_hc_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         final_hc_executor = await _executor(final_hc_hyst)
                         final_hc_outputs = await _execute_pass(final_hc_executor, final_hc_merged)
                         # Same late-hold guard as every earlier replay stage
@@ -4913,7 +4940,7 @@ class LogicManager:
                         if _final_hc_late_cf_hold_ids:
                             for _final_hc_late_cf_id in _final_hc_late_cf_hold_ids:
                                 final_hc_merged.setdefault(_final_hc_late_cf_id, {})["_suppress_change_filter"] = True
-                            final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                            final_hc_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                             final_hc_executor = await _executor(final_hc_hyst)
                             final_hc_outputs = await _execute_pass(final_hc_executor, final_hc_merged)
                         for nid, vals in final_hc_outputs.items():
@@ -5048,7 +5075,7 @@ class LogicManager:
                             _fwolhc_mrgd.setdefault(nid, {}).update(vals)
                         for nid, vals in _fwolhc_dn_ovr.items():
                             _fwolhc_mrgd.setdefault(nid, {}).update(vals)
-                        _fwolhc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                        _fwolhc_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                         _fwolhc_exec = await _executor(_fwolhc_hyst)
                         _fwolhc_out = await _execute_pass(_fwolhc_exec, _fwolhc_mrgd)
                         _fwolhc_desc: set[str] = set()
@@ -5203,7 +5230,7 @@ class LogicManager:
         # alone) so a plain boolean source wired to "message" is unaffected.
         _cf_changed_message_targets = {
             edge.target
-            for edge in flow.edges
+            for edge in _effective_edges
             if (edge.targetHandle or "in") == "message"
             and (edge.sourceHandle or "out") == "changed"
             and _node_by_id_early.get(edge.source) is not None
@@ -5589,7 +5616,14 @@ class LogicManager:
         # snapshot could incorrectly release a change_filter that must stay
         # held for one of those unrelated, still-genuinely-pending reasons.
         if _cf_hold_ids:
-            _late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_source_ids - _freshness_settled_async_ids)
+            # A freshness-skipped action also settles async descendants that
+            # were included only because the original frozen chain closure
+            # ran through that action. Re-evaluate just that scoped closure;
+            # unrelated async branches retain their frozen seed status.
+            _freshness_descendants = async_replay_source_ids & _downstream_closure(_freshness_settled_async_ids, _effective_edges)
+            _still_unresolved_freshness_descendants = _still_unresolved_source_ids() & _freshness_descendants
+            _freshness_definitively_settled = _freshness_settled_async_ids | (_freshness_descendants - _still_unresolved_freshness_descendants)
+            _late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_source_ids - _freshness_definitively_settled)
             if _late_cf_hold_ids != _cf_hold_ids:
                 _late_cf_hold_overrides: dict[str, dict[str, Any]] = {nid: dict(vals) for nid, vals in aug_overrides.items()}
                 for _nid, _vals in resolved_async_edge_overrides.items():
@@ -5597,7 +5631,7 @@ class LogicManager:
                 for _cf_id in _late_cf_hold_ids:
                     _late_cf_hold_overrides.setdefault(_cf_id, {})["_suppress_change_filter"] = True
                 _late_cf_hold_known_outputs = {nid: vals for nid, vals in outputs.items() if nid not in _cf_hold_island}
-                _late_cf_hold_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
+                _late_cf_hold_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
                 _late_cf_hold_outputs = await _execute_pass(
                     await _executor(_late_cf_hold_hyst), _late_cf_hold_overrides, known_outputs=_late_cf_hold_known_outputs
                 )

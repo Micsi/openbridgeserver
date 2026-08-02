@@ -1571,6 +1571,38 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 3
 
+    def test_change_filter_pulse_reads_last_effective_gate_enable_edge(self):
+        nodes = [
+            node("cf", "change_filter"),
+            node("closed", "const_value", {"value": "false", "data_type": "bool"}),
+            node("open", "const_value", {"value": "true", "data_type": "bool"}),
+            node("gate1", "gate", {}),
+            node("hc", "host_check", {"host": "192.168.1.1", "timeout_s": 1, "count": 1}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf", "gate1", "changed", "in"),
+                edge("closed", "gate1", "value", "enable"),
+                edge("open", "gate1", "value", "enable"),
+                edge("gate1", "hc", "out", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-effective-gate-enable"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)) as mock_ping,
+        ):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 3}}))
+
+        assert mock_ping.await_count == 3
+
     def test_taint_analysis_survives_malformed_gate_input_count(self):
         """Regression: a malformed input_count (e.g. an imported/legacy
         node left with "invalid" or null) reached bare int() in the taint

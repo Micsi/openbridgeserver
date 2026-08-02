@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 _AVG_MULTI_MAX_SAMPLES = 100_000
 
 
+class _OpaqueRecoveredStr(str):
+    """String restored from an ``opaque_str`` persistence tag."""
+
+
 def _snapshot_debug_value(value: Any) -> Any:
     try:
         return copy.deepcopy(value)
@@ -184,7 +188,9 @@ class GraphExecutor:
             inputs: dict[str, Any] = {}
             for handle, (src_id, src_handle) in edge_map.get(node.id, {}).items():
                 src_out = outputs.get(src_id, {})
-                inputs[handle] = self._get_output_value(src_out, src_handle)
+                has_value, value = self._try_get_output_value(src_out, src_handle)
+                if has_value:
+                    inputs[handle] = value
 
             incoming_inputs = inputs.copy()
             incoming_inputs.update(capture_incoming_overrides.get(node.id, {}))
@@ -453,7 +459,9 @@ class GraphExecutor:
         """
         if isinstance(v, bool):
             return Decimal(1) if v else Decimal(0)
-        if isinstance(v, int):
+        if isinstance(v, Decimal):
+            dec = v
+        elif isinstance(v, int):
             dec = Decimal(v)
         elif isinstance(v, float):
             # str() of any float (finite, inf, or nan) is always a valid
@@ -523,7 +531,8 @@ class GraphExecutor:
         dec_left, dec_right = cls._try_decimal(left), cls._try_decimal(right)
         if dec_left is not None and dec_right is not None:
             return dec_left == dec_right, True
-        if isinstance(left, (dict, list)) and isinstance(right, (dict, list)):
+        container_types = (dict, list, tuple, set, frozenset)
+        if isinstance(left, container_types) and isinstance(right, container_types):
             if right_is_opaque_recovered_str and left != right:
                 # An opaque_str tag can be nested arbitrarily deep inside a
                 # persisted container (e.g. a python_script's [3 + 4j]
@@ -534,7 +543,12 @@ class GraphExecutor:
                 # unambiguous str()-fallback recursively at every leaf,
                 # exactly like the scalar case below does for a top-level
                 # opaque value.
-                return cls._opaque_aware_container_equal(left, right), False
+                # Restored v2 state carries a marker subclass on each exact
+                # opaque leaf. Older in-memory/tests may only have the
+                # historical container-wide flag, so retain its broad
+                # behavior only when no precise leaf marker is available.
+                precise = cls._contains_opaque_recovered_leaf(right)
+                return cls._opaque_aware_container_equal(left, right, allow_unmarked=not precise), False
             return left == right, True
         # A persisted datetime.date/time/datetime (e.g. a KNX DPT10/11 value)
         # survives a restart only as its str() form (`default=str` in
@@ -553,12 +567,22 @@ class GraphExecutor:
         # str() here — except dict/list, excluded defensively for the same
         # coincidental-repr reason as above, even though a dict/list could
         # never actually be the type this tag was generated from.
-        if right_is_opaque_recovered_str and isinstance(right, str) and not isinstance(left, (dict, list)):
+        if right_is_opaque_recovered_str and isinstance(right, str) and not isinstance(left, container_types):
             return str(left) == right, False
         return left == right, True
 
     @classmethod
-    def _opaque_aware_container_equal(cls, left: Any, right: Any) -> bool:
+    def _contains_opaque_recovered_leaf(cls, value: Any) -> bool:
+        if isinstance(value, _OpaqueRecoveredStr):
+            return True
+        if isinstance(value, dict):
+            return any(cls._contains_opaque_recovered_leaf(k) or cls._contains_opaque_recovered_leaf(v) for k, v in value.items())
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return any(cls._contains_opaque_recovered_leaf(item) for item in value)
+        return False
+
+    @classmethod
+    def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
         """Structural equality for a dict/list, like plain `==`, but at any
         leaf position also accepts a match via str(left) == right when
         `right` there is a string — the same unambiguous "opaque_str"
@@ -618,20 +642,40 @@ class GraphExecutor:
                         (
                             candidate
                             for candidate in remaining_right
-                            if isinstance(candidate, str) and not isinstance(lk, (dict, list)) and str(lk) == candidate
+                            if isinstance(candidate, _OpaqueRecoveredStr) or (allow_unmarked and isinstance(candidate, str))
+                            if str(lk) == candidate
                         ),
                         None,
                     )
                     if rk is None:
                         return False
-                if not cls._opaque_aware_container_equal(lv, remaining_right.pop(rk)):
+                if not cls._opaque_aware_container_equal(lv, remaining_right.pop(rk), allow_unmarked=allow_unmarked):
                     return False
             return True
-        if isinstance(left, list) and isinstance(right, list):
-            return len(left) == len(right) and all(cls._opaque_aware_container_equal(le, ri) for le, ri in zip(left, right))
+        if isinstance(left, (list, tuple)) and isinstance(right, type(left)):
+            return len(left) == len(right) and all(
+                cls._opaque_aware_container_equal(le, ri, allow_unmarked=allow_unmarked) for le, ri in zip(left, right)
+            )
+        if isinstance(left, (set, frozenset)) and isinstance(right, type(left)):
+            if len(left) != len(right):
+                return False
+            remaining = list(right)
+            for left_item in left:
+                match = next(
+                    (
+                        index
+                        for index, right_item in enumerate(remaining)
+                        if cls._opaque_aware_container_equal(left_item, right_item, allow_unmarked=allow_unmarked)
+                    ),
+                    None,
+                )
+                if match is None:
+                    return False
+                remaining.pop(match)
+            return True
         if left == right:
             return True
-        return isinstance(right, str) and not isinstance(left, (dict, list)) and str(left) == right
+        return (isinstance(right, _OpaqueRecoveredStr) or (allow_unmarked and isinstance(right, str))) and str(left) == right
 
     @classmethod
     def _values_equal(cls, left: Any, right: Any) -> bool:

@@ -21,10 +21,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from obs.logic.manager import LogicManager
+from obs.logic.manager import LogicManager, _safe_deepcopy_state
 from obs.logic.models import FlowData
 
 _SEED_TS = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+
+def test_safe_state_snapshot_preserves_noncopyable_runtime_value():
+    runtime_value = (item for item in (1, 2, 3))
+    state = {"memory": {"value": runtime_value}, "other": {"value": [1]}}
+
+    snapshot = _safe_deepcopy_state(state)
+
+    assert snapshot["memory"]["value"] is runtime_value
+    assert snapshot["other"] == {"value": [1]}
+    assert snapshot["other"] is not state["other"]
 
 
 def _make_manager(graphs: dict, values: dict | None = None) -> LogicManager:
@@ -752,6 +763,81 @@ async def test_change_filter_state_committed_when_or_gate_absorbed_by_seeded_inp
     await mgr.initialize_graph("g1")
 
     assert mgr._hysteresis["g1"]["cf1"] == {"value": True}
+
+
+@pytest.mark.asyncio
+async def test_initial_changed_target_gate_can_absorb_taint_with_decisive_seed():
+    seeded_id = str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "source_cf", "type": "change_filter", "data": {}},
+            {"id": "r_seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "or1", "type": "or", "data": {}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+        ],
+        [
+            {"source": "source_cf", "sourceHandle": "changed", "target": "or1", "targetHandle": "in1"},
+            {"source": "r_seeded", "sourceHandle": "value", "target": "or1", "targetHandle": "in2"},
+            {"source": "or1", "sourceHandle": "out", "target": "cf1", "targetHandle": "in"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: True})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": True}
+
+
+@pytest.mark.asyncio
+async def test_initialization_taint_stops_at_memory_tick_boundary():
+    seeded_id = str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "unseeded", "type": "datapoint_read", "data": {}},
+            {"id": "memory", "type": "memory", "data": {"initial_value": 2, "data_type": "number"}},
+            {"id": "seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "add", "type": "math_formula", "data": {"formula": "a + b"}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+        ],
+        [
+            {"source": "unseeded", "sourceHandle": "value", "target": "memory", "targetHandle": "in"},
+            {"source": "memory", "sourceHandle": "out", "target": "add", "targetHandle": "in1"},
+            {"source": "seeded", "sourceHandle": "value", "target": "add", "targetHandle": "in2"},
+            {"source": "add", "sourceHandle": "result", "target": "cf1", "targetHandle": "in"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: 10})
+    mgr._hysteresis["g1"] = {"memory": {"value": 2}, "cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    # Memory's initialization output is its prior/default tick value (zero
+    # in this dry-run), so the downstream result is deterministic despite
+    # the unresolved value waiting to be committed for the next tick.
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": 10.0}
+
+
+@pytest.mark.asyncio
+async def test_initialization_taint_uses_only_last_edge_for_target_handle():
+    seeded_id = str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "unseeded", "type": "datapoint_read", "data": {}},
+            {"id": "seeded", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+        ],
+        [
+            {"source": "unseeded", "sourceHandle": "value", "target": "cf1", "targetHandle": "in"},
+            {"source": "seeded", "sourceHandle": "value", "target": "cf1", "targetHandle": "in"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: 7})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": 7}
 
 
 @pytest.mark.asyncio

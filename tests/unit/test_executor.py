@@ -17,12 +17,13 @@ import json
 import math
 import time
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import ClassVar
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from obs.logic.executor import ExecutionError, GraphExecutor
+from obs.logic.executor import ExecutionError, GraphExecutor, _OpaqueRecoveredStr
 from tests.unit.conftest import edge, make_executor, node
 
 
@@ -1059,6 +1060,22 @@ class TestChangeFilterNode:
         assert out["cf"] == {"out": None, "changed": False}
         assert state == {}
 
+    def test_missing_producer_output_does_not_commit_none(self):
+        """A producer error has no requested output port; that is absent
+        input, not a genuine ``None`` reading."""
+        state = {}
+        exc = make_executor(
+            [node("producer", "python_script", {"script": "raise RuntimeError('boom')"}), node("cf", "change_filter")],
+            [edge("producer", "cf", "result", "in")],
+            hysteresis_state=state,
+        )
+
+        out = exc.execute()
+
+        assert "__error__" in out["producer"]
+        assert out["cf"] == {"out": None, "changed": False}
+        assert state == {}
+
     def test_large_integers_compared_without_precision_loss(self):
         """Regression: float round-trip must not equate distinct 64-bit values."""
         state = {}
@@ -1275,6 +1292,14 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": "0.123456789012345678902"}})
         assert out["cf"]["changed"] is True
 
+    def test_decimal_value_compares_exactly_to_decimal_string(self):
+        state = {"cf": {"value": "0.123456789012345678901"}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": Decimal("0.123456789012345678901")}})
+
+        assert out["cf"]["changed"] is False
+
     def test_non_integral_decimal_string_does_not_short_circuit_exact_int(self):
         """Regression: "1.5" parses as a valid Decimal but isn't a whole
         number — it must not be treated as an exact-int candidate, so a
@@ -1375,6 +1400,35 @@ class TestChangeFilterNode:
 
         out = exc.execute({"cf": {"in": [3 + 4j, "unchanged"]}})
         assert out["cf"]["changed"] is False
+
+    @pytest.mark.parametrize(
+        ("persisted", "live"),
+        [
+            ((_OpaqueRecoveredStr("(3+4j)"), "unchanged"), (3 + 4j, "unchanged")),
+            ({_OpaqueRecoveredStr("(3+4j)"), "unchanged"}, {3 + 4j, "unchanged"}),
+            (frozenset({_OpaqueRecoveredStr("(3+4j)"), "unchanged"}), frozenset({3 + 4j, "unchanged"})),
+        ],
+    )
+    def test_opaque_recovery_recurses_through_tuple_and_set_containers(self, persisted, live):
+        state = {"cf": {"value": persisted, "_opaque_recovered_str": True}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is False
+
+    def test_opaque_recovery_fallback_is_limited_to_tagged_leaf_positions(self):
+        state = {
+            "cf": {
+                "value": [_OpaqueRecoveredStr("(3+4j)"), "2"],
+                "_opaque_recovered_str": True,
+            }
+        }
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": [3 + 4j, 2]}})
+
+        assert out["cf"]["changed"] is True
 
     def test_opaque_recovery_matches_a_recovered_dict_key(self):
         """Regression: a non-string dict KEY (e.g. 3+4j in {3+4j: "x"})

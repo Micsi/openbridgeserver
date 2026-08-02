@@ -611,6 +611,39 @@ def test_notify_message_does_not_fire_on_an_unchanged_change_filter_pulse() -> N
     adapter.send_notification.assert_awaited_once()
 
 
+def test_shadowed_change_filter_message_edge_does_not_suppress_false_message() -> None:
+    """Only the effective last edge determines whether False is a
+    change-filter no-pulse or an ordinary delivered boolean message."""
+    read_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("cf", "change_filter"),
+            node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+        ],
+        [
+            edge("cf", "notify", "changed", "message"),
+            edge("read", "notify", "value", "message"),
+        ],
+    )
+    manager = _make_manager()
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = _run(manager, flow, {"read": {"value": False, "changed": True}})
+
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once()
+
+
 def test_notify_message_fires_on_a_false_value_from_an_ordinary_boolean_source() -> None:
     """Regression: the false-pulse suppression above must be scoped
     strictly to an edge whose source is a change_filter's own "changed"
@@ -703,6 +736,46 @@ def test_freshness_skipped_notify_settles_instead_of_holding_downstream_change_f
     # baseline of 1 — not stay held hostage to notify's own irrelevant,
     # never-going-to-fire trigger.
     assert outputs["cf"] == {"out": 2.0, "changed": True}
+
+
+def test_freshness_skipped_notify_releases_inactive_async_descendant_chain() -> None:
+    """The frozen async closure includes structurally downstream actions,
+    but a skipped notify's false ``sent`` output leaves those actions
+    definitively inactive for this tick."""
+    message_datapoint_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("message_read", "datapoint_read", {"datapoint_id": str(message_datapoint_id)}),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+            node("api", "api_client", {"url": "https://example.invalid"}),
+            node("cf", "change_filter"),
+        ],
+        [
+            edge("message_read", "notify", "value", "message"),
+            edge("notify", "api", "sent", "trigger"),
+            edge("api", "cf", "success", "in"),
+        ],
+    )
+    manager = _make_manager()
+    manager._registry.get_value.side_effect = {message_datapoint_id: MagicMock(value="cached alert")}.get
+    manager._hysteresis["archive-graph"] = {"cf": {"value": True}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        patch("obs.logic.manager.httpx.AsyncClient") as client,
+    ):
+        outputs = _run(manager, flow, {"unrelated": {"value": 1}})
+
+    adapter.send_notification.assert_not_awaited()
+    client.assert_not_called()
+    assert outputs["cf"] == {"out": False, "changed": True}
 
 
 def test_freshness_skipped_notify_release_runs_downstream_host_check() -> None:
