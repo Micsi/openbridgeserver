@@ -3726,6 +3726,9 @@ class LogicManager:
                                     "consumption_counter",
                                     "operating_hours",
                                     "memory",
+                                    "datetime",
+                                    "astro_sun",
+                                    "ical",
                                 }
                                 and GraphExecutor._get_output_value(outputs.get(edge.source, {}), edge.sourceHandle or "out") is not None
                             )

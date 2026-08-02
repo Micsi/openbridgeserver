@@ -999,6 +999,41 @@ def test_manual_dynamic_fan_in_is_independently_fresh() -> None:
     adapter.send_notification.assert_awaited_once()
 
 
+def test_manual_datetime_fan_in_is_independently_fresh() -> None:
+    flow = _flow(
+        [
+            node("constant", "const_value", {"value": "1", "data_type": "number"}),
+            node("cf", "change_filter"),
+            node("clock", "datetime"),
+            node("relay", "or", {"input_count": 2}),
+            node("notify", "notify_message", {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]}),
+        ],
+        [
+            edge("constant", "cf", "value", "in"),
+            edge("cf", "relay", "changed", "in1"),
+            edge("clock", "relay", "time", "in2"),
+            edge("relay", "notify", "out", "message"),
+        ],
+    )
+    manager = _make_manager()
+    manager._graphs["datetime-dynamic"] = ("DateTime Dynamic", True, flow)
+    manager._node_state["datetime-dynamic"] = {}
+    manager._hysteresis["datetime-dynamic"] = {"cf": {"value": 1.0}}
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        outputs = asyncio.run(manager._execute_graph("datetime-dynamic", "DateTime Dynamic", flow, {}))
+
+    assert outputs["cf"]["changed"] is False
+    assert outputs["clock"]["time"]
+    assert outputs["notify"]["sent"] is True
+    adapter.send_notification.assert_awaited_once()
+
+
 def test_manual_dynamic_fan_in_requires_connected_output() -> None:
     flow = _flow(
         [

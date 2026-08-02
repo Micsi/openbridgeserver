@@ -775,8 +775,7 @@ class GraphExecutor:
             try:
                 return bool(left == right)
             except RecursionError:
-                # Cyclic containers need the visited-pair recursive path.
-                pass
+                return cls._plain_container_equal_iterative(left, right)
             except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing equality
                 return False
         if isinstance(left, dict) and isinstance(right, dict):
@@ -826,28 +825,76 @@ class GraphExecutor:
 
     @classmethod
     def _contains_nonstandard_equality_leaf(cls, value: Any, seen: set[int] | None = None) -> bool:
-        if _is_nan(value):
-            return True
-        if isinstance(value, _datetime):
-            try:
-                return (value.tzinfo is not None and value.utcoffset() is not None) or bool(value.fold)
-            except Exception:  # noqa: BLE001 - force arbitrary failing tzinfo through the guarded recursive path
+        visited = set() if seen is None else seen
+        pending = [value]
+        while pending:
+            current = pending.pop()
+            if _is_nan(current):
                 return True
-        if isinstance(value, _time):
-            return value.tzinfo is not None or bool(value.fold)
-        if isinstance(value, (dict, list, tuple, set, frozenset)):
-            seen = set() if seen is None else seen
-            if id(value) in seen:
-                return False
-            seen.add(id(value))
-        if isinstance(value, dict):
-            return any(
-                cls._contains_nonstandard_equality_leaf(key, seen) or cls._contains_nonstandard_equality_leaf(item, seen)
-                for key, item in value.items()
-            )
-        if isinstance(value, (list, tuple, set, frozenset)):
-            return any(cls._contains_nonstandard_equality_leaf(item, seen) for item in value)
+            if isinstance(current, _datetime):
+                try:
+                    if (current.tzinfo is not None and current.utcoffset() is not None) or bool(current.fold):
+                        return True
+                except Exception:  # noqa: BLE001 - force arbitrary failing tzinfo through the guarded recursive path
+                    return True
+                continue
+            if isinstance(current, _time):
+                if current.tzinfo is not None or bool(current.fold):
+                    return True
+                continue
+            if isinstance(current, (dict, list, tuple, set, frozenset)):
+                if id(current) in visited:
+                    continue
+                visited.add(id(current))
+                if isinstance(current, dict):
+                    for key, item in current.items():
+                        pending.extend((key, item))
+                else:
+                    pending.extend(current)
         return False
+
+    @classmethod
+    def _plain_container_equal_iterative(cls, left: Any, right: Any) -> bool:
+        """Compare deeply nested ordinary containers without Python recursion."""
+        pending = [(left, right)]
+        seen: set[tuple[int, int]] = set()
+        while pending:
+            current_left, current_right = pending.pop()
+            if type(current_left) is not type(current_right):
+                return False
+            if isinstance(current_left, (list, tuple)):
+                if len(current_left) != len(current_right):
+                    return False
+                pair = (id(current_left), id(current_right))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                pending.extend(zip(current_left, current_right))
+                continue
+            if isinstance(current_left, dict):
+                if len(current_left) != len(current_right):
+                    return False
+                try:
+                    for key, item in current_left.items():
+                        if key not in current_right:
+                            return False
+                        pending.append((item, current_right[key]))
+                except (RecursionError, TypeError):
+                    return False
+                continue
+            if isinstance(current_left, (set, frozenset)):
+                try:
+                    if not bool(current_left == current_right):
+                        return False
+                except Exception:  # noqa: BLE001 - arbitrary set members may define unsafe equality
+                    return False
+                continue
+            try:
+                if not bool(current_left == current_right):
+                    return False
+            except Exception:  # noqa: BLE001 - arbitrary leaves may define unsafe equality
+                return False
+        return True
 
     @classmethod
     def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
