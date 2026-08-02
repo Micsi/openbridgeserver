@@ -388,24 +388,31 @@ class GraphExecutor:
         self,
         outputs: dict[str, dict[str, Any]],
         input_overrides: dict[str, dict[str, Any]] | None = None,
+        blocked_inputs: set[tuple[str, str]] | None = None,
     ) -> None:
-        self._commit_memory_inputs(outputs, input_overrides or {}, self._build_edge_map())
+        self._commit_memory_inputs(outputs, input_overrides or {}, self._build_edge_map(), blocked_inputs)
 
     def _commit_memory_inputs(
         self,
         outputs: dict[str, dict[str, Any]],
         input_overrides: dict[str, dict[str, Any]],
         edge_map: dict[str, dict[str, tuple[str, str]]],
+        blocked_inputs: set[tuple[str, str]] | None = None,
     ) -> None:
+        blocked_inputs = blocked_inputs or set()
         for node in self.flow.nodes:
             if node.type != "memory":
                 continue
             node_overrides = input_overrides.get(node.id, {})
-            has_reset, reset_value = self._memory_input_value(node, "reset", outputs, node_overrides, edge_map)
+            has_reset, reset_value = (
+                (False, None) if (node.id, "reset") in blocked_inputs else self._memory_input_value(node, "reset", outputs, node_overrides, edge_map)
+            )
             if has_reset and self._to_bool(reset_value):
                 self._set_memory_value(node, self._memory_initial_value(node))
                 continue
-            has_input, input_value = self._memory_input_value(node, "in", outputs, node_overrides, edge_map)
+            has_input, input_value = (
+                (False, None) if (node.id, "in") in blocked_inputs else self._memory_input_value(node, "in", outputs, node_overrides, edge_map)
+            )
             if has_input:
                 self._set_memory_value(node, self._coerce_memory_value(node, input_value))
                 continue
@@ -493,8 +500,18 @@ class GraphExecutor:
         # adapter representations: 1 == "1" == "true" must all agree.
         if isinstance(v, Decimal):
             return bool(v) if v.is_finite() and v in (0, 1) else None
-        if isinstance(v, (int, float)) and v in (0, 1):
-            return bool(v)
+        if isinstance(v, (int, float)):
+            try:
+                equals_zero = v == 0
+                equals_one = v == 1
+            except Exception:  # noqa: BLE001 - numeric subclasses may implement hostile equality
+                return None
+            if type(equals_zero) is not bool or type(equals_one) is not bool:
+                return None
+            if equals_zero:
+                return False
+            if equals_one:
+                return True
         return None
 
     @staticmethod
@@ -503,13 +520,19 @@ class GraphExecutor:
         if isinstance(v, bool):
             return None
         if isinstance(v, int):
-            return v
+            try:
+                return int(v)
+            except (TypeError, ValueError, OverflowError):
+                return None
         if isinstance(v, float):
             # A float that already holds a whole number carries no more
             # precision than its int() conversion — unlike converting the
             # *other* operand (an arbitrary-precision int) through float(),
             # which is exactly the precision loss this method exists to avoid.
-            return int(v) if v.is_integer() else None
+            try:
+                return int(v) if v.is_integer() else None
+            except (TypeError, ValueError, OverflowError):
+                return None
         if isinstance(v, str):
             s = v.strip()
             try:

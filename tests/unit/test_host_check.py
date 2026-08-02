@@ -686,6 +686,27 @@ class TestHostCheckRisingEdge:
 
         assert mock_ping.await_count == 1
 
+    def test_missing_change_filter_pulse_does_not_overwrite_memory_input(self):
+        flow = _flow(
+            [node("cf", "change_filter"), node("mem", "memory", {"data_type": "bool"})],
+            [edge("cf", "mem", "changed", "in")],
+        )
+        manager = _make_manager()
+        graph_id = "g-cf-memory-data-input"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            following = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+
+        assert first["cf"]["changed"] is True
+        assert repeated["cf"]["changed"] is False
+        assert repeated["mem"]["out"] is True
+        assert following["mem"]["out"] is True
+        assert manager._hysteresis[graph_id]["mem"] == {"value": True}
+
     def test_change_filter_pulse_via_async_replay_does_not_bypass_dedup_through_memory(self):
         """Same memory tick-boundary stop as above, but for the pulse only
         discovered via the api_client async replay (_register_change_filter_

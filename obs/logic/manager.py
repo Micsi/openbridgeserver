@@ -3897,11 +3897,10 @@ class LogicManager:
                         continue
                     target_type_name = _node_type_by_id.get(pulse_edge.target)
                     target_handle = pulse_edge.targetHandle or "in"
-                    # Statistics has a separate reset trigger, but its value
-                    # input is still stateful.  A missing Change Filter pulse
-                    # must therefore roll its accumulator back/replay it with
-                    # no value instead of committing the False placeholder.
-                    if target_type_name == "statistics" and target_handle == "value":
+                    # Statistics and Memory have separate reset triggers, but
+                    # their data inputs are still stateful. A missing Change
+                    # Filter pulse must not commit the False placeholder.
+                    if (target_type_name, target_handle) in {("statistics", "value"), ("memory", "in")}:
                         stateful_relay_origins.setdefault(pulse_edge.target, {}).setdefault(target_handle, set()).update(source_origins)
                     if target_type and any(port.type == "trigger" for port in target_type.inputs):
                         continue
@@ -6220,13 +6219,17 @@ class LogicManager:
         # after all async node re-propagation so the stored value always reflects
         # the final graph outputs, not executor placeholders from an earlier pass.
         memory_commit_overrides = _debug_run_overrides(aug_overrides)
+        blocked_memory_inputs: set[tuple[str, str]] = set()
         for memory_node in flow.nodes:
             if memory_node.type != "memory":
                 continue
             origins = _cf_changed_trigger_origins.get(memory_node.id, set())
             if origins and not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
                 memory_commit_overrides.setdefault(memory_node.id, {})["reset"] = False
-        executor.commit_memory_inputs(outputs, memory_commit_overrides)
+            data_origins = _cf_changed_stateful_relay_origins.get(memory_node.id, {}).get("in", set())
+            if data_origins and not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in data_origins):
+                blocked_memory_inputs.add((memory_node.id, "in"))
+        executor.commit_memory_inputs(outputs, memory_commit_overrides, blocked_memory_inputs)
 
         # ── Start/cancel value sequences ──────────────────────────────────
         wired_inputs: set[tuple[str, str]] = {(e.target, e.targetHandle or "in") for e in flow.edges}

@@ -1861,6 +1861,27 @@ class TestChangeFilterNode:
         exc.execute({"cf": {"in": Decimal(0)}})
         assert exc.execute({"cf": {"in": "false"}})["cf"]["changed"] is False
 
+    def test_numeric_subclass_with_raising_equality_does_not_error(self):
+        class RaisingEqualityInt(int):
+            def __eq__(self, _other):
+                raise RuntimeError("unsafe equality")
+
+        state = {}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+        exc.execute({"cf": {"in": RaisingEqualityInt(1)}})
+
+        out = exc.execute({"cf": {"in": RaisingEqualityInt(1)}})
+
+        assert out["cf"]["changed"] is False
+        assert "__error__" not in out["cf"]
+
+    def test_numeric_subclass_with_nonscalar_equality_is_not_a_bool_literal(self):
+        class NonScalarEqualityFloat(float):
+            def __eq__(self, _other):
+                return [True, False]
+
+        assert GraphExecutor._try_bool_literal(NonScalarEqualityFloat(1.0)) is None
+
     def test_large_integer_not_equated_to_rounded_float(self):
         """Regression: 9007199254740993 (2**53 + 1) cannot be represented
         exactly as a float — round-tripping it through float() rounds it
