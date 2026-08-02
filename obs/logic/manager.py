@@ -5202,7 +5202,7 @@ class LogicManager:
                     post_api_wol_merged.setdefault(nid, {}).update(vals)
                 for nid, vals in post_api_wol_overrides.items():
                     post_api_wol_merged.setdefault(nid, {}).update(vals)
-                _pawol_hyst_snap = copy.deepcopy(hyst)
+                _pawol_hyst_snap = _safe_deepcopy_state(hyst)
                 post_api_wol_executor = await _executor(_pawol_hyst_snap)
                 post_api_wol_outputs = await _execute_pass(post_api_wol_executor, post_api_wol_merged)
                 # This WoL send can itself newly reveal — only once visible in
@@ -5222,7 +5222,7 @@ class LogicManager:
                 if _pawol_late_cf_hold_ids:
                     for _pawol_late_cf_id in _pawol_late_cf_hold_ids:
                         post_api_wol_merged.setdefault(_pawol_late_cf_id, {})["_suppress_change_filter"] = True
-                    _pawol_hyst_snap = copy.deepcopy(hyst)
+                    _pawol_hyst_snap = _safe_deepcopy_state(hyst)
                     post_api_wol_executor = await _executor(_pawol_hyst_snap)
                     post_api_wol_outputs = await _execute_pass(post_api_wol_executor, post_api_wol_merged)
                 post_api_wol_descendants: set[str] = set()
@@ -5657,7 +5657,7 @@ class LogicManager:
                     _fwol_merged.setdefault(nid, {}).update(vals)
                 for nid, vals in _fwol_dn_ovr.items():
                     _fwol_merged.setdefault(nid, {}).update(vals)
-                _fwol_hyst_snap = copy.deepcopy(hyst)
+                _fwol_hyst_snap = _safe_deepcopy_state(hyst)
                 _fwol_exec = await _executor(_fwol_hyst_snap)
                 _fwol_out = await _execute_pass(_fwol_exec, _fwol_merged)
                 # Same late-hold guard as every earlier replay stage (see
@@ -5671,7 +5671,7 @@ class LogicManager:
                 if _fwol_late_cf_hold_ids:
                     for _fwol_late_cf_id in _fwol_late_cf_hold_ids:
                         _fwol_merged.setdefault(_fwol_late_cf_id, {})["_suppress_change_filter"] = True
-                    _fwol_hyst_snap = copy.deepcopy(hyst)
+                    _fwol_hyst_snap = _safe_deepcopy_state(hyst)
                     _fwol_exec = await _executor(_fwol_hyst_snap)
                     _fwol_out = await _execute_pass(_fwol_exec, _fwol_merged)
                 _fwol_desc: set[str] = set()

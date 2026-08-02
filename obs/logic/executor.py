@@ -699,7 +699,7 @@ class GraphExecutor:
                     return False, True
             if left_aware and right_aware:
                 try:
-                    return left.astimezone(_UTC) == right.astimezone(_UTC), True
+                    return bool(left.astimezone(_UTC) == right.astimezone(_UTC)), True
                 except Exception:  # noqa: BLE001 - arbitrary tzinfo normalization may fail
                     try:
                         return bool(left == right), True
@@ -832,7 +832,7 @@ class GraphExecutor:
                     return False
             if left_aware and right_aware:
                 try:
-                    return left.astimezone(_UTC) == right.astimezone(_UTC)
+                    return bool(left.astimezone(_UTC) == right.astimezone(_UTC))
                 except Exception:  # noqa: BLE001 - arbitrary tzinfo normalization may fail
                     try:
                         return bool(left == right)

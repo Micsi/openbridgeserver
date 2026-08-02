@@ -1135,6 +1135,28 @@ class TestChangeFilterNode:
         assert first == second
         assert out["cf"] == {"out": second, "changed": True}
 
+    def test_aware_datetime_normalized_equality_has_guarded_truth_conversion(self):
+        class UnsafeTruth:
+            def __bool__(self):
+                raise RuntimeError("truth conversion unavailable")
+
+        class UnsafeEquality:
+            def __eq__(self, other):
+                return UnsafeTruth()
+
+        class UnsafeNormalizedDatetime(datetime):
+            def astimezone(self, tz=None):
+                return UnsafeEquality()
+
+        first = UnsafeNormalizedDatetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+        second = UnsafeNormalizedDatetime(2026, 1, 1, 11, 0, tzinfo=UTC)
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state={"cf": {"value": first}})
+
+        out = exc.execute({"cf": {"in": second}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
     def test_nested_naive_datetime_fold_transitions_are_changes(self):
         first = datetime(2025, 10, 26, 2, 30, fold=0)  # noqa: DTZ001 - specifically tests naive fold metadata
         second = datetime(2025, 10, 26, 2, 30, fold=1)  # noqa: DTZ001 - specifically tests naive fold metadata

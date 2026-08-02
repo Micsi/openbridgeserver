@@ -4237,6 +4237,7 @@ class TestHostCheckPostApiExtraPaths:
             node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
             node("cv2", "const_value", {"value": "true", "data_type": "bool"}),
             node("gate", "and", {"input_count": 2}),
+            node("unrelated_cf", "change_filter"),
         ]
         flow = _flow(
             nodes,
@@ -4252,6 +4253,8 @@ class TestHostCheckPostApiExtraPaths:
         graph_id = "g-post-api-wol-ds"
         manager._graphs[graph_id] = ("test", True, flow)
         manager._node_state[graph_id] = {}
+        runtime_value = (item for item in (1, 2, 3))
+        manager._hysteresis[graph_id] = {"unrelated_cf": {"value": runtime_value}}
 
         mock_client_cls = _patch_api_success()
         try:
@@ -4266,6 +4269,7 @@ class TestHostCheckPostApiExtraPaths:
 
         assert outputs["wol"]["sent"] is True
         assert outputs["gate"]["out"] is True
+        assert manager._hysteresis[graph_id]["unrelated_cf"]["value"] is runtime_value
 
     def test_post_api_hc_unreachable_wol_not_triggered(self):
         """Post-api HC fires but is unreachable: WoL node in descendants skips WoL (lines 1793-1794)."""
@@ -5816,6 +5820,7 @@ class TestFinalWolDownstream:
             node("ac2", "api_client", {"url": "http://93.184.216.34/two", "method": "GET"}),
             node("wol", "wake_on_lan", {"mac_address": "AA:BB:CC:DD:EE:FF"}),
             node("gate", "and", {"input_count": 2}),
+            node("unrelated_cf", "change_filter"),
         ]
         flow = _flow(
             nodes,
@@ -5832,6 +5837,8 @@ class TestFinalWolDownstream:
         graph_id = "g-final-wol-dn"
         manager._graphs[graph_id] = ("test", True, flow)
         manager._node_state[graph_id] = {}
+        runtime_value = (item for item in (1, 2, 3))
+        manager._hysteresis[graph_id] = {"unrelated_cf": {"value": runtime_value}}
 
         mock_client_cls = _patch_api_success()
         try:
@@ -5846,6 +5853,7 @@ class TestFinalWolDownstream:
 
         assert outputs["wol"]["sent"] is True
         assert outputs["gate"]["out"] is True
+        assert manager._hysteresis[graph_id]["unrelated_cf"]["value"] is runtime_value
 
 
 # ===========================================================================
