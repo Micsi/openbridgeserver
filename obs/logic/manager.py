@@ -309,7 +309,7 @@ def _escape_persist_collision(v: Any) -> Any:
     if isinstance(v, _OpaqueRecoveredStr):
         return {_PERSIST_TYPE_TAG: "opaque_str", "value": str(v)}
     if isinstance(v, dict):
-        if any(not isinstance(k, str) for k in v):
+        if any(not isinstance(k, str) or isinstance(k, _OpaqueRecoveredStr) for k in v):
             return {
                 _PERSIST_TYPE_TAG: "dict_nonstr_keys",
                 "value": [[_escape_persist_collision(k), _escape_persist_collision(val)] for k, val in v.items()],
@@ -3427,7 +3427,7 @@ class LogicManager:
             _cfq: list[str] = list(_cf_hold_ids)
             while _cfq:
                 _cn = _cfq.pop()
-                for _ce in flow.edges:
+                for _ce in _effective_edges:
                     if _ce.source == _cn and _ce.target not in _cf_hold_desc:
                         _cf_hold_desc.add(_ce.target)
                         _cfq.append(_ce.target)
@@ -3760,7 +3760,7 @@ class LogicManager:
 
         def _add_resolved_outputs(node_ids: set[str]) -> None:
             _settled_async_ids.update(node_ids & async_replay_source_ids)
-            for _re in flow.edges:
+            for _re in _effective_edges:
                 if _re.source in node_ids:
                     resolved_async_edge_overrides.setdefault(_re.target, {})[_re.targetHandle or "in"] = GraphExecutor._get_output_value(
                         outputs.get(_re.source, {}), _re.sourceHandle or "out"
@@ -3772,7 +3772,7 @@ class LogicManager:
             queue: list[str] = list(node_ids)
             while queue:
                 source_id = queue.pop()
-                for edge in flow.edges:
+                for edge in _effective_edges:
                     if edge.source == source_id and edge.target not in descendants:
                         descendants.add(edge.target)
                         queue.append(edge.target)
@@ -3782,13 +3782,13 @@ class LogicManager:
             replay_overrides: dict[str, dict[str, Any]] = {nid: dict(vals) for nid, vals in aug_overrides.items()}
             for nid, vals in resolved_async_edge_overrides.items():
                 replay_overrides.setdefault(nid, {}).update(vals)
-            for edge in flow.edges:
+            for edge in _effective_edges:
                 if edge.source in node_ids:
                     source_handle = edge.sourceHandle or "out"
                     target_handle = edge.targetHandle or "in"
                     source_value = GraphExecutor._get_output_value(outputs.get(edge.source, {}), source_handle)
                     replay_overrides.setdefault(edge.target, {})[target_handle] = source_value
-            for edge in flow.edges:
+            for edge in _effective_edges:
                 if edge.target not in descendants or edge.source in descendants or edge.source in node_ids:
                     continue
                 source_handle = edge.sourceHandle or "out"
@@ -3842,7 +3842,7 @@ class LogicManager:
                 break
             processed_host_check_replay.update(replay_sources)
             hc_downstream_overrides: dict[str, dict[str, Any]] = {}
-            for e in flow.edges:
+            for e in _effective_edges:
                 if e.source in replay_sources:
                     src_handle = e.sourceHandle or "out"
                     tgt_handle = e.targetHandle or "in"
@@ -3880,7 +3880,7 @@ class LogicManager:
             hc_queue: list[str] = list(replay_sources)
             while hc_queue:
                 nid = hc_queue.pop()
-                for e in flow.edges:
+                for e in _effective_edges:
                     if e.source == nid and e.target not in hc_descendants:
                         hc_descendants.add(e.target)
                         hc_queue.append(e.target)
@@ -3972,7 +3972,7 @@ class LogicManager:
         # keep their first-pass results.
         if triggered_wol_nodes:
             wol_downstream_overrides: dict[str, dict[str, Any]] = {}
-            for e in flow.edges:
+            for e in _effective_edges:
                 if e.source in triggered_wol_nodes:
                     src_handle = e.sourceHandle or "out"
                     tgt_handle = e.targetHandle or "in"
@@ -4026,7 +4026,7 @@ class LogicManager:
                 queue = list(triggered_wol_nodes)
                 while queue:
                     nid = queue.pop()
-                    for e in flow.edges:
+                    for e in _effective_edges:
                         if e.source == nid and e.target not in wol_descendants:
                             wol_descendants.add(e.target)
                             queue.append(e.target)
@@ -4046,7 +4046,7 @@ class LogicManager:
             _wol_desc_q: list[str] = list(triggered_wol_nodes)
             while _wol_desc_q:
                 _wn = _wol_desc_q.pop()
-                for _we in flow.edges:
+                for _we in _effective_edges:
                     if _we.source == _wn and _we.target not in _wol_all_desc:
                         _wol_all_desc.add(_we.target)
                         _wol_desc_q.append(_we.target)
@@ -4065,7 +4065,7 @@ class LogicManager:
                         break
                     _processed_pwol.update(_pwol_src)
                     _pwol_dn_ovr: dict[str, dict[str, Any]] = {}
-                    for _e in flow.edges:
+                    for _e in _effective_edges:
                         if _e.source in _pwol_src:
                             _pwol_dn_ovr.setdefault(_e.target, {})[_e.targetHandle or "in"] = GraphExecutor._get_output_value(
                                 outputs[_e.source], _e.sourceHandle or "out"
@@ -4104,7 +4104,7 @@ class LogicManager:
                     _pwol_dq: list[str] = list(_pwol_src)
                     while _pwol_dq:
                         _pn = _pwol_dq.pop()
-                        for _e in flow.edges:
+                        for _e in _effective_edges:
                             if _e.source == _pn and _e.target not in _pwol_desc:
                                 _pwol_desc.add(_e.target)
                                 _pwol_dq.append(_e.target)
@@ -4335,14 +4335,14 @@ class LogicManager:
             pending_sources = list(triggered_api_clients)
             while pending_sources:
                 source_id = pending_sources.pop()
-                for e in flow.edges:
+                for e in _effective_edges:
                     if e.source != source_id or e.target in downstream_node_ids:
                         continue
                     downstream_node_ids.add(e.target)
                     pending_sources.append(e.target)
 
             downstream_overrides: dict[str, dict[str, Any]] = {}
-            for e in flow.edges:
+            for e in _effective_edges:
                 if e.source in triggered_api_clients:
                     src_handle = e.sourceHandle or "out"
                     tgt_handle = e.targetHandle or "in"
@@ -4351,7 +4351,7 @@ class LogicManager:
                 replay_overrides = {nid: dict(vals) for nid, vals in aug_overrides.items()}
                 for nid, vals in downstream_overrides.items():
                     replay_overrides.setdefault(nid, {}).update(vals)
-                for e in flow.edges:
+                for e in _effective_edges:
                     if e.target not in downstream_node_ids or e.source in downstream_node_ids or e.source in triggered_api_clients:
                         continue
                     src_handle = e.sourceHandle or "out"
@@ -4413,7 +4413,7 @@ class LogicManager:
                     _aq: list[str] = list(triggered_api_clients)
                     while _aq:
                         _an = _aq.pop()
-                        for _ae in flow.edges:
+                        for _ae in _effective_edges:
                             if _ae.source == _an and _ae.target not in api_descendants:
                                 api_descendants.add(_ae.target)
                                 _aq.append(_ae.target)
@@ -4446,7 +4446,7 @@ class LogicManager:
                 break
             processed_post_api_hc_replay.update(replay_sources)
             pat_hc_overrides: dict[str, dict[str, Any]] = {}
-            for e in flow.edges:
+            for e in _effective_edges:
                 if e.source in replay_sources:
                     src_handle = e.sourceHandle or "out"
                     tgt_handle = e.targetHandle or "in"
@@ -4488,7 +4488,7 @@ class LogicManager:
             pat_queue: list[str] = list(replay_sources)
             while pat_queue:
                 nid = pat_queue.pop()
-                for e in flow.edges:
+                for e in _effective_edges:
                     if e.source == nid and e.target not in pat_descendants:
                         pat_descendants.add(e.target)
                         pat_queue.append(e.target)
@@ -4556,7 +4556,7 @@ class LogicManager:
         if post_api_wol_nodes:
             _add_resolved_outputs(post_api_wol_nodes)
             post_api_wol_overrides: dict[str, dict[str, Any]] = {}
-            for e in flow.edges:
+            for e in _effective_edges:
                 if e.source in post_api_wol_nodes:
                     src_handle = e.sourceHandle or "out"
                     tgt_handle = e.targetHandle or "in"
@@ -4595,7 +4595,7 @@ class LogicManager:
                 post_api_wol_queue = list(post_api_wol_nodes)
                 while post_api_wol_queue:
                     nid = post_api_wol_queue.pop()
-                    for e in flow.edges:
+                    for e in _effective_edges:
                         if e.source == nid and e.target not in post_api_wol_descendants:
                             post_api_wol_descendants.add(e.target)
                             post_api_wol_queue.append(e.target)
@@ -4623,7 +4623,7 @@ class LogicManager:
                             break
                         _pawol_processed.update(_pawol_replay_src)
                         _pawol_dn_ovr: dict[str, dict[str, Any]] = {}
-                        for _e in flow.edges:
+                        for _e in _effective_edges:
                             if _e.source in _pawol_replay_src:
                                 _pawol_dn_ovr.setdefault(_e.target, {})[_e.targetHandle or "in"] = GraphExecutor._get_output_value(
                                     outputs[_e.source], _e.sourceHandle or "out"
@@ -4643,7 +4643,7 @@ class LogicManager:
                         _pawol_dq: list[str] = list(_pawol_replay_src)
                         while _pawol_dq:
                             _pn = _pawol_dq.pop()
-                            for _e in flow.edges:
+                            for _e in _effective_edges:
                                 if _e.source == _pn and _e.target not in _pawol_desc:
                                     _pawol_desc.add(_e.target)
                                     _pawol_dq.append(_e.target)
@@ -4852,14 +4852,14 @@ class LogicManager:
             pending_sources = list(post_api_hc_api_clients)
             while pending_sources:
                 source_id = pending_sources.pop()
-                for e in flow.edges:
+                for e in _effective_edges:
                     if e.source != source_id or e.target in api_descendants:
                         continue
                     api_descendants.add(e.target)
                     pending_sources.append(e.target)
 
             downstream_overrides: dict[str, dict[str, Any]] = {}
-            for e in flow.edges:
+            for e in _effective_edges:
                 if e.source in post_api_hc_api_clients:
                     src_handle = e.sourceHandle or "out"
                     tgt_handle = e.targetHandle or "in"
@@ -4869,7 +4869,7 @@ class LogicManager:
                 replay_overrides = {nid: dict(vals) for nid, vals in replay_base.items()}
                 for nid, vals in downstream_overrides.items():
                     replay_overrides.setdefault(nid, {}).update(vals)
-                for e in flow.edges:
+                for e in _effective_edges:
                     if e.target not in api_descendants or e.source in api_descendants or e.source in post_api_hc_api_clients:
                         continue
                     src_handle = e.sourceHandle or "out"
@@ -4903,12 +4903,12 @@ class LogicManager:
                         final_hc_queue = list(replay_sources)
                         while final_hc_queue:
                             nid = final_hc_queue.pop()
-                            for e in flow.edges:
+                            for e in _effective_edges:
                                 if e.source == nid and e.target not in final_hc_descendants:
                                     final_hc_descendants.add(e.target)
                                     final_hc_queue.append(e.target)
                         final_hc_overrides: dict[str, dict[str, Any]] = {}
-                        for e in flow.edges:
+                        for e in _effective_edges:
                             if e.source in replay_sources:
                                 src_handle = e.sourceHandle or "out"
                                 tgt_handle = e.targetHandle or "in"
@@ -4923,7 +4923,7 @@ class LogicManager:
                             final_hc_merged.setdefault(nid, {}).update(vals)
                         for nid, vals in final_hc_overrides.items():
                             final_hc_merged.setdefault(nid, {}).update(vals)
-                        for e in flow.edges:
+                        for e in _effective_edges:
                             if e.target not in final_hc_descendants or e.source in final_hc_descendants or e.source in replay_sources:
                                 continue
                             src_handle = e.sourceHandle or "out"
@@ -5011,7 +5011,7 @@ class LogicManager:
         if _final_wol_candidates:
             _add_resolved_outputs(_final_wol_candidates)
             _fwol_dn_ovr: dict[str, dict[str, Any]] = {}
-            for _e in flow.edges:
+            for _e in _effective_edges:
                 if _e.source in _final_wol_candidates:
                     _fwol_dn_ovr.setdefault(_e.target, {})[_e.targetHandle or "in"] = GraphExecutor._get_output_value(
                         outputs[_e.source], _e.sourceHandle or "out"
@@ -5046,7 +5046,7 @@ class LogicManager:
                 _fwol_q: list[str] = list(_final_wol_candidates)
                 while _fwol_q:
                     _fn = _fwol_q.pop()
-                    for _e in flow.edges:
+                    for _e in _effective_edges:
                         if _e.source == _fn and _e.target not in _fwol_desc:
                             _fwol_desc.add(_e.target)
                             _fwol_q.append(_e.target)
@@ -5072,7 +5072,7 @@ class LogicManager:
                             break
                         _fwolhc_processed.update(_fwolhc_srcs)
                         _fwolhc_dn_ovr: dict[str, dict[str, Any]] = {}
-                        for _e in flow.edges:
+                        for _e in _effective_edges:
                             if _e.source in _fwolhc_srcs:
                                 _fwolhc_dn_ovr.setdefault(_e.target, {})[_e.targetHandle or "in"] = GraphExecutor._get_output_value(
                                     outputs[_e.source], _e.sourceHandle or "out"
@@ -5092,7 +5092,7 @@ class LogicManager:
                         _fwolhc_dq: list[str] = list(_fwolhc_srcs)
                         while _fwolhc_dq:
                             _fn = _fwolhc_dq.pop()
-                            for _e in flow.edges:
+                            for _e in _effective_edges:
                                 if _e.source == _fn and _e.target not in _fwolhc_desc:
                                     _fwolhc_desc.add(_e.target)
                                     _fwolhc_dq.append(_e.target)
@@ -5723,7 +5723,7 @@ class LogicManager:
                 # pulsed" — only a non-Memory source directly in
                 # cron_reachable genuinely means that.
                 and (node_by_id[edge.source].type != "memory" if edge.source in node_by_id else True)
-                for edge in flow.edges
+                for edge in _effective_edges
             )
             pulse_sources = [node.id]
             pulse_seen: set[str] = set()

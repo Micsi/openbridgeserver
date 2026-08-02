@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from obs.api.v1.logic import _row_to_out
 from obs.config import SecuritySettings, Settings, override_settings
 from obs.core.registry import ValueState
 from obs.logic.manager import (
@@ -209,6 +210,26 @@ class TestMigrateLegacyApiClientFieldNames:
         _migrate_legacy_api_client_field_names(flow)
 
         assert flow.nodes[0].data == {"headers_secret_file": "/run/secrets/hdr"}
+
+    def test_graph_api_output_exposes_legacy_file_fields_under_current_names(self):
+        raw_flow = self._flow_with_legacy_fields().model_dump_json()
+
+        result = _row_to_out(
+            {
+                "id": "g1",
+                "name": "Graph",
+                "description": "",
+                "enabled": 1,
+                "flow_data": raw_flow,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+
+        assert result.flow_data.nodes[0].data == {
+            "headers_value_file": "/run/secrets/hdr",
+            "auth_value_file": "/run/secrets/tok",
+        }
 
     def test_update_cached_graph_migrates_legacy_fields_on_layout_only_save(self):
         # A layout-only save (e.g. dragging a node) resubmits the flow_data

@@ -2175,6 +2175,35 @@ class TestHostCheckRisingEdge:
         # True and the OR would fire the ping.
         mock_ping.assert_not_awaited()
 
+    def test_held_replay_island_ignores_shadowed_edge_to_random_value(self):
+        nodes = [
+            node("unseeded_read", "datapoint_read", {}),
+            node("cf", "change_filter"),
+            node("trigger", "const_value", {"value": "true", "data_type": "bool"}),
+            node("rand", "random_value", {"data_type": "int", "min": 1, "max": 100}),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "cf", "value", "in"),
+                edge("cf", "rand", "changed", "trigger"),
+                edge("trigger", "rand", "value", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-held-shadowed-random"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("random.randint", side_effect=[10, 90]) as mock_rand,
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert mock_rand.call_count == 1
+        assert outputs["rand"]["value"] == 10
+
     def test_change_filter_holds_behind_unresolved_wake_on_lan(self):
         """Regression: wake_on_lan.sent is a placeholder-then-replayed
         output just like api_client/host_check, but async_replay_source_ids
@@ -3787,6 +3816,34 @@ class TestReplayOrderingFixes:
         assert outputs["hc_a"]["reachable"] is True
         assert outputs["hc_b"]["reachable"] is True
         assert outputs["gate"]["out"] is True, "gate must see both real HC outputs, not the hc_a placeholder"
+
+    def test_resolved_async_output_does_not_override_shadowed_filter_input(self):
+        nodes = [
+            node("hc", "host_check", {"host": "a.local", "timeout_s": 1, "count": 1}),
+            node("constant", "const_value", {"value": "7", "data_type": "number"}),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("hc", "cf", "reachable", "in"),
+                edge("constant", "cf", "value", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-shadowed-resolved-output"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": 7.0}}
+
+        with (
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+            patch("obs.logic.manager._ping_host", new_callable=AsyncMock, return_value=(True, 1.0)),
+        ):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"hc": {"trigger": True}}))
+
+        assert outputs["hc"]["reachable"] is True
+        assert outputs["cf"] == {"out": 7.0, "changed": False}
 
     def test_wol_triggers_downstream_host_check(self):
         """timer_cron → wake_on_lan → host_check: HC must ping in the same tick."""

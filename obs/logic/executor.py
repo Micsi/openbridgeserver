@@ -34,6 +34,10 @@ class _OpaqueRecoveredStr(str):
     """String restored from an ``opaque_str`` persistence tag."""
 
 
+def _is_nan(value: Any) -> bool:
+    return (isinstance(value, float) and math.isnan(value)) or (isinstance(value, Decimal) and value.is_nan())
+
+
 def _snapshot_debug_value(value: Any) -> Any:
     try:
         return copy.deepcopy(value)
@@ -520,7 +524,7 @@ class GraphExecutor:
         # itself.  For change detection, however, two repeated invalid sensor
         # readings are the same retained reading and must not emit a fresh
         # pulse on every graph execution.
-        if isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right):
+        if _is_nan(left) and _is_nan(right):
             return True, True
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
@@ -535,7 +539,7 @@ class GraphExecutor:
             return dec_left == dec_right, True
         container_types = (dict, list, tuple, set, frozenset)
         if isinstance(left, container_types) and isinstance(right, container_types):
-            if right_is_opaque_recovered_str and left != right:
+            if right_is_opaque_recovered_str:
                 # An opaque_str tag can be nested arbitrarily deep inside a
                 # persisted container (e.g. a python_script's [3 + 4j]
                 # baseline persists as a list holding one opaque-tagged
@@ -586,7 +590,7 @@ class GraphExecutor:
     @classmethod
     def _nan_aware_equal(cls, left: Any, right: Any) -> bool:
         """Structural equality that treats matching NaN leaves as retained readings."""
-        if isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right):
+        if _is_nan(left) and _is_nan(right):
             return True
         if isinstance(left, dict) and isinstance(right, dict):
             if len(left) != len(right):
@@ -635,7 +639,7 @@ class GraphExecutor:
         1 == "1") for every nested element, silently loosening ordinary
         (non-opaque) list/dict equality far beyond what this fix needs.
         """
-        if isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right):
+        if _is_nan(left) and _is_nan(right):
             return True
         if isinstance(left, dict) and isinstance(right, dict):
             # A non-string dict KEY (e.g. 3+4j) persists the same lossy way

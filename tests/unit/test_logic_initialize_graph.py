@@ -1650,6 +1650,17 @@ class TestPersistDefaultAndDecode:
         assert decoded == Decimal("1.500")
         assert isinstance(decoded, Decimal)
 
+    def test_recovered_opaque_dictionary_key_keeps_its_tag_when_repersisted(self):
+        from obs.logic.executor import _OpaqueRecoveredStr
+        from obs.logic.manager import _PERSIST_TYPE_TAG, _escape_persist_collision
+
+        encoded = _escape_persist_collision({_OpaqueRecoveredStr("(3+4j)"): "value"})
+
+        assert encoded == {
+            _PERSIST_TYPE_TAG: "dict_nonstr_keys",
+            "value": [[{_PERSIST_TYPE_TAG: "opaque_str", "value": "(3+4j)"}, "value"]],
+        }
+
     def test_decode_persisted_value_restores_opaque_str_as_plain_string(self):
         from obs.logic.manager import _decode_persisted_value
 

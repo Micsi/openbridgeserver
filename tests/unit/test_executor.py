@@ -1022,6 +1022,17 @@ class TestChangeFilterNode:
         assert math.isnan(out["cf"]["out"])
         assert out["cf"]["changed"] is False
 
+    @pytest.mark.parametrize("value", [Decimal("NaN"), [Decimal("NaN")], {"value": Decimal("NaN")}])
+    def test_repeated_decimal_nan_value_is_suppressed(self, value):
+        state = {}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+        exc.execute({"cf": {"in": value}})
+
+        repeated = Decimal("NaN") if isinstance(value, Decimal) else type(value)(value)
+        out = exc.execute({"cf": {"in": repeated}})
+
+        assert out["cf"]["changed"] is False
+
     @pytest.mark.parametrize("value", [[float("nan")], {"value": float("nan")}, (float("nan"),), {float("nan")}])
     def test_repeated_nested_nan_value_is_suppressed(self, value):
         state = {}
@@ -1453,6 +1464,21 @@ class TestChangeFilterNode:
         out = exc.execute({"cf": {"in": [3 + 4j, 2]}})
 
         assert out["cf"]["changed"] is True
+
+    def test_equal_live_string_container_migrates_opaque_leaf_markers(self):
+        state = {
+            "cf": {
+                "value": [_OpaqueRecoveredStr("(3+4j)")],
+                "_opaque_recovered_str": True,
+            }
+        }
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": ["(3+4j)"]}})
+
+        assert out["cf"] == {"out": ["(3+4j)"], "changed": False}
+        assert state == {"cf": {"value": ["(3+4j)"]}}
+        assert type(state["cf"]["value"][0]) is str
 
     def test_opaque_recovery_matches_a_recovered_dict_key(self):
         """Regression: a non-string dict KEY (e.g. 3+4j in {3+4j: "x"})
