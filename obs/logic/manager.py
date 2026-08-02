@@ -3938,6 +3938,10 @@ class LogicManager:
                         ("heating_circuit", "value"),
                         ("datapoint_write", "value"),
                         ("api_client", "body"),
+                        ("notify_pushover", "image_url"),
+                        ("notify_pushover", "url"),
+                        ("notify_pushover", "url_title"),
+                        ("message_archive", "title"),
                         ("value_sequence", "condition"),
                     } or (target_type_name == "avg_multi" and target_handle.startswith("in_"))
                     if stateful_data_handle:

@@ -1945,6 +1945,44 @@ class TestHostCheckRisingEdge:
         assert client.request.await_args_list[0].kwargs["content"] == "true"
         assert client.request.await_args_list[1].kwargs["content"] == "null"
 
+    @pytest.mark.parametrize(
+        ("target_type", "target_handle", "output_handle"),
+        [
+            ("notify_pushover", "image_url", "_image_url"),
+            ("notify_pushover", "url", "_url"),
+            ("notify_pushover", "url_title", "_url_title"),
+            ("message_archive", "title", "_title"),
+        ],
+    )
+    def test_missing_filter_pulse_is_absent_side_effect_metadata(self, target_type, target_handle, output_handle):
+        message_id = uuid.uuid4()
+        target_data = (
+            {"message": "configured", "image_url": "https://example.com/configured.png"}
+            if target_type == "notify_pushover"
+            else {"message": "configured", "title": "Configured title"}
+        )
+        flow = _flow(
+            [
+                node("cf", "change_filter"),
+                node("message", "datapoint_read", {"datapoint_id": str(message_id)}),
+                node("target", target_type, target_data),
+            ],
+            [
+                edge("cf", "target", "changed", target_handle),
+                edge("message", "target", "value", "message"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = f"g-missing-pulse-{target_type}-{target_handle}"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "message": {"value": "first"}}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "message": {"value": "second"}}))
+
+        assert repeated["target"][output_handle] is None
+
     def test_async_refresh_uses_final_stateful_provenance_for_memory_commit(self):
         flow = _flow(
             [
