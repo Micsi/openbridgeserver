@@ -2719,9 +2719,15 @@ class LogicManager:
         execution_ical_prepared = False
         has_python_scripts = any(node.type == "python_script" for node in flow.nodes)
         run_executor_in_worker = has_python_scripts or capture_debug_inputs
+        missing_cf_override_values: dict[str, dict[str, Any]] = {}
 
         def _debug_run_overrides(candidate: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             merged = {node_id: dict(values) for node_id, values in candidate.items()}
+            for node_id, values in missing_cf_override_values.items():
+                candidate_values = candidate.get(node_id, {})
+                for handle, value in values.items():
+                    if handle in candidate_values:
+                        merged[node_id][handle] = value
             for node_id, values in debug_overrides.items():
                 merged.setdefault(node_id, {}).update(values)
             return merged
@@ -3883,7 +3889,7 @@ class LogicManager:
                     without_pulse = _fan_in_probe._eval_node(target_node, effective_inputs)
                     if not GraphExecutor._nan_aware_equal(without_pulse, outputs.get(pulse_edge.target, {})):
                         return False
-                    if target_node.type in {"and", "or", "xor"}:
+                    if target_node.type in _pure_fan_in_types:
                         # A sibling is decisive only if either possible pulse
                         # value leaves the result unchanged. Merely matching
                         # the absent-input default would wrongly call AND(True,
@@ -4062,6 +4068,28 @@ class LogicManager:
                 if "_message" in target_output:
                     target_output["_message"] = None
 
+        def _refresh_missing_cf_override_values() -> None:
+            missing_cf_override_values.clear()
+            for target_id, origins in _cf_changed_message_origins.items():
+                if not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
+                    missing_cf_override_values.setdefault(target_id, {})["message"] = None
+            for target_id, handle_origins in _cf_changed_trigger_handle_origins.items():
+                for handle, origins in handle_origins.items():
+                    if any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
+                        continue
+                    if _node_type_by_id.get(target_id) == "operating_hours" and handle == "active":
+                        value = bool((pre_execute_node_state or {}).get(target_id, {}).get("last_start"))
+                    else:
+                        value = False
+                    missing_cf_override_values.setdefault(target_id, {})[handle] = value
+            for target_id, handle_origins in _cf_changed_stateful_relay_origins.items():
+                if _node_type_by_id.get(target_id) in {"gate", "hysteresis"}:
+                    continue
+                for handle, origins in handle_origins.items():
+                    if not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
+                        missing_cf_override_values.setdefault(target_id, {})[handle] = None
+
+        _refresh_missing_cf_override_values()
         _suppress_missing_cf_trigger_pulses()
         _neutralize_missing_cf_messages()
 
@@ -4213,6 +4241,7 @@ class LogicManager:
             # this right after any replay pass updates `outputs` for
             # `node_ids`, before anything downstream reads cron_reachable.
             _suppress_missing_cf_trigger_pulses(node_ids)
+            _refresh_missing_cf_override_values()
             _new_pulses = {
                 n.id
                 for n in flow.nodes
@@ -5844,6 +5873,7 @@ class LogicManager:
             _late_cf_changed_stateful_relay_origins,
         ) = _build_cf_pulse_origins(_event_fresh_inputs(), {node_id: _event_origin(node_id) for node_id in set(overrides) | refreshed_ical_nodes})
         _cf_changed_stateful_relay_origins = _late_cf_changed_stateful_relay_origins
+        _refresh_missing_cf_override_values()
         _neutralize_missing_cf_messages()
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:

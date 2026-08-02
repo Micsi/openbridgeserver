@@ -1913,6 +1913,93 @@ class TestHostCheckRisingEdge:
         assert repeated["write"]["_write_value"] is None
         assert manager._event_bus.publish.await_count == 1
 
+    def test_compare_fan_in_preserves_missing_filter_provenance(self):
+        target_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("source", "const_value", {"value": "1", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("other", "const_value", {"value": "true", "data_type": "bool"}),
+                node("compare", "compare", {"operator": "eq"}),
+                node("write", "datapoint_write", {"datapoint_id": str(target_id)}),
+            ],
+            [
+                edge("source", "cf", "value", "in"),
+                edge("cf", "compare", "changed", "in1"),
+                edge("other", "compare", "value", "in2"),
+                edge("compare", "write", "out", "value"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-compare-missing-pulse"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert first["write"]["_write_value"] is True
+        assert repeated["compare"]["out"] is False
+        assert repeated["write"]["_write_value"] is None
+        assert manager._event_bus.publish.await_count == 1
+
+    def test_async_replay_neutralizes_missing_filter_api_body(self):
+        notify_trigger_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("cf", "change_filter"),
+                node("notify_trigger", "datapoint_read", {"datapoint_id": str(notify_trigger_id)}),
+                node(
+                    "notify",
+                    "notify_message",
+                    {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+                ),
+                node("api", "api_client", {"url": "http://93.184.216.34/", "method": "POST"}),
+            ],
+            [
+                edge("cf", "api", "changed", "body"),
+                edge("notify_trigger", "notify", "value", "trigger"),
+                edge("notify", "api", "sent", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-replay-missing-api-body"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        adapter = MagicMock(adapter_type="MESSAGE")
+        adapter.send_notification = AsyncMock(return_value=[MagicMock(ok=True)])
+
+        with (
+            patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+            patch("obs.logic.manager.httpx.AsyncClient") as client_cls,
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            client = AsyncMock()
+            client_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+            client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            client.request = AsyncMock(return_value=_MockResponse(200))
+            asyncio.run(
+                manager._execute_graph(
+                    graph_id,
+                    "test",
+                    flow,
+                    {"cf": {"in": 1}, "notify_trigger": {"value": True}},
+                )
+            )
+            asyncio.run(
+                manager._execute_graph(
+                    graph_id,
+                    "test",
+                    flow,
+                    {"cf": {"in": 1}, "notify_trigger": {"value": True}},
+                )
+            )
+
+        assert client.request.await_count == 2
+        assert client.request.await_args_list[0].kwargs["content"] == "true"
+        assert client.request.await_args_list[1].kwargs["content"] == "null"
+
     def test_missing_filter_pulse_is_null_api_request_body(self):
         trigger_id = uuid.uuid4()
         flow = _flow(
