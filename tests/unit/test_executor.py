@@ -1033,6 +1033,27 @@ class TestChangeFilterNode:
 
         assert out["cf"]["changed"] is False
 
+    def test_signaling_decimal_nan_can_be_replaced_by_valid_reading(self):
+        state = {"cf": {"value": Decimal("sNaN")}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": Decimal("1.5")}})
+
+        assert out["cf"] == {"out": Decimal("1.5"), "changed": True}
+        assert state == {"cf": {"value": Decimal("1.5")}}
+
+    def test_ambiguous_aware_datetimes_compare_by_instant(self):
+        zone = ZoneInfo("Europe/Zurich")
+        first = datetime(2025, 10, 26, 2, 30, tzinfo=zone, fold=0)
+        second = datetime(2025, 10, 26, 2, 30, tzinfo=zone, fold=1)
+        state = {"cf": {"value": first}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": second}})
+
+        assert first == second  # documents Python's same-ZoneInfo fold behavior
+        assert out["cf"] == {"out": second, "changed": True}
+
     @pytest.mark.parametrize("value", [[float("nan")], {"value": float("nan")}, (float("nan"),), {float("nan")}])
     def test_repeated_nested_nan_value_is_suppressed(self, value):
         state = {}

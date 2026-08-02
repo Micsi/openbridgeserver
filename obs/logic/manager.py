@@ -2253,6 +2253,27 @@ class LogicManager:
                         return True
                 return False
 
+            def _closed_gate_absorbs_init(gate_id: str) -> bool:
+                gate_node = _node_by_id_init.get(gate_id)
+                if gate_node is None:
+                    return False
+                enable_edge = next(
+                    (e for e in _effective_edges_init if e.target == gate_id and (e.targetHandle or "in") == "enable"),
+                    None,
+                )
+                if enable_edge is not None and enable_edge.source in cf_tainted:
+                    return False
+                enable_value = (
+                    False
+                    if enable_edge is None
+                    else GraphExecutor._to_bool(
+                        GraphExecutor._get_output_value(outputs.get(enable_edge.source, {}), enable_edge.sourceHandle or "out")
+                    )
+                )
+                if (gate_node.data or {}).get("negate_enable"):
+                    enable_value = not enable_value
+                return not enable_value
+
             cf_tainted: set[str] = set(unseeded | changed_targets | excluded_ids)
             cf_tainted.difference_update(n.id for n in flow.nodes if n.type == "memory")
             # A decisive seeded input can absorb taint even when the gate is
@@ -2266,6 +2287,21 @@ class LogicManager:
                     and _gate_taint_absorbed_init(_initial_id, _initial_node.type)
                 ):
                     cf_tainted.discard(_initial_id)
+                    continue
+                if _initial_node is not None and _initial_node.type == "gate":
+                    initial_changed_edges = [
+                        edge
+                        for edge in _effective_edges_init
+                        if edge.target == _initial_id
+                        and edge.sourceHandle == "changed"
+                        and (edge.source in read_node_ids or node_type_by_id.get(edge.source) == "change_filter")
+                    ]
+                    if (
+                        initial_changed_edges
+                        and all((edge.targetHandle or "in") == "in" for edge in initial_changed_edges)
+                        and _closed_gate_absorbs_init(_initial_id)
+                    ):
+                        cf_tainted.discard(_initial_id)
             _cfq: list[str] = list(cf_tainted)
             while _cfq:
                 _cn = _cfq.pop()
@@ -5249,11 +5285,11 @@ class LogicManager:
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()
-            if event_fresh_inputs is None:
-                return True
-            fresh_handles = event_fresh_inputs.get(node_id, set())
             _msg = out.get("_message")
             _is_false_cf_pulse = _msg is False and node_id in _cf_changed_message_targets
+            if event_fresh_inputs is None:
+                return not _is_false_cf_pulse
+            fresh_handles = event_fresh_inputs.get(node_id, set())
             fresh_message = "message" in fresh_handles and _msg is not None and not _is_false_cf_pulse
             fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger"))
             return fresh_message or fresh_trigger

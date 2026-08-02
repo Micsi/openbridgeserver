@@ -14,6 +14,7 @@ import math
 import operator
 import re
 import sys
+from datetime import UTC as _UTC
 from datetime import date as _date
 from datetime import datetime as _datetime
 from datetime import time as _time
@@ -526,6 +527,13 @@ class GraphExecutor:
         # pulse on every graph execution.
         if _is_nan(left) and _is_nan(right):
             return True, True
+        if _is_nan(left) or _is_nan(right):
+            return False, True
+        if isinstance(left, _datetime) and isinstance(right, _datetime):
+            left_aware = left.tzinfo is not None and left.utcoffset() is not None
+            right_aware = right.tzinfo is not None and right.utcoffset() is not None
+            if left_aware and right_aware:
+                return left.astimezone(_UTC) == right.astimezone(_UTC), True
         bool_left, bool_right = cls._try_bool_literal(left), cls._try_bool_literal(right)
         if bool_left is not None and bool_right is not None:
             return bool_left == bool_right, True
@@ -592,6 +600,8 @@ class GraphExecutor:
         """Structural equality that treats matching NaN leaves as retained readings."""
         if _is_nan(left) and _is_nan(right):
             return True
+        if _is_nan(left) or _is_nan(right):
+            return False
         if left == right:
             return True
         # Ordinary equality already decided every container without NaN.
@@ -659,6 +669,8 @@ class GraphExecutor:
         """
         if _is_nan(left) and _is_nan(right):
             return True
+        if _is_nan(left) or _is_nan(right):
+            return False
         if isinstance(left, dict) and isinstance(right, dict):
             # A non-string dict KEY (e.g. 3+4j) persists the same lossy way
             # a leaf VALUE does: encoded via _persist_default's opaque_str

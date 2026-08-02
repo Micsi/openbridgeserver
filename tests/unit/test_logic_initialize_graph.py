@@ -791,6 +791,32 @@ async def test_initial_changed_target_gate_can_absorb_taint_with_decisive_seed()
 
 
 @pytest.mark.asyncio
+async def test_initial_changed_target_closed_gate_absorbs_taint():
+    seeded_id = str(uuid.uuid4())
+    flow = _flow(
+        [
+            {"id": "read", "type": "datapoint_read", "data": {"datapoint_id": seeded_id}},
+            {"id": "source_cf", "type": "change_filter", "data": {}},
+            {"id": "disabled", "type": "const_value", "data": {"value": "false", "data_type": "bool"}},
+            {"id": "gate", "type": "gate", "data": {"closed_behavior": "default_value", "default_value": "9"}},
+            {"id": "cf1", "type": "change_filter", "data": {}},
+        ],
+        [
+            {"source": "read", "sourceHandle": "value", "target": "source_cf", "targetHandle": "in"},
+            {"source": "source_cf", "sourceHandle": "changed", "target": "gate", "targetHandle": "in"},
+            {"source": "disabled", "sourceHandle": "value", "target": "gate", "targetHandle": "enable"},
+            {"source": "gate", "sourceHandle": "out", "target": "cf1", "targetHandle": "in"},
+        ],
+    )
+    mgr = _make_manager({"g1": ("G", True, flow)}, values={seeded_id: 1})
+    mgr._hysteresis["g1"] = {"cf1": {"value": "stale"}}
+
+    await mgr.initialize_graph("g1")
+
+    assert mgr._hysteresis["g1"]["cf1"] == {"value": 9.0}
+
+
+@pytest.mark.asyncio
 async def test_initialization_taint_stops_at_memory_tick_boundary():
     seeded_id = str(uuid.uuid4())
     flow = _flow(
