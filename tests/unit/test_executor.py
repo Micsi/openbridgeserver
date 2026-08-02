@@ -1732,6 +1732,17 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is True
         assert "__error__" not in out["cf"]
 
+    def test_ambiguous_nan_set_mismatch_is_bounded(self):
+        retained = {float("nan") for _ in range(10)}
+        live = {float("nan") for _ in range(9)} | {1}
+        state = {"cf": {"value": retained}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+
     def test_absent_missing_node_output_stays_unresolved_through_not(self):
         nodes = [node("missing", "missing_node"), node("invert", "not"), node("cf", "change_filter")]
         edges = [edge("missing", "invert", "out", "in1"), edge("invert", "cf", "out", "in")]

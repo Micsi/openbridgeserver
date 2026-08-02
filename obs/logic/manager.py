@@ -3881,7 +3881,23 @@ class LogicManager:
                 try:
                     effective_inputs = GraphExecutor._resolve_effective_inputs(target_node, target_inputs)
                     without_pulse = _fan_in_probe._eval_node(target_node, effective_inputs)
-                    return GraphExecutor._nan_aware_equal(without_pulse, outputs.get(pulse_edge.target, {}))
+                    if not GraphExecutor._nan_aware_equal(without_pulse, outputs.get(pulse_edge.target, {})):
+                        return False
+                    if target_node.type in {"and", "or"}:
+                        # A sibling is decisive only if either possible pulse
+                        # value leaves the result unchanged. Merely matching
+                        # the absent-input default would wrongly call AND(True,
+                        # missing) independent when the missing False itself
+                        # is what determines the output.
+                        for counterfactual in (False, True):
+                            counterfactual_inputs = dict(target_inputs)
+                            counterfactual_inputs[pulse_edge.targetHandle or "in"] = counterfactual
+                            effective_counterfactual = GraphExecutor._resolve_effective_inputs(target_node, counterfactual_inputs)
+                            if not GraphExecutor._nan_aware_equal(
+                                _fan_in_probe._eval_node(target_node, effective_counterfactual), outputs.get(pulse_edge.target, {})
+                            ):
+                                return False
+                    return True
                 except Exception:  # noqa: BLE001 - malformed imported relay config remains provenance-conservative
                     return False
 
@@ -3947,6 +3963,7 @@ class LogicManager:
                                 and _node_type_by_id.get(edge.source)
                                 in {
                                     "api_client",
+                                    "const_value",
                                     "host_check",
                                     "wake_on_lan",
                                     "message_archive",
@@ -5806,6 +5823,7 @@ class LogicManager:
             _cf_downstream_filter_origins,
             _late_cf_changed_stateful_relay_origins,
         ) = _build_cf_pulse_origins(_event_fresh_inputs(), {node_id: _event_origin(node_id) for node_id in set(overrides) | refreshed_ical_nodes})
+        _cf_changed_stateful_relay_origins = _late_cf_changed_stateful_relay_origins
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()

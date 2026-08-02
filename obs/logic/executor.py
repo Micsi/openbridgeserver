@@ -934,7 +934,6 @@ class GraphExecutor:
         states: list[tuple[list[tuple[str, Any, Any]], set[tuple[int, int]]]] = [([("pair", left, right)], set())]
         while states:
             work, seen = states.pop()
-            branched = False
             while work:
                 kind, current_left, current_right = work.pop()
                 if kind == "dict":
@@ -964,16 +963,22 @@ class GraphExecutor:
                     if not left_items:
                         continue
                     left_item = left_items[0]
-                    branches = []
-                    for index, right_item in enumerate(right_items):
-                        if not cls._nonstandard_container_equal_iterative(left_item, right_item):
-                            continue
-                        branch_work = list(work)
-                        branch_work.append(("set", left_items[1:], right_items[:index] + right_items[index + 1 :]))
-                        branches.append((branch_work, set(seen)))
-                    states.extend(branches)
-                    branched = True
-                    break
+                    candidates = [
+                        index for index, right_item in enumerate(right_items) if cls._nonstandard_container_equal_iterative(left_item, right_item)
+                    ]
+                    if not candidates:
+                        break
+                    if len(candidates) == 1:
+                        index = candidates[0]
+                        work.append(("set", left_items[1:], right_items[:index] + right_items[index + 1 :]))
+                        continue
+                    adjacency = [
+                        [index for index, right_item in enumerate(right_items) if cls._nonstandard_container_equal_iterative(item, right_item)]
+                        for item in left_items
+                    ]
+                    if not cls._has_perfect_bipartite_matching(adjacency):
+                        break
+                    continue
 
                 if _is_nan(current_left) or _is_nan(current_right):
                     if not (_is_nan(current_left) and _is_nan(current_right)):
@@ -1011,8 +1016,6 @@ class GraphExecutor:
                     break
             else:
                 return True
-            if branched:
-                continue
         return False
 
     @classmethod
@@ -1030,9 +1033,15 @@ class GraphExecutor:
                 return False
             adjacency.append(candidates)
 
+        return cls._has_perfect_bipartite_matching(adjacency)
+
+    @staticmethod
+    def _has_perfect_bipartite_matching(adjacency: list[list[int]]) -> bool:
+        if any(not candidates for candidates in adjacency):
+            return False
         match_left: dict[int, int] = {}
         match_right: dict[int, int] = {}
-        for start in range(len(left_items)):
+        for start in range(len(adjacency)):
             queue = [start]
             queue_index = 0
             parents: dict[int, tuple[int, int]] = {}

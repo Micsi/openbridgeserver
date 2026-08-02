@@ -1816,6 +1816,74 @@ class TestHostCheckRisingEdge:
         assert repeated["write"]["_write_value"] is None
         assert manager._event_bus.publish.await_count == 1
 
+    def test_manual_fan_in_treats_constant_as_independent_input(self):
+        target_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("source", "const_value", {"value": "1", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("invert", "not"),
+                node("decisive", "const_value", {"value": "true", "data_type": "boolean"}),
+                node("or_gate", "or", {"input_count": 2}),
+                node("write", "datapoint_write", {"datapoint_id": str(target_id)}),
+            ],
+            [
+                edge("source", "cf", "value", "in"),
+                edge("cf", "invert", "changed", "in1"),
+                edge("invert", "or_gate", "out", "in1"),
+                edge("decisive", "or_gate", "value", "in2"),
+                edge("or_gate", "write", "out", "value"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-manual-constant-fan-in"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert repeated["or_gate"]["out"] is True
+        assert repeated["write"]["_write_value"] is True
+        assert manager._event_bus.publish.await_count == 2
+
+    def test_async_refresh_uses_final_stateful_provenance_for_memory_commit(self):
+        flow = _flow(
+            [
+                node("source", "const_value", {"value": "1", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("invert", "not"),
+                node("api_trigger", "const_value", {"value": "true", "data_type": "boolean"}),
+                node("api", "api_client", {"url": "http://93.184.216.34/", "method": "GET"}),
+                node("or_gate", "or", {"input_count": 2}),
+                node("mem", "memory", {"data_type": "bool"}),
+            ],
+            [
+                edge("source", "cf", "value", "in"),
+                edge("cf", "invert", "changed", "in1"),
+                edge("invert", "or_gate", "out", "in1"),
+                edge("api_trigger", "api", "value", "trigger"),
+                edge("api", "or_gate", "success", "in2"),
+                edge("or_gate", "mem", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-late-stateful-provenance"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": 1.0}, "mem": {"value": False}}
+        patcher = _patch_api_success()
+        try:
+            with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+                outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+        finally:
+            patcher.stop()
+
+        assert outputs["api"]["success"] is True
+        assert outputs["or_gate"]["out"] is True
+        assert manager._hysteresis[graph_id]["mem"] == {"value": True}
+
     @pytest.mark.parametrize(
         ("node_type", "node_data", "target_handle"),
         [
