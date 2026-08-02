@@ -3249,7 +3249,11 @@ class LogicManager:
             _change_filter_ids & (_downstream_closure(_potential_no_result_mapping_ids, _effective_edges) - _potential_no_result_mapping_ids)
         )
         _synchronous_correction_ids = {node.id for node in flow.nodes if node.type in {"statistics", "operating_hours", "random_value"}}
-        _stateful_relay_correction_ids = {node.id for node in flow.nodes if node.type in {"gate", "hysteresis"}}
+        _stateful_relay_correction_ids = {
+            node.id
+            for node in flow.nodes
+            if node.type in {"gate", "hysteresis", "avg_multi", "min_max_tracker", "consumption_counter", "heating_circuit", "datapoint_write"}
+        }
         _needs_cf_pulse_correction_snapshot = any(
             bool(
                 (_downstream_closure({_cf_id}, _effective_edges) - {_cf_id})
@@ -3897,10 +3901,18 @@ class LogicManager:
                         continue
                     target_type_name = _node_type_by_id.get(pulse_edge.target)
                     target_handle = pulse_edge.targetHandle or "in"
-                    # Statistics and Memory have separate reset triggers, but
-                    # their data inputs are still stateful. A missing Change
-                    # Filter pulse must not commit the False placeholder.
-                    if (target_type_name, target_handle) in {("statistics", "value"), ("memory", "in")}:
+                    # Stateful data consumers must not commit a Change
+                    # Filter's False no-pulse placeholder. Write values use
+                    # the same correction path so the publish is suppressed.
+                    stateful_data_handle = (target_type_name, target_handle) in {
+                        ("statistics", "value"),
+                        ("memory", "in"),
+                        ("min_max_tracker", "value"),
+                        ("consumption_counter", "value"),
+                        ("heating_circuit", "value"),
+                        ("datapoint_write", "value"),
+                    } or (target_type_name == "avg_multi" and target_handle.startswith("in_"))
+                    if stateful_data_handle:
                         stateful_relay_origins.setdefault(pulse_edge.target, {}).setdefault(target_handle, set()).update(source_origins)
                     if target_type and any(port.type == "trigger" for port in target_type.inputs):
                         continue

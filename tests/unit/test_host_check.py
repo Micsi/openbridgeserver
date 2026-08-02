@@ -1714,6 +1714,61 @@ class TestHostCheckRisingEdge:
         assert repeated["stats"]["avg"] == 1.0
         assert manager._hysteresis[graph_id]["stats"]["s_count"] == 1
 
+    @pytest.mark.parametrize(
+        ("node_type", "node_data", "target_handle"),
+        [
+            ("avg_multi", {"input_count": 2}, "in_1"),
+            ("min_max_tracker", {}, "value"),
+            ("consumption_counter", {}, "value"),
+            ("heating_circuit", {}, "value"),
+        ],
+    )
+    def test_missing_filter_pulse_does_not_mutate_other_accumulators(self, node_type, node_data, target_handle):
+        flow = _flow(
+            [node("cf", "change_filter"), node("acc", node_type, node_data)],
+            [edge("cf", "acc", "changed", target_handle)],
+        )
+        manager = _make_manager()
+        graph_id = f"g-missing-pulse-{node_type}"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+
+        state = manager._hysteresis[graph_id]["acc"]
+        if node_type == "avg_multi":
+            assert len(state["samples"]) == 1
+            assert state["samples"][0][1] == 1.0
+        elif node_type == "min_max_tracker":
+            assert state["abs_min"] == 1.0
+            assert state["abs_max"] == 1.0
+        else:
+            assert state["last_value"] == 1.0
+
+    @pytest.mark.parametrize("with_trigger", [False, True])
+    def test_missing_filter_pulse_does_not_publish_write_value(self, with_trigger):
+        target_id = uuid.uuid4()
+        nodes = [node("cf", "change_filter"), node("write", "datapoint_write", {"datapoint_id": str(target_id)})]
+        edges = [edge("cf", "write", "changed", "value")]
+        if with_trigger:
+            nodes.append(node("trigger", "const_value", {"value": "true", "data_type": "boolean"}))
+            edges.append(edge("trigger", "write", "value", "trigger"))
+        flow = _flow(nodes, edges)
+        manager = _make_manager()
+        graph_id = f"g-missing-pulse-write-{with_trigger}"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            first = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+
+        assert first["write"]["_write_value"] is True
+        assert repeated["write"]["_write_value"] is None
+        assert manager._event_bus.publish.await_count == 1
+
     def test_change_filter_is_not_held_when_read_is_resolved_via_debug_override(self):
         """Regression: a manual/debug execution (the debug-inspector "run"
         feature) that supplies debug_overrides={read_id: {"value": ...}}
