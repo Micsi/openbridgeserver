@@ -24,6 +24,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time
+from decimal import Decimal, InvalidOperation
 from functools import partial
 from pathlib import Path
 from time import perf_counter
@@ -253,6 +254,8 @@ def _persist_default(v: Any) -> Any:
         return {_PERSIST_TYPE_TAG: "time", "value": v.isoformat()}
     if isinstance(v, bytes):
         return {_PERSIST_TYPE_TAG: "bytes", "value": v.hex()}
+    if isinstance(v, Decimal):
+        return {_PERSIST_TYPE_TAG: "decimal", "value": str(v)}
     # frozenset before set: a set/frozenset isn't natively JSON-encodable
     # (unlike tuple, which the encoder treats as an array), so it reaches
     # this default= hook directly — no separate handling in
@@ -356,6 +359,11 @@ def _decode_persisted_value(v: Any) -> Any:
             try:
                 return bytes.fromhex(v.get("value", ""))
             except (TypeError, ValueError):
+                return v
+        if tag == "decimal":
+            try:
+                return Decimal(v.get("value", ""))
+            except (InvalidOperation, TypeError):
                 return v
         if tag == "opaque_str":
             # _persist_default's catch-all for a type it doesn't otherwise
@@ -3324,7 +3332,9 @@ class LogicManager:
                         # change_filter too, even though nothing downstream
                         # actually depends on anything still unresolved — only
                         # on this filter's own deterministic held output.
-                        continue
+                        _pre_hold_state = (pre_execute_hyst if pre_execute_hyst is not None else hyst).get(_te.target)
+                        if isinstance(_pre_hold_state, dict) and "value" in _pre_hold_state:
+                            continue
                     _tq.append(_te.target)
             return {n.id for n in flow.nodes if n.type == "change_filter" and n.id in _tainted}
 
@@ -5200,7 +5210,7 @@ class LogicManager:
             }
             blocked_outputs = {
                 (edge.source, edge.sourceHandle or "out")
-                for edge in flow.edges
+                for edge in _effective_edges
                 if edge.source in no_result_mapping_ids and (edge.sourceHandle or "out") in {"out", "result"}
             }
             while True:
@@ -5735,7 +5745,7 @@ class LogicManager:
                 _target_node = node_by_id.get(target_id)
                 if _target_node is not None and _target_node.type == "memory":
                     continue
-                for edge in flow.edges:
+                for edge in _effective_edges:
                     if edge.target != target_id:
                         continue
                     # Same trigger-aware filtering as _edge_carries_pulse: at

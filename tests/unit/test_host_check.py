@@ -1240,6 +1240,31 @@ class TestHostCheckRisingEdge:
         # hostage to cf1's own, unrelated unresolved upstream.
         assert outputs["cf2"] == {"out": 7, "changed": True}
 
+    def test_baseline_less_held_filter_keeps_downstream_filter_held(self):
+        nodes = [
+            node("unseeded_read", "datapoint_read", {}),
+            node("cf1", "change_filter"),
+            node("cf2", "change_filter"),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("unseeded_read", "cf1", "value", "in"),
+                edge("cf1", "cf2", "out", "in"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-fresh-held-cf-chain"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["cf1"] == {"out": None, "changed": False}
+        assert outputs["cf2"] == {"out": None, "changed": False}
+        assert manager._hysteresis[graph_id] == {}
+
     def test_taint_bfs_ignores_a_shadowed_edge_replaced_by_a_later_one(self):
         """Regression: GraphExecutor._build_edge_map() resolves multiple
         edges into the same (target, targetHandle) pair with "last edge
@@ -2271,6 +2296,44 @@ class TestHostCheckRisingEdge:
                 asyncio.run(_exercise())
         finally:
             mock_client_cls.stop()
+
+    def test_shadowed_change_filter_edge_does_not_retrigger_sequence(self):
+        target = uuid.uuid4()
+        nodes = [
+            node("cf", "change_filter"),
+            node("sustained", "const_value", {"value": "true", "data_type": "bool"}),
+            node(
+                "sequence",
+                "value_sequence",
+                {"restart_policy": "queue", "steps": [{"datapoint_id": str(target), "value": 1}]},
+            ),
+        ]
+        flow = _flow(
+            nodes,
+            [
+                edge("cf", "sequence", "changed", "trigger"),
+                edge("sustained", "sequence", "value", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-shadowed-cf-sequence-trigger"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        async def _exercise():
+            await manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}})
+            await manager._sequence_tasks[(graph_id, "sequence")]
+            first_count = manager._event_bus.publish.await_count
+
+            await manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 2}})
+            second_task = manager._sequence_tasks.get((graph_id, "sequence"))
+            if second_task is not None and not second_task.done():
+                await second_task
+
+            assert manager._event_bus.publish.await_count == first_count
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(_exercise())
 
     def test_inactive_async_branch_does_not_hold_a_real_change(self):
         """Regression: change_filter must not be held behind an async source

@@ -1022,6 +1022,20 @@ class TestChangeFilterNode:
         assert math.isnan(out["cf"]["out"])
         assert out["cf"]["changed"] is False
 
+    @pytest.mark.parametrize("value", [[float("nan")], {"value": float("nan")}, (float("nan"),), {float("nan")}])
+    def test_repeated_nested_nan_value_is_suppressed(self, value):
+        state = {}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+        exc.execute({"cf": {"in": value}})
+
+        if isinstance(value, dict):
+            repeated = {"value": float("nan")}
+        else:
+            repeated = type(value)([float("nan")])
+        out = exc.execute({"cf": {"in": repeated}})
+
+        assert out["cf"]["changed"] is False
+
     def test_differing_value_is_reported_as_changed(self):
         state = {}
         n1 = node("cf", "change_filter")
@@ -1176,6 +1190,16 @@ class TestChangeFilterNode:
         exc.execute({"cf": {"in": 0}})
         out = exc.execute({"cf": {"in": "false"}})
         assert out["cf"]["changed"] is False
+
+    def test_decimal_boolean_aliases_stay_transitive(self):
+        state = {}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+        exc.execute({"cf": {"in": Decimal(1)}})
+
+        assert exc.execute({"cf": {"in": "true"}})["cf"]["changed"] is False
+
+        exc.execute({"cf": {"in": Decimal(0)}})
+        assert exc.execute({"cf": {"in": "false"}})["cf"]["changed"] is False
 
     def test_large_integer_not_equated_to_rounded_float(self):
         """Regression: 9007199254740993 (2**53 + 1) cannot be represented

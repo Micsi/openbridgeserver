@@ -395,6 +395,8 @@ class GraphExecutor:
             return None
         # Numeric 0/1 are recognized too, so equality stays transitive across
         # adapter representations: 1 == "1" == "true" must all agree.
+        if isinstance(v, Decimal):
+            return bool(v) if v.is_finite() and v in (0, 1) else None
         if isinstance(v, (int, float)) and v in (0, 1):
             return bool(v)
         return None
@@ -549,7 +551,7 @@ class GraphExecutor:
                 # behavior only when no precise leaf marker is available.
                 precise = cls._contains_opaque_recovered_leaf(right)
                 return cls._opaque_aware_container_equal(left, right, allow_unmarked=not precise), False
-            return left == right, True
+            return cls._nan_aware_equal(left, right), True
         # A persisted datetime.date/time/datetime (e.g. a KNX DPT10/11 value)
         # survives a restart only as its str() form (`default=str` in
         # _persist_node_state) — recognize *that specific* recovery, and
@@ -582,6 +584,42 @@ class GraphExecutor:
         return False
 
     @classmethod
+    def _nan_aware_equal(cls, left: Any, right: Any) -> bool:
+        """Structural equality that treats matching NaN leaves as retained readings."""
+        if isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right):
+            return True
+        if isinstance(left, dict) and isinstance(right, dict):
+            if len(left) != len(right):
+                return False
+            remaining = list(right.items())
+            for left_key, left_value in left.items():
+                match = next(
+                    (
+                        index
+                        for index, (right_key, right_value) in enumerate(remaining)
+                        if cls._nan_aware_equal(left_key, right_key) and cls._nan_aware_equal(left_value, right_value)
+                    ),
+                    None,
+                )
+                if match is None:
+                    return False
+                remaining.pop(match)
+            return True
+        if isinstance(left, (list, tuple)) and isinstance(right, type(left)):
+            return len(left) == len(right) and all(cls._nan_aware_equal(le, re) for le, re in zip(left, right))
+        if isinstance(left, (set, frozenset)) and isinstance(right, type(left)):
+            if len(left) != len(right):
+                return False
+            remaining = list(right)
+            for left_item in left:
+                match = next((i for i, right_item in enumerate(remaining) if cls._nan_aware_equal(left_item, right_item)), None)
+                if match is None:
+                    return False
+                remaining.pop(match)
+            return True
+        return left == right
+
+    @classmethod
     def _opaque_aware_container_equal(cls, left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
         """Structural equality for a dict/list, like plain `==`, but at any
         leaf position also accepts a match via str(left) == right when
@@ -597,6 +635,8 @@ class GraphExecutor:
         1 == "1") for every nested element, silently loosening ordinary
         (non-opaque) list/dict equality far beyond what this fix needs.
         """
+        if isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right):
+            return True
         if isinstance(left, dict) and isinstance(right, dict):
             # A non-string dict KEY (e.g. 3+4j) persists the same lossy way
             # a leaf VALUE does: encoded via _persist_default's opaque_str

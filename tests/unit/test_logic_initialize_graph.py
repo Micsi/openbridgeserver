@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1638,6 +1639,16 @@ class TestPersistDefaultAndDecode:
         from obs.logic.manager import _persist_default
 
         assert _persist_default(3 + 4j) == {"__obs_persisted_type__": "opaque_str", "value": str(3 + 4j)}
+
+    def test_decimal_round_trips_as_its_original_type(self):
+        from obs.logic.manager import _decode_persisted_value, _persist_default
+
+        encoded = _persist_default(Decimal("1.500"))
+
+        assert encoded == {"__obs_persisted_type__": "decimal", "value": "1.500"}
+        decoded = _decode_persisted_value(encoded)
+        assert decoded == Decimal("1.500")
+        assert isinstance(decoded, Decimal)
 
     def test_decode_persisted_value_restores_opaque_str_as_plain_string(self):
         from obs.logic.manager import _decode_persisted_value
