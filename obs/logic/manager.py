@@ -257,8 +257,8 @@ def _persist_default(v: Any) -> Any:
         # looks naive. Preserve the ZoneInfo identity and fold explicitly.
         if isinstance(v.tzinfo, ZoneInfo):
             _tag["tz"] = v.tzinfo.key
-            if v.fold:
-                _tag["fold"] = v.fold
+        if v.fold:
+            _tag["fold"] = v.fold
         return _tag
     if isinstance(v, bytes):
         return {_PERSIST_TYPE_TAG: "bytes", "value": v.hex()}
@@ -428,9 +428,11 @@ def _decode_persisted_value(v: Any) -> Any:
                     # fold=0 from the wall-clock numbers alone, which is
                     # wrong for the second occurrence of an ambiguous DST
                     # "fall back" wall-clock time.
-                    return _decoded.replace(tzinfo=ZoneInfo(_tz_name), fold=v.get("fold", 0))
+                    _decoded = _decoded.replace(tzinfo=ZoneInfo(_tz_name), fold=v.get("fold", 0))
                 except (ZoneInfoNotFoundError, ValueError):
-                    return _decoded
+                    pass
+            if tag == "time" and v.get("fold"):
+                return _decoded.replace(fold=v["fold"])
             return _decoded
         return {k: _decode_persisted_value(val) for k, val in v.items()}
     if isinstance(v, list):
@@ -3263,6 +3265,13 @@ class LogicManager:
                     return False
                 for i in range(1, count + 1):
                     handle = f"in{i}"
+                    if handle in debug_overrides.get(gate_id, {}):
+                        v = GraphExecutor._to_bool(debug_overrides[gate_id][handle])
+                        if gdata.get(f"negate_{handle}"):
+                            v = not v
+                        if v == decisive:
+                            return True
+                        continue
                     src_edge = next(
                         (e for e in _effective_edges if e.target == gate_id and (e.targetHandle or "in") == handle),
                         None,
@@ -3308,6 +3317,11 @@ class LogicManager:
                 _tn = _tq.pop()
                 for _te in _effective_edges:
                     if _te.source != _tn or _te.target in _tainted:
+                        continue
+                    if (_te.targetHandle or "in") in debug_overrides.get(_te.target, {}):
+                        # A debug override replaces this effective edge for
+                        # the current execution, so its unresolved source
+                        # cannot taint the overridden value or descendants.
                         continue
                     _target_node = _node_by_id_early.get(_te.target)
                     _target_type = _target_node.type if _target_node is not None else None
@@ -5309,6 +5323,18 @@ class LogicManager:
                 # Once it enters a node with a dedicated trigger port, that
                 # node's outputs are new result data, not the original pulse.
                 if _target_type and any(port.type == "trigger" for port in _target_type.inputs):
+                    continue
+                _other_data_edges = [
+                    edge
+                    for edge in _effective_edges
+                    if edge.target == _pulse_edge.target
+                    and edge is not _pulse_edge
+                    and not (_node_type_by_id.get(edge.target) == "gate" and (edge.targetHandle or "in") == "enable")
+                ]
+                if _other_data_edges:
+                    # At a fan-in relay, an independently fresh input may be
+                    # what drove the output. Do not let an unchanged Change
+                    # Filter on a sibling input suppress that real message.
                     continue
                 if _edge_carries_pulse(_pulse_edge, require_fired_change_filter=False):
                     _target_origins = _cf_pulse_relay_origins.setdefault(_pulse_edge.target, set())

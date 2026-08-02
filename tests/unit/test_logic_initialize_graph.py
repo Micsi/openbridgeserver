@@ -1676,6 +1676,15 @@ class TestPersistDefaultAndDecode:
         assert decoded.tzinfo.key == "Europe/Zurich"
         assert decoded.fold == 1
 
+        naive = time(2, 30, fold=1)
+        naive_encoded = _persist_default(naive)
+        assert naive_encoded == {
+            "__obs_persisted_type__": "time",
+            "value": "02:30:00",
+            "fold": 1,
+        }
+        assert _decode_persisted_value(naive_encoded).fold == 1
+
     def test_persist_default_tags_str_fallback_for_unrecognized_types(self):
         """Regression: an untagged bare str(v) fallback here would violate
         the version-2 envelope's own guarantee that every non-JSON-native

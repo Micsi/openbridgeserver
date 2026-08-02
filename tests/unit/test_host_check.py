@@ -1428,6 +1428,32 @@ class TestHostCheckRisingEdge:
         assert outputs["cf"]["changed"] is True
         assert outputs["cf"]["out"] == 5
 
+    def test_debug_override_on_intermediate_input_masks_upstream_taint(self):
+        nodes = [
+            node("read", "datapoint_read", {}),
+            node("invert", "not"),
+            node("cf", "change_filter"),
+        ]
+        flow = _flow(nodes, [edge("read", "invert", "value", "in1"), edge("invert", "cf", "out", "in")])
+        manager = _make_manager()
+        graph_id = "g-cf-debug-intermediate-override"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(
+                manager._execute_graph(
+                    graph_id,
+                    "test",
+                    flow,
+                    {},
+                    debug_overrides={"invert": {"in1": False}},
+                )
+            )
+
+        assert outputs["invert"]["out"] is True
+        assert outputs["cf"] == {"out": True, "changed": True}
+
     def test_change_filter_is_not_held_when_and_gate_has_an_unconnected_resolved_input(self):
         """Regression: the AND gate's per-input taint-absorption check
         skipped ("continue"d past) an unconnected input entirely, missing
