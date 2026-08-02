@@ -1208,6 +1208,77 @@ class TestChangeFilterNode:
         assert recovered["h"] == {"out": False}
         assert recovered["cf"] == {"out": False, "changed": False}
 
+    @pytest.mark.parametrize(
+        ("logic_type", "decisive_value", "expected"),
+        [("or", True, True), ("and", False, False)],
+    )
+    def test_missing_producer_output_is_absorbed_by_decisive_logic(self, logic_type, decisive_value, expected):
+        state = {"cf": {"value": expected}}
+        exc = make_executor(
+            [
+                node("producer", "python_script", {"script": "raise RuntimeError('boom')"}),
+                node("decisive", "const_value", {"value": str(decisive_value).lower(), "data_type": "bool"}),
+                node("logic", logic_type, {"input_count": 2}),
+                node("cf", "change_filter"),
+            ],
+            [
+                edge("producer", "logic", "result", "in1"),
+                edge("decisive", "logic", "value", "in2"),
+                edge("logic", "cf", "out", "in"),
+            ],
+            hysteresis_state=state,
+        )
+
+        out = exc.execute()
+
+        assert out["logic"] == {"out": expected}
+        assert out["cf"] == {"out": expected, "changed": False}
+
+    def test_missing_producer_output_is_absorbed_by_closed_gate(self):
+        state = {"gate": 42, "cf": {"value": 42}}
+        exc = make_executor(
+            [
+                node("producer", "python_script", {"script": "raise RuntimeError('boom')"}),
+                node("disabled", "const_value", {"value": "false", "data_type": "bool"}),
+                node("gate", "gate"),
+                node("cf", "change_filter"),
+            ],
+            [
+                edge("producer", "gate", "result", "in"),
+                edge("disabled", "gate", "value", "enable"),
+                edge("gate", "cf", "out", "in"),
+            ],
+            hysteresis_state=state,
+        )
+
+        out = exc.execute()
+
+        assert out["gate"] == {"out": 42}
+        assert out["cf"] == {"out": 42, "changed": False}
+
+    @pytest.mark.parametrize("mode", ["raises", "non_scalar"])
+    def test_live_value_with_unsafe_equality_replaces_change_filter_baseline(self, mode):
+        class UnsafeTruth:
+            def __bool__(self):
+                raise ValueError("ambiguous truth")
+
+        class UnsafeEquality:
+            def __eq__(self, other):
+                if mode == "raises":
+                    raise RuntimeError("comparison unavailable")
+                return UnsafeTruth()
+
+        old = UnsafeEquality()
+        new = UnsafeEquality()
+        state = {"cf": {"value": old}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": new}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
+        assert isinstance(state["cf"]["value"], UnsafeEquality)
+
     def test_large_integers_compared_without_precision_loss(self):
         """Regression: float round-trip must not equate distinct 64-bit values."""
         state = {}

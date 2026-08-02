@@ -251,7 +251,15 @@ def _persist_default(v: Any) -> Any:
     if isinstance(v, date):
         return {_PERSIST_TYPE_TAG: "date", "value": v.isoformat()}
     if isinstance(v, time):
-        return {_PERSIST_TYPE_TAG: "time", "value": v.isoformat()}
+        _tag = {_PERSIST_TYPE_TAG: "time", "value": v.isoformat()}
+        # A named zone cannot determine a numeric UTC offset for a bare time
+        # (there is no date on which to resolve DST), so isoformat() silently
+        # looks naive. Preserve the ZoneInfo identity and fold explicitly.
+        if isinstance(v.tzinfo, ZoneInfo):
+            _tag["tz"] = v.tzinfo.key
+            if v.fold:
+                _tag["fold"] = v.fold
+        return _tag
     if isinstance(v, bytes):
         return {_PERSIST_TYPE_TAG: "bytes", "value": v.hex()}
     if isinstance(v, Decimal):
@@ -400,7 +408,7 @@ def _decode_persisted_value(v: Any) -> Any:
             except (TypeError, ValueError):
                 return v
             _tz_name = v.get("tz")
-            if tag == "datetime" and isinstance(_tz_name, str):
+            if tag in {"datetime", "time"} and isinstance(_tz_name, str):
                 # Reconstruct the ORIGINAL named zone instead of the
                 # fixed-offset tzinfo fromisoformat() produces (see
                 # _persist_default's comment above) — fall back to the
@@ -3506,7 +3514,7 @@ class LogicManager:
         # cron are not suppressed by the rising-edge deduplication below.
         _node_type_by_id = {n.id: n.type for n in flow.nodes}
 
-        def _edge_carries_pulse(edge: Any) -> bool:
+        def _edge_carries_pulse(edge: Any, *, require_fired_change_filter: bool = True) -> bool:
             # A pulse only continues through an edge if its target either has
             # no dedicated trigger-typed input at all (a pure logic/relay
             # node — NOT/AND/OR/Decision/etc. — where any input legitimately
@@ -3547,7 +3555,7 @@ class LogicManager:
                 # treated as pulse-reachable — and have its rising-edge
                 # dedup bypassed — on every cf1 event, even on ticks where
                 # cf2 itself did not change.
-                if not GraphExecutor._to_bool(outputs.get(edge.source, {}).get("changed")):
+                if require_fired_change_filter and not GraphExecutor._to_bool(outputs.get(edge.source, {}).get("changed")):
                     return False
             target_type = get_node_type(_node_type_by_id.get(edge.target))
             if not target_type:
@@ -5274,14 +5282,28 @@ class LogicManager:
         # whose SOURCE is actually a change_filter's own "changed" output
         # gets this treatment — restricted structurally here (not by value
         # alone) so a plain boolean source wired to "message" is unaffected.
-        _cf_changed_message_targets = {
-            edge.target
-            for edge in _effective_edges
-            if (edge.targetHandle or "in") == "message"
-            and (edge.sourceHandle or "out") == "changed"
-            and _node_by_id_early.get(edge.source) is not None
-            and _node_by_id_early[edge.source].type == "change_filter"
-        }
+        _cf_changed_message_targets: set[str] = set()
+        _cf_pulse_relays = {node.id for node in flow.nodes if node.type == "change_filter"}
+        _cf_pulse_queue = list(_cf_pulse_relays)
+        while _cf_pulse_queue:
+            _source_id = _cf_pulse_queue.pop()
+            for _pulse_edge in _effective_edges:
+                if _pulse_edge.source != _source_id:
+                    continue
+                if _node_type_by_id.get(_source_id) == "change_filter" and (_pulse_edge.sourceHandle or "out") != "changed":
+                    continue
+                if (_pulse_edge.targetHandle or "in") == "message":
+                    _cf_changed_message_targets.add(_pulse_edge.target)
+                    continue
+                _target_type = get_node_type(_node_type_by_id.get(_pulse_edge.target))
+                # Only pure logic/relay nodes carry pulse identity onward.
+                # Once it enters a node with a dedicated trigger port, that
+                # node's outputs are new result data, not the original pulse.
+                if _target_type and any(port.type == "trigger" for port in _target_type.inputs):
+                    continue
+                if _pulse_edge.target not in _cf_pulse_relays and _edge_carries_pulse(_pulse_edge, require_fired_change_filter=False):
+                    _cf_pulse_relays.add(_pulse_edge.target)
+                    _cf_pulse_queue.append(_pulse_edge.target)
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()

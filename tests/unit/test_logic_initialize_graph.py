@@ -1655,6 +1655,27 @@ class TestPersistDefaultAndDecode:
         first_occurrence = datetime(2025, 10, 26, 2, 30, tzinfo=ZoneInfo("Europe/Zurich"))
         assert "fold" not in _persist_default(first_occurrence)
 
+    def test_persist_default_preserves_named_zone_and_fold_for_time(self):
+        from datetime import time
+        from zoneinfo import ZoneInfo
+
+        from obs.logic.manager import _decode_persisted_value, _persist_default
+
+        aware = time(2, 30, tzinfo=ZoneInfo("Europe/Zurich"), fold=1)
+        encoded = _persist_default(aware)
+
+        assert encoded == {
+            "__obs_persisted_type__": "time",
+            "value": "02:30:00",
+            "tz": "Europe/Zurich",
+            "fold": 1,
+        }
+        decoded = _decode_persisted_value(encoded)
+        assert decoded == aware
+        assert isinstance(decoded.tzinfo, ZoneInfo)
+        assert decoded.tzinfo.key == "Europe/Zurich"
+        assert decoded.fold == 1
+
     def test_persist_default_tags_str_fallback_for_unrecognized_types(self):
         """Regression: an untagged bare str(v) fallback here would violate
         the version-2 envelope's own guarantee that every non-JSON-native

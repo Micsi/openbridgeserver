@@ -611,6 +611,44 @@ def test_notify_message_does_not_fire_on_an_unchanged_change_filter_pulse() -> N
     adapter.send_notification.assert_awaited_once()
 
 
+def test_notify_message_does_not_fire_on_a_relayed_false_change_filter_pulse() -> None:
+    read_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
+            node("cf", "change_filter"),
+            node("enabled", "const_value", {"value": "true", "data_type": "bool"}),
+            node("relay", "gate"),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+        ],
+        [
+            edge("read", "cf", "value", "in"),
+            edge("cf", "relay", "changed", "in"),
+            edge("enabled", "relay", "value", "enable"),
+            edge("relay", "notify", "out", "message"),
+        ],
+    )
+    manager = _make_manager()
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        first = _run(manager, flow, {"read": {"value": 1, "changed": True}})
+        second = _run(manager, flow, {"read": {"value": 1, "changed": True}})
+
+    assert first["notify"]["sent"] is True
+    assert second["relay"]["out"] is False
+    assert second["notify"]["sent"] is False
+    adapter.send_notification.assert_awaited_once()
+
+
 def test_manual_run_does_not_send_false_change_filter_message() -> None:
     flow = _flow(
         [

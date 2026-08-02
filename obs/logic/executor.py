@@ -217,6 +217,7 @@ class GraphExecutor:
             inputs.update(node_overrides)
 
             try:
+                inputs = self._resolve_effective_inputs(node, inputs)
                 # A connected port that its producer did not emit is not the
                 # same thing as an unconnected/defaulted input. In particular,
                 # evaluating a synchronous node with its default here can turn
@@ -231,10 +232,27 @@ class GraphExecutor:
                     # like Memory. Do not turn that defined fallback into an
                     # error merely because a downstream Change Filter exists.
                     unresolved = [item for item in unresolved if item[0] != "value"]
-                if unresolved and node.id in change_filter_ancestors and node.type not in {"change_filter", "memory"}:
+                absorbed = False
+                if unresolved and node.type == "gate" and all(item[0] == "in" for item in unresolved):
+                    enable = self._to_bool(inputs.get("enable"))
+                    if node.data.get("negate_enable"):
+                        enable = not enable
+                    absorbed = not enable
+                elif unresolved and node.type in {"and", "or"}:
+                    resolved_values: list[bool] = []
+                    count = max(2, min(30, int(node.data.get("input_count", 2))))
+                    for index in range(1, count + 1):
+                        port = f"in{index}"
+                        if port not in inputs:
+                            continue
+                        value = self._to_bool(inputs[port])
+                        if node.data.get(f"negate_{port}"):
+                            value = not value
+                        resolved_values.append(value)
+                    absorbed = any(resolved_values) if node.type == "or" else any(not value for value in resolved_values)
+                if unresolved and not absorbed and node.id in change_filter_ancestors and node.type not in {"change_filter", "memory"}:
                     details = ", ".join(f"{handle} <- {src_id}.{src_handle}" for handle, src_id, src_handle in unresolved)
                     raise ExecutionError(f"Missing upstream output: {details}")
-                inputs = self._resolve_effective_inputs(node, inputs)
 
                 if self.input_capture is not None:
                     self.input_capture[node.id] = {
@@ -614,7 +632,10 @@ class GraphExecutor:
         # never actually be the type this tag was generated from.
         if right_is_opaque_recovered_str and isinstance(right, str) and not isinstance(left, container_types):
             return str(left) == right, False
-        return left == right, True
+        try:
+            return bool(left == right), True
+        except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing/non-scalar equality
+            return False, True
 
     @classmethod
     def _contains_opaque_recovered_leaf(cls, value: Any) -> bool:
