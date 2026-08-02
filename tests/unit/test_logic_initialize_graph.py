@@ -1250,7 +1250,11 @@ async def test_change_filter_persists_and_restores_opaque_baseline_without_spuri
     await mgr._persist_node_state("g1")
     saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
     saved = json.loads(saved_json)
-    assert saved["state"]["cf1"]["value"] == {"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"}
+    assert saved["state"]["cf1"]["value"] == {
+        "__obs_persisted_type__": "opaque_str",
+        "value": "(3+4j)",
+        "type": "builtins.complex",
+    }
 
     mgr2 = _make_manager({})
     mgr2._db.fetchall = AsyncMock(
@@ -1286,7 +1290,7 @@ async def test_change_filter_persists_and_restores_nested_opaque_baseline_withou
     await mgr._persist_node_state("g1")
     saved_json = mgr._db.execute_and_commit.await_args.args[1][0]
     saved = json.loads(saved_json)
-    assert saved["state"]["cf1"]["value"] == [{"__obs_persisted_type__": "opaque_str", "value": "(3+4j)"}]
+    assert saved["state"]["cf1"]["value"] == [{"__obs_persisted_type__": "opaque_str", "value": "(3+4j)", "type": "builtins.complex"}]
 
     mgr2 = _make_manager({})
     mgr2._db.fetchall = AsyncMock(
@@ -1709,7 +1713,11 @@ class TestPersistDefaultAndDecode:
         number) against it would report a spurious changed=True forever."""
         from obs.logic.manager import _persist_default
 
-        assert _persist_default(3 + 4j) == {"__obs_persisted_type__": "opaque_str", "value": str(3 + 4j)}
+        assert _persist_default(3 + 4j) == {
+            "__obs_persisted_type__": "opaque_str",
+            "value": str(3 + 4j),
+            "type": "builtins.complex",
+        }
 
     def test_decimal_round_trips_as_its_original_type(self):
         from obs.logic.manager import _decode_persisted_value, _persist_default

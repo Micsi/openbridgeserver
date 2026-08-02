@@ -1403,6 +1403,9 @@ class TestHostCheckRisingEdge:
 
     def test_worker_state_merge_survives_raising_runtime_equality(self):
         class UnsafeEquality:
+            def __init__(self, label):
+                self.label = label
+
             def __eq__(self, other):
                 raise RuntimeError("comparison unavailable")
 
@@ -1416,13 +1419,40 @@ class TestHostCheckRisingEdge:
         graph_id = "g-worker-merge-unsafe-equality"
         manager._graphs[graph_id] = ("test", True, flow)
         manager._node_state[graph_id] = {}
-        manager._hysteresis[graph_id] = {"cf": {"value": UnsafeEquality()}}
+        manager._hysteresis[graph_id] = {"cf": {"value": UnsafeEquality("old")}}
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
-            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": UnsafeEquality()}}))
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": UnsafeEquality("new")}}))
 
         assert outputs["cf"]["changed"] is True
         assert "__error__" not in outputs["cf"]
+        assert manager._hysteresis[graph_id]["cf"]["value"].label == "new"
+
+    def test_transformed_no_change_pulse_does_not_reset_memory(self):
+        flow = _flow(
+            [
+                node("constant", "const_value", {"value": "1", "data_type": "number"}),
+                node("cf", "change_filter"),
+                node("invert", "not"),
+                node("memory", "memory", {"initial_value": 0, "data_type": "number"}),
+            ],
+            [
+                edge("constant", "cf", "value", "in"),
+                edge("cf", "invert", "changed", "in1"),
+                edge("invert", "memory", "out", "reset"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = "g-no-pulse-memory-reset"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": 1.0}, "memory": {"value": 7.0}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {}))
+
+        assert outputs["invert"]["out"] is True
+        assert manager._hysteresis[graph_id]["memory"] == {"value": 7.0}
 
     def test_transformed_no_change_pulse_does_not_trigger_datapoint_write(self):
         target_id = uuid.uuid4()

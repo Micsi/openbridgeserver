@@ -797,6 +797,49 @@ def test_same_change_filter_source_on_two_fan_in_ports_keeps_provenance() -> Non
     adapter.send_notification.assert_awaited_once()
 
 
+def test_duplicate_reads_for_one_datapoint_share_event_origin() -> None:
+    datapoint_id = uuid.uuid4()
+    flow = _flow(
+        [
+            node("read1", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node("read2", "datapoint_read", {"datapoint_id": str(datapoint_id)}),
+            node("cf1", "change_filter"),
+            node("cf2", "change_filter"),
+            node("relay", "and", {"input_count": 2}),
+            node(
+                "notify",
+                "notify_message",
+                {"adapter_instance_id": "message-1", "providers": [{"provider": "telegram", "target": "alerts"}]},
+            ),
+        ],
+        [
+            edge("read1", "cf1", "value", "in"),
+            edge("read2", "cf2", "value", "in"),
+            edge("cf1", "relay", "changed", "in1"),
+            edge("cf2", "relay", "changed", "in2"),
+            edge("relay", "notify", "out", "message"),
+        ],
+    )
+    manager = _make_manager()
+    adapter = MagicMock(adapter_type="MESSAGE")
+    adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "alerts", True)])
+    event_overrides = {
+        "read1": {"value": 1, "changed": True},
+        "read2": {"value": 1, "changed": True},
+    }
+
+    with (
+        patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+        patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+    ):
+        first = _run(manager, flow, event_overrides)
+        second = _run(manager, flow, event_overrides)
+
+    assert first["notify"]["sent"] is True
+    assert second["notify"]["sent"] is False
+    adapter.send_notification.assert_awaited_once()
+
+
 def test_debug_message_override_replaces_change_filter_provenance() -> None:
     flow = _flow(
         [

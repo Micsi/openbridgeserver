@@ -51,27 +51,27 @@ class _ObsoleteGraphExecution(Exception):
     """Stop a pass whose captured graph generation has been replaced."""
 
 
-def _state_values_equal(left: Any, right: Any) -> bool:
+def _state_values_equal(left: Any, right: Any) -> bool | None:
     """Compare arbitrary retained state without trusting runtime equality."""
     try:
         return bool(left == right)
     except Exception:  # noqa: BLE001 - script values may define raising or ambiguous equality
-        return left is right
+        return True if left is right else None
 
 
 def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: dict[str, Any]) -> None:
     """Apply worker changes without erasing state updated concurrently."""
     for key in base.keys() - updated.keys():
-        if _state_values_equal(target.get(key, _MISSING_STATE), base[key]):
+        if _state_values_equal(target.get(key, _MISSING_STATE), base[key]) is not False:
             target.pop(key, None)
     for key, updated_value in updated.items():
         base_value = base.get(key, _MISSING_STATE)
-        if base_value is not _MISSING_STATE and _state_values_equal(updated_value, base_value):
+        if base_value is not _MISSING_STATE and _state_values_equal(updated_value, base_value) is True:
             continue
         target_value = target.get(key, _MISSING_STATE)
         if isinstance(base_value, dict) and isinstance(updated_value, dict) and isinstance(target_value, dict):
             _merge_worker_state(base_value, updated_value, target_value)
-        elif target_value is _MISSING_STATE or _state_values_equal(target_value, base_value):
+        elif target_value is _MISSING_STATE or _state_values_equal(target_value, base_value) is not False:
             # ``updated`` is an isolated worker snapshot that is discarded
             # after this commit, so ownership can safely move to ``target``.
             target[key] = updated_value
@@ -290,7 +290,11 @@ def _persist_default(v: Any) -> Any:
     # would restore this as a plain string, and a change_filter comparing a
     # live value of the original type against it would report a spurious
     # changed=True forever, since nothing marks the string as recovered.
-    return {_PERSIST_TYPE_TAG: "opaque_str", "value": str(v)}
+    return {
+        _PERSIST_TYPE_TAG: "opaque_str",
+        "value": str(v),
+        "type": f"{type(v).__module__}.{type(v).__qualname__}",
+    }
 
 
 def _escape_persist_collision(v: Any) -> Any:
@@ -313,7 +317,10 @@ def _escape_persist_collision(v: Any) -> Any:
     any JSON-representable type) instead of a native JSON object.
     """
     if isinstance(v, _OpaqueRecoveredStr):
-        return {_PERSIST_TYPE_TAG: "opaque_str", "value": str(v)}
+        tag = {_PERSIST_TYPE_TAG: "opaque_str", "value": str(v)}
+        if v.type_name:
+            tag["type"] = v.type_name
+        return tag
     if isinstance(v, _OpaqueRecoveredSet):
         return {
             _PERSIST_TYPE_TAG: "frozenset" if v.frozen else "set",
@@ -390,7 +397,7 @@ def _decode_persisted_value(v: Any) -> Any:
             # done there, not here, since decoding is per-value and that
             # marker lives on the enclosing node-state dict.
             value = v.get("value")
-            return _OpaqueRecoveredStr(value) if isinstance(value, str) else value
+            return _OpaqueRecoveredStr(value, v.get("type")) if isinstance(value, str) else value
         if tag == "tuple":
             inner = v.get("value")
             if isinstance(inner, list):
@@ -3635,11 +3642,11 @@ class LogicManager:
             return (edge.targetHandle or "in") in trigger_port_ids
 
         def _build_cf_pulse_origins(
-            event_fresh: dict[str, set[str]] | None, fresh_seed_ids: set[str]
+            event_fresh: dict[str, set[str]] | None, fresh_seed_origins: dict[str, str]
         ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
             message_origins: dict[str, set[str]] = {}
             trigger_origins: dict[str, set[str]] = {}
-            fresh_origins = {node_id: {node_id} for node_id in fresh_seed_ids}
+            fresh_origins = {node_id: {origin} for node_id, origin in fresh_seed_origins.items()}
             if event_fresh is not None:
                 changed = True
                 while changed:
@@ -3699,7 +3706,15 @@ class LogicManager:
         _initial_event_fresh = (
             _fresh_input_handles({node_id: dict(values) for node_id, values in overrides.items()}, flow.edges) if overrides else None
         )
-        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(_initial_event_fresh, set(overrides))
+
+        def _event_origin(node_id: str) -> str:
+            event_node = _node_by_id_early.get(node_id)
+            datapoint_id = (event_node.data or {}).get("datapoint_id") if event_node is not None and event_node.type == "datapoint_read" else None
+            return f"datapoint:{datapoint_id}" if datapoint_id else node_id
+
+        _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(
+            _initial_event_fresh, {node_id: _event_origin(node_id) for node_id in overrides}
+        )
 
         def _suppress_missing_cf_trigger_pulses(node_ids: set[str] | None = None) -> None:
             for target_id, origins in _cf_changed_trigger_origins.items():
@@ -5402,7 +5417,7 @@ class LogicManager:
         # provenance structural (not value-based) leaves ordinary boolean
         # sources wired to "message" unaffected.
         _cf_changed_message_origins, _cf_changed_trigger_origins = _build_cf_pulse_origins(
-            _event_fresh_inputs(), set(overrides) | refreshed_ical_nodes
+            _event_fresh_inputs(), {node_id: _event_origin(node_id) for node_id in set(overrides) | refreshed_ical_nodes}
         )
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
@@ -5843,7 +5858,14 @@ class LogicManager:
         # Memory is the explicit tick boundary for feedback loops. Commit it
         # after all async node re-propagation so the stored value always reflects
         # the final graph outputs, not executor placeholders from an earlier pass.
-        executor.commit_memory_inputs(outputs, _debug_run_overrides(aug_overrides))
+        memory_commit_overrides = _debug_run_overrides(aug_overrides)
+        for memory_node in flow.nodes:
+            if memory_node.type != "memory":
+                continue
+            origins = _cf_changed_trigger_origins.get(memory_node.id, set())
+            if origins and not any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
+                memory_commit_overrides.setdefault(memory_node.id, {})["reset"] = False
+        executor.commit_memory_inputs(outputs, memory_commit_overrides)
 
         # ── Start/cancel value sequences ──────────────────────────────────
         wired_inputs: set[tuple[str, str]] = {(e.target, e.targetHandle or "in") for e in flow.edges}

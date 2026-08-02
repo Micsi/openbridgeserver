@@ -1412,6 +1412,37 @@ class TestChangeFilterNode:
         assert out["cf"]["changed"] is True
         assert "__error__" not in out["cf"]
 
+    def test_opaque_recovery_reports_transition_to_genuine_string(self):
+        state = {
+            "cf": {
+                "value": _OpaqueRecoveredStr("(3+4j)", "builtins.complex"),
+                "_opaque_recovered_str": True,
+            }
+        }
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": "(3+4j)"}})
+
+        assert out["cf"]["changed"] is True
+        assert state["cf"] == {"value": "(3+4j)"}
+
+    def test_opaque_recovery_rejects_different_runtime_type_with_same_string(self):
+        class SameString:
+            def __str__(self):
+                return "(3+4j)"
+
+        state = {
+            "cf": {
+                "value": _OpaqueRecoveredStr("(3+4j)", "builtins.complex"),
+                "_opaque_recovered_str": True,
+            }
+        }
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": SameString()}})
+
+        assert out["cf"]["changed"] is True
+
     def test_self_referential_containers_compare_without_recursion_error(self):
         first = []
         first.append(first)
@@ -1812,7 +1843,7 @@ class TestChangeFilterNode:
 
         assert out["cf"]["changed"] is True
 
-    def test_equal_live_string_container_migrates_opaque_leaf_markers(self):
+    def test_live_string_container_reports_transition_from_opaque_leaf(self):
         state = {
             "cf": {
                 "value": [_OpaqueRecoveredStr("(3+4j)")],
@@ -1823,7 +1854,7 @@ class TestChangeFilterNode:
 
         out = exc.execute({"cf": {"in": ["(3+4j)"]}})
 
-        assert out["cf"] == {"out": ["(3+4j)"], "changed": False}
+        assert out["cf"] == {"out": ["(3+4j)"], "changed": True}
         assert state == {"cf": {"value": ["(3+4j)"]}}
         assert type(state["cf"]["value"][0]) is str
 

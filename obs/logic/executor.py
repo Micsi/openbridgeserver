@@ -34,6 +34,29 @@ _AVG_MULTI_MAX_SAMPLES = 100_000
 class _OpaqueRecoveredStr(str):
     """String restored from an ``opaque_str`` persistence tag."""
 
+    def __new__(cls, value: str, type_name: str | None = None):
+        instance = super().__new__(cls, value)
+        instance.type_name = type_name if isinstance(type_name, str) else None
+        return instance
+
+
+def _opaque_type_name(value: Any) -> str:
+    return f"{type(value).__module__}.{type(value).__qualname__}"
+
+
+def _opaque_recovered_matches(left: Any, right: Any, *, allow_unmarked: bool = False) -> bool:
+    if isinstance(right, _OpaqueRecoveredStr):
+        if isinstance(left, str):
+            return False
+        if right.type_name and _opaque_type_name(left) != right.type_name:
+            return False
+    elif not (allow_unmarked and isinstance(right, str)):
+        return False
+    try:
+        return str(left) == right
+    except Exception:  # noqa: BLE001 - opaque runtime values may define failing string conversion
+        return False
+
 
 class _OpaqueRecoveredSet:
     """Lossless decoded set members awaiting opaque-type recovery."""
@@ -656,10 +679,7 @@ class GraphExecutor:
         # coincidental-repr reason as above, even though a dict/list could
         # never actually be the type this tag was generated from.
         if right_is_opaque_recovered_str and isinstance(right, str) and not isinstance(left, container_types):
-            try:
-                return str(left) == right, False
-            except Exception:  # noqa: BLE001 - opaque runtime values may define failing string conversion
-                return False, False
+            return _opaque_recovered_matches(left, right), False
         try:
             return bool(left == right), True
         except Exception:  # noqa: BLE001 - arbitrary runtime values may define failing/non-scalar equality
@@ -844,20 +864,22 @@ class GraphExecutor:
                 return False
             remaining_right = dict(right)
             for lk, lv in left.items():
-                if lk in remaining_right:
-                    rk = lk
-                else:
-                    rk = next(
-                        (
-                            candidate
-                            for candidate in remaining_right
-                            if isinstance(candidate, _OpaqueRecoveredStr) or (allow_unmarked and isinstance(candidate, str))
-                            if str(lk) == candidate
-                        ),
-                        None,
-                    )
-                    if rk is None:
-                        return False
+                rk = None
+                for candidate in remaining_right:
+                    if isinstance(candidate, _OpaqueRecoveredStr):
+                        matches = _opaque_recovered_matches(lk, candidate, allow_unmarked=allow_unmarked)
+                    else:
+                        try:
+                            matches = bool(lk == candidate)
+                        except Exception:  # noqa: BLE001 - arbitrary mapping keys may define failing equality
+                            matches = False
+                        if not matches and allow_unmarked:
+                            matches = _opaque_recovered_matches(lk, candidate, allow_unmarked=True)
+                    if matches:
+                        rk = candidate
+                        break
+                if rk is None:
+                    return False
                 if not cls._opaque_aware_container_equal(lv, remaining_right.pop(rk), allow_unmarked=allow_unmarked):
                     return False
             return True
@@ -916,16 +938,15 @@ class GraphExecutor:
                 return False
 
             return _match_remaining(list(left), list(right.items))
+        if isinstance(right, _OpaqueRecoveredStr):
+            return _opaque_recovered_matches(left, right, allow_unmarked=allow_unmarked)
         try:
             equal = bool(left == right)
         except Exception:  # noqa: BLE001 - opaque runtime values may define failing/non-scalar equality
             equal = False
         if equal:
             return True
-        try:
-            return (isinstance(right, _OpaqueRecoveredStr) or (allow_unmarked and isinstance(right, str))) and str(left) == right
-        except Exception:  # noqa: BLE001 - opaque runtime values may also define failing string conversion
-            return False
+        return _opaque_recovered_matches(left, right, allow_unmarked=allow_unmarked)
 
     @classmethod
     def _values_equal(cls, left: Any, right: Any) -> bool:
