@@ -1983,6 +1983,49 @@ class TestHostCheckRisingEdge:
 
         assert repeated["target"][output_handle] is None
 
+    @pytest.mark.parametrize("target_type", ["notify_message", "notify_pushover", "notify_sms", "message_archive"])
+    def test_missing_filter_message_pulse_is_absent_with_independent_trigger(self, target_type):
+        trigger_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("cf", "change_filter"),
+                node("trigger", "datapoint_read", {"datapoint_id": str(trigger_id)}),
+                node("target", target_type, {"message": "Configured message"}),
+            ],
+            [
+                edge("cf", "target", "changed", "message"),
+                edge("trigger", "target", "value", "trigger"),
+            ],
+        )
+        manager = _make_manager()
+        graph_id = f"g-missing-message-{target_type}"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "trigger": {"value": True}}))
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}, "trigger": {"value": True}}))
+
+        assert repeated["target"]["_message"] is None
+
+    def test_missing_active_pulse_preserves_running_operating_hours(self):
+        flow = _flow(
+            [node("cf", "change_filter"), node("hours", "operating_hours")],
+            [edge("cf", "hours", "changed", "active")],
+        )
+        manager = _make_manager()
+        graph_id = "g-missing-active-operating-hours"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+            started_at = manager._node_state[graph_id]["hours"]["last_start"]
+            repeated = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"cf": {"in": 1}}))
+
+        assert repeated["hours"]["_active"] is True
+        assert manager._node_state[graph_id]["hours"]["last_start"] == started_at
+
     def test_async_refresh_uses_final_stateful_provenance_for_memory_commit(self):
         flow = _flow(
             [

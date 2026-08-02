@@ -4052,7 +4052,18 @@ class LogicManager:
                 if "_triggered" in target_output:
                     target_output["_triggered"] = False
 
+        def _neutralize_missing_cf_messages(node_ids: set[str] | None = None) -> None:
+            for target_id, origins in _cf_changed_message_origins.items():
+                if node_ids is not None and target_id not in node_ids:
+                    continue
+                if any(GraphExecutor._to_bool(outputs.get(origin, {}).get("changed")) for origin in origins):
+                    continue
+                target_output = outputs.get(target_id, {})
+                if "_message" in target_output:
+                    target_output["_message"] = None
+
         _suppress_missing_cf_trigger_pulses()
+        _neutralize_missing_cf_messages()
 
         missing_downstream_filters = {
             target_id
@@ -4094,7 +4105,10 @@ class LogicManager:
             for target_id, missing_handles in missing_synchronous_handles.items():
                 target_overrides = synchronous_overrides.setdefault(target_id, {})
                 for handle in missing_handles:
-                    target_overrides[handle] = False
+                    if _node_type_by_id.get(target_id) == "operating_hours" and handle == "active":
+                        target_overrides[handle] = bool(pre_execute_node_state.get(target_id, {}).get("last_start"))
+                    else:
+                        target_overrides[handle] = False
             synchronous_hyst = _safe_deepcopy_state(pre_execute_hyst if pre_execute_hyst is not None else hyst)
             synchronous_known_outputs = {node_id: values for node_id, values in outputs.items() if node_id not in synchronous_descendants}
             synchronous_outputs = await _execute_pass(
@@ -5830,6 +5844,7 @@ class LogicManager:
             _late_cf_changed_stateful_relay_origins,
         ) = _build_cf_pulse_origins(_event_fresh_inputs(), {node_id: _event_origin(node_id) for node_id in set(overrides) | refreshed_ical_nodes})
         _cf_changed_stateful_relay_origins = _late_cf_changed_stateful_relay_origins
+        _neutralize_missing_cf_messages()
 
         def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
             event_fresh_inputs = _event_fresh_inputs()
