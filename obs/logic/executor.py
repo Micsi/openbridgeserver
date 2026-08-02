@@ -929,21 +929,21 @@ class GraphExecutor:
         if isinstance(left, dict) and isinstance(right, _OpaqueRecoveredDict):
             if len(left) != len(right.items):
                 return False
-
-            def _match_mapping(left_items: list[tuple[Any, Any]], right_items: list[tuple[Any, Any]]) -> bool:
-                if not left_items:
+            left_items = list(left.items())
+            # Keep the ambiguous-key backtracking semantics without using
+            # Python call-stack depth proportional to dictionary size.
+            pending: list[tuple[int, list[tuple[Any, Any]]]] = [(0, list(right.items))]
+            while pending:
+                left_index, remaining = pending.pop()
+                if left_index == len(left_items):
                     return True
-                left_key, left_value = left_items[0]
-                for index, (right_key, right_value) in enumerate(right_items):
-                    if (
-                        cls._opaque_aware_container_equal(left_key, right_key, allow_unmarked=allow_unmarked)
-                        and cls._opaque_aware_container_equal(left_value, right_value, allow_unmarked=allow_unmarked)
-                        and _match_mapping(left_items[1:], right_items[:index] + right_items[index + 1 :])
+                left_key, left_value = left_items[left_index]
+                for right_index, (right_key, right_value) in enumerate(remaining):
+                    if cls._opaque_aware_container_equal(left_key, right_key, allow_unmarked=allow_unmarked) and cls._opaque_aware_container_equal(
+                        left_value, right_value, allow_unmarked=allow_unmarked
                     ):
-                        return True
-                return False
-
-            return _match_mapping(list(left.items()), list(right.items))
+                        pending.append((left_index + 1, remaining[:right_index] + remaining[right_index + 1 :]))
+            return False
         if isinstance(left, (list, tuple)) and isinstance(right, type(left)):
             return len(left) == len(right) and all(
                 cls._opaque_aware_container_equal(le, ri, allow_unmarked=allow_unmarked) for le, ri in zip(left, right)

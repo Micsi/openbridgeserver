@@ -3222,8 +3222,20 @@ class LogicManager:
             _src = outputs_source if outputs_source is not None else outputs
             return {nid for nid in random_value_ids if _src.get(nid, {}).get("value") is None}
 
-        _inactive_random_ids = _inactive_random_ids_from()
-        _unresolved_source_ids: set[str] = unseeded_read_ids | _directly_triggered_async_ids | _chained_unresolved_async_ids | _inactive_random_ids
+        def _no_result_mapping_ids_from(outputs_source: dict[str, dict[str, Any]] | None = None) -> set[str]:
+            _src = outputs_source if outputs_source is not None else outputs
+            return {
+                node.id
+                for node in flow.nodes
+                if node.type == "value_mapping"
+                and not GraphExecutor._to_bool(node.data.get("has_default"))
+                and _src.get(node.id, {}).get("result") is None
+            }
+
+        def _unresolved_value_ids_from(outputs_source: dict[str, dict[str, Any]] | None = None) -> set[str]:
+            return unseeded_read_ids | _inactive_random_ids_from(outputs_source) | _no_result_mapping_ids_from(outputs_source)
+
+        _unresolved_source_ids: set[str] = _unresolved_value_ids_from() | _directly_triggered_async_ids | _chained_unresolved_async_ids
 
         _node_by_id_early = {n.id: n for n in flow.nodes}
         _decisive_gate_value = {"or": True, "and": False}
@@ -3703,6 +3715,20 @@ class LogicManager:
                         and (
                             (edge.targetHandle or "in") in debug_overrides.get(edge.target, {})
                             or (
+                                event_fresh is None
+                                and _node_type_by_id.get(edge.source)
+                                in {
+                                    "random_value",
+                                    "python_script",
+                                    "statistics",
+                                    "avg_multi",
+                                    "min_max_tracker",
+                                    "consumption_counter",
+                                    "operating_hours",
+                                }
+                                and any(value is not None for value in outputs.get(edge.source, {}).values())
+                            )
+                            or (
                                 event_fresh is not None
                                 and (edge.targetHandle or "in") in event_fresh.get(edge.target, set())
                                 and (edge.source not in relay_origins or bool(fresh_origins.get(edge.source, set()) - pulse_fresh_origins))
@@ -4000,7 +4026,7 @@ class LogicManager:
             if api_replay_overrides is None:
                 return
             _current_cf_hold_ids = _compute_cf_hold_ids(
-                unseeded_read_ids | _inactive_random_ids_from(outputs_source) | _still_unresolved_source_ids(outputs_source), outputs_source
+                _unresolved_value_ids_from(outputs_source) | _still_unresolved_source_ids(outputs_source), outputs_source
             )
             _refreshed: dict[str, dict[str, Any]] = {}
             for _nid, _vals in api_replay_overrides.items():
@@ -4062,7 +4088,7 @@ class LogicManager:
             # Redo the replay with suppression applied if this reveals
             # anything new.
             _late_pending = _still_unresolved_source_ids(replay_outputs)
-            _late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids_from(replay_outputs) | _late_pending, replay_outputs)
+            _late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_value_ids_from(replay_outputs) | _late_pending, replay_outputs)
             if _late_cf_hold_ids:
                 for _late_cf_id in _late_cf_hold_ids:
                     replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
@@ -4120,9 +4146,7 @@ class LogicManager:
             # host_check irreversibly ping. Redo the replay with
             # suppression applied if this reveals anything new.
             _hc_late_pending = _still_unresolved_source_ids(hc_second_outputs)
-            _hc_late_cf_hold_ids = _compute_cf_hold_ids(
-                unseeded_read_ids | _inactive_random_ids_from(hc_second_outputs) | _hc_late_pending, hc_second_outputs
-            )
+            _hc_late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_value_ids_from(hc_second_outputs) | _hc_late_pending, hc_second_outputs)
             if _hc_late_cf_hold_ids:
                 for _hc_late_cf_id in _hc_late_cf_hold_ids:
                     hc_merged.setdefault(_hc_late_cf_id, {})["_suppress_change_filter"] = True
@@ -4264,9 +4288,7 @@ class LogicManager:
                 # downstream host_check irreversibly ping. Redo the replay
                 # with suppression applied if this reveals anything new.
                 _wol_late_pending = _still_unresolved_source_ids(wol_second_outputs)
-                _wol_late_cf_hold_ids = _compute_cf_hold_ids(
-                    unseeded_read_ids | _inactive_random_ids_from(wol_second_outputs) | _wol_late_pending, wol_second_outputs
-                )
+                _wol_late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_value_ids_from(wol_second_outputs) | _wol_late_pending, wol_second_outputs)
                 if _wol_late_cf_hold_ids:
                     for _wol_late_cf_id in _wol_late_cf_hold_ids:
                         wol_merged.setdefault(_wol_late_cf_id, {})["_suppress_change_filter"] = True
@@ -4344,9 +4366,7 @@ class LogicManager:
                     # the replay with suppression applied if this reveals
                     # anything new.
                     _pwol_late_pending = _still_unresolved_source_ids(_pwol_out)
-                    _pwol_late_cf_hold_ids = _compute_cf_hold_ids(
-                        unseeded_read_ids | _inactive_random_ids_from(_pwol_out) | _pwol_late_pending, _pwol_out
-                    )
+                    _pwol_late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_value_ids_from(_pwol_out) | _pwol_late_pending, _pwol_out)
                     if _pwol_late_cf_hold_ids:
                         for _pwol_late_cf_id in _pwol_late_cf_hold_ids:
                             _pwol_merged.setdefault(_pwol_late_cf_id, {})["_suppress_change_filter"] = True
@@ -4638,9 +4658,7 @@ class LogicManager:
                     # committed just because this pass happened to be an
                     # API replay.
                     _late_pending = _still_unresolved_source_ids(second_outputs)
-                    _late_cf_hold_ids = _compute_cf_hold_ids(
-                        unseeded_read_ids | _inactive_random_ids_from(second_outputs) | _late_pending, second_outputs
-                    )
+                    _late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_value_ids_from(second_outputs) | _late_pending, second_outputs)
                     if _late_cf_hold_ids:
                         for _late_cf_id in _late_cf_hold_ids:
                             replay_overrides.setdefault(_late_cf_id, {})["_suppress_change_filter"] = True
@@ -4730,7 +4748,7 @@ class LogicManager:
             # consistency with every other replay site, in case a future
             # change decouples pat_base_overrides from that inheritance.
             _pat_late_pending = _still_unresolved_source_ids(pat_outputs)
-            _pat_late_cf_hold_ids = _compute_cf_hold_ids(unseeded_read_ids | _inactive_random_ids_from(pat_outputs) | _pat_late_pending, pat_outputs)
+            _pat_late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_value_ids_from(pat_outputs) | _pat_late_pending, pat_outputs)
             if _pat_late_cf_hold_ids:
                 for _pat_late_cf_id in _pat_late_cf_hold_ids:
                     pat_merged.setdefault(_pat_late_cf_id, {})["_suppress_change_filter"] = True
@@ -4836,7 +4854,7 @@ class LogicManager:
                 # anything new.
                 _pawol_late_pending = _still_unresolved_source_ids(post_api_wol_outputs)
                 _pawol_late_cf_hold_ids = _compute_cf_hold_ids(
-                    unseeded_read_ids | _inactive_random_ids_from(post_api_wol_outputs) | _pawol_late_pending, post_api_wol_outputs
+                    _unresolved_value_ids_from(post_api_wol_outputs) | _pawol_late_pending, post_api_wol_outputs
                 )
                 if _pawol_late_cf_hold_ids:
                     for _pawol_late_cf_id in _pawol_late_cf_hold_ids:
@@ -5198,7 +5216,7 @@ class LogicManager:
                         # committed it.
                         _final_hc_late_pending = _still_unresolved_source_ids(final_hc_outputs)
                         _final_hc_late_cf_hold_ids = _compute_cf_hold_ids(
-                            unseeded_read_ids | _inactive_random_ids_from(final_hc_outputs) | _final_hc_late_pending, final_hc_outputs
+                            _unresolved_value_ids_from(final_hc_outputs) | _final_hc_late_pending, final_hc_outputs
                         )
                         if _final_hc_late_cf_hold_ids:
                             for _final_hc_late_cf_id in _final_hc_late_cf_hold_ids:
@@ -5286,9 +5304,7 @@ class LogicManager:
                 # further pass after this one to correct a change_filter
                 # that already committed it.
                 _fwol_late_pending = _still_unresolved_source_ids(_fwol_out)
-                _fwol_late_cf_hold_ids = _compute_cf_hold_ids(
-                    unseeded_read_ids | _inactive_random_ids_from(_fwol_out) | _fwol_late_pending, _fwol_out
-                )
+                _fwol_late_cf_hold_ids = _compute_cf_hold_ids(_unresolved_value_ids_from(_fwol_out) | _fwol_late_pending, _fwol_out)
                 if _fwol_late_cf_hold_ids:
                     for _fwol_late_cf_id in _fwol_late_cf_hold_ids:
                         _fwol_merged.setdefault(_fwol_late_cf_id, {})["_suppress_change_filter"] = True

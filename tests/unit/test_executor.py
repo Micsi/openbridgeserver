@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from obs.logic.executor import ExecutionError, GraphExecutor, _OpaqueRecoveredStr
+from obs.logic.executor import ExecutionError, GraphExecutor, _OpaqueRecoveredDict, _OpaqueRecoveredStr
 from tests.unit.conftest import edge, make_executor, node
 
 
@@ -1536,6 +1536,18 @@ class TestChangeFilterNode:
 
         assert first["cf"]["changed"] is True
         assert second["cf"]["changed"] is False
+
+    def test_large_recovered_dictionary_matches_without_recursion_error(self):
+        live = {index: index for index in range(1100)}
+        live[3 + 4j] = "opaque"
+        recovered = _OpaqueRecoveredDict([(index, index) for index in range(1100)] + [(_OpaqueRecoveredStr("(3+4j)", "builtins.complex"), "opaque")])
+        state = {"cf": {"value": recovered, "_opaque_recovered_str": True}}
+        exc = make_executor([node("cf", "change_filter")], hysteresis_state=state)
+
+        out = exc.execute({"cf": {"in": live}})
+
+        assert out["cf"]["changed"] is True
+        assert "__error__" not in out["cf"]
 
     def test_self_referential_containers_compare_without_recursion_error(self):
         first = []

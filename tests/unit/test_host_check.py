@@ -1519,6 +1519,33 @@ class TestHostCheckRisingEdge:
         assert manager._node_state[graph_id]["hours"]["last_start"] is not None
         assert outputs["random"]["value"] is None
 
+    def test_no_result_mapping_does_not_replace_change_filter_baseline(self):
+        read_id = uuid.uuid4()
+        flow = _flow(
+            [
+                node("read", "datapoint_read", {"datapoint_id": str(read_id)}),
+                node(
+                    "mapping",
+                    "value_mapping",
+                    {"rules": [{"operator": "eq", "value": 1, "result": "mapped"}], "has_default": False},
+                ),
+                node("cf", "change_filter"),
+            ],
+            [edge("read", "mapping", "value", "value"), edge("mapping", "cf", "result", "in")],
+        )
+        manager = _make_manager()
+        graph_id = "g-no-result-mapping-filter"
+        manager._graphs[graph_id] = ("test", True, flow)
+        manager._node_state[graph_id] = {}
+        manager._hysteresis[graph_id] = {"cf": {"value": "mapped"}}
+
+        with patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")):
+            outputs = asyncio.run(manager._execute_graph(graph_id, "test", flow, {"read": {"value": 2, "changed": True}}))
+
+        assert outputs["mapping"]["result"] is None
+        assert outputs["cf"] == {"out": "mapped", "changed": False}
+        assert manager._hysteresis[graph_id]["cf"] == {"value": "mapped"}
+
     def test_transformed_no_change_pulse_does_not_trigger_datapoint_write(self):
         target_id = uuid.uuid4()
         flow = _flow(
