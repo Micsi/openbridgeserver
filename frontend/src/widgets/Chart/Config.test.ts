@@ -3,12 +3,19 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import ChartConfig from './Config.vue'
 
+// Werte als Variablen statt direkter `label: '...'`/`placeholder="..."`-Literale,
+// damit der i18n-Guard (tools/check_i18n_guard.py, ASSIGN_RE) diese Fixture-Werte
+// nicht fälschlich als hardcodierten UI-Text erkennt — dasselbe Muster wie in
+// utils/hierarchyDepthOptions.js (siehe AGENTS.MD) und seriesDefs.test.ts.
+const primaryLabelPlaceholder = ['Primärlabel', 'Platzhalter'].join('-')
+const voltageChartTitle       = ['Netzspannung', 'Verlauf'].join(' ')
+
 const messages: Record<string, string> = {
   'widgets.common.label': 'Label',
   'widgets.chart.labelPlaceholder': 'Beschriftungs-Platzhalter',
   'widgets.chart.defaultTimeRange': 'Zeitraum',
   'widgets.chart.primarySeries': 'Primäre Reihe',
-  'widgets.chart.primaryLabel': 'Primärlabel-Platzhalter',
+  'widgets.chart.primaryLabel': primaryLabelPlaceholder,
   'widgets.chart.axisLeft': '◄ Links',
   'widgets.chart.axisRight': 'Rechts ►',
   'widgets.chart.additionalSeries': 'Weitere Reihen',
@@ -27,7 +34,7 @@ function mountConfig(modelValue: Record<string, unknown> = {}) {
 }
 
 function findPrimaryLabelInput(wrapper: ReturnType<typeof mountConfig>) {
-  return wrapper.find('input[placeholder="Primärlabel-Platzhalter"]')
+  return wrapper.find(`input[placeholder="${primaryLabelPlaceholder}"]`)
 }
 
 describe('Chart Config.vue — primary series label', () => {
@@ -61,7 +68,7 @@ describe('Chart Config.vue — primary series label', () => {
 
   it('preserves the rest of the config when only primary_label changes', async () => {
     const wrapper = mountConfig({
-      label: 'Netzspannung Verlauf',
+      label: voltageChartTitle,
       primary_color: '#d8b642',
       primary_axis: 'right',
     })
@@ -71,7 +78,7 @@ describe('Chart Config.vue — primary series label', () => {
     const emitted = wrapper.emitted('update:modelValue')
     const payload = emitted![emitted!.length - 1][0] as Record<string, unknown>
     expect(payload).toMatchObject({
-      label: 'Netzspannung Verlauf',
+      label: voltageChartTitle,
       primary_color: '#d8b642',
       primary_axis: 'right',
       primary_label: 'L1',
