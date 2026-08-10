@@ -110,14 +110,13 @@ def _row_to_summary(
 
 
 async def _get_node_or_404(db: Database, node_id: str) -> VisuNode:
-    async with db.conn.execute(
+    row = await db.fetchone(
         """SELECT vn.*, avp.access_mode
            FROM visu_nodes AS vn
            LEFT JOIN authz_visu_page_policies AS avp ON avp.node_id = vn.id
            WHERE vn.id = ?""",
         (node_id,),
-    ) as cur:
-        row = await cur.fetchone()
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Knoten nicht gefunden")
     access = row["access_mode"] if "access_mode" in row.keys() else None
@@ -128,14 +127,13 @@ async def _resolve_access(db: Database, node_id: str) -> str:
     """Traversiert die parent_id-Kette und gibt das effektive Access-Level zurück."""
     current_id: str | None = node_id
     while current_id:
-        async with db.conn.execute(
+        row = await db.fetchone(
             """SELECT vn.parent_id, avp.access_mode
                FROM visu_nodes AS vn
                LEFT JOIN authz_visu_page_policies AS avp ON avp.node_id = vn.id
                WHERE vn.id = ?""",
             (current_id,),
-        ) as cur:
-            row = await cur.fetchone()
+        )
         if not row:
             break
         access_mode = row["access_mode"] if "access_mode" in row.keys() else row["access"]
@@ -151,14 +149,13 @@ async def _resolve_access_with_node(db: Database, node_id: str) -> tuple[str, st
     """
     current_id: str | None = node_id
     while current_id:
-        async with db.conn.execute(
+        row = await db.fetchone(
             """SELECT vn.parent_id, avp.access_mode
                FROM visu_nodes AS vn
                LEFT JOIN authz_visu_page_policies AS avp ON avp.node_id = vn.id
                WHERE vn.id = ?""",
             (current_id,),
-        ) as cur:
-            row = await cur.fetchone()
+        )
         if not row:
             break
         access_mode = row["access_mode"] if "access_mode" in row.keys() else row["access"]
@@ -179,14 +176,13 @@ async def _resolve_access_with_node_overrides(
     seen: set[str] = set()
     while current_id and current_id not in seen:
         seen.add(current_id)
-        async with db.conn.execute(
+        row = await db.fetchone(
             """SELECT vn.parent_id, avp.access_mode
                FROM visu_nodes AS vn
                LEFT JOIN authz_visu_page_policies AS avp ON avp.node_id = vn.id
                WHERE vn.id = ?""",
             (current_id,),
-        ) as cur:
-            row = await cur.fetchone()
+        )
         if not row:
             break
         stored_access = row["access_mode"] if "access_mode" in row.keys() else row["access"]
@@ -561,13 +557,12 @@ async def get_tree(
 ):
     """Gesamtbaum als flache Liste (Frontend baut Baum via parent_id)."""
     principal = _principal_from_dependency(user)
-    async with db.conn.execute(
+    rows = await db.fetchall(
         """SELECT vn.*, avp.access_mode
            FROM visu_nodes AS vn
            LEFT JOIN authz_visu_page_policies AS avp ON avp.node_id = vn.id
            ORDER BY vn.node_order ASC""",
-    ) as cur:
-        rows = await cur.fetchall()
+    )
     visible_rows = [row for row in rows if await _can_discover_node(db, row["id"], principal)]
     visible_ids = {row["id"] for row in visible_rows}
     return [
@@ -883,14 +878,13 @@ async def get_breadcrumb(
     rows = []
     current_id: str | None = node_id
     while current_id:
-        async with db.conn.execute(
+        row = await db.fetchone(
             """SELECT vn.*, avp.access_mode
                FROM visu_nodes AS vn
                LEFT JOIN authz_visu_page_policies AS avp ON avp.node_id = vn.id
                WHERE vn.id = ?""",
             (current_id,),
-        ) as cur:
-            row = await cur.fetchone()
+        )
         if not row:
             break
         if await _can_discover_node(db, row["id"], principal):
@@ -919,15 +913,14 @@ async def get_children(
     principal = _principal_from_dependency(user)
     if not await _can_discover_node(db, node_id, principal):
         raise HTTPException(status_code=404, detail="Visu-Knoten nicht gefunden")
-    async with db.conn.execute(
+    rows = await db.fetchall(
         """SELECT vn.*, avp.access_mode
            FROM visu_nodes AS vn
            LEFT JOIN authz_visu_page_policies AS avp ON avp.node_id = vn.id
            WHERE vn.parent_id = ?
            ORDER BY vn.node_order ASC""",
         (node_id,),
-    ) as cur:
-        rows = await cur.fetchall()
+    )
     return [
         _row_to_summary(row, access=row["access_mode"] if "access_mode" in row.keys() else None)
         for row in rows
@@ -1028,8 +1021,7 @@ async def export_node(
     async def collect(nid: str) -> list[dict]:
         if not await _can_discover_node(db, nid, principal):
             return []
-        async with db.conn.execute("SELECT * FROM visu_nodes WHERE id = ?", (nid,)) as cur:
-            row = await cur.fetchone()
+        row = await db.fetchone("SELECT * FROM visu_nodes WHERE id = ?", (nid,))
         if not row:
             return []
         page_config = json.loads(row["page_config"]) if row["page_config"] else None
@@ -1049,8 +1041,7 @@ async def export_node(
                 "page_config": page_config,
             },
         ]
-        async with db.conn.execute("SELECT id FROM visu_nodes WHERE parent_id = ? ORDER BY node_order", (nid,)) as cur:
-            children = await cur.fetchall()
+        children = await db.fetchall("SELECT id FROM visu_nodes WHERE parent_id = ? ORDER BY node_order", (nid,))
         for child in children:
             result.extend(await collect(child["id"]))
         return result

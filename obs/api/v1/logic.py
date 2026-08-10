@@ -257,8 +257,8 @@ async def _persist_created_graph(
                 details=details,
                 commit=False,
             )
-    row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
-    assert row is not None
+        row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
+        assert row is not None
     return row
 
 
@@ -688,6 +688,9 @@ async def update_graph_full(
                 graph_id,
             ),
         )
+        persisted_row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
+        if persisted_row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Graph nicht gefunden")
         await write_application_success(db, None, principal, "PUT", "/api/v1/logic/graphs/{graph_id}", resource_id=graph_id, commit=False)
     # Invalidate executor cache only when execution semantics changed.
     try:
@@ -700,8 +703,7 @@ async def update_graph_full(
             await manager.reinitialize_graph(graph_id)
     except Exception:
         logger.exception("Failed to refresh logic manager cache after updating graph %s", graph_id)
-    row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
-    return _row_to_out(row)
+    return _row_to_out(persisted_row)
 
 
 @router.patch("/graphs/{graph_id}", response_model=LogicGraphOut)
@@ -745,6 +747,9 @@ async def update_graph_partial(
                WHERE id=?""",
             (name, description, int(enabled), flow_json, control_class, now, graph_id),
         )
+        persisted_row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
+        if persisted_row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Graph nicht gefunden")
         await write_application_success(db, None, principal, "PATCH", "/api/v1/logic/graphs/{graph_id}", resource_id=graph_id, commit=False)
 
     # A title/description change does not alter execution.  Keeping the cache
@@ -782,8 +787,7 @@ async def update_graph_partial(
             get_logic_manager().update_cached_graph_name(graph_id, name)
         except Exception:
             logger.exception("Failed to update cached graph name for graph %s", graph_id)
-    row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
-    return _row_to_out(row)
+    return _row_to_out(persisted_row)
 
 
 @router.delete("/graphs/{graph_id}", status_code=status.HTTP_204_NO_CONTENT)

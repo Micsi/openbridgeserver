@@ -762,20 +762,8 @@ def test_row_to_node_converts_row():
 
 @pytest.mark.asyncio
 async def test_get_visu_tree_empty():
-    class _FakeCursor:
-        async def fetchall(self):
-            return []
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            pass
-
-    conn = MagicMock()
-    conn.execute = MagicMock(return_value=_FakeCursor())
     db = MagicMock()
-    db.conn = conn
+    db.fetchall = AsyncMock(return_value=[])
     result = await get_tree(db=db)
     assert result == []
 
@@ -783,24 +771,9 @@ async def test_get_visu_tree_empty():
 @pytest.mark.asyncio
 async def test_list_nodes_returns_nodes():
     row = _make_node_row(type="PAGE", label="Home")
-
-    class _FakeCursor:
-        async def fetchone(self):
-            return row
-
-        async def fetchall(self):
-            return [row]
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            pass
-
-    conn = MagicMock()
-    conn.execute = MagicMock(return_value=_FakeCursor())
     db = MagicMock()
-    db.conn = conn
+    db.fetchone = AsyncMock(return_value=None)
+    db.fetchall = AsyncMock(return_value=[row])
     result = await get_children(node_id="root", db=db)
     assert len(result) >= 0  # just verify it runs
 
@@ -938,21 +911,8 @@ from obs.api.v1.visu import _check_user_access, _get_node_or_404
 @pytest.mark.asyncio
 async def test_get_node_or_404_not_found():
     """_get_node_or_404 raises 404 when node doesn't exist."""
-
-    class _FakeCursor:
-        async def fetchone(self):
-            return None
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            pass
-
-    conn = MagicMock()
-    conn.execute = MagicMock(return_value=_FakeCursor())
     db = MagicMock()
-    db.conn = conn
+    db.fetchone = AsyncMock(return_value=None)
     with pytest.raises(HTTPException) as exc_info:
         await _get_node_or_404(db, "nonexistent")
     assert exc_info.value.status_code == 404
@@ -1253,20 +1213,8 @@ async def test_get_breadcrumb_empty():
     """get_breadcrumb returns empty list for non-existent node."""
     from obs.api.v1.visu import get_breadcrumb
 
-    class _FakeCursor:
-        async def fetchone(self):
-            return None
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            pass
-
-    conn = MagicMock()
-    conn.execute = MagicMock(return_value=_FakeCursor())
     db = MagicMock()
-    db.conn = conn
+    db.fetchone = AsyncMock(return_value=None)
     result = await get_breadcrumb(node_id="nonexistent", db=db)
     assert result == []
 
@@ -1275,21 +1223,8 @@ async def test_get_breadcrumb_empty():
 async def test_get_node_found():
     """_get_node_or_404 returns node when found."""
     node_row = _make_node_row(type="PAGE", name="Found")
-
-    class _FakeCursor:
-        async def fetchone(self):
-            return node_row
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            pass
-
-    conn = MagicMock()
-    conn.execute = MagicMock(return_value=_FakeCursor())
     db = MagicMock()
-    db.conn = conn
+    db.fetchone = AsyncMock(return_value=node_row)
     result = await _get_node_or_404(db, "some-id")
     assert result.name == "Found"
 
@@ -1968,7 +1903,6 @@ async def test_set_node_users_empty():
     """set_node_users clears all users for a node."""
     node_row = _make_node_row(id="n1", type="PAGE", name="Page")
     db = _make_visu_db(row=node_row)
-    db.fetchone = AsyncMock(return_value=None)  # users don't exist
     db.fetchall = AsyncMock(return_value=[])
 
     body = VisuNodeUsersUpdate(usernames=[])
@@ -2035,7 +1969,8 @@ async def test_import_nodes_success():
 async def test_export_node_not_found():
     """export_node raises 404 when node not found."""
     db = _make_visu_db(row=None)
-    db.conn.execute.return_value = _DualCursor(row=None)
+    db.fetchone = AsyncMock(return_value=None)
+    db.fetchall = AsyncMock(return_value=[])
     with pytest.raises(HTTPException) as exc_info:
         await export_node(node_id="nonexistent", db=db, _user="admin")
     assert exc_info.value.status_code == 404
@@ -2118,7 +2053,7 @@ async def test_copy_node_success():
 async def test_move_node_not_found():
     """move_node raises 404 when source not found."""
     db = _make_visu_db(row=None)
-    db.conn.execute.return_value = _DualCursor(row=None)
+    db.fetchone = AsyncMock(return_value=None)
     body = MoveNodeRequest(target_parent_id=None, node_order=0)
     with pytest.raises(HTTPException) as exc_info:
         await move_node(node_id="nonexistent", body=body, db=db, _user="admin")

@@ -141,6 +141,29 @@ describe('Stufenschalter widget', () => {
     await flushPromises()
   })
 
+  it('queues consecutive sequence clicks from the optimistic step', async () => {
+    const firstWrite = deferredWrite()
+    writeMock
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockResolvedValueOnce(undefined)
+    mountWidget({ steps: baseOptions() }, 0)
+
+    await wrapper!.trigger('click')
+    await wrapper!.trigger('click')
+
+    const labelAfterClicks = wrapper!.get('[data-testid="stufenschalter-label"]').text()
+    expect(writeMock).toHaveBeenCalledTimes(1)
+
+    firstWrite.resolve()
+    await flushPromises()
+
+    expect(labelAfterClicks).toBe('Komfort')
+    expect(writeMock).toHaveBeenCalledTimes(2)
+    expect(writeMock).toHaveBeenNthCalledWith(1, 'dp-1', 1)
+    expect(writeMock).toHaveBeenNthCalledWith(2, 'dp-1', 2)
+    expect(wrapper!.get('[data-testid="stufenschalter-label"]').text()).toBe('Komfort')
+  })
+
   it('does not restore stale optimistic sequence state after a live datapoint update', async () => {
     const write = deferredWrite()
     writeMock.mockReturnValueOnce(write.promise)

@@ -1207,26 +1207,36 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
 
 
 class _LoopReusableLock:
-    """An asyncio lock that may be reused by sequential event loops."""
+    """Keep asyncio lock ownership isolated per event loop.
+
+    Production uses one loop, while integration fixtures may reuse a Database
+    from several sequential loops. Keeping the concrete asyncio.Lock per loop
+    prevents an orphaned/stopped loop from replacing or blocking another
+    loop's lock, and lets each loop release exactly the lock it acquired.
+    """
 
     def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+
+    def _current_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._locks.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[loop] = lock
+        return lock
 
     async def acquire(self) -> bool:
-        loop = asyncio.get_running_loop()
-        if self._loop is not loop:
-            if self._lock.locked():
-                raise RuntimeError("Database lock is still owned by another event loop")
-            self._lock = asyncio.Lock()
-            self._loop = loop
-        return await self._lock.acquire()
+        return await self._current_lock().acquire()
 
     def release(self) -> None:
-        self._lock.release()
+        self._current_lock().release()
 
     def locked(self) -> bool:
-        return self._lock.locked()
+        try:
+            return self._current_lock().locked()
+        except RuntimeError:
+            return any(lock.locked() for lock in self._locks.values())
 
     async def __aenter__(self) -> _LoopReusableLock:
         await self.acquire()
@@ -1314,9 +1324,11 @@ class Database:
         # disconnect from returning while a private transaction still owns the
         # old file.
         self._transaction_lifecycle_lock = _LoopReusableLock()
-        # SQLite shared-cache memory databases return SQLITE_LOCKED immediately
-        # instead of honoring busy_timeout. Serialize their ordinary operations
-        # with private transactions so callers retain normal wait semantics.
+        # Serialize shared-connection operations with private transactions. For
+        # shared-cache memory databases this avoids immediate SQLITE_LOCKED errors;
+        # for WAL files it prevents a shared reader snapshot from becoming stale
+        # when a private writer commits (SQLITE_BUSY_SNAPSHOT on the next shared
+        # write). The historical attribute name is kept for test compatibility.
         self._memory_operation_lock = _LoopReusableLock()
 
     # ------------------------------------------------------------------
@@ -1579,10 +1591,6 @@ class Database:
 
     @asynccontextmanager
     async def _isolated_operation(self) -> AsyncIterator[None]:
-        if not self._is_memory:
-            yield
-            return
-
         while True:
             # Do not retain the lock while waiting: the existing ordinary
             # transaction may need another helper call before it can commit.
@@ -1600,10 +1608,10 @@ class Database:
 
     @asynccontextmanager
     async def _ordinary_operation(self) -> AsyncIterator[None]:
-        # Task-local transactions already hold the memory isolation lock for
+        # Task-local transactions already hold the operation isolation lock for
         # their whole lifetime. Re-entering it from fetchone()/fetchall() would
         # deadlock because asyncio locks are deliberately not re-entrant.
-        if self.in_transaction or not self._is_memory:
+        if self.in_transaction:
             yield
         else:
             async with self._memory_operation_lock:

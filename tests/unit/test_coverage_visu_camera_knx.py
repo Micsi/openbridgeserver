@@ -618,8 +618,7 @@ class TestResolveAccess:
     @pytest.mark.asyncio
     async def test_public_fallback_when_no_rows(self):
         db = MagicMock()
-        cursor = _FakeCursor(row=None)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=None)
         result = await _resolve_access(db, "node-1")
         assert result == "public"
 
@@ -627,8 +626,7 @@ class TestResolveAccess:
     async def test_returns_explicit_access(self):
         row = _Row({"access_mode": "readonly", "parent_id": None})
         db = MagicMock()
-        cursor = _FakeCursor(row=row)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=row)
         result = await _resolve_access(db, "node-1")
         assert result == "readonly"
 
@@ -638,13 +636,8 @@ class TestResolveAccess:
         child_row = _Row({"access_mode": None, "parent_id": "parent-1"})
         parent_row = _Row({"access_mode": "user", "parent_id": None})
 
-        cursors = iter([_FakeCursor(row=child_row), _FakeCursor(row=parent_row)])
-
-        def mock_execute(query, params=()):
-            return next(cursors)
-
         db = MagicMock()
-        db.conn.execute = MagicMock(side_effect=mock_execute)
+        db.fetchone = AsyncMock(side_effect=[child_row, parent_row])
         result = await _resolve_access(db, "child-node")
         assert result == "user"
 
@@ -653,8 +646,7 @@ class TestResolveAccessWithNode:
     @pytest.mark.asyncio
     async def test_returns_public_none_when_no_rows(self):
         db = MagicMock()
-        cursor = _FakeCursor(row=None)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=None)
         access, node_id = await _resolve_access_with_node(db, "node-1")
         assert access == "public"
         assert node_id is None
@@ -663,8 +655,7 @@ class TestResolveAccessWithNode:
     async def test_returns_defining_node_id(self):
         row = _Row({"access_mode": "protected", "parent_id": None})
         db = MagicMock()
-        cursor = _FakeCursor(row=row)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=row)
         access, defining_id = await _resolve_access_with_node(db, "node-1")
         assert access == "protected"
         assert defining_id == "node-1"
@@ -682,8 +673,7 @@ class TestGetNodeOr404:
     @pytest.mark.asyncio
     async def test_raises_404_when_not_found(self):
         db = MagicMock()
-        cursor = _FakeCursor(row=None)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=None)
         with pytest.raises(HTTPException) as exc:
             await _get_node_or_404(db, "missing-id")
         assert exc.value.status_code == 404
@@ -705,8 +695,7 @@ class TestGetNodeOr404:
             }
         )
         db = MagicMock()
-        cursor = _FakeCursor(row=row)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=row)
         node = await _get_node_or_404(db, "node-1")
         assert node.id == "node-1"
         assert node.name == "Root"
@@ -724,8 +713,7 @@ class TestGetTree:
     @pytest.mark.asyncio
     async def test_empty_tree(self):
         db = MagicMock()
-        cursor = _FakeCursor(rows=[])
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchall = AsyncMock(return_value=[])
         result = await get_tree(db=db)
         assert result == []
 
@@ -749,8 +737,8 @@ class TestGetTree:
             for i in range(3)
         ]
         db = MagicMock()
-        cursor = _FakeCursor(rows=rows)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=None)
+        db.fetchall = AsyncMock(return_value=rows)
         result = await get_tree(db=db)
         assert len(result) == 3
 
@@ -767,8 +755,8 @@ class TestGetChildren:
     @pytest.mark.asyncio
     async def test_empty_children(self):
         db = MagicMock()
-        cursor = _FakeCursor(rows=[])
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=None)
+        db.fetchall = AsyncMock(return_value=[])
         result = await get_children(node_id="node-1", db=db)
         assert result == []
 
@@ -791,8 +779,8 @@ class TestGetChildren:
             )
         ]
         db = MagicMock()
-        cursor = _FakeCursor(rows=rows)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=None)
+        db.fetchall = AsyncMock(return_value=rows)
         result = await get_children(node_id="parent-1", db=db)
         assert len(result) == 1
         assert result[0].id == "child-1"
@@ -802,8 +790,7 @@ class TestGetBreadcrumb:
     @pytest.mark.asyncio
     async def test_empty_when_node_missing(self):
         db = MagicMock()
-        cursor = _FakeCursor(row=None)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=None)
         result = await get_breadcrumb(node_id="missing", db=db)
         assert result == []
 
@@ -824,8 +811,7 @@ class TestGetBreadcrumb:
             }
         )
         db = MagicMock()
-        cursor = _FakeCursor(row=row)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=row)
         result = await get_breadcrumb(node_id="node-1", db=db)
         assert len(result) == 1
         assert result[0].id == "node-1"
@@ -875,8 +861,7 @@ class TestGetPage:
             }
         )
         db = MagicMock()
-        cursor = _FakeCursor(row=location_row)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=location_row)
         request = MagicMock()
         request.headers = {}
         with pytest.raises(HTTPException) as exc:
@@ -887,8 +872,7 @@ class TestGetPage:
     async def test_public_page_accessible_without_auth(self):
         row = self._make_page_node_row(access="public")
         db = MagicMock()
-        cursor = _FakeCursor(row=row)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=row)
         request = MagicMock()
         request.headers = {}
         pc = await get_page(node_id="page-1", request=request, db=db, user=None)
@@ -898,8 +882,7 @@ class TestGetPage:
     async def test_user_page_without_auth_raises_401(self):
         row = self._make_page_node_row(access="user")
         db = MagicMock()
-        cursor = _FakeCursor(row=row)
-        db.conn.execute = MagicMock(return_value=cursor)
+        db.fetchone = AsyncMock(return_value=row)
         request = MagicMock()
         request.headers = {}
         with pytest.raises(HTTPException) as exc:

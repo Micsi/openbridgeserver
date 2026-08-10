@@ -113,14 +113,13 @@ async def _resolve_page_access_with_node(db: Database, node_id: str) -> tuple[st
     """Return the effective access level and the node that defines it."""
     current_id: str | None = node_id
     while current_id:
-        async with db.conn.execute(
+        row = await db.fetchone(
             """SELECT vn.parent_id, avp.access_mode
                FROM visu_nodes AS vn
                LEFT JOIN authz_visu_page_policies AS avp ON avp.node_id = vn.id
                WHERE vn.id = ?""",
             (current_id,),
-        ) as cur:
-            row = await cur.fetchone()
+        )
         if not row:
             return "private", None
         if row["access_mode"] is not None:
