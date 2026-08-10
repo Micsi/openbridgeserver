@@ -255,13 +255,16 @@ this root file, this root file wins.
 
 ### Re-review discipline
 
-- Bind every review to the publicly fetchable GitHub base and PR HEAD SHAs captured when the review
-  starts. If the local checkout uses a synthetic commit, report it separately; reproduction commands
-  must use the public SHAs or include the complete required patch.
-- Compute the effective-diff fingerprint from the exact NUL-delimited raw tree delta below, with no
-  further normalization. Set `BASE_SHA` to GitHub's captured base SHA and `HEAD_SHA` to the captured
-  `refs/pull/<number>/head` SHA. Always retain both inputs, `git --version`, and the SHA-256 output in
-  internal review state for the frozen HEAD:
+- Bind every GitHub PR review to the publicly fetchable base and `refs/pull/<number>/head` SHAs
+  captured when the review starts. For a non-PR `--commit` or `--base` review, bind instead to the
+  explicitly requested or resolved comparison commit and reviewed commit. If uncommitted changes or
+  a synthetic commit cannot be represented by those commits, report that separately and include the
+  complete required patch with every reproduction command.
+- For every commit-backed review, compute the effective-diff fingerprint from the exact NUL-delimited
+  raw tree delta below, with no further normalization. For a PR, set `BASE_SHA` and `HEAD_SHA` to the
+  captured public GitHub SHAs. For a non-PR commit/base review, set them to the resolved comparison and
+  reviewed commit SHAs. Always retain the review mode, both inputs, `git --version`, and the SHA-256
+  output in internal review state for the frozen target:
 
   ```bash
   set -euo pipefail
