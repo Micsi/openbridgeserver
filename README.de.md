@@ -1316,7 +1316,7 @@ ls -l /dev/onewire-busmaster /dev/onewire-pbm
 
 **3. Passthrough auf den stabilen Pfad umstellen**
 
-- **Proxmox-LXC** (`/etc/pve/lxc/<CTID>.conf`) — beide Zeilen sind nötig, der Mount-Eintrag allein reicht nicht (siehe Abschnitt „owserver (1-Wire) in the LXC template" in AGENTS.MD):
+- **Proxmox-LXC** (`/etc/pve/lxc/<CTID>.conf`) — beide Zeilen sind nötig, der Mount-Eintrag allein reicht nicht (siehe `docs/AGENT_REFERENCE.md`, Abschnitt „owserver (1-Wire) in the LXC template"):
   ```
   lxc.mount.entry: /dev/onewire-busmaster dev/onewire-busmaster none bind,optional,create=file
   lxc.cgroup2.devices.allow: c 189:* rwm

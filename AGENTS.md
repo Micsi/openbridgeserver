@@ -10,102 +10,22 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Project Overview
 
-**open bridge server** is an open-source multiprotocol building automation server (MIT-licensed replacement for the proprietary Timberwolf Server). It bridges KNX, Modbus RTU/TCP, 1-Wire, MQTT, SNMP, Home Assistant, ioBroker, Anwesenheitssimulation (presence simulation), and Zeitschaltuhr into a unified system with a FastAPI REST/WebSocket API and a Vue-based admin GUI.
+**open bridge server** is an open-source multiprotocol building automation server (MIT-licensed
+replacement for the proprietary Timberwolf Server). It bridges KNX, Modbus RTU/TCP, 1-Wire,
+MQTT, SNMP, Home Assistant, ioBroker, presence simulation, and scheduling into a unified system
+with a FastAPI REST/WebSocket API and Vue-based admin and visualisation frontends.
 
 ## Repository Layout
 
-Two top-level directories have distinct, non-overlapping purposes — keep them that way (see issue #877):
+Two top-level directories have distinct, non-overlapping purposes — keep them that way:
 
 | Directory | Audience | What belongs here |
 |---|---|---|
-| `tools/` | Developers, CI, release pipeline | Dev tooling only — linting, test helpers, LXC builder, worktree helpers, venv resolver, i18n guards, coverage summary, `build-local.sh`. Nothing in `tools/` is installed on a running OBS host. |
-| `scripts/` | Running OBS host | Deployed runtime scripts — every file that gets installed onto a production or LXC host lives here. Currently: `obs-admin` and `obs-update`. |
+| `tools/` | Developers, CI, release pipeline | Dev tooling only. Nothing here is installed on a running OBS host. |
+| `scripts/` | Running OBS host | Deployed runtime scripts installed onto a production or LXC host. |
 
-**Rule of thumb:** if a file is only needed to build, test, or check the project, it goes in `tools/`. If it ends up on the host after installation, it goes in `scripts/`. Never mix the two.
-
-## Code Review Rules
-
-### Consolidated review
-
-- Review the complete effective pull-request diff at one frozen public GitHub PR HEAD.
-- Limit reportable findings to defects introduced or materially worsened by that effective diff.
-  Inspect unchanged context only to understand the changed code's behavior; do not report unrelated
-  pre-existing defects from elsewhere in a touched or renamed file.
-- A case-only rename, file move, mode change, symlink-target update, formatting-only change, or line
-  movement does not make unchanged file contents part of the review scope.
-- Do not post findings incrementally. Run repeated internal review passes, combine and deduplicate
-  their results, and post one consolidated review.
-- Continue until two consecutive complete passes on that same HEAD produce no new findings. If
-  that cannot be completed, report review coverage as partial and list every deferred surface.
-
-### Reproduction evidence
-
-- The consolidated review has two reportable classes: `Confirmed findings` and `Blocked candidates`.
-  Put an item under confirmed findings only when it is `reproduced`, has a demonstrated reachable
-  execution or use path, and meets the bar for an actionable defect; only confirmed findings carry
-  a defect severity.
-- A meaningful reproducer must exercise an actual supported entry point, caller, request or API route,
-  event, command, configuration consumer, or documented workflow through the affected code to the
-  observed failure. A suspicious source pattern, isolated function invocation that production cannot
-  reach, or script that merely asserts a hypothetical condition is not evidence of a defect.
-- Use `not_reproduced` only when every required prerequisite was available, an adequate reproducer
-  ran to completion and the claimed behavior did not occur, or no reachable path from a supported
-  entry point to the claimed behavior could be demonstrated. Exclude such candidates from the
-  published review and retain them only in internal deduplication state for the reviewed HEAD.
-- Use `blocked` only when reproduction could not complete because a required prerequisite such as
-  credentials, hardware, a service, data, or permission was unavailable. Keep every blocked candidate
-  visible in the consolidated review, but do not present it as confirmed or count it as a finding.
-  Failure to identify a reachable path is `not_reproduced`, not `blocked`.
-- When the review transport supports a summary body, publish confirmed findings and blocked candidates
-  in separate sections. When it accepts only a `findings` array, use that array as a transport envelope
-  for blocked candidates: place `[BLOCKED]` immediately after the transport's required priority prefix
-  (for example, `[P3] [BLOCKED] ...`), use the lowest supported priority only as a schema placeholder,
-  and state explicitly that the entry is not a confirmed finding and the priority is not a severity.
-- Every published finding or blocked candidate must include executable reproduction code, the exact
-  command, expected and observed behavior, exit status, validation logs, and its status.
-- Every confirmed finding must also demonstrate the causal link to the effective diff. When practical,
-  run the same reproducer against the captured base and head and show that the failure is absent at the
-  base and present at the head; otherwise explain why that comparison cannot run and prove the causal
-  link another way.
-- A blocked candidate must include the attempted reproducer and exact blocker. Never present it as
-  confirmed without successful reproduction.
-- Every security item must additionally state the attacker capabilities, crossed trust boundary,
-  and affected asset. A `reproduced` security finding must include executable exploit or proof-of-
-  concept code that demonstrates the claimed impact. A blocked security candidate must instead
-  include the attempted proof of concept, missing prerequisite, and potential impact; label it
-  unconfirmed and do not claim demonstrated exploitability.
-
-### Re-review discipline
-
-- Bind every review to the publicly fetchable GitHub base and PR HEAD SHAs captured when the review
-  starts. If the local checkout uses a synthetic commit, report it separately; reproduction commands
-  must use the public SHAs or include the complete required patch.
-- Compute the effective-diff fingerprint from the exact NUL-delimited raw tree delta below, with no
-  further normalization. Set `BASE_SHA` to GitHub's captured base SHA and `HEAD_SHA` to the captured
-  `refs/pull/<number>/head` SHA. Always retain both inputs, `git --version`, and the SHA-256 output in
-  internal review state for the frozen HEAD:
-
-  ```bash
-  set -euo pipefail
-  git cat-file -e "${BASE_SHA}^{commit}"
-  git cat-file -e "${HEAD_SHA}^{commit}"
-  MERGE_BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
-  git diff-tree --no-commit-id --raw -r -z --no-abbrev --no-renames "$MERGE_BASE" "$HEAD_SHA" \
-    | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
-  ```
-
-- Publish the fingerprint metadata in the consolidated summary when that surface exists. For a
-  `findings`-only transport, include it in every emitted confirmed finding or blocked-candidate body.
-  If the array is empty, emit no synthetic metadata finding; keep the metadata only in internal state.
-- Re-review the complete effective pull-request diff, but deduplicate against existing findings by path,
-  violated invariant, affected data or control flow, and observed behavior.
-- Carry earlier findings and their dispositions into a separate prior-finding state. Keep the
-  existing thread authoritative; do not post a duplicate or count it as a new current finding.
-- Honor `will not fix`, `later`, and `follow-up` dispositions. Reopen the existing thread, without
-  posting a duplicate, when a claimed fix is incomplete or ineffective and the defect still
-  reproduces, when a fix regressed, or when materially new evidence changes the invariant, affected
-  flow, or observed behavior.
-- A base-branch merge or line-number change does not make an existing finding new.
+If a file is only needed to build, test, or check the project, it goes in `tools/`. If it ends up
+on the host after installation, it goes in `scripts/`.
 
 ## Common Commands
 
@@ -165,9 +85,12 @@ Typen) Ende-zu-Ende — Schwächen, die Vitest-Mocks verdecken können, fallen e
 
 ```bash
 tools/with-venv ./tools/lint.sh --check
-cd gui && npm run build     # validiert reale Abhängigkeiten/Imports, was Vitest nicht tut
-cd gui && npm run test
-cd gui && npm run test:coverage
+(
+  cd gui
+  npm run build          # validiert reale Abhängigkeiten/Imports, was Vitest nicht tut
+  npm run test
+  npm run test:coverage
+)
 # bei Backend-Änderungen zusätzlich:
 tools/with-venv pytest tests/unit tests/adapters tests/contracts  # ohne Docker
 tools/with-venv pytest tests/integration                          # mit Docker
@@ -240,7 +163,7 @@ tools/with-venv pytest tests/integration --cov=obs --cov-append --cov-report=ter
 
 Wenn neue Zeilen im Report unter „Missing" auftauchen: Tests ergänzen, nicht pushen.
 
-- **Vor jedem Push mit GUI-Änderungen** ebenso `cd gui && npm run test:coverage` laufen lassen.
+- **Vor jedem Push mit GUI-Änderungen** ebenso `(cd gui && npm run test:coverage)` laufen lassen.
   Für Branch-Detail auf einzelne Zeilen (nicht nur die aggregierte %-Spalte) die generierte
   `gui/coverage/lcov.info` auswerten — `BRDA:<line>,<block>,<branch>,<hits>`-Zeilen mit `hits == 0`
   markieren einen ungetesteten Zweig genau dieser Zeile:
@@ -256,487 +179,108 @@ awk '/SF:.*<Dateipfad>$/{f=1} f && /^BRDA:/{print} f && /end_of_record/{f=0}' gu
 
 Gilt für Haupt-Sessions **und** für Subagents — bitte explizit in den Subagent-Prompt schreiben.
 
-## Local Development Setup
-
-### Prerequisites
-- Python 3.13+, Docker Desktop, Node.js 24 (use nvm; `.nvmrc` pins v24)
-
-### One-time setup
-
-```bash
-# 1. Create local venv
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt -r requirements_dev.txt
-
-# 2. Config files
-cp config.example.yaml config.yaml   # then edit (see below)
-cp .env.example .env                  # set OBS_MQTT_PASSWORD
-
-# 3. Frontend deps
-cd gui && npm install
-```
-
-### Python venv resolver for agents and worktrees
-
-Local checks must use the project venv through `tools/with-venv`:
-
-```bash
-tools/with-venv python -m pytest tests/unit
-tools/with-venv ./tools/lint.sh --check
-```
-
-The resolver checks `OBS_VENV`, then the current worktree's `.venv`, then the main Git worktree's
-`.venv`. If no usable venv exists, it exits with a hard error and explicitly forbids installing
-dependencies into the worktree.
-
-For linked worktrees, prefer a local `.venv` symlink to the main worktree venv:
-
-```bash
-tools/link-worktree-venvs
-```
-
-Do not run `pip install ...` in issue or PR worktrees. Install or update Python dependencies only
-in the shared project venv, then let worktrees resolve that environment through `.venv` or
-`OBS_VENV`.
-
-### GUI Node dependencies for agents and worktrees
-
-Do not run `npm install` or `npm ci` in issue or PR worktrees. GUI dependencies are shared from the
-main worktree through a local `gui/node_modules` symlink:
-
-```bash
-tools/link-worktree-node-modules
-```
-
-The pre-push hook runs this linker automatically before GUI Vitest gates if `gui/node_modules` is
-missing. If the main worktree dependencies are missing or stale, update them in the main worktree,
-not in the issue/PR worktree.
-
-### config.yaml — required local overrides
-
-The defaults assume a Docker deployment (`/data/obs.db`, `/mosquitto/passwd/passwd`).
-For local dev, override these keys:
-
-```yaml
-mqtt:
-  username: obs
-  password: <value of OBS_MQTT_PASSWORD in .env>
-
-database:
-  path: <absolute-project-path>/data/obs.db
-
-mosquitto:
-  passwd_file: <absolute-project-path>/data/mosquitto/passwd
-  reload_pid: null
-  reload_command: null
-  service_username: obs
-  service_password: <same as mqtt.password>
-```
-
-**Important:** `mqtt.password` and `mosquitto.service_password` must match `OBS_MQTT_PASSWORD` in `.env`,
-which is the password the Dockerized Mosquitto is initialized with. Mismatch → `MqttConnectError: Not authorized`.
-
-### PyCharm run configurations
-
-Shared configs live in `.run/` and are loaded automatically by PyCharm:
-
-| Config | Description |
-|---|---|
-| **OBS Mosquitto (Docker)** | Starts MQTT broker via `docker compose up mosquitto` |
-| **OBS Backend** | Runs `python -m obs` with project venv |
-| **OBS GUI (Admin)** | Runs `npm run dev` in `gui/`, serves on `localhost:5173` |
-| **OBS GUI (Visu)** | Runs `npm run dev` in `frontend/`, serves on `localhost:5174` |
-| **OBS Full Dev Stack** | Compound — launches all four at once |
-
-### Dev URLs
-
-| Service | URL |
-|---|---|
-| Admin GUI | http://localhost:5173 |
-| API docs (Swagger) | http://localhost:8080/docs |
-| MQTT | localhost:1883 |
-
-Default login: `admin` / `admin`
-
-### GUI architecture
-
-- `gui/` — Admin GUI (Vue 3 + Vite), dev server on port 5173, built to `gui_dist/` (served by FastAPI at `/`)
-- `frontend/` — Visu SPA (Vue 3 + TypeScript), built to `frontend_dist/` (served by FastAPI at `/visu`)
-- Both proxy `/api` to `localhost:8080` during dev via `vite.config`
-
-### Internationalisation (i18n)
-
-Both frontends use **vue-i18n v9** (Composition API mode, `legacy: false`).
-
-| File | Purpose |
-|---|---|
-| `gui/src/i18n.js` | i18n instance; locale auto-detected from `localStorage` → browser language; `fallbackLocale: 'en'` |
-| `gui/src/locales/en.json` | English source strings (authoritative — Weblate source language; must be complete) |
-| `gui/src/locales/de.json` | German translation |
-| `gui/src/components/ui/LocaleSwitcher.vue` | Dropdown wired into Settings → Appearance |
-| `frontend/src/i18n.ts` | Same setup for the Visu SPA (TypeScript) |
-| `frontend/src/locales/{de,en}.json` | Visu locale files |
-| `.weblate` | Weblate CLI (`wlc`) config for community translations |
-
-#### Rules — every new feature must follow these
-
-**No hardcoded user-facing strings.** Any text visible to the user — labels, button text, placeholders, tooltips, error messages, badge text, empty-state messages — must go through `$t()` / `t()`. This includes strings returned from utility functions (`utils/`, composables) that end up rendered in a template.
-
-**`en.json` is the source of truth.** English is the Weblate source language (volunteers translate *from* English) and is the i18n `fallbackLocale`, so it must be complete. Always add new keys to both `en.json` (English, authoritative) and `de.json` (German) in the same commit. Use Python (`json.dumps(..., ensure_ascii=False)`) when writing locale files programmatically — never shell heredocs, which strip non-ASCII characters.
-
-#### Key namespace conventions
-
-Admin GUI (`gui/src/locales/`):
-
-| Namespace | Used for |
-|---|---|
-| `nav.*` | Sidebar navigation labels; page titles in TopBar |
-| `topbar.*` | TopBar actions (e.g. `topbar.logout`) |
-| `sidebar.*` | Connection status labels |
-| `login.*` | Login view |
-| `dashboard.*` | Dashboard view (stats, adapter status, live values, warnings) |
-| `datapoints.*` | Data points list + detail view |
-| `adapters.*` | Adapter instances view; `adapters.status.*` for badge labels |
-| `history.*` | History view |
-| `ringbuffer.*` | Monitor / ring-buffer view |
-| `logs.*` | Log view |
-| `logic.*` | Logic engine view |
-| `settings.*` | Settings view |
-| `common.*` | Shared across views (save, cancel, delete, error, warning, …) |
-| `hierarchy.*` | Hierarchy manager |
-
-Visu SPA (`frontend/src/locales/`):
-
-| Namespace | Used for |
-|---|---|
-| `login.*`, `pin.*` | Auth views |
-| `common.*` | Shared UI strings |
-| `widgets.common.*` | Strings shared across widget configs |
-| `widgets.<name>.*` | Per-widget config strings |
-
-#### Usage patterns
-
-**Template-only** — no script import needed when `t()` is not called from JS:
-```vue
-<label>{{ $t('datapoints.form.name') }}</label>
-<input :placeholder="$t('datapoints.searchPlaceholder')" />
-<button :title="$t('common.delete')">…</button>
-```
-
-**Script usage** — import `useI18n` only when `t()` is called in `<script setup>`:
-```js
-import { useI18n } from 'vue-i18n'
-const { t } = useI18n()
-
-// computed properties, functions, error messages:
-const label = computed(() => t('adapters.status.connected'))
-const msg = t('ringbuffer.queryFailed')
-```
-
-Do **not** add `const { t } = useI18n()` if the component only uses `$t()` in its template — TypeScript will flag `t` as declared but never used.
-
-**Parametrized strings** — use named placeholders in the JSON value, pass an object as the second argument:
-```json
-{ "bindings": "{n} Verknüpfungen", "areasCount": "{n} Bereiche" }
-```
-```vue
-{{ $t('dashboard.adapterStatus.bindings', { n: a.bindings }) }}
-{{ $t('widgets.grundriss.areasCount', { n: cfg.areas.length }) }}
-```
-
-**Reactive option arrays** — when an array of `{ label, value }` objects is used in a `v-for` select/radio, it must be `computed` so labels update when the locale changes:
-```js
-// Wrong — labels are frozen at component creation time
-const MODES = [{ value: 'a', label: t('key.a') }, …]
-
-// Correct — labels recompute on locale change
-const MODES = computed(() => [{ value: 'a', label: t('key.a') }, …])
-```
-
-**Pure utility functions** (`utils/`, plain `.js`/`.ts` files without a Vue setup context) cannot call `t()`. Instead, return locale key strings and translate at the callsite:
-```js
-// utils/adapterStatus.js
-export function adapterStatusLabel(a) {
-  if (!a.running) return 'adapters.status.inactive'
-  if (a.connected) return 'adapters.status.connected'
-  return 'adapters.status.running'
-}
-
-// In the template:
-{{ $t(adapterStatusLabel(a)) }}
-```
-
-#### Checklist for new features
-
-When adding a new view, widget config, or significant UI component:
-
-1. Add all user-facing strings to `gui/src/locales/de.json` **and** `en.json` under the appropriate namespace, in the same commit.
-2. Use `$t('namespace.key')` in templates; `t('namespace.key')` in script (after `const { t } = useI18n()`).
-3. Only add `useI18n()` to a component's script if `t()` is actually called there.
-4. Make option/select arrays `computed` if they contain translated labels.
-5. Pure utility functions must return keys, not translated strings.
-6. Run `npm run build` in `gui/` (and `frontend/` if Visu was touched) — a missing key does not throw at dev time but will surface as `[namespace.key]` in production.
-
-#### Hard-Gate (local + CI)
-
-`./tools/check-i18n-hardcoded-strings.sh` runs two gates on the PR/push diff; both must pass.
-
-**Frontend** (`tools/check_i18n_guard.py`):
-
-1. Changed files under `gui/src` and `frontend/src` with extension `.vue`, `.js`, `.ts` are scanned file-wide for hardcoded user-facing strings outside `$t()` / `t()`.
-2. If locale files changed, `de.json` and `en.json` are compared pairwise (`gui/src/locales/` and `frontend/src/locales/`); missing counterpart keys fail the gate.
-
-Allowlisted technical literals are maintained in `tools/i18n-allowlist.txt`. Keep the list minimal and reviewable.
-
-**Backend adapter strings** (`tools/check_adapter_i18n.py`, issue #779): changed files under `obs/adapters/**` and `obs/api/v1/adapters.py` are AST-scanned — any `_publish_status(...)` / `TestResult(...)` call (and the thin wrappers around them) whose `detail` is a non-empty **string literal** must also pass a stable `code=` / `detail_code=`, and every referenced code must exist in both `en.json` and `de.json`. Dynamic fallbacks (f-strings, variables, `str(exc)`) are allowed without a code.
-
-##### Backend adapter status / schema strings (issue #779)
-
-Adapter status details and config-schema labels are user-facing and must use locale keys, **not** German literals:
-
-- **Status details** — `_publish_status(connected, detail, *, code=..., params=...)` emits a stable `code` (key suffix under `adapters.statusDetail.*`) plus interpolation `params`; the frontend translates it via `adapterStatusDetailText()` in `gui/src/utils/adapterStatus.js`. `detail` stays as the non-localized fallback for genuinely dynamic text. `TestResult` works the same way via `detail_code` / `adapters.testResult.*`.
-- **Schema labels** — `gui/src/components/adapters/SchemaForm.vue` prefers `adapters.schema.<ADAPTER_TYPE>.<field>.{title,description}` over the backend Pydantic `Field(title/description=)`. Add keys for every field of any `SchemaForm`-rendered adapter (KNX & Anwesenheit use custom forms). `<ADAPTER_TYPE>` is the registry type string (e.g. `HOME_ASSISTANT`, `MODBUS_TCP`).
-
-##### `gui/src/utils/hierarchyDepthOptions.js`
-
-This utility builds option labels that mix runtime tree node names with translated structural level names. It accepts an optional `t` function from the caller. Composite labels are assembled from translated parts and runtime data using local variables (not `label:` assignments) to stay clean of the i18n guard ASSIGN_RE scan. Call it from a `computed()` and pass `t` to keep labels reactive on locale changes.
-
-#### E2E tests (Playwright) and locale
-
-The Playwright suite lives in `tests/gui/` and requires a running full stack (backend + both frontends, typically via `docker compose up`). Run with `npx playwright test` from `tests/gui/`.
-
-**Locale requirement:** `tests/gui/playwright.config.ts` sets `locale: 'de'` in the global `use` config. This tells Playwright's Chromium to simulate a German browser (`navigator.language = 'de'`), so `detectLocale()` always picks German and all test assertions against German strings work. Do not remove this setting — without it every test that checks a translated string will fail when run on a machine with an English OS/browser.
-
-#### Adding a new locale
-
-1. Add `src/locales/<lang>.json` (copy `de.json` as a starting point)
-2. Import it in `i18n.js` / `i18n.ts` and add to `messages` + `SUPPORTED_LOCALES`
-3. Run `wlc push gui-admin` to upload source; community translates on Weblate; `wlc pull gui-admin` to pull back
-
-**i18n-guard and non-ASCII language names:** The `label` field in `SUPPORTED_LOCALES` holds the native name of the language (e.g. `Español`, `Français`). These are intentionally hardcoded — `$t()` cannot be used here because the locale has not been bootstrapped yet when `SUPPORTED_LOCALES` is evaluated. The i18n-guard passes pure-ASCII names automatically (e.g. `Italiano`, `Schweizerdeutsch`) via its technical-token check, but **names containing non-ASCII characters** (accented letters, ñ, ç, etc.) must be added to `tools/i18n-allowlist.txt` with a short comment. Do this in the same commit that introduces the new locale.
-
-**Weblate** components are named `gui-admin` (Admin GUI) and `frontend-visu` (Visu SPA) under the `openbridgeserver` project on [hosted.weblate.org](https://hosted.weblate.org/projects/openbridgeserver/). Source language is `de`; file format is `JSON (simple)`. CLI tool: `pip install wlc`; credentials in `~/.config/weblate` or via `WLC_URL` / `WLC_KEY` env vars.
-
-## Architecture
-
-### Startup Sequence (`obs/main.py`)
-
-Services initialize in this fixed order (reverse-order shutdown):
-0. Log buffer (`LogBufferHandler.install`) — attached to root logger before the async startup; broadcasts all log records via WebSocket
-1. SQLite DB + migrations
-2. EventBus (async pub/sub)
-3. MQTT client (connects to Mosquitto)
-4. DataPoint Registry (loads from DB)
-5. RingBuffer
-6. History plugin
-7. WebSocket Manager
-8. WriteRouter (MQTT `dp/{uuid}/set` → adapters; cross-protocol propagation)
-9. Protocol adapters (`@register` decorator triggers self-registration on import)
-10. Logic Engine
-11. Autobackup Scheduler (`init_autobackup_scheduler` from `obs/api/v1/autobackup.py`)
-
-### Core Data Flow
-
-```
-Protocol Adapter → DataValueEvent (EventBus) → [Registry, RingBuffer, History, WebSocket, WriteRouter]
-                                                       ↓
-                                               DEST/BOTH Bindings → other adapters
-```
-
-- **DataPoint**: a named, typed value with a stable UUID. MQTT topic `dp/{uuid}/value`.
-- **AdapterBinding**: connects a DataPoint to a protocol endpoint. `direction` is `SOURCE` (reads), `DEST` (writes), or `BOTH`.
-- **WriteRouter**: when a SOURCE/BOTH binding fires a `DataValueEvent`, the router automatically writes to all DEST/BOTH bindings of the same DataPoint (skipping the originating binding to prevent loops). Also handles `dp/{uuid}/set` MQTT writes from external clients.
-
-### Registry Pattern
-
-All major subsystems use the same singleton pattern:
-- `init_*()` constructs and stores a module-level singleton
-- `get_*()` retrieves it (raises `RuntimeError` if not initialized)
-
-Adapters self-register at import time via `@register` (from `obs/adapters/registry.py`). The adapter import block in `obs/main.py` is therefore the authoritative list of enabled adapters.
-
-### Adding a New Adapter
-
-1. Create `obs/adapters/<name>/adapter.py`
-2. Subclass `AdapterBase`, set `adapter_type`, `config_schema`, `binding_config_schema`
-3. Implement `connect`, `disconnect`, `read`, `write`
-4. Decorate the class with `@register`
-5. Add the import to the adapter block in `obs/main.py`
-
-### Configuration
-
-Priority (highest → lowest): environment variables → `config.yaml` → built-in defaults.
-
-Env var pattern: `OBS_<SECTION>__<KEY>` (double underscore for nesting), e.g.:
-- `OBS_MQTT__HOST=192.168.1.10`
-- `OBS_SECURITY__JWT_SECRET=...`
-- `OBS_DATABASE__PATH=/data/obs.db`
-
-History backend is configured at runtime via the Admin UI (stored in `app_settings` table), not in `config.yaml`.
-
-### Authentication
-
-Dual-auth: JWT Bearer token (`Authorization: Bearer {token}`) and API Key (`X-API-Key: {key}`). Default credentials: `admin` / `admin`.
-
-### Test Structure
-
-| Directory | Scope | External deps |
-|---|---|---|
-| `tests/unit/` | Pure logic (converter, models, DPT registry, etc.) | None |
-| `tests/adapters/` | Adapter unit tests with mocked EventBus | None |
-| `tests/contracts/` | External library API surface contracts (see below) | None |
-| `tests/integration/` | Full FastAPI app + real SQLite + real MQTT | Docker (Mosquitto) |
-
-Integration tests spin up a `eclipse-mosquitto` Docker container on port 18830 automatically via the session-scoped `mosquitto_port` fixture. The `make_binding()` helper in `tests/adapters/conftest.py` creates mock bindings for adapter tests.
-
-#### Contract tests (`tests/contracts/`)
-
-One file per external library. Each test verifies the exact import paths and API surface that OBS uses — constructor parameter names, method signatures, return types. They run without Docker and complete in ~2 seconds.
-
-**Purpose:** catch breaking changes when Renovate/Dependabot bumps a dependency. A library that renames a constructor parameter (e.g. `aiomqtt` 1.x→2.x changed `host=` to `hostname=`) will fail a contract test immediately rather than failing silently at runtime.
-
-| File | Library | Key checks |
-|---|---|---|
-| `test_aiomqtt_contract.py` | `aiomqtt` | `Client(hostname=, port=, username=, password=)`, `publish/subscribe/messages`, `Message` fields |
-| `test_astral_contract.py` | `astral` | `LocationInfo.observer`, `sun()` keys, `SunDirection`, `time_at_elevation()` |
-| `test_croniter_contract.py` | `croniter` | `croniter(expr, now).get_next(datetime)` — exact manager.py pattern |
-| `test_fastapi_contract.py` | `fastapi` | Routing, 422 response shape (`detail` list with `loc`/`msg`), `HTTPException`, `APIRouter` |
-| `test_holidays_contract.py` | `holidays` | `country_holidays()`, `.items()`, date membership, `subdiv` kwarg |
-| `test_jose_contract.py` | `python-jose` | `jwt.encode/decode` roundtrip, `JWTError`, expiry handling |
-| `test_pydantic_contract.py` | `pydantic` | v2 APIs: `model_dump()`, `model_validate()`, `field_validator(mode=)`, `model_config` |
-| `test_pymodbus_contract.py` | `pymodbus` | Import path `from pymodbus.client import Async*`, all read/write method names, `connected` |
-| `test_slowapi_contract.py` | `slowapi` | `Limiter`, `_rate_limit_exceeded_handler`, `RateLimitExceeded` |
-| `test_socketio_contract.py` | `python-socketio` | `AsyncClient`, `@sio.event`, `connect/emit/disconnect` as coroutines |
-| `test_xknx_contract.py` | `xknx` | `Telegram`, `GroupAddress`, `DPTArray/DPTBinary`, APCI types |
-| `test_icalendar_contract.py` | `icalendar` + `recurring_ical_events` | `Calendar.from_ical()`, `component.name`, `component.get()`, `of(cal).between(start, end)` |
-| `test_pysnmp_contract.py` | `pysnmp` | `getCmd/setCmd/nextCmd`, `CommunityData`, `UsmUserData`, `UdpTransportTarget`, `ObjectType/ObjectIdentity`; tries v6 path (`hlapi.v3arch.asyncio`) first, falls back to v5 (`hlapi.asyncio`) |
-
-#### Response shape helpers (`tests/integration/conftest.py`)
-
-`assert_datapoint_shape()`, `assert_datapoint_page_shape()`, `assert_value_out_shape()`, `assert_auth_token_shape()` — call these after any integration test that reads a response body to verify all expected fields are present. Catches silent Pydantic/FastAPI serialization regressions that still return HTTP 200.
-
-#### Dependency version bounds
-
-`requirements.txt` caps all volatile libraries at the next major version (e.g. `pydantic>=2.13.3,<3`, `aiomqtt>=2.5.1,<3`). Renovate PRs are therefore scoped to minor/patch upgrades by default; a deliberate edit is required to cross a major version boundary. Coverage config lives in `.coveragerc`.
-
-### Linting
-
-`ruff` is the sole linter/formatter. Config in `.ruff.toml`: line length 150, target Python 3.13. Run `./tools/lint.sh --check` for the exact same lint path as GitHub CI, or `./tools/lint.sh --fix` for local autofix. Tests have relaxed rules (no `assert` warnings, no type annotations required, no docstrings). Contract tests (`tests/contracts/`) additionally suppress E402 (module-level import not at top of file) because `pytest.importorskip()` must precede the library imports it guards — a standard pytest pattern.
-
-## Release & CI
-
-### Workflows
-
-PR/branch quality workflows:
-
-| Workflow | Purpose |
-|---|---|
-| `.github/workflows/lint.yml` | Ruff lint + format-check via `./tools/lint.sh --check` |
-| `.github/workflows/unittest.yml` | Python test matrix + coverage upload |
-| `.github/workflows/e2e.yml` | Full-stack Playwright E2E |
-| `.github/workflows/i18n-guard.yml` | Hard gate for i18n in changed frontend files + locale parity checks |
-
-GitHub CI enforcement (required for merge gate):
-
-1. Open `Settings` → `Branches` in `abeggled/openbridgeserver`.
-2. Edit the branch protection rule for `main`.
-3. Enable `Require status checks to pass before merging`.
-4. Add `i18n-guard` as a required status check.
-
-Two workflows run on every tag push (`push: tags: '*'`):
-
-| Workflow | Purpose |
-|---|---|
-| `.github/workflows/release.yml` | Creates the GitHub release, builds and pushes the Docker image to GHCR |
-| `.github/workflows/lxc-template.yml` | Builds the Proxmox LXC template and app bundle, uploads both as release assets |
-
-`lxc-template.yml` never creates a release — it only uploads assets to the release that `release.yml` already created. The LXC build takes several minutes, so no race condition exists.
-
-### Versioning
-
-- The version is derived from the **topmost `## ` headline in `RELEASENOTES.md`**, with the RC suffix (e.g. `-RC1`) appended from the git tag when applicable.
-- `obs/version` is committed to the repo as `dev-version` (indicates a local dev environment). Both `release.yml` and `lxc-template.yml` overwrite it with the real version at build time before packaging.
-- `obs/__init__.py` reads `obs/version` at import time to expose `__version__`. Do not hardcode the version there.
-- To start a new release cycle: add a new `## <version>` headline at the top of `RELEASENOTES.md`. No other file needs to change.
-
-### Docker Image Tags
-
-| Release type | Tags applied |
-|---|---|
-| Stable release | `latest`, `<version>`, `<short-git-hash>` |
-| Release candidate | `<version-RC#>`, `<short-git-hash>` |
-
-RCs never receive the `latest` tag.
-
-### LXC Template
-
-- Base OS: **Ubuntu 26.04 LTS (Resolute)** — chosen for native Python 3.14 support
-- The build job runs as a **matrix** (two parallel jobs): `amd64` on `ubuntu-latest`, `arm64` on `ubuntu-24.04-arm` (native runner — no QEMU)
-  - `amd64` uses `archive.ubuntu.com`; `arm64` uses `ports.ubuntu.com/ubuntu-ports` (including security updates)
-- Three release assets are produced:
-  - `openbridgeserver-lxc_<version>_amd64.tar.zst` — full Proxmox CT template (x86-64)
-  - `openbridgeserver-lxc_<version>_arm64.tar.zst` — full Proxmox CT template (ARM64)
-  - `openbridgeserver-app-bundle_<version>.tar.gz` — arch-agnostic app archive (`obs/`, `gui_dist/`, `frontend_dist/`, `requirements.txt`, `obs-update`) used for in-place updates; built once from the amd64 job
-- App installs to `/opt/obs/`, Python venv at `/opt/obs/venv/`, data volume at `/data/`
-- Installed version tracked in `/opt/obs/version` (written by `obs-update` after each install)
-- `obs-update` script at `/usr/local/bin/obs-update` presents an interactive version picker (all RCs + up to two stable releases, sorted semantically). It self-updates on every install by copying the `obs-update` from the extracted bundle.
-
-#### Mosquitto in the LXC template
-
-Mosquitto is installed as a systemd service alongside OBS. Key paths:
-
-| Path | Purpose |
-|---|---|
-| `/etc/mosquitto/mosquitto.conf` | Broker config (no anonymous, MQTT 1883, WebSocket 9001) |
-| `/etc/mosquitto/passwd` | Password file managed by OBS |
-| `/etc/obs.env` | Runtime environment vars including generated MQTT credentials |
-| `/opt/obs/obs-first-boot.sh` | First-boot credential generator |
-
-**First-boot credential setup:** `obs-first-boot.service` is a oneshot unit that runs once before `mosquitto.service` and `obs.service` on the first boot. It generates a 32-character random MQTT password, creates the Mosquitto passwd file for the `obs` service account, and appends all `OBS_MQTT__*` / `OBS_MOSQUITTO__*` / `OBS_SECURITY__*` variables to `/etc/obs.env`. A flag file `/etc/obs-first-boot-done` prevents it from running again on subsequent boots.
-
-OBS reloads Mosquitto after passwd file changes via `OBS_MOSQUITTO__RELOAD_COMMAND=systemctl reload mosquitto`.
-
-#### owserver (1-Wire) in the LXC template — issue #1040
-
-`owserver` (the OWFS 1-Wire bus server the `ONEWIRE` adapter talks to via `pyownet`, see #6) is
-installed alongside Mosquitto but, unlike Mosquitto, is **opt-in**: an idle, unconfigured `owserver`
-wastes resources on the small hosts OBS often runs on, so the packaged `owserver.service` only
-actually starts once an admin has configured a 1-Wire bus master.
-
-| Path | Purpose |
-|---|---|
-| `/etc/systemd/system/owserver.service.d/override.conf` | Drop-in that gates the packaged unit — does not replace its `ExecStart=`, so package upgrades keep working |
-| `scripts/obs-onewire-should-run.sh` | `ExecCondition=` — exits 0 only if `OBS_ONEWIRE__USB_ALL=true` or `OBS_ONEWIRE__PBM_DEVICES` is set in `/etc/obs.env` |
-| `scripts/obs-onewire-configure.sh` | `ExecStartPre=` — (re)generates `/etc/owfs.conf` from those same env vars on every start attempt |
-| `/etc/obs.env` | Same file as the MQTT credentials; `OBS_ONEWIRE__*` lines ship commented out |
-
-Both scripts are shared verbatim with the Docker sidecar image (`tools/docker/owserver.Dockerfile`)
-— one script, two consumers. To enable 1-Wire on an installed LXC: uncomment/add the relevant
-`OBS_ONEWIRE__*` lines in `/etc/obs.env`, then `systemctl restart owserver` (systemd re-evaluates
-`ExecCondition` on every start attempt, so there is no first-boot-only flag file to worry about).
-
-**Env vars:**
-- `OBS_ONEWIRE__USB_ALL=true` → `server: usb = all` (plain USB busmasters, e.g. DS9490)
-- `OBS_ONEWIRE__PBM_DEVICES=/dev/serial/by-id/...` → one `server: pbm = <path>` line per
-  comma-separated entry (ElabNET PBM). Use a stable `/dev/serial/by-id/...` path, not
-  `/dev/ttyUSB0` — the latter can shift across reboots or when other serial devices are attached.
-- `OBS_ONEWIRE__PORT` → optional, defaults to `4304` (owserver's own historical default, matches the
-  `ONEWIRE` adapter's default `port` config field)
-
-**Proxmox host-side USB/serial passthrough** (not automatable from inside the container — hardware
-topology is host-specific): both a `lxc.mount.entry` **and** the matching `lxc.cgroup2.devices.allow`
-cgroup rule are required — the mount alone is not sufficient and this is easy to forget. Confirmed
-against real hardware: a plain USB busmaster needs its `/dev/bus/usb/BBB/DDD` node passed through; the
-ElabNET PBM enumerates as an FTDI serial device and needs its `/dev/serial/by-id/...` path passed
-through (mapped to e.g. `/dev/ttyUSB0` inside the container).
-
-**Docker Compose equivalent:** the `owserver` service in `docker-compose.yml` is gated by a Compose
-profile (`profiles: ["onewire"]`) instead of `ExecCondition`, activated via
-`COMPOSE_PROFILES=onewire`. See the comments in `docker-compose.yml` and `.env.example`.
-
-### Release Notes
-
-`RELEASENOTES_FOOTER.md` contains an invisible HTML comment `<!-- LXC_INSERT -->` that marks where the LXC checksum block is injected by `lxc-template.yml`. Do not remove this marker.
-
-Within each section of a version's changelog (`### Breaking changes`, `### New features`, `### Fixes`, etc.), entries must be sorted alphabetically by their leading component label (e.g. `Admin GUI/Visu:` before `Logic Engine/Admin GUI:`). When adding a new entry, insert it at the alphabetically correct position rather than appending it at the end.
+## Detailed guidance routing (MUST)
+
+The detailed, task-specific instructions live in `docs/AGENT_REFERENCE.md`. Read the relevant
+named sections there before acting; do not assume the root instruction budget contains them:
+
+- Before configuring a development environment or linked worktree, read the applicable parts of
+  `Local Development Setup`. The command, pre-push, and coverage rules remain in this root file.
+- Before changing either frontend or any user-facing text, read `GUI architecture` and the complete
+  `Internationalisation (i18n)` section, including its hard gate and Weblate source-language rule.
+- Before changing backend startup, data flow, adapters, configuration, authentication, tests, or
+  dependencies, read the applicable parts of `Architecture`.
+- Before changing workflows, versioning, images, LXC packaging, runtime scripts, or release notes,
+  read the applicable parts of `Release & CI`.
+
+When more than one category applies, read every applicable section. These referenced instructions
+are mandatory and have the same authority as this file. If a referenced instruction conflicts with
+this root file, this root file wins.
+
+## Code Review Rules
+
+### Consolidated review
+
+- Review the complete effective pull-request diff at one frozen public GitHub PR HEAD.
+- Limit reportable findings to defects introduced or materially worsened by that effective diff.
+  Inspect unchanged context only to understand the changed code's behavior; do not report unrelated
+  pre-existing defects from elsewhere in a touched or renamed file.
+- A case-only rename, file move, mode change, symlink-target update, formatting-only change, or line
+  movement does not make unchanged file contents part of the review scope.
+- Do not post findings incrementally. Run repeated internal review passes, combine and deduplicate
+  their results, and post one consolidated review.
+- Continue until two consecutive complete passes on that same HEAD produce no new findings. If
+  that cannot be completed, report review coverage as partial and list every deferred surface.
+- Publish partial coverage and every deferred surface in the consolidated summary when that surface
+  exists. In a `findings`-only transport, include the same coverage metadata in each emitted item; if
+  the array would otherwise be empty, emit one `[P3] [PARTIAL] Review coverage incomplete` transport
+  envelope. State explicitly that this envelope is neither a confirmed finding nor a severity.
+
+### Reproduction evidence
+
+- The consolidated review has two reportable classes: `Confirmed findings` and `Blocked candidates`.
+  Put an item under confirmed findings only when it is `reproduced`, has a demonstrated reachable
+  execution or use path, and meets the bar for an actionable defect; only confirmed findings carry
+  a defect severity.
+- A meaningful reproducer must exercise an actual supported entry point, caller, request or API route,
+  event, command, configuration consumer, or documented workflow through the affected code to the
+  observed failure. A suspicious source pattern, isolated function invocation that production cannot
+  reach, or script that merely asserts a hypothetical condition is not evidence of a defect.
+- Use `not_reproduced` only when every required prerequisite was available, an adequate reproducer
+  ran to completion and the claimed behavior did not occur, or no reachable path from a supported
+  entry point to the claimed behavior could be demonstrated. Exclude such candidates from the
+  published review and retain them only in internal deduplication state for the reviewed HEAD.
+- Use `blocked` only when reproduction could not complete because a required prerequisite such as
+  credentials, hardware, a service, data, or permission was unavailable. Keep every blocked candidate
+  visible in the consolidated review, but do not present it as confirmed or count it as a finding.
+  Failure to identify a reachable path is `not_reproduced`, not `blocked`.
+- When the review transport supports a summary body, publish confirmed findings and blocked candidates
+  in separate sections. When it accepts only a `findings` array, use that array as a transport envelope
+  for blocked candidates: place `[BLOCKED]` immediately after the transport's required priority prefix
+  (for example, `[P3] [BLOCKED] ...`), use the lowest supported priority only as a schema placeholder,
+  and state explicitly that the entry is not a confirmed finding and the priority is not a severity.
+- Every published finding or blocked candidate must include executable reproduction code, the exact
+  command, expected and observed behavior, exit status, validation logs, and its status.
+- Every confirmed finding must also demonstrate the causal link to the effective diff. When practical,
+  run the same reproducer against the captured base and head and show that the failure is absent at the
+  base and present at the head; otherwise explain why that comparison cannot run and prove the causal
+  link another way.
+- A blocked candidate must include the attempted reproducer and exact blocker. Never present it as
+  confirmed without successful reproduction.
+- Every security item must additionally state the attacker capabilities, crossed trust boundary,
+  and affected asset. A `reproduced` security finding must include executable exploit or proof-of-
+  concept code that demonstrates the claimed impact. A blocked security candidate must instead
+  include the attempted proof of concept, missing prerequisite, and potential impact; label it
+  unconfirmed and do not claim demonstrated exploitability.
+
+### Re-review discipline
+
+- Bind every review to the publicly fetchable GitHub base and PR HEAD SHAs captured when the review
+  starts. If the local checkout uses a synthetic commit, report it separately; reproduction commands
+  must use the public SHAs or include the complete required patch.
+- Compute the effective-diff fingerprint from the exact NUL-delimited raw tree delta below, with no
+  further normalization. Set `BASE_SHA` to GitHub's captured base SHA and `HEAD_SHA` to the captured
+  `refs/pull/<number>/head` SHA. Always retain both inputs, `git --version`, and the SHA-256 output in
+  internal review state for the frozen HEAD:
+
+  ```bash
+  set -euo pipefail
+  git cat-file -e "${BASE_SHA}^{commit}"
+  git cat-file -e "${HEAD_SHA}^{commit}"
+  MERGE_BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+  git diff-tree --no-commit-id --raw -r -z --no-abbrev --no-renames "$MERGE_BASE" "$HEAD_SHA" \
+    | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+  ```
+
+- Publish the fingerprint metadata in the consolidated summary when that surface exists. For a
+  `findings`-only transport, include it in every emitted confirmed finding or blocked-candidate body.
+  If the array is empty, emit no synthetic metadata finding; keep the metadata only in internal state.
+- Re-review the complete effective pull-request diff, but deduplicate against existing findings by path,
+  violated invariant, affected data or control flow, and observed behavior.
+- Carry earlier findings and their dispositions into a separate prior-finding state. Keep the
+  existing thread authoritative; do not post a duplicate or count it as a new current finding.
+- Honor `will not fix`, `later`, and `follow-up` dispositions. Reopen the existing thread, without
+  posting a duplicate, when a claimed fix is incomplete or ineffective and the defect still
+  reproduces, when a fix regressed, or when materially new evidence changes the invariant, affected
+  flow, or observed behavior.
+- A base-branch merge or line-number change does not make an existing finding new.
