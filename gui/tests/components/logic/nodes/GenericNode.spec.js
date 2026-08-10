@@ -41,6 +41,12 @@ describe('GenericNode — label from NODE_DEFS', () => {
     await flushPromises()
     expect(w.find('.gn-title').text()).toBe('mystery_node')
   })
+
+  it('exposes the full heading when its fixed-width display is truncated', async () => {
+    const w = await mountGN('substring_extractor')
+    await flushPromises()
+    expect(w.find('.gn-title').attributes('title')).toBe(w.find('.gn-title').text())
+  })
 })
 
 describe('GenericNode — handles', () => {
@@ -120,6 +126,7 @@ describe('GenericNode — summary', () => {
     const w = await mountGN('math_formula', { formula: 'a * 2' })
     await flushPromises()
     expect(w.find('.gn-summary').text()).toContain('a * 2')
+    expect(w.find('.gn-summary').attributes('title')).toBe('a * 2')
   })
 
   it('shows compare summary: A > B by default', async () => {
@@ -132,6 +139,20 @@ describe('GenericNode — summary', () => {
     const w = await mountGN('timer_delay', { delay_s: 5 })
     await flushPromises()
     expect(w.find('.gn-summary').text()).toContain('5')
+  })
+
+  it('shows value-sequence step summary and its control handles', async () => {
+    const w = await mountGN('value_sequence', { run_mode: 'repeat_count', steps: [{}, {}] })
+    await flushPromises()
+    expect(w.find('.gn-summary').text()).toContain('2')
+    expect(w.findAll('.handle').filter(h => h.attributes('data-type') === 'target')).toHaveLength(2)
+    expect(w.findAll('.handle').filter(h => h.attributes('data-type') === 'source')).toHaveLength(0)
+  })
+
+  it('falls back to the configured value-sequence mode when it is not translated', async () => {
+    const w = await mountGN('value_sequence', { run_mode: 'custom', steps: JSON.stringify([{}]) })
+    await flushPromises()
+    expect(w.find('.gn-summary').text()).toContain('custom')
   })
 
   it('shows decision rule count summary', async () => {
@@ -185,14 +206,27 @@ describe('GenericNode — summary', () => {
     await flushPromises()
     expect(w.find('.gn-summary').text()).toBe('—')
   })
+
+  it('shows datetime outputs and configured or default format summaries', async () => {
+    const configured = await mountGN('datetime', { custom_format: 'yyyy/MM/dd' })
+    await flushPromises()
+    expect(configured.find('.gn-title').text()).toBe('Datum/Zeit')
+    expect(configured.find('.gn-summary').text()).toBe('yyyy/MM/dd')
+    expect(configured.findAll('.handle').map(handle => handle.attributes('data-id'))).toEqual(['date', 'time', 'custom'])
+
+    const defaults = await mountGN('datetime')
+    await flushPromises()
+    expect(defaults.find('.gn-summary').text()).toBe('EEEE, MMMM d, yyyy HH:mm:ss')
+  })
 })
 
 describe('GenericNode — debug band', () => {
-  it('shows debug band when data._dbg is set', async () => {
-    const w = await mountGN('and', { _dbg: 'true' })
+  it('shows the compact debug band when data._dbg is set', async () => {
+    const w = await mountGN('and', { _dbg: 'true', _dbg_title: 'out=true' })
     await flushPromises()
-    expect(w.find('[data-testid="debug-band"]').exists()).toBe(true)
-    expect(w.find('[data-testid="debug-band"]').text()).toBe('true')
+    const band = w.find('[data-testid="debug-band"]')
+    expect(band.text()).toBe('true')
+    expect(band.attributes('title')).toBe('out=true')
   })
 
   it('hides debug band when no _dbg', async () => {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -489,7 +490,14 @@ async def test_run_graph_allows_resident_when_all_datapoints_are_in_scope(monkey
         db=db,
     )
 
-    assert result == {"status": "ok", "outputs": {"n0": {"out": True}}, "warnings": []}
+    assert result["status"] == "ok"
+    assert result["outputs"] == {"n0": {"out": True}}
+    assert result["warnings"] == []
+    assert set(result["debug"]) == {"timestamp", "duration_ms", "used_overrides", "inputs"}
+    assert datetime.fromisoformat(result["debug"]["timestamp"]).tzinfo is not None
+    assert result["debug"]["duration_ms"] >= 0
+    assert result["debug"]["used_overrides"] is False
+    assert result["debug"]["inputs"] == {}
     manager.execute_graph.assert_awaited_once_with("allowed-graph")
 
 
@@ -546,5 +554,12 @@ async def test_run_graph_allows_admin_side_effect_nodes(monkeypatch, db: Databas
         db=db,
     )
 
-    assert result == {"status": "ok", "outputs": {}, "warnings": []}
+    assert result["status"] == "ok"
+    assert result["outputs"] == {}
+    assert result["warnings"] == []
+    assert set(result["debug"]) == {"timestamp", "duration_ms", "used_overrides", "inputs"}
+    assert datetime.fromisoformat(result["debug"]["timestamp"]).tzinfo is not None
+    assert result["debug"]["duration_ms"] >= 0
+    assert result["debug"]["used_overrides"] is False
+    assert result["debug"]["inputs"] == {}
     manager.execute_graph.assert_awaited_once_with("graph-admin-side-effect")

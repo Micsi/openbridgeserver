@@ -9,13 +9,16 @@ Rückwärtskompatibel: Alter Export mit adapter_configs wird beim Import erkannt
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import logging
 import os
 import sqlite3
 import tempfile
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile, status
@@ -29,10 +32,15 @@ from obs.api.v1.bindings import _json_config, _validate_adapter_binding
 from obs.api.v1.services.hierarchy_lifecycle import collect_hierarchy_tree_node_ids, delete_hierarchy_grants
 from obs.core.formula import validate_formula
 from obs.core.registry import get_registry
+from obs.datetime_format import DATETIME_SETTING_KEYS, validate_datetime_setting
 from obs.db.database import Database, get_db
 from obs.logic.capabilities import LOGIC_CAPABILITIES, LOGIC_CREATE_CAPABILITY
+from obs.logic.models import FlowData
+from obs.logic.validation import validate_timer_durations
 from obs.models.authz import AuthzPrincipalGrant
 from obs.models.datapoint import DataPoint
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["config"])
 
@@ -166,6 +174,7 @@ async def _validate_import_message_instance_configs(
                     instance_config=instance.config,
                 )
         except Exception as exc:
+            logger.exception(f"Binding validation for instance {instance_id} failed")
             invalid[instance_id] = str(exc)
     return invalid
 
@@ -418,9 +427,9 @@ async def export_config(
                     ),
                 )
             except OSError:
-                pass
+                logger.exception(f"Skipping unreadable icon {svg_file}")
     except Exception:
-        pass
+        logger.exception("Icon export failed — continuing export without icons")
 
     # FontAwesome API Key
     fa_key_row = await db.fetchone("SELECT value FROM app_settings WHERE key = 'icons.fontawesome_api_key'")
@@ -608,8 +617,8 @@ async def export_db(
     if not os.path.exists(src_path):
         raise HTTPException(status_code=404, detail="Datenbankdatei nicht gefunden.")
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
-    tmp.close()
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        pass
     try:
         src = sqlite3.connect(src_path)
         dst = sqlite3.connect(tmp.name)
@@ -648,11 +657,11 @@ async def import_db(
     operation_succeeded = False
 
     # Hochgeladene Datei in temporäre Datei speichern
-    tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        pass
     try:
         content = await file.read()
-        tmp.write(content)
-        tmp.close()
+        await asyncio.to_thread(Path(tmp.name).write_bytes, content)
 
         # SQLite-Magic-Header prüfen (erste 16 Bytes: "SQLite format 3\000")
         if len(content) < 16 or not content.startswith(b"SQLite format 3\x00"):
@@ -665,35 +674,40 @@ async def import_db(
 
             await adapter_registry.stop_all()
         except Exception:
-            pass
+            logger.exception("Adapter stop before DB restore failed — continuing restore anyway")
 
         try:
             from obs.logic.manager import get_logic_manager
 
             await get_logic_manager().stop()
         except Exception:
-            pass
+            logger.exception("Logic engine stop before DB restore failed — continuing restore anyway")
 
-        # Aiosqlite-Verbindung trennen
-        await db.disconnect()
-        db_disconnected = True
+        # Keep private transactions blocked until the replacement connection
+        # and its in-memory registry snapshot are consistent again.
+        async with db.exclusive_lifecycle() as lifecycle:
+            await lifecycle.disconnect()
+            db_disconnected = True
 
-        # Restore via sqlite3.backup()
-        try:
-            with sqlite3.connect(tmp.name) as src_conn, sqlite3.connect(dst_path) as dst_conn:
+            # Restore via sqlite3.backup()
+            try:
+                src_conn = sqlite3.connect(tmp.name)
+                dst_conn = sqlite3.connect(dst_path)
                 src_conn.backup(dst_conn)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Datenbankwiederherstellung fehlgeschlagen: {exc}") from exc
+                dst_conn.close()
+                src_conn.close()
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Datenbankwiederherstellung fehlgeschlagen: {exc}") from exc
 
-        # Verbindung wieder aufbauen (inkl. Migrationen)
-        await db.connect()
-        db_disconnected = False
+            # Verbindung wieder aufbauen (inkl. Migrationen)
+            await lifecycle.connect()
+            db_disconnected = False
 
-        # Registry neu laden
-        reg = get_registry()
-        reg._points.clear()
-        reg._values.clear()
-        await reg.load_from_db()
+            # Registry neu laden
+            reg = get_registry()
+            reg._points.clear()
+            reg._values.clear()
+            await reg.load_from_db()
 
         # Logic Engine neu starten
         try:
@@ -702,7 +716,7 @@ async def import_db(
             logic_mgr = get_logic_manager()
             await logic_mgr.start()
         except Exception:
-            pass
+            logger.exception("Logic engine restart after DB restore failed")
 
         # Adapter neu starten
         adapters_restarted = 0
@@ -714,7 +728,7 @@ async def import_db(
             await adapter_registry.start_all(event_bus, db)
             adapters_restarted = len(adapter_registry.get_all_instances())
         except Exception:
-            pass
+            logger.exception("Adapter restart after DB restore failed")
 
         operation_succeeded = True
         writer = AuditLogWriter(db, audit_context)
@@ -733,7 +747,7 @@ async def import_db(
     finally:
         try:
             os.unlink(tmp.name)
-        except Exception:
+        except OSError:
             pass
 
 
@@ -812,6 +826,7 @@ async def import_config(
                 reg._values[dp_id] = ValueState()
                 result.datapoints_created += 1
         except Exception as exc:
+            logger.exception(f"DataPoint {dp_data.id} failed")
             result.errors.append(f"DataPoint {dp_data.id}: {exc}")
 
     # --- Adapter Instances ---
@@ -855,6 +870,7 @@ async def import_config(
             )
             result.adapter_instances_upserted += 1
         except Exception as exc:
+            logger.exception(f"AdapterInstance {ai.id} failed")
             result.errors.append(f"AdapterInstance {ai.id}: {exc}")
 
     # --- Bindings ---
@@ -937,6 +953,7 @@ async def import_config(
                 )
                 result.bindings_created += 1
         except Exception as exc:
+            logger.exception(f"Binding {b_data.id} failed")
             result.errors.append(f"Binding {b_data.id}: {exc}")
 
     # --- KNX Group Addresses ---
@@ -951,12 +968,15 @@ async def import_config(
             )
             result.knx_group_addresses_upserted += 1
         except Exception as exc:
+            logger.exception(f"KNX GA {ga.address} failed")
             result.errors.append(f"KNX GA {ga.address}: {exc}")
 
     # --- Logic Graphs ---
+    imported_graph_ids: list[str] = []
     for lg in body.logic_graphs:
         try:
             row = await db.fetchone("SELECT id FROM logic_graphs WHERE id=?", (lg.id,))
+            validate_timer_durations(FlowData.model_validate(lg.flow_data))
             flow_json = json.dumps(lg.flow_data)
             if row:
                 await db.execute_and_commit(
@@ -984,15 +1004,29 @@ async def import_config(
                     ),
                 )
                 result.logic_graphs_created += 1
+            # Duplicate ids collapse to one row — initialize each id once
+            if lg.id not in imported_graph_ids:
+                imported_graph_ids.append(lg.id)
         except Exception as exc:
+            logger.exception(f"LogicGraph {lg.id} failed")
             result.errors.append(f"LogicGraph {lg.id}: {exc}")
 
     if body.logic_graphs:
         try:
             from obs.logic.manager import get_logic_manager
 
-            await get_logic_manager().reload()
+            manager = get_logic_manager()
+            # The imported sheet carries no node state: drop the cached graph
+            # plus all in-memory and persisted node state of the upserted
+            # graphs, so neither stale read/write-filter state nor old
+            # hysteresis/accumulator state of a reused graph id leaks into
+            # the restored sheet.
+            for graph_id in imported_graph_ids:
+                manager.invalidate_cache(graph_id)
+                await manager.reset_node_state(graph_id)
+            await manager.reload()
         except Exception as exc:
+            logger.exception("Logic manager reload failed")
             result.errors.append(f"Logic manager reload: {exc}")
 
     # Restart all adapter instances so they pick up new configs and bindings
@@ -1005,6 +1039,7 @@ async def import_config(
         await adapter_registry.start_all(event_bus, db)
         result.adapters_restarted = len(adapter_registry.get_all_instances())
     except Exception as exc:
+        logger.exception("Adapter restart failed")
         result.errors.append(f"Adapter restart failed: {exc}")
 
     # --- FontAwesome API Key ---
@@ -1015,6 +1050,7 @@ async def import_config(
                 ("icons.fontawesome_api_key", body.fa_api_key),
             )
         except Exception as exc:
+            logger.exception("FA API Key import failed")
             result.errors.append(f"FA API Key import failed: {exc}")
 
     # --- Icons ---
@@ -1036,6 +1072,7 @@ async def import_config(
                 (icons_dir / f"{safe}.svg").write_bytes(sanitized)
                 result.icons_imported += 1
             except Exception as exc:
+                logger.exception(f"Icon '{icon.name}' failed")
                 result.errors.append(f"Icon '{icon.name}': {exc}")
 
     # --- Visu Nodes (topologisch sortiert: Eltern vor Kindern) ---
@@ -1104,6 +1141,7 @@ async def import_config(
                                         (username, node.id),
                                     )
                     except Exception as exc:
+                        logger.exception(f"VisuNode {node.id} failed")
                         result.errors.append(f"VisuNode {node.id}: {exc}")
                         inserted_ids.add(node.id)
                 else:
@@ -1126,18 +1164,53 @@ async def import_config(
             )
             result.nav_links_upserted += 1
         except Exception as exc:
+            logger.exception(f"NavLink {nl.id} failed")
             result.errors.append(f"NavLink {nl.id}: {exc}")
 
     # --- App Settings ---
+    imported_datetime_settings: dict[str, str] = {}
     for s in body.app_settings:
         try:
+            if s.key in DATETIME_SETTING_KEYS:
+                validate_datetime_setting(s.key, s.value)
             await db.execute_and_commit(
                 "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?,?)",
                 (s.key, s.value),
             )
             result.app_settings_upserted += 1
+            if s.key in DATETIME_SETTING_KEYS:
+                imported_datetime_settings[s.key] = s.value
         except Exception as exc:
+            logger.exception(f"AppSetting {s.key} failed")
             result.errors.append(f"AppSetting {s.key}: {exc}")
+
+    # Apply imported date/time settings immediately. Logic graphs may already
+    # have been reloaded above, but their executor receives this hot
+    # configuration on the next evaluation.
+    if imported_datetime_settings:
+        try:
+            from obs.logic.manager import get_logic_manager
+
+            get_logic_manager().update_app_config(imported_datetime_settings)
+        except RuntimeError:
+            pass  # Manager may not be running — non-critical
+
+    # Seed Read Object nodes of the restored graphs with the current registry
+    # values (issue #1031) — after the adapter restart, so the WriteRouter can
+    # resolve newly imported adapter instances for the published writes, and
+    # after the app-settings import, so timezone-dependent nodes evaluate
+    # with the restored configuration. Only successfully upserted graphs
+    # qualify — a failed entry reusing an existing graph id must not
+    # re-initialize the old graph. The bulk pass suppresses cascades between
+    # the restored graphs so each one initializes exactly once.
+    if imported_graph_ids:
+        try:
+            from obs.logic.manager import get_logic_manager
+
+            await get_logic_manager().initialize_graphs(imported_graph_ids)
+        except Exception as exc:
+            logger.exception("Logic graph initialization failed")
+            result.errors.append(f"Logic graph initialization: {exc}")
 
     # --- Hierarchy Trees ---
     for ht in body.hierarchy_trees:
@@ -1151,6 +1224,7 @@ async def import_config(
             )
             result.hierarchy_upserted += 1
         except Exception as exc:
+            logger.exception(f"HierarchyTree {ht.id} failed")
             result.errors.append(f"HierarchyTree {ht.id}: {exc}")
 
     # --- Hierarchy Nodes (topologisch sortiert) ---
@@ -1181,6 +1255,7 @@ async def import_config(
                         inserted_h_ids.add(hn.id)
                         result.hierarchy_upserted += 1
                     except Exception as exc:
+                        logger.exception(f"HierarchyNode {hn.id} failed")
                         result.errors.append(f"HierarchyNode {hn.id}: {exc}")
                         inserted_h_ids.add(hn.id)
                 else:
@@ -1197,6 +1272,7 @@ async def import_config(
             )
             result.hierarchy_upserted += 1
         except Exception as exc:
+            logger.exception(f"HierarchyDpLink {link.id} failed")
             result.errors.append(f"HierarchyDpLink {link.id}: {exc}")
 
     # --- Central authorization grants ---
@@ -1306,6 +1382,7 @@ async def factory_reset(
 
         await adapter_registry.stop_all()
     except Exception as exc:
+        logger.exception("Adapter stop failed")
         result.errors.append(f"Adapter stop failed: {exc}")
 
     try:
@@ -1318,6 +1395,7 @@ async def factory_reset(
 
         await get_logic_manager().reload()
     except Exception as exc:
+        logger.exception("Logic graphs reset failed")
         result.errors.append(f"Logic graphs reset failed: {exc}")
 
     try:
@@ -1337,6 +1415,7 @@ async def factory_reset(
         reg._points.clear()
         reg._values.clear()
     except Exception as exc:
+        logger.exception("DataPoints and adapters reset failed")
         result.errors.append(f"DataPoints and adapters reset failed: {exc}")
 
     try:
@@ -1346,6 +1425,7 @@ async def factory_reset(
         result.knx_group_addresses_deleted = row["n"] if row else 0
         await db.execute_and_commit("DELETE FROM knx_group_addresses")
     except Exception as exc:
+        logger.exception("KNX group addresses reset failed")
         result.errors.append(f"KNX group addresses reset failed: {exc}")
 
     # Visu-Nodes löschen (Kinder werden durch CASCADE automatisch gelöscht)
@@ -1356,6 +1436,7 @@ async def factory_reset(
             await db.execute("DELETE FROM authz_node_roles WHERE node_type='visu_page'")
             await db.execute("DELETE FROM visu_nodes WHERE parent_id IS NULL")
     except Exception as exc:
+        logger.exception("Visu nodes reset failed")
         result.errors.append(f"Visu nodes reset failed: {exc}")
 
     # NavLinks löschen
@@ -1364,6 +1445,7 @@ async def factory_reset(
         result.nav_links_deleted = row["n"] if row else 0
         await db.execute_and_commit("DELETE FROM nav_links")
     except Exception as exc:
+        logger.exception("NavLinks reset failed")
         result.errors.append(f"NavLinks reset failed: {exc}")
 
     # Hierarchy löschen
@@ -1378,13 +1460,21 @@ async def factory_reset(
             await db.execute("DELETE FROM authz_node_roles WHERE node_type='hierarchy'")
             await db.execute("DELETE FROM hierarchy_trees")
     except Exception as exc:
+        logger.exception("Hierarchy reset failed")
         result.errors.append(f"Hierarchy reset failed: {exc}")
 
     # App-Settings zurücksetzen (Autobackup-Einstellungen behalten, Standard-Timezone wiederherstellen)
     try:
         await db.execute_and_commit("DELETE FROM app_settings WHERE key NOT LIKE 'autobackup.%'")
         await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('timezone', 'Europe/Zurich')")
+        await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('date_format', 'dd.MM.yyyy')")
+        await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('time_format', 'HH:mm:ss')")
+        await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('language', 'de')")
+        from obs.logic.manager import get_logic_manager
+
+        get_logic_manager().update_app_config({"timezone": "Europe/Zurich", "date_format": "dd.MM.yyyy", "time_format": "HH:mm:ss", "language": "de"})
     except Exception as exc:
+        logger.exception("App settings reset failed")
         result.errors.append(f"App settings reset failed: {exc}")
 
     # Icons (SVG-Dateien) löschen
@@ -1396,6 +1486,7 @@ async def factory_reset(
             svg_file.unlink()
             result.icons_deleted += 1
     except Exception as exc:
+        logger.exception("Icons reset failed")
         result.errors.append(f"Icons reset failed: {exc}")
 
     writer = AuditLogWriter(db, build_audit_context(request, _admin))
@@ -1429,6 +1520,7 @@ async def clear_bindings(
         await db.execute_and_commit("DELETE FROM adapter_bindings")
         await adapter_registry.start_all(get_event_bus(), db)
     except Exception as exc:
+        logger.exception("Bindings clear failed")
         result.errors.append(f"Bindings clear failed: {exc}")
     writer = AuditLogWriter(db, build_audit_context(request, _admin))
     outcome = AuditOutcome.FAILED if result.errors else AuditOutcome.SUCCESS
@@ -1468,6 +1560,7 @@ async def clear_datapoints(
         reg._values.clear()
         await adapter_registry.start_all(get_event_bus(), db)
     except Exception as exc:
+        logger.exception("DataPoints clear failed")
         result.errors.append(f"DataPoints clear failed: {exc}")
     writer = AuditLogWriter(db, build_audit_context(request, _admin))
     outcome = AuditOutcome.FAILED if result.errors else AuditOutcome.SUCCESS
@@ -1499,6 +1592,7 @@ async def clear_logic(
 
         await get_logic_manager().reload()
     except Exception as exc:
+        logger.exception("Logic graphs clear failed")
         result.errors.append(f"Logic graphs clear failed: {exc}")
     writer = AuditLogWriter(db, build_audit_context(request, _admin))
     outcome = AuditOutcome.FAILED if result.errors else AuditOutcome.SUCCESS
@@ -1533,6 +1627,7 @@ async def clear_adapters(
             await db.execute("DELETE FROM authz_node_roles WHERE node_type='adapter_instance'")
             await db.execute("DELETE FROM adapter_instances")
     except Exception as exc:
+        logger.exception("Adapters clear failed")
         result.errors.append(f"Adapters clear failed: {exc}")
     writer = AuditLogWriter(db, build_audit_context(request, _admin))
     outcome = AuditOutcome.FAILED if result.errors else AuditOutcome.SUCCESS

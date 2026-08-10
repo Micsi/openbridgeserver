@@ -65,12 +65,12 @@ async def _insert_binding(
 
 
 @pytest.mark.asyncio
-async def test_v44_clean_install_is_default_deny_and_idempotent() -> None:
+async def test_clean_install_reaches_v50_and_v44_is_default_deny_and_idempotent() -> None:
     db = Database(":memory:")
     await db.connect()
     try:
         version = await db.fetchone("SELECT MAX(version) AS version FROM schema_version")
-        assert version["version"] == 47
+        assert version["version"] == 50
 
         await _migration_v44(db.conn)
         await _migration_v44(db.conn)

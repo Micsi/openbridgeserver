@@ -266,6 +266,13 @@ ROUTE_SECURITY_CONTRACTS: Final[dict[RouteSignature, RouteSecurityContract]] = {
     ),
     # Datapoints and bindings.
     ("POST", "/api/v1/datapoints/"): _admin("datapoint", "datapoint.created", root=True, result=True, audit_effect=AuditEffect.EXTERNAL_MUTATION),
+    ("POST", "/api/v1/datapoints/{dp_id}/duplicate"): _admin(
+        "datapoint",
+        "datapoint.duplicated",
+        root=True,
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
+    ),
     ("PATCH", "/api/v1/datapoints/{dp_id}"): _policy(
         "datapoint",
         "datapoint.updated",
@@ -317,6 +324,12 @@ ROUTE_SECURITY_CONTRACTS: Final[dict[RouteSignature, RouteSecurityContract]] = {
     ),
     ("DELETE", "/api/v1/adapters/instances/{instance_id}"): _policy(
         "adapter_instance", "adapter.instance.deleted", result=True, audit_effect=AuditEffect.EXTERNAL_MUTATION
+    ),
+    ("PATCH", "/api/v1/adapters/instances/{instance_id}/onewire/aliases"): _admin(
+        "adapter_instance",
+        "adapter.onewire.alias_updated",
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
     ),
     ("POST", "/api/v1/adapters/instances/{instance_id}/test"): _policy("adapter_instance", "adapter.instance.tested", result=True),
     ("POST", "/api/v1/adapters/instances/{instance_id}/restart"): _policy("adapter_instance", "adapter.instance.restarted", result=True),
@@ -390,6 +403,57 @@ ROUTE_SECURITY_CONTRACTS: Final[dict[RouteSignature, RouteSecurityContract]] = {
         "ringbuffer.config.updated",
         result=True,
         audit_effect=AuditEffect.EXTERNAL_MUTATION,
+    ),
+    ("POST", "/api/v1/ringbuffer/migration/decision"): _admin(
+        "ringbuffer_migration",
+        "ringbuffer.migration.decision_updated",
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
+        details=("decision",),
+    ),
+    ("POST", "/api/v1/ringbuffer/migration/start"): _admin(
+        "ringbuffer_migration",
+        "ringbuffer.migration.started",
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
+    ),
+    ("POST", "/api/v1/message-archives"): _admin(
+        "message_archive",
+        "message_archive.created",
+        root=True,
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
+    ),
+    ("POST", "/api/v1/message-archives/integrity-check"): _admin(
+        "message_archive_database",
+        "message_archive.integrity_checked",
+        result=True,
+    ),
+    ("POST", "/api/v1/message-archives/import/db"): _admin(
+        "message_archive_database",
+        "message_archive.database_imported",
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
+    ),
+    ("PATCH", "/api/v1/message-archives/{archive_id}"): _admin(
+        "message_archive",
+        "message_archive.updated",
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
+    ),
+    ("DELETE", "/api/v1/message-archives/{archive_id}"): _admin(
+        "message_archive",
+        "message_archive.deleted",
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
+        details=("affected_entries",),
+    ),
+    ("POST", "/api/v1/message-archives/{archive_id}/clear"): _admin(
+        "message_archive",
+        "message_archive.cleared",
+        result=True,
+        audit_effect=AuditEffect.EXTERNAL_MUTATION,
+        details=("affected_entries",),
     ),
     ("POST", "/api/v1/config/import/db"): _admin(
         "database_config", "config.database.imported", result=True, audit_effect=AuditEffect.EXTERNAL_MUTATION

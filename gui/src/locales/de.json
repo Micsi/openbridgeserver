@@ -1,4 +1,11 @@
 {
+  "datetimeNames": {
+    "weekdays": "Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag",
+    "weekdaysShort": "Mo.|Di.|Mi.|Do.|Fr.|Sa.|So.",
+    "weekdaysTwo": "Mo|Di|Mi|Do|Fr|Sa|So",
+    "months": "Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember",
+    "monthsShort": "Jan.|Feb.|März|Apr.|Mai|Juni|Juli|Aug.|Sept.|Okt.|Nov.|Dez."
+  },
   "nav": {
     "dashboard": "Übersicht",
     "datapoints": "Objekte",
@@ -141,6 +148,14 @@
     "createModal": "Neues Objekt",
     "deleteTitle": "Objekt löschen",
     "deleteWithBindings": "'{name}' und alle Verknüpfungen löschen?",
+    "duplicate": {
+      "action": "Duplizieren",
+      "title": "Objekt duplizieren",
+      "hint": "Alle Eigenschaften und Adapter-Verknüpfungen werden kopiert. Aktuelle Werte und Historie werden nicht übernommen.",
+      "defaultName": "Kopie von {name}",
+      "saving": "Wird dupliziert …",
+      "error": "Das Objekt konnte nicht dupliziert werden."
+    },
     "quality": {
       "good": "Gut",
       "uncertain": "Unbekannt",
@@ -366,7 +381,11 @@
         "invalidXml": "Kein gültiges XML: {msg}",
         "noChildElementsFound": "Keine Kind-Elemente gefunden",
         "sampleMustBeJsonObjectOrArray": "Sample muss ein JSON-Objekt oder Array sein",
-        "selectAdapterInstance": "Bitte eine Adapter-Instanz wählen"
+        "selectAdapterInstance": "Bitte eine Adapter-Instanz wählen",
+        "selectOnewireInstanceFirst": "Bitte zuerst eine 1-Wire-Instanz wählen",
+        "noSensorsFound": "Keine Sensoren gefunden",
+        "onewireScanFailed": "1-Wire-Sensor-Scan fehlgeschlagen",
+        "onewireAliasSaveFailed": "Alias konnte nicht gespeichert werden"
       },
       "knxSection": "KNX-Verknüpfung",
       "dptLabel": "DPT *",
@@ -423,10 +442,12 @@
       "xmlPathHint": "Pfad relativ zum Root-Element (ET-XPath, z.B. data/temperature). Numerische Textwerte werden automatisch konvertiert.",
       "onewireSection": "1-Wire Binding",
       "onewireSensorIdLabel": "Sensor-ID *",
-      "onewireSensorIdPlaceholder": "z.B. 28-000000000001",
-      "onewireSensorTypeLabel": "Sensor-Typ",
-      "onewireSensorTypePlaceholder": "DS18B20",
-      "onewireSensorTypeHint": "Standard: DS18B20",
+      "onewireSensorIdPlaceholder": "z.B. 28.4B057F0A1C10",
+      "onewirePropertyLabel": "Property",
+      "onewirePropertyPlaceholder": "temperature",
+      "onewireScanButton": "Scannen",
+      "onewireAliasPlaceholder": "Label (z.B. Gästebad)",
+      "onewireAliasSave": "Speichern",
       "haSection": "Home Assistant Binding",
       "haEntityIdLabel": "Entity ID *",
       "haEntityIdPlaceholder": "z.B. light.living_room, sensor.temperature",
@@ -750,6 +771,10 @@
           "title": "Lesezugriffe serialisieren",
           "description": "Sendet Modbus-Requests nacheinander statt gleichzeitig. Empfohlen für einfache Geräte (Heizungsregler, Wechselrichter, Zähler), die nur einen Request gleichzeitig verarbeiten können. Deaktivieren bei leistungsstarken PLCs mit Multi-Request-Unterstützung."
         },
+        "shared_bus": {
+          "title": "Bus mit Instanzen gleicher IP:Port teilen",
+          "description": "Serialisiert I/O über ALLE Instanzen, die denselben Host:Port pollen (z.B. mehrere Geräte hinter einem RS485/Modbus-TCP-Gateway). Verhindert gleichzeitige Requests konkurrierender Instanzen am selben Bus."
+        },
         "startup_jitter_s": {
           "title": "Startup-Jitter (s)",
           "description": "Maximale zufällige Verzögerung (Sekunden) vor dem ersten Poll jedes Bindings. Verhindert einen Request-Burst wenn alle Tasks gleichzeitig starten. 0 = deaktiviert."
@@ -791,6 +816,27 @@
         },
         "priv_key": {
           "title": "Privacy-Key (v3)"
+        },
+        "host": {
+          "title": "Host (IP/DNS)"
+        },
+        "port": {
+          "title": "UDP-Port"
+        },
+        "oid": {
+          "title": "OID"
+        },
+        "data_type": {
+          "title": "Datentyp"
+        },
+        "poll_interval": {
+          "title": "Poll-Intervall (s)"
+        },
+        "timeout": {
+          "title": "Timeout (s)"
+        },
+        "retries": {
+          "title": "Wiederholungen"
         }
       },
       "ZEITSCHALTUHR": {
@@ -873,6 +919,66 @@
         "custom_holidays": {
           "title": "Benutzerdefinierte Feiertage",
           "description": "Benutzerdefinierte Feiertage als Liste von Ausdrücken. Formate: 'MM-TT[:Name]' (fixes Datum, z.B. '12-26:Stephanstag'), 'easter+N[:Name]' / 'easter-N[:Name]' (relativ zu Ostersonntag), 'advent+N[:Name]' / 'advent-N[:Name]' (relativ zum 1. Advent), 'last_WT_MON[:Name]' (letzter Wochentag des Monats), 'N_WT_MON[:Name]' (n-ter Wochentag). Wochentags-Kürzel: MO DI MI DO FR SA SO. Monats-Kürzel: JAN FEB MAR APR MAI JUN JUL AUG SEP OKT NOV DEZ. Mehrere Einträge durch Komma oder Zeilenumbruch trennen."
+        },
+        "timer_type": {
+          "description": "Schaltuhrentyp"
+        },
+        "meta_type": {
+          "description": "Metadaten-Typ (nur bei timer_type=meta)"
+        },
+        "weekdays": {
+          "description": "Aktive Wochentage (0=Mo, 1=Di, 2=Mi, 3=Do, 4=Fr, 5=Sa, 6=So)"
+        },
+        "months": {
+          "description": "Aktive Monate 1-12 (leer = alle; nur Jahresschaltuhr)"
+        },
+        "day_of_month": {
+          "description": "Tag im Monat (0 = alle; nur Jahresschaltuhr)"
+        },
+        "time_ref": {
+          "description": "Zeitreferenz"
+        },
+        "hour": {
+          "description": "Stunde (nur bei time_ref=absolute)"
+        },
+        "minute": {
+          "description": "Minute"
+        },
+        "offset_minutes": {
+          "description": "Offset in Minuten (positiv/negativ) relativ zur Zeitreferenz"
+        },
+        "solar_altitude_deg": {
+          "description": "Sonnenhöhenwinkel in Grad (−18 … 90) — nur bei time_ref=solar_altitude. Beispiele: 0° = Horizont, −6° = bürgerliche Dämmerung, 30° = mittlerer Vormittag"
+        },
+        "sun_direction": {
+          "description": "Richtung der Sonnenbewegung — nur bei time_ref=solar_altitude. rising = Sonne steigt (morgens), setting = Sonne sinkt (nachmittags/abends)"
+        },
+        "every_hour": {
+          "description": "Jede Stunde zur angegebenen Minute schalten"
+        },
+        "every_minute": {
+          "description": "Jede Minute schalten"
+        },
+        "holiday_mode": {
+          "description": "Feiertagsbehandlung"
+        },
+        "vacation_mode": {
+          "description": "Ferienbehandlung"
+        },
+        "selected_holidays": {
+          "description": "Ausgewählte Feiertage für timer_type=holiday (leer = alle Feiertage)"
+        },
+        "date_window_enabled": {
+          "description": "Datum-Fenster: nur innerhalb eines Zeitraums schalten"
+        },
+        "date_window_from": {
+          "description": "Fenster-Beginn (MM-TT | easter±N | advent±N | holiday:Name±N)"
+        },
+        "date_window_to": {
+          "description": "Fenster-Ende (MM-TT | easter±N | advent±N | holiday:Name±N)"
+        },
+        "value": {
+          "description": "Ausgabewert beim Schalten. Erlaubt: 0/1, true/false, on/off, ein/aus, Ganzzahl, Dezimalzahl oder String"
         }
       },
       "HOME_ASSISTANT": {
@@ -1000,13 +1106,21 @@
         }
       },
       "ONEWIRE": {
+        "host": {
+          "title": "Host",
+          "description": "Hostname oder IP-Adresse eines laufenden owserver-Prozesses (lokaler Sidecar/Dienst oder extern — dieser Adapter startet ihn nicht)"
+        },
+        "port": {
+          "title": "Port",
+          "description": "owserver-Port (Standard: 4304)"
+        },
         "poll_interval": {
           "title": "Abfrageintervall (s)",
           "description": "Wie oft Sensoren gelesen werden, in Sekunden"
         },
-        "w1_path": {
-          "title": "1-Wire-Pfad",
-          "description": "Sysfs-Pfad zum 1-Wire-Bus (Standard: /sys/bus/w1/devices)"
+        "request_timeout": {
+          "title": "Anfrage-Timeout (s)",
+          "description": "Sekunden pro owserver-Aufruf, bevor er als Fehler gewertet wird"
         }
       }
     },
@@ -1029,8 +1143,6 @@
       "couldNotOpenPort": "{port} konnte nicht geöffnet werden",
       "modbusSerialConnected": "Verbunden ({port} @ {baudrate} Baud)",
       "modbusReconnectBackoff": "Modbus-TCP-Neuverbindung pausiert (Backoff aktiv)",
-      "pathNotFound": "{path} nicht gefunden",
-      "onewireBusAt": "1-Wire-Bus an {path}",
       "socketConnectFailed": "Socket.IO-Verbindung fehlgeschlagen",
       "socketDisconnected": "Socket.IO getrennt",
       "socketUnstable": "ioBroker Socket.IO-Verbindung instabil: mehrere Disconnects in kurzer Zeit.",
@@ -1143,7 +1255,7 @@
     "storageFixed": "Speichermodell ist serverseitig fix:",
     "maxDisk": "Max. Speicherplatz auf Platte",
     "maxDiskPlaceholder": "z. B. 500",
-    "effectiveStorageNote": "Effektiver Speicherbedarf: Das Budget ist ein Retention-Ziel, kein harter Momentan-Deckel. Zwischen zwei Rotationen wächst das aktive Segment oben drauf (bis zu einer Segmentgröße), bevor die nächste Rotation alte Segmente entfernt. Spitzenwert ≈ Budget + Segmentgröße (Standard: Segmentgröße ≈ Budget/3, also bis zu ~133 %).",
+    "effectiveStorageNote": "Effektiver Speicherbedarf: Das Budget ist ein Retention-Ziel, kein harter Momentan-Deckel. Ohne explizite Segmentgröße wird sie aus dem Speicherbudget als Budget/3 abgeleitet. Dann liegt der Spitzenwert bei bis zu ~133 %. Ohne Speicherbudget und ohne explizite Segmentgröße gibt es keine größenbasierte Rotation.",
     "maxRetention": "Max. Retention",
     "maxRetentionPlaceholder": "z. B. 30",
     "maxEntriesPlaceholder": "z. B. 10000",
@@ -1159,6 +1271,12 @@
     "validationMinEntries": "Max. Einträge muss mindestens 100 sein",
     "validationMinDisk": "Max. Speicherplatz muss grösser als 0 sein",
     "validationRetentionNaN": "Retention muss eine gültige Zahl sein",
+    "validationSegmentTriggerRequired": "Für den segmentierten Ringbuffer ist mindestens eine wirksame Segment-Rotationsgrenze erforderlich: explizit oder aus einer passenden Gesamtgrenze abgeleitet.",
+    "unboundedWarningTitle": "Gesamt-Retention unbegrenzt",
+    "unboundedWarningBody": "Es ist keine Grenze für Einträge, Speicherplatz oder Alter aktiv. Geschlossene Segmente werden daher nicht automatisch entfernt und der Ringbuffer kann unbegrenzt wachsen.",
+    "unboundedConfirmTitle": "Ringbuffer unbegrenzt wachsen lassen?",
+    "unboundedConfirmMessage": "Ohne Gesamtgrenze werden alte Segmente dauerhaft aufbewahrt. Der belegte Speicher wächst weiter, bis die Konfiguration geändert oder Speicher extern freigegeben wird.",
+    "unboundedConfirmLabel": "Unbegrenzt speichern",
     "export": {
       "csvFormat": "CSV-Format",
       "rfcResetTitle": "Setzt Trennzeichen, Anführungszeichen und Escape-Zeichen auf die RFC-4180-Vorgabe.",
@@ -1324,13 +1442,17 @@
     "retentionOverBudgetReason": "Aufbewahrung über Budget: {reason}",
     "storageOnNetworkDrive": "Der Speicher liegt auf einem Netzlaufwerk. Das kann zu Datenverlust oder Sperren führen — lokaler Speicher wird empfohlen.",
     "segmentMaxAge": "Segment-Rotation nach Alter",
-    "segmentMaxAgeHint": "Nach dieser Zeitspanne wird ein neues Segment begonnen (Standard: 6 Stunden, Minimum: 5 Minuten).",
+    "segmentMaxAgeHint": "Explizit aktivieren oder deaktivieren. Ohne expliziten Wert wird eine aktive Gesamt-Retention nach Alter durch drei geteilt.",
     "segmentMaxAgePlaceholder": "z. B. 6",
     "segmentAdvanced": "Erweitert",
-    "segmentAdvancedHint": "Optionale zusätzliche Rotationsschwellen. Leer lassen, um sie automatisch aus den Retention-Grenzen abzuleiten.",
+    "segmentAdvancedHint": "Jede Schwelle kann explizit gesetzt werden. Ist sie deaktiviert, wird sie aus der passenden Gesamtgrenze abgeleitet oder bleibt ohne passende Gesamtgrenze aus.",
     "segmentMaxBytes": "Segment-Rotation nach Größe",
     "segmentMaxRows": "Segment-Rotation nach Zeilen",
     "segmentOptionalPlaceholder": "optional",
+    "segmentSourceExplicit": "Explizit: {value}",
+    "segmentSourceExplicitInvalid": "Explizit: gültigen Wert eingeben",
+    "segmentSourceDerived": "Abgeleitet aus Gesamtgrenze: {value}",
+    "segmentSourceDisabled": "Deaktiviert",
     "segmentRatioHint": "Damit die Aufbewahrung segmentgenau greifen kann, muss jedes gesetzte Retention-Limit (Größe, Zeilen, Alter) mindestens das Dreifache der zugehörigen Segment-Schwelle betragen.",
     "segmentRatioError": "Die Segmentierung ist zu grob für die gewählte Aufbewahrung: Jedes gesetzte Retention-Limit (Größe, Zeilen, Alter) muss mindestens das Dreifache der zugehörigen Segment-Schwelle betragen.",
     "validationSegmentMaxAge": "Das Segment-Alter muss mindestens 5 Minuten betragen.",
@@ -1360,12 +1482,26 @@
     "prognosis": {
       "title": "Prognose",
       "warming": "Prognose läuft sich noch ein (zu wenige Segmente).",
-      "rate": "Aktuell ~{mib} MiB/h (~{rows} Events/h).",
+      "warmingLive": "Live-Daten werden gesammelt — erste Prognose in ~{seconds} s.",
+      "provisional": "Vorläufig aus {seconds} s Live-Daten; wird mit jedem Abruf genauer.",
+      "idle": "Seit {seconds} Sekunden keine neuen Events.",
+      "rate": "Aktuell ~{rows} Events/s — hochgerechnet ~{mib} MiB/h.",
+      "eventRateOnly": "Aktuell ~{rows} Events/s — Speicherwachstum wird noch gemessen.",
+      "storageRateOnly": "Hochgerechnet ~{mib} MiB/h — Eventrate noch unbekannt.",
       "rotation": "Neues Segment ~alle {hours} h",
+      "rotationWithTrigger": "Neues Segment ~alle {hours} h — zuerst greift: {trigger}",
       "rotationSizeCap": " — der Größen-Cap (~{cap} MiB) greift vor den eingestellten {age} h.",
+      "trigger": {
+        "age": "Alter",
+        "size": "Größe",
+        "rows": "Zeilen"
+      },
       "history": "Budget {budget} reicht für ~{duration}.",
       "historyUnlimited": "Budget unbegrenzt — Historie wächst.",
+      "historyOtherLimits": "Kein Speicherbudget — andere Gesamtgrenzen können alte Segmente entfernen.",
+      "unboundedGrowth": "Ohne Gesamtgrenze wachsen bei dieser Rate etwa {month} in 30 Tagen und {year} pro Jahr an.",
       "budget": "Für ~{age}-h-Segmente: Budget ≥ {budget} (für mind. {segments} Segmente).",
+      "budgetRetention": "Für {retention} Retention: Budget ≥ {budget} (bei aktueller Rate).",
       "hours": "{n} h",
       "days": "{n} Tage"
     },
@@ -1394,6 +1530,7 @@
       "progressDropped": "{n} Zeilen über Budget verworfen",
       "migrateFailed": "Migration fehlgeschlagen: {error}",
       "migrateDone": "Migration abgeschlossen – die neuesten Alt-Daten wurden übernommen.",
+      "statsRefreshFailed": "Migration abgeschlossen. Die aktuellen Segmentdaten konnten noch nicht geladen werden und werden beim nächsten Abruf erneut geprüft.",
       "keepTitle": "Behalten",
       "keepBody": "Die Alt-Historie bleibt lesbar erhalten. Der Schutz entfällt: Ist das Budget erschöpft, darf die Bereinigung die Alt-Historie später als Ganzes verwerfen. Revidierbar, solange die Alt-Historie existiert.",
       "keepEta": "Voraussichtlich in ~{days} Tagen erzwingt das Budget die Rückgewinnung der Alt-Historie.",
@@ -1458,12 +1595,16 @@
     "searchNodesPalette": "Knoten suchen …",
     "negateOutput": "Ausgang negieren",
     "debugMode": "Debug-Modus: zeigt Werte nach Ausführen",
+    "snapToGrid": "Raster",
+    "snapToGridTitle": "Funktionsblöcke am Raster einrasten",
+    "gridSize": "Rastermaß",
     "deleteBlock": "Block löschen",
     "deleteNode": "Ast löschen",
     "init": "Init",
     "nodeTypes": {
       "divide": "Dividieren",
       "const_value": "Festwert",
+      "comment": "Kommentar",
       "and": "AND",
       "or": "OR",
       "not": "NOT",
@@ -1488,13 +1629,16 @@
       "consumption_counter": "Verbrauchszähler",
       "timer_delay": "Verzögerung",
       "timer_pulse": "Impuls",
+      "value_sequence": "Sequenz",
       "timer_cron": "Trigger",
+      "datetime": "Datum/Zeit",
       "operating_hours": "Betriebsstd.",
       "python_script": "Python Script",
       "ai_logic": "AI Logic",
       "astro_sun": "Astro Sonne",
       "notify_pushover": "Pushover",
       "notify_sms": "SMS (seven.io)",
+      "notify_message": "Benachrichtigung",
       "message_archive": "Meldungsarchiv",
       "wake_on_lan": "Wake on LAN",
       "host_check": "Host Check",
@@ -1519,8 +1663,32 @@
     "deactivated": "Graph deaktiviert",
     "errorToggle": "Fehler beim Ändern des Status",
     "debugBtn": "Debug",
+    "debugInspector": {
+      "title": "Debug-Inspektor",
+      "inputs": "Eingänge",
+      "outputs": "Ausgänge",
+      "incoming": "Eingehender Wert",
+      "effective": "Effektiver Wert",
+      "override": "Temporäre Überschreibung",
+      "overridePlaceholder": "JSON oder Text; leer bedeutet keine Überschreibung",
+      "overridden": "Überschrieben",
+      "clearAll": "Alle Überschreibungen löschen",
+      "copyAll": "Nutzdaten kopieren",
+      "copy": "Kopieren",
+      "copied": "Kopiert!",
+      "close": "Schließen",
+      "noValues": "Keine Eingänge",
+      "noExecution": "Logikblatt ausführen, um Ausgänge zu prüfen.",
+      "timestamp": "Ausgeführt",
+      "duration": "Dauer",
+      "overrideExecution": "Diese Ausführung verwendete temporäre Eingangsüberschreibungen."
+    },
     "rename": "Umbenennen",
     "duplicate": "Duplizieren",
+    "copySelection": "Kopieren",
+    "copySelectionTitle": "Markierte Blöcke kopieren",
+    "pasteSelection": "Einfügen",
+    "pasteSelectionTitle": "Kopierte Blöcke einfügen",
     "export": "Exportieren",
     "import": "Importieren",
     "emptyHint": "Logikblatt wählen oder neu erstellen",
@@ -1531,6 +1699,7 @@
     "create": "Erstellen",
     "saved": "Graph gespeichert",
     "errorSave": "Fehler beim Speichern",
+    "errorLoad": "Fehler beim Laden des Graphen",
     "runResult": "Graph ausgeführt — {count} Nodes evaluiert",
     "preflightTitle": "Graph-Ausführung prüfen",
     "preflightDescription": "Prüfe den Graphen und alle externen Auswirkungen vor der Ausführung.",
@@ -1554,6 +1723,9 @@
     "graphValidationNodeError": "Zyklus erkannt; direkte Rückkopplung benötigt eine Speicher-Node.",
     "duplicated": "Graph dupliziert als „{name}“",
     "errorDuplicate": "Fehler beim Duplizieren",
+    "copiedNodes": "{count} Block(e) kopiert",
+    "copySelectionEmpty": "Keine Blöcke markiert",
+    "pastedNodes": "{count} Block(e) eingefügt",
     "errorExport": "Fehler beim Exportieren",
     "renamed": "Graph umbenannt",
     "errorRename": "Fehler beim Umbenennen",
@@ -1595,6 +1767,9 @@
       "data": "Daten",
       "body": "Body",
       "done": "Fertig",
+      "running": "Läuft",
+      "cancelled": "Abgebrochen",
+      "condition": "Bedingung",
       "sent": "Gesendet",
       "stored": "Gespeichert",
       "active": "Aktiv",
@@ -1608,12 +1783,16 @@
       "count": "N",
       "min": "Min",
       "max": "Max",
-      "avg": "∅"
+      "avg": "∅",
+      "date": "Datum",
+      "time": "Zeit",
+      "custom": "Benutzerdefiniert"
     },
     "summary": {
       "inputs": "{n} Eingänge",
       "parts": "{n} Teile",
       "rules": "{n} Regeln",
+      "sequence": "{n} Schritte · {mode}",
       "hold": "→ halten",
       "filters": "{n} Filter",
       "negateEnable": "¬Freigabe",
@@ -1630,6 +1809,15 @@
       "ariaLabel": "Unbekannter Block-Typ"
     },
     "nodeConfig": {
+      "datetime": {
+        "custom_format": "Benutzerdefiniertes Format",
+        "tokens": "Token: H/HH Stunde, m/mm Minute, s/ss Sekunde, d/dd Tag, EE = Mo, EEE = Mo., EEEE = Montag, M/MM/MMM/MMMM Monat, yy/yyyy Jahr. Namen folgen der gewählten Sprache."
+      },
+      "comment": {
+        "text": "Text",
+        "textPlaceholder": "Notiztext…",
+        "empty": "Leerer Kommentar — im Panel bearbeiten"
+      },
       "tabs": {
         "connection": "Verbindung",
         "transform": "Transformation",
@@ -1890,6 +2078,8 @@
         "urlLabel": "iCal-URL",
         "refreshLabel": "Aktualisierungsintervall (Minuten)",
         "refreshHint": "Kalender wird höchstens alle N Minuten neu geladen.",
+        "maxPayloadSizeLabel": "Maximale Kalendergrösse (MiB)",
+        "maxPayloadSizeHint": "Downloads, die diesen Wert überschreiten, werden abgebrochen (1–50 MiB).",
         "rawInfo": "Der RAW-Ausgang liefert immer den rohen iCal-Text. Für erweiterte Auswertungen können Filter hinzugefügt werden.",
         "filtersSection": "Filter / Instanzen",
         "addFilter": "+ Filter hinzufügen",
@@ -1913,6 +2103,7 @@
         "descriptionPlaceholder": "z.B. Biotonne",
         "url": "iCal-URL",
         "refresh_interval_min": "Aktualisierungsintervall (Minuten)",
+        "max_payload_size_mb": "Maximale Kalendergrösse (MiB)",
         "filter_count": "Anzahl Filter",
         "filters": "Filter (JSON)"
       },
@@ -2011,6 +2202,28 @@
       "timer_pulse": {
         "duration_s": "Dauer (s)"
       },
+      "value_sequence": {
+        "run_mode": "Ausführung",
+        "repeat_count": "Wiederholungen",
+        "restart_policy": "Bei neuem Trigger",
+        "cancel_when_condition_false": "Abbrechen, wenn Bedingung false wird",
+        "add": "Schritt hinzufügen",
+        "blink": "Blink-Vorlage",
+        "step": "Schritt {n}",
+        "duplicate": "Duplizieren",
+        "object": "Objekt (leer = Pause)",
+        "value": "Wert",
+        "modes": {
+          "once": "Einmal",
+          "repeat_count": "Feste Anzahl",
+          "while_condition": "Solange Bedingung wahr ist"
+        },
+        "policies": {
+          "ignore": "Ignorieren",
+          "restart": "Neu starten",
+          "queue": "Einreihen"
+        }
+      },
       "timer_cron": {
         "cron": "Cron-Ausdruck"
       },
@@ -2039,6 +2252,17 @@
         "to": "Empfänger (+41…)",
         "sender": "Absender (max 11 Zeichen)",
         "message": "Nachricht (Fallback)"
+      },
+      "notification": {
+        "adapter": "Message-/Benachrichtigungsadapter",
+        "selectAdapter": "Adapter auswählen",
+        "targets": "Ziele",
+        "noTargets": "Keine aktiven, konfigurierten Ziele vorhanden.",
+        "title": "Titel",
+        "fallback": "Nachricht (Fallback)",
+        "placeholders": "Der Logikblock hat keinen Datenpunkt-Kontext; MESSAGE-Platzhalter werden unverändert gesendet.",
+        "priority": "Priorität",
+        "legacy": "Legacy-Block. Für neue Benachrichtigungen bitte den Block Benachrichtigung verwenden."
       },
       "messageArchive": {
         "archive": "Meldungsarchiv",
@@ -2109,7 +2333,8 @@
         "in_max": "Eingang Max",
         "out_min": "Ausgang Min",
         "out_max": "Ausgang Max"
-      }
+      },
+      "resizeHandle": "Ziehen, um die Panel-Breite zu ändern"
     },
     "portLabels": {
       "heizmode": "Heizmodus",
@@ -2160,7 +2385,9 @@
       "latencyMs": "Latenz (ms)"
     },
     "nodeDescriptions": {
+      "datetime": "Gibt aktuelles Datum und Uhrzeit in der konfigurierten Zeitzone und im gewählten Format aus.",
       "const_value": "Gibt einen festen Wert aus — Zahl, Bool oder Text. Nützlich als Schwellwert oder Referenz.",
+      "comment": "Freier Mehrzeilen-Text zur Dokumentation direkt auf dem Graph-Canvas. Rein visuell, hat keinen Effekt auf die Ausführung.",
       "and": "Ausgang ist true wenn ALLE Eingänge true sind. Eingänge (2–30) und Ausgang einzeln negierbar.",
       "or": "Ausgang ist true wenn MINDESTENS EIN Eingang true ist. Eingänge (2–30) und Ausgang einzeln negierbar.",
       "not": "Invertiert den Eingang",
@@ -2185,10 +2412,12 @@
       "consumption_counter": "Berechnet Verbrauchswerte (täglich, wöchentlich, monatlich, jährlich) aus einem fortlaufenden Zählerwert. Speichert zusätzlich den Verbrauch der Vorperiode für Vergleiche.",
       "timer_delay": "Verzögert ein Signal um N Sekunden",
       "timer_pulse": "Gibt einen Impuls für N Sekunden aus",
+      "value_sequence": "Schreibt konfigurierte Werte und Pausen als Sequenz ohne die Logikausführung zu blockieren.",
       "timer_cron": "Löst automatisch nach einem Cron-Zeitplan aus (Minute Stunde Tag Monat Wochentag).",
       "operating_hours": "Zählt Betriebsstunden solange 'Aktiv' wahr ist. Reset setzt den Zähler zurück.",
       "python_script": "Führt ein Python-Skript aus. Verfügbar: inputs dict → return value",
       "astro_sun": "Berechnet Sonnenauf- und -untergang basierend auf Breitengrad/Längengrad. Benötigt: pip install astral",
+      "notify_message": "Sendet eine Benachrichtigung über die konfigurierten Ziele eines Message-/Benachrichtigungsadapters.",
       "notify_pushover": "Sendet eine Push-Benachrichtigung via Pushover API (api.pushover.net). Wird automatisch ausgelöst wenn eine Nachricht am Eingang ankommt.",
       "notify_sms": "Sendet eine SMS via seven.io Gateway (gateway.seven.io). Wird automatisch ausgelöst wenn eine Nachricht am Eingang ankommt.",
       "message_archive": "Schreibt eine Meldung in ein Meldungsarchiv. Wird automatisch ausgelöst wenn eine Nachricht am Eingang ankommt oder der Trigger wahr ist.",
@@ -2230,6 +2459,9 @@
       "title": "Allgemeine Einstellungen",
       "timezone": "Zeitzone",
       "timezoneHint": "Alle Zeitangaben im System werden in dieser Zeitzone dargestellt.",
+      "dateFormat": "Standard-Datumsformat",
+      "timeFormat": "Standard-Zeitformat",
+      "formatHint": "Token: d/dd Tag, EE = Mo, EEE = Mo., EEEE = Montag, M/MM/MMM/MMMM Monat, yy/yyyy Jahr; H/HH Stunde, m/mm Minute, s/ss Sekunde.",
       "timezonePlaceholder": "Suchen … z.B. Zurich, Berlin, UTC",
       "noResults": "Keine Treffer",
       "save": "Speichern",

@@ -82,6 +82,8 @@ def test_privileged_node_types_publish_stable_capabilities() -> None:
         "api_client": "http_request",
         "host_check": "network_probe",
         "ical": "http_request",
+        "message_archive": "message_archive",
+        "notify_message": "notification",
         "notify_pushover": "notification",
         "notify_sms": "sms",
         "python_script": "python_execution",
@@ -158,6 +160,41 @@ async def test_preflight_requires_graph_and_every_side_effect_capability(db: Dat
         ("http_request", True, "allowed"),
         ("sms", False, "missing_allow"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_notify_message_preflight_requires_selected_adapter_instance_scope(db: Database) -> None:
+    row = await _insert_graph(
+        db,
+        "graph-notify",
+        [_node("notify", "notify_message", {"adapter_instance_id": "message-1"})],
+    )
+    await _grant(db, "logic_graph", "graph-notify")
+    await _grant(db, "logic_capability", "notification")
+
+    denied = await logic_api._logic_run_preflight(
+        db,
+        Principal(subject="alice", type="user", is_admin=False),
+        row,
+    )
+
+    adapter_check = next(check for check in denied.checks if check.target_type == "adapter_instance")
+    assert (adapter_check.target_id, adapter_check.node_ids, adapter_check.allowed, adapter_check.reason) == (
+        "message-1",
+        ["notify"],
+        False,
+        "missing_allow",
+    )
+
+    await _grant(db, "adapter_instance", "message-1")
+    allowed = await logic_api._logic_run_preflight(
+        db,
+        Principal(subject="alice", type="user", is_admin=False),
+        row,
+    )
+
+    assert allowed.allowed is True
+    assert next(check for check in allowed.checks if check.target_type == "adapter_instance").allowed is True
 
 
 @pytest.mark.asyncio
@@ -307,11 +344,11 @@ async def test_central_graph_run_preflight_requires_central_control(db: Database
     manager = MagicMock()
     manager.execute_graph = AsyncMock(return_value={})
     monkeypatch.setattr("obs.logic.manager.get_logic_manager", lambda: manager)
-    assert await logic_api.run_graph("graph-central", _user=principal, db=db) == {
-        "status": "ok",
-        "outputs": {},
-        "warnings": [],
-    }
+    result = await logic_api.run_graph("graph-central", _user=principal, db=db)
+    assert result["status"] == "ok"
+    assert result["outputs"] == {}
+    assert result["warnings"] == []
+    assert result["debug"]["used_overrides"] is False
 
     admin = await logic_api._logic_run_preflight(
         db,

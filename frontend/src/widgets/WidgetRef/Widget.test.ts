@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { flushPromises, mount } from '@vue/test-utils'
+import { config, flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
+import { createI18n } from 'vue-i18n'
 import { WidgetRegistry } from '@/widgets/registry'
 import WidgetRef from './Widget.vue'
 
@@ -20,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   wsDispatch: vi.fn(),
   messageHandlers: [] as Array<(msg: Record<string, unknown>) => void>,
 }))
+
+config.global.plugins = [createI18n({ legacy: false, locale: 'de', messages: { de: {} } })]
 
 vi.mock('@/api/client', () => ({
   getJwt: () => localStorage.getItem('visu_jwt'),

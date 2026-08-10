@@ -198,6 +198,8 @@ async def test_json_export_import_preserves_central_authz_and_api_key_capabiliti
         patch("obs.logic.manager.get_logic_manager") as logic_manager,
     ):
         logic_manager.return_value.reload = AsyncMock()
+        logic_manager.return_value.reset_node_state = AsyncMock()
+        logic_manager.return_value.initialize_graphs = AsyncMock()
         result = await config_api.import_config(body=exported, _user="admin", db=db)
 
     assert result.errors == []
@@ -243,6 +245,8 @@ async def test_config_roundtrip_preserves_resource_control_classes(monkeypatch, 
     await db.execute_and_commit("UPDATE logic_graphs SET control_class='room_local'")
     logic_manager = MagicMock()
     logic_manager.reload = AsyncMock()
+    logic_manager.reset_node_state = AsyncMock()
+    logic_manager.initialize_graphs = AsyncMock()
     with (
         patch("obs.adapters.registry.stop_all", new_callable=AsyncMock),
         patch("obs.adapters.registry.start_all", new_callable=AsyncMock),

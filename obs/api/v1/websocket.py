@@ -43,6 +43,7 @@ router = APIRouter(tags=["websocket"])
 LogAccessCheck = Callable[[], Awaitable[bool]]
 DatapointScopeCheck = Callable[[], Awaitable[set[str] | None]]
 DATAPOINT_SCOPE_REFRESH_SECONDS = 5.0
+LogicDebugAccessCheck = Callable[[str], Awaitable[bool]]
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,11 @@ class WebSocketManager:
         # Tracks which connections may receive non-DP action broadcasts (e.g. logic_run).
         # True for authenticated (JWT/API-key) connections; False for anonymous page-scoped viewers.
         self._action_access: dict[str, bool] = {}
+        # conn_id -> allowed message archive predicates. None means unrestricted.
+        self._message_archive_access: dict[str, MessageArchiveAccess] = {}
+        self._logic_debug_subscriptions: dict[str, set[str]] = {}
+        self._logic_debug_access: set[str] = set()
+        self._logic_debug_access_checks: dict[str, LogicDebugAccessCheck] = {}
 
     async def connect(
         self,
@@ -97,6 +103,8 @@ class WebSocketManager:
         datapoint_scope_check: DatapointScopeCheck | None = None,
         ringbuffer_metadata: bool = False,
         action_access: bool = False,
+        logic_debug_access: bool = False,
+        logic_debug_access_check: LogicDebugAccessCheck | None = None,
         subprotocol: str | None = None,
     ) -> str:
         if subprotocol is None:
@@ -113,6 +121,17 @@ class WebSocketManager:
             self._datapoint_scope_checks[conn_id] = datapoint_scope_check
             self._datapoint_scope_refreshed_at[conn_id] = time.monotonic()
         self._action_access[conn_id] = action_access
+        self._logic_debug_subscriptions[conn_id] = set()
+        if logic_debug_access:
+            self._logic_debug_access.add(conn_id)
+        if logic_debug_access_check is not None:
+            self._logic_debug_access_checks[conn_id] = logic_debug_access_check
+        if allowed_message_archive_access is not None:
+            self._message_archive_access[conn_id] = allowed_message_archive_access
+        elif allowed_message_archive_ids is not None:
+            self._message_archive_access[conn_id] = [MessageArchivePredicate(archive_ids=allowed_message_archive_ids)]
+        else:
+            self._message_archive_access[conn_id] = None
         logger.debug("WS client connected: %s  (total: %d)", conn_id[:8], len(self._connections))
         return conn_id
 
@@ -122,11 +141,15 @@ class WebSocketManager:
         self._action_access.pop(conn_id, None)
         entry = self._connections.pop(conn_id, None)
         self._message_archive_access.pop(conn_id, None)
+        self._logic_debug_subscriptions.pop(conn_id, None)
+        self._logic_debug_access.discard(conn_id)
+        self._logic_debug_access_checks.pop(conn_id, None)
         if entry:
             ws = entry[0]
             try:
                 await ws.close()
-            except Exception:
+            except (RuntimeError, WebSocketDisconnect):
+                # Already closed / invalid ASGI state — nothing left to clean up.
                 pass
         logger.debug(
             "WS client disconnected: %s  (total: %d)",
@@ -182,6 +205,46 @@ class WebSocketManager:
     def unsubscribe(self, conn_id: str, dp_ids: list[str]) -> None:
         if conn_id in self._connections:
             self._connections[conn_id][1].difference_update(dp_ids)
+
+    async def set_logic_debug(self, conn_id: str, graph_id: str, enabled: bool) -> None:
+        subscriptions = self._logic_debug_subscriptions.get(conn_id)
+        if subscriptions is None:
+            return
+        access_check = self._logic_debug_access_checks.get(conn_id)
+        allowed = conn_id in self._logic_debug_access
+        if access_check is not None:
+            try:
+                allowed = await access_check(graph_id)
+            except Exception:
+                logger.exception("WS logic debug scope check failed for connection %s", conn_id[:8])
+                allowed = False
+        if enabled and allowed:
+            subscriptions.add(graph_id)
+        else:
+            subscriptions.discard(graph_id)
+
+    def has_logic_debug_subscribers(self, graph_id: str) -> bool:
+        return any(graph_id in subscriptions for subscriptions in self._logic_debug_subscriptions.values())
+
+    async def broadcast_logic_debug(self, graph_id: str, msg: dict) -> None:
+        dead: list[str] = []
+        for conn_id, subscriptions in list(self._logic_debug_subscriptions.items()):
+            if graph_id not in subscriptions:
+                continue
+            access_check = self._logic_debug_access_checks.get(conn_id)
+            if access_check is not None:
+                try:
+                    allowed = await access_check(graph_id)
+                except Exception:
+                    logger.exception("WS logic debug scope revalidation failed for connection %s", conn_id[:8])
+                    allowed = False
+                if not allowed:
+                    subscriptions.discard(graph_id)
+                    continue
+            if not await self._send(conn_id, msg):
+                dead.append(conn_id)
+        for conn_id in dead:
+            await self.disconnect(conn_id)
 
     async def send_initial_values(self, conn_id: str, dp_ids: list[str]) -> None:
         """Send current registry values for subscribed datapoints."""
@@ -249,6 +312,7 @@ class WebSocketManager:
                 return True
             except Exception:
                 # Actual transport error — signal caller to close the connection.
+                logger.exception("WS transport error on connection %s — closing", conn_id)
                 return False
 
     @staticmethod
@@ -463,14 +527,14 @@ async def _page_allowed_datapoints(
             else:
                 try:
                     page_config_raw = row["page_config"]
-                except Exception:
+                except (KeyError, IndexError, TypeError):
                     page_config_raw = None
         if not row or not page_config_raw:
             page_cache[target_page_id] = None
             return None
         try:
             parsed = PageConfig.model_validate_json(page_config_raw)
-        except Exception:
+        except ValueError:
             parsed = None
         page_cache[target_page_id] = parsed
         return parsed
@@ -602,14 +666,14 @@ async def _page_allowed_message_archive_predicates(
             else:
                 try:
                     page_config_raw = row["page_config"]
-                except Exception:
+                except (KeyError, IndexError, TypeError):
                     page_config_raw = None
         if not row or not page_config_raw:
             page_cache[target_page_id] = None
             return None
         try:
             parsed = PageConfig.model_validate_json(page_config_raw)
-        except Exception:
+        except ValueError:
             parsed = None
         page_cache[target_page_id] = parsed
         return parsed
@@ -780,6 +844,8 @@ async def _authorize_visu_page_scope(
     if access in ("public", "readonly"):
         return True, "OK"
     if access == "protected":
+        if username is not None and username != "__api_key__" and not username.startswith("api_key:"):
+            return True, "OK"
         validate_id = defining_node_id or page_id
         if session_token and sessions_api.validate_session(session_token, validate_id):
             return True, "OK"
@@ -820,7 +886,7 @@ async def _authenticate_ws_request(ws: WebSocket) -> tuple[bool, str]:
             username = decode_token(auth_header[7:])
             await _jwt_principal(get_db(), username)
             return True, "OK"
-        except Exception:
+        except HTTPException:
             return False, "Invalid token"
 
     subprotocol_jwt, _session_token, _selected = _extract_subprotocol_tokens(ws)
@@ -829,7 +895,7 @@ async def _authenticate_ws_request(ws: WebSocket) -> tuple[bool, str]:
             username = decode_token(subprotocol_jwt)
             await _jwt_principal(get_db(), username)
             return True, "OK"
-        except Exception:
+        except HTTPException:
             return False, "Invalid token"
 
     api_key = ws.headers.get("x-api-key")
@@ -869,9 +935,21 @@ async def _ws_has_log_access(user: str | None, api_key: str | None) -> bool:
             (key_hash,),
         )
         return row is not None
-    if user and user != "__api_key__":
-        return True
-    return False
+    return bool(user and user != "__api_key__")
+
+
+async def _ws_has_logic_debug_access(db: Database, principal: Principal, graph_id: str) -> bool:
+    """Return whether *principal* may inspect one graph's live values."""
+    try:
+        row = await db.fetchone("SELECT * FROM logic_graphs WHERE id=?", (graph_id,))
+        if not row:
+            return False
+        from obs.api.v1.logic import _can_read_logic_graph
+
+        return await _can_read_logic_graph(db, principal, row)
+    except Exception:
+        logger.exception("WS logic debug graph authorization failed for graph %s", graph_id)
+        return False
 
 
 async def _jwt_principal(db: Database, username: str) -> Principal:
@@ -1050,12 +1128,11 @@ async def websocket_endpoint(
 
     page_id = ws.query_params.get("page_id")
     user: str | None = "__api_key__" if api_key else None
-    identity_from_jwt = resolved_token is not None
     invalid_token = False
     if resolved_token is not None:
         try:
             user = decode_token(resolved_token)
-        except Exception:
+        except HTTPException:
             invalid_token = True
             user = None
 
@@ -1064,9 +1141,33 @@ async def websocket_endpoint(
         return
 
     allowed_dp_ids: set[str] | None = None
-    db: Database | None = None
+    allowed_message_archive_access: MessageArchiveAccess = None
+    db: Database | None = get_db() if page_id else None
     datapoint_scope_check: DatapointScopeCheck | None = None
     authenticated_page_session = subprotocol_session or ws.query_params.get("session_token")
+    session_token = authenticated_page_session
+    current_principal_check: Callable[[], Awaitable[Principal]] | None = None
+
+    async def _can_access_widget_ref_page(source_page_id: str) -> bool:
+        if db is None:
+            return False
+        source_access, source_defining_node_id = await _resolve_access_with_node(db, source_page_id)
+        if source_access in ("public", "readonly"):
+            return True
+        if source_access == "protected":
+            source_validate_id = source_defining_node_id or source_page_id
+            return bool(session_token and sessions_api.validate_session(session_token, source_validate_id))
+        if source_access == "user":
+            if user is None or user == "__api_key__" or user.startswith("api_key:"):
+                return False
+            return await _check_user_access(db, source_page_id, user)
+        return False
+
+    async def _is_readonly_widget_ref_page(source_page_id: str) -> bool:
+        if db is None:
+            return False
+        source_access, _source_defining_node_id = await _resolve_access_with_node(db, source_page_id)
+        return source_access == "readonly"
 
     async def _scope_for_principal(current_principal: Principal) -> set[str] | None:
         assert db is not None
@@ -1076,24 +1177,32 @@ async def websocket_endpoint(
         return scope
 
     if api_key and user == "__api_key__":
-        db = get_db()
+        db = db or get_db()
+
+        async def _revalidate_api_key_principal() -> Principal:
+            assert db is not None
+            return await get_current_principal(credentials=None, api_key=api_key, db=db)
 
         async def _revalidate_api_key_scope() -> set[str] | None:
-            assert db is not None
-            current_principal = await get_current_principal(credentials=None, api_key=api_key, db=db)
-            return await _scope_for_principal(current_principal)
+            return await _scope_for_principal(await _revalidate_api_key_principal())
 
+        current_principal_check = _revalidate_api_key_principal
         datapoint_scope_check = _revalidate_api_key_scope
         allowed_dp_ids = await datapoint_scope_check()
     elif user is not None:
-        db = get_db()
+        db = db or get_db()
         username = user
 
-        async def _revalidate_jwt_scope() -> set[str] | None:
+        async def _revalidate_jwt_principal() -> Principal:
             assert db is not None
-            current_principal = await _jwt_principal(db, username)
-            return await _scope_for_principal(current_principal)
+            if resolved_token is None or decode_token(resolved_token) != username:
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+            return await _jwt_principal(db, username)
 
+        async def _revalidate_jwt_scope() -> set[str] | None:
+            return await _scope_for_principal(await _revalidate_jwt_principal())
+
+        current_principal_check = _revalidate_jwt_principal
         datapoint_scope_check = _revalidate_jwt_scope
         allowed_dp_ids = await datapoint_scope_check()
 
@@ -1112,10 +1221,7 @@ async def websocket_endpoint(
             if not session_token or not sessions_api.validate_session(session_token, validate_id):
                 await ws.close(code=4001, reason="Valid session token required")
                 return
-        elif access == "user":
-            await ws.close(code=4001, reason="Authentication required")
-            return
-        elif access not in ("public", "readonly"):
+        elif access == "user" or access not in ("public", "readonly"):
             await ws.close(code=4001, reason="Authentication required")
             return
 
@@ -1148,6 +1254,17 @@ async def websocket_endpoint(
     effective_api_key = api_key if user == "__api_key__" else None
     log_access = await _ws_has_log_access(user, effective_api_key) if authenticated_user and not page_id and user != "__api_key__" else False
 
+    async def _revalidate_logic_debug_access(graph_id: str) -> bool:
+        if db is None or current_principal_check is None or page_id:
+            return False
+        try:
+            principal = await current_principal_check()
+        except Exception:
+            return False
+        return await _ws_has_logic_debug_access(db, principal, graph_id)
+
+    logic_debug_access_check = _revalidate_logic_debug_access if authenticated_user and not page_id else None
+
     manager = get_ws_manager()
     conn_id = await manager.connect(
         ws,
@@ -1158,6 +1275,7 @@ async def websocket_endpoint(
         datapoint_scope_check=datapoint_scope_check,
         ringbuffer_metadata=authenticated_user,
         action_access=authenticated_user,
+        logic_debug_access_check=logic_debug_access_check,
         subprotocol=selected_subprotocol,
     )
 
@@ -1189,6 +1307,11 @@ async def websocket_endpoint(
 
             elif action == "ping":
                 await ws.send_json({"action": "pong"})
+
+            elif action == "logic_debug":
+                graph_id = str(data.get("graph_id") or "")
+                if graph_id:
+                    await manager.set_logic_debug(conn_id, graph_id, bool(data.get("enabled")))
 
     except WebSocketDisconnect:
         pass

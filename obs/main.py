@@ -125,16 +125,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await _reload_mqtt(_m.reload_command, _m.reload_pid)
 
     # 8. Adapters — import triggers @register, then start_all loads DB configs + bindings
+    import obs.adapters.anwesenheit.adapter
     import obs.adapters.homeassistant.adapter
     import obs.adapters.iobroker.adapter
     import obs.adapters.knx.adapter
+    import obs.adapters.message.adapter
     import obs.adapters.modbus_rtu.adapter
     import obs.adapters.modbus_tcp.adapter
-    import obs.adapters.message.adapter
     import obs.adapters.mqtt.adapter
     import obs.adapters.onewire.adapter
-    import obs.adapters.snmp.adapter  # noqa: F401
-    import obs.adapters.anwesenheit.adapter  # noqa: F401
+    import obs.adapters.snmp.adapter
     import obs.adapters.zeitschaltuhr.adapter  # noqa: F401
 
     await adapter_registry.start_all(bus, db, value_getter=registry.get_value)
@@ -193,6 +193,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
 async def _init_persisted_ringbuffer(db, bus, database_path: str, data_value_event_type) -> None:
     from obs.ringbuffer.persisted_config import (
+        LEGACY_DECISION_PENDING,
         LEGACY_DECISIONS_PROTECTED,
         ensure_legacy_migration_decision,
         finalize_committed_migration_decision,
@@ -227,7 +228,18 @@ async def _init_persisted_ringbuffer(db, bus, database_path: str, data_value_eve
     # Migrations-Assistent (#964): liegt eine Legacy-Single-DB vor und wurde noch
     # nie entschieden, wird ``pending`` persistiert. Ohne informierte Entscheidung
     # (pending/skipped) bleibt das attachte Legacy-Segment retention-geschützt.
-    decision = await ensure_legacy_migration_decision(db, legacy_db_path=rb_path if segmented else None)
+    try:
+        decision = await ensure_legacy_migration_decision(db, legacy_db_path=rb_path if segmented else None)
+    except Exception:
+        # Die Reparatur eines mitkopierten Terminalmarkers ist best-effort. Bei
+        # einem transienten app-DB-Schreibfehler konservativ wie ``pending``
+        # starten: so bleibt eine attachte Legacy-Quelle im Speicher geschützt,
+        # während der Status-Endpoint den Write später erneut versucht.
+        logger.exception(
+            "RingBuffer: Startup-Abgleich der Legacy-Entscheidung fehlgeschlagen "
+            "(Server startet retention-geschützt, Retry beim nächsten Status-Poll)"
+        )
+        decision = LEGACY_DECISION_PENDING
 
     rb = await init_ringbuffer(
         storage="file",
@@ -399,6 +411,7 @@ async def _read_persistent_log_level(db: object) -> str | None:
     try:
         row = await db.fetchone("SELECT value FROM app_settings WHERE key='server.log_level'")
     except Exception:
+        logger.exception("Could not read persisted log level — using default")
         return None
     if row is None:
         return None

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
 import aiosqlite
+import pytest
 
 from obs.db.database import Database, _MIGRATION_V34, _MIGRATION_V35, _migration_v36
 
@@ -93,6 +93,9 @@ async def test_v39_repairs_existing_v38_without_device_hierarchy_links(tmp_path)
     db_path = tmp_path / "v38-collision.db"
     async with aiosqlite.connect(db_path) as conn:
         await conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT '')")
+        # A real v38 database already has the base adapter_bindings table; this
+        # focused fixture only materializes the columns needed by main's v40 index.
+        await conn.execute("CREATE TABLE adapter_bindings (adapter_instance_id TEXT, enabled INTEGER NOT NULL DEFAULT 1)")
         await conn.executemany("INSERT INTO schema_version (version) VALUES (?)", [(version,) for version in range(1, 30)])
         await conn.executemany("INSERT INTO schema_version (version) VALUES (?)", [(32,), (33,), (34,), (35,), (36,), (37,), (38,)])
         await conn.executescript(_MIGRATION_V34)
@@ -108,9 +111,9 @@ async def test_v39_repairs_existing_v38_without_device_hierarchy_links(tmp_path)
         assert "idx_hierarchy_device_links_node" in await _index_names(db, "hierarchy_device_links")
         assert "idx_hierarchy_device_links_device" in await _index_names(db, "hierarchy_device_links")
         # V40 (adapter_bindings index, #935) wurde beim Merge von issue-919 auf main
-        # als naechste freie Migration ergaenzt -> neueste Version ist jetzt 40.
+        # als naechste freie Migration ergaenzt; V41 adds date/time settings.
         version = await db.fetchone("SELECT MAX(version) AS version FROM schema_version")
-        assert version["version"] == 47
+        assert version["version"] == 50
     finally:
         await db.disconnect()
 

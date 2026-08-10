@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -9,26 +10,27 @@ import sqlite3
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
 
-from obs.api.audit import AuditLogWriter, get_audit_log_writer
 from obs.api.auth import Principal, decode_token, get_admin_user, get_current_principal, hash_api_key
+from obs.api.v1.application_audit import audit_application_contract, write_application_success
 from obs.config import get_settings
 from obs.db.database import Database, get_db
 from obs.message_archive import (
+    MIGRATIONS,
+    RESERVED_ARCHIVE_IDS,
     ArchiveInput,
     ArchivePatch,
     EntryInput,
     EntryPatch,
     EntryPredicate,
     EntryQuery,
-    MIGRATIONS,
     MessageArchiveStore,
-    RESERVED_ARCHIVE_IDS,
     activate_message_archive_service,
     broadcast_message_archive_entry,
     broadcast_message_archive_refresh,
@@ -64,7 +66,7 @@ class MessageArchiveUpdate(BaseModel):
     retention_max_age_days: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
-    def validate_required_nulls(self) -> "MessageArchiveUpdate":
+    def validate_required_nulls(self) -> MessageArchiveUpdate:
         for field in ("name", "description", "color"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} must not be null")
@@ -539,13 +541,16 @@ async def list_message_archives(
 
 
 @router.post("", response_model=MessageArchiveOut, status_code=status.HTTP_201_CREATED)
+@audit_application_contract("POST", "/api/v1/message-archives", principal_param="_admin")
 async def create_message_archive(
     body: MessageArchiveCreate,
+    request: Request = None,  # type: ignore[assignment]
     _admin: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
     store: MessageArchiveStore = Depends(_store),
 ) -> dict[str, Any]:
     try:
-        return await store.create_archive(
+        archive = await store.create_archive(
             ArchiveInput(
                 id=body.id,
                 name=body.name,
@@ -564,14 +569,39 @@ async def create_message_archive(
             raise HTTPException(status.HTTP_409_CONFLICT, "Message archive already exists") from None
         logger.exception("Message archive creation failed")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Message archive could not be created") from None
+    if isinstance(db, Database):
+        await write_application_success(
+            db,
+            request,
+            _admin,
+            "POST",
+            "/api/v1/message-archives",
+            resource_id=body.id,
+            commit=True,
+        )
+    return archive
 
 
 @router.post("/integrity-check", response_model=IntegrityCheckResult)
+@audit_application_contract("POST", "/api/v1/message-archives/integrity-check", principal_param="_admin")
 async def run_message_archive_integrity_check(
+    request: Request = None,  # type: ignore[assignment]
     _admin: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
     store: MessageArchiveStore = Depends(_store_for_import),
 ) -> dict[str, Any]:
-    return await store.integrity_check()
+    result = await store.integrity_check()
+    if isinstance(db, Database):
+        await write_application_success(
+            db,
+            request,
+            _admin,
+            "POST",
+            "/api/v1/message-archives/integrity-check",
+            resource_id="global",
+            commit=True,
+        )
+    return result
 
 
 @router.get("/export/db")
@@ -582,8 +612,8 @@ async def export_message_archive_db(
 ) -> FileResponse:
     if store.path == ":memory:":
         raise HTTPException(status.HTTP_409_CONFLICT, "Meldungsarchiv-Datenbank kann im In-Memory-Modus nicht gesichert werden.")
-    tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
-    tmp.close()
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        pass
     try:
         await store.sqlite_snapshot(tmp.name)
     except Exception:
@@ -602,21 +632,24 @@ async def export_message_archive_db(
 
 
 @router.post("/import/db", response_model=DatabaseImportResult, status_code=status.HTTP_200_OK)
+@audit_application_contract("POST", "/api/v1/message-archives/import/db", principal_param="_admin")
 async def import_message_archive_db(
     file: UploadFile = File(...),
+    request: Request = None,  # type: ignore[assignment]
     _admin: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
     store: MessageArchiveStore = Depends(_store_for_import),
 ) -> dict[str, Any]:
     if store.path == ":memory:":
         raise HTTPException(status.HTTP_409_CONFLICT, "Meldungsarchiv-Datenbank kann im In-Memory-Modus nicht wiederhergestellt werden.")
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        pass
     backup_path = f"{store.path}.pre-import.bak"
     preserve_backup = False
     try:
         content = await file.read()
-        tmp.write(content)
-        tmp.close()
+        await asyncio.to_thread(Path(tmp.name).write_bytes, content)
         _validate_sqlite_archive_db(tmp.name)
 
         target_path = store.path
@@ -637,7 +670,7 @@ async def import_message_archive_db(
             try:
                 await store.disconnect()
             except Exception:
-                pass
+                logger.exception("Message archive disconnect before rollback failed")
             if target_exists and os.path.exists(backup_path):
                 try:
                     shutil.copy2(backup_path, target_path)
@@ -676,18 +709,31 @@ async def import_message_archive_db(
                 ) from None
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Meldungsarchiv-Wiederherstellung fehlgeschlagen.")
 
-        return {
+        result = {
             "ok": True,
             "message": "Meldungsarchiv-Datenbankwiederherstellung erfolgreich.",
             "size_bytes": os.path.getsize(target_path),
         }
+        if isinstance(db, Database):
+            await write_application_success(
+                db,
+                request,
+                _admin,
+                "POST",
+                "/api/v1/message-archives/import/db",
+                resource_id="global",
+                commit=True,
+            )
+        return result
     finally:
         cleanup_paths = (tmp.name,) if preserve_backup else (tmp.name, backup_path)
         for path in cleanup_paths:
             try:
                 os.unlink(path)
-            except Exception:
+            except FileNotFoundError:
                 pass
+            except OSError:
+                logger.warning("Could not remove temporary file %s", path)
 
 
 @router.get("/entries", response_model=MessageEntryPage)
@@ -764,10 +810,13 @@ async def get_message_archive(
 
 
 @router.patch("/{archive_id}", response_model=MessageArchiveOut)
+@audit_application_contract("PATCH", "/api/v1/message-archives/{archive_id}", principal_param="_admin", resource_param="archive_id")
 async def update_message_archive(
     archive_id: str,
     body: MessageArchiveUpdate,
+    request: Request = None,  # type: ignore[assignment]
     _admin: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
     store: MessageArchiveStore = Depends(_store),
 ) -> dict[str, Any]:
     archive_id = _validate_archive_id(archive_id)
@@ -787,16 +836,28 @@ async def update_message_archive(
     if not archive:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Message archive not found")
     await broadcast_message_archive_refresh(archive_id)
+    if isinstance(db, Database):
+        await write_application_success(
+            db,
+            request,
+            _admin,
+            "PATCH",
+            "/api/v1/message-archives/{archive_id}",
+            resource_id=archive_id,
+            commit=True,
+        )
     return archive
 
 
 @router.delete("/{archive_id}", response_model=DestructiveActionResult)
+@audit_application_contract("DELETE", "/api/v1/message-archives/{archive_id}", principal_param="_admin", resource_param="archive_id")
 async def delete_message_archive(
     archive_id: str,
     confirm: bool = False,
+    request: Request = None,  # type: ignore[assignment]
     _admin: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
     store: MessageArchiveStore = Depends(_store),
-    audit: AuditLogWriter = Depends(get_audit_log_writer),
 ) -> dict[str, Any]:
     archive_id = _validate_archive_id(archive_id)
     archive = await store.get_archive(archive_id)
@@ -808,23 +869,30 @@ async def delete_message_archive(
     deleted = await store.delete_archive(archive_id)
     if deleted < 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Message archive not found")
-    await audit.write(
-        "message_archive.delete",
-        resource_type="message_archive",
-        resource_id=archive_id,
-        details={"affected_entries": affected},
-    )
     await broadcast_message_archive_refresh(archive_id)
+    if isinstance(db, Database):
+        await write_application_success(
+            db,
+            request,
+            _admin,
+            "DELETE",
+            "/api/v1/message-archives/{archive_id}",
+            resource_id=archive_id,
+            details={"affected_entries": affected},
+            commit=True,
+        )
     return {"ok": True, "affected_entries": affected}
 
 
 @router.post("/{archive_id}/clear", response_model=DestructiveActionResult)
+@audit_application_contract("POST", "/api/v1/message-archives/{archive_id}/clear", principal_param="_admin", resource_param="archive_id")
 async def clear_message_archive(
     archive_id: str,
     confirm: bool = False,
+    request: Request = None,  # type: ignore[assignment]
     _admin: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
     store: MessageArchiveStore = Depends(_store),
-    audit: AuditLogWriter = Depends(get_audit_log_writer),
 ) -> dict[str, Any]:
     archive_id = _validate_archive_id(archive_id)
     archive = await store.get_archive(archive_id)
@@ -834,13 +902,18 @@ async def clear_message_archive(
     if not confirm:
         raise HTTPException(status.HTTP_409_CONFLICT, {"confirmation_required": True, "affected_entries": affected})
     await store.clear_archive(archive_id)
-    await audit.write(
-        "message_archive.clear",
-        resource_type="message_archive",
-        resource_id=archive_id,
-        details={"affected_entries": affected},
-    )
     await broadcast_message_archive_refresh(archive_id)
+    if isinstance(db, Database):
+        await write_application_success(
+            db,
+            request,
+            _admin,
+            "POST",
+            "/api/v1/message-archives/{archive_id}/clear",
+            resource_id=archive_id,
+            details={"affected_entries": affected},
+            commit=True,
+        )
     return {"ok": True, "affected_entries": affected}
 
 

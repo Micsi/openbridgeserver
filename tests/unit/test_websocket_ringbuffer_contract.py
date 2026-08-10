@@ -12,12 +12,11 @@ from uuid import uuid4
 import pytest
 
 from obs.api.v1.websocket import (
-    MessageArchivePredicate,
     WebSocketManager,
     _extract_subprotocol_tokens,
     _page_allowed_datapoints,
-    _page_allowed_message_archives,
     _page_allowed_message_archive_predicates,
+    _page_allowed_message_archives,
 )
 from obs.core.event_bus import DataValueEvent
 
@@ -26,6 +25,7 @@ class _FakeWebSocket:
     def __init__(self) -> None:
         self.messages: list[dict] = []
         self.accepted = False
+        self.closed = False
 
     async def accept(self, subprotocol: str | None = None) -> None:
         self.accepted = True
@@ -34,7 +34,7 @@ class _FakeWebSocket:
         self.messages.append(msg)
 
     async def close(self) -> None:
-        return None
+        self.closed = True
 
 
 class _SerializationFailWebSocket(_FakeWebSocket):
@@ -45,6 +45,45 @@ class _SerializationFailWebSocket(_FakeWebSocket):
 class _TransportFailWebSocket(_FakeWebSocket):
     async def send_json(self, msg: dict) -> None:
         raise RuntimeError("socket is closed")
+
+
+@pytest.mark.asyncio
+async def test_logic_debug_payloads_only_reach_subscribed_editor_connections():
+    subscribed_ws = _FakeWebSocket()
+    normal_ws = _FakeWebSocket()
+    page_ws = _FakeWebSocket()
+    manager = WebSocketManager()
+    subscribed_id = await manager.connect(subscribed_ws, logic_debug_access=True)
+    await manager.connect(normal_ws)
+    page_id = await manager.connect(page_ws, allowed_dp_ids=set())
+
+    await manager.set_logic_debug(subscribed_id, "graph", True)
+    await manager.set_logic_debug(page_id, "graph", True)
+    assert manager.has_logic_debug_subscribers("graph") is True
+    await manager.broadcast_logic_debug("graph", {"action": "logic_run"})
+
+    assert subscribed_ws.messages == [{"action": "logic_run"}]
+    assert normal_ws.messages == []
+    assert page_ws.messages == []
+    await manager.set_logic_debug(subscribed_id, "graph", False)
+    assert manager.has_logic_debug_subscribers("graph") is False
+
+
+@pytest.mark.asyncio
+async def test_logic_debug_access_is_revalidated_before_broadcast():
+    ws = _FakeWebSocket()
+    access_check = AsyncMock(side_effect=[True, False])
+    manager = WebSocketManager()
+    conn_id = await manager.connect(ws, logic_debug_access_check=access_check)
+    await manager.set_logic_debug(conn_id, "graph", True)
+
+    await manager.broadcast_logic_debug("graph", {"action": "logic_run"})
+
+    assert [awaited.args for awaited in access_check.await_args_list] == [("graph",), ("graph",)]
+    assert ws.messages == []
+    assert ws.closed is False
+    assert conn_id in manager._connections
+    assert manager.has_logic_debug_subscribers("graph") is False
 
 
 @pytest.mark.asyncio
@@ -168,7 +207,7 @@ async def test_send_drops_non_serializable_message_without_disconnect():
     manager = WebSocketManager()
     conn_id = await manager.connect(ws)
 
-    ok = await manager._send(conn_id, {"action": "ringbuffer_entry", "entry": object()})  # noqa: SLF001
+    ok = await manager._send(conn_id, {"action": "ringbuffer_entry", "entry": object()})
 
     assert ok is True
     assert manager.connection_count == 1
@@ -1134,3 +1173,69 @@ def test_extract_subprotocol_tokens_accepts_session_when_jwt_missing():
     assert jwt_token is None
     assert session_token == "session-only-token"
     assert selected == "obs.session.session-only-token"
+
+
+class _NonDictRow:
+    """Mimics a sqlite3.Row-like object: not a dict, raises on item access for unknown keys."""
+
+    def __getitem__(self, key):
+        raise KeyError(key)
+
+
+@pytest.mark.asyncio
+async def test_page_allowed_datapoints_handles_non_dict_row_item_access_error():
+    class _DbStub:
+        async def fetchone(self, _sql, _params):
+            return _NonDictRow()
+
+    ids = await _page_allowed_datapoints(_DbStub(), "page-1")
+
+    assert ids is None
+
+
+@pytest.mark.asyncio
+async def test_page_allowed_datapoints_handles_invalid_page_config_json():
+    class _DbStub:
+        async def fetchone(self, _sql, _params):
+            return {"page_config": "not-valid-json"}
+
+    ids = await _page_allowed_datapoints(_DbStub(), "page-1")
+
+    assert ids is None
+
+
+@pytest.mark.asyncio
+async def test_page_allowed_message_archive_predicates_handles_non_dict_row_item_access_error():
+    class _DbStub:
+        async def fetchone(self, _sql, _params):
+            return _NonDictRow()
+
+    predicates = await _page_allowed_message_archive_predicates(_DbStub(), "page-1")
+
+    assert predicates == []
+
+
+@pytest.mark.asyncio
+async def test_page_allowed_message_archive_predicates_handles_invalid_page_config_json():
+    class _DbStub:
+        async def fetchone(self, _sql, _params):
+            return {"page_config": "not-valid-json"}
+
+    predicates = await _page_allowed_message_archive_predicates(_DbStub(), "page-1")
+
+    assert predicates == []
+
+
+@pytest.mark.asyncio
+async def test_disconnect_swallows_runtime_error_from_already_closed_socket():
+    class _FailingCloseWebSocket(_FakeWebSocket):
+        async def close(self) -> None:
+            raise RuntimeError("already closed")
+
+    manager = WebSocketManager()
+    ws = _FailingCloseWebSocket()
+    conn_id = await manager.connect(ws)
+
+    await manager.disconnect(conn_id)
+
+    assert conn_id not in manager._connections

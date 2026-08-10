@@ -13,12 +13,12 @@
          :style="{ borderTopColor: def.color, background: def.color + '12', minHeight: cardH + 'px' }">
 
       <div class="gn-header" :style="{ background: def.color + '28' }">
-        <span class="gn-title">{{ def.label }}</span>
+        <span class="gn-title" :title="def.label">{{ def.label }}</span>
         <button class="gn-del nodrag" :style="{ visibility: hovered ? 'visible' : 'hidden' }" @click.stop="remove">✕</button>
       </div>
 
       <div class="gn-body">
-        <div v-if="summary" class="gn-summary">{{ summary }}</div>
+        <div v-if="summary" class="gn-summary" :title="summary">{{ summary }}</div>
 
         <!-- Port rows — height matches handle spacing -->
         <div class="gn-ports-rows">
@@ -49,9 +49,7 @@
           </div>
         </div>
       </div>
-
-      <!-- Debug value strip -->
-      <div v-if="data._dbg" class="gn-debug" :title="debugTitle" data-testid="debug-band">{{ data._dbg }}</div>
+      <div v-if="data._dbg" class="gn-debug" :title="data._dbg_title || data._dbg" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <!-- Output handles (RIGHT) -->
@@ -94,8 +92,6 @@ function parseRowList(raw) {
   }
 }
 
-const debugTitle = computed(() => props.data._dbg_title || props.data._dbg || '')
-
 // ── Node definitions ───────────────────────────────────────────────────────
 const NODE_DEFS = computed(() => ({
   const_value:  { label: 'Festwert',    color: '#475569', inputs: [],                                                                                                  outputs: [{id:'value',      label:t('logic.ports.value')}]       },
@@ -113,7 +109,9 @@ const NODE_DEFS = computed(() => ({
   math_map:     { label: 'Skalieren',   color: '#7c3aed', inputs: [{id:'value',label:t('logic.ports.value')}],                                                         outputs: [{id:'result',     label:t('logic.portLabels.resultShort')}] },
   timer_delay:  { label: 'Verzögerung', color: '#b45309', inputs: [{id:'trigger',label:t('logic.ports.trigger')}],                                                     outputs: [{id:'trigger',    label:t('logic.ports.trigger')}]     },
   timer_pulse:  { label: 'Impuls',      color: '#b45309', inputs: [{id:'trigger',label:t('logic.ports.trigger')}],                                                     outputs: [{id:'out',        label:t('logic.ports.out')}]         },
+  value_sequence: { label: t('logic.nodeTypes.value_sequence'), color: '#b45309', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'condition',label:t('logic.ports.condition')}], outputs: [] },
   timer_cron:   { label: 'Trigger',     color: '#b45309', inputs: [],                                                                                                  outputs: [{id:'trigger',    label:t('logic.ports.trigger')}]     },
+  datetime:     { label: t('logic.nodeTypes.datetime'), color: '#b45309', inputs: [], outputs: [{id:'date',label:t('logic.ports.date')},{id:'time',label:t('logic.ports.time')},{id:'custom',label:t('logic.ports.custom')}] },
   mcp_tool:     { label: 'MCP Tool',    color: '#0e7490', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'input',label:t('logic.ports.input')}],            outputs: [{id:'result',     label:t('logic.portLabels.resultShort')},{id:'done',label:t('logic.ports.done')}] },
   python_script:{ label: 'Python',      color: '#be185d', inputs: [{id:'in1',label:t('logic.ports.in_n',{n:1})},{id:'in2',label:t('logic.ports.in_n',{n:2})},{id:'in3',label:t('logic.ports.in_n',{n:3})}], outputs: [{id:'result',label:t('logic.portLabels.resultShort')}] },
   // Astro
@@ -128,6 +126,7 @@ const NODE_DEFS = computed(() => ({
   // Timer (extended)
   operating_hours:    { label: 'Betriebsstd.',   color: '#b45309', inputs: [{id:'active',label:t('logic.ports.active')},{id:'reset',label:t('logic.ports.reset')}],     outputs: [{id:'hours',      label:t('logic.ports.hours')}]       },
   // Notification
+  notify_message:     { label: 'Benachrichtigung', color: '#e11d48', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'message',label:t('logic.ports.message')}], outputs: [{id:'sent',label:t('logic.ports.sent')}] },
   notify_pushover:    { label: 'Pushover',       color: '#e11d48', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'message',label:t('logic.ports.message')},{id:'url',label:'URL'},{id:'url_title',label:t('logic.portLabels.urlTitle')},{id:'image_url',label:t('logic.portLabels.imageUrl')}], outputs: [{id:'sent',label:t('logic.ports.sent')}] },
   notify_sms:         { label: 'SMS (seven.io)', color: '#e11d48', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'message',label:t('logic.ports.message')}], outputs: [{id:'sent',     label:t('logic.ports.sent')}]        },
   message_archive:    { label: t('logic.nodeTypes.message_archive'), color: '#2563eb', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'message',label:t('logic.ports.message')},{id:'title',label:t('logic.portLabels.title')}], outputs: [{id:'stored', label:t('logic.ports.stored')}] },
@@ -278,7 +277,13 @@ const summary = computed(() => {
   if (props.type === 'math_map')     return `[${d.in_min ?? 0}‒${d.in_max ?? 100}] → [${d.out_min ?? 0}‒${d.out_max ?? 1}]`
   if (props.type === 'timer_delay')  return `${d.delay_s ?? 1} s`
   if (props.type === 'timer_pulse')  return `${d.duration_s ?? 1} s`
+  if (props.type === 'value_sequence') {
+    const mode = d.run_mode || 'once'
+    const key = `logic.nodeConfig.value_sequence.modes.${mode}`
+    return t('logic.summary.sequence', { n: parseRowList(d.steps).length, mode: te(key) ? t(key) : mode })
+  }
   if (props.type === 'timer_cron')   return d.cron || '0 7 * * *'
+  if (props.type === 'datetime')     return d.custom_format || 'EEEE, MMMM d, yyyy HH:mm:ss'
   if (props.type === 'mcp_tool')     return d.tool_name || '—'
   if (props.type === 'astro_sun')       return `${d.latitude ?? 47.37}° N  ${d.longitude ?? 8.54}° E`
   if (props.type === 'clamp')           return `[${d.min ?? 0} … ${d.max ?? 100}]`
@@ -348,7 +353,7 @@ const DEBUG_H  = 18   // px  debug value strip height (only when present)
 
 const rowCount  = computed(() => Math.max(def.value.inputs.length, def.value.outputs.length, 1))
 const summaryPx = computed(() => summary.value ? SUMMARY_H : 0)
-const debugPx   = computed(() => props.data._dbg   ? DEBUG_H  : 0)
+const debugPx   = computed(() => props.data._dbg ? DEBUG_H : 0)
 const cardH     = computed(() => HEADER_H + summaryPx.value + rowCount.value * PORT_H + debugPx.value + 8)
 
 // port row indices (0..rowCount-1)
@@ -383,7 +388,7 @@ function remove() { removeNodes([props.id]) }
 .gn-root  { position: relative; }
 
 .gn-card  {
-  min-width: 130px;
+  width: 130px;
   border: 1px solid var(--node-card-border);
   border-top: 3px solid #475569;
   border-radius: 8px;
@@ -399,18 +404,33 @@ function remove() { removeNodes([props.id]) }
   padding: 4px 10px;
   border-radius: 5px 5px 0 0;
 }
-.gn-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--node-title-color); }
-.gn-del   { font-size:11px; color:var(--node-del-color); background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; }
+.gn-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--node-title-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gn-del   { flex-shrink:0; font-size:11px; color:var(--node-del-color); background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; }
 .gn-del:hover { color:#f87171; }
 
 .gn-body  { padding: 0; }
 
 .gn-summary {
+  box-sizing: border-box;
+  width: 100%;
   font-size: 10px;
   color: var(--node-summary-color);
   padding: 2px 10px;
   font-family: ui-monospace, monospace;
   border-bottom: 1px solid var(--node-card-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gn-ports-rows { padding: 0 10px; }
@@ -440,6 +460,9 @@ function remove() { removeNodes([props.id]) }
 .gn-port-negate--right         { margin-left: auto; }
 
 .gn-debug {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   font-size: 9px;
   color: var(--node-debug-color);
   font-family: ui-monospace, monospace;

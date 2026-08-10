@@ -14,9 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from fastapi import HTTPException
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers / stubs
@@ -812,6 +810,66 @@ class TestUpdateInstance:
             )
         assert exc_info.value.status_code == 422
 
+    @pytest.mark.asyncio
+    async def test_update_onewire_instance_preserves_stored_aliases_over_stale_client_copy(self, monkeypatch):
+        # `aliases` is maintained exclusively by onewire_set_alias() (binding-form
+        # sensor scan), never by this form — an alias saved elsewhere after this
+        # form was loaded must survive a subsequent general instance-settings save,
+        # even though the client's own (now stale) copy still says otherwise.
+        from obs.api.v1 import adapters as adp_api
+        from obs.api.v1.adapters import AdapterInstanceUpdate
+
+        stored_config = {"host": "localhost", "port": 4304, "aliases": {"28.AA": "Fresh Label"}}
+        incoming_config = {"host": "localhost", "port": 4304, "aliases": {"28.AA": "Stale Label"}}
+        row = _inst_row(adapter_type="ONEWIRE", enabled=0, config=stored_config)
+        monkeypatch.setattr(adp_api.adapter_registry, "get_class", lambda t: None)
+        monkeypatch.setattr(adp_api.adapter_registry, "get_instance_by_id", lambda iid: None)
+
+        async def _fake_stop(iid):
+            pass
+
+        monkeypatch.setattr(adp_api.adapter_registry, "stop_instance", _fake_stop)
+        db = _DbStub(one=row)
+
+        await adp_api.update_instance(
+            instance_id=uuid.UUID(row["id"]),
+            body=AdapterInstanceUpdate(config=incoming_config),
+            db=db,
+            _user="admin",
+        )
+
+        saved_config = json.loads(db.committed[0][1][1])
+        assert saved_config["aliases"] == {"28.AA": "Fresh Label"}
+
+    @pytest.mark.asyncio
+    async def test_update_onewire_instance_without_stored_aliases_drops_client_copy(self, monkeypatch):
+        # A fresh instance with no aliases set yet — the client shouldn't be able
+        # to introduce an aliases value through this form either.
+        from obs.api.v1 import adapters as adp_api
+        from obs.api.v1.adapters import AdapterInstanceUpdate
+
+        stored_config = {"host": "localhost", "port": 4304}
+        incoming_config = {"host": "localhost", "port": 4304, "aliases": {"28.AA": "Injected"}}
+        row = _inst_row(adapter_type="ONEWIRE", enabled=0, config=stored_config)
+        monkeypatch.setattr(adp_api.adapter_registry, "get_class", lambda t: None)
+        monkeypatch.setattr(adp_api.adapter_registry, "get_instance_by_id", lambda iid: None)
+
+        async def _fake_stop(iid):
+            pass
+
+        monkeypatch.setattr(adp_api.adapter_registry, "stop_instance", _fake_stop)
+        db = _DbStub(one=row)
+
+        await adp_api.update_instance(
+            instance_id=uuid.UUID(row["id"]),
+            body=AdapterInstanceUpdate(config=incoming_config),
+            db=db,
+            _user="admin",
+        )
+
+        saved_config = json.loads(db.committed[0][1][1])
+        assert "aliases" not in saved_config
+
 
 class TestDeleteInstance:
     @pytest.mark.asyncio
@@ -967,9 +1025,9 @@ class TestGetAdapterSchema:
 
     @pytest.mark.asyncio
     async def test_schema_found(self, monkeypatch):
-        from obs.api.v1 import adapters as adp_api
-
         from pydantic import BaseModel
+
+        from obs.api.v1 import adapters as adp_api
 
         class FakeConfig(BaseModel):
             host: str = "localhost"
@@ -1026,10 +1084,10 @@ class TestUpdateAdapterConfig:
 
     @pytest.mark.asyncio
     async def test_update_config_success(self, monkeypatch):
+        from pydantic import BaseModel
+
         from obs.api.v1 import adapters as adp_api
         from obs.api.v1.adapters import ConfigPatch
-
-        from pydantic import BaseModel
 
         class Cfg(BaseModel):
             host: str = "localhost"
@@ -1044,11 +1102,11 @@ class TestUpdateAdapterConfig:
 
     @pytest.mark.asyncio
     async def test_update_config_preserves_legacy_message_redacted_secrets(self, monkeypatch):
+        from pydantic import BaseModel
+
         from obs.api.v1 import adapters as adp_api
         from obs.api.v1.adapters import ConfigPatch
         from obs.api.v1.redaction import REDACTED
-
-        from pydantic import BaseModel
 
         class Cfg(BaseModel):
             providers: dict
@@ -1088,11 +1146,11 @@ class TestUpdateAdapterConfig:
     @pytest.mark.asyncio
     async def test_update_config_legacy_message_unresolvable_redaction_returns_422(self, monkeypatch):
         """PATCH /{type}/config must return 422 (not 500) when redacted target secret is unresolvable."""
+        from pydantic import BaseModel
+
         from obs.api.v1 import adapters as adp_api
         from obs.api.v1.adapters import ConfigPatch
         from obs.api.v1.redaction import REDACTED
-
-        from pydantic import BaseModel
 
         class Cfg(BaseModel):
             providers: dict
@@ -1129,11 +1187,11 @@ class TestUpdateAdapterConfig:
 
     @pytest.mark.asyncio
     async def test_update_config_legacy_message_rejects_redacted_secrets_without_stored_config(self, monkeypatch):
+        from pydantic import BaseModel
+
         from obs.api.v1 import adapters as adp_api
         from obs.api.v1.adapters import ConfigPatch
         from obs.api.v1.redaction import REDACTED
-
-        from pydantic import BaseModel
 
         class Cfg(BaseModel):
             providers: dict
@@ -1497,6 +1555,159 @@ class TestSnmpWalk:
                 _user="admin",
             )
         assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_snmp_walk_reconnects_when_instance_not_connected(self, monkeypatch):
+        """Instance is not running -> a dummy SnmpAdapter is built inline (covers the local import)."""
+        from obs.api.v1 import adapters as adp_api
+
+        row = _inst_row(adapter_type="SNMP", config={})
+        db = _DbStub(one=row)
+        monkeypatch.setattr(adp_api.adapter_registry, "get_instance_by_id", lambda iid: None)
+
+        with patch("obs.adapters.snmp.adapter._import_pysnmp", return_value=None), pytest.raises(HTTPException) as exc_info:
+            await adp_api.snmp_walk(
+                instance_id=uuid.UUID(row["id"]),
+                host="10.0.0.1",
+                db=db,
+                _user="admin",
+            )
+        assert exc_info.value.status_code == 503
+
+
+class TestListInstanceHolidays:
+    @pytest.mark.asyncio
+    async def test_reconstructs_dummy_adapter_when_instance_not_running(self, monkeypatch):
+        from obs.api.v1 import adapters as adp_api
+
+        row = _inst_row(adapter_type="ZEITSCHALTUHR", config={"custom_holidays": ["01-01:Neujahr"]})
+        db = _DbStub(one=row)
+        monkeypatch.setattr(adp_api.adapter_registry, "get_instance_by_id", lambda iid: None)
+
+        result = await adp_api.list_instance_holidays(
+            instance_id=uuid.UUID(row["id"]),
+            year=2026,
+            _user="admin",
+            db=db,
+        )
+
+        assert any(h.name == "Neujahr" for h in result)
+
+
+class TestIoBrokerCandidatesInvalidBindingConfig:
+    @pytest.mark.asyncio
+    async def test_skips_binding_with_unparseable_config_json(self, monkeypatch):
+        from obs.api.v1 import adapters as adp_api
+
+        instance = MagicMock()
+        instance.browse_states = AsyncMock(return_value=[{"id": "state.1", "type": "boolean"}])
+        monkeypatch.setattr(adp_api.adapter_registry, "get_instance_by_id", lambda iid: instance)
+
+        bad_row = _row(config="{not-json")
+        db = _DbStub(rows=[bad_row])
+
+        body = adp_api.IoBrokerImportRequest(prefix="", states=[], direction="auto", tags=[], limit=10)
+        result = await adp_api._iobroker_candidates("iid", body, db)
+
+        assert result[0].state_id == "state.1"
+        assert result[0].exists is False
+
+
+class TestIoBrokerImportStatesFailure:
+    @pytest.mark.asyncio
+    async def test_logs_exception_and_records_error_on_datapoint_creation_failure(self, monkeypatch):
+        from obs.api.v1 import adapters as adp_api
+
+        row = _inst_row(adapter_type="IOBROKER")
+        db = _DbStub(one=row, rows=[])
+
+        instance = MagicMock()
+        instance.browse_states = AsyncMock(return_value=[{"id": "state.1", "type": "boolean", "name": "Lamp"}])
+        monkeypatch.setattr(adp_api.adapter_registry, "get_instance_by_id", lambda iid: instance)
+
+        fake_registry = MagicMock()
+        fake_registry.create = AsyncMock(side_effect=RuntimeError("db boom"))
+        monkeypatch.setattr("obs.core.registry.get_registry", lambda: fake_registry)
+
+        body = adp_api.IoBrokerImportRequest(prefix="", states=[], direction="auto", tags=[], limit=10)
+        result = await adp_api.iobroker_import_states(
+            instance_id=uuid.UUID(row["id"]),
+            body=body,
+            _user="admin",
+            db=db,
+        )
+
+        assert result.errors == ["state.1: db boom"]
+        assert result.created_datapoints == 0
+
+
+class TestAnwesenheitHealth:
+    @pytest.mark.asyncio
+    async def test_returns_unhealthy_on_invalid_config(self, monkeypatch):
+        from obs.api.v1 import adapters as adp_api
+
+        row = _inst_row(adapter_type="ANWESENHEITSSIMULATION", config={"offset_days": "not-a-number"})
+        db = _DbStub(one=row)
+
+        result = await adp_api.anwesenheit_health(instance_id=uuid.UUID(row["id"]), _user="admin", db=db)
+
+        assert result.healthy is False
+        assert "Config-Fehler" in result.message
+
+    @pytest.mark.asyncio
+    async def test_logs_exception_when_history_query_fails_for_a_binding(self, monkeypatch):
+        from obs.api.v1 import adapters as adp_api
+
+        dp_id = str(uuid.uuid4())
+        binding_row = _row(id=str(uuid.uuid4()), datapoint_id=dp_id)
+        row = _inst_row(adapter_type="ANWESENHEITSSIMULATION", config={"offset_days": 3})
+        db = _DbStub(one=row, rows=[binding_row])
+
+        fake_history = MagicMock()
+        fake_history.query = AsyncMock(side_effect=RuntimeError("history boom"))
+
+        with patch("obs.history.factory.get_history_plugin", return_value=fake_history):
+            result = await adp_api.anwesenheit_health(instance_id=uuid.UUID(row["id"]), _user="admin", db=db)
+
+        assert result.bindings_total == 1
+        assert result.healthy is False
+
+
+class TestAnwesenheitSyncBindingsFailurePaths:
+    @pytest.mark.asyncio
+    async def test_logs_exceptions_for_create_delete_and_reload_failures(self, monkeypatch):
+        from obs.api.v1 import adapters as adp_api
+        from obs.api.v1 import bindings as bindings_api
+
+        inst_id = uuid.uuid4()
+        existing_dp = str(uuid.uuid4())
+        existing_binding_id = str(uuid.uuid4())
+        new_dp = str(uuid.uuid4())
+
+        row = _inst_row(adapter_type="ANWESENHEITSSIMULATION")
+        binding_row = _row(datapoint_id=existing_dp, id=existing_binding_id)
+        db = _DbStub(one=row, rows=[binding_row])
+
+        monkeypatch.setattr(bindings_api, "create_binding", AsyncMock(side_effect=RuntimeError("create boom")))
+        monkeypatch.setattr(bindings_api, "delete_binding", AsyncMock(side_effect=RuntimeError("delete boom")))
+        monkeypatch.setattr(adp_api.adapter_registry, "get_instance_by_id", lambda iid: object())
+        monkeypatch.setattr(
+            adp_api.adapter_registry,
+            "reload_instance_bindings",
+            AsyncMock(side_effect=RuntimeError("reload boom")),
+        )
+
+        body = adp_api.AnwesenheitSyncRequest(datapoint_ids=[new_dp])
+        result = await adp_api.anwesenheit_sync_bindings(
+            instance_id=inst_id,
+            body=body,
+            _user="admin",
+            db=db,
+        )
+
+        assert result.created == 0
+        assert result.removed == 0
+        assert len(result.errors) == 2
 
 
 # ============================================================================
@@ -2306,7 +2517,7 @@ class TestEtsImport:
 
         result = await create_ets_hierarchy(
             db,
-            EtsImportRequest(tree_name="Reusable", mode="groups"),
+            EtsImportRequest(tree_name="Reusable", mode="groups", auto_link=False),
         )
 
         assert result.tree_name == "Reusable"
@@ -2993,7 +3204,7 @@ class TestIoBrokerAdapterExtras:
         a._cfg = IoBrokerAdapterConfig(socket_instability_window_s=60)
         import datetime
 
-        t0 = datetime.datetime(2024, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        t0 = datetime.datetime(2024, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
         t1 = t0 + timedelta(seconds=61)
         t2 = t0 + timedelta(seconds=70)
         a._disconnect_times = deque([t0, t1])
@@ -3348,13 +3559,18 @@ class TestLogicManagerBasics:
         await mgr._load_app_config()
 
     def test_update_app_config(self):
-        mgr, _, _, _ = _make_logic_manager()
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, _make_flow())})
+        original_generation = mgr._ical_cache_generations.setdefault("g1", object())
         mgr.update_app_config({"timezone": "America/New_York"})
         assert mgr._app_config["timezone"] == "America/New_York"
+        changed_generation = mgr._ical_cache_generations["g1"]
+        assert changed_generation is not original_generation
+        mgr.update_app_config({"timezone": "America/New_York", "language": "en"})
+        assert mgr._ical_cache_generations["g1"] is changed_generation
 
     @pytest.mark.asyncio
     async def test_stop_cancels_cron_tasks(self):
-        mgr, _, event_bus, _ = _make_logic_manager()
+        mgr, _, _event_bus, _ = _make_logic_manager()
         task = MagicMock()
         task.cancel = MagicMock()
         mgr._cron_tasks[("g1", "n1")] = task
@@ -3382,13 +3598,130 @@ class TestLogicManagerBasics:
 
     @pytest.mark.asyncio
     async def test_reload(self):
+        import asyncio
+
         mgr, db, _, _ = _make_logic_manager()
-        db.fetchall = AsyncMock(return_value=[])
+        live_flow = _make_flow(
+            nodes=[
+                {
+                    "id": "remaining",
+                    "type": "const_value",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"value": 1},
+                },
+                {
+                    "id": "current-ical",
+                    "type": "ical",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"url": "https://example.com/current.ics"},
+                },
+                {
+                    "id": "url-less-ical",
+                    "type": "ical",
+                    "position": {"x": 400, "y": 0},
+                    "data": {"url": ""},
+                },
+                {
+                    "id": "invalid-url-ical",
+                    "type": "ical",
+                    "position": {"x": 600, "y": 0},
+                    "data": {"url": 123},
+                },
+            ]
+        )
+        disabled_flow = _make_flow(
+            nodes=[
+                {
+                    "id": "disabled-ical",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/disabled.ics"},
+                }
+            ]
+        )
+        db.fetchall = AsyncMock(
+            return_value=[
+                {
+                    "id": "live",
+                    "name": "Live",
+                    "enabled": 1,
+                    "flow_data": live_flow.model_dump_json(),
+                    "node_state": "{}",
+                },
+                {
+                    "id": "disabled",
+                    "name": "Disabled",
+                    "enabled": 0,
+                    "flow_data": disabled_flow.model_dump_json(),
+                    "node_state": "{}",
+                },
+            ]
+        )
+        mgr._hysteresis["removed"] = {"i1": {"raw": "large body"}}
+        mgr._ical_result_caches["removed"] = {"i1": {"outputs": {"events": []}}}
+        mgr._ical_fetch_locks[("removed", "i1")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("removed", "i1")] = asyncio.Lock()
+        mgr._hysteresis["live"] = {
+            "remaining": {"counter": 1},
+            "current-ical": {"raw": "current body"},
+            "url-less-ical": {"raw": "stale body"},
+            "invalid-url-ical": {"raw": "invalid body"},
+            "deleted-ical": {"raw": "large body"},
+        }
+        mgr._hysteresis["disabled"] = {"disabled-ical": {"raw": "disabled body"}}
+        mgr._ical_result_caches["live"] = {
+            "current-ical": {"outputs": {"events": ["current"]}},
+            "url-less-ical": {"outputs": {"events": ["stale"]}},
+            "invalid-url-ical": {"outputs": {"events": ["invalid"]}},
+            "deleted-ical": {"outputs": {"events": []}},
+        }
+        mgr._ical_result_caches["disabled"] = {"disabled-ical": {"outputs": {"events": ["disabled"]}}}
+        mgr._ical_fetch_locks[("live", "current-ical")] = asyncio.Lock()
+        mgr._ical_fetch_locks[("live", "url-less-ical")] = asyncio.Lock()
+        mgr._ical_fetch_locks[("live", "invalid-url-ical")] = asyncio.Lock()
+        mgr._ical_fetch_locks[("live", "deleted-ical")] = asyncio.Lock()
+        mgr._ical_fetch_locks[("disabled", "disabled-ical")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("live", "current-ical")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("live", "deleted-ical")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("disabled", "disabled-ical")] = asyncio.Lock()
+        live_cache_before_reload = mgr._ical_result_caches["live"]
+        live_generation_before_reload = mgr._ical_cache_generations.setdefault("live", object())
+        mgr._ical_cache_generations["removed-without-cache"] = object()
+        mgr._graph_executor_locks["removed"] = asyncio.Lock()
         task = MagicMock()
         task.cancel = MagicMock()
         mgr._cron_tasks[("g1", "n1")] = task
+        mgr._start_cron_tasks = MagicMock()
         await mgr.reload()
         task.cancel.assert_called_once()
+        assert "removed" not in mgr._hysteresis
+        assert "removed" not in mgr._ical_result_caches
+        assert "removed-without-cache" not in mgr._ical_cache_generations
+        assert "removed" not in mgr._graph_executor_locks
+        assert ("removed", "i1") not in mgr._ical_fetch_locks
+        assert ("removed", "i1") not in mgr._ical_precompute_locks
+        assert "deleted-ical" not in mgr._hysteresis["live"]
+        assert "deleted-ical" not in mgr._ical_result_caches["live"]
+        assert ("live", "deleted-ical") not in mgr._ical_fetch_locks
+        assert ("live", "deleted-ical") not in mgr._ical_precompute_locks
+        assert "url-less-ical" not in mgr._hysteresis["live"]
+        assert "url-less-ical" not in mgr._ical_result_caches["live"]
+        assert ("live", "url-less-ical") not in mgr._ical_fetch_locks
+        assert "invalid-url-ical" not in mgr._hysteresis["live"]
+        assert "invalid-url-ical" not in mgr._ical_result_caches["live"]
+        assert ("live", "invalid-url-ical") not in mgr._ical_fetch_locks
+        assert "disabled-ical" not in mgr._hysteresis["disabled"]
+        assert "disabled-ical" not in mgr._ical_result_caches["disabled"]
+        assert ("disabled", "disabled-ical") not in mgr._ical_fetch_locks
+        assert ("disabled", "disabled-ical") not in mgr._ical_precompute_locks
+        assert mgr._hysteresis["live"]["remaining"] == {"counter": 1}
+        assert mgr._hysteresis["live"]["current-ical"]["raw"] == "current body"
+        assert mgr._ical_result_caches["live"]["current-ical"]["outputs"]["events"] == ["current"]
+        assert mgr._ical_result_caches["live"] is not live_cache_before_reload
+        assert "deleted-ical" in live_cache_before_reload
+        assert mgr._ical_cache_generations["live"] is live_generation_before_reload
+        assert ("live", "current-ical") in mgr._ical_fetch_locks
+        assert ("live", "current-ical") in mgr._ical_precompute_locks
 
     def test_invalidate_cache(self):
         mgr, _, _, _ = _make_logic_manager()
@@ -3407,6 +3740,26 @@ class TestLogicManagerBasics:
         assert ("g1", "n1") not in mgr._cron_tasks
         assert ("g2", "n1") in mgr._cron_tasks
 
+    def test_remove_graph_discards_ical_runtime_state(self):
+        import asyncio
+
+        mgr, _, _, _ = _make_logic_manager()
+        mgr._graphs["g1"] = ("G1", True, _make_flow())
+        mgr._hysteresis["g1"] = {"i1": {"raw": "large body"}}
+        mgr._ical_result_caches["g1"] = {"i1": {"outputs": {"events": []}}}
+        mgr._ical_fetch_locks[("g1", "i1")] = asyncio.Lock()
+        mgr._ical_precompute_locks[("g1", "i1")] = asyncio.Lock()
+        mgr._graph_executor_locks["g1"] = asyncio.Lock()
+
+        mgr.remove_graph("g1")
+
+        assert "g1" not in mgr._graphs
+        assert "g1" not in mgr._hysteresis
+        assert "g1" not in mgr._ical_result_caches
+        assert ("g1", "i1") not in mgr._ical_fetch_locks
+        assert ("g1", "i1") not in mgr._ical_precompute_locks
+        assert "g1" not in mgr._graph_executor_locks
+
     @pytest.mark.asyncio
     async def test_execute_graph_missing(self):
         mgr, _, _, _ = _make_logic_manager()
@@ -3415,12 +3768,24 @@ class TestLogicManagerBasics:
 
     @pytest.mark.asyncio
     async def test_execute_graph_success(self):
+        from obs.logic.executor import GraphExecutor
+
         flow = _make_flow()
-        mgr, db, event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr, _db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        captures = []
+        original_init = GraphExecutor.__init__
+
+        def recording_init(instance, *args, **kwargs):
+            captures.append(args[3] if len(args) > 3 else kwargs.get("input_capture"))
+            original_init(instance, *args, **kwargs)
+
         with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
             mock_ws.return_value.broadcast = AsyncMock()
-            result = await mgr.execute_graph("g1")
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            with patch.object(GraphExecutor, "__init__", recording_init):
+                result = await mgr.execute_graph("g1")
         assert isinstance(result, dict)
+        assert captures and all(capture is None for capture in captures)
 
     @pytest.mark.asyncio
     async def test_load_graphs_parses_flow(self):
@@ -3454,12 +3819,51 @@ class TestLogicManagerBasics:
         await mgr._load_graphs()
         assert mgr._hysteresis.get("g1") == state
 
+    @pytest.mark.asyncio
+    async def test_load_graphs_ignores_malformed_node_state(self):
+        """A malformed node_state column (not valid JSON) must not abort
+        loading the graph itself — only the node_state restore is skipped."""
+        from obs.logic.models import FlowData
+
+        flow = FlowData.model_validate({"nodes": [], "edges": []})
+        db_rows = [_row(id="g1", name="G1", enabled=1, flow_data=flow.model_dump_json(), node_state="not-json{")]
+        mgr, db, _, _ = _make_logic_manager()
+        db.fetchall = AsyncMock(return_value=db_rows)
+        await mgr._load_graphs()
+        assert "g1" in mgr._graphs
+        assert "g1" not in mgr._hysteresis
+
 
 class TestLogicManagerValueEvent:
     @pytest.mark.asyncio
+    async def test_on_value_event_ignores_state_only_confirmation_actions(self):
+        dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "n1",
+                    "type": "datapoint_read",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"datapoint_id": str(dp_id)},
+                }
+            ]
+        )
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr._execute_graph = AsyncMock()
+        event = SimpleNamespace(
+            datapoint_id=dp_id,
+            value=42.0,
+            suppress_action_triggers=True,
+        )
+
+        await mgr._on_value_event(event)
+
+        mgr._execute_graph.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_on_value_event_no_matching_graph(self):
         """When no graph has a node watching the DP, no execute call is made."""
-        mgr, db, event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, _make_flow())})
+        mgr, _db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, _make_flow())})
         event = MagicMock()
         event.datapoint_id = uuid.uuid4()
         event.value = 42.0
@@ -3820,6 +4224,538 @@ class TestLogicManagerHelpers:
 
 class TestLogicManagerExecuteGraph:
     @pytest.mark.asyncio
+    async def test_reload_preserves_generation_for_unchanged_graphs(self):
+        unchanged_flow = _make_flow(nodes=[{"id": "constant", "type": "constant", "position": {"x": 0, "y": 0}, "data": {"value": 1}}])
+        changed_before = _make_flow(nodes=[{"id": "constant", "type": "constant", "position": {"x": 0, "y": 0}, "data": {"value": 1}}])
+        changed_after = _make_flow(nodes=[{"id": "constant", "type": "constant", "position": {"x": 0, "y": 0}, "data": {"value": 2}}])
+        mgr, _, _, _ = _make_logic_manager(
+            graphs={
+                "unchanged": ("Old name", True, unchanged_flow),
+                "changed": ("Changed", True, changed_before),
+            }
+        )
+        unchanged_generation = mgr._ical_cache_generations.setdefault("unchanged", object())
+        changed_generation = mgr._ical_cache_generations.setdefault("changed", object())
+
+        async def _load_updated_graphs():
+            mgr._graphs = {
+                "unchanged": ("New name only", True, unchanged_flow),
+                "changed": ("Changed", True, changed_after),
+            }
+
+        mgr._load_graphs = AsyncMock(side_effect=_load_updated_graphs)
+        mgr._start_cron_tasks = MagicMock()
+
+        await mgr.reload()
+
+        assert mgr._ical_cache_generations["unchanged"] is unchanged_generation
+        assert mgr._ical_cache_generations["changed"] is not changed_generation
+
+    @pytest.mark.asyncio
+    async def test_reload_retains_locked_ical_precompute_lock_until_worker_drains(self):
+        import asyncio
+
+        active_flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/calendar.ics"},
+                }
+            ]
+        )
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, active_flow)})
+        lock = asyncio.Lock()
+        await lock.acquire()
+        mgr._ical_precompute_locks[("g1", "i1")] = lock
+
+        async def _load_disabled_graph():
+            mgr._graphs = {"g1": ("G1", False, active_flow)}
+
+        mgr._load_graphs = AsyncMock(side_effect=_load_disabled_graph)
+        mgr._start_cron_tasks = MagicMock()
+        await mgr.reload()
+
+        assert mgr._ical_precompute_locks[("g1", "i1")] is lock
+        mgr._graphs["g1"] = ("G1", True, active_flow)
+        assert mgr._ical_precompute_locks.setdefault(("g1", "i1"), asyncio.Lock()) is lock
+
+        mgr._graphs.pop("g1")
+        lock.release()
+        mgr._prune_ical_precompute_lock(("g1", "i1"), lock)
+        assert ("g1", "i1") not in mgr._ical_precompute_locks
+
+    @pytest.mark.asyncio
+    async def test_ical_precompute_lock_pruning_guards_active_and_replaced_locks(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/calendar.ics"},
+                }
+            ]
+        )
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        key = ("g1", "i1")
+        lock = asyncio.Lock()
+        mgr._ical_precompute_locks[key] = lock
+
+        mgr._prune_ical_precompute_lock(("missing", "i1"))
+        mgr._prune_ical_precompute_lock(key, asyncio.Lock())
+        mgr._prune_ical_precompute_lock(key, lock)
+        assert mgr._ical_precompute_locks[key] is lock
+
+        mgr._graphs["g1"] = ("G1", False, flow)
+        await lock.acquire()
+        mgr._prune_ical_precompute_lock(key, lock)
+        assert mgr._ical_precompute_locks[key] is lock
+
+        lock.release()
+        mgr._prune_ical_precompute_lock(key, lock)
+        assert key not in mgr._ical_precompute_locks
+
+    @pytest.mark.asyncio
+    async def test_graph_worker_state_snapshot_runs_off_event_loop(self):
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        copy_threads = []
+
+        class _CopyAware:
+            def __deepcopy__(self, _memo):
+                copy_threads.append(threading.get_ident())
+                return self
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                }
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        mgr._hysteresis["g1"] = {"large-state": _CopyAware()}
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert copy_threads
+        assert all(thread_id != event_loop_thread for thread_id in copy_threads)
+
+    @pytest.mark.asyncio
+    async def test_logic_debug_serialization_runs_off_event_loop(self):
+        import asyncio
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        serialization_threads = []
+        real_to_thread = asyncio.to_thread
+
+        async def _tracked_worker(func, *args):
+            def _run():
+                serialization_threads.append(threading.get_ident())
+                return func(*args)
+
+            return await real_to_thread(_run)
+
+        flow = _make_flow(nodes=[{"id": "constant", "type": "constant", "position": {"x": 0, "y": 0}, "data": {"value": 1}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with (
+            patch("obs.logic.manager._run_logic_debug_serialization_in_worker", side_effect=_tracked_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = True
+            mock_ws.return_value.broadcast_logic_debug = AsyncMock()
+            await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert serialization_threads
+        assert all(thread_id != event_loop_thread for thread_id in serialization_threads)
+
+    @pytest.mark.asyncio
+    async def test_python_script_input_clone_runs_off_event_loop(self):
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        copy_threads = []
+
+        class _CopyAware:
+            def __deepcopy__(self, _memo):
+                copy_threads.append(threading.get_ident())
+                return self
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = inputs['value']"},
+                }
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            await mgr._execute_graph("g1", "G1", flow, {"script": {"value": _CopyAware()}})
+
+        assert copy_threads
+        assert all(thread_id != event_loop_thread for thread_id in copy_threads)
+
+    @pytest.mark.asyncio
+    async def test_debug_input_snapshots_run_off_event_loop(self):
+        import threading
+
+        event_loop_thread = threading.get_ident()
+        copy_threads = []
+
+        class _CopyAware:
+            def __deepcopy__(self, _memo):
+                copy_threads.append(threading.get_ident())
+                return self
+
+        flow = _make_flow(nodes=[{"id": "formula", "type": "math_formula", "position": {"x": 0, "y": 0}, "data": {"formula": "a"}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = True
+            mock_ws.return_value.broadcast_logic_debug = AsyncMock()
+            await mgr._execute_graph("g1", "G1", flow, {"formula": {"a": _CopyAware()}})
+
+        assert copy_threads
+        assert all(thread_id != event_loop_thread for thread_id in copy_threads)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_python_script_keeps_lock_until_worker_exits(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                }
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        first_worker_started = asyncio.Event()
+        release_first_worker = asyncio.Event()
+        worker_calls = 0
+
+        async def _controlled_worker(func):
+            nonlocal worker_calls
+            worker_calls += 1
+            if worker_calls == 1:
+                first_worker_started.set()
+                await release_first_worker.wait()
+            return func()
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            obsolete = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await first_worker_started.wait()
+            obsolete.cancel()
+            replacement = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await asyncio.sleep(0)
+
+            assert worker_calls == 1
+            assert mgr._graph_executor_locks["g1"].locked()
+
+            release_first_worker.set()
+            with pytest.raises(asyncio.CancelledError):
+                await obsolete
+            result = await replacement
+
+        assert worker_calls == 2
+        assert result["script"]["result"] == 1
+
+    @pytest.mark.asyncio
+    async def test_obsolete_python_worker_discards_hysteresis_mutations(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                },
+                {"id": "stats", "type": "statistics", "position": {"x": 200, "y": 0}, "data": {}},
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        original_state = {"s_min": 2.0, "s_max": 2.0, "s_sum": 2.0, "s_count": 1}
+        mgr._hysteresis["g1"] = {"stats": dict(original_state)}
+        worker_mutated_snapshot = asyncio.Event()
+        release_worker = asyncio.Event()
+
+        async def _controlled_worker(func):
+            result = func()
+            worker_mutated_snapshot.set()
+            await release_worker.wait()
+            return result
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            execution = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"stats": {"value": 9.0}}))
+            await worker_mutated_snapshot.wait()
+            mgr.invalidate_cache("g1")
+            release_worker.set()
+            result = await execution
+
+        assert result == {}
+        assert mgr._hysteresis["g1"]["stats"] == original_state
+        assert "g1" not in mgr._graph_executor_locks
+
+    @pytest.mark.asyncio
+    async def test_concurrent_python_executions_snapshot_state_under_lock(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                },
+                {"id": "stats", "type": "statistics", "position": {"x": 200, "y": 0}, "data": {}},
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        first_worker_started = asyncio.Event()
+        release_first_worker = asyncio.Event()
+        worker_calls = 0
+
+        async def _controlled_worker(func):
+            nonlocal worker_calls
+            worker_calls += 1
+            if worker_calls == 1:
+                first_worker_started.set()
+                await release_first_worker.wait()
+            return func()
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            first = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"stats": {"value": 2.0}}))
+            await first_worker_started.wait()
+            second = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"stats": {"value": 4.0}}))
+            await asyncio.sleep(0)
+            release_first_worker.set()
+            await asyncio.gather(first, second)
+
+        assert worker_calls == 2
+        assert mgr._hysteresis["g1"]["stats"] == {
+            "s_min": 2.0,
+            "s_max": 4.0,
+            "s_sum": 6.0,
+            "s_count": 2,
+        }
+
+    @pytest.mark.asyncio
+    async def test_python_worker_merge_preserves_concurrent_async_state(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"script": "result = 1"},
+                },
+                {"id": "stats", "type": "statistics", "position": {"x": 200, "y": 0}, "data": {}},
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        mgr._hysteresis["g1"] = {"host": {"hc_prev_trigger": False}}
+        worker_started = asyncio.Event()
+        release_worker = asyncio.Event()
+
+        async def _controlled_worker(func):
+            worker_started.set()
+            await release_worker.wait()
+            return func()
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            execution = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"stats": {"value": 3.0}}))
+            await worker_started.wait()
+            mgr._hysteresis["g1"]["host"].update({"hc_prev_trigger": True, "hc_last_reachable": True})
+            release_worker.set()
+            await execution
+
+        assert mgr._hysteresis["g1"]["host"] == {"hc_prev_trigger": True, "hc_last_reachable": True}
+        assert mgr._hysteresis["g1"]["stats"]["s_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_obsolete_python_replay_stops_before_datapoint_write(self):
+        write_dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 100},
+                    "data": {"script": "result = 1"},
+                },
+                {
+                    "id": "host",
+                    "type": "host_check",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"host": "example.com"},
+                },
+                {
+                    "id": "write",
+                    "type": "datapoint_write",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"datapoint_id": str(write_dp_id)},
+                },
+            ],
+            edges=[
+                {
+                    "id": "host-write",
+                    "source": "host",
+                    "target": "write",
+                    "sourceHandle": "reachable",
+                    "targetHandle": "value",
+                }
+            ],
+        )
+        mgr, db, event_bus, registry = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        registry.get_value = MagicMock(return_value=None)
+        worker_calls = 0
+
+        async def _invalidate_during_replay(func):
+            nonlocal worker_calls
+            worker_calls += 1
+            result = func()
+            if worker_calls == 2:
+                mgr.invalidate_cache("g1")
+            return result
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_invalidate_during_replay),
+            patch("obs.logic.manager._ping_host", new=AsyncMock(return_value=(True, 1.0))),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            result = await mgr._execute_graph("g1", "G1", flow, {"host": {"trigger": True}})
+
+        assert worker_calls == 2
+        assert result == {}
+        event_bus.publish.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_obsolete_queued_python_replay_skips_worker(self):
+        import asyncio
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "script",
+                    "type": "python_script",
+                    "position": {"x": 0, "y": 100},
+                    "data": {"script": "result = 1"},
+                },
+                {
+                    "id": "host",
+                    "type": "host_check",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"host": "example.com"},
+                },
+                {
+                    "id": "formula",
+                    "type": "math_formula",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"formula": "a"},
+                },
+            ],
+            edges=[
+                {
+                    "id": "host-formula",
+                    "source": "host",
+                    "target": "formula",
+                    "sourceHandle": "reachable",
+                    "targetHandle": "a",
+                }
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        ping_started = asyncio.Event()
+        release_ping = asyncio.Event()
+        second_worker_started = asyncio.Event()
+        release_second_worker = asyncio.Event()
+        worker_calls = 0
+
+        async def _controlled_ping(*_args):
+            ping_started.set()
+            await release_ping.wait()
+            return True, 1.0
+
+        async def _controlled_worker(func):
+            nonlocal worker_calls
+            worker_calls += 1
+            if worker_calls == 2:
+                second_worker_started.set()
+                await release_second_worker.wait()
+            return func()
+
+        with (
+            patch("obs.logic.manager._run_graph_executor_in_worker", side_effect=_controlled_worker),
+            patch("obs.logic.manager._ping_host", side_effect=_controlled_ping),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            replaying = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"host": {"trigger": True}}))
+            await ping_started.wait()
+            blocker = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await second_worker_started.wait()
+            release_ping.set()
+            await asyncio.sleep(0)
+            mgr.invalidate_cache("g1")
+            release_second_worker.set()
+            results = await asyncio.gather(replaying, blocker)
+
+        assert worker_calls == 2
+        assert results == [{}, {}]
+
+    @pytest.mark.asyncio
     async def test_execute_graph_writes_datapoint(self):
         """Test that datapoint_write nodes publish events."""
         write_dp_id = uuid.uuid4()
@@ -3873,12 +4809,215 @@ class TestLogicManagerExecuteGraph:
     async def test_execute_graph_ws_error_ignored(self):
         """If websocket broadcast fails, execution should still succeed."""
         flow = _make_flow()
-        mgr, db, event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        mgr, db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
         db.execute_and_commit = AsyncMock()
 
         with patch("obs.api.v1.websocket.get_ws_manager", side_effect=Exception("ws not ready")):
             result = await mgr._execute_graph("g1", "G1", flow, {})
         assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_execute_graph_skips_registry_seed_for_invalid_datapoint_id(self):
+        """A datapoint_read node whose datapoint_id isn't a valid UUID must not
+        blow up graph execution — the registry seed is simply skipped for it."""
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "n1",
+                    "type": "datapoint_read",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"datapoint_id": "not-a-valid-uuid"},
+                },
+            ],
+        )
+        mgr, db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.broadcast = AsyncMock()
+            result = await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert isinstance(result, dict)
+
+    @pytest.mark.asyncio
+    async def test_execute_graph_ical_fetch_failure_is_logged(self):
+        """An unexpected error while pre-fetching an iCal URL (e.g. building the
+        fetch targets) must not blow up graph execution — it's logged per node
+        and the graph still produces its normal outputs."""
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/cal.ics"},
+                },
+            ],
+        )
+        mgr, db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with (
+            patch("obs.logic.manager._build_ical_fetch_targets", side_effect=RuntimeError("blocked")),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            result = await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert isinstance(result, dict)
+        assert mgr._hysteresis["g1"]["i1"].get("raw") is None
+
+    @pytest.mark.asyncio
+    async def test_execute_graph_ical_uses_configured_payload_limit(self):
+        import threading
+
+        from icalendar import Calendar
+
+        from obs.logic.executor import GraphExecutor
+
+        class _Headers(dict):
+            def get_list(self, _key):
+                return []
+
+        class _Response:
+            status_code = 200
+            headers = _Headers({"content-type": "text/calendar"})
+
+            def raise_for_status(self):
+                return None
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Response()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class _Client:
+            def stream(self, *_args, **_kwargs):
+                return _Stream()
+
+            async def aclose(self):
+                return None
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {
+                        "url": "https://example.com/cal.ics",
+                        "max_payload_size_mb": 8,
+                    },
+                },
+            ],
+        )
+        mgr, db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        # Persisted fetch metadata intentionally has no runtime-only body.
+        # A restart must fetch even though the previous timestamp is fresh.
+        mgr._hysteresis["g1"] = {
+            "i1": {
+                "fetched_url": "https://example.com/cal.ics",
+                "last_fetch_ts": 4_102_444_800.0,
+            }
+        }
+        read_body = AsyncMock(return_value=b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n")
+        event_loop_thread = threading.get_ident()
+        ical_eval_threads = []
+        parse_threads = []
+        original_eval_node = GraphExecutor._eval_node
+        original_from_ical = Calendar.from_ical
+
+        def _record_eval_thread(executor, node, inputs):
+            if node.type == "ical":
+                ical_eval_threads.append(threading.get_ident())
+            return original_eval_node(executor, node, inputs)
+
+        def _record_parse_thread(*args, **kwargs):
+            parse_threads.append(threading.get_ident())
+            return original_from_ical(*args, **kwargs)
+
+        with (
+            patch(
+                "obs.logic.manager._build_ical_fetch_targets",
+                return_value=(["https://93.184.216.34/cal.ics"], {"Host": "example.com"}, {}),
+            ),
+            patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
+            patch("obs.logic.manager._read_limited_response_body", read_body),
+            patch.object(GraphExecutor, "_eval_node", _record_eval_thread),
+            patch.object(Calendar, "from_ical", side_effect=_record_parse_thread),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            result = await mgr._execute_graph("g1", "G1", flow, {})
+            flow.nodes[0].data["filters"] = '[{"pattern":"holiday"}]'
+            await mgr._execute_graph("g1", "G1", flow, {})
+            await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert isinstance(result, dict)
+        assert read_body.await_args.args[1] == 8 * 1_048_576
+        assert ical_eval_threads[0] != event_loop_thread
+        assert len(parse_threads) == 2
+        assert all(thread_id != event_loop_thread for thread_id in parse_threads)
+        assert mgr._ical_result_caches["g1"]["i1"]["key"][0] == '[{"pattern":"holiday"}]'
+
+    @pytest.mark.asyncio
+    async def test_ical_precompute_error_is_isolated_to_its_node(self):
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    # Malformed persisted configuration must not escape the
+                    # worker precompute and abort the full graph.
+                    "data": {"filters": ["not", "json"]},
+                },
+                {
+                    "id": "constant",
+                    "type": "const_value",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"value": 7},
+                },
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.broadcast = AsyncMock()
+            result = await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert "strip" in result["i1"]["__error__"]
+        assert result["constant"]["value"] == 7.0
+
+    @pytest.mark.asyncio
+    async def test_execute_graph_executor_error_returns_empty_dict(self):
+        """If GraphExecutor.execute() itself raises, _execute_graph logs the
+        failure and returns an empty dict rather than propagating."""
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "n1",
+                    "type": "datapoint_write",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"datapoint_id": str(uuid.uuid4())},
+                },
+            ],
+        )
+        mgr, db, _event_bus, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        with (
+            patch("obs.logic.manager.GraphExecutor.execute", side_effect=RuntimeError("executor blew up")),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            result = await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert result == {}
 
 
 class TestStartCronTasks:
@@ -3956,3 +5095,674 @@ class TestStartCronTasks:
         mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", False, flow)})
         mgr._start_cron_tasks()
         assert ("g1", "c1") not in mgr._cron_tasks
+
+    @pytest.mark.asyncio
+    async def test_cron_loop_logs_and_backs_off_on_error(self):
+        """_cron_loop swallows an unexpected exception (e.g. from croniter),
+        logs it and backs off for 60s rather than letting the loop die."""
+        import asyncio
+
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, _make_flow())})
+
+        sleep_calls = []
+
+        async def _fake_sleep(seconds):
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 2:
+                raise asyncio.CancelledError()
+
+        with patch("obs.logic.manager.asyncio.sleep", _fake_sleep):
+            task = asyncio.create_task(mgr._cron_loop("g1", "c1", "not-a-valid-cron-expression"))
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert sleep_calls == [60, 60]
+
+    @pytest.mark.asyncio
+    async def test_ical_loop_logs_and_backs_off_on_error(self):
+        """_ical_loop swallows an unexpected exception from _execute_graph,
+        logs it and backs off for 60s rather than letting the loop die."""
+        import asyncio
+
+        mgr, _, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, _make_flow())})
+        mgr._execute_graph = AsyncMock(side_effect=RuntimeError("execute failed"))
+
+        sleep_calls = []
+
+        async def _fake_sleep(seconds):
+            sleep_calls.append(seconds)
+            if len(sleep_calls) >= 2:
+                raise asyncio.CancelledError()
+
+        with patch("obs.logic.manager.asyncio.sleep", _fake_sleep):
+            task = asyncio.create_task(mgr._ical_loop("g1", "i1", 30))
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert sleep_calls == [60, 60]
+        assert mgr._execute_graph.await_count == 2
+        assert [entry.args[3] for entry in mgr._execute_graph.await_args_list] == [
+            {"i1": {}},
+            {"i1": {}},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_ical_graph_executions_coalesce_fetch_outcomes(self):
+        """Scheduler and event executions share both successful and failed
+        refresh attempts."""
+        import asyncio
+
+        from icalendar import Calendar
+
+        class _Headers(dict):
+            def get_list(self, _key):
+                return []
+
+        class _Response:
+            status_code = 200
+            headers = _Headers({"content-type": "text/calendar"})
+
+            def raise_for_status(self):
+                return None
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Response()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class _Client:
+            def stream(self, *_args, **_kwargs):
+                return _Stream()
+
+            async def aclose(self):
+                return None
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/cal.ics"},
+                },
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        mgr._ical_result_caches["g1"] = {"removed-node": {"outputs": {}}}
+        mgr._hysteresis["g1"] = {"i1": {"_ical_result_cache": {"outputs": {}}}}
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        fetch_count = 0
+        fail_fetch = False
+        parse_count = 0
+        original_from_ical = Calendar.from_ical
+
+        def _count_parse(*args, **kwargs):
+            nonlocal parse_count
+            parse_count += 1
+            return original_from_ical(*args, **kwargs)
+
+        async def _read_body(*_args):
+            nonlocal fetch_count
+            fetch_count += 1
+            first_started.set()
+            await release_first.wait()
+            if fail_fetch:
+                raise RuntimeError("endpoint unavailable")
+            return b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+
+        with (
+            patch(
+                "obs.logic.manager._build_ical_fetch_targets",
+                return_value=(["https://93.184.216.34/cal.ics"], {"Host": "example.com"}, {}),
+            ),
+            patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
+            patch("obs.logic.manager._read_limited_response_body", side_effect=_read_body),
+            patch.object(Calendar, "from_ical", side_effect=_count_parse),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            scheduler_run = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"i1": {}}))
+            await first_started.wait()
+            event_task = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"event-node": {"value": 1}}))
+            await asyncio.sleep(0)
+            assert fetch_count == 1
+            release_first.set()
+            await asyncio.gather(scheduler_run, event_task)
+
+            assert fetch_count == 1
+            assert parse_count == 1
+
+            fail_fetch = True
+            first_started = asyncio.Event()
+            release_first = asyncio.Event()
+            hyst_node = mgr._hysteresis["g1"]["i1"]
+            hyst_node.pop("raw")
+            hyst_node.pop("_ical_last_attempt_url")
+            hyst_node.pop("_ical_last_attempt_ts")
+
+            first_failed_run = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"i1": {}}))
+            await first_started.wait()
+            queued_run = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"event-node": {"value": 2}}))
+            await asyncio.sleep(0)
+            assert fetch_count == 2
+            release_first.set()
+            await asyncio.gather(first_failed_run, queued_run)
+
+            fail_fetch = False
+            flow.nodes[0].data["max_payload_size_mb"] = 8
+            await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+
+        assert fetch_count == 3
+        assert mgr._hysteresis["g1"]["i1"]["_ical_last_attempt_limit"] == 8 * 1_048_576
+        assert "removed-node" not in mgr._ical_result_caches["g1"]
+        assert "_ical_result_cache" not in mgr._hysteresis["g1"]["i1"]
+
+    @pytest.mark.asyncio
+    async def test_obsolete_ical_fetch_waiter_stops_after_generation_change(self):
+        import asyncio
+
+        class _Headers(dict):
+            def get_list(self, _key):
+                return []
+
+        class _Response:
+            status_code = 200
+            headers = _Headers({"content-type": "text/calendar"})
+
+            def raise_for_status(self):
+                return None
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Response()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class _Client:
+            def stream(self, *_args, **_kwargs):
+                return _Stream()
+
+            async def aclose(self):
+                return None
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/cal.ics"},
+                },
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        fetch_count = 0
+
+        async def _read_body(*_args):
+            nonlocal fetch_count
+            fetch_count += 1
+            first_started.set()
+            await release_first.wait()
+            return b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+
+        with (
+            patch(
+                "obs.logic.manager._build_ical_fetch_targets",
+                return_value=(["https://93.184.216.34/cal.ics"], {"Host": "example.com"}, {}),
+            ),
+            patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
+            patch("obs.logic.manager._read_limited_response_body", side_effect=_read_body),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            first = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"i1": {}}))
+            await first_started.wait()
+            waiter = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {"i1": {}}))
+            await asyncio.sleep(0)
+            mgr.invalidate_cache("g1")
+            release_first.set()
+            await asyncio.gather(first, waiter)
+
+        assert fetch_count == 1
+        assert not mgr._ical_fetch_locks[("g1", "i1")].locked()
+
+    @pytest.mark.asyncio
+    async def test_obsolete_ical_precompute_waiter_aborts_before_parsing(self):
+        import asyncio
+
+        flow = _make_flow(nodes=[{"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        mgr._hysteresis["g1"] = {"i1": {"raw": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"}}
+        first_precompute_started = asyncio.Event()
+        release_first_precompute = asyncio.Event()
+        precompute_calls = 0
+        real_to_thread = asyncio.to_thread
+
+        async def _controlled_to_thread(func, *args):
+            nonlocal precompute_calls
+            if getattr(func, "__name__", "") == "_precompute_ical_node":
+                precompute_calls += 1
+                first_precompute_started.set()
+                await release_first_precompute.wait()
+                return func(*args)
+            return await real_to_thread(func, *args)
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=_controlled_to_thread),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            first = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await first_precompute_started.wait()
+            waiter = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await asyncio.sleep(0)
+            mgr.invalidate_cache("g1")
+            release_first_precompute.set()
+            results = await asyncio.gather(first, waiter)
+
+        assert precompute_calls == 1
+        assert results == [{}, {}]
+
+    @pytest.mark.asyncio
+    async def test_cancelled_ical_precompute_keeps_lock_until_worker_exits(self):
+        import asyncio
+
+        flow = _make_flow(nodes=[{"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        mgr._hysteresis["g1"] = {"i1": {"raw": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"}}
+        first_precompute_started = asyncio.Event()
+        release_first_precompute = asyncio.Event()
+        precompute_calls = 0
+        real_to_thread = asyncio.to_thread
+
+        async def _controlled_to_thread(func, *args):
+            nonlocal precompute_calls
+            if getattr(func, "__name__", "") == "_precompute_ical_node":
+                precompute_calls += 1
+                if precompute_calls == 1:
+                    first_precompute_started.set()
+                    await release_first_precompute.wait()
+                return func(*args)
+            return await real_to_thread(func, *args)
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=_controlled_to_thread),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            cancelled = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await first_precompute_started.wait()
+            cancelled.cancel()
+            replacement = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await asyncio.sleep(0)
+
+            assert precompute_calls == 1
+            assert mgr._ical_precompute_locks[("g1", "i1")].locked()
+
+            release_first_precompute.set()
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled
+            await replacement
+
+        assert precompute_calls == 2
+
+    @pytest.mark.asyncio
+    async def test_current_ical_cache_skips_precompute_worker_and_lock(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        flow = _make_flow(nodes=[{"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {"filters": "[]"}}])
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        raw = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+        mgr._hysteresis["g1"] = {"i1": {"raw": raw}}
+        mgr._ical_result_caches["g1"] = {
+            "i1": {
+                "raw": raw,
+                "key": ("[]", "Europe/Zurich", datetime.now(ZoneInfo("Europe/Zurich")).date().isoformat()),
+                "outputs": {"events": []},
+            }
+        }
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=AssertionError("unexpected precompute worker")),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            result = await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert result["i1"]["events"] == []
+        assert ("g1", "i1") not in mgr._ical_precompute_locks
+
+    @pytest.mark.asyncio
+    async def test_cancelled_ical_fetch_does_not_suppress_replacement_refresh(self):
+        import asyncio
+
+        close_count = 0
+
+        class _Headers(dict):
+            def get_list(self, _key):
+                return []
+
+        class _Response:
+            status_code = 200
+            headers = _Headers({"content-type": "text/calendar"})
+
+            def raise_for_status(self):
+                return None
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Response()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class _Client:
+            def stream(self, *_args, **_kwargs):
+                return _Stream()
+
+            async def aclose(self):
+                nonlocal close_count
+                close_count += 1
+                if close_count == 1:
+                    raise asyncio.CancelledError()
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/cal.ics"},
+                },
+            ]
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        fetch_count = 0
+
+        async def _read_body(*_args):
+            nonlocal fetch_count
+            fetch_count += 1
+            return b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+
+        with (
+            patch(
+                "obs.logic.manager._build_ical_fetch_targets",
+                return_value=(["https://93.184.216.34/cal.ics"], {"Host": "example.com"}, {}),
+            ),
+            patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
+            patch("obs.logic.manager._read_limited_response_body", side_effect=_read_body),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            with pytest.raises(asyncio.CancelledError):
+                await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+
+            hyst_node = mgr._hysteresis["g1"]["i1"]
+            assert "raw" in hyst_node
+            assert "_ical_last_attempt_ts" not in hyst_node
+            assert not mgr._ical_fetch_locks[("g1", "i1")].locked()
+
+            await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+            assert "_ical_last_attempt_ts" in mgr._hysteresis["g1"]["i1"]
+
+            hyst_node = mgr._hysteresis["g1"]["i1"]
+            for key in ("raw", "_ical_last_attempt_url", "_ical_last_attempt_limit", "_ical_last_attempt_ts"):
+                hyst_node.pop(key, None)
+            mgr._ical_result_caches["g1"].clear()
+            real_to_thread = asyncio.to_thread
+
+            async def _cancel_precompute(func, *args):
+                if getattr(func, "__name__", "") == "_precompute_ical_node":
+                    func(*args)
+                    raise asyncio.CancelledError()
+                return await real_to_thread(func, *args)
+
+            with (
+                patch("obs.logic.manager.asyncio.to_thread", side_effect=_cancel_precompute),
+                pytest.raises(asyncio.CancelledError),
+            ):
+                await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+
+            assert mgr._ical_result_caches["g1"] == {}
+
+            async def _invalidate_after_precompute(func, *args):
+                if getattr(func, "__name__", "") == "_precompute_ical_node":
+                    result = func(*args)
+                    mgr.invalidate_cache("g1")
+                    mgr._hysteresis.pop("g1", None)
+                    mgr._ical_result_caches.pop("g1", None)
+                    return result
+                return await real_to_thread(func, *args)
+
+            with patch("obs.logic.manager.asyncio.to_thread", side_effect=_invalidate_after_precompute):
+                await mgr._execute_graph("g1", "G1", flow, {"i1": {}})
+
+        assert fetch_count == 3
+        assert mgr._ical_result_caches.get("g1", {}) == {}
+
+    @pytest.mark.asyncio
+    async def test_obsolete_execution_stops_after_ical_precompute(self):
+        import asyncio
+
+        write_dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
+                {
+                    "id": "write",
+                    "type": "datapoint_write",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"datapoint_id": str(write_dp_id)},
+                },
+            ]
+        )
+        mgr, db, event_bus, registry = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        registry.get_value = MagicMock(return_value=None)
+        mgr._hysteresis["g1"] = {"i1": {"raw": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"}}
+        real_to_thread = asyncio.to_thread
+
+        async def _invalidate_after_precompute(func, *args):
+            result = await real_to_thread(func, *args)
+            if getattr(func, "__name__", "") == "_precompute_ical_node":
+                mgr.invalidate_cache("g1")
+            return result
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=_invalidate_after_precompute),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.has_logic_debug_subscribers.return_value = False
+            result = await mgr._execute_graph("g1", "G1", flow, {"write": {"value": 42.0}})
+
+        assert result == {}
+        event_bus.publish.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ical_snapshot_survives_concurrent_reload_eviction(self):
+        import asyncio
+
+        precompute_started = asyncio.Event()
+        release_precompute = asyncio.Event()
+
+        flow = _make_flow(
+            nodes=[
+                {"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        mgr._hysteresis["g1"] = {"i1": {"raw": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"}}
+        old_cache = {"i1": object()}
+        mgr._ical_result_caches["g1"] = old_cache
+
+        real_to_thread = asyncio.to_thread
+
+        async def _pause_precompute(func, *args):
+            if getattr(func, "__name__", "") == "_precompute_ical_node":
+                precompute_started.set()
+                await release_precompute.wait()
+            return await real_to_thread(func, *args)
+
+        with (
+            patch("obs.logic.manager.asyncio.to_thread", side_effect=_pause_precompute),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            execution = asyncio.create_task(mgr._execute_graph("g1", "G1", flow, {}))
+            await precompute_started.wait()
+            await mgr.reload()
+            release_precompute.set()
+            await execution
+
+        assert "g1" not in mgr._ical_result_caches
+        assert "i1" in old_cache
+
+    @pytest.mark.asyncio
+    async def test_ical_fetch_result_is_discarded_after_graph_removal(self):
+        class _Headers(dict):
+            def get_list(self, _key):
+                return []
+
+        class _Response:
+            status_code = 200
+            headers = _Headers({"content-type": "text/calendar"})
+
+            def raise_for_status(self):
+                return None
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Response()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        class _Client:
+            def stream(self, *_args, **_kwargs):
+                return _Stream()
+
+            async def aclose(self):
+                return None
+
+        flow = _make_flow(
+            nodes=[
+                {
+                    "id": "i1",
+                    "type": "ical",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"url": "https://example.com/cal.ics"},
+                },
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+
+        async def _remove_during_fetch(*_args):
+            mgr.remove_graph("g1")
+            return b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+
+        with (
+            patch(
+                "obs.logic.manager._build_ical_fetch_targets",
+                return_value=(["https://93.184.216.34/cal.ics"], {"Host": "example.com"}, {}),
+            ),
+            patch("obs.logic.manager.httpx.AsyncClient", return_value=_Client()),
+            patch("obs.logic.manager._read_limited_response_body", side_effect=_remove_during_fetch),
+            patch("obs.api.v1.websocket.get_ws_manager") as mock_ws,
+        ):
+            mock_ws.return_value.broadcast = AsyncMock()
+            await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert "g1" not in mgr._hysteresis
+        assert "g1" not in mgr._ical_result_caches
+        assert "g1" not in mgr._ical_cache_generations
+
+    @pytest.mark.asyncio
+    async def test_ical_result_cache_is_shared_without_copy_for_async_replay(self):
+        copy_count = 0
+
+        class _CopyAware:
+            def __deepcopy__(self, _memo):
+                nonlocal copy_count
+                copy_count += 1
+                return self
+
+        flow = _make_flow(
+            nodes=[
+                {"id": "api", "type": "api_client", "position": {"x": 0, "y": 0}, "data": {}},
+                {"id": "i1", "type": "ical", "position": {"x": 200, "y": 0}, "data": {}},
+            ],
+            edges=[
+                {
+                    "id": "api-i1",
+                    "source": "api",
+                    "target": "i1",
+                    "sourceHandle": "response",
+                    "targetHandle": "in",
+                }
+            ],
+        )
+        mgr, db, _, _ = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        sentinel = _CopyAware()
+        mgr._ical_result_caches["g1"] = {"i1": sentinel}
+
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.broadcast = AsyncMock()
+            await mgr._execute_graph("g1", "G1", flow, {})
+
+        assert mgr._ical_result_caches["g1"]["i1"] is sentinel
+        assert copy_count == 0
+
+    @pytest.mark.asyncio
+    async def test_ical_graph_can_reenter_during_datapoint_publication(self):
+        """Publishing a write may synchronously invoke the same graph again;
+        iCalendar synchronization must not lock the whole execution."""
+        import asyncio
+
+        write_dp_id = uuid.uuid4()
+        flow = _make_flow(
+            nodes=[
+                {"id": "i1", "type": "ical", "position": {"x": 0, "y": 0}, "data": {}},
+                {
+                    "id": "n_write",
+                    "type": "datapoint_write",
+                    "position": {"x": 200, "y": 0},
+                    "data": {"datapoint_id": str(write_dp_id)},
+                },
+            ]
+        )
+        mgr, db, event_bus, registry = _make_logic_manager(graphs={"g1": ("G1", True, flow)})
+        db.execute_and_commit = AsyncMock()
+        registry.get_value = MagicMock(return_value=None)
+        publish_count = 0
+
+        async def _publish_and_reenter(_event):
+            nonlocal publish_count
+            publish_count += 1
+            if publish_count == 1:
+                await mgr._execute_graph("g1", "G1", flow, {})
+
+        event_bus.publish.side_effect = _publish_and_reenter
+        with patch("obs.api.v1.websocket.get_ws_manager") as mock_ws:
+            mock_ws.return_value.broadcast = AsyncMock()
+            await asyncio.wait_for(
+                mgr._execute_graph("g1", "G1", flow, {"n_write": {"value": 42.0}}),
+                timeout=1,
+            )
+
+        assert publish_count == 1

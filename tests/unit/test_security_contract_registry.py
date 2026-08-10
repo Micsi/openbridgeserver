@@ -12,7 +12,14 @@ from obs.api.auth import get_admin_user, get_current_principal
 from obs.api.router import router as api_router
 from obs.api.v1.application_audit import audit_application_contract
 from obs.api.v1.route_classification_registry import ROUTE_CLASSIFICATIONS
-from obs.api.v1.security_contract_registry import AuditMode, ROUTE_SECURITY_CONTRACTS, get_route_security_contract
+from obs.api.v1.security_contract_registry import (
+    AuditEffect,
+    AuditMode,
+    AuthorizationMode,
+    PrincipalMode,
+    ROUTE_SECURITY_CONTRACTS,
+    get_route_security_contract,
+)
 from obs.db.database import get_db
 from tests.unit._authz_checker_helpers import write_shared_helper_audit
 from tools.check_authz_contract import validate_contracts
@@ -41,7 +48,34 @@ async def _helper_audited_endpoint(_admin=Depends(get_admin_user)) -> None:
 def test_every_config_mutation_has_exactly_one_security_and_audit_contract() -> None:
     expected = {signature for signature, category in ROUTE_CLASSIFICATIONS.items() if category == "config_mutation"}
     assert set(ROUTE_SECURITY_CONTRACTS) == expected
-    assert len(ROUTE_SECURITY_CONTRACTS) == 99
+    assert len(ROUTE_SECURITY_CONTRACTS) == 109
+
+
+def test_admin_archive_and_device_mutations_declare_result_contracts() -> None:
+    expected = {
+        ("POST", "/api/v1/datapoints/{dp_id}/duplicate"): ("datapoint.duplicated", AuditEffect.EXTERNAL_MUTATION),
+        ("PATCH", "/api/v1/adapters/instances/{instance_id}/onewire/aliases"): (
+            "adapter.onewire.alias_updated",
+            AuditEffect.EXTERNAL_MUTATION,
+        ),
+        ("POST", "/api/v1/message-archives"): ("message_archive.created", AuditEffect.EXTERNAL_MUTATION),
+        ("POST", "/api/v1/message-archives/integrity-check"): ("message_archive.integrity_checked", AuditEffect.OPERATION),
+        ("POST", "/api/v1/message-archives/import/db"): ("message_archive.database_imported", AuditEffect.EXTERNAL_MUTATION),
+        ("PATCH", "/api/v1/message-archives/{archive_id}"): ("message_archive.updated", AuditEffect.EXTERNAL_MUTATION),
+        ("DELETE", "/api/v1/message-archives/{archive_id}"): ("message_archive.deleted", AuditEffect.EXTERNAL_MUTATION),
+        ("POST", "/api/v1/message-archives/{archive_id}/clear"): ("message_archive.cleared", AuditEffect.EXTERNAL_MUTATION),
+    }
+
+    for signature, (audit_action, audit_effect) in expected.items():
+        contract = ROUTE_SECURITY_CONTRACTS[signature]
+        assert contract.principal == PrincipalMode.ADMIN
+        assert contract.authorization == AuthorizationMode.ADMIN
+        assert contract.audit_mode == AuditMode.RESULT
+        assert contract.audit_action == audit_action
+        assert contract.audit_effect == audit_effect
+
+    assert ROUTE_SECURITY_CONTRACTS[("DELETE", "/api/v1/message-archives/{archive_id}")].allowed_detail_fields == {"affected_entries"}
+    assert ROUTE_SECURITY_CONTRACTS[("POST", "/api/v1/message-archives/{archive_id}/clear")].allowed_detail_fields == {"affected_entries"}
 
 
 def test_contract_checker_accepts_the_current_router_and_policy() -> None:

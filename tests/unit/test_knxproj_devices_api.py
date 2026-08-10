@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -62,6 +63,33 @@ async def _prepare_db() -> Database:
     return db
 
 
+async def _insert_datapoint_binding(
+    db: Database,
+    *,
+    dp_id: str,
+    name: str,
+    config: str,
+    direction: str = "SOURCE",
+    enabled: int = 1,
+) -> str:
+    now = datetime.now(UTC).isoformat()
+    binding_id = str(uuid.uuid5(uuid.NAMESPACE_URL, dp_id))
+    await db.execute(
+        """INSERT INTO datapoints
+           (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, created_at, updated_at, persist_value, record_history)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (dp_id, name, "BOOLEAN", None, "[]", f"dp/{dp_id}/value", None, now, now, 1, 1),
+    )
+    await db.execute(
+        """INSERT INTO adapter_bindings
+           (id, datapoint_id, adapter_type, direction, config, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (binding_id, dp_id, "KNX", direction, config, enabled, now, now),
+    )
+    await db.commit()
+    return binding_id
+
+
 async def _insert_authz_tree(db: Database) -> None:
     now = datetime.now(UTC).isoformat()
     await db.execute_and_commit(
@@ -87,12 +115,13 @@ async def _insert_authz_tree(db: Database) -> None:
 
 async def _insert_knx_instance(db: Database, *, instance_id: str = "knx-main", enabled: bool = True) -> None:
     now = datetime.now(UTC).isoformat()
+    stored_instance_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"adapter-instance:{instance_id}"))
     await db.execute_and_commit(
         """
         INSERT INTO adapter_instances (id, adapter_type, name, config, enabled, created_at, updated_at)
         VALUES (?, 'KNX', ?, '{}', ?, ?, ?)
         """,
-        (instance_id, instance_id, int(enabled), now, now),
+        (stored_instance_id, instance_id, int(enabled), now, now),
     )
 
 
@@ -109,6 +138,7 @@ async def _insert_scoped_datapoint(
     adapter_type: str = "KNX",
 ) -> None:
     now = datetime.now(UTC).isoformat()
+    stored_instance_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"adapter-instance:{adapter_instance_id}"))
     config = {"group_address": ga}
     if state_ga:
         config["state_group_address"] = state_ga
@@ -133,7 +163,16 @@ async def _insert_scoped_datapoint(
             (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled, created_at, updated_at)
         VALUES (?, ?, ?, ?, 'SOURCE', ?, ?, ?, ?)
         """,
-        (f"binding-{dp_id}", dp_id, adapter_type, adapter_instance_id, json.dumps(config), int(binding_enabled), now, now),
+        (
+            str(uuid.uuid5(uuid.NAMESPACE_URL, dp_id)),
+            dp_id,
+            adapter_type,
+            stored_instance_id,
+            json.dumps(config),
+            int(binding_enabled),
+            now,
+            now,
+        ),
     )
 
 

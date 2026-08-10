@@ -11,9 +11,10 @@ POST   /icons/fontawesome — import icons from FontAwesome
 from __future__ import annotations
 
 import io
+import logging
 import re
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -25,6 +26,8 @@ from obs.api.audit import contract_audit, set_contract_audit_summary
 from obs.api.auth import get_admin_user, get_current_user
 from obs.config import get_settings
 from obs.db.database import Database, get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["icons"])
 
@@ -162,9 +165,7 @@ def _sanitize_svg(content: bytes) -> bytes:
             attr_name = local_name(attr)
             value = elem.attrib.get(attr) or ""
             normalized_scheme = re.sub(r"[\x00-\x20]+", "", value).lower()
-            if attr_name.startswith("on"):
-                del elem.attrib[attr]
-            elif attr_name in {"href", "xlink:href"} and normalized_scheme.startswith(("javascript:", "data:")):
+            if attr_name.startswith("on") or attr_name in {"href", "xlink:href"} and normalized_scheme.startswith(("javascript:", "data:")):
                 del elem.attrib[attr]
 
         for child in list(elem):
@@ -552,7 +553,7 @@ async def _fa_exchange_token(
             return token
     except Exception:
         # dbg.append(f"[token-exchange] Exception: {exc}")
-        pass
+        logger.exception("FontAwesome token exchange failed")
     return None
 
 
@@ -588,7 +589,7 @@ async def _fa_get_version(
                 return v
     except Exception:
         # dbg.append(f"[version-discovery] Exception: {exc}")
-        pass
+        logger.exception("FontAwesome version discovery failed")
     # dbg.append("[version-discovery] Fallback → 7.2.0")
     return "7.2.0"
 
@@ -655,7 +656,7 @@ async def _fa_graphql_svg(
 
     except Exception:
         # dbg.append(f"[graphql:{icon_name}] Exception: {exc}")
-        pass
+        logger.exception("FontAwesome GraphQL icon lookup failed for %s", icon_name)
     return None
 
 
@@ -675,7 +676,7 @@ async def _fa_cdn_svg(
             if r.status_code == 200 and _is_svg(r.content):
                 return r.content
         except Exception:
-            pass
+            logger.exception("FontAwesome CDN fetch failed for %s", name)
         return None
 
     svg = await _fetch(icon_name)
@@ -816,7 +817,7 @@ def _parse_knxuf_js(content: str) -> dict[str, str]:
 
 def _build_knxuf_svg(path_data: str) -> bytes:
     """Wrap a KNX UF path string in a minimal SVG element."""
-    import xml.etree.ElementTree as ET  # noqa: PLC0415 (local import for clarity)
+    import xml.etree.ElementTree as ET
 
     root = ET.Element("svg")
     root.set("xmlns", "http://www.w3.org/2000/svg")

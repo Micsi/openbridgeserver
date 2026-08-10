@@ -14,16 +14,16 @@ from obs.db.database import Database
 from tools.check_authz_contract import collect_live_routes
 
 
-_APPLICATION_PREFIXES = ("/api/v1/logic", "/api/v1/ringbuffer", "/api/v1/visu")
+_APPLICATION_PREFIXES = ("/api/v1/logic", "/api/v1/message-archives", "/api/v1/ringbuffer", "/api/v1/visu")
 
 
-def test_all_26_application_mutations_are_bound_to_their_declared_contract() -> None:
+def test_all_34_application_mutations_are_bound_to_their_declared_contract() -> None:
     expected = {
         signature
         for signature, category in ROUTE_CLASSIFICATIONS.items()
         if category == "config_mutation" and signature[1].startswith(_APPLICATION_PREFIXES)
     }
-    assert len(expected) == 26
+    assert len(expected) == 34
 
     live = collect_live_routes()
     assert {signature for signature in expected if getattr(live[signature].endpoint, "__audit_contract__", None) == signature} == expected

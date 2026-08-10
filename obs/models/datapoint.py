@@ -1,10 +1,10 @@
 """DataPoint Pydantic model — Phase 1."""
 
 from __future__ import annotations
-from typing import Any, Literal
 
 import datetime
 import uuid
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 

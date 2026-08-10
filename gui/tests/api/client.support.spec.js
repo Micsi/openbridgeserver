@@ -5,7 +5,7 @@ let axiosDefault
 
 beforeEach(() => {
   vi.resetModules()
-  api = {
+  api = Object.assign(vi.fn().mockResolvedValue({ data: {} }), {
     interceptors: {
       request: { use: vi.fn() },
       response: { use: vi.fn() },
@@ -14,7 +14,7 @@ beforeEach(() => {
     post: vi.fn().mockResolvedValue({ data: {} }),
     patch: vi.fn().mockResolvedValue({ data: {} }),
     delete: vi.fn().mockResolvedValue({ data: {} }),
-  }
+  })
   axiosDefault = {
     create: vi.fn(() => api),
     get: vi.fn().mockResolvedValue({ data: {} }),
@@ -42,6 +42,66 @@ describe('supportApi client', () => {
     expect(api.get).toHaveBeenCalledWith('/support/debug-log')
     expect(api.post).toHaveBeenCalledWith('/support/debug-log', { duration_seconds: 300, level: 'DEBUG' })
     expect(api.delete).toHaveBeenCalledWith('/support/debug-log')
+  })
+})
+
+describe('dpApi client', () => {
+  it('calls the datapoint duplication endpoint with the requested name', async () => {
+    const { dpApi } = await import('@/api/client')
+
+    await dpApi.duplicate('dp-1', 'Copy')
+
+    expect(api.post).toHaveBeenCalledWith('/datapoints/dp-1/duplicate', { name: 'Copy' }, { timeout: 0 })
+  })
+})
+
+describe('logicApi client', () => {
+  it('passes optional debug input overrides to graph runs', async () => {
+    const { logicApi } = await import('@/api/client')
+    const payload = { input_overrides: { node: { value: 42 } } }
+
+    await logicApi.runGraph('graph-1', payload)
+
+    expect(api.post).toHaveBeenCalledWith('/logic/graphs/graph-1/run', payload)
+  })
+})
+
+describe('authentication refresh', () => {
+  it('notifies WebSocket consumers after storing refreshed tokens', async () => {
+    const listener = vi.fn()
+    const { AUTH_TOKEN_REFRESHED_EVENT } = await import('@/utils/authEvents')
+    window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, listener)
+    localStorage.setItem('refresh_token', 'old-refresh')
+    axiosDefault.post.mockResolvedValueOnce({
+      data: { access_token: 'fresh-access', refresh_token: 'fresh-refresh' },
+    })
+    await import('@/api/client')
+    const rejectResponse = api.interceptors.response.use.mock.calls[0][1]
+
+    await rejectResponse({
+      config: { headers: {} },
+      response: { status: 401 },
+    })
+
+    expect(localStorage.getItem('access_token')).toBe('fresh-access')
+    expect(localStorage.getItem('refresh_token')).toBe('fresh-refresh')
+    expect(listener).toHaveBeenCalledOnce()
+    window.removeEventListener(AUTH_TOKEN_REFRESHED_EVENT, listener)
+  })
+})
+
+describe('adapterApi onewire client', () => {
+  it('calls the onewire browse and alias endpoints', async () => {
+    const { adapterApi } = await import('@/api/client')
+
+    await adapterApi.onewireBrowseSensors('ow-1')
+    await adapterApi.onewireSetAlias('ow-1', '28.4B057F0A1C10', 'Gästebad')
+
+    expect(api.get).toHaveBeenCalledWith('/adapters/instances/ow-1/onewire/browse', { timeout: 60_000 })
+    expect(api.patch).toHaveBeenCalledWith('/adapters/instances/ow-1/onewire/aliases', {
+      rom_id: '28.4B057F0A1C10',
+      label: 'Gästebad',
+    })
   })
 })
 

@@ -49,6 +49,7 @@ async def test_config_rejects_too_coarse_segmentation_with_422(db, field, segmen
         with pytest.raises(HTTPException) as exc:
             await rb_api.configure_ringbuffer(
                 _cfg(**segment_kwargs, **retention_kwargs),
+                request=None,
                 _user="admin",
                 db=db,
             )
@@ -73,6 +74,7 @@ async def test_config_normalizes_zero_max_age_to_none_in_segmented_path(db, monk
     try:
         stats = await rb_api.configure_ringbuffer(
             _cfg(segmented=True, max_age=0),
+            request=None,
             _user="admin",
             db=db,
         )
@@ -95,6 +97,7 @@ async def test_config_segmented_opt_in_persists_and_exposes_store_stats(db, monk
     try:
         stats = await rb_api.configure_ringbuffer(
             _cfg(segmented=True, segment_max_rows=1000, max_entries=3000),
+            request=None,
             _user="admin",
             db=db,
         )
@@ -118,7 +121,7 @@ async def test_config_default_is_segmented_and_store_stats_present(db, monkeypat
     rb_path = tmp_path / "obs_ringbuffer.db"
     monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(rb_path))
     try:
-        stats = await rb_api.configure_ringbuffer(_cfg(), _user="admin", db=db)
+        stats = await rb_api.configure_ringbuffer(_cfg(), request=None, _user="admin", db=db)
         assert stats.enabled is True
         assert stats.store is not None
         cfg = await rb_api.load_persisted_ringbuffer_config(db)
@@ -137,7 +140,7 @@ async def test_config_explicit_opt_out_keeps_legacy_path(db, monkeypatch, tmp_pa
     rb_path = tmp_path / "obs_ringbuffer.db"
     monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(rb_path))
     try:
-        stats = await rb_api.configure_ringbuffer(_cfg(segmented=False), _user="admin", db=db)
+        stats = await rb_api.configure_ringbuffer(_cfg(segmented=False), request=None, _user="admin", db=db)
         assert stats.enabled is True
         assert stats.store is None
         cfg = await rb_api.load_persisted_ringbuffer_config(db)
@@ -161,6 +164,7 @@ async def test_config_accepts_segments_at_valid_ratio(db, monkeypatch, tmp_path)
                 segment_max_rows=1000,
                 max_entries=3000,
             ),
+            request=None,
             _user="admin",
             db=db,
         )
@@ -173,6 +177,111 @@ async def test_config_accepts_segments_at_valid_ratio(db, monkeypatch, tmp_path)
         if active_rb is not None:
             await active_rb.stop()
         reset_ringbuffer()
+
+
+@pytest.mark.asyncio
+async def test_config_rejects_all_total_and_segment_limits_disabled(db, monkeypatch, tmp_path):
+    rb_path = tmp_path / "obs_ringbuffer.db"
+    monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(rb_path))
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await rb_api.configure_ringbuffer(
+                _cfg(
+                    max_entries=None,
+                    max_file_size_bytes=None,
+                    max_age=None,
+                    segment_max_bytes=None,
+                    segment_max_rows=None,
+                    segment_max_age=None,
+                ),
+                request=None,
+                _user="admin",
+                db=db,
+            )
+        assert exc.value.status_code == 422
+        assert "segment rotation" in str(exc.value.detail).lower()
+    finally:
+        reset_ringbuffer()
+
+
+@pytest.mark.asyncio
+async def test_config_accepts_explicit_age_rotation_with_unbounded_total_retention(db, monkeypatch, tmp_path):
+    rb_path = tmp_path / "obs_ringbuffer.db"
+    monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(rb_path))
+    try:
+        stats = await rb_api.configure_ringbuffer(
+            _cfg(
+                max_entries=None,
+                max_file_size_bytes=None,
+                max_age=None,
+                segment_max_bytes=None,
+                segment_max_rows=None,
+                segment_max_age=24 * 60 * 60,
+            ),
+            request=None,
+            _user="admin",
+            db=db,
+        )
+        assert stats.retention_unbounded is True
+        assert stats.effective_segment_max_bytes is None
+        assert stats.effective_segment_max_rows is None
+        assert stats.effective_segment_max_age == 24 * 60 * 60
+        assert stats.segment_max_bytes_source == "disabled"
+        assert stats.segment_max_rows_source == "disabled"
+        assert stats.segment_max_age_source == "explicit"
+    finally:
+        active_rb = rb_api.get_optional_ringbuffer()
+        if active_rb is not None:
+            await active_rb.stop()
+        reset_ringbuffer()
+
+
+@pytest.mark.asyncio
+async def test_config_reports_per_dimension_derived_effective_limits(db, monkeypatch, tmp_path):
+    rb_path = tmp_path / "obs_ringbuffer.db"
+    monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: str(rb_path))
+    try:
+        stats = await rb_api.configure_ringbuffer(
+            _cfg(
+                max_entries=30_000,
+                max_file_size_bytes=3 * 1024 * 1024 * 1024,
+                max_age=30 * 24 * 60 * 60,
+                segment_max_bytes=None,
+                segment_max_rows=None,
+                segment_max_age=None,
+            ),
+            request=None,
+            _user="admin",
+            db=db,
+        )
+        assert stats.retention_unbounded is False
+        assert stats.effective_segment_max_bytes == 1024 * 1024 * 1024
+        assert stats.effective_segment_max_rows == 10_000
+        assert stats.effective_segment_max_age == 10 * 24 * 60 * 60
+        assert stats.segment_max_bytes_source == "derived"
+        assert stats.segment_max_rows_source == "derived"
+        assert stats.segment_max_age_source == "derived"
+    finally:
+        active_rb = rb_api.get_optional_ringbuffer()
+        if active_rb is not None:
+            await active_rb.stop()
+        reset_ringbuffer()
+
+
+@pytest.mark.parametrize("max_age", [1, 2])
+def test_stats_reports_non_derivable_tiny_age_limit_as_disabled(max_age):
+    stats = rb_api._segment_contract_stats(
+        max_entries=30_000,
+        max_file_size_bytes=None,
+        max_age=max_age,
+        segment_max_bytes=None,
+        segment_max_rows=None,
+        segment_max_age=None,
+    )
+
+    assert stats["effective_segment_max_age"] is None
+    assert stats["segment_max_age_source"] == "disabled"
+    assert stats["segment_max_rows_source"] == "derived"
 
 
 @pytest.mark.asyncio
@@ -189,6 +298,7 @@ async def test_config_segmented_false_with_short_max_age_is_accepted(db, monkeyp
     try:
         stats = await rb_api.configure_ringbuffer(
             _cfg(segmented=False, max_age=3600),
+            request=None,
             _user="admin",
             db=db,
         )
@@ -220,7 +330,7 @@ async def test_config_rejects_out_of_bounds_explicit_values_with_422(db, field, 
     monkeypatch.setattr(rb_api, "_ringbuffer_disk_path", lambda: ":memory:")
     try:
         with pytest.raises(HTTPException) as exc:
-            await rb_api.configure_ringbuffer(_cfg(**segment_kwargs), _user="admin", db=db)
+            await rb_api.configure_ringbuffer(_cfg(**segment_kwargs), request=None, _user="admin", db=db)
         assert exc.value.status_code == 422
         assert field in str(exc.value.detail)
     finally:

@@ -25,6 +25,10 @@ from obs.models.types import DataTypeRegistry
 
 logger = logging.getLogger(__name__)
 
+_INSERT_DATAPOINT_SQL = """INSERT INTO datapoints
+   (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, persist_value, record_history, control_class, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
 
 # ---------------------------------------------------------------------------
 # ValueState — last known value per DataPoint
@@ -103,17 +107,16 @@ class DataPointRegistry:
                 import json as _json
 
                 value = _json.loads(row["value"])
-            except Exception:
+            except (_json.JSONDecodeError, TypeError):
                 value = row["value"]
             if dp.data_type in {"DATE", "TIME", "DATETIME"}:
                 try:
                     value = DataTypeRegistry.get(dp.data_type).mqtt_deserializer(row["value"])
-                except Exception as exc:
+                except (_json.JSONDecodeError, ValueError, TypeError):
                     logger.debug(
-                        "DataPointRegistry: persisted %s value for %s could not be deserialized: %s",
+                        "DataPointRegistry: persisted %s value for %s could not be deserialized",
                         dp.data_type,
                         dp.id,
-                        exc,
                     )
             state.value = value
             state.quality = "good"
@@ -121,7 +124,7 @@ class DataPointRegistry:
 
             try:
                 state.ts = datetime.fromisoformat(row["ts"])
-            except Exception:
+            except (ValueError, TypeError):
                 state.ts = datetime.now(UTC)
             restored += 1
         if restored:
@@ -179,30 +182,42 @@ class DataPointRegistry:
     # Write (CRUD)
     # ------------------------------------------------------------------
 
-    async def create(self, payload: DataPointCreate) -> DataPoint:
-        dp = DataPoint(**payload.model_dump())
-        await self._db.execute_and_commit(
-            """INSERT INTO datapoints
-               (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, persist_value, record_history, control_class, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                str(dp.id),
-                dp.name,
-                dp.data_type,
-                dp.unit,
-                json.dumps(dp.tags),
-                dp.mqtt_topic,
-                dp.mqtt_alias,
-                int(dp.persist_value),
-                int(dp.record_history),
-                dp.control_class,
-                dp.created_at.isoformat(),
-                dp.updated_at.isoformat(),
-            ),
+    @staticmethod
+    def prepare_create(payload: DataPointCreate) -> DataPoint:
+        """Build a datapoint without persisting or publishing it."""
+        return DataPoint(**payload.model_dump())
+
+    @staticmethod
+    def _insert_params(dp: DataPoint) -> tuple[Any, ...]:
+        return (
+            str(dp.id),
+            dp.name,
+            dp.data_type,
+            dp.unit,
+            json.dumps(dp.tags),
+            dp.mqtt_topic,
+            dp.mqtt_alias,
+            int(dp.persist_value),
+            int(dp.record_history),
+            dp.control_class,
+            dp.created_at.isoformat(),
+            dp.updated_at.isoformat(),
         )
+
+    async def insert(self, dp: DataPoint, *, connection: Any | None = None) -> None:
+        """Insert a datapoint into the current database transaction."""
+        await (connection or self._db).execute(_INSERT_DATAPOINT_SQL, self._insert_params(dp))
+
+    def publish(self, dp: DataPoint) -> None:
+        """Publish a committed datapoint to the in-memory registry."""
         self._points[dp.id] = dp
         self._values[dp.id] = ValueState()
         logger.debug("DataPoint created: %s (%s)", dp.name, dp.id)
+
+    async def create(self, payload: DataPointCreate) -> DataPoint:
+        dp = self.prepare_create(payload)
+        await self._db.execute_and_commit(_INSERT_DATAPOINT_SQL, self._insert_params(dp))
+        self.publish(dp)
         return dp
 
     async def update(self, dp_id: uuid.UUID, payload: DataPointUpdate) -> DataPoint:

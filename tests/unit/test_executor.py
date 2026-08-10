@@ -14,11 +14,168 @@ Covers:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from typing import ClassVar
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from obs.logic.executor import ExecutionError, GraphExecutor
 from tests.unit.conftest import edge, make_executor, node
+
+
+def test_execute_captures_incoming_and_effective_inputs_without_mutating_values():
+    base = make_executor(
+        [node("source", "const_value", {"value": 3}), node("target", "math_formula", {"formula": "a * 2"})],
+        [edge("source", "target", "value", "in1")],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute({"target": {"in1": 7}})
+
+    assert outputs["target"]["result"] == 14
+    assert captured["target"]["in1"] == {"incoming": 3.0, "effective": 7, "overridden": True}
+
+
+def test_execute_captures_configured_compare_operand_as_effective_input():
+    base = make_executor(
+        [node("source", "const_value", {"value": 3}), node("target", "compare", {"operator": ">", "operand": 2})],
+        [edge("source", "target", "value", "in1")],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute()
+
+    assert outputs["target"]["out"] is True
+    assert captured["target"]["in2"] == {"incoming": None, "effective": 2, "overridden": False}
+
+
+def test_execute_captures_configured_string_values_and_override_precedence():
+    base = make_executor(
+        [node("target", "string_concat", {"count": 3, "separator": "-", "text_1": "A", "text_2": "B"})],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute({"target": {"in_2": "override"}})
+
+    assert outputs["target"]["result"] == "A-override-"
+    assert captured["target"] == {
+        "in_1": {"incoming": None, "effective": "A", "overridden": False},
+        "in_2": {"incoming": None, "effective": "override", "overridden": True},
+        "in_3": {"incoming": None, "effective": "", "overridden": False},
+    }
+
+
+def test_execute_isolates_mutable_inputs_from_python_script_mutation():
+    mutable = {"x": 1}
+    base = make_executor(
+        [node("target", "python_script", {"script": "inputs['a']['x'] = 2; result = inputs['a']"})],
+    )
+    captured = {}
+    executor = GraphExecutor(base.flow, input_capture=captured)
+
+    outputs = executor.execute(
+        {"target": {"a": mutable}},
+        capture_incoming_overrides={"target": {"a": mutable}},
+    )
+
+    assert mutable == {"x": 1}
+    assert outputs["target"]["result"] == {"x": 2}
+    assert captured["target"]["a"] == {
+        "incoming": {"x": 1},
+        "effective": {"x": 1},
+        "overridden": True,
+    }
+
+
+def test_python_script_cannot_mutate_shared_ical_outputs_between_replays():
+    today = datetime.now(UTC).strftime("%Y%m%d")
+    raw = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:{today}\r\nSUMMARY:Original\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    base = make_executor(
+        [
+            node("calendar", "ical", {"filters": '[{"pattern": "Original"}]'}),
+            node(
+                "script",
+                "python_script",
+                {"script": "inputs['events'][0][3] = 'mutated'; result = inputs['events']"},
+            ),
+        ],
+        [edge("calendar", "script", "f0_array", "events")],
+    )
+    cache = {}
+    executor = GraphExecutor(
+        base.flow,
+        {"calendar": {"raw": raw}},
+        {"timezone": "UTC"},
+        ical_result_cache=cache,
+        ical_cache_outputs_owned=True,
+    )
+
+    first = executor.execute()
+    second = executor.execute()
+
+    assert first["script"]["result"][0][3] == "mutated"
+    assert first["calendar"]["f0_array"][0][3] == "Original"
+    assert second["calendar"]["f0_array"][0][3] == "Original"
+    assert cache["calendar"]["outputs"]["f0_array"][0][3] == "Original"
+
+
+def test_invalid_configured_string_input_count_is_isolated_to_its_node():
+    executor = make_executor([node("target", "string_concat", {"count": "invalid"})])
+
+    outputs = executor.execute()
+
+    assert "invalid literal" in outputs["target"]["__error__"]
+
+
+def test_datetime_node_uses_application_formats():
+    executor = make_executor(
+        [node("clock", "datetime", {"custom_format": "yyyy-MM-dd HH:mm:ss"})],
+        app_config={"timezone": "UTC", "date_format": "yyyy/MM/dd", "time_format": "HH-mm"},
+    )
+
+    output = executor.execute()["clock"]
+
+    assert output["date"].count("/") == 2
+    assert output["time"].count("-") == 1
+    assert len(output["custom"]) == 19
+
+
+def test_datetime_node_localizes_names_and_preserves_literal_words():
+    executor = make_executor(
+        [node("clock", "datetime", {"custom_format": "EEEE MMMM guguseli"})],
+        app_config={"timezone": "UTC", "language": "de"},
+    )
+
+    output = executor.execute()["clock"]["custom"]
+
+    assert "guguseli" in output
+    assert any(day in output for day in ("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"))
+
+
+def test_datetime_node_uses_schema_default_for_custom_output():
+    executor = make_executor([node("clock", "datetime", {})], app_config={"timezone": "UTC", "language": "en"})
+
+    output = executor.execute()["clock"]["custom"]
+
+    assert "," in output
+    assert ":" in output
+
+
+def test_datetime_node_falls_back_to_utc_for_invalid_timezone():
+    executor = make_executor(
+        [node("clock", "datetime", {"custom_format": "yyyy"})],
+        app_config={"timezone": "not-a-timezone", "date_format": "yyyy", "time_format": "HH"},
+    )
+
+    output = executor.execute()["clock"]
+
+    assert len(output["date"]) == 4
+    assert len(output["time"]) == 2
+
 
 # ===========================================================================
 # _round_half_up
@@ -57,6 +214,12 @@ class TestRoundHalfUp:
 
     def test_exact_integer_unchanged(self):
         assert GraphExecutor._round_half_up(5.0) == 5
+
+    def test_infinite_value_falls_back_to_builtin_round(self):
+        """Decimal.quantize() can't handle an infinite value (InvalidOperation)
+        — _round_half_up must fall back to Python's built-in round() instead
+        of propagating the error."""
+        assert GraphExecutor._round_half_up(float("inf")) == float("inf")
 
 
 # ===========================================================================
@@ -167,6 +330,18 @@ class TestConstValue:
     def test_string(self):
         out = run_single("const_value", {"value": "hello", "data_type": "string"})
         assert out["value"] == "hello"
+
+
+# ===========================================================================
+# comment node — purely visual, no executor case (falls through to the
+# "unknown node type" no-op branch, same as ai_logic)
+# ===========================================================================
+
+
+class TestCommentNode:
+    def test_is_a_no_op(self):
+        out = run_single("comment", {"text": "Hysterese-Gating: siehe #1043", "width": 220, "height": 140})
+        assert out == {}
 
 
 # ===========================================================================
@@ -939,6 +1114,26 @@ class TestRandomValueNode:
 
 
 # ===========================================================================
+# astro_sun node
+# ===========================================================================
+
+
+class TestAstroSunNode:
+    def test_success_returns_sunrise_sunset_and_is_day(self):
+        pytest.importorskip("astral", reason="astral not installed")
+        out = run_single("astro_sun", {"latitude": 47.37, "longitude": 8.54})
+        assert isinstance(out["sunrise"], str)
+        assert isinstance(out["sunset"], str)
+        assert isinstance(out["is_day"], bool)
+
+    def test_computation_error_returns_none_values(self):
+        """An invalid config value (e.g. a non-numeric latitude) must not
+        blow up graph execution — the error is logged and defaults returned."""
+        out = run_single("astro_sun", {"latitude": "not-a-number", "longitude": 8.54})
+        assert out == {"sunrise": None, "sunset": None, "is_day": False}
+
+
+# ===========================================================================
 # statistics node
 # ===========================================================================
 
@@ -1027,6 +1222,11 @@ class TestDatapointNodes:
     def test_write_applies_formula(self):
         out = run_single("datapoint_write", {"value_formula": "x * 3600"}, {"value": 1.0})
         assert out["_write_value"] == pytest.approx(3600.0)
+
+    def test_write_formula_error_returns_original(self):
+        # Formula error must not propagate — original value preserved
+        out = run_single("datapoint_write", {"value_formula": "1 / 0"}, {"value": 5.0})
+        assert out["_write_value"] == 5.0
 
     def test_write_trigger_passed_through(self):
         out = run_single("datapoint_write", {}, {"value": 1.0, "trigger": True})
@@ -1600,7 +1800,7 @@ class TestHeatingCircuit:
     """
 
     # Default: heating ON below 14 °C, OFF at or above 16 °C (14 + 2 hysteresis)
-    _CFG = {"threshold_temp": 14.0, "hysteresis": 2.0}
+    _CFG: ClassVar[dict[str, float]] = {"threshold_temp": 14.0, "hysteresis": 2.0}
 
     @staticmethod
     def _d(day: int) -> str:
@@ -1641,6 +1841,16 @@ class TestHeatingCircuit:
         n1 = node("h", "heating_circuit", config)
         exc = make_executor([n1], hysteresis_state=state)
         return exc.execute({"h": {"value": value, "_hour": hour, "_date": date}})["h"], state
+
+    # ── App-Timezone Fallback ────────────────────────────────────────────────
+
+    def test_invalid_app_timezone_falls_back_to_utc(self):
+        """An invalid app_config timezone must not blow up the node — it
+        falls back to UTC and execution proceeds normally."""
+        n1 = node("h", "heating_circuit", self._CFG)
+        exc = make_executor([n1], app_config={"timezone": "not-a-real-timezone"})
+        out = exc.execute({"h": {"value": 10.0, "_slot": "t1", "_date": "2025-01-01"}})["h"]
+        assert out["t1"] == pytest.approx(10.0)
 
     # ── DIN-Formel ────────────────────────────────────────────────────────────
 
@@ -2023,11 +2233,11 @@ class TestHeatingCircuit:
 
 
 class TestMinMaxTracker:
-    def _run(self, value, state=None):
+    def _run(self, value, state=None, app_config=None):
         if state is None:
             state = {}
         n1 = node("m", "min_max_tracker", {})
-        exc = make_executor([n1], hysteresis_state=state)
+        exc = make_executor([n1], hysteresis_state=state, app_config=app_config)
         return exc.execute({"m": {"value": value}})["m"], state
 
     def test_first_value_sets_min_and_max(self):
@@ -2069,7 +2279,7 @@ class TestMinMaxTracker:
 
     def test_no_value_returns_current_state(self):
         state = {}
-        out, state = self._run(5.0, state)
+        _out, state = self._run(5.0, state)
         # Execute without a new value — state must persist
         n1 = node("m", "min_max_tracker", {})
         exc = make_executor([n1], hysteresis_state=state)
@@ -2087,6 +2297,20 @@ class TestMinMaxTracker:
         assert out["max_daily"] == pytest.approx(5.0)
         assert out["min_abs"] == pytest.approx(5.0)  # 5 < 100
         assert out["max_abs"] == pytest.approx(100.0)
+
+    def test_periods_use_configured_application_timezone(self):
+        utc_today = datetime.now(UTC).date()
+        timezone = next(name for name in ("Pacific/Kiritimati", "Etc/GMT+12") if datetime.now(ZoneInfo(name)).date() != utc_today)
+        expected_day = datetime.now(ZoneInfo(timezone)).date().isoformat()
+
+        _, state = self._run(42.0, app_config={"timezone": timezone})
+
+        assert state["m"]["last_day"] == expected_day
+
+    def test_invalid_application_timezone_falls_back_to_default(self):
+        _, state = self._run(42.0, app_config={"timezone": "not/a-timezone"})
+
+        assert state["m"]["last_day"] == datetime.now(ZoneInfo("Europe/Zurich")).date().isoformat()
 
     def test_seed_abs_min_max_applied_once(self):
         """Startwerte für abs_min/abs_max werden einmalig übernommen."""
@@ -2181,6 +2405,32 @@ class TestConsumptionCounter:
         out, _ = self._run(60.0, state)
         assert out["prev_daily"] == pytest.approx(50.0)
         assert out["daily"] == pytest.approx(10.0)
+
+    def test_periods_use_configured_application_timezone(self):
+        # Choose a timezone whose calendar date differs from UTC right now,
+        # so this cannot accidentally pass by using the server clock.
+        utc_today = datetime.now(UTC).date()
+        timezone = next(name for name in ("Pacific/Kiritimati", "Etc/GMT+12") if datetime.now(ZoneInfo(name)).date() != utc_today)
+        expected_day = datetime.now(ZoneInfo(timezone)).date().isoformat()
+        state = {}
+        n1 = node("c", "consumption_counter", {})
+        exc = make_executor([n1], hysteresis_state=state, app_config={"timezone": timezone})
+
+        exc.execute({"c": {"value": 100.0}})
+
+        assert state["c"]["last_day"] == expected_day
+
+    def test_invalid_app_timezone_falls_back_to_default(self):
+        """An invalid app_config timezone must not blow up the node — it
+        falls back to Europe/Zurich and execution proceeds normally."""
+        state = {}
+        n1 = node("c", "consumption_counter", {})
+        exc = make_executor([n1], hysteresis_state=state, app_config={"timezone": "not-a-real-timezone"})
+
+        out = exc.execute({"c": {"value": 100.0}})["c"]
+
+        assert out["daily"] == pytest.approx(0.0)
+        assert state["c"]["last_day"] == datetime.now(ZoneInfo("Europe/Zurich")).date().isoformat()
 
     def test_no_value_returns_current_state(self):
         state = {}

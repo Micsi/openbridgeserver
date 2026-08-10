@@ -50,6 +50,10 @@ _INFRASTRUCTURE_MODULES = frozenset(
 def _audit_contracts(route: APIRoute) -> list[tuple[str, str]]:
     contracts: list[tuple[str, str]] = []
 
+    endpoint_contract = getattr(route.endpoint, "__audit_contract__", None)
+    if endpoint_contract is not None:
+        contracts.append(endpoint_contract)
+
     def walk(dependant) -> None:
         for dependency in dependant.dependencies:
             contract = getattr(dependency.call, "__audit_contract__", None)
@@ -86,7 +90,7 @@ async def db() -> Database:
         await database.disconnect()
 
 
-def test_all_39_infrastructure_mutations_have_exactly_one_literal_audit_dependency() -> None:
+def test_all_41_infrastructure_mutations_have_exactly_one_literal_audit_binding() -> None:
     live = collect_live_routes()
     infrastructure = {
         signature: route
@@ -96,11 +100,11 @@ def test_all_39_infrastructure_mutations_have_exactly_one_literal_audit_dependen
         and ROUTE_CLASSIFICATIONS[signature] == "config_mutation"
     }
 
-    assert len(infrastructure) == 39
+    assert len(infrastructure) == 41
     assert {module: sum(route.endpoint.__module__ == module for route in infrastructure.values()) for module in _INFRASTRUCTURE_MODULES} == {
-        "obs.api.v1.adapters": 11,
+        "obs.api.v1.adapters": 12,
         "obs.api.v1.bindings": 3,
-        "obs.api.v1.datapoints": 3,
+        "obs.api.v1.datapoints": 4,
         "obs.api.v1.hierarchy": 10,
         "obs.api.v1.icons": 6,
         "obs.api.v1.knxkeyfile": 2,

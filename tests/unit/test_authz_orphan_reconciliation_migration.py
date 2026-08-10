@@ -101,12 +101,12 @@ async def test_v45_leaves_grant_types_with_missing_historical_tables_untouched()
 
 
 @pytest.mark.asyncio
-async def test_clean_install_reaches_v45_and_reconciliation_is_idempotent() -> None:
+async def test_clean_install_reaches_v50_and_reconciliation_is_idempotent() -> None:
     db = Database(":memory:")
     await db.connect()
     try:
         row = await db.fetchone("SELECT MAX(version) AS version FROM schema_version")
-        assert row["version"] == 47
+        assert row["version"] == 50
 
         await _migration_v45(db.conn)
         await _migration_v45(db.conn)
@@ -116,7 +116,7 @@ async def test_clean_install_reaches_v45_and_reconciliation_is_idempotent() -> N
 
 
 @pytest.mark.asyncio
-async def test_populated_v44_database_applies_v45_on_upgrade(tmp_path) -> None:
+async def test_populated_v44_database_upgrades_to_v50_and_applies_v45(tmp_path) -> None:
     path = tmp_path / "populated-v44.sqlite"
     db = Database(str(path))
     await db.connect()
@@ -141,7 +141,7 @@ async def test_populated_v44_database_applies_v45_on_upgrade(tmp_path) -> None:
     await upgraded.connect()
     try:
         version = await upgraded.fetchone("SELECT MAX(version) AS version FROM schema_version")
-        assert version["version"] == 47
+        assert version["version"] == 50
         rows = await upgraded.fetchall(
             "SELECT principal_id, node_id FROM authz_node_roles ORDER BY principal_id",
         )

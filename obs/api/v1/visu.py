@@ -1206,7 +1206,15 @@ async def get_widget_ref(
     pc = node.page_config or PageConfig()
     if access == "user":
         await _check_page_datapoint_policy(db, principal, _collect_page_datapoint_ids(pc), AuthzAction.READ)
-    return pc.widgets
+    return [
+        WidgetRefInstance.model_validate(
+            {
+                **widget.model_dump(),
+                "source_page_readonly": access == "readonly",
+            }
+        )
+        for widget in pc.widgets
+    ]
 
 
 @router.put("/pages/{node_id}", status_code=status.HTTP_204_NO_CONTENT)

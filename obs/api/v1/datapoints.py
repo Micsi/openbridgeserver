@@ -2,6 +2,7 @@
 
 GET    /api/v1/datapoints            paginated list
 POST   /api/v1/datapoints            create
+POST   /api/v1/datapoints/{id}/duplicate duplicate (+ adapter bindings)
 GET    /api/v1/datapoints/{id}       get one (+ current value)
 PATCH  /api/v1/datapoints/{id}       update
 DELETE /api/v1/datapoints/{id}       delete
@@ -11,13 +12,15 @@ POST   /api/v1/datapoints/{id}/value write value (fires DataValueEvent)
 
 from __future__ import annotations
 
+import asyncio
 import datetime
+import logging
 import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, Field, field_serializer
 
 from obs.api.audit import contract_audit, set_contract_audit_details, set_contract_audit_resource_id
 from obs.api.auth import Principal, get_admin_user, get_current_principal
@@ -29,16 +32,18 @@ from obs.api.authz_service import (
     load_role_grants,
     resolve_datapoint_targets,
 )
+from obs.api.v1.application_audit import audit_application_contract, write_application_success
 from obs.api.v1.datapoint_config import collect_datapoint_ids_from_config
 from obs.api.v1.services.knx_traceability import KnxDatapointContextOut, build_datapoint_knx_context
 from obs.api.v1.sessions import validate_session
 from obs.core.event_bus import DataValueEvent, get_event_bus
-from obs.core.registry import get_registry
+from obs.core.registry import _row_to_datapoint, get_registry
 from obs.db.database import Database, get_db
 from obs.models.datapoint import DataPointCreate, DataPointUpdate
 from obs.models.visu import PageConfig
 
 router = APIRouter(tags=["datapoints"])
+logger = logging.getLogger(__name__)
 
 _AUDITABLE_METADATA_FIELDS = (
     "name",
@@ -137,6 +142,12 @@ class ValueOut(BaseModel):
 
 class WriteValueIn(BaseModel):
     value: Any
+
+
+class DataPointDuplicateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+    model_config = {"str_strip_whitespace": True}
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +321,20 @@ async def _page_context_allows_datapoint_read(
     return False
 
 
+async def _reload_duplicate_bindings(duplicate_id: uuid.UUID, instance_ids: list[str], db: Database) -> None:
+    from obs.api.v1.bindings import _reload_adapter_instance
+
+    for instance_id in instance_ids:
+        try:
+            await _reload_adapter_instance(instance_id, db)
+        except Exception:
+            logger.exception(
+                "DataPoint %s duplicated successfully, but adapter instance %s failed to reload bindings",
+                duplicate_id,
+                instance_id,
+            )
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -385,6 +410,133 @@ async def create_datapoint(
     return _enrich(dp)
 
 
+@router.post("/{dp_id}/duplicate", response_model=DataPointOut, status_code=status.HTTP_201_CREATED)
+@audit_application_contract(
+    "POST",
+    "/api/v1/datapoints/{dp_id}/duplicate",
+    principal_param="_user",
+    resource_param="dp_id",
+)
+async def duplicate_datapoint(
+    dp_id: uuid.UUID,
+    body: DataPointDuplicateIn,
+    request: Request = None,  # type: ignore[assignment]
+    _user: str = Depends(get_admin_user),
+    db: Database = Depends(get_db),
+) -> DataPointOut:
+    registry = get_registry()
+    now = datetime.datetime.now(datetime.UTC).isoformat()
+    cancelled_after_commit: asyncio.CancelledError | None = None
+    committed = False
+    try:
+        async with db.isolated_transaction() as transaction:
+            try:
+                # Acquire the SQLite write reservation before taking the binding
+                # snapshot, so deleting an adapter instance cannot interleave and
+                # leave copied bindings pointing at an instance that no longer exists.
+                await transaction.execute("BEGIN IMMEDIATE")
+                source_row = await transaction.fetchone(
+                    "SELECT * FROM datapoints WHERE id=?",
+                    (str(dp_id),),
+                )
+                if source_row is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+                source = _row_to_datapoint(source_row)
+                duplicate = registry.prepare_create(
+                    DataPointCreate(
+                        name=body.name,
+                        data_type=source.data_type,
+                        unit=source.unit,
+                        tags=list(source.tags),
+                        mqtt_alias=source.mqtt_alias,
+                        persist_value=source.persist_value,
+                        record_history=source.record_history,
+                    )
+                )
+                binding_rows = await transaction.fetchall(
+                    "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
+                    (str(dp_id),),
+                )
+                await registry.insert(duplicate, connection=transaction)
+                if binding_rows:
+                    await transaction.executemany(
+                        """INSERT INTO adapter_bindings
+                           (id, datapoint_id, adapter_type, adapter_instance_id, direction, config, enabled,
+                            send_throttle_ms, send_on_change, send_min_delta, send_min_delta_pct,
+                            value_formula, value_map, created_at, updated_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        [
+                            (
+                                str(uuid.uuid4()),
+                                str(duplicate.id),
+                                row["adapter_type"],
+                                row["adapter_instance_id"],
+                                row["direction"],
+                                row["config"],
+                                row["enabled"],
+                                row["send_throttle_ms"],
+                                row["send_on_change"],
+                                row["send_min_delta"],
+                                row["send_min_delta_pct"],
+                                row["value_formula"],
+                                row["value_map"],
+                                now,
+                                now,
+                            )
+                            for row in binding_rows
+                        ],
+                    )
+            except asyncio.CancelledError:
+                await asyncio.shield(transaction.rollback())
+                raise
+            except Exception:
+                await transaction.rollback()
+                raise
+
+            commit_task = asyncio.create_task(transaction.commit())
+            try:
+                await asyncio.shield(commit_task)
+            except asyncio.CancelledError as exc:
+                try:
+                    await commit_task
+                except Exception:
+                    await asyncio.shield(transaction.rollback())
+                    raise
+                cancelled_after_commit = exc
+            except Exception:
+                await transaction.rollback()
+                raise
+            committed = True
+            registry.publish(duplicate)
+    except asyncio.CancelledError as exc:
+        if not committed:
+            raise
+        cancelled_after_commit = cancelled_after_commit or exc
+
+    instance_ids = sorted({row["adapter_instance_id"] for row in binding_rows if row["enabled"] and row["adapter_instance_id"]})
+    if instance_ids:
+        reload_task = asyncio.create_task(_reload_duplicate_bindings(duplicate.id, instance_ids, db))
+        try:
+            await asyncio.shield(reload_task)
+        except asyncio.CancelledError as exc:
+            await reload_task
+            cancelled_after_commit = cancelled_after_commit or exc
+    if isinstance(db, Database):
+        await write_application_success(
+            db,
+            request,
+            _user,
+            "POST",
+            "/api/v1/datapoints/{dp_id}/duplicate",
+            resource_id=str(duplicate.id),
+            commit=True,
+        )
+    if cancelled_after_commit is not None:
+        raise cancelled_after_commit
+
+    return _enrich(duplicate)
+
+
 @router.get("/{dp_id}", response_model=DataPointOut)
 async def get_datapoint(
     dp_id: uuid.UUID,
@@ -398,6 +550,18 @@ async def get_datapoint(
     if not await _can_read_datapoint(db, principal, dp_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
     return _enrich(dp)
+
+
+@router.get("/{dp_id}/knx-context", response_model=KnxDatapointContextOut)
+async def get_datapoint_knx_context(
+    dp_id: uuid.UUID,
+    _user: Principal | str = Depends(get_current_principal),
+    db: Database = Depends(get_db),
+) -> KnxDatapointContextOut:
+    principal = _principal_from_dependency(_user)
+    if get_registry().get(dp_id) is None or not await _can_read_datapoint(db, principal, dp_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+    return await build_datapoint_knx_context(dp_id, db)
 
 
 @router.patch(
@@ -553,9 +717,7 @@ async def get_value(
             validate_id = defining_node_id or page_id
             if not session_token or not validate_session(session_token, validate_id):
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Valid session token required")
-        elif access == "user":
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-        elif access not in ("public", "readonly"):
+        elif access == "user" or access not in ("public", "readonly"):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     else:
         principal = _principal_from_dependency(user)
@@ -592,7 +754,7 @@ async def _page_has_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> b
 
     try:
         page = PageConfig.model_validate_json(raw)
-    except Exception:
+    except ValueError:
         return False
 
     dp_id_str = str(dp_id)

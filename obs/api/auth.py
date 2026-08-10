@@ -17,8 +17,6 @@ First startup: an owner must be created offline with ``obs-admin``.
 """
 
 from __future__ import annotations
-from obs.config import get_settings
-from obs.db.database import Database, get_db
 
 import hashlib
 import hmac
@@ -35,6 +33,9 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+from obs.config import get_settings
+from obs.db.database import Database, get_db
 
 # Rate limiter — mounted on app in main.py via app.state.limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -69,7 +70,7 @@ def verify_password(plain: str, stored: str) -> bool:
             int(iterations),
         )
         return hmac.compare_digest(dk.hex(), hash_hex)
-    except Exception:
+    except ValueError:
         return False
 
 

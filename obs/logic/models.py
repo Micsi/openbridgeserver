@@ -58,6 +58,13 @@ class LogicGraphUpdate(BaseModel):
     control_class: ControlClassName | None = None
 
 
+class LogicGraphRun(BaseModel):
+    """Ephemeral values used for one interactive debug execution."""
+
+    input_overrides: dict[str, dict[str, Any]] = {}
+    debug: bool = False
+
+
 class LogicGraphOut(BaseModel):
     id: str
     name: str
@@ -98,6 +105,8 @@ class NodeTypeDef(BaseModel):
     color: str = "#475569"  # default node color (tailwind slate-600)
     has_external_side_effect: bool | None = None
     required_capability: str | None = None
+    hidden_from_palette: bool = False
+    legacy: bool = False
 
 
 class LogicRunPreflightCheck(BaseModel):

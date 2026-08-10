@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from urllib.parse import parse_qsl, urlencode
 
 import aiosqlite
 
@@ -139,7 +140,7 @@ async def _migration_v5(conn: aiosqlite.Connection) -> None:
     try:
         await conn.execute("ALTER TABLE adapter_bindings ADD COLUMN adapter_instance_id TEXT")
         await conn.commit()
-    except Exception:
+    except aiosqlite.OperationalError:
         pass  # Spalte existiert bereits
 
     # 3. adapter_configs → adapter_instances migrieren
@@ -663,9 +664,19 @@ CREATE INDEX IF NOT EXISTS idx_authz_node_roles_role
 # nicht im Datenpfad. Alle weiteren im Issue vorgeschlagenen OBS.db-Indexe wurden
 # per EXPLAIN als Duplikate oder ohne genutzten Query-Pfad verworfen (Details im
 # Audit-Skript tools/index-audit-919.py).
-_MIGRATION_V40 = """
+_MIGRATION_V40_BINDING_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_bind_instance_enabled
     ON adapter_bindings(adapter_instance_id, enabled);
+"""
+
+_MIGRATION_V41_DATETIME_SETTINGS = """
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('date_format', 'dd.MM.yyyy');
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('time_format', 'HH:mm:ss');
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('language', 'de');
 """
 
 
@@ -698,7 +709,7 @@ async def _migration_v40(conn: aiosqlite.Connection) -> None:
         await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_created_by ON {table}(created_by)")
 
 
-_MIGRATION_V41 = """
+_MIGRATION_V41_AUTHZ_CAPABILITIES = """
 CREATE TABLE IF NOT EXISTS api_key_capability_sets (
     key_id      TEXT PRIMARY KEY REFERENCES api_keys(id) ON DELETE CASCADE,
     revision    INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
@@ -1119,6 +1130,20 @@ async def _migration_v47(conn: aiosqlite.Connection) -> None:
     await conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_entries_route ON audit_log_entries(http_method, route_template)")
 
 
+async def _migration_v50(conn: aiosqlite.Connection) -> None:
+    """Reconcile the two pre-merge migration lineages at versions 40 and 41.
+
+    Main used these versions for the binding index and datetime settings while
+    the AuthZ feature branch used the same numbers for ownership and API-key
+    capabilities.  The authoritative merged sequence keeps main's immutable
+    versions and moves the AuthZ migrations to 42-49.  Reapplying main's two
+    idempotent migrations here also repairs local AuthZ development databases
+    that had already recorded schema version 47 before the merge.
+    """
+    await conn.executescript(_MIGRATION_V40_BINDING_INDEX)
+    await conn.executescript(_MIGRATION_V41_DATETIME_SETTINGS)
+
+
 # List of (version, sql_or_callable) tuples — append new migrations here
 MIGRATIONS: list[tuple[int, str | Callable]] = [
     (1, _MIGRATION_V1),
@@ -1162,14 +1187,17 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (37, _MIGRATION_V37),
     (38, _MIGRATION_V38),
     (39, _MIGRATION_V39),
-    (40, _migration_v40),
-    (41, _MIGRATION_V41),
-    (42, _migration_v42),
-    (43, _migration_v43),
-    (44, _migration_v44),
-    (45, _migration_v45),
-    (46, _migration_v46),
-    (47, _migration_v47),
+    (40, _MIGRATION_V40_BINDING_INDEX),
+    (41, _MIGRATION_V41_DATETIME_SETTINGS),
+    (42, _migration_v40),
+    (43, _MIGRATION_V41_AUTHZ_CAPABILITIES),
+    (44, _migration_v42),
+    (45, _migration_v43),
+    (46, _migration_v44),
+    (47, _migration_v45),
+    (48, _migration_v46),
+    (49, _migration_v47),
+    (50, _migration_v50),
 ]
 
 
@@ -1208,17 +1236,67 @@ class _LoopReusableLock:
         self.release()
 
 
+class _DatabaseTransaction:
+    """Connection handle for a multi-statement transaction."""
+
+    def __init__(self, conn: aiosqlite.Connection) -> None:
+        self._conn = conn
+
+    async def execute(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
+        return await self._conn.execute(sql, params)
+
+    async def executemany(self, sql: str, params: Any) -> aiosqlite.Cursor:
+        return await self._conn.executemany(sql, params)
+
+    async def fetchall(self, sql: str, params: Any = ()) -> list[aiosqlite.Row]:
+        async with self._conn.execute(sql, params) as cur:
+            return await cur.fetchall()
+
+    async def fetchone(self, sql: str, params: Any = ()) -> aiosqlite.Row | None:
+        async with self._conn.execute(sql, params) as cur:
+            return await cur.fetchone()
+
+    async def commit(self) -> None:
+        await self._conn.commit()
+
+    async def rollback(self) -> None:
+        await self._conn.rollback()
+
+
+class _DatabaseLifecycle:
+    """Connection lifecycle operations under the database's exclusive lock."""
+
+    def __init__(self, database: Database) -> None:
+        self._database = database
+
+    async def connect(self) -> None:
+        await self._database._connect()
+
+    async def disconnect(self) -> None:
+        await self._database._disconnect()
+
+
 class Database:
     """Async SQLite database wrapper with built-in migration support."""
 
     def __init__(self, path: str) -> None:
+        from obs.ringbuffer.ringbuffer import _is_sqlite_memory_path
+
         self._path = path
+        self._is_memory = _is_sqlite_memory_path(path)
+        # Memory databases only exist inside one SQLite connection unless every
+        # connection uses the same shared-cache URI. Give plain ``:memory:`` a
+        # private name and normalize all supported memory URIs accordingly.
         if path == ":memory:":
-            self._connection_path = f"file:obs-{uuid4().hex}?mode=memory&cache=shared"
-            self._connection_uri = True
+            self._connection_path = f"file:obs-{uuid.uuid4().hex}?mode=memory&cache=shared"
+        elif self._is_memory:
+            uri_path, _, query_string = path.partition("?")
+            query = [(key, value) for key, value in parse_qsl(query_string, keep_blank_values=True) if key.lower() != "cache"]
+            query.append(("cache", "shared"))
+            self._connection_path = f"{uri_path}?{urlencode(query)}"
         else:
             self._connection_path = path
-            self._connection_uri = path.startswith("file:")
+        self._connection_uri = self._connection_path.startswith("file:")
         self._conn: aiosqlite.Connection | None = None
         # Serializes WAL checkpoints and pairs them with disconnect: a restore
         # (POST /config/import/db) disconnects the DB and rewrites the file, and
@@ -1232,12 +1310,24 @@ class Database:
         self._write_lock = _LoopReusableLock()
         self._legacy_write_owner: asyncio.Task | None = None
         self._transaction_connections: dict[asyncio.Task, aiosqlite.Connection] = {}
+        # A config restore may replace the database file after disconnect. Keep
+        # disconnect from returning while a private transaction still owns the
+        # old file.
+        self._transaction_lifecycle_lock = _LoopReusableLock()
+        # SQLite shared-cache memory databases return SQLITE_LOCKED immediately
+        # instead of honoring busy_timeout. Serialize their ordinary operations
+        # with private transactions so callers retain normal wait semantics.
+        self._memory_operation_lock = _LoopReusableLock()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def connect(self) -> None:
+        async with self._transaction_lifecycle_lock:
+            await self._connect()
+
+    async def _connect(self) -> None:
         if self._path not in (":memory:", "file::memory:?cache=shared"):
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -1273,6 +1363,10 @@ class Database:
         # in-flight maintenance checkpoint to finish (its worker thread cannot be
         # cancelled) before closing, so a restore that rewrites the file right after
         # disconnect never races a checkpoint still holding locks on it. See #908.
+        async with self._transaction_lifecycle_lock:
+            await self._disconnect()
+
+    async def _disconnect(self) -> None:
         async with self._checkpoint_lock:
             if self._conn is not None:
                 # Leave the -wal sidecar bounded on graceful shutdown.
@@ -1283,6 +1377,12 @@ class Database:
                 await self._conn.close()
                 self._conn = None
                 logger.info("Database disconnected")
+
+    @asynccontextmanager
+    async def exclusive_lifecycle(self) -> AsyncIterator[_DatabaseLifecycle]:
+        """Block transactions throughout a disconnect/replace/reconnect sequence."""
+        async with self._transaction_lifecycle_lock:
+            yield _DatabaseLifecycle(self)
 
     async def checkpoint(self) -> bool:
         """Force a TRUNCATE WAL checkpoint to keep the ``-wal`` sidecar bounded.
@@ -1407,7 +1507,7 @@ class Database:
         # Checkpoints, disconnect/restore, and explicit transactions all hold this
         # lifecycle guard. A restore therefore cannot close or replace the database
         # file while a dedicated transaction is still using it.
-        async with self._checkpoint_lock, self._write_lock:
+        async with self._transaction_lifecycle_lock, self._checkpoint_lock, self._isolated_operation(), self._write_lock:
             if self._conn is None:
                 raise RuntimeError("Database.connect() has not been called")
             transaction_conn = await self._open_connection()
@@ -1449,6 +1549,66 @@ class Database:
             raise RuntimeError("Database.connect() has not been called")
         return self._conn
 
+    @asynccontextmanager
+    async def isolated_transaction(self) -> AsyncIterator[_DatabaseTransaction]:
+        """Yield a private connection so a multi-statement transaction cannot interleave."""
+        async with self._transaction_lifecycle_lock, self._checkpoint_lock, self._isolated_operation(), self._write_lock:
+            if self._conn is None:
+                raise RuntimeError("Database.connect() has not been called")
+            isolated = await aiosqlite.connect(
+                self._connection_path,
+                uri=self._connection_path.startswith("file:"),
+            )
+            try:
+                isolated.row_factory = aiosqlite.Row
+                await isolated.execute("PRAGMA foreign_keys=ON")
+                yield _DatabaseTransaction(isolated)
+            finally:
+
+                async def _cleanup() -> None:
+                    if isolated.in_transaction:
+                        await isolated.rollback()
+                    await isolated.close()
+
+                cleanup_task = asyncio.create_task(_cleanup())
+                try:
+                    await asyncio.shield(cleanup_task)
+                except asyncio.CancelledError:
+                    await cleanup_task
+                    raise
+
+    @asynccontextmanager
+    async def _isolated_operation(self) -> AsyncIterator[None]:
+        if not self._is_memory:
+            yield
+            return
+
+        while True:
+            # Do not retain the lock while waiting: the existing ordinary
+            # transaction may need another helper call before it can commit.
+            while self.conn.in_transaction:
+                await asyncio.sleep(0)
+            await self._memory_operation_lock.acquire()
+            if not self.conn.in_transaction:
+                break
+            self._memory_operation_lock.release()
+
+        try:
+            yield
+        finally:
+            self._memory_operation_lock.release()
+
+    @asynccontextmanager
+    async def _ordinary_operation(self) -> AsyncIterator[None]:
+        # Task-local transactions already hold the memory isolation lock for
+        # their whole lifetime. Re-entering it from fetchone()/fetchall() would
+        # deadlock because asyncio locks are deliberately not re-entrant.
+        if self.in_transaction or not self._is_memory:
+            yield
+        else:
+            async with self._memory_operation_lock:
+                yield
+
     async def execute(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
         if self.in_transaction:
             return await self.conn.execute(sql, params)
@@ -1456,17 +1616,18 @@ class Database:
         assert task is not None
         if task is self._legacy_write_owner:
             return await self.conn.execute(sql, params)
-        await self._write_lock.acquire()
-        try:
-            cur = await self.conn.execute(sql, params)
-            if self.conn.in_transaction:
-                self._legacy_write_owner = task
-            else:
+        async with self._ordinary_operation():
+            await self._write_lock.acquire()
+            try:
+                cur = await self.conn.execute(sql, params)
+                if self.conn.in_transaction:
+                    self._legacy_write_owner = task
+                else:
+                    self._write_lock.release()
+                return cur
+            except BaseException:
                 self._write_lock.release()
-            return cur
-        except BaseException:
-            self._write_lock.release()
-            raise
+                raise
 
     async def executemany(self, sql: str, params: Any) -> aiosqlite.Cursor:
         if self.in_transaction:
@@ -1475,17 +1636,18 @@ class Database:
         assert task is not None
         if task is self._legacy_write_owner:
             return await self.conn.executemany(sql, params)
-        await self._write_lock.acquire()
-        try:
-            cur = await self.conn.executemany(sql, params)
-            if self.conn.in_transaction:
-                self._legacy_write_owner = task
-            else:
+        async with self._ordinary_operation():
+            await self._write_lock.acquire()
+            try:
+                cur = await self.conn.executemany(sql, params)
+                if self.conn.in_transaction:
+                    self._legacy_write_owner = task
+                else:
+                    self._write_lock.release()
+                return cur
+            except BaseException:
                 self._write_lock.release()
-            return cur
-        except BaseException:
-            self._write_lock.release()
-            raise
+                raise
 
     async def commit(self) -> None:
         # The outer explicit transaction owns the durability boundary.  Some
@@ -1520,11 +1682,11 @@ class Database:
             await self.conn.rollback()
 
     async def fetchall(self, sql: str, params: Any = ()) -> list[aiosqlite.Row]:
-        async with self.conn.execute(sql, params) as cur:
+        async with self._ordinary_operation(), self.conn.execute(sql, params) as cur:
             return await cur.fetchall()
 
     async def fetchone(self, sql: str, params: Any = ()) -> aiosqlite.Row | None:
-        async with self.conn.execute(sql, params) as cur:
+        async with self._ordinary_operation(), self.conn.execute(sql, params) as cur:
             return await cur.fetchone()
 
     async def execute_and_commit(self, sql: str, params: Any = ()) -> aiosqlite.Cursor:
@@ -1542,10 +1704,11 @@ class Database:
             finally:
                 self._legacy_write_owner = None
                 self._write_lock.release()
-        async with self._write_lock:
-            cur = await self.conn.execute(sql, params)
-            await self.conn.commit()
-            return cur
+        async with self._ordinary_operation():
+            async with self._write_lock:
+                cur = await self.conn.execute(sql, params)
+                await self.conn.commit()
+                return cur
 
 
 # ---------------------------------------------------------------------------

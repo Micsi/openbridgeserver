@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from obs.datetime_format import DEFAULT_CUSTOM_FORMAT
 from obs.logic.capabilities import LOGIC_NODE_CAPABILITIES, PURE_LOGIC_NODE_TYPES
 from obs.logic.models import NodeTypeDef, NodeTypePort
 
@@ -48,7 +49,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         outputs=[_port("out", "Out")],
         config_schema={
             "input_count": {
-                "type": "number",
+                "type": "integer",
                 "default": 2,
                 "min": 2,
                 "max": 30,
@@ -66,7 +67,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         outputs=[_port("out", "Out")],
         config_schema={
             "input_count": {
-                "type": "number",
+                "type": "integer",
                 "default": 2,
                 "min": 2,
                 "max": 30,
@@ -93,7 +94,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         outputs=[_port("out", "Out")],
         config_schema={
             "input_count": {
-                "type": "number",
+                "type": "integer",
                 "default": 2,
                 "min": 2,
                 "max": 30,
@@ -414,6 +415,25 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         color="#7c3aed",
     ),
     # ── String ───────────────────────────────────────────────────────────
+    # Purely visual annotation node (issue #1043) — no ports, no executor
+    # case (falls through to the "unknown node type" no-op branch, same as
+    # ai_logic). width/height live in config_schema only so freshly dropped
+    # nodes get sane defaults via the generic onDrop seeding in LogicView.vue;
+    # they are not rendered as form fields (comment has its own config panel).
+    NodeTypeDef(
+        type="comment",
+        label="Kommentar",
+        category="string",
+        description="Freier Mehrzeilen-Text zur Dokumentation direkt auf dem Graph-Canvas. Rein visuell, hat keinen Effekt auf die Ausführung.",
+        inputs=[],
+        outputs=[],
+        config_schema={
+            "text": {"type": "string", "default": "", "label": "Text"},
+            "width": {"type": "number", "default": 220, "label": "Breite"},
+            "height": {"type": "number", "default": 140, "label": "Höhe"},
+        },
+        color="#ca8a04",
+    ),
     NodeTypeDef(
         type="string_concat",
         label="String Verketten",
@@ -614,7 +634,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         description="Verzögert ein Signal um N Sekunden",
         inputs=[_port("trigger", "Trigger", "trigger")],
         outputs=[_port("trigger", "Trigger", "trigger")],
-        config_schema={"delay_s": {"type": "number", "default": 1.0}},
+        config_schema={"delay_s": {"type": "number", "default": 1.0, "min": 0}},
         color="#b45309",
     ),
     NodeTypeDef(
@@ -624,7 +644,23 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         description="Gibt einen Impuls für N Sekunden aus",
         inputs=[_port("trigger", "Trigger", "trigger")],
         outputs=[_port("out", "Out")],
-        config_schema={"duration_s": {"type": "number", "default": 1.0}},
+        config_schema={"duration_s": {"type": "number", "default": 1.0, "min": 0}},
+        color="#b45309",
+    ),
+    NodeTypeDef(
+        type="value_sequence",
+        label="Sequenz",
+        category="timer",
+        description="Schreibt eine Folge von Werten mit konfigurierbaren Pausen.",
+        inputs=[_port("trigger", "Trigger", "trigger"), _port("condition", "Bedingung")],
+        outputs=[],
+        config_schema={
+            "run_mode": {"type": "string", "enum": ["once", "repeat_count", "while_condition"], "default": "once"},
+            "repeat_count": {"type": "number", "default": 2, "min": 1},
+            "restart_policy": {"type": "string", "enum": ["ignore", "restart", "queue"], "default": "ignore"},
+            "cancel_when_condition_false": {"type": "boolean", "default": False},
+            "steps": {"type": "array", "default": []},
+        },
         color="#b45309",
     ),
     NodeTypeDef(
@@ -635,6 +671,18 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
         inputs=[],
         outputs=[_port("trigger", "Trigger", "trigger")],
         config_schema={"cron": {"type": "string", "default": "0 7 * * *"}},
+        color="#b45309",
+    ),
+    NodeTypeDef(
+        type="datetime",
+        label="Datum/Zeit",
+        category="timer",
+        description="Gibt das aktuelle Datum und die aktuelle Zeit in der Anwendungs-Zeitzone aus.",
+        inputs=[],
+        outputs=[_port("date", "Datum"), _port("time", "Zeit"), _port("custom", "Benutzerdefiniert")],
+        config_schema={
+            "custom_format": {"type": "string", "default": DEFAULT_CUSTOM_FORMAT, "label": "Benutzerdefiniertes Format"},
+        },
         color="#b45309",
     ),
     NodeTypeDef(
@@ -703,6 +751,22 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
     ),
     # ── Notification ──────────────────────────────────────────────────────
     NodeTypeDef(
+        type="notify_message",
+        label="Benachrichtigung",
+        category="notification",
+        description="Sendet eine Nachricht über konfigurierte Ziele eines Message-/Benachrichtigungsadapters.",
+        inputs=[_port("trigger", "Trigger", "trigger"), _port("message", "Nachricht")],
+        outputs=[_port("sent", "Gesendet", "trigger")],
+        config_schema={
+            "adapter_instance_id": {"type": "string", "default": "", "label": "MESSAGE-Adapter"},
+            "providers": {"type": "array", "default": [], "label": "Ziele"},
+            "title": {"type": "string", "default": "", "label": "Titel"},
+            "message": {"type": "string", "default": "", "label": "Nachricht (Fallback)"},
+            "priority": {"type": "integer", "default": 0, "min": -2, "max": 1, "label": "Priorität"},
+        },
+        color="#e11d48",
+    ),
+    NodeTypeDef(
         type="notify_pushover",
         label="Pushover",
         category="notification",
@@ -747,6 +811,8 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
             },
         },
         color="#e11d48",
+        hidden_from_palette=True,
+        legacy=True,
     ),
     NodeTypeDef(
         type="notify_sms",
@@ -770,6 +836,8 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
             },
         },
         color="#e11d48",
+        hidden_from_palette=True,
+        legacy=True,
     ),
     NodeTypeDef(
         type="message_archive",
@@ -929,6 +997,13 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
                 "default": 60,
                 "label": "Aktualisierungsintervall (Minuten)",
             },
+            "max_payload_size_mb": {
+                "type": "integer",
+                "default": 2,
+                "min": 1,
+                "max": 50,
+                "label": "Maximale Kalendergrösse (MiB)",
+            },
             "filter_count": {
                 "type": "integer",
                 "default": 0,
@@ -999,7 +1074,7 @@ BUILTIN_NODE_TYPES: list[NodeTypeDef] = [
                 "default": [],
                 "label": "Variablen",
             },
-            "timeout_s": {"type": "number", "default": 10, "label": "Timeout (s)"},
+            "timeout_s": {"type": "number", "default": 10, "min": 1, "label": "Timeout (s)"},
             "auth_type": {
                 "type": "string",
                 "enum": ["none", "basic", "digest", "bearer"],

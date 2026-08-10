@@ -21,18 +21,75 @@ import re
 import socket
 import stat
 import uuid
-from datetime import UTC, datetime
+from collections import deque
+from datetime import UTC, date, datetime, time
+from functools import partial
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, urlunparse
 
 import httpx
 
+from obs.core.json import jsonable
 from obs.logic.executor import GraphExecutor
 from obs.logic.models import FlowData
 from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
+_run_graph_executor_in_worker = asyncio.to_thread
+_run_graph_state_copy_in_worker = asyncio.to_thread
+_run_logic_debug_serialization_in_worker = asyncio.to_thread
+_MISSING_STATE = object()
+
+
+class _ObsoleteGraphExecution(Exception):
+    """Stop a pass whose captured graph generation has been replaced."""
+
+
+def _merge_worker_state(base: dict[str, Any], updated: dict[str, Any], target: dict[str, Any]) -> None:
+    """Apply worker changes without erasing state updated concurrently."""
+    for key in base.keys() - updated.keys():
+        if target.get(key, _MISSING_STATE) == base[key]:
+            target.pop(key, None)
+    for key, updated_value in updated.items():
+        base_value = base.get(key, _MISSING_STATE)
+        if base_value is not _MISSING_STATE and updated_value == base_value:
+            continue
+        target_value = target.get(key, _MISSING_STATE)
+        if isinstance(base_value, dict) and isinstance(updated_value, dict) and isinstance(target_value, dict):
+            _merge_worker_state(base_value, updated_value, target_value)
+        elif target_value is _MISSING_STATE or target_value == base_value:
+            # ``updated`` is an isolated worker snapshot that is discarded
+            # after this commit, so ownership can safely move to ``target``.
+            target[key] = updated_value
+
+
+def _copy_graph_worker_state(state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create the worker baseline and mutable state away from the event loop."""
+    base = copy.deepcopy(state)
+    return base, copy.deepcopy(base)
+
+
+def _serialize_logic_debug_payload(
+    graph_id: str,
+    outputs: dict[str, Any],
+    debug_inputs: dict[str, Any],
+    debug_overrides: dict[str, Any],
+    execution_started: float,
+) -> dict[str, Any]:
+    """Build the potentially large websocket snapshot in a worker thread."""
+    return {
+        "action": "logic_run",
+        "graph_id": graph_id,
+        "outputs": json.loads(json.dumps(jsonable(outputs), default=str)),
+        "inputs": json.loads(json.dumps(jsonable(debug_inputs), default=str)),
+        "debug": {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "duration_ms": round((perf_counter() - execution_started) * 1000, 2),
+            "used_overrides": bool(debug_overrides),
+        },
+    }
 
 
 def _msg_to_str(v: object) -> str:
@@ -42,7 +99,7 @@ def _msg_to_str(v: object) -> str:
     (0, False, 0.0, "") are preserved as their string representation instead
     of being silently replaced by a fallback.
     """
-    import json as _j  # noqa: PLC0415
+    import json as _j
 
     if isinstance(v, (dict, list)):
         return _j.dumps(v, ensure_ascii=False)
@@ -56,8 +113,108 @@ _THROTTLE_UNITS: dict[str, float] = {
     "h": 3_600_000.0,
 }
 _MAX_LOGIC_CASCADE_DEPTH = 10
+_MAX_SEQUENCE_REPEAT_COUNT = 10_000
 
-_ICAL_MAX_BYTES = 1_048_576
+# Node types the side-effect-free initialization pass (initialize_graph) must
+# not publish through: async/action nodes are not executed there, so their
+# executor outputs are placeholders (e.g. api_client.success=False, timers
+# and missing_node return {}); per-sample accumulators run on a throwaway
+# state copy, so their outputs would include the seed while the persisted
+# state stays untouched; random_value generates a fresh value on every
+# evaluation, so a save would publish a new random actuator value; memory
+# evaluates with commit_memory=False, so its output is the uncommitted
+# previous/default value, not the seeded input; ical outputs come from the
+# fetch cache, which may still be empty right after a save.
+_INIT_EXCLUDED_NODE_TYPES = frozenset(
+    {
+        "api_client",
+        "host_check",
+        "notify_pushover",
+        "notify_sms",
+        "message_archive",
+        "wake_on_lan",
+        "value_sequence",
+        "timer_delay",
+        "timer_pulse",
+        "timer_cron",
+        "ical",
+        "missing_node",
+        "python_script",
+        "statistics",
+        "avg_multi",
+        "min_max_tracker",
+        "consumption_counter",
+        "heating_circuit",
+        "random_value",
+        "memory",
+    }
+)
+
+# Deterministic two-state nodes whose init-pass state IS committed when they
+# sit on a clean seeded path: their output is published, so the persisted
+# state must switch with it or the next real value inside the dead band would
+# flip the output back to the stale pre-save state.
+_INIT_COMMIT_STATE_NODE_TYPES = frozenset({"gate", "hysteresis"})
+
+# Input handles that control WHEN a node's output fires/passes but do not
+# deliver the value itself. Seeded eligibility must not propagate through
+# them: a Const → Gate.in → Write.value sheet whose Read Object only drives
+# Gate.enable (or Write.trigger) would otherwise publish the constant on
+# save even though the written value does not descend from the seed.
+_INIT_CONTROL_INPUT_HANDLES: dict[str, frozenset[str]] = {
+    "datapoint_write": frozenset({"trigger"}),
+    "gate": frozenset({"enable"}),
+}
+
+
+def _downstream_closure(start: set[str], edges: list[Any]) -> set[str]:
+    """Node ids reachable from *start* (inclusive) following edges forward."""
+    reached = set(start)
+    grew = True
+    while grew:
+        grew = False
+        for edge in edges:
+            if edge.source in reached and edge.target not in reached:
+                reached.add(edge.target)
+                grew = True
+    return reached
+
+
+def _fresh_input_handles(
+    overrides: dict[str, dict[str, Any]],
+    edges: list[Any],
+    blocked_sources: set[str] | None = None,
+    blocked_outputs: set[tuple[str, str]] | None = None,
+) -> dict[str, set[str]]:
+    """Input handles that receive values downstream of explicit overrides."""
+    fresh_inputs = {node_id: set(values) for node_id, values in overrides.items()}
+    reached = set(overrides)
+    blocked_sources = blocked_sources or set()
+    blocked_outputs = blocked_outputs or set()
+    effective_edges: dict[tuple[str, str], Any] = {}
+    for edge in edges:
+        effective_edges[(edge.target, edge.targetHandle or "in")] = edge
+    outgoing: dict[str, list[Any]] = {}
+    for edge in effective_edges.values():
+        outgoing.setdefault(edge.source, []).append(edge)
+    pending = deque(reached)
+    while pending:
+        source = pending.popleft()
+        if source in blocked_sources:
+            continue
+        for edge in outgoing.get(source, []):
+            if (source, edge.sourceHandle or "out") in blocked_outputs:
+                continue
+            fresh_inputs.setdefault(edge.target, set()).add(edge.targetHandle or "in")
+            if edge.target not in reached:
+                reached.add(edge.target)
+                pending.append(edge.target)
+    return fresh_inputs
+
+
+_ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB = 2
+_ICAL_MAX_PAYLOAD_SIZE_MB = 50
+_MIB_BYTES = 1_048_576
 _ICAL_MAX_REDIRECTS = 5
 _ICAL_ALLOWED_CONTENT_TYPES = ("text/calendar", "application/ics", "application/octet-stream", "text/plain")
 _PUSHOVER_ATTACHMENT_MAX_BYTES = 5_000_000
@@ -121,7 +278,7 @@ def _normalise_api_client_variables(raw: Any) -> dict[int, dict[str, str]]:
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             raw = []
     if not isinstance(raw, list):
         return {}
@@ -153,7 +310,7 @@ def _rename_api_client_variable_datapoint_names(raw: Any, datapoint_id: str, new
     if was_string:
         try:
             variables = json.loads(raw)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             return raw, False
     if not isinstance(variables, list):
         return raw, False
@@ -482,7 +639,7 @@ def _store_response_cookies(
         jar = http.cookies.SimpleCookie()
         try:
             jar.load(raw)
-        except Exception:
+        except http.cookies.CookieError:
             continue
         for morsel in jar.values():
             name = morsel.key
@@ -509,7 +666,7 @@ def _store_response_cookies(
                     if exp_dt.tzinfo is None:
                         exp_dt = exp_dt.replace(tzinfo=UTC)
                     delete_cookie = exp_dt <= datetime.now(UTC)
-                except Exception:
+                except (TypeError, ValueError):
                     pass
             key = (domain, path, name, host_only)
             if delete_cookie:
@@ -558,9 +715,7 @@ def _should_send_cookie(
         return False
     if not _cookie_path_matches(req_path, cookie_path):
         return False
-    if bool(cookie_secure) and not req_is_https:
-        return False
-    return True
+    return not (bool(cookie_secure) and not req_is_https)
 
 
 def _send_wol_packet(mac: str, broadcast: str, port: int) -> None:
@@ -596,7 +751,7 @@ async def _ping_host(host: str, count: int, timeout_s: float) -> tuple[bool, flo
     timeout_s is passed to ping as the per-packet deadline; an additional
     2-second asyncio safety timeout is layered on top to handle hangs.
     """
-    import sys  # noqa: PLC0415
+    import sys
 
     timeout_s, count = _normalise_host_check_ping_config(timeout_s, count)
     timeout_int = int(timeout_s)
@@ -612,7 +767,7 @@ async def _ping_host(host: str, count: int, timeout_s: float) -> tuple[bool, flo
         )
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s * count + 2)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return False, None
@@ -627,6 +782,7 @@ async def _ping_host(host: str, count: int, timeout_s: float) -> tuple[bool, flo
         logger.warning("ping binary not found — install iputils-ping to enable Host Check")
         return False, None
     except Exception:
+        logger.exception("Host Check ping subprocess for %s failed unexpectedly", host)
         return False, None
 
 
@@ -653,7 +809,7 @@ def _build_ical_fetch_targets(url: str) -> tuple[list[str], dict[str, str], dict
     if parsed.username is not None:
         username = unquote(parsed.username)
         password = unquote(parsed.password or "")
-        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        token = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
         headers["Authorization"] = f"Basic {token}"
     extensions = {"sni_hostname": hostname_ascii} if parsed.scheme == "https" else {}
     fetch_urls: list[str] = []
@@ -689,6 +845,17 @@ async def _read_limited_response_body(resp: httpx.Response, max_bytes: int) -> b
     return bytes(body)
 
 
+def _ical_payload_limit_bytes(node_data: dict[str, Any]) -> int:
+    raw_limit = node_data.get("max_payload_size_mb", _ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB)
+    if isinstance(raw_limit, bool):
+        raw_limit = _ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB
+    try:
+        limit_mb = int(raw_limit)
+    except (TypeError, ValueError, OverflowError):
+        limit_mb = _ICAL_DEFAULT_MAX_PAYLOAD_SIZE_MB
+    return min(max(limit_mb, 1), _ICAL_MAX_PAYLOAD_SIZE_MB) * _MIB_BYTES
+
+
 _manager: LogicManager | None = None
 
 
@@ -716,10 +883,51 @@ class LogicManager:
         # per-node runtime state for filter/throttle
         # {graph_id: {node_id: {last_value, last_ts, last_write_val, last_write_ts}}}
         self._node_state: dict[str, dict[str, dict[str, Any]]] = {}
+        # graphs whose initialize_graph publish is in flight, mapped to the
+        # DataPoint ids that pass is writing — only those self-originating
+        # events must not re-enter the graph (see _on_value_event)
+        self._initializing_graphs: dict[str, set[str]] = {}
+        # graphs still awaiting their turn in a bulk initialization pass
+        # (config restore) — cascaded logic writes must not double-run them
+        self._bulk_init_pending: set[str] = set()
         # cron tasks: (graph_id, node_id) → asyncio.Task
         self._cron_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
+        # Coalesce concurrent refreshes per iCalendar node.  Keep this lock
+        # scoped to the fetch itself: graph execution may synchronously publish
+        # an event that re-enters the same graph.
+        self._ical_fetch_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Coalesce recurrence parsing independently from network refreshes.
+        # A queued execution rechecks the shared cache after acquiring this
+        # lock so only one worker expands a given node/key generation.
+        self._ical_precompute_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Python-script GraphExecutor passes run in a worker so large mutable
+        # inputs are cloned off the event loop. Serialize passes that share
+        # per-graph state while they run concurrently with the loop.
+        self._graph_executor_locks: dict[str, asyncio.Lock] = {}
+        # Parsed/filtered calendar results must stay outside hysteresis state:
+        # async replay paths deep-copy that state several times per execution.
+        self._ical_result_caches: dict[str, dict[str, Any]] = {}
+        # Replacing this token invalidates cache/fetch work that started against
+        # an older graph configuration.  Cache dictionaries are likewise
+        # replaced, rather than mutated, so worker snapshots remain race-free.
+        self._ical_cache_generations: dict[str, object] = {}
+        # Running value sequences, keyed per graph/node.  They are deliberately
+        # separate from cron tasks because they are short-lived and user-triggered.
+        self._sequence_tasks: dict[tuple[str, str], asyncio.Task] = {}  # type: ignore[type-arg]
+        self._sequence_conditions: dict[tuple[str, str], bool] = {}
+        self._sequence_queues: dict[tuple[str, str], int] = {}
+        self._sequence_queue_depths: dict[tuple[str, str], int] = {}
+        self._sequence_configs: dict[tuple[str, str], dict[str, Any]] = {}
+        self._sequence_graph_signatures: dict[str, str] = {}
+        self._sequence_restarts: set[tuple[str, str]] = set()
+        self._sequence_restart_sources: dict[tuple[str, str], asyncio.Task] = {}
         # application-level config (e.g. timezone) — loaded from app_settings table
-        self._app_config: dict[str, Any] = {"timezone": "Europe/Zurich"}
+        self._app_config: dict[str, Any] = {
+            "timezone": "Europe/Zurich",
+            "date_format": "dd.MM.yyyy",
+            "time_format": "HH:mm:ss",
+            "language": "de",
+        }
 
     async def start(self) -> None:
         """Subscribe to EventBus, load all graphs and start cron schedulers."""
@@ -740,16 +948,293 @@ class LogicManager:
         for task in list(self._cron_tasks.values()):
             task.cancel()
         self._cron_tasks.clear()
+        self._cancel_sequence_tasks()
 
     async def reload(self) -> None:
         """Reload graph cache from DB and restart cron schedulers."""
+        previous_graphs = self._graphs
         for task in list(self._cron_tasks.values()):
             task.cancel()
         self._cron_tasks.clear()
         await self._load_graphs()
+        live_graph_ids = set(self._graphs)
+        # A reload restarts all schedulers, but it must not invalidate work for
+        # unrelated graphs.  Rotate only configurations that actually changed
+        # (or disappeared); save paths that called invalidate_cache() already
+        # have a fresh generation and are absent from ``previous_graphs``.
+        for graph_id, previous_entry in previous_graphs.items():
+            current_entry = self._graphs.get(graph_id)
+            if current_entry is None or previous_entry[1:] != current_entry[1:]:
+                self._ical_cache_generations[graph_id] = object()
+        for graph_id in set(self._ical_result_caches) - live_graph_ids:
+            self._ical_result_caches.pop(graph_id, None)
+        for graph_id in set(self._ical_cache_generations) - live_graph_ids:
+            self._ical_cache_generations.pop(graph_id, None)
+        for graph_id in set(self._graph_executor_locks) - live_graph_ids:
+            self._prune_graph_executor_lock(graph_id)
+        for graph_id in set(self._hysteresis) - live_graph_ids:
+            self._hysteresis.pop(graph_id, None)
+        for key in [key for key in self._ical_fetch_locks if key[0] not in live_graph_ids]:
+            self._ical_fetch_locks.pop(key, None)
+        for key in [key for key in self._ical_precompute_locks if key[0] not in live_graph_ids]:
+            self._prune_ical_precompute_lock(key)
+        ical_runtime_keys = {
+            "raw",
+            "_ical_result_cache",
+            "_ical_last_attempt_url",
+            "_ical_last_attempt_limit",
+            "_ical_last_attempt_ts",
+            "_ical_precompute_token",
+        }
+        for graph_id, (_, enabled, flow) in self._graphs.items():
+            active_ical_ids = {
+                node.id
+                for node in flow.nodes
+                if enabled and node.type == "ical" and isinstance(node.data.get("url"), str) and node.data["url"].strip()
+            }
+            result_cache = self._ical_result_caches.get(graph_id)
+            if result_cache is not None:
+                self._ical_result_caches[graph_id] = {node_id: entry for node_id, entry in result_cache.items() if node_id in active_ical_ids}
+            self._ical_cache_generations.setdefault(graph_id, object())
+            graph_hysteresis = self._hysteresis.get(graph_id)
+            if graph_hysteresis is not None:
+                for node_id, node_state in list(graph_hysteresis.items()):
+                    if isinstance(node_state, dict):
+                        node_state.pop("_ical_precompute_token", None)
+                    if node_id not in active_ical_ids and isinstance(node_state, dict) and not ical_runtime_keys.isdisjoint(node_state):
+                        graph_hysteresis.pop(node_id, None)
+            for key in [key for key in self._ical_fetch_locks if key[0] == graph_id and key[1] not in active_ical_ids]:
+                self._ical_fetch_locks.pop(key, None)
+            for key in [key for key in self._ical_precompute_locks if key[0] == graph_id and key[1] not in active_ical_ids]:
+                self._prune_ical_precompute_lock(key)
+        # A config import/reset can remove graphs without first calling
+        # invalidate_cache().  Cancel only sequences whose graph no longer
+        # exists or is disabled; unrelated live graphs keep running.
+        for graph_id, node_id in list(self._sequence_tasks):
+            entry = self._graphs.get(graph_id)
+            node = next((node for node in entry[2].nodes if node.id == node_id), None) if entry else None
+            if (
+                entry is None
+                or not entry[1]
+                or node is None
+                or node.type != "value_sequence"
+                or node.data != self._sequence_configs.get((graph_id, node_id))
+                or entry[2].model_dump_json() != self._sequence_graph_signatures.get(graph_id)
+            ):
+                self._cancel_sequence_tasks(graph_id)
         self._start_cron_tasks()
 
     # ── App Config ────────────────────────────────────────────────────────
+
+    def _cancel_sequence_tasks(self, graph_id: str | None = None) -> None:
+        """Cancel active sequences, for shutdown/reload/delete semantics."""
+        keys = [key for key in self._sequence_tasks if graph_id is None or key[0] == graph_id]
+        for key in keys:
+            self._cancel_sequence_task(key)
+            self._sequence_conditions.pop(key, None)
+            self._sequence_queues.pop(key, None)
+            self._sequence_queue_depths.pop(key, None)
+            self._sequence_configs.pop(key, None)
+
+    def _cancel_sequence_task(self, key: tuple[str, str]) -> None:
+        """Cancel a tracked task and the source it may be restarting."""
+        task = self._sequence_tasks.pop(key, None)
+        source = self._sequence_restart_sources.pop(key, None)
+        self._sequence_restarts.discard(key)
+        self._sequence_queues.pop(key, None)
+        self._sequence_queue_depths.pop(key, None)
+        if task:
+            task.cancel()
+        if source and source is not task:
+            source.cancel()
+
+    @staticmethod
+    def _sequence_steps(raw: Any) -> list[dict[str, Any]]:
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError):
+                raw = []
+        return [step for step in raw if isinstance(step, dict)] if isinstance(raw, list) else []
+
+    @staticmethod
+    def _coerce_sequence_value(value: Any, data_type: str) -> Any:
+        if data_type == "BOOLEAN":
+            if not isinstance(value, str):
+                return bool(value)
+            lowered = value.strip().lower()
+            if lowered in {"true", "1", "yes", "on"}:
+                return True
+            if lowered in {"false", "0", "no", "off"}:
+                return False
+            raise ValueError(f"invalid boolean value {value!r}")
+        if data_type == "INTEGER":
+            if isinstance(value, float) and not value.is_integer():
+                raise ValueError(f"fractional integer value {value!r}")
+            return int(value)
+        if data_type == "FLOAT":
+            return float(value)
+        if data_type == "DATE":
+            return date.fromisoformat(value) if isinstance(value, str) else value
+        if data_type == "TIME":
+            return time.fromisoformat(value) if isinstance(value, str) else value
+        if data_type == "DATETIME":
+            return datetime.fromisoformat(value) if isinstance(value, str) else value
+        if data_type == "STRING":
+            return str(value)
+        return value
+
+    async def _run_value_sequence(self, graph_id: str, node_id: str, config: dict[str, Any], logic_depth: int = 0) -> None:
+        """Publish configured writes without blocking the graph executor."""
+        from obs.core.event_bus import DataValueEvent
+
+        key = (graph_id, node_id)
+        steps = self._sequence_steps(config.get("steps"))
+        if not steps:
+            logger.warning("Value sequence graph=%s node=%s has no steps", graph_id[:8], node_id[:8])
+            return
+        mode = config.get("run_mode", "once")
+        if mode == "while_condition" and not self._sequence_conditions.get(key, True):
+            return
+        try:
+            raw_repeat_count = config.get("repeat_count", 2)
+            repetitions = (
+                min(_MAX_SEQUENCE_REPEAT_COUNT, max(1, int(2 if raw_repeat_count is None else raw_repeat_count))) if mode == "repeat_count" else 1
+            )
+        except (TypeError, ValueError):
+            repetitions = 1
+        try:
+            while True:
+                slept = False
+                for step in steps:
+                    if (mode == "while_condition" or config.get("cancel_when_condition_false")) and not self._sequence_conditions.get(key, True):
+                        logger.info("Value sequence cancelled: graph=%s node=%s", graph_id[:8], node_id[:8])
+                        return
+                    target = str(step.get("datapoint_id") or "").strip()
+                    if target:
+                        try:
+                            datapoint_id = uuid.UUID(target)
+                            target_dp = self._registry.get(datapoint_id)
+                            if target_dp is None:
+                                raise ValueError("target object no longer exists")
+                            publish_task = asyncio.create_task(
+                                self._event_bus.publish(
+                                    DataValueEvent(
+                                        datapoint_id=datapoint_id,
+                                        value=self._coerce_sequence_value(step.get("value"), target_dp.data_type),
+                                        quality="good",
+                                        source_adapter="logic_sequence",
+                                        logic_depth=logic_depth + 1,
+                                    )
+                                )
+                            )
+                            try:
+                                await asyncio.shield(publish_task)
+                            except asyncio.CancelledError:
+                                # A write can synchronously re-run this graph
+                                # and cancel its own sequence.  Complete the
+                                # already-emitted event before stopping so all
+                                # EventBus subscribers see the write.
+                                try:
+                                    await asyncio.shield(publish_task)
+                                except Exception:
+                                    logger.exception(
+                                        "Value sequence graph=%s node=%s target=%s: cleanup re-await after cancellation failed",
+                                        graph_id[:8],
+                                        node_id[:8],
+                                        target,
+                                    )
+                                raise
+                        except Exception:
+                            logger.exception("Value sequence graph=%s node=%s target=%s failed", graph_id[:8], node_id[:8], target)
+                    try:
+                        delay_s = max(0.0, float(step.get("delay_ms") or 0) / 1000)
+                    except (TypeError, ValueError):
+                        delay_s = 0.0
+                    if delay_s:
+                        await asyncio.sleep(delay_s)
+                        slept = True
+                if mode == "while_condition":
+                    if not self._sequence_conditions.get(key, True):
+                        return
+                    if not slept:
+                        logger.warning("Value sequence graph=%s node=%s needs a positive pause in while mode", graph_id[:8], node_id[:8])
+                        return
+                    continue
+                repetitions -= 1
+                if repetitions <= 0:
+                    return
+                if mode == "repeat_count" and not slept:
+                    await asyncio.sleep(0)
+        finally:
+            if self._sequence_tasks.get(key) is asyncio.current_task():
+                self._sequence_tasks.pop(key, None)
+                queued = self._sequence_queues.pop(key, 0)
+                queued_depth = self._sequence_queue_depths.pop(key, logic_depth)
+                if queued and self._sequence_conditions.get(key, True):
+                    if queued > 1:
+                        self._sequence_queues[key] = queued - 1
+                        self._sequence_queue_depths[key] = queued_depth
+                    task = asyncio.create_task(
+                        self._run_value_sequence(graph_id, node_id, config, queued_depth),
+                        name=f"sequence-{graph_id[:8]}-{node_id[:8]}",
+                    )
+                    self._sequence_tasks[key] = task
+
+    async def _restart_value_sequence(self, graph_id: str, node_id: str, config: dict[str, Any], logic_depth: int, active: asyncio.Task) -> None:
+        """Stop a sequence completely before launching its restart replacement."""
+        key = (graph_id, node_id)
+        try:
+            active.cancel()
+            try:
+                await active
+            except asyncio.CancelledError:
+                pass
+            if self._sequence_tasks.get(key) is not asyncio.current_task():
+                return
+            task = asyncio.create_task(
+                self._run_value_sequence(graph_id, node_id, config, logic_depth),
+                name=f"sequence-{graph_id[:8]}-{node_id[:8]}",
+            )
+            self._sequence_tasks[key] = task
+        finally:
+            self._sequence_restarts.discard(key)
+            if self._sequence_restart_sources.get(key) is active:
+                self._sequence_restart_sources.pop(key, None)
+
+    def _start_value_sequence(self, graph_id: str, node: Any, condition: bool, logic_depth: int = 0, graph_signature: str = "") -> None:
+        key = (graph_id, node.id)
+        self._sequence_conditions[key] = condition
+        self._sequence_configs[key] = dict(node.data)
+        self._sequence_graph_signatures[graph_id] = graph_signature
+        active = self._sequence_tasks.get(key)
+        if active and not active.done():
+            policy = node.data.get("restart_policy", "ignore")
+            if policy == "restart":
+                # The task slot holds the restart helper while it awaits the
+                # original task.  Coalesce rapid retriggers so they cannot
+                # cancel the helper and detach from that original publish.
+                if key in self._sequence_restarts:
+                    return
+                self._sequence_restarts.add(key)
+                self._sequence_restart_sources[key] = active
+                restart = asyncio.create_task(
+                    self._restart_value_sequence(graph_id, node.id, dict(node.data), logic_depth, active),
+                    name=f"sequence-restart-{graph_id[:8]}-{node.id[:8]}",
+                )
+                self._sequence_tasks[key] = restart
+                return
+            elif policy == "queue":
+                self._sequence_queues[key] = self._sequence_queues.get(key, 0) + 1
+                self._sequence_queue_depths[key] = max(self._sequence_queue_depths.get(key, 0), logic_depth)
+                return
+            else:
+                return
+        task = asyncio.create_task(
+            self._run_value_sequence(graph_id, node.id, dict(node.data), logic_depth),
+            name=f"sequence-{graph_id[:8]}-{node.id[:8]}",
+        )
+        self._sequence_tasks[key] = task
 
     async def _load_app_config(self) -> None:
         """Load app-level settings (e.g. timezone) from the database."""
@@ -758,12 +1243,16 @@ class LogicManager:
             for row in rows:
                 self._app_config[row["key"]] = row["value"]
             logger.debug("LogicManager: app_config loaded: %s", self._app_config)
-        except Exception as exc:
-            logger.warning("LogicManager: could not load app_settings: %s", exc)
+        except Exception:
+            logger.exception("LogicManager: could not load app_settings")
 
     def update_app_config(self, config: dict[str, Any]) -> None:
         """Hot-update app config (called by settings API on PUT /system/settings)."""
+        previous_timezone = self._app_config.get("timezone")
         self._app_config.update(config)
+        if self._app_config.get("timezone") != previous_timezone:
+            for graph_id in set(self._graphs) | set(self._ical_result_caches):
+                self._ical_cache_generations[graph_id] = object()
         logger.info("LogicManager: app_config updated: %s", config)
 
     # ── Cron Scheduler ────────────────────────────────────────────────────
@@ -854,8 +1343,8 @@ class LogicManager:
 
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
-                logger.error("Cron loop error graph=%s: %s", graph_id[:8], exc)
+            except Exception:
+                logger.exception("Cron loop error graph=%s", graph_id[:8])
                 await asyncio.sleep(60)  # back-off on unexpected errors
 
     async def _ical_loop(self, graph_id: str, node_id: str, refresh_min: float) -> None:
@@ -871,23 +1360,26 @@ class LogicManager:
                 entry = self._graphs.get(graph_id)
                 if entry and entry[1]:  # still exists and enabled
                     g_name, _, flow = entry
-                    await self._execute_graph(graph_id, g_name, flow, {})
+                    await self._execute_graph(graph_id, g_name, flow, {node_id: {}})
                     logger.debug("iCal graph %s (%s) node %s refreshed", graph_id[:8], g_name, node_id[:8])
 
                 await asyncio.sleep(refresh_min * 60)
 
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
-                logger.error("iCal loop error graph=%s node=%s: %s", graph_id[:8], node_id[:8], exc)
+            except Exception:
+                logger.exception("iCal loop error graph=%s node=%s", graph_id[:8], node_id[:8])
                 await asyncio.sleep(60)  # back-off on unexpected errors
 
     # ── Event Handler ─────────────────────────────────────────────────────
 
     async def _on_value_event(self, event: Any) -> None:
+        if getattr(event, "suppress_action_triggers", False) is True:
+            return
         dp_id = str(event.datapoint_id)
         now = datetime.now(UTC)
         logic_depth = int(getattr(event, "logic_depth", 0) or 0)
+        is_init_event = getattr(event, "initialization", False) is True
 
         for graph_id in list(self._graphs):
             entry = self._graphs.get(graph_id)
@@ -895,6 +1387,24 @@ class LogicManager:
                 continue
             name, enabled, flow = entry
             if not enabled:
+                continue
+            if is_init_event and (dp_id in self._initializing_graphs.get(graph_id, ()) or graph_id in self._bulk_init_pending):
+                # This graph's own initialization publish is in flight — or
+                # the graph awaits its turn in a bulk config-restore pass and
+                # will seed itself from the registry in a moment — so the
+                # initialization-flagged write must not re-enter it mid-pass
+                # (issue #1031). Only flagged events qualify: a REAL logic
+                # write from another sheet racing in during the publish await
+                # executes normally. Keep the read filters of the written
+                # DataPoint in sync so a later event repeating this value is
+                # deduplicated (last_value only — refreshing last_ts would
+                # start a throttle window at save time and drop the next
+                # real update).
+                sync_state = self._node_state.setdefault(graph_id, {})
+                for tn in flow.nodes:
+                    if tn.type == "datapoint_read" and tn.data.get("datapoint_id") == dp_id:
+                        ns = sync_state.setdefault(tn.id, {})
+                        ns["last_value"] = event.value
                 continue
             trigger_nodes = [n for n in flow.nodes if n.type == "datapoint_read" and n.data.get("datapoint_id") == dp_id]
             if not trigger_nodes:
@@ -921,9 +1431,8 @@ class LogicManager:
 
                 # ── Filter: trigger_on_change ────────────────────────────
                 toc = d.get("trigger_on_change")
-                if toc is True or toc == "true":
-                    if new_val == last_val:
-                        continue
+                if (toc is True or toc == "true") and new_val == last_val:
+                    continue
 
                 # ── Filter: min_delta ────────────────────────────────────
                 raw_delta = d.get("min_delta")
@@ -956,12 +1465,24 @@ class LogicManager:
                     except (TypeError, ValueError):
                         pass
 
-                # All filters passed — update state and add override
+                # All filters passed — update state and add override.
+                # Initialization cascades keep last_ts untouched: save-time
+                # seeding is not a real source update and must not start a
+                # throttle window that would drop the next real event.
                 ns["last_value"] = new_val
-                ns["last_ts"] = now
+                if not is_init_event:
+                    ns["last_ts"] = now
                 overrides[tn.id] = {"value": new_val, "changed": True}
 
             if not overrides:
+                continue
+            if is_init_event:
+                # Save-time seeding cascading into another sheet stays
+                # initialization: run the side-effect-free pass instead of a
+                # full execution so no api_client/notify/WoL/sequence action
+                # fires because a different sheet was saved. The cascade
+                # depth guard above still bounds chains between sheets.
+                await self.initialize_graph(graph_id, logic_depth=logic_depth, seed_overrides={dp_id: event.value})
                 continue
             await self._execute_graph(graph_id, name, flow, overrides, logic_depth=logic_depth)
 
@@ -972,7 +1493,7 @@ class LogicManager:
             entry = self._graphs.get(graph_id)
             if entry is None:
                 continue
-            name, enabled, flow = entry
+            _name, _enabled, flow = entry
             changed = False
             for node in flow.nodes:
                 if node.data.get("datapoint_id") == dp_id_str and node.data.get("datapoint_name") != event.new_name:
@@ -986,6 +1507,13 @@ class LogicManager:
                 if variables_changed:
                     node.data["variables"] = variables
                     changed = True
+                if node.type == "value_sequence":
+                    steps = self._sequence_steps(node.data.get("steps"))
+                    for step in steps:
+                        if step.get("datapoint_id") == dp_id_str and step.get("datapoint_name") != event.new_name:
+                            step["datapoint_name"] = event.new_name
+                            changed = True
+                    node.data["steps"] = steps
             if changed:
                 current = self._graphs.get(graph_id)
                 if current is None or current[2] is not flow:
@@ -1001,12 +1529,16 @@ class LogicManager:
                         event.new_name,
                         graph_id[:8],
                     )
-                except Exception as exc:
-                    logger.warning("LogicManager: failed to persist renamed datapoint in graph %s: %s", graph_id[:8], exc)
+                except Exception:
+                    logger.exception("LogicManager: failed to persist renamed datapoint in graph %s", graph_id[:8])
 
     # ── Execution ─────────────────────────────────────────────────────────
 
-    async def execute_graph(self, graph_id: str) -> dict[str, Any]:
+    async def execute_graph(
+        self,
+        graph_id: str,
+        input_overrides: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Manually trigger a graph (e.g. from API).
 
         Registry seeding for all datapoint_read nodes is handled inside
@@ -1015,8 +1547,429 @@ class LogicManager:
         entry = self._graphs.get(graph_id)
         if not entry:
             raise KeyError(f"Graph {graph_id} not in cache")
+        name, _enabled, flow = entry
+        return await self._execute_graph(
+            graph_id,
+            name,
+            flow,
+            {},
+            debug_overrides=input_overrides or {},
+        )
+
+    async def execute_graph_debug(
+        self,
+        graph_id: str,
+        input_overrides: dict[str, dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, dict[str, dict[str, Any]]]]:
+        """Manually run a graph and return its actual final-pass inputs."""
+        entry = self._graphs.get(graph_id)
+        if not entry:
+            raise KeyError(f"Graph {graph_id} not in cache")
+        name, _enabled, flow = entry
+        input_capture: dict[str, dict[str, dict[str, Any]]] = {}
+        outputs = await self._execute_graph(
+            graph_id,
+            name,
+            flow,
+            {},
+            debug_overrides=input_overrides or {},
+            debug_input_capture=input_capture,
+        )
+        return outputs, input_capture
+
+    async def initialize_graph(self, graph_id: str, logic_depth: int = 0, seed_overrides: dict[str, Any] | None = None) -> None:
+        """Seed Read Object nodes with their current registry values right
+        after a graph is saved or activated (issue #1031).
+
+        Without this, datapoint_read nodes stay unset until their DataPoint
+        receives the next external update. Deliberately NOT a full
+        _execute_graph run: saving a sheet is not a datapoint event, so this
+        pass evaluates the graph side-effect-free — stateful nodes
+        (statistics, memory, sequences) run on a throwaway state copy, no
+        iCal URLs are fetched, and no trigger-driven action nodes
+        (api_client, notify_*, wake_on_lan, message_archive, value_sequence)
+        are started. Only datapoint_write outputs are published, and only
+        for writes that descend from a seeded Read Object without passing
+        through an unseeded one (whose None would be coerced to 0/False) or
+        an _INIT_EXCLUDED_NODE_TYPES node (whose init output would be a
+        placeholder or computed from throwaway state). Errors are logged,
+        never raised, so a failed initial run cannot break the save request.
+        """
+        entry = self._graphs.get(graph_id)
+        if not entry:
+            return
         name, enabled, flow = entry
-        return await self._execute_graph(graph_id, name, flow, {})
+        if not enabled:
+            return
+
+        # Seed every configured Read Object from the registry; nodes whose
+        # DataPoint has no current value taint their downstream subgraph.
+        seeds: dict[str, dict[str, Any]] = {}
+        seed_ts: dict[str, Any] = {}
+        unseeded: set[str] = set()
+        for node in flow.nodes:
+            if node.type != "datapoint_read":
+                continue
+            dp_id_str = node.data.get("datapoint_id")
+            if not dp_id_str:
+                # An unconfigured Read Object evaluates to None just like a
+                # configured one without a value — taint it the same way.
+                unseeded.add(node.id)
+                continue
+            if seed_overrides and dp_id_str in seed_overrides:
+                # Cascaded initialization: the triggering event value takes
+                # precedence — the registry handler runs concurrently and may
+                # not have stored the write yet.
+                seeds[node.id] = {"value": seed_overrides[dp_id_str], "changed": False}
+                seed_ts[node.id] = None
+                continue
+            vs = None
+            try:
+                vs = self._registry.get_value(uuid.UUID(dp_id_str))
+            except (ValueError, TypeError, AttributeError):
+                pass
+            # The registry returns an empty ValueState for DataPoints that
+            # never received a value — only a real value counts as seeded.
+            if vs is not None and vs.value is not None:
+                seeds[node.id] = {"value": vs.value, "changed": False}
+                seed_ts[node.id] = getattr(vs, "ts", None)
+            else:
+                unseeded.add(node.id)
+        if not seeds:
+            return
+
+        # Topology-only sets, computed once:
+        # - Read.changed edges carry the synthetic changed=False seed, not
+        #   the object value — branches fed via that handle must not be
+        #   initialized.
+        # - Seeded eligibility must follow value-carrying paths only: an edge
+        #   into a write node's trigger handle controls WHEN a write fires
+        #   but does not deliver the written value, so it must not make a
+        #   write (e.g. Const → Write.value plus Read → Write.trigger)
+        #   initializable.
+        # - A write that closes a feedback loop onto a Read Object of the
+        #   same DataPoint (the write is reachable from that read) would
+        #   re-enter _on_value_event during publish and repeat until the
+        #   cascade-depth guard — skip only those; unrelated reads of the
+        #   target DataPoint (e.g. a separate status branch) keep the write
+        #   eligible.
+        read_node_ids = {node.id for node in flow.nodes if node.type == "datapoint_read"}
+        changed_targets = {e.target for e in flow.edges if e.source in read_node_ids and e.sourceHandle == "changed"}
+        excluded_ids = {node.id for node in flow.nodes if node.type in _INIT_EXCLUDED_NODE_TYPES}
+        node_type_by_id = {node.id: node.type for node in flow.nodes}
+        value_edges = [
+            e for e in flow.edges if (e.targetHandle or "") not in _INIT_CONTROL_INPUT_HANDLES.get(node_type_by_id.get(e.target, ""), frozenset())
+        ]
+        wired_inputs = {(e.target, e.targetHandle or "in") for e in flow.edges}
+        feedback_writes: set[str] = set()
+        reach_by_read: dict[str, set[str]] = {}
+        for rnode in flow.nodes:
+            if rnode.type != "datapoint_read":
+                continue
+            r_dp = rnode.data.get("datapoint_id")
+            if not r_dp:
+                continue
+            reach = _downstream_closure({rnode.id}, flow.edges)
+            reach_by_read[rnode.id] = reach
+            feedback_writes.update(
+                wnode.id for wnode in flow.nodes if wnode.type == "datapoint_write" and wnode.id in reach and wnode.data.get("datapoint_id") == r_dp
+            )
+
+        # The settle pass adds implicit write-target → read dependencies, so
+        # feedback can also span several DataPoints (Read A → Write B plus
+        # Read B → Write A would never settle). Build the DataPoint-level
+        # dependency graph and exclude every write whose target sits on a
+        # cycle, exactly like the same-DataPoint feedback above. Only
+        # value-carrying reachability counts: a read that merely gates a
+        # write's trigger (or another control-only handle) can never deliver
+        # the written value, so it forms no settle dependency.
+        reach_by_read_value: dict[str, set[str]] = {
+            rnode.id: _downstream_closure({rnode.id}, value_edges) for rnode in flow.nodes if rnode.type == "datapoint_read"
+        }
+        dp_deps: dict[str, set[str]] = {}
+        for wnode in flow.nodes:
+            if wnode.type != "datapoint_write" or wnode.id in feedback_writes:
+                continue
+            w_dp = wnode.data.get("datapoint_id")
+            if not w_dp:
+                continue
+            for rnode in flow.nodes:
+                if rnode.type == "datapoint_read" and rnode.data.get("datapoint_id") and wnode.id in reach_by_read_value.get(rnode.id, ()):
+                    dp_deps.setdefault(w_dp, set()).add(rnode.data.get("datapoint_id"))
+        cyclic_dps: set[str] = set()
+        for start_dp in dp_deps:
+            frontier = set(dp_deps.get(start_dp, ()))
+            seen: set[str] = set()
+            while frontier:
+                dep = frontier.pop()
+                if dep == start_dp:
+                    cyclic_dps.add(start_dp)
+                    break
+                if dep in seen:
+                    continue
+                seen.add(dep)
+                frontier.update(dp_deps.get(dep, ()))
+        feedback_writes.update(wnode.id for wnode in flow.nodes if wnode.type == "datapoint_write" and wnode.data.get("datapoint_id") in cyclic_dps)
+
+        now = datetime.now(UTC)
+        graph_state = self._node_state.setdefault(graph_id, {})
+
+        # Prime the event filters (trigger_on_change, min_delta) BEFORE
+        # publishing writes: a graph that writes a DataPoint it also reads
+        # re-enters _on_value_event during the publish await. last_ts keeps
+        # the value's own registry timestamp — saving is not a datapoint
+        # event, so it must not start a fresh throttle window.
+        for node_id, seed in seeds.items():
+            ns = graph_state.setdefault(node_id, {})
+            ns["last_value"] = seed["value"]
+            ts = seed_ts.get(node_id)
+            if ts is not None:
+                ns["last_ts"] = ts
+
+        try:
+            # Excluded node types never influence published writes (their
+            # subgraphs are tainted) — replace them with inert placeholders
+            # for the dry run so e.g. a python_script cannot burn CPU inside
+            # the save request.
+            init_flow = flow
+            if excluded_ids:
+                init_flow = flow.model_copy(deep=True)
+                for node in init_flow.nodes:
+                    if node.type in _INIT_EXCLUDED_NODE_TYPES:
+                        node.type = "missing_node"
+
+            # Evaluate until intermediate DataPoints settle: a write target
+            # that another Read Object of the same sheet watches feeds its
+            # computed value back into that read and re-evaluates — the write
+            # event is suppressed for this graph, so downstream branches
+            # would otherwise initialize from the stale registry value.
+            # Feedback loops are excluded via feedback_writes, so the chains
+            # form a DAG and each pass settles at least one handoff level —
+            # the number of DataPoints both read and written bounds the pass
+            # count for chains of any length.
+            read_dps = {node.data.get("datapoint_id") for node in flow.nodes if node.type == "datapoint_read" and node.data.get("datapoint_id")}
+            write_dps = {node.data.get("datapoint_id") for node in flow.nodes if node.type == "datapoint_write" and node.data.get("datapoint_id")}
+            for _ in range(len(read_dps & write_dps) + 1):
+                # A write may only fire when it carries a seeded value: it
+                # must descend from a seeded Read Object (a save must not
+                # actuate unrelated branches like Const → Write) and must not
+                # descend from an unseeded Read Object or an excluded node
+                # type (see _INIT_EXCLUDED_NODE_TYPES).
+                tainted = _downstream_closure(unseeded | changed_targets | excluded_ids, flow.edges)
+                seeded_paths = _downstream_closure(set(seeds), value_edges)
+                skip_writes = {
+                    node.id
+                    for node in flow.nodes
+                    if node.type == "datapoint_write" and (node.id in tainted or node.id not in seeded_paths or node.id in feedback_writes)
+                }
+
+                # operating_hours totals are injected as overrides by
+                # _execute_graph's pre-pass — mirror that here (read-only) so
+                # seeded paths through such nodes publish the accumulated
+                # hours instead of 0.0.
+                overrides = dict(seeds)
+                for node in flow.nodes:
+                    if node.type != "operating_hours":
+                        continue
+                    ns = graph_state.setdefault(node.id, {"accumulated_hours": 0.0, "last_start": None})
+                    acc = ns["accumulated_hours"]
+                    if ns.get("last_start"):
+                        acc += (now - ns["last_start"]).total_seconds() / 3600
+                    overrides[node.id] = {**overrides.get(node.id, {}), "_computed_hours": round(acc, 6)}
+
+                # Fresh state copy per pass: the executor mutates gate/
+                # hysteresis state during evaluation, and a later pass with
+                # settled seeds must evaluate against the ORIGINAL persisted
+                # state, not the state an earlier pass derived from stale
+                # intermediate values.
+                hyst_copy = copy.deepcopy(self._hysteresis.get(graph_id, {}))
+                executor = GraphExecutor(init_flow, hyst_copy, self._app_config)
+                outputs = executor.execute(overrides, commit_memory=False)
+
+                settled = True
+                for wnode in flow.nodes:
+                    if wnode.type != "datapoint_write" or wnode.id in skip_writes:
+                        continue
+                    node_out = outputs.get(wnode.id, {})
+                    if (wnode.id, "trigger") in wired_inputs and not GraphExecutor._to_bool(node_out.get("_triggered")):
+                        continue  # gated writes do not deliver a value
+                    w_dp = wnode.data.get("datapoint_id")
+                    write_val = node_out.get("_write_value")
+                    if not w_dp or write_val is None:
+                        continue
+                    # A value the write-side filters would suppress is never
+                    # actually written — it must not seed downstream reads.
+                    if not self._write_filters_allow(wnode.data, graph_state.get(wnode.id, {}), write_val, now):
+                        continue
+                    for rnode in flow.nodes:
+                        if rnode.type != "datapoint_read" or rnode.data.get("datapoint_id") != w_dp:
+                            continue
+                        if seeds.get(rnode.id, {}).get("value") != write_val:
+                            seeds[rnode.id] = {"value": write_val, "changed": False}
+                            unseeded.discard(rnode.id)
+                            settled = False
+                if settled:
+                    break
+
+            # Start/stop the operating-hours accumulators exactly like
+            # _execute_graph's _apply_operating_hours_state, but only for
+            # nodes driven by clean seeded inputs — a placeholder-coerced
+            # False must not stop a running counter. Without this, a source
+            # that is already on at activation would not be counted until
+            # its next datapoint event.
+            for node in flow.nodes:
+                if node.type != "operating_hours" or node.id not in seeded_paths or node.id in tainted:
+                    continue
+                out = outputs.get(node.id, {})
+                ns = graph_state.setdefault(node.id, {"accumulated_hours": 0.0, "last_start": None})
+                if out.get("_reset", False):
+                    ns["accumulated_hours"] = 0.0
+                    ns["last_start"] = now if out.get("_active", False) else None
+                elif out.get("_active", False):
+                    if not ns.get("last_start"):
+                        ns["last_start"] = now
+                elif ns.get("last_start"):
+                    ns["accumulated_hours"] += (now - ns["last_start"]).total_seconds() / 3600
+                    ns["last_start"] = None
+
+            # While the publish is in flight, _on_value_event skips THIS
+            # graph for the DataPoints written here: a write target read
+            # elsewhere in the same sheet (e.g. Read A → Write B plus
+            # Read B → Write C) would otherwise re-enter the graph mid-pass
+            # and burst until the cascade guard. Live events for other
+            # DataPoints keep executing the graph normally.
+            init_write_dps = {
+                str(node.data.get("datapoint_id"))
+                for node in flow.nodes
+                if node.type == "datapoint_write" and node.id not in skip_writes and node.data.get("datapoint_id")
+            }
+            self._initializing_graphs[graph_id] = init_write_dps
+            try:
+                published_writes = await self._apply_datapoint_write_outputs(
+                    graph_id, flow, outputs, graph_state, wired_inputs, now, logic_depth, skip_node_ids=skip_writes, initialization=True
+                )
+            finally:
+                self._initializing_graphs.pop(graph_id, None)
+
+            # Commit gate/hysteresis state only for nodes whose switched
+            # output was actually published (see
+            # _INIT_COMMIT_STATE_NODE_TYPES) — without a published write the
+            # save must not act like a datapoint event on the stored state.
+            state_committed = False
+            for node in flow.nodes:
+                if (
+                    node.type in _INIT_COMMIT_STATE_NODE_TYPES
+                    and node.id in seeded_paths
+                    and node.id not in tainted
+                    and node.id in hyst_copy
+                    and _downstream_closure({node.id}, flow.edges) & published_writes
+                ):
+                    self._hysteresis.setdefault(graph_id, {})[node.id] = hyst_copy[node.id]
+                    state_committed = True
+            if state_committed:
+                # Persist like _execute_graph does — otherwise a restart
+                # before the next real execution reloads the stale pre-save
+                # state from the DB while the switched value was already
+                # written.
+                await self._persist_node_state(graph_id)
+        except Exception:
+            logger.exception("LogicManager: initialization of graph %s (%s) failed", graph_id[:8], name)
+
+    def _order_graphs_for_initialization(self, graph_ids: list[str]) -> list[str]:
+        """Order restored graphs producers-first.
+
+        A graph that writes a DataPoint another restored graph reads must
+        initialize first, so the consumer seeds from the freshly written
+        registry value. Dependency cycles fall back to the given order.
+        """
+        infos: dict[str, tuple[set[str], set[str]]] = {}
+        for gid in graph_ids:
+            entry = self._graphs.get(gid)
+            if not entry:
+                infos[gid] = (set(), set())
+                continue
+            _, _, flow = entry
+            reads = {n.data.get("datapoint_id") for n in flow.nodes if n.type == "datapoint_read" and n.data.get("datapoint_id")}
+            writes = {n.data.get("datapoint_id") for n in flow.nodes if n.type == "datapoint_write" and n.data.get("datapoint_id")}
+            infos[gid] = (reads, writes)
+        ordered: list[str] = []
+        remaining = list(graph_ids)
+        while remaining:
+            progressed = False
+            for gid in list(remaining):
+                reads, _ = infos[gid]
+                if any(other != gid and infos[other][1] & reads for other in remaining):
+                    continue  # a pending producer writes what this graph reads
+                ordered.append(gid)
+                remaining.remove(gid)
+                progressed = True
+            if not progressed:
+                ordered.extend(remaining)
+                break
+        return ordered
+
+    async def reinitialize_graph(self, graph_id: str) -> None:
+        """Save-path helper: invalidate + reload + initialize (issue #1031).
+
+        The read/write filter state (last_value, last_write_val, …) is
+        carried across the reload: invalidate_cache drops _node_state, and an
+        initialization publish evaluated against empty filter state would
+        re-send unchanged actuator values on every semantic save even though
+        only_on_change/min_delta/throttle should suppress them. Only nodes
+        whose semantics are unchanged (same type and data) keep their state —
+        e.g. a write retargeted to another DataPoint must not inherit the old
+        target's last_write_val and skip its initialization.
+        """
+        old_entry = self._graphs.get(graph_id)
+        saved_state = self._node_state.get(graph_id)
+        self.invalidate_cache(graph_id)
+        await self.reload()
+        new_entry = self._graphs.get(graph_id)
+        if saved_state and old_entry and new_entry:
+            old_nodes = {node.id: node for node in old_entry[2].nodes}
+            kept = {
+                node.id: saved_state[node.id]
+                for node in new_entry[2].nodes
+                if node.id in saved_state and node.id in old_nodes and old_nodes[node.id].type == node.type and old_nodes[node.id].data == node.data
+            }
+            if kept:
+                self._node_state[graph_id] = kept
+        await self.initialize_graph(graph_id)
+
+    async def initialize_graphs(self, graph_ids: list[str]) -> None:
+        """Initialize several restored graphs exactly once each (issue #1031).
+
+        The pass runs producers-first and keeps ALL restored graphs listed in
+        _bulk_init_pending for its whole duration — initialization-flagged
+        cascades between imported graphs are suppressed (the later graph
+        seeds itself from the then-current registry state instead of
+        double-executing), while real live events keep executing the graphs
+        normally (see _on_value_event).
+        """
+        self._bulk_init_pending.update(graph_ids)
+        try:
+            for graph_id in self._order_graphs_for_initialization(graph_ids):
+                await self.initialize_graph(graph_id)
+        finally:
+            self._bulk_init_pending.difference_update(graph_ids)
+
+    async def reset_node_state(self, graph_id: str) -> None:
+        """Drop in-memory and persisted node state of a graph.
+
+        Used by the config restore: the imported sheet carries no node state,
+        so accumulators and switch states of a previously existing graph with
+        reused node ids must not leak into the restored one.
+        """
+        self._hysteresis.pop(graph_id, None)
+        self._ical_result_caches.pop(graph_id, None)
+        self._ical_cache_generations[graph_id] = object()
+        self._node_state.pop(graph_id, None)
+        try:
+            # node_state is TEXT NOT NULL DEFAULT '{}' — reset to the empty
+            # object, NULL would violate the schema.
+            await self._db.execute_and_commit("UPDATE logic_graphs SET node_state = '{}' WHERE id = ?", (graph_id,))
+        except Exception:
+            logger.exception("Graph %s: failed to reset node_state", graph_id[:8])
 
     async def _execute_graph(
         self,
@@ -1025,9 +1978,253 @@ class LogicManager:
         flow: FlowData,
         overrides: dict[str, dict[str, Any]],
         logic_depth: int = 0,
+        debug_overrides: dict[str, dict[str, Any]] | None = None,
+        debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            return await self._execute_graph_impl(
+                graph_id,
+                name,
+                flow,
+                overrides,
+                logic_depth,
+                debug_overrides,
+                debug_input_capture,
+            )
+        except _ObsoleteGraphExecution:
+            return {}
+
+    async def _execute_graph_impl(
+        self,
+        graph_id: str,
+        name: str,
+        flow: FlowData,
+        overrides: dict[str, dict[str, Any]],
+        logic_depth: int = 0,
+        debug_overrides: dict[str, dict[str, Any]] | None = None,
+        debug_input_capture: dict[str, dict[str, dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         execute_now = datetime.now(UTC)
+        execution_started = perf_counter()
+        ical_app_config = dict(self._app_config)
         graph_state = self._node_state.setdefault(graph_id, {})
+        ical_generation = self._ical_cache_generations.setdefault(graph_id, object())
+        ical_result_cache = self._ical_result_caches.setdefault(graph_id, {})
+        # Event-driven executions still evaluate the full graph so unrelated
+        # datapoint_read nodes can contribute their latest registry values.
+        # Track which input handles descend from the explicit event overrides:
+        # cached inputs are context, not fresh notification triggers. An
+        # execution without overrides is a manual/full-sheet run and keeps the
+        # existing all-inputs behaviour.
+        debug_overrides = debug_overrides or {}
+        capture_debug_inputs = debug_input_capture is not None
+        if not capture_debug_inputs:
+            try:
+                from obs.api.v1.websocket import get_ws_manager
+
+                if get_ws_manager().has_logic_debug_subscribers(graph_id):
+                    capture_debug_inputs = True
+            except Exception:
+                logger.debug("WebSocket debug subscriber lookup unavailable", exc_info=True)
+        debug_inputs: dict[str, dict[str, dict[str, Any]]] = {}
+        debug_input_runs: list[tuple[dict[str, Any], dict[str, dict[str, dict[str, Any]]]]] = []
+        execution_ical_cache: dict[str, Any] | None = None
+        execution_ical_sources: dict[str, Any] = {}
+        execution_ical_prepared = False
+        has_python_scripts = any(node.type == "python_script" for node in flow.nodes)
+        run_executor_in_worker = has_python_scripts or capture_debug_inputs
+
+        def _debug_run_overrides(candidate: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+            merged = {node_id: dict(values) for node_id, values in candidate.items()}
+            for node_id, values in debug_overrides.items():
+                merged.setdefault(node_id, {}).update(values)
+            return merged
+
+        async def _execute_pass(
+            executor: GraphExecutor,
+            candidate: dict[str, dict[str, Any]],
+            *,
+            commit_memory: bool = False,
+            executor_lock_held: bool = False,
+        ) -> dict[str, dict[str, Any]]:
+            execute_args = partial(
+                executor.execute,
+                _debug_run_overrides(candidate),
+                commit_memory=commit_memory,
+                capture_incoming_overrides=candidate,
+            )
+            if not run_executor_in_worker:
+                result = execute_args()
+            else:
+
+                async def _run_worker() -> dict[str, dict[str, Any]]:
+                    worker = asyncio.create_task(_run_graph_executor_in_worker(execute_args))
+                    try:
+                        return await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        # Cancelling to_thread() cannot stop code already running.
+                        # The caller retains the per-graph lock while this drains.
+                        try:
+                            await worker
+                        except Exception:
+                            logger.exception("Graph %s: cancelled Python-script worker failed while draining", graph_id)
+                        raise
+
+                if executor_lock_held:
+                    result = await _run_worker()
+                else:
+                    execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
+                    try:
+                        async with execution_lock:
+                            if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                                raise _ObsoleteGraphExecution
+                            result = await _run_worker()
+                    finally:
+                        self._prune_graph_executor_lock(graph_id)
+            if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                raise _ObsoleteGraphExecution
+            return result
+
+        async def _executor(state: dict[str, Any]) -> GraphExecutor:
+            nonlocal execution_ical_cache, execution_ical_prepared
+            ical_nodes = [node for node in flow.nodes if node.type == "ical"]
+            if execution_ical_cache is None:
+                source_ical_cache = (
+                    self._ical_result_caches.get(graph_id, {}) if self._ical_cache_generations.get(graph_id) is ical_generation else ical_result_cache
+                )
+                execution_ical_sources.update(source_ical_cache)
+                # Cache entries are immutable once published.  Snapshot only
+                # the small mapping so concurrent executions can share large
+                # parsed calendar outputs without retaining full copies.
+                execution_ical_cache = dict(source_ical_cache)
+            pass_ical_cache = execution_ical_cache
+            precompute_state: dict[str, Any] = {}
+            for ical_node in ical_nodes:
+                state.setdefault(ical_node.id, {})
+                precompute_state[ical_node.id] = {
+                    "raw": state[ical_node.id].get("raw", ""),
+                }
+            if not capture_debug_inputs:
+                executor: GraphExecutor = GraphExecutor(
+                    flow,
+                    state,
+                    ical_app_config,
+                    ical_result_cache=pass_ical_cache,
+                    ical_cache_outputs_owned=True,
+                )
+
+            else:
+                run_inputs: dict[str, dict[str, dict[str, Any]]] = {}
+
+                class CapturingGraphExecutor(GraphExecutor):
+                    def execute(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                        run_outputs = super().execute(*args, **kwargs)
+                        # ``outputs`` is updated in place as async replay results are
+                        # merged. A shallow copy preserves each node output object's
+                        # identity while isolating the pass's top-level mapping.
+                        debug_input_runs.append((dict(run_outputs), run_inputs))
+                        return run_outputs
+
+                executor = CapturingGraphExecutor(
+                    flow,
+                    state,
+                    ical_app_config,
+                    run_inputs,
+                    pass_ical_cache,
+                    ical_cache_outputs_owned=True,
+                )
+
+            if not ical_nodes or execution_ical_prepared:
+                return executor
+
+            def _precompute_ical_node(ical_node: Any) -> Any:
+                precompute_executor = GraphExecutor(
+                    flow,
+                    precompute_state,
+                    ical_app_config,
+                    ical_result_cache=pass_ical_cache,
+                    ical_cache_outputs_owned=True,
+                )
+                previous = pass_ical_cache.get(ical_node.id)
+                try:
+                    precompute_executor._eval_node(ical_node, {})
+                except Exception:
+                    # The normal executor isolates errors to their node.  The
+                    # worker precompute must preserve that contract rather than
+                    # failing the entire graph before execute() gets a chance
+                    # to produce the node's diagnostic output.
+                    logger.exception(
+                        "Graph %s: iCalendar precompute failed for node %s",
+                        graph_id,
+                        ical_node.id,
+                    )
+                    return None
+                current = pass_ical_cache.get(ical_node.id)
+                if current is not None and current is not previous:
+                    # The execution owns its entry; publish a separate copy so
+                    # downstream output handling cannot mutate the shared cache.
+                    return copy.deepcopy(current)
+                return None
+
+            def _ical_precompute_needed(ical_node: Any) -> bool:
+                raw_text = precompute_state[ical_node.id].get("raw", "")
+                if not raw_text:
+                    return False
+                filters_value = ical_node.data.get("filters") or "[]"
+                if not isinstance(filters_value, str):
+                    return True
+                try:
+                    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+                    timezone_name = ical_app_config.get("timezone", "Europe/Zurich")
+                    cache_key = (filters_value.strip(), timezone_name, datetime.now(ZoneInfo(timezone_name)).date().isoformat())
+                except (TypeError, ValueError, ZoneInfoNotFoundError):
+                    return True
+                cached = pass_ical_cache.get(ical_node.id)
+                return not (
+                    isinstance(cached, dict)
+                    and cached.get("raw") is raw_text
+                    and cached.get("key") == cache_key
+                    and isinstance(cached.get("outputs"), dict)
+                )
+
+            for ical_node in ical_nodes:
+                if not _ical_precompute_needed(ical_node):
+                    continue
+                precompute_key = (graph_id, ical_node.id)
+                precompute_lock = self._ical_precompute_locks.setdefault(precompute_key, asyncio.Lock())
+                try:
+                    async with precompute_lock:
+                        if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                            raise _ObsoleteGraphExecution
+                        latest_entry = self._ical_result_caches.get(graph_id, {}).get(ical_node.id)
+                        if latest_entry is not None and latest_entry is not execution_ical_sources.get(ical_node.id):
+                            pass_ical_cache[ical_node.id] = latest_entry
+                            execution_ical_sources[ical_node.id] = latest_entry
+                        if not _ical_precompute_needed(ical_node):
+                            continue
+                        worker = asyncio.create_task(asyncio.to_thread(_precompute_ical_node, ical_node))
+                        try:
+                            publication = await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            # A running thread cannot be canceled.  Retain the
+                            # per-node lock until it exits so a replacement graph
+                            # cannot start a second large recurrence parse beside it.
+                            try:
+                                await worker
+                            except Exception:
+                                logger.exception("Graph %s: cancelled iCalendar precompute failed while draining", graph_id)
+                            raise
+                        if publication is not None and self._ical_cache_generations.get(graph_id) is ical_generation:
+                            self._ical_result_caches[graph_id] = {
+                                **self._ical_result_caches.get(graph_id, {}),
+                                ical_node.id: publication,
+                            }
+                            execution_ical_sources[ical_node.id] = publication
+                finally:
+                    self._prune_ical_precompute_lock(precompute_key, precompute_lock)
+            execution_ical_prepared = True
+            return executor
 
         # ── Seed all datapoint_read nodes from registry ───────────────────
         # In event-driven execution only the triggered node(s) have overrides.
@@ -1047,15 +2244,25 @@ class LogicManager:
                 vs = self._registry.get_value(dp_id)
                 if vs is not None:
                     aug_overrides[node.id] = {"value": vs.value, "changed": False}
-            except Exception:
+            except (ValueError, TypeError, AttributeError):
                 pass
         # Event / manual overrides take priority over registry seed
         aug_overrides.update(overrides)
 
         api_client_ids = {node.id for node in flow.nodes if node.type == "api_client"}
         host_check_ids = {node.id for node in flow.nodes if node.type == "host_check"}
+        ical_ids = {node.id for node in flow.nodes if node.type == "ical"}
+        normalized_ical_cache = {node_id: entry for node_id, entry in ical_result_cache.items() if node_id in ical_ids}
+        for node_id in ical_ids:
+            hyst_node = self._hysteresis.setdefault(graph_id, {}).setdefault(node_id, {})
+            legacy_cache = hyst_node.pop("_ical_result_cache", None)
+            if node_id not in normalized_ical_cache and isinstance(legacy_cache, dict):
+                normalized_ical_cache[node_id] = legacy_cache
+        ical_result_cache = normalized_ical_cache
+        if self._ical_cache_generations.get(graph_id) is ical_generation:
+            self._ical_result_caches[graph_id] = normalized_ical_cache
         message_archive_ids = {node.id for node in flow.nodes if node.type == "message_archive"}
-        notify_ids = {node.id for node in flow.nodes if node.type in {"notify_pushover", "notify_sms"}}
+        notify_ids = {node.id for node in flow.nodes if node.type in {"notify_message", "notify_pushover", "notify_sms"}}
         operating_hour_ids = {node.id for node in flow.nodes if node.type == "operating_hours"}
         async_replay_source_ids = api_client_ids | host_check_ids | message_archive_ids | notify_ids
         needs_async_replay_snapshot = any(edge.source in async_replay_source_ids for edge in flow.edges)
@@ -1074,6 +2281,7 @@ class LogicManager:
 
         # ── Pre-fetch iCal URLs (refresh only when cache is stale) ───────────
         hyst = self._hysteresis.setdefault(graph_id, {})
+        refreshed_ical_nodes: set[str] = set()
         for node in flow.nodes:
             if node.type != "ical":
                 continue
@@ -1081,12 +2289,28 @@ class LogicManager:
             if not url:
                 continue
             refresh_min = float(node.data.get("refresh_interval_min") or 60)
+            payload_limit = _ical_payload_limit_bytes(node.data)
             hyst_node = hyst.setdefault(node.id, {})
-            last_fetch: float | None = hyst_node.get("last_fetch_ts")
-            url_changed = hyst_node.get("fetched_url") != url
-            needs_fetch = url_changed or last_fetch is None or (execute_now.timestamp() - last_fetch) >= refresh_min * 60
+            last_attempt: float | None = hyst_node.get("_ical_last_attempt_ts")
+            attempt_config_changed = hyst_node.get("_ical_last_attempt_url") != url or hyst_node.get("_ical_last_attempt_limit") != payload_limit
+            needs_fetch = attempt_config_changed or last_attempt is None or (execute_now.timestamp() - last_attempt) >= refresh_min * 60
             if needs_fetch:
+                fetch_lock = self._ical_fetch_locks.setdefault((graph_id, node.id), asyncio.Lock())
+                await fetch_lock.acquire()
+                if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                    fetch_lock.release()
+                    continue
+                # Another execution may have refreshed this node while this one
+                # waited.  Re-check the shared attempt metadata under the lock;
+                # a failed attempt also satisfies queued callers.
+                last_attempt = hyst_node.get("_ical_last_attempt_ts")
+                attempt_config_changed = hyst_node.get("_ical_last_attempt_url") != url or hyst_node.get("_ical_last_attempt_limit") != payload_limit
+                needs_fetch = attempt_config_changed or last_attempt is None or (datetime.now(UTC).timestamp() - last_attempt) >= refresh_min * 60
+                if not needs_fetch:
+                    fetch_lock.release()
+                    continue
                 active_client: httpx.AsyncClient | None = None
+                attempt_completed = False
                 try:
                     current_url = url
                     active_origin: tuple[str, str, int] | None = None
@@ -1126,7 +2350,10 @@ class LogicManager:
                                     _resp.raise_for_status()
                                     _store_response_cookies(logical_cookie_store, _resp.headers.get_list("set-cookie"), current_url)
                                     _ct = _resp.headers.get("content-type", "").lower()
-                                    _resp_bytes = await _read_limited_response_body(_resp, _ICAL_MAX_BYTES)
+                                    _resp_bytes = await _read_limited_response_body(
+                                        _resp,
+                                        payload_limit,
+                                    )
                                     break
                             except httpx.RequestError as req_exc:
                                 last_transport_error = req_exc
@@ -1166,24 +2393,36 @@ class LogicManager:
                                 _raw_text = _resp_bytes.decode("latin-1")
                         if not _raw_text.lstrip().startswith("BEGIN:VCALENDAR"):
                             raise ValueError(f"Response is not an iCal file (starts with {_raw_text[:60]!r})")
-                        hyst_node["raw"] = _raw_text
-                        hyst_node["fetched_url"] = url
-                        hyst_node["last_fetch_ts"] = execute_now.timestamp()
+                        if self._ical_cache_generations.get(graph_id) is ical_generation:
+                            hyst_node["raw"] = _raw_text
+                            hyst_node["fetched_url"] = url
+                            hyst_node["last_fetch_ts"] = execute_now.timestamp()
+                            refreshed_ical_nodes.add(node.id)
                         logger.info("Graph %s: iCal fetched from %s (%d bytes)", graph_id[:8], current_url, len(_resp_bytes))
                         break
-                except Exception as _exc:
-                    logger.warning("Graph %s: iCal fetch failed for node %s (%s): %s", graph_id[:8], node.id[:8], url, _exc)
+                except Exception:
+                    attempt_completed = True
+                    logger.exception("Graph %s: iCal fetch failed for node %s (%s)", graph_id[:8], node.id[:8], url)
+                else:
+                    attempt_completed = True
                 finally:
-                    if active_client is not None:
-                        await active_client.aclose()
+                    try:
+                        if active_client is not None:
+                            await active_client.aclose()
+                        if attempt_completed and self._ical_cache_generations.get(graph_id) is ical_generation:
+                            hyst_node["_ical_last_attempt_url"] = url
+                            hyst_node["_ical_last_attempt_limit"] = payload_limit
+                            hyst_node["_ical_last_attempt_ts"] = datetime.now(UTC).timestamp()
+                    finally:
+                        fetch_lock.release()
 
         # ── Pre-fill heating_circuit missing slots from history ───────────────────────
         # For each heating_circuit node: when a slot (T1/T2/T3) is missing for today
         # and the clock has already passed the slot's threshold hour, query the history
         # for the last value at or before that hour and inject it as _history_{slot}.
         # This covers restarts where the slot would otherwise stay empty all day.
-        import datetime as _hc_dt  # noqa: PLC0415
-        import zoneinfo as _hc_zi  # noqa: PLC0415
+        import datetime as _hc_dt
+        import zoneinfo as _hc_zi
 
         _hc_tz = _hc_zi.ZoneInfo(self._app_config.get("timezone", "Europe/Zurich"))
         _hc_now = _hc_dt.datetime.now(tz=_hc_tz)
@@ -1213,7 +2452,7 @@ class LogicManager:
             # cause slots to be tagged with the wrong date and re-filled on every run.
             _hc_node_aug["_date"] = _hc_today
             try:
-                from obs.history.factory import get_history_plugin as _get_hp  # noqa: PLC0415
+                from obs.history.factory import get_history_plugin as _get_hp
 
                 _hc_dp_id = uuid.UUID(_hc_dp_id_str)
                 _hc_plugin = _get_hp()
@@ -1236,19 +2475,27 @@ class LogicManager:
                             _hc_formula = (_hc_dp_read_node.data.get("value_formula") or "").strip()
                             if _hc_formula:
                                 try:
-                                    from obs.logic.executor import GraphExecutor as _GE  # noqa: PLC0415
+                                    from obs.logic.executor import GraphExecutor as _GE
 
                                     _hist_val = _GE._safe_eval(_hc_formula, {"x": float(_hist_val)})
                                 except Exception:
-                                    pass
+                                    logger.exception(
+                                        "Graph %s: heating_circuit %s: history value_formula failed, using raw value",
+                                        graph_id[:8],
+                                        _hc_slot,
+                                    )
                             _hc_vmap = _hc_dp_read_node.data.get("value_map")
                             if _hc_vmap:
                                 try:
-                                    from obs.core.transformation import apply_value_map as _avm  # noqa: PLC0415
+                                    from obs.core.transformation import apply_value_map as _avm
 
                                     _hist_val = _avm(_hist_val, _hc_vmap)
                                 except Exception:
-                                    pass
+                                    logger.exception(
+                                        "Graph %s: heating_circuit %s: history value_map failed, using pre-map value",
+                                        graph_id[:8],
+                                        _hc_slot,
+                                    )
                         try:
                             _hc_node_aug[f"_history_{_hc_slot}"] = float(_hist_val)
                             logger.debug(
@@ -1265,16 +2512,42 @@ class LogicManager:
                                 node.id[:8],
                                 _hc_slot,
                             )
-            except Exception as _hc_exc:
-                logger.debug("Graph %s: heating_circuit history pre-fill failed: %s", graph_id[:8], _hc_exc)
+            except Exception:
+                logger.exception("Graph %s: heating_circuit history pre-fill failed", graph_id[:8])
 
-        executor = GraphExecutor(flow, hyst, self._app_config)
+        # Executor nodes mutate their hysteresis mapping synchronously.  Run
+        # the first pass against an isolated snapshot so a worker made
+        # obsolete by a concurrent save cannot leak state into the replacement
+        # graph.  Commit only after the pass proves its generation is current.
         try:
-            pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
-            pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
-            outputs = executor.execute(aug_overrides, commit_memory=False)
-        except Exception as exc:
-            logger.error("Graph %s (%s) execution error: %s", graph_id, name, exc)
+            if run_executor_in_worker:
+                execution_lock = self._graph_executor_locks.setdefault(graph_id, asyncio.Lock())
+                try:
+                    async with execution_lock:
+                        # Snapshot and commit inside the same critical section so
+                        # overlapping executions observe the preceding pass's
+                        # committed state instead of overwriting it from a stale copy.
+                        base_hyst, execution_hyst = await _run_graph_state_copy_in_worker(_copy_graph_worker_state, hyst)
+                        executor = await _executor(execution_hyst)
+                        if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                            raise _ObsoleteGraphExecution
+                        pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
+                        pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
+                        outputs = await _execute_pass(executor, aug_overrides, executor_lock_held=True)
+                        _merge_worker_state(base_hyst, execution_hyst, hyst)
+                finally:
+                    self._prune_graph_executor_lock(graph_id)
+            else:
+                executor = await _executor(hyst)
+                if self._ical_cache_generations.get(graph_id) is not ical_generation:
+                    raise _ObsoleteGraphExecution
+                pre_execute_hyst = copy.deepcopy(hyst) if needs_async_replay_snapshot else None
+                pre_execute_node_state = copy.deepcopy(graph_state) if needs_async_replay_snapshot else None
+                outputs = await _execute_pass(executor, aug_overrides)
+        except _ObsoleteGraphExecution:
+            raise
+        except Exception:
+            logger.exception("Graph %s (%s) execution error", graph_id, name)
             return {}
 
         def _apply_operating_hours_state(node_ids: set[str] | None = None, base_state: dict[str, Any] | None = None) -> None:
@@ -1320,6 +2593,8 @@ class LogicManager:
                         cron_reachable.add(_ce.target)
                         _cq.append(_ce.target)
 
+        executed_host_check_nodes: set[str] = set()
+
         async def _run_host_check_node(node: Any, target_set: set[str], log_suffix: str = "") -> bool:
             out = outputs.get(node.id, {})
             hyst_hc = hyst.setdefault(node.id, {})
@@ -1335,8 +2610,8 @@ class LogicManager:
             try:
                 timeout_s, count = _normalise_host_check_ping_config(node.data.get("timeout_s"), node.data.get("count"))
                 config_sig = f"{host}\0{timeout_s:g}\0{count}"
-            except Exception as exc:
-                logger.warning("Graph %s: host_check %s failed: %s", graph_id[:8], host, exc)
+            except Exception:
+                logger.exception("Graph %s: host_check %s failed", graph_id[:8], host)
                 return False
             if (
                 was_triggered
@@ -1358,6 +2633,7 @@ class LogicManager:
                 outputs[node.id]["reachable"] = reachable
                 outputs[node.id]["latency_ms"] = latency_ms
                 target_set.add(node.id)
+                executed_host_check_nodes.add(node.id)
                 logger.info(
                     "Graph %s: host_check%s %s → reachable=%s latency=%s ms",
                     graph_id[:8],
@@ -1367,8 +2643,8 @@ class LogicManager:
                     f"{latency_ms:.1f}" if latency_ms is not None else "—",
                 )
                 return True
-            except Exception as exc:
-                logger.warning("Graph %s: host_check %s failed: %s", graph_id[:8], host, exc)
+            except Exception:
+                logger.exception("Graph %s: host_check %s failed", graph_id[:8], host)
                 return False
 
         # ── Handle host_check ─────────────────────────────────────────────
@@ -1395,7 +2671,7 @@ class LogicManager:
                         outputs.get(_re.source, {}), _re.sourceHandle or "out"
                     )
 
-        def _replay_async_descendants(node_ids: set[str], *, skip_node_ids: set[str] | None = None) -> set[str]:
+        async def _replay_async_descendants(node_ids: set[str], *, skip_node_ids: set[str] | None = None) -> set[str]:
             descendants: set[str] = set()
             queue: list[str] = list(node_ids)
             while queue:
@@ -1425,8 +2701,8 @@ class LogicManager:
                 replay_overrides.setdefault(edge.target, {})[target_handle] = source_value
 
             replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            replay_executor = GraphExecutor(flow, replay_hyst, self._app_config)
-            replay_outputs = replay_executor.execute(replay_overrides, commit_memory=False)
+            replay_executor = await _executor(replay_hyst)
+            replay_outputs = await _execute_pass(replay_executor, replay_overrides)
             blocked_ids = skip_node_ids or set()
             for nid, vals in replay_outputs.items():
                 if nid in descendants and nid not in blocked_ids:
@@ -1465,8 +2741,8 @@ class LogicManager:
             for nid, vals in hc_downstream_overrides.items():
                 hc_merged.setdefault(nid, {}).update(vals)
             hc_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            hc_second_executor = GraphExecutor(flow, hc_hyst_snapshot, self._app_config)
-            hc_second_outputs = hc_second_executor.execute(hc_merged, commit_memory=False)
+            hc_second_executor = await _executor(hc_hyst_snapshot)
+            hc_second_outputs = await _execute_pass(hc_second_executor, hc_merged)
             hc_descendants: set[str] = set()
             hc_queue: list[str] = list(replay_sources)
             while hc_queue:
@@ -1527,8 +2803,8 @@ class LogicManager:
                 target_set.add(node.id)
                 logger.info("Graph %s: WoL sent by node %s", graph_id[:8], node.id[:8])
                 return True
-            except Exception as exc:
-                logger.warning("Graph %s: WoL failed on node %s: %s", graph_id[:8], node.id[:8], type(exc).__name__)
+            except Exception:
+                logger.exception("Graph %s: WoL failed on node %s", graph_id[:8], node.id[:8])
                 return False
 
         # ── Handle wake_on_lan ────────────────────────────────────────────
@@ -1570,8 +2846,8 @@ class LogicManager:
                 # avg_multi, …) don't accumulate a second sample just because
                 # a WoL edge is present — we only want their *outputs*, not
                 # a second mutation of their persisted state.
-                wol_second_executor = GraphExecutor(flow, copy.deepcopy(hyst), self._app_config)
-                wol_second_outputs = wol_second_executor.execute(wol_merged, commit_memory=False)
+                wol_second_executor = await _executor(copy.deepcopy(hyst))
+                wol_second_outputs = await _execute_pass(wol_second_executor, wol_merged)
                 # Compute transitive closure of WoL-triggered nodes so that only
                 # their descendants are updated, leaving unrelated nodes intact.
                 wol_descendants: set[str] = set()
@@ -1627,8 +2903,8 @@ class LogicManager:
                     for nid, vals in _pwol_dn_ovr.items():
                         _pwol_merged.setdefault(nid, {}).update(vals)
                     _pwol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                    _pwol_exec = GraphExecutor(flow, _pwol_hyst, self._app_config)
-                    _pwol_out = _pwol_exec.execute(_pwol_merged, commit_memory=False)
+                    _pwol_exec = await _executor(_pwol_hyst)
+                    _pwol_out = await _execute_pass(_pwol_exec, _pwol_merged)
                     _pwol_desc: set[str] = set()
                     _pwol_dq: list[str] = list(_pwol_src)
                     while _pwol_dq:
@@ -1662,14 +2938,22 @@ class LogicManager:
             if node.type != "datapoint_read":
                 continue
             dp_id_str = str(node.data.get("datapoint_id") or "").strip()
-            if not dp_id_str or node.id not in aug_overrides or "value" not in aug_overrides[node.id]:
+            node_override = {
+                **aug_overrides.get(node.id, {}),
+                **debug_overrides.get(node.id, {}),
+            }
+            if not dp_id_str or "value" not in node_override:
                 continue
-            node_override = aug_overrides[node.id]
-            priority = 2 if node.id in overrides or GraphExecutor._to_bool(node_override.get("changed")) else 1
+            if "value" in debug_overrides.get(node.id, {}):
+                priority = 3
+            elif node.id in overrides or GraphExecutor._to_bool(node_override.get("changed")):
+                priority = 2
+            else:
+                priority = 1
             if priority >= execution_value_priority_by_datapoint_id.get(dp_id_str, 0):
                 execution_values_by_datapoint_id[dp_id_str] = node_override["value"]
                 execution_value_priority_by_datapoint_id[dp_id_str] = priority
-        import json as _json  # noqa: PLC0415
+        import json as _json
 
         async def _run_api_client_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
@@ -1711,7 +2995,7 @@ class LogicManager:
             if hdr_str:
                 try:
                     extra_headers = _json.loads(hdr_str)
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
                     pass
             hdr_file = (node.data.get("headers_secret_file") or "").strip()
             if hdr_file:
@@ -1720,7 +3004,7 @@ class LogicManager:
                         **extra_headers,
                         **_json.loads(_read_secret_file(hdr_file)),
                     }
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
                     pass
             try:
                 extra_headers = _replace_api_client_placeholders(extra_headers, variable_resolver)
@@ -1809,7 +3093,7 @@ class LogicManager:
                 if resp_type in ("json", "application/json"):
                     try:
                         resp_data: Any = resp.json()
-                    except Exception:
+                    except ValueError:
                         resp_data = resp_text
                 else:
                     resp_data = resp_text
@@ -1830,7 +3114,7 @@ class LogicManager:
                 target_set.add(node.id)
                 return True
             except Exception as exc:
-                logger.warning("Graph %s: api_client failed: %s", graph_id[:8], exc)
+                logger.exception("Graph %s: api_client failed", graph_id[:8])
                 outputs[node.id].update({"response": str(exc), "status": None, "success": False})
                 target_set.add(node.id)
                 return True
@@ -1878,8 +3162,8 @@ class LogicManager:
                 api_replay_overrides = {nid: dict(vals) for nid, vals in replay_overrides.items()}
                 if pre_execute_hyst is not None:
                     replay_hyst = copy.deepcopy(pre_execute_hyst)
-                    second_executor = GraphExecutor(flow, replay_hyst, self._app_config)
-                    second_outputs = second_executor.execute(replay_overrides, commit_memory=False)
+                    second_executor = await _executor(replay_hyst)
+                    second_outputs = await _execute_pass(second_executor, replay_overrides)
                     # Compute transitive descendants of triggered api_clients so that
                     # only their subtree is updated. This prevents the api_client
                     # second pass from overwriting WoL-propagated outputs that were
@@ -1934,8 +3218,8 @@ class LogicManager:
             for nid, vals in pat_hc_overrides.items():
                 pat_merged.setdefault(nid, {}).update(vals)
             pat_hyst_snapshot = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-            pat_executor = GraphExecutor(flow, pat_hyst_snapshot, self._app_config)
-            pat_outputs = pat_executor.execute(pat_merged, commit_memory=False)
+            pat_executor = await _executor(pat_hyst_snapshot)
+            pat_outputs = await _execute_pass(pat_executor, pat_merged)
             pat_descendants: set[str] = set()
             pat_queue: list[str] = list(replay_sources)
             while pat_queue:
@@ -2001,8 +3285,8 @@ class LogicManager:
                     post_api_wol_nodes.add(node.id)
                     triggered_wol_nodes.add(node.id)
                     logger.info("Graph %s: WoL sent by node %s", graph_id[:8], node.id[:8])
-                except Exception as exc:
-                    logger.warning("Graph %s: WoL failed on node %s: %s", graph_id[:8], node.id[:8], type(exc).__name__)
+                except Exception:
+                    logger.exception("Graph %s: WoL failed on node %s", graph_id[:8], node.id[:8])
 
         if post_api_wol_nodes:
             _add_resolved_outputs(post_api_wol_nodes)
@@ -2020,8 +3304,8 @@ class LogicManager:
                 for nid, vals in post_api_wol_overrides.items():
                     post_api_wol_merged.setdefault(nid, {}).update(vals)
                 _pawol_hyst_snap = copy.deepcopy(hyst)
-                post_api_wol_executor = GraphExecutor(flow, _pawol_hyst_snap, self._app_config)
-                post_api_wol_outputs = post_api_wol_executor.execute(post_api_wol_merged, commit_memory=False)
+                post_api_wol_executor = await _executor(_pawol_hyst_snap)
+                post_api_wol_outputs = await _execute_pass(post_api_wol_executor, post_api_wol_merged)
                 post_api_wol_descendants: set[str] = set()
                 post_api_wol_queue = list(post_api_wol_nodes)
                 while post_api_wol_queue:
@@ -2067,8 +3351,8 @@ class LogicManager:
                         for nid, vals in _pawol_dn_ovr.items():
                             _pawol_merged.setdefault(nid, {}).update(vals)
                         _pawol_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        _pawol_exec = GraphExecutor(flow, _pawol_hyst, self._app_config)
-                        _pawol_out = _pawol_exec.execute(_pawol_merged, commit_memory=False)
+                        _pawol_exec = await _executor(_pawol_hyst)
+                        _pawol_out = await _execute_pass(_pawol_exec, _pawol_merged)
                         _pawol_desc: set[str] = set()
                         _pawol_dq: list[str] = list(_pawol_replay_src)
                         while _pawol_dq:
@@ -2138,7 +3422,7 @@ class LogicManager:
                 if hdr_str:
                     try:
                         extra_headers = _json.loads(hdr_str)
-                    except Exception:
+                    except (json.JSONDecodeError, TypeError):
                         pass
                 hdr_file = (node.data.get("headers_secret_file") or "").strip()
                 if hdr_file:
@@ -2147,7 +3431,7 @@ class LogicManager:
                             **extra_headers,
                             **_json.loads(_read_secret_file(hdr_file)),
                         }
-                    except Exception:
+                    except (json.JSONDecodeError, TypeError):
                         pass
                 try:
                     extra_headers = _replace_api_client_placeholders(extra_headers, variable_resolver)
@@ -2237,7 +3521,7 @@ class LogicManager:
                     if resp_type in ("json", "application/json"):
                         try:
                             resp_data: Any = resp.json()
-                        except Exception:
+                        except ValueError:
                             resp_data = resp_text
                     else:
                         resp_data = resp_text
@@ -2258,7 +3542,7 @@ class LogicManager:
                     post_api_hc_api_clients.add(node.id)
                     triggered_api_clients.add(node.id)
                 except Exception as exc:
-                    logger.warning("Graph %s: api_client failed: %s", graph_id[:8], exc)
+                    logger.exception("Graph %s: api_client failed", graph_id[:8])
                     outputs[node.id].update({"response": str(exc), "status": None, "success": False})
                     post_api_hc_api_clients.add(node.id)
                     triggered_api_clients.add(node.id)
@@ -2293,8 +3577,8 @@ class LogicManager:
                     tgt_handle = e.targetHandle or "in"
                     replay_overrides.setdefault(e.target, {})[tgt_handle] = GraphExecutor._get_output_value(outputs.get(e.source, {}), src_handle)
                 replay_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                api_executor = GraphExecutor(flow, replay_hyst, self._app_config)
-                api_outputs = api_executor.execute(replay_overrides, commit_memory=False)
+                api_executor = await _executor(replay_hyst)
+                api_outputs = await _execute_pass(api_executor, replay_overrides)
                 for nid, vals in api_outputs.items():
                     if nid not in api_client_ids and nid in api_descendants:
                         outputs[nid] = vals
@@ -2349,8 +3633,8 @@ class LogicManager:
                                 src_handle,
                             )
                         final_hc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        final_hc_executor = GraphExecutor(flow, final_hc_hyst, self._app_config)
-                        final_hc_outputs = final_hc_executor.execute(final_hc_merged, commit_memory=False)
+                        final_hc_executor = await _executor(final_hc_hyst)
+                        final_hc_outputs = await _execute_pass(final_hc_executor, final_hc_merged)
                         for nid, vals in final_hc_outputs.items():
                             if nid in final_hc_descendants and nid not in triggered_api_clients:
                                 outputs[nid] = vals
@@ -2403,8 +3687,8 @@ class LogicManager:
                 _final_wol_candidates.add(_fw_node.id)
                 triggered_wol_nodes.add(_fw_node.id)
                 logger.info("Graph %s: WoL sent by node %s", graph_id[:8], _fw_node.id[:8])
-            except Exception as exc:
-                logger.warning("Graph %s: WoL failed on node %s: %s", graph_id[:8], _fw_node.id[:8], type(exc).__name__)
+            except Exception:
+                logger.exception("Graph %s: WoL failed on node %s", graph_id[:8], _fw_node.id[:8])
         if _final_wol_candidates:
             _add_resolved_outputs(_final_wol_candidates)
             _fwol_dn_ovr: dict[str, dict[str, Any]] = {}
@@ -2421,8 +3705,8 @@ class LogicManager:
                 for nid, vals in _fwol_dn_ovr.items():
                     _fwol_merged.setdefault(nid, {}).update(vals)
                 _fwol_hyst_snap = copy.deepcopy(hyst)
-                _fwol_exec = GraphExecutor(flow, _fwol_hyst_snap, self._app_config)
-                _fwol_out = _fwol_exec.execute(_fwol_merged, commit_memory=False)
+                _fwol_exec = await _executor(_fwol_hyst_snap)
+                _fwol_out = await _execute_pass(_fwol_exec, _fwol_merged)
                 _fwol_desc: set[str] = set()
                 _fwol_q: list[str] = list(_final_wol_candidates)
                 while _fwol_q:
@@ -2466,8 +3750,8 @@ class LogicManager:
                         for nid, vals in _fwolhc_dn_ovr.items():
                             _fwolhc_mrgd.setdefault(nid, {}).update(vals)
                         _fwolhc_hyst = copy.deepcopy(pre_execute_hyst if pre_execute_hyst is not None else hyst)
-                        _fwolhc_exec = GraphExecutor(flow, _fwolhc_hyst, self._app_config)
-                        _fwolhc_out = _fwolhc_exec.execute(_fwolhc_mrgd, commit_memory=False)
+                        _fwolhc_exec = await _executor(_fwolhc_hyst)
+                        _fwolhc_out = await _execute_pass(_fwolhc_exec, _fwolhc_mrgd)
                         _fwolhc_desc: set[str] = set()
                         _fwolhc_dq: list[str] = list(_fwolhc_srcs)
                         while _fwolhc_dq:
@@ -2493,10 +3777,13 @@ class LogicManager:
 
         # ── Handle message_archive ────────────────────────────────────────────
         triggered_message_archive_nodes: set[str] = set()
+        replayed_message_archive_nodes: set[str] = set()
 
         async def _run_message_archive_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
+                return False
+            if not _has_fresh_firing_input(node.id, out):
                 return False
 
             archive_id = (node.data.get("archive_id") or "").strip().lower()
@@ -2514,24 +3801,144 @@ class LogicManager:
             try:
                 from obs.message_archive import get_message_archive_service
 
-                payload = dict(graph_id=graph_id, graph_name=name, node_id=node.id, node_label=node.data.get("label") or node.data.get("name") or "")
+                payload = {
+                    "graph_id": graph_id,
+                    "graph_name": name,
+                    "node_id": node.id,
+                    "node_label": node.data.get("label") or node.data.get("name") or "",
+                }
                 source = f"logic.graph.{graph_id}.node.{node.id}"
-                record_kwargs = dict(type=message_type, severity=severity, source=source, title=title, message=msg, payload=payload)
+                record_kwargs = {"type": message_type, "severity": severity, "source": source, "title": title, "message": msg, "payload": payload}
                 await get_message_archive_service().record(archive_id, **record_kwargs)
                 outputs[node.id]["stored"] = True
                 target_set.add(node.id)
                 logger.info("Graph %s: message archived in %s (msg=%r)", graph_id[:8], archive_id, msg[:40])
                 return True
-            except Exception as exc:
-                logger.warning("Graph %s: message archive write failed (node=%s): %s", graph_id[:8], node.id[:8], exc)
+            except Exception:
+                logger.exception("Graph %s: message archive write failed (node=%s)", graph_id[:8], node.id[:8])
                 return False
 
         triggered_notify_nodes: set[str] = set()
+        replayed_notify_nodes: set[str] = set()
+
+        input_sources = {(edge.target, edge.targetHandle or "in"): (edge.source, edge.sourceHandle or "out") for edge in flow.edges}
+        freshness_cache: dict[tuple[frozenset[str], frozenset[tuple[str, str]]], dict[str, set[str]]] = {}
+
+        def _current_input_value(node_id: str, handle: str) -> Any:
+            node_overrides = {**aug_overrides.get(node_id, {}), **debug_overrides.get(node_id, {})}
+            if handle in node_overrides:
+                return node_overrides[handle]
+            source_id, source_handle = input_sources.get((node_id, handle), ("", ""))
+            return GraphExecutor._get_output_value(outputs.get(source_id, {}), source_handle)
+
+        def _event_fresh_inputs() -> dict[str, set[str]] | None:
+            if not overrides:
+                return None
+            event_sources = {node_id: dict(values) for node_id, values in overrides.items()}
+            for node_id in refreshed_ical_nodes:
+                event_sources.setdefault(node_id, {})
+            blocked_sources = {node.id for node in flow.nodes if node.type == "memory"}
+            blocked_sources.update(api_client_ids - triggered_api_clients)
+            blocked_sources.update(host_check_ids - executed_host_check_nodes)
+            blocked_sources.update(ical_ids - refreshed_ical_nodes)
+            blocked_sources.update(message_archive_ids - replayed_message_archive_nodes)
+            blocked_sources.update(notify_ids - replayed_notify_nodes)
+            blocked_sources.update(node.id for node in flow.nodes if node.type == "wake_on_lan" and node.id not in triggered_wol_nodes)
+            blocked_sources.update(node.id for node in flow.nodes if node.type == "random_value" and outputs.get(node.id, {}).get("value") is None)
+            blocked_sources.update(
+                node.id
+                for node in flow.nodes
+                if node.type == "gate"
+                and node.data.get("closed_behavior", "retain") == "retain"
+                and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
+            )
+            no_result_mapping_ids = {
+                node.id
+                for node in flow.nodes
+                if node.type == "value_mapping"
+                and not GraphExecutor._to_bool(node.data.get("has_default"))
+                and outputs.get(node.id, {}).get("result") is None
+            }
+            blocked_outputs = {
+                (edge.source, edge.sourceHandle or "out")
+                for edge in flow.edges
+                if edge.source in no_result_mapping_ids and (edge.sourceHandle or "out") in {"out", "result"}
+            }
+            while True:
+                cache_key = (frozenset(blocked_sources), frozenset(blocked_outputs))
+                if cache_key not in freshness_cache:
+                    freshness_cache[cache_key] = _fresh_input_handles(event_sources, flow.edges, blocked_sources, blocked_outputs)
+                event_fresh_inputs = freshness_cache[cache_key]
+                newly_blocked_default_gates = {
+                    node.id
+                    for node in flow.nodes
+                    if node.type == "gate"
+                    and node.data.get("closed_behavior", "retain") == "default_value"
+                    and GraphExecutor._to_bool(_current_input_value(node.id, "enable")) == bool(node.data.get("negate_enable"))
+                    and ("enable" not in event_fresh_inputs.get(node.id, set()) or graph_state.get(node.id, {}).get("gate_prev_open") is False)
+                } - blocked_sources
+                if not newly_blocked_default_gates:
+                    return event_fresh_inputs
+                blocked_sources.update(newly_blocked_default_gates)
+
+        def _has_fresh_firing_input(node_id: str, out: dict[str, Any]) -> bool:
+            event_fresh_inputs = _event_fresh_inputs()
+            if event_fresh_inputs is None:
+                return True
+            fresh_handles = event_fresh_inputs.get(node_id, set())
+            fresh_message = "message" in fresh_handles and out.get("_message") is not None
+            fresh_trigger = "trigger" in fresh_handles and GraphExecutor._to_bool(_current_input_value(node_id, "trigger"))
+            return fresh_message or fresh_trigger
 
         async def _run_notify_node(node: Any, target_set: set[str]) -> bool:
             out = outputs.get(node.id, {})
             if not GraphExecutor._to_bool(out.get("_trigger")):
                 return False
+            if not _has_fresh_firing_input(node.id, out):
+                return False
+
+            if node.type == "notify_message":
+                instance_id = str(node.data.get("adapter_instance_id") or "").strip()
+                providers = node.data.get("providers") or []
+                if not instance_id or not isinstance(providers, list) or not providers:
+                    outputs[node.id]["__error__"] = "MESSAGE adapter and at least one target are required"
+                    logger.warning("Notification: adapter or targets missing on node %s", node.id[:8])
+                    return False
+                from obs.adapters import registry as adapter_registry
+
+                adapter = adapter_registry.get_instance_by_id(instance_id)
+                if adapter is None or getattr(adapter, "adapter_type", None) != "MESSAGE":
+                    outputs[node.id]["__error__"] = "MESSAGE adapter instance is unavailable"
+                    logger.warning("Notification: MESSAGE adapter %s unavailable", instance_id)
+                    return False
+                raw_message = out.get("_message")
+                message = _msg_to_str(raw_message) if raw_message is not None else str(node.data.get("message") or "")
+                try:
+                    raw_priority = node.data.get("priority")
+                    try:
+                        priority = int(raw_priority) if raw_priority not in (None, "") else 0
+                    except (TypeError, ValueError):
+                        priority = 0
+                    priority = max(-2, min(1, priority))
+                    results = await adapter.send_notification(
+                        message=message,
+                        providers=providers,
+                        title=str(node.data.get("title") or "") or None,
+                        priority=priority,
+                    )
+                    failures = [result for result in results if not result.ok]
+                    if not results or failures:
+                        detail = ", ".join(f"{result.provider}/{result.target}: {result.detail}" for result in failures)
+                        outputs[node.id]["__error__"] = detail or "MESSAGE adapter did not process any targets"
+                        logger.warning("Graph %s: notification failed: %s", graph_id[:8], outputs[node.id]["__error__"])
+                        return False
+                    outputs[node.id]["sent"] = True
+                    target_set.add(node.id)
+                    return True
+                except Exception as exc:
+                    outputs[node.id]["__error__"] = str(exc)
+                    logger.exception("Graph %s: notification failed", graph_id[:8])
+                    return False
 
             if node.type == "notify_pushover":
                 app_token = (node.data.get("app_token") or "").strip()
@@ -2616,12 +4023,11 @@ class LogicManager:
                         target_set.add(node.id)
                         logger.info("Graph %s: Pushover sent (msg=%r)", graph_id[:8], msg[:40])
                         return True
-                except Exception as exc:
-                    logger.warning(
-                        "Graph %s: Pushover failed (msg=%r): %s",
+                except Exception:
+                    logger.exception(
+                        "Graph %s: Pushover failed (msg=%r)",
                         graph_id[:8],
                         msg[:40],
-                        exc,
                     )
                     return False
 
@@ -2679,12 +4085,11 @@ class LogicManager:
                             msg[:40],
                         )
                         return True
-                except Exception as exc:
-                    logger.warning(
-                        "Graph %s: seven.io SMS failed (msg=%r): %s",
+                except Exception:
+                    logger.exception(
+                        "Graph %s: seven.io SMS failed (msg=%r)",
                         graph_id[:8],
                         msg[:40],
-                        exc,
                     )
                     return False
 
@@ -2718,16 +4123,20 @@ class LogicManager:
                     elif node.type == "message_archive" and node.id not in triggered_message_archive_nodes:
                         if await _run_message_archive_node(node, newly_triggered):
                             triggered_message_archive_nodes.add(node.id)
-                    elif node.type in {"notify_pushover", "notify_sms"} and node.id not in triggered_notify_nodes:
-                        if await _run_notify_node(node, newly_triggered) or GraphExecutor._to_bool(outputs.get(node.id, {}).get("_trigger")):
+                    elif node.type in {"notify_message", "notify_pushover", "notify_sms"} and node.id not in triggered_notify_nodes:
+                        out = outputs.get(node.id, {})
+                        if GraphExecutor._to_bool(out.get("_trigger")) and _has_fresh_firing_input(node.id, out):
+                            await _run_notify_node(node, newly_triggered)
                             triggered_notify_nodes.add(node.id)
                 if not newly_triggered:
                     break
                 _add_resolved_outputs(newly_triggered)
-                pending_candidates = _replay_async_descendants(
+                pending_candidates = await _replay_async_descendants(
                     newly_triggered,
                     skip_node_ids=_triggered_side_effect_ids(),
                 )
+                replayed_message_archive_nodes.update(newly_triggered & triggered_message_archive_nodes)
+                replayed_notify_nodes.update(newly_triggered & triggered_notify_nodes)
 
         for node in flow.nodes:
             if node.type != "message_archive":
@@ -2735,7 +4144,7 @@ class LogicManager:
             await _run_message_archive_node(node, triggered_message_archive_nodes)
         if triggered_message_archive_nodes:
             _add_resolved_outputs(triggered_message_archive_nodes)
-            message_archive_descendants = _replay_async_descendants(
+            message_archive_descendants = await _replay_async_descendants(
                 triggered_message_archive_nodes,
                 skip_node_ids=triggered_message_archive_nodes
                 | triggered_notify_nodes
@@ -2743,9 +4152,16 @@ class LogicManager:
                 | triggered_wol_nodes
                 | triggered_host_check_nodes,
             )
+            replayed_message_archive_nodes.update(triggered_message_archive_nodes)
             await _run_replay_triggered_side_effects(message_archive_descendants)
 
         # ── Handle notify_pushover ────────────────────────────────────────
+        # Generic notifications use the MESSAGE adapter. Provider-specific
+        # branches below are retained solely for existing legacy sheets.
+        for node in flow.nodes:
+            if node.type == "notify_message" and node.id not in triggered_notify_nodes:
+                await _run_notify_node(node, triggered_notify_nodes)
+
         # Runs AFTER api_client second-pass so that graphs with api_client →
         # json_extractor → notify see the real HTTP response, not placeholders.
         for node in flow.nodes:
@@ -2765,7 +4181,7 @@ class LogicManager:
 
         if triggered_notify_nodes:
             _add_resolved_outputs(triggered_notify_nodes)
-            notify_descendants = _replay_async_descendants(
+            notify_descendants = await _replay_async_descendants(
                 triggered_notify_nodes,
                 skip_node_ids=triggered_message_archive_nodes
                 | triggered_notify_nodes
@@ -2773,6 +4189,7 @@ class LogicManager:
                 | triggered_wol_nodes
                 | triggered_host_check_nodes,
             )
+            replayed_notify_nodes.update(triggered_notify_nodes)
             await _run_replay_triggered_side_effects(notify_descendants)
 
         # Deferred hc_prev_trigger=False: clear only for HC nodes that did NOT
@@ -2788,19 +4205,210 @@ class LogicManager:
         # Memory is the explicit tick boundary for feedback loops. Commit it
         # after all async node re-propagation so the stored value always reflects
         # the final graph outputs, not executor placeholders from an earlier pass.
-        executor.commit_memory_inputs(outputs, aug_overrides)
+        executor.commit_memory_inputs(outputs, _debug_run_overrides(aug_overrides))
+
+        # ── Start/cancel value sequences ──────────────────────────────────
+        wired_inputs: set[tuple[str, str]] = {(e.target, e.targetHandle or "in") for e in flow.edges}
+        node_by_id = {node.id: node for node in flow.nodes}
+        pending_sequence_starts: list[tuple[Any, bool]] = []
+        for node in flow.nodes:
+            if node.type != "value_sequence":
+                continue
+            output = outputs.get(node.id, {})
+            key = (graph_id, node.id)
+            condition = GraphExecutor._to_bool(output.get("_condition")) if (node.id, "condition") in wired_inputs else True
+            self._sequence_conditions[key] = condition
+            active = self._sequence_tasks.get(key)
+            if (
+                node.data.get("cancel_when_condition_false")
+                and not condition
+                and active
+                and not active.done()
+                and active is not asyncio.current_task()
+            ):
+                self._cancel_sequence_task(key)
+            state = graph_state.setdefault(node.id, {})
+            triggered = GraphExecutor._to_bool(output.get("_triggered"))
+            # A wired condition gates every sequence mode.  The cancellation
+            # setting controls only whether an already-running task is stopped.
+            blocked = not condition
+            if blocked:
+                state["sequence_prev_trigger"] = False
+                continue
+            was_triggered = state.get("sequence_prev_trigger", False)
+            state["sequence_prev_trigger"] = triggered
+            cron_triggered = any(
+                edge.target == node.id and (edge.targetHandle or "in") == "trigger" and edge.source in cron_reachable for edge in flow.edges
+            )
+            pulse_sources = [node.id]
+            pulse_seen: set[str] = set()
+            datapoint_change_triggered = False
+            while pulse_sources:
+                target_id = pulse_sources.pop()
+                if target_id in pulse_seen:
+                    continue
+                pulse_seen.add(target_id)
+                for edge in flow.edges:
+                    if edge.target != target_id:
+                        continue
+                    source = node_by_id.get(edge.source)
+                    if (
+                        source
+                        and source.type == "datapoint_read"
+                        and (edge.sourceHandle or "out") == "changed"
+                        and GraphExecutor._to_bool(outputs.get(source.id, {}).get("changed"))
+                    ):
+                        datapoint_change_triggered = True
+                        break
+                    pulse_sources.append(edge.source)
+                if datapoint_change_triggered:
+                    break
+            if triggered and (not was_triggered or cron_triggered or datapoint_change_triggered):
+                # Defer creating the task until ordinary datapoint writes have
+                # been published below.  A task created here can otherwise run
+                # at the write loop's first await and invert graph-local order.
+                pending_sequence_starts.append((node, condition))
 
         # ── Process datapoint_write outputs — apply trigger gating + write-side filters,
         # then publish DataValueEvent so registry, ring-buffer, MQTT and WS all get notified.
-        from obs.core.event_bus import DataValueEvent
+        await self._apply_datapoint_write_outputs(graph_id, flow, outputs, graph_state, wired_inputs, execute_now, logic_depth)
 
-        write_now = execute_now
-
-        # Build set of node+handle pairs that have an incoming edge (= are wired)
-        wired_inputs: set[tuple[str, str]] = {(e.target, e.targetHandle or "in") for e in flow.edges}
+        # Value sequences are intentionally started after synchronous graph
+        # writes, so an execution that triggers both has deterministic order.
+        for node, condition in pending_sequence_starts:
+            if not graph_state.get(node.id, {}).get("sequence_prev_trigger", False):
+                continue
+            current_condition = self._sequence_conditions.get((graph_id, node.id), condition)
+            if current_condition:
+                self._start_value_sequence(graph_id, node, current_condition, logic_depth, flow.model_dump_json())
 
         for node in flow.nodes:
-            if node.type != "datapoint_write":
+            if node.type == "gate":
+                graph_state.setdefault(node.id, {})["gate_prev_open"] = GraphExecutor._to_bool(_current_input_value(node.id, "enable")) != bool(
+                    node.data.get("negate_enable")
+                )
+
+        # ── Persist node state (statistics / hysteresis) to DB ───────────
+        await self._persist_node_state(graph_id)
+
+        # Select each node's capture from the execution pass whose output was
+        # retained. Async replay passes may execute unrelated branches whose
+        # outputs are deliberately discarded; their inputs must be discarded too.
+        if capture_debug_inputs:
+            for run_outputs, run_inputs in debug_input_runs:
+                for node_id, ports in run_inputs.items():
+                    if run_outputs.get(node_id) is outputs.get(node_id):
+                        debug_inputs[node_id] = ports
+            if debug_input_capture is not None:
+                debug_input_capture.clear()
+                debug_input_capture.update(debug_inputs)
+
+        # ── Broadcast final execution results to all WS clients ──────────
+        # Broadcast happens here — after all async ops (api_client HTTP calls,
+        # second-pass re-execution, etc.) — so the debug view shows the real
+        # success/response values and not the executor's initial placeholders.
+        for node_id, ports in (debug_inputs or {}).items():
+            node_debug_overrides = debug_overrides.get(node_id, {})
+            for port, snapshot in ports.items():
+                is_debug_override = port in node_debug_overrides
+                snapshot["overridden"] = is_debug_override
+                if not is_debug_override:
+                    snapshot["incoming"] = snapshot["effective"]
+        try:
+            from obs.api.v1.websocket import get_ws_manager
+
+            ws_manager = get_ws_manager()
+            if not ws_manager.has_logic_debug_subscribers(graph_id):
+                return outputs
+
+            payload = await _run_logic_debug_serialization_in_worker(
+                _serialize_logic_debug_payload,
+                graph_id,
+                outputs,
+                debug_inputs or {},
+                debug_overrides,
+                execution_started,
+            )
+            await ws_manager.broadcast_logic_debug(graph_id, payload)
+        except Exception:
+            logger.exception("Graph %s: WS broadcast failed — ignoring (non-critical)", graph_id[:8])
+
+        return outputs
+
+    # ── Cache ─────────────────────────────────────────────────────────────
+
+    async def _persist_node_state(self, graph_id: str) -> None:
+        """Persist node state (statistics / hysteresis) to the DB.
+
+        Nodes with persist_state=False are excluded from the saved snapshot
+        so their accumulators reset on server restart (opt-out behaviour).
+        """
+        hyst = self._hysteresis.get(graph_id)
+        if not hyst:
+            return
+        try:
+            ical_runtime_keys = {
+                "raw",
+                "_ical_result_cache",
+                "_ical_last_attempt_url",
+                "_ical_last_attempt_limit",
+                "_ical_last_attempt_ts",
+                "_ical_precompute_token",
+            }
+
+            def _without_ical_runtime(node_state: Any) -> Any:
+                if not isinstance(node_state, dict):
+                    return node_state
+                return {key: value for key, value in node_state.items() if key not in ical_runtime_keys}
+
+            graph_entry = self._graphs.get(graph_id)
+            if graph_entry:
+                _, _, _flow = graph_entry
+                current_nodes = {node.id: node for node in _flow.nodes}
+                no_persist = {n.id for n in _flow.nodes if n.data.get("persist_state") is False}
+                state_to_save = {}
+                for node_id, node_state in hyst.items():
+                    if node_id not in current_nodes or node_id in no_persist:
+                        continue
+                    state_to_save[node_id] = _without_ical_runtime(node_state)
+            else:
+                # During a semantic save, invalidate_cache() briefly removes
+                # the graph entry before reload() restores it.  Never let that
+                # cache gap serialize large calendar bodies or attempt metadata.
+                state_to_save = {node_id: _without_ical_runtime(node_state) for node_id, node_state in hyst.items()}
+            await self._db.execute_and_commit(
+                "UPDATE logic_graphs SET node_state = ? WHERE id = ?",
+                (json.dumps(state_to_save), graph_id),
+            )
+        except Exception:
+            logger.exception("Graph %s: failed to persist node_state", graph_id[:8])
+
+    async def _apply_datapoint_write_outputs(
+        self,
+        graph_id: str,
+        flow: FlowData,
+        outputs: dict[str, dict[str, Any]],
+        graph_state: dict[str, Any],
+        wired_inputs: set[tuple[str, str]],
+        write_now: datetime,
+        logic_depth: int,
+        *,
+        skip_node_ids: set[str] | frozenset[str] = frozenset(),
+        initialization: bool = False,
+    ) -> set[str]:
+        """Apply trigger gating + write-side filters to datapoint_write outputs,
+        then publish DataValueEvent so registry, ring-buffer, MQTT and WS all get
+        notified. skip_node_ids excludes individual write nodes (used by
+        initialize_graph for writes descending from unseeded Read Objects);
+        initialization marks the events as save-time seeding so notification
+        subscribers do not react to them. Returns the ids of the write nodes
+        whose event was actually published.
+        """
+        from obs.core.event_bus import DataValueEvent
+
+        published: set[str] = set()
+        for node in flow.nodes:
+            if node.type != "datapoint_write" or node.id in skip_node_ids:
                 continue
             node_out = outputs.get(node.id, {})
             write_val = node_out.get("_write_value")
@@ -2818,37 +4426,9 @@ class LogicManager:
             if not dp_id_str:
                 continue
 
-            d = node.data
             ns = graph_state.setdefault(node.id, {})
-            last_wr = ns.get("last_write_val")
-            last_ts = ns.get("last_write_ts")
-
-            # ── Filter: only_on_change ───────────────────────────────────
-            ooc = d.get("only_on_change")
-            if ooc is True or ooc == "true":
-                if write_val == last_wr:
-                    continue
-
-            # ── Filter: min_delta (write side) ───────────────────────────
-            raw_delta = d.get("min_delta")
-            if raw_delta not in (None, "", 0) and last_wr is not None:
-                try:
-                    if abs(float(write_val) - float(last_wr)) < float(raw_delta):
-                        continue
-                except (TypeError, ValueError):
-                    pass
-
-            # ── Filter: throttle (value + unit, write side) ───────────────
-            tv = d.get("throttle_value")
-            if tv not in (None, "", 0) and last_ts is not None:
-                try:
-                    unit_ms = _THROTTLE_UNITS.get(d.get("throttle_unit", "s"), 1000.0)
-                    throttle_ms = float(tv) * unit_ms
-                    elapsed_ms = (write_now - last_ts).total_seconds() * 1000
-                    if elapsed_ms < throttle_ms:
-                        continue
-                except (TypeError, ValueError):
-                    pass
+            if not self._write_filters_allow(node.data, ns, write_val, write_now):
+                continue
 
             # All filters passed — update state and publish
             ns["last_write_val"] = write_val
@@ -2861,58 +4441,47 @@ class LogicManager:
                     quality="good",
                     source_adapter="logic",
                     logic_depth=logic_depth + 1,
+                    initialization=initialization,
                 )
                 await self._event_bus.publish(event)
+                published.add(node.id)
                 logger.debug("Graph %s: wrote dp %s = %s", graph_id, dp_id_str, write_val)
-            except Exception as exc:
-                logger.warning("Graph %s: failed to write dp %s: %s", graph_id, dp_id_str, exc)
+            except Exception:
+                logger.exception("Graph %s: failed to write dp %s", graph_id, dp_id_str)
+        return published
 
-        # ── Persist node state (statistics / hysteresis) to DB ───────────
-        # Nodes with persist_state=False are excluded from the saved snapshot
-        # so their accumulators reset on server restart (opt-out behaviour).
-        hyst = self._hysteresis.get(graph_id)
-        if hyst:
+    @staticmethod
+    def _write_filters_allow(d: dict[str, Any], ns: dict[str, Any], write_val: Any, write_now: datetime) -> bool:
+        """Write-side only_on_change / min_delta / throttle filters.
+
+        Pure predicate against the node's filter state — shared by the
+        publish path and the initialization settle pass, which must not feed
+        values downstream that these filters would suppress.
+        """
+        last_wr = ns.get("last_write_val")
+        last_ts = ns.get("last_write_ts")
+
+        ooc = d.get("only_on_change")
+        if (ooc is True or ooc == "true") and write_val == last_wr:
+            return False
+
+        raw_delta = d.get("min_delta")
+        if raw_delta not in (None, "", 0) and last_wr is not None:
             try:
-                graph_entry = self._graphs.get(graph_id)
-                if graph_entry:
-                    _, _, _flow = graph_entry
-                    no_persist = {n.id for n in _flow.nodes if n.data.get("persist_state") is False}
-                    state_to_save = {nid: s for nid, s in hyst.items() if nid not in no_persist}
-                else:
-                    state_to_save = hyst
-                await self._db.execute_and_commit(
-                    "UPDATE logic_graphs SET node_state = ? WHERE id = ?",
-                    (json.dumps(state_to_save), graph_id),
-                )
-            except Exception as exc:
-                logger.warning("Graph %s: failed to persist node_state: %s", graph_id[:8], exc)
+                if abs(float(write_val) - float(last_wr)) < float(raw_delta):
+                    return False
+            except (TypeError, ValueError):
+                pass
 
-        # ── Broadcast final execution results to all WS clients ──────────
-        # Broadcast happens here — after all async ops (api_client HTTP calls,
-        # second-pass re-execution, etc.) — so the debug view shows the real
-        # success/response values and not the executor's initial placeholders.
-        try:
-            from obs.api.v1.websocket import get_ws_manager
-
-            def _safe(v: Any) -> Any:
-                if v is None or isinstance(v, (bool, int, float, str)):
-                    return v
-                return str(v)
-
-            safe_outputs = {nid: {k: _safe(val) for k, val in node_out.items()} for nid, node_out in outputs.items() if isinstance(node_out, dict)}
-            await get_ws_manager().broadcast(
-                {
-                    "action": "logic_run",
-                    "graph_id": graph_id,
-                    "outputs": safe_outputs,
-                },
-            )
-        except Exception:
-            pass  # WS not ready or no clients — non-critical
-
-        return outputs
-
-    # ── Cache ─────────────────────────────────────────────────────────────
+        tv = d.get("throttle_value")
+        if tv not in (None, "", 0) and last_ts is not None:
+            try:
+                unit_ms = _THROTTLE_UNITS.get(d.get("throttle_unit", "s"), 1000.0)
+                if (write_now - last_ts).total_seconds() * 1000 < float(tv) * unit_ms:
+                    return False
+            except (TypeError, ValueError):
+                pass
+        return True
 
     async def _load_graphs(self) -> None:
         rows = await self._db.fetchall("SELECT id, name, enabled, flow_data, node_state FROM logic_graphs")
@@ -2936,12 +4505,13 @@ class LogicManager:
                                 row["id"][:8],
                                 len(saved),
                             )
-                    except Exception:
+                    except (json.JSONDecodeError, TypeError):
                         pass
-            except Exception as exc:
-                logger.warning("Failed to parse graph %s: %s", row["id"], exc)
+            except Exception:
+                logger.exception("Failed to parse graph %s", row["id"])
 
     def invalidate_cache(self, graph_id: str) -> None:
+        self._ical_cache_generations[graph_id] = object()
         self._graphs.pop(graph_id, None)
         # NOTE: _hysteresis is intentionally NOT cleared here.
         # When a graph is saved (PUT/PATCH), invalidate_cache + reload() are called.
@@ -2950,8 +4520,58 @@ class LogicManager:
         # On DELETE the graph row is gone from DB so no persistence concerns remain;
         # the in-memory entry is a no-op and will be GC'd naturally.
         self._node_state.pop(graph_id, None)
+        self._cancel_sequence_tasks(graph_id)
         # Cancel cron tasks for this specific graph
         to_remove = [k for k in list(self._cron_tasks) if k[0] == graph_id]
         for k in to_remove:
             self._cron_tasks[k].cancel()
             del self._cron_tasks[k]
+
+    def _prune_graph_executor_lock(self, graph_id: str) -> None:
+        """Release an idle worker lock after its graph has disappeared."""
+        lock = self._graph_executor_locks.get(graph_id)
+        if graph_id not in self._graphs and lock is not None and not lock.locked():
+            self._graph_executor_locks.pop(graph_id, None)
+
+    def _prune_ical_precompute_lock(self, key: tuple[str, str], expected_lock: asyncio.Lock | None = None) -> None:
+        """Drop an inactive node's lock only after its worker has drained."""
+        lock = self._ical_precompute_locks.get(key)
+        if lock is None or (expected_lock is not None and lock is not expected_lock):
+            return
+        graph_id, node_id = key
+        graph = self._graphs.get(graph_id)
+        active = bool(
+            graph
+            and graph[1]
+            and any(
+                node.id == node_id and node.type == "ical" and isinstance(node.data.get("url"), str) and node.data["url"].strip()
+                for node in graph[2].nodes
+            )
+        )
+        if not active and not lock.locked():
+            self._ical_precompute_locks.pop(key, None)
+
+    def remove_graph(self, graph_id: str) -> None:
+        """Invalidate a deleted graph and release all of its runtime data."""
+        self.invalidate_cache(graph_id)
+        self._hysteresis.pop(graph_id, None)
+        self._ical_result_caches.pop(graph_id, None)
+        self._ical_cache_generations.pop(graph_id, None)
+        for key in [key for key in self._ical_fetch_locks if key[0] == graph_id]:
+            self._ical_fetch_locks.pop(key, None)
+        for key in [key for key in self._ical_precompute_locks if key[0] == graph_id]:
+            self._prune_ical_precompute_lock(key)
+        self._prune_graph_executor_lock(graph_id)
+
+    def update_cached_graph_name(self, graph_id: str, name: str) -> None:
+        """Refresh metadata without invalidating active graph execution."""
+        graph = self._graphs.get(graph_id)
+        if graph:
+            _, enabled, flow = graph
+            self._graphs[graph_id] = (name, enabled, flow)
+
+    def update_cached_graph(self, graph_id: str, name: str, enabled: bool, flow: FlowData) -> None:
+        """Apply a layout-only save without interrupting active sequences."""
+        if graph_id in self._graphs:
+            self._graphs[graph_id] = (name, enabled, flow)
+            self._sequence_graph_signatures[graph_id] = flow.model_dump_json()

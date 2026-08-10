@@ -1,4 +1,11 @@
 {
+  "datetimeNames": {
+    "weekdays": "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday",
+    "weekdaysShort": "Mon|Tue|Wed|Thu|Fri|Sat|Sun",
+    "weekdaysTwo": "Mo|Tu|We|Th|Fr|Sa|Su",
+    "months": "January|February|March|April|May|June|July|August|September|October|November|December",
+    "monthsShort": "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+  },
   "nav": {
     "dashboard": "Overview",
     "datapoints": "Data Points",
@@ -141,6 +148,14 @@
     "createModal": "New data point",
     "deleteTitle": "Delete data point",
     "deleteWithBindings": "Delete '{name}' and all bindings?",
+    "duplicate": {
+      "action": "Duplicate",
+      "title": "Duplicate data point",
+      "hint": "All properties and adapter bindings are copied. Current values and history are not copied.",
+      "defaultName": "Copy of {name}",
+      "saving": "Duplicating …",
+      "error": "The data point could not be duplicated."
+    },
     "quality": {
       "good": "Good",
       "uncertain": "Unknown",
@@ -366,7 +381,11 @@
         "invalidXml": "Invalid XML: {msg}",
         "noChildElementsFound": "No child elements found",
         "sampleMustBeJsonObjectOrArray": "Sample must be a JSON object or array",
-        "selectAdapterInstance": "Please select an adapter instance"
+        "selectAdapterInstance": "Please select an adapter instance",
+        "selectOnewireInstanceFirst": "Please select a 1-Wire instance first",
+        "noSensorsFound": "No sensors found",
+        "onewireScanFailed": "1-Wire sensor scan failed",
+        "onewireAliasSaveFailed": "Could not save alias"
       },
       "knxSection": "KNX binding",
       "dptLabel": "DPT *",
@@ -423,10 +442,12 @@
       "xmlPathHint": "Path relative to the root element (ET-XPath, e.g. data/temperature). Numeric text values are converted automatically.",
       "onewireSection": "1-Wire binding",
       "onewireSensorIdLabel": "Sensor ID *",
-      "onewireSensorIdPlaceholder": "e.g. 28-000000000001",
-      "onewireSensorTypeLabel": "Sensor type",
-      "onewireSensorTypePlaceholder": "DS18B20",
-      "onewireSensorTypeHint": "Default: DS18B20",
+      "onewireSensorIdPlaceholder": "e.g. 28.4B057F0A1C10",
+      "onewirePropertyLabel": "Property",
+      "onewirePropertyPlaceholder": "temperature",
+      "onewireScanButton": "Scan",
+      "onewireAliasPlaceholder": "Label (e.g. Guest bathroom)",
+      "onewireAliasSave": "Save",
       "haSection": "Home Assistant binding",
       "haEntityIdLabel": "Entity ID *",
       "haEntityIdPlaceholder": "e.g. light.living_room, sensor.temperature",
@@ -750,6 +771,10 @@
           "title": "Serialize reads",
           "description": "Sends Modbus requests one at a time instead of concurrently. Recommended for simple devices (heating controllers, inverters, meters) that can only handle one request at a time. Disable for capable PLCs with multi-request support."
         },
+        "shared_bus": {
+          "title": "Share bus with instances on the same IP:port",
+          "description": "Serializes I/O across ALL instances polling the same host:port (e.g. several devices behind one RS485/Modbus-TCP gateway). Prevents concurrent requests from competing instances on the same bus."
+        },
         "startup_jitter_s": {
           "title": "Startup jitter (s)",
           "description": "Maximum random delay (seconds) before the first poll of each binding. Prevents a request burst when all tasks start simultaneously. 0 = disabled."
@@ -791,6 +816,27 @@
         },
         "priv_key": {
           "title": "Privacy key (v3)"
+        },
+        "host": {
+          "title": "Host (IP/DNS)"
+        },
+        "port": {
+          "title": "UDP port"
+        },
+        "oid": {
+          "title": "OID"
+        },
+        "data_type": {
+          "title": "Data type"
+        },
+        "poll_interval": {
+          "title": "Poll interval (s)"
+        },
+        "timeout": {
+          "title": "Timeout (s)"
+        },
+        "retries": {
+          "title": "Retries"
         }
       },
       "ZEITSCHALTUHR": {
@@ -873,6 +919,66 @@
         "custom_holidays": {
           "title": "Custom holidays",
           "description": "User-defined holidays as a list of expressions. Formats: 'MM-DD[:Name]' (fixed date), 'easter+N[:Name]' / 'easter-N[:Name]' (relative to Easter Sunday), 'advent+N[:Name]' / 'advent-N[:Name]' (relative to the 1st Advent), 'last_WD_MON[:Name]' (last weekday of the month), 'N_WD_MON[:Name]' (n-th weekday). Weekday codes: MO TU WE TH FR SA SU. Month codes: JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC. Separate multiple entries with a comma or newline."
+        },
+        "timer_type": {
+          "description": "Timer type"
+        },
+        "meta_type": {
+          "description": "Metadata type (only for timer_type=meta)"
+        },
+        "weekdays": {
+          "description": "Active weekdays (0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun)"
+        },
+        "months": {
+          "description": "Active months 1-12 (empty = all; annual timer only)"
+        },
+        "day_of_month": {
+          "description": "Day of month (0 = all; annual timer only)"
+        },
+        "time_ref": {
+          "description": "Time reference"
+        },
+        "hour": {
+          "description": "Hour (only for time_ref=absolute)"
+        },
+        "minute": {
+          "description": "Minute"
+        },
+        "offset_minutes": {
+          "description": "Offset in minutes (positive/negative) relative to the time reference"
+        },
+        "solar_altitude_deg": {
+          "description": "Sun elevation angle in degrees (−18 … 90) — only for time_ref=solar_altitude. Examples: 0° = horizon, −6° = civil twilight, 30° = mid-morning"
+        },
+        "sun_direction": {
+          "description": "Direction of the sun's movement — only for time_ref=solar_altitude. rising = sun ascending (morning), setting = sun descending (afternoon/evening)"
+        },
+        "every_hour": {
+          "description": "Switch every hour at the given minute"
+        },
+        "every_minute": {
+          "description": "Switch every minute"
+        },
+        "holiday_mode": {
+          "description": "Holiday handling"
+        },
+        "vacation_mode": {
+          "description": "Vacation handling"
+        },
+        "selected_holidays": {
+          "description": "Selected holidays for timer_type=holiday (empty = all holidays)"
+        },
+        "date_window_enabled": {
+          "description": "Date window: only switch within a date range"
+        },
+        "date_window_from": {
+          "description": "Window start (MM-DD | easter±N | advent±N | holiday:Name±N)"
+        },
+        "date_window_to": {
+          "description": "Window end (MM-DD | easter±N | advent±N | holiday:Name±N)"
+        },
+        "value": {
+          "description": "Output value when switching. Allowed: 0/1, true/false, on/off, ein/aus, integer, decimal, or string"
         }
       },
       "HOME_ASSISTANT": {
@@ -1000,13 +1106,21 @@
         }
       },
       "ONEWIRE": {
+        "host": {
+          "title": "Host",
+          "description": "Hostname or IP address of a running owserver process (local sidecar/service or external — this adapter doesn't start it)"
+        },
+        "port": {
+          "title": "Port",
+          "description": "owserver port (default: 4304)"
+        },
         "poll_interval": {
           "title": "Poll interval (s)",
           "description": "How often sensors are read, in seconds"
         },
-        "w1_path": {
-          "title": "1-Wire path",
-          "description": "Sysfs path to the 1-Wire bus (default: /sys/bus/w1/devices)"
+        "request_timeout": {
+          "title": "Request timeout (s)",
+          "description": "Seconds per owserver call before it is treated as an error"
         }
       }
     },
@@ -1029,8 +1143,6 @@
       "couldNotOpenPort": "Could not open {port}",
       "modbusSerialConnected": "Connected ({port} @ {baudrate} baud)",
       "modbusReconnectBackoff": "Modbus TCP reconnect backoff active",
-      "pathNotFound": "{path} not found",
-      "onewireBusAt": "1-Wire bus at {path}",
       "socketConnectFailed": "Socket.IO connection failed",
       "socketDisconnected": "Socket.IO disconnected",
       "socketUnstable": "ioBroker Socket.IO connection unstable: multiple disconnects in a short time.",
@@ -1143,7 +1255,7 @@
     "storageFixed": "Storage model is fixed server-side:",
     "maxDisk": "Max. disk space",
     "maxDiskPlaceholder": "e.g. 500",
-    "effectiveStorageNote": "Effective disk usage: the budget is a retention target, not a hard instantaneous cap. Between rotations the active segment grows on top of it (by up to one segment size) before the next rotation trims old segments. Peak ≈ budget + segment size (default segment size ≈ budget/3, i.e. up to ~133%).",
+    "effectiveStorageNote": "Effective disk usage: the budget is a retention target, not a hard instantaneous cap. Without an explicit segment size it is derived as one third of the disk budget. Peak usage can then reach ~133%. Without a disk budget and without an explicit segment size there is no size-based rotation.",
     "maxRetention": "Max. retention",
     "maxRetentionPlaceholder": "e.g. 30",
     "maxEntriesPlaceholder": "e.g. 10000",
@@ -1159,6 +1271,12 @@
     "validationMinEntries": "Max. entries must be at least 100",
     "validationMinDisk": "Max. disk space must be greater than 0",
     "validationRetentionNaN": "Retention must be a valid number",
+    "validationSegmentTriggerRequired": "The segmented ring buffer requires at least one effective segment rotation limit, either explicit or derived from a matching total limit.",
+    "unboundedWarningTitle": "Total retention is unlimited",
+    "unboundedWarningBody": "No entry, disk-space, or age limit is active. Closed segments are therefore not removed automatically and the ring buffer can grow without limit.",
+    "unboundedConfirmTitle": "Allow unlimited ring buffer growth?",
+    "unboundedConfirmMessage": "Without a total limit, old segments are retained permanently. Disk usage keeps growing until the configuration changes or storage is freed externally.",
+    "unboundedConfirmLabel": "Store without limit",
     "export": {
       "csvFormat": "CSV format",
       "rfcResetTitle": "Reset delimiter, quote and escape character to RFC 4180 defaults.",
@@ -1324,13 +1442,17 @@
     "retentionOverBudgetReason": "Retention over budget: {reason}",
     "storageOnNetworkDrive": "Storage is located on a network drive. This can lead to data loss or locking — local storage is recommended.",
     "segmentMaxAge": "Segment rotation by age",
-    "segmentMaxAgeHint": "A new segment is started after this interval (default: 6 hours, minimum: 5 minutes).",
+    "segmentMaxAgeHint": "Enable or disable an explicit value. Without one, an active total age retention is divided by three.",
     "segmentMaxAgePlaceholder": "e.g. 6",
     "segmentAdvanced": "Advanced",
-    "segmentAdvancedHint": "Optional additional rotation thresholds. Leave empty to derive them automatically from the retention limits.",
+    "segmentAdvancedHint": "Each threshold can be set explicitly. When disabled, it is derived from the matching total limit or remains inactive if there is no matching limit.",
     "segmentMaxBytes": "Segment rotation by size",
     "segmentMaxRows": "Segment rotation by rows",
     "segmentOptionalPlaceholder": "optional",
+    "segmentSourceExplicit": "Explicit: {value}",
+    "segmentSourceExplicitInvalid": "Explicit: enter a valid value",
+    "segmentSourceDerived": "Derived from total limit: {value}",
+    "segmentSourceDisabled": "Disabled",
     "segmentRatioHint": "For segment-granular retention to work, each retention limit that is set (size, rows, age) must be at least three times the corresponding segment threshold.",
     "segmentRatioError": "The segmentation is too coarse for the chosen retention: each retention limit that is set (size, rows, age) must be at least three times the corresponding segment threshold.",
     "validationSegmentMaxAge": "The segment age must be at least 5 minutes.",
@@ -1360,12 +1482,26 @@
     "prognosis": {
       "title": "Forecast",
       "warming": "Forecast is still warming up (too few segments).",
-      "rate": "Currently ~{mib} MiB/h (~{rows} events/h).",
+      "warmingLive": "Collecting live data — first forecast in ~{seconds} s.",
+      "provisional": "Preliminary result from {seconds} s of live data; it improves with every refresh.",
+      "idle": "No new events for {seconds} seconds.",
+      "rate": "Currently ~{rows} events/s — projected ~{mib} MiB/h.",
+      "eventRateOnly": "Currently ~{rows} events/s — storage growth is still being measured.",
+      "storageRateOnly": "Projected ~{mib} MiB/h — event rate is not available yet.",
       "rotation": "New segment ~every {hours} h",
+      "rotationWithTrigger": "New segment ~every {hours} h — first trigger: {trigger}",
       "rotationSizeCap": " — the size cap (~{cap} MiB) kicks in before the configured {age} h.",
+      "trigger": {
+        "age": "age",
+        "size": "size",
+        "rows": "rows"
+      },
       "history": "Budget {budget} lasts for ~{duration}.",
       "historyUnlimited": "Budget unlimited — history keeps growing.",
+      "historyOtherLimits": "No disk budget — other total limits may remove old segments.",
+      "unboundedGrowth": "At this rate, unlimited total retention adds about {month} in 30 days and {year} per year.",
       "budget": "For ~{age}h segments: budget ≥ {budget} (for at least {segments} segments).",
+      "budgetRetention": "For {retention} retention: budget ≥ {budget} (at the current rate).",
       "hours": "{n} h",
       "days": "{n} days"
     },
@@ -1394,6 +1530,7 @@
       "progressDropped": "{n} rows beyond the budget dropped",
       "migrateFailed": "Migration failed: {error}",
       "migrateDone": "Migration finished – the newest legacy data has been taken over.",
+      "statsRefreshFailed": "Migration completed. Current segment data could not be loaded yet and will be checked again on the next refresh.",
       "keepTitle": "Keep",
       "keepBody": "The legacy history stays readable. The protection is lifted: once the budget is exhausted, retention may later discard the legacy history as a whole. Revocable as long as the legacy history exists.",
       "keepEta": "The budget is expected to force reclaiming the legacy history in ~{days} days.",
@@ -1458,12 +1595,16 @@
     "searchNodesPalette": "Search nodes …",
     "negateOutput": "Negate output",
     "debugMode": "Debug mode: shows values after execution",
+    "snapToGrid": "Grid",
+    "snapToGridTitle": "Snap function blocks to the grid",
+    "gridSize": "Grid size",
     "deleteBlock": "Delete block",
     "deleteNode": "Delete branch",
     "init": "Init",
     "nodeTypes": {
       "divide": "Divide",
       "const_value": "Constant",
+      "comment": "Comment",
       "and": "AND",
       "or": "OR",
       "not": "NOT",
@@ -1488,13 +1629,16 @@
       "consumption_counter": "Energy counter",
       "timer_delay": "Delay",
       "timer_pulse": "Pulse",
+      "value_sequence": "Sequence",
       "timer_cron": "Trigger",
+      "datetime": "Date/Time",
       "operating_hours": "Op. Hours",
       "python_script": "Python Script",
       "ai_logic": "AI Logic",
       "astro_sun": "Astro Sun",
       "notify_pushover": "Pushover",
       "notify_sms": "SMS (seven.io)",
+      "notify_message": "Notification",
       "message_archive": "Message Archive",
       "wake_on_lan": "Wake on LAN",
       "host_check": "Host Check",
@@ -1519,8 +1663,32 @@
     "deactivated": "Graph deactivated",
     "errorToggle": "Error changing status",
     "debugBtn": "Debug",
+    "debugInspector": {
+      "title": "Debug inspector",
+      "inputs": "Inputs",
+      "outputs": "Outputs",
+      "incoming": "Incoming value",
+      "effective": "Effective value",
+      "override": "Temporary override",
+      "overridePlaceholder": "JSON or text; empty means no override",
+      "overridden": "Overridden",
+      "clearAll": "Clear all overrides",
+      "copyAll": "Copy payload",
+      "copy": "Copy",
+      "copied": "Copied!",
+      "close": "Close",
+      "noValues": "No inputs",
+      "noExecution": "Run the sheet to inspect outputs.",
+      "timestamp": "Executed",
+      "duration": "Duration",
+      "overrideExecution": "This execution used temporary input overrides."
+    },
     "rename": "Rename",
     "duplicate": "Duplicate",
+    "copySelection": "Copy",
+    "copySelectionTitle": "Copy selected blocks",
+    "pasteSelection": "Paste",
+    "pasteSelectionTitle": "Paste copied blocks",
     "export": "Export",
     "import": "Import",
     "emptyHint": "Select a logic sheet or create a new one",
@@ -1531,6 +1699,7 @@
     "create": "Create",
     "saved": "Graph saved",
     "errorSave": "Error saving graph",
+    "errorLoad": "Error loading graph",
     "runResult": "Graph executed — {count} nodes evaluated",
     "preflightTitle": "Check graph execution",
     "preflightDescription": "Review the graph and all external effects before execution.",
@@ -1554,6 +1723,9 @@
     "graphValidationNodeError": "Cycle detected; direct feedback needs a Memory node.",
     "duplicated": "Graph duplicated as “{name}”",
     "errorDuplicate": "Error duplicating graph",
+    "copiedNodes": "{count} block(s) copied",
+    "copySelectionEmpty": "No blocks selected",
+    "pastedNodes": "{count} block(s) pasted",
     "errorExport": "Error exporting graph",
     "renamed": "Graph renamed",
     "errorRename": "Error renaming graph",
@@ -1595,6 +1767,9 @@
       "data": "Data",
       "body": "Body",
       "done": "Done",
+      "running": "Running",
+      "cancelled": "Cancelled",
+      "condition": "Condition",
       "sent": "Sent",
       "stored": "Stored",
       "active": "Active",
@@ -1608,12 +1783,16 @@
       "count": "N",
       "min": "Min",
       "max": "Max",
-      "avg": "∅"
+      "avg": "∅",
+      "date": "Date",
+      "time": "Time",
+      "custom": "Custom"
     },
     "summary": {
       "inputs": "{n} Inputs",
       "parts": "{n} Parts",
       "rules": "{n} Rules",
+      "sequence": "{n} steps · {mode}",
       "hold": "→ hold",
       "filters": "{n} Filters",
       "negateEnable": "¬Enable",
@@ -1630,6 +1809,15 @@
       "ariaLabel": "Unknown block type"
     },
     "nodeConfig": {
+      "datetime": {
+        "custom_format": "Custom format",
+        "tokens": "Tokens: H/HH hour, m/mm minute, s/ss second, d/dd day, EE = Mo, EEE = Mon, EEEE = Monday, M/MM/MMM/MMMM month, yy/yyyy year. Names follow the selected language."
+      },
+      "comment": {
+        "text": "Text",
+        "textPlaceholder": "Note text…",
+        "empty": "Empty comment — edit in the panel"
+      },
       "tabs": {
         "connection": "Connection",
         "transform": "Transformation",
@@ -1890,6 +2078,8 @@
         "urlLabel": "iCal URL",
         "refreshLabel": "Refresh interval (minutes)",
         "refreshHint": "Calendar is reloaded at most every N minutes.",
+        "maxPayloadSizeLabel": "Maximum calendar size (MiB)",
+        "maxPayloadSizeHint": "Downloads exceeding this value are aborted (1–50 MiB).",
         "rawInfo": "The RAW output always delivers the raw iCal text. Filters can be added for extended analysis.",
         "filtersSection": "Filters / Instances",
         "addFilter": "+ Add filter",
@@ -1913,6 +2103,7 @@
         "descriptionPlaceholder": "e.g. organic bin",
         "url": "iCal URL",
         "refresh_interval_min": "Refresh interval (minutes)",
+        "max_payload_size_mb": "Maximum calendar size (MiB)",
         "filter_count": "Filter count",
         "filters": "Filters (JSON)"
       },
@@ -2011,6 +2202,28 @@
       "timer_pulse": {
         "duration_s": "Duration (s)"
       },
+      "value_sequence": {
+        "run_mode": "Run mode",
+        "repeat_count": "Repeat count",
+        "restart_policy": "On new trigger",
+        "cancel_when_condition_false": "Cancel when condition becomes false",
+        "add": "Add step",
+        "blink": "Blink preset",
+        "step": "Step {n}",
+        "duplicate": "Duplicate",
+        "object": "Object (empty = pause)",
+        "value": "Value",
+        "modes": {
+          "once": "Once",
+          "repeat_count": "Repeat a fixed count",
+          "while_condition": "Repeat while condition is true"
+        },
+        "policies": {
+          "ignore": "Ignore",
+          "restart": "Restart",
+          "queue": "Queue"
+        }
+      },
       "timer_cron": {
         "cron": "Cron expression"
       },
@@ -2039,6 +2252,17 @@
         "to": "Recipient (+41…)",
         "sender": "Sender (max 11 chars)",
         "message": "Message (fallback)"
+      },
+      "notification": {
+        "adapter": "Message/notification adapter",
+        "selectAdapter": "Select adapter",
+        "targets": "Targets",
+        "noTargets": "No active, configured targets available.",
+        "title": "Title",
+        "fallback": "Message (fallback)",
+        "placeholders": "The logic block has no datapoint context; MESSAGE placeholders are sent unchanged.",
+        "priority": "Priority",
+        "legacy": "Legacy block. Please use the Notification block for new notifications."
       },
       "messageArchive": {
         "archive": "Message archive",
@@ -2109,7 +2333,8 @@
         "in_max": "Input max",
         "out_min": "Output min",
         "out_max": "Output max"
-      }
+      },
+      "resizeHandle": "Drag to resize panel"
     },
     "portLabels": {
       "heizmode": "Heating mode",
@@ -2160,7 +2385,9 @@
       "latencyMs": "Latency (ms)"
     },
     "nodeDescriptions": {
+      "datetime": "Outputs the current date and time in the configured timezone and format.",
       "const_value": "Outputs a fixed value — number, bool or text. Useful as threshold or reference.",
+      "comment": "Free-form multi-line note placed directly on the canvas for documentation. Purely visual — has no effect on execution.",
       "and": "Output is true when ALL inputs are true. Inputs (2–30) and output can be individually negated.",
       "or": "Output is true when AT LEAST ONE input is true. Inputs (2–30) and output can be individually negated.",
       "not": "Inverts the input",
@@ -2185,10 +2412,12 @@
       "consumption_counter": "Calculates consumption values (daily, weekly, monthly, yearly) from a continuously incrementing counter value. Also stores the previous period's consumption for comparisons.",
       "timer_delay": "Delays a signal by N seconds",
       "timer_pulse": "Outputs a pulse for N seconds",
+      "value_sequence": "Writes configured values and pauses in sequence without blocking logic execution.",
       "timer_cron": "Fires automatically on a cron schedule (minute hour day month weekday).",
       "operating_hours": "Counts operating hours while 'Active' is true. Reset clears the counter.",
       "python_script": "Executes a Python script. Available: inputs dict → return value",
       "astro_sun": "Calculates sunrise and sunset based on latitude/longitude. Requires: pip install astral",
+      "notify_message": "Sends a notification through the configured targets of a Message/notification adapter.",
       "notify_pushover": "Sends a push notification via the Pushover API (api.pushover.net). Triggered automatically when a message arrives at the input.",
       "notify_sms": "Sends an SMS via the seven.io gateway (gateway.seven.io). Triggered automatically when a message arrives at the input.",
       "message_archive": "Writes a message to a message archive. Triggered automatically when a message arrives at the input or when the trigger is true.",
@@ -2230,6 +2459,9 @@
       "title": "General settings",
       "timezone": "Timezone",
       "timezoneHint": "All timestamps in the system are shown in this timezone.",
+      "dateFormat": "Default date format",
+      "timeFormat": "Default time format",
+      "formatHint": "Tokens: d/dd, EE/EEE/EEEE, M/MM/MMM/MMMM, yy/yyyy; time uses H/HH, m/mm, s/ss.",
       "timezonePlaceholder": "Search … e.g. Zurich, Berlin, UTC",
       "noResults": "No results",
       "save": "Save",
@@ -2591,7 +2823,7 @@
       "autobackupDesc": "Daily automatic JSON backup of all configuration data (adapters, objects, logic module, Visu, icons, etc.). Backups are stored locally in the data directory.",
       "autobackupEnable": "Enable Autobackup",
       "autobackupTime": "Time of daily backup",
-      "autobackupUhr": "",
+      "autobackupUhr": "O'clock",
       "autobackupRetention": "Number of backups to keep (days)",
       "retentionDay": "day",
       "retentionDays": "days",

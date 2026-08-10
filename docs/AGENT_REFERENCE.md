@@ -1,166 +1,7 @@
-# AGENTS/CLAUDE Alias Note
+## Detailed agent reference
 
-`AGENTS.MD` is the canonical agent-instructions file in this repository.
-`CLAUDE.md` is a symlink to this same file for tool compatibility.
-You only need to read one of them; reading both is redundant.
-
-# AGENTS.MD
-
-This file provides guidance to AI coding agents when working with code in this repository.
-
-## Project Overview
-
-**open bridge server** is an open-source multiprotocol building automation server (MIT-licensed replacement for the proprietary Timberwolf Server). It bridges KNX, Modbus RTU/TCP, 1-Wire, MQTT, SNMP, Home Assistant, ioBroker, Anwesenheitssimulation (presence simulation), and Zeitschaltuhr into a unified system with a FastAPI REST/WebSocket API and a Vue-based admin GUI.
-
-## Repository Layout
-
-Two top-level directories have distinct, non-overlapping purposes — keep them that way (see issue #877):
-
-| Directory | Audience | What belongs here |
-|---|---|---|
-| `tools/` | Developers, CI, release pipeline | Dev tooling only — linting, test helpers, LXC builder, worktree helpers, venv resolver, i18n guards, coverage summary, `build-local.sh`. Nothing in `tools/` is installed on a running OBS host. |
-| `scripts/` | Running OBS host | Deployed runtime scripts — every file that gets installed onto a production or LXC host lives here. Currently: `obs-admin` and `obs-update`. |
-
-**Rule of thumb:** if a file is only needed to build, test, or check the project, it goes in `tools/`. If it ends up on the host after installation, it goes in `scripts/`. Never mix the two.
-
-## Common Commands
-
-```bash
-# Run the server
-tools/with-venv python -m obs
-
-# Run all tests
-tools/with-venv pytest tests/
-
-# Run a single test file
-tools/with-venv pytest tests/unit/test_converter.py
-
-# Run a specific test
-tools/with-venv pytest tests/unit/test_converter.py::test_float_to_int
-
-# Run only adapter + unit tests (no Docker needed)
-tools/with-venv pytest tests/adapters/ tests/unit/
-
-# Run contract tests — verify external library API surfaces (no Docker needed)
-tools/with-venv pytest tests/contracts/
-
-# Run integration tests (requires Docker for Mosquitto)
-tools/with-venv pytest tests/integration/
-
-# Run with coverage report
-tools/with-venv pytest tests/ --cov=obs --cov-report=term-missing
-
-# Lint (same checks as CI)
-tools/with-venv ./tools/lint.sh --check
-
-# Format + autofix
-tools/with-venv ./tools/lint.sh --fix
-
-# Docker Compose (full stack)
-docker compose up -d
-
-# Docker Compose (Mosquitto only — for local dev outside Docker)
-docker compose up -d mosquitto
-
-# Build release artifacts locally (only requires Docker)
-./tools/build-local.sh docker    # Docker image (via docker compose build obs + version stamp)
-./tools/build-local.sh lxc       # Proxmox LXC template (.tar.zst); rootfs cached in ~/.cache/obs-lxc-builder/
-./tools/build-local.sh bundle    # app bundle only, no rootfs (fast)
-./tools/build-local.sh all       # docker + lxc
-
-# Admin GUI dev server (proxies /api to localhost:8080)
-cd gui && npm run dev
-```
-
-## Pre-Push Gate (verbindlich)
-
-CI im PR-Workflow baut das Frontend **nicht** — `npm run build` läuft erst beim Release-Tag.
-Ein Production-Build validiert die Frontend-Abhängigkeiten (Module-Resolution, Import-Pfade,
-Typen) Ende-zu-Ende — Schwächen, die Vitest-Mocks verdecken können, fallen erst hier auf. Vor
-**jedem** Push, der Frontend-Code berührt, alle Stufen lokal grün laufen lassen:
-
-```bash
-tools/with-venv ./tools/lint.sh --check
-cd gui && npm run build     # validiert reale Abhängigkeiten/Imports, was Vitest nicht tut
-cd gui && npm run test
-cd gui && npm run test:coverage
-# bei Backend-Änderungen zusätzlich:
-tools/with-venv pytest tests/unit tests/adapters tests/contracts  # ohne Docker
-tools/with-venv pytest tests/integration                          # mit Docker
-```
-
-Wenn rot: nicht pushen, sondern fixen. Gilt für Haupt-Sessions **und** für Subagents — bitte
-explizit in den Subagent-Prompt schreiben, weil deren Kontext leer startet.
-
-Zusätzlich für i18n-Änderungen (Admin GUI + Visu) gilt ein harter Diff-Gate:
-
-```bash
-# Diff-basierter i18n Hard-Gate (Hardcoded user-facing strings + locale parity)
-./tools/check-i18n-hardcoded-strings.sh
-```
-
-Für GUI-Änderungen gilt zusätzlich ein weicher Coverage-Nachzieh-Hinweis:
-
-```bash
-node tools/gui-coverage-summary.mjs --changed-only --threshold=70
-```
-
-Wenn geänderte Dateien unter dem Schwellwert liegen, im Abschlussbericht konkret nennen
-und möglichst passende Vitests ergänzen. Der Hinweis ist bewusst kein lokaler Hard-Fail;
-`npm run test` und `npm run test:coverage` bleiben dagegen verpflichtende Gates und
-brechen bei Fehlern ab.
-
-Optional als lokaler Push-Hook aktivieren:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-Danach läuft der i18n-Gate automatisch vor jedem `git push`.
-
-## Authorization and mutation audit contract (MUST)
-
-Every new or changed mutating v1 endpoint is incomplete until its authorization
-and audit contract is implemented and tested together with the route:
-
-1. Classify the route in `obs/api/v1/route_classification_registry.py` and add
-   its exact security contract to `obs/api/v1/security_contract_registry.py`.
-2. Use the declared principal dependency and real policy/capability checks.
-   Never use `optional_current_user`, wildcard capabilities, or a synthetic
-   admin `Principal` to protect a mutation.
-3. Emit the contract's canonical event with `AuditLogWriter.write_contract()`.
-   A successful DB mutation and its event must share `db.transaction()` and use
-   `commit=False`; denied/failed attempts must be recorded only after rollback.
-   Raw passwords, tokens, credentials, keyfiles, PINs, or request payloads must
-   never enter audit details.
-4. Add focused admin/user/API-key/anonymous persona tests as applicable,
-   including denial-without-state-change and audit rollback/redaction cases.
-5. Run `tools/with-venv python tools/check_authz_contract.py` and the focused
-   authorization/audit test suite before pushing. The `authz-contract` CI job is
-   a required anti-drift gate; do not bypass or baseline new violations.
-
-## Test Coverage Gate (verbindlich)
-
-**Jede neue Zeile Code muss durch Tests abgedeckt sein.** Codecov prüft die *Patch Coverage* —
-d.h. ob jede im Diff hinzugefügte Zeile durch die Testsuite ausgeführt wird. Das ist strenger als
-nur die Gesamtabdeckung zu halten: eine neue Funktion, die bestehende Zeilen nicht senkt, aber
-selbst ungetestet bleibt, fällt durch dieses Gate.
-
-- **Neuer Code → neue Tests im selben Commit.** Jede neue API-Route, jeder neue Adapter, jede
-  neue Hilfsfunktion braucht zugehörige Tests (Unit oder Integration), die genau die neuen Zeilen
-  ausführen.
-- **Refactorings** dürfen weder die Gesamtabdeckung noch die Patch Coverage senken.
-- **Vor jedem Push mit Backend-Änderungen** Coverage prüfen:
-
-```bash
-# Gesamtabdeckung (muss ≥ Baseline bleiben):
-tools/with-venv pytest tests/unit tests/adapters tests/contracts --cov=obs --cov-report=term-missing
-# mit Docker auch:
-tools/with-venv pytest tests/integration --cov=obs --cov-append --cov-report=term-missing
-```
-
-Wenn neue Zeilen im Report unter „Missing" auftauchen: Tests ergänzen, nicht pushen.
-Gilt für Haupt-Sessions **und** für Subagents — bitte explizit in den Subagent-Prompt schreiben.
+This file contains task-specific instructions routed from the root `AGENTS.md`. Read the
+applicable named sections before acting. The root file remains authoritative on conflicts.
 
 ## Local Development Setup
 
@@ -278,8 +119,8 @@ Both frontends use **vue-i18n v9** (Composition API mode, `legacy: false`).
 | File | Purpose |
 |---|---|
 | `gui/src/i18n.js` | i18n instance; locale auto-detected from `localStorage` → browser language; `fallbackLocale: 'en'` |
-| `gui/src/locales/en.json` | English source strings (authoritative — Weblate source language; must be complete) |
-| `gui/src/locales/de.json` | German translation |
+| `gui/src/locales/de.json` | German source strings (authoritative Weblate source language; must be complete) |
+| `gui/src/locales/en.json` | English translation and runtime fallback; must be complete |
 | `gui/src/components/ui/LocaleSwitcher.vue` | Dropdown wired into Settings → Appearance |
 | `frontend/src/i18n.ts` | Same setup for the Visu SPA (TypeScript) |
 | `frontend/src/locales/{de,en}.json` | Visu locale files |
@@ -289,7 +130,11 @@ Both frontends use **vue-i18n v9** (Composition API mode, `legacy: false`).
 
 **No hardcoded user-facing strings.** Any text visible to the user — labels, button text, placeholders, tooltips, error messages, badge text, empty-state messages — must go through `$t()` / `t()`. This includes strings returned from utility functions (`utils/`, composables) that end up rendered in a template.
 
-**`en.json` is the source of truth.** English is the Weblate source language (volunteers translate *from* English) and is the i18n `fallbackLocale`, so it must be complete. Always add new keys to both `en.json` (English, authoritative) and `de.json` (German) in the same commit. Use Python (`json.dumps(..., ensure_ascii=False)`) when writing locale files programmatically — never shell heredocs, which strip non-ASCII characters.
+**`de.json` is the source of truth.** German is the configured Weblate source language; English is
+the runtime `fallbackLocale`. Both files must remain complete. Always add the German source string
+to `de.json` and its English translation to `en.json` in the same commit. Use Python
+(`json.dumps(..., ensure_ascii=False)`) when writing locale files programmatically — never shell
+heredocs, which strip non-ASCII characters.
 
 #### Key namespace conventions
 
@@ -603,6 +448,46 @@ Mosquitto is installed as a systemd service alongside OBS. Key paths:
 
 OBS reloads Mosquitto after passwd file changes via `OBS_MOSQUITTO__RELOAD_COMMAND=systemctl reload mosquitto`.
 
+#### owserver (1-Wire) in the LXC template — issue #1040
+
+`owserver` (the OWFS 1-Wire bus server the `ONEWIRE` adapter talks to via `pyownet`, see #6) is
+installed alongside Mosquitto but, unlike Mosquitto, is **opt-in**: an idle, unconfigured `owserver`
+wastes resources on the small hosts OBS often runs on, so the packaged `owserver.service` only
+actually starts once an admin has configured a 1-Wire bus master.
+
+| Path | Purpose |
+|---|---|
+| `/etc/systemd/system/owserver.service.d/override.conf` | Drop-in that gates the packaged unit — does not replace its `ExecStart=`, so package upgrades keep working |
+| `scripts/obs-onewire-should-run.sh` | `ExecCondition=` — exits 0 only if `OBS_ONEWIRE__USB_ALL=true` or `OBS_ONEWIRE__PBM_DEVICES` is set in `/etc/obs.env` |
+| `scripts/obs-onewire-configure.sh` | `ExecStartPre=` — (re)generates `/etc/owfs.conf` from those same env vars on every start attempt |
+| `/etc/obs.env` | Same file as the MQTT credentials; `OBS_ONEWIRE__*` lines ship commented out |
+
+Both scripts are shared verbatim with the Docker sidecar image (`tools/docker/owserver.Dockerfile`)
+— one script, two consumers. To enable 1-Wire on an installed LXC: uncomment/add the relevant
+`OBS_ONEWIRE__*` lines in `/etc/obs.env`, then `systemctl restart owserver` (systemd re-evaluates
+`ExecCondition` on every start attempt, so there is no first-boot-only flag file to worry about).
+
+**Env vars:**
+- `OBS_ONEWIRE__USB_ALL=true` → `server: usb = all` (plain USB busmasters, e.g. DS9490)
+- `OBS_ONEWIRE__PBM_DEVICES=/dev/serial/by-id/...` → one `server: pbm = <path>` line per
+  comma-separated entry (ElabNET PBM). Use a stable `/dev/serial/by-id/...` path, not
+  `/dev/ttyUSB0` — the latter can shift across reboots or when other serial devices are attached.
+- `OBS_ONEWIRE__PORT` → optional, defaults to `4304` (owserver's own historical default, matches the
+  `ONEWIRE` adapter's default `port` config field)
+
+**Proxmox host-side USB/serial passthrough** (not automatable from inside the container — hardware
+topology is host-specific): both a `lxc.mount.entry` **and** the matching `lxc.cgroup2.devices.allow`
+cgroup rule are required — the mount alone is not sufficient and this is easy to forget. Confirmed
+against real hardware: a plain USB busmaster needs its `/dev/bus/usb/BBB/DDD` node passed through; the
+ElabNET PBM enumerates as an FTDI serial device and needs its `/dev/serial/by-id/...` path passed
+through (mapped to e.g. `/dev/ttyUSB0` inside the container).
+
+**Docker Compose equivalent:** the `owserver` service in `docker-compose.yml` is gated by a Compose
+profile (`profiles: ["onewire"]`) instead of `ExecCondition`, activated via
+`COMPOSE_PROFILES=onewire`. See the comments in `docker-compose.yml` and `.env.example`.
+
 ### Release Notes
 
 `RELEASENOTES_FOOTER.md` contains an invisible HTML comment `<!-- LXC_INSERT -->` that marks where the LXC checksum block is injected by `lxc-template.yml`. Do not remove this marker.
+
+Within each section of a version's changelog (`### Breaking changes`, `### New features`, `### Fixes`, etc.), entries must be sorted alphabetically by their leading component label (e.g. `Admin GUI/Visu:` before `Logic Engine/Admin GUI:`). When adding a new entry, insert it at the alphabetically correct position rather than appending it at the end.

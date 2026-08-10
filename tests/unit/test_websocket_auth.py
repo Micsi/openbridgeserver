@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -9,6 +10,7 @@ import pytest
 from fastapi import HTTPException, WebSocketDisconnect
 
 import obs.api.auth as auth_api
+from obs.api.auth import Principal
 from obs.api.v1 import websocket as ws_api
 
 
@@ -90,6 +92,8 @@ class _JwtScopeDbStub:
             if self.is_admin is None:
                 return None
             return {"is_admin": int(self.is_admin)}
+        if "FROM visu_nodes" in query:
+            return {"type": "PAGE"}
         return None
 
     async def fetchall(self, query: str, _params: tuple = ()):
@@ -104,6 +108,8 @@ class _ApiKeyScopeDbStub:
             if "SELECT id, owner" in query:
                 return {"id": "key-1", "owner": None}
             return {"name": "automation-client"}
+        if "FROM visu_nodes" in query:
+            return {"type": "PAGE"}
         return None
 
     async def fetchall(self, query: str, _params: tuple = ()):
@@ -118,7 +124,7 @@ class _ApiKeyScopeDbStub:
 @pytest.mark.asyncio
 async def test_authenticate_ws_rejects_missing_credentials():
     ws = _FakeWebSocket()
-    ok, reason = await ws_api._authenticate_ws_request(ws)  # noqa: SLF001
+    ok, reason = await ws_api._authenticate_ws_request(ws)
     assert ok is False
     assert reason == "Missing credentials"
 
@@ -681,7 +687,7 @@ async def test_ws_log_access_revalidates_api_key_with_legacy_name_fallback(monke
     db = _LogAccessDbStub({"subject": "automation-client"})
     monkeypatch.setattr(ws_api, "get_db", lambda: db)
 
-    assert await ws_api._ws_has_log_access("__api_key__", "obs_valid") is True  # noqa: SLF001
+    assert await ws_api._ws_has_log_access("__api_key__", "obs_valid") is True
     assert "COALESCE(NULLIF(owner, ''), name)" in db.queries[0]
 
 
@@ -691,7 +697,7 @@ async def test_ws_log_access_rejects_revoked_api_key(monkeypatch):
     db = _LogAccessDbStub(None)
     monkeypatch.setattr(ws_api, "get_db", lambda: db)
 
-    assert await ws_api._ws_has_log_access("__api_key__", "obs_revoked") is False  # noqa: SLF001
+    assert await ws_api._ws_has_log_access("__api_key__", "obs_revoked") is False
 
 
 @pytest.mark.asyncio
@@ -700,20 +706,35 @@ async def test_ws_log_access_revalidates_resolved_api_key_owner(monkeypatch):
     db = _LogAccessDbStub(None)
     monkeypatch.setattr(ws_api, "get_db", lambda: db)
 
-    assert await ws_api._ws_has_log_access("alice", "obs_revoked") is False  # noqa: SLF001
+    assert await ws_api._ws_has_log_access("alice", "obs_revoked") is False
     assert db.queries
 
 
 @pytest.mark.asyncio
-async def test_ws_log_access_ignores_stray_api_key_for_jwt_identity(monkeypatch):
-    def fail_get_db():
-        raise AssertionError("A JWT-derived identity must not be revalidated against an unrelated api_key header")
+async def test_ws_logic_debug_access_is_scoped_to_the_requested_graph(monkeypatch):
+    class _GraphDb:
+        async def fetchone(self, _query, params):
+            return {"id": params[0], "flow_data": '{"nodes": [], "edges": []}'} if params[0] == "visible" else None
 
-    monkeypatch.setattr(ws_api, "get_db", fail_get_db)
+    can_read = AsyncMock(return_value=True)
+    monkeypatch.setattr("obs.api.v1.logic._can_read_logic_graph", can_read)
+    principal = Principal(subject="alice", type="user", is_admin=False)
+    db = _GraphDb()
 
-    assert (
-        await ws_api._ws_has_log_access("alice", "stray-invalid-key", identity_from_jwt=True) is True  # noqa: SLF001
-    )
+    assert await ws_api._ws_has_logic_debug_access(db, principal, "visible") is True
+    assert await ws_api._ws_has_logic_debug_access(db, principal, "missing") is False
+    can_read.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("database unavailable"), sqlite3.OperationalError("database locked")])
+async def test_ws_logic_debug_access_fails_closed_on_database_errors(monkeypatch, error):
+    class _FailingDb:
+        async def fetchone(self, _query, _params):
+            raise error
+
+    principal = Principal(subject="admin", type="user", is_admin=True)
+    assert await ws_api._ws_has_logic_debug_access(_FailingDb(), principal, "graph") is False
 
 
 @pytest.mark.asyncio
@@ -775,3 +796,79 @@ async def _resolve_protected_access(_db, _node_id: str) -> tuple[str, str | None
 
 async def _resolve_user_access(_db, _node_id: str) -> tuple[str, str | None]:
     return "user", "node-user"
+
+
+@pytest.mark.asyncio
+async def test_authenticate_ws_request_rejects_invalid_bearer_token(monkeypatch):
+    """Covers the Bearer-header branch's own except HTTPException (distinct from the subprotocol one)."""
+
+    def _decode_token(_token: str, expected_type: str = "access") -> str:
+        raise HTTPException(401, "invalid")
+
+    monkeypatch.setattr(auth_api, "decode_token", _decode_token)
+
+    ws = _FakeWebSocket(headers={"authorization": "Bearer bad.token"})
+    ok, reason = await ws_api._authenticate_ws_request(ws)
+
+    assert ok is False
+    assert reason == "Invalid token"
+
+
+@pytest.mark.asyncio
+async def test_websocket_endpoint_closes_when_second_decode_fails_without_page_context(monkeypatch):
+    """`_authenticate_ws_request` succeeds first, but the endpoint's own follow-up decode
+    (used to resolve `user` for scoping) fails independently — covers that second except
+    HTTPException branch, distinct from the one inside `_authenticate_ws_request`.
+    """
+    calls = {"n": 0}
+
+    def _decode_token(_token: str, expected_type: str = "access") -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "admin"
+        raise HTTPException(401, "expired mid-handshake")
+
+    monkeypatch.setattr(auth_api, "decode_token", _decode_token)
+    monkeypatch.setattr(ws_api, "get_db", lambda: _JwtScopeDbStub(is_admin=True))
+
+    ws = _FakeWebSocket(headers={"authorization": "Bearer sometoken"})
+    await ws_api.websocket_endpoint(ws)
+
+    assert ws.close_calls == [(4001, "Invalid token")]
+
+
+@pytest.mark.asyncio
+async def test_logic_debug_access_revalidates_jwt_before_broadcast(monkeypatch):
+    token_valid = True
+
+    def _decode_token(_token: str, expected_type: str = "access") -> str:
+        if token_valid and expected_type == "access":
+            return "admin"
+        raise HTTPException(401, "expired")
+
+    class _AdminDb:
+        async def fetchone(self, _query: str, _params: tuple):
+            return {"is_admin": 1}
+
+    class _ManagerStub:
+        logic_debug_access_check = None
+
+        async def connect(self, ws, **kwargs):
+            self.logic_debug_access_check = kwargs["logic_debug_access_check"]
+            await ws.accept()
+            return "conn-1"
+
+        async def disconnect(self, _conn_id: str) -> None:
+            return None
+
+    monkeypatch.setattr(auth_api, "decode_token", _decode_token)
+    monkeypatch.setattr(ws_api, "get_db", lambda: _AdminDb())
+    manager = _ManagerStub()
+    monkeypatch.setattr(ws_api, "get_ws_manager", lambda: manager)
+
+    ws = _FakeWebSocket(headers={"authorization": "Bearer jwt"})
+    await ws_api.websocket_endpoint(ws)
+
+    assert manager.logic_debug_access_check is not None
+    token_valid = False
+    assert await manager.logic_debug_access_check("graph") is False

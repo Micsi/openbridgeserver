@@ -100,6 +100,7 @@ vi.mock('@/composables/useVisuBackgrounds', () => ({
 
 vi.mock('@/widgets/registry', () => ({
   WidgetRegistry: {
+    register: vi.fn(),
     get: vi.fn(() => ({
       component: mocks.previewWidget,
       label: 'Kamera',
