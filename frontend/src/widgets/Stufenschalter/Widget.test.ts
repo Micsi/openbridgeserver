@@ -54,10 +54,12 @@ function baseOptions() {
 
 function deferredWrite() {
   let resolve!: () => void
-  const promise = new Promise<void>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
+    reject = rejectPromise
   })
-  return { promise, resolve }
+  return { promise, reject, resolve }
 }
 
 function mountWidget(config: Record<string, unknown>, value: unknown = 0) {
@@ -162,6 +164,22 @@ describe('Stufenschalter widget', () => {
     expect(writeMock).toHaveBeenNthCalledWith(1, 'dp-1', 1)
     expect(writeMock).toHaveBeenNthCalledWith(2, 'dp-1', 2)
     expect(wrapper!.get('[data-testid="stufenschalter-label"]').text()).toBe('Komfort')
+  })
+
+  it('rolls failed queued sequence writes back to the server-confirmed value', async () => {
+    const firstWrite = deferredWrite()
+    writeMock
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockRejectedValueOnce(new Error('offline'))
+    mountWidget({ steps: baseOptions() }, 0)
+
+    await wrapper!.trigger('click')
+    await wrapper!.trigger('click')
+    firstWrite.reject(new Error('offline'))
+    await flushPromises()
+
+    expect(wrapper!.get('[data-testid="stufenschalter-label"]').text()).toBe('Off')
+    expect(wrapper!.get('[data-testid="stufenschalter-error"]').text()).toBe('offline')
   })
 
   it('does not restore stale optimistic sequence state after a live datapoint update', async () => {

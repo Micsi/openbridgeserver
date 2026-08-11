@@ -5,7 +5,6 @@ import pytest
 
 from obs.db.database import Database, _migration_v45
 
-
 AUTHZ_TABLE = """
 CREATE TABLE authz_node_roles (
     principal_type TEXT NOT NULL,

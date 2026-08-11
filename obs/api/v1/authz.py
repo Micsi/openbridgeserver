@@ -11,9 +11,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 
-from obs.api.auth import Principal, get_admin_user
 from obs.api.audit import AuditLogWriter, build_audit_context
-from obs.api.v1.application_audit import audit_application_contract
+from obs.api.auth import Principal, get_admin_user
 from obs.api.authz import AuthzAction, AuthzDecision, AuthzTarget, GrantEffect, Role, RoleGrant, authorize
 from obs.api.authz_service import (
     _datapoint_read_grants,
@@ -22,6 +21,7 @@ from obs.api.authz_service import (
     resolve_hierarchy_targets,
     resolve_visu_page_targets,
 )
+from obs.api.v1.application_audit import audit_application_contract
 from obs.db.database import Database, get_db
 from obs.logic.capabilities import LOGIC_CAPABILITIES, LOGIC_CREATE_CAPABILITY
 from obs.models.authz import (
@@ -275,7 +275,8 @@ async def _materialize_draft_grants(db: Database, grants: Sequence[AuthzPreviewG
 
 
 def _grant_key(grant: RoleGrant) -> tuple[str, str, str, str]:
-    return (grant.principal_type, grant.principal_id, grant.node_type, grant.node_id)
+    principal_id = grant.principal_id.removeprefix("api_key:") if grant.principal_type == "api_key" else grant.principal_id
+    return (grant.principal_type, principal_id, grant.node_type, grant.node_id)
 
 
 def _merge_grants(persisted: Sequence[RoleGrant], draft: Sequence[RoleGrant]) -> list[RoleGrant]:

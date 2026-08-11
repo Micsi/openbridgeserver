@@ -625,8 +625,8 @@ async def test_handle_value_event_accepts_seven_field_connection_entries(monkeyp
     conn_id = await manager.connect(ws)
     await manager.subscribe(conn_id, [dp_id])
 
-    ws_entry = manager._connections[conn_id]  # noqa: SLF001
-    manager._connections[conn_id] = (ws_entry[0], ws_entry[1], asyncio.Lock(), ws_entry[3], False, None, False)  # noqa: SLF001
+    ws_entry = manager._connections[conn_id]
+    manager._connections[conn_id] = (ws_entry[0], ws_entry[1], asyncio.Lock(), ws_entry[3], False, None, False)
 
     class _RegistryStub:
         def get(self, _dp_id):

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final, Literal, TypeAlias
+from typing import Final, Literal
 
 from obs.api.v1.route_classification_registry import RouteSignature
 
-AuthzActionName: TypeAlias = Literal["read", "write", "generate", "activate"]
+type AuthzActionName = Literal["read", "write", "generate", "activate"]
 
 
 class PrincipalMode(StrEnum):

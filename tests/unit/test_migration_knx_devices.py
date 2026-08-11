@@ -5,7 +5,7 @@ from __future__ import annotations
 import aiosqlite
 import pytest
 
-from obs.db.database import Database, _MIGRATION_V34, _MIGRATION_V35, _migration_v36
+from obs.db.database import _MIGRATION_V34, _MIGRATION_V35, Database, _migration_v36
 
 
 async def _table_names(db: Database) -> set[str]:

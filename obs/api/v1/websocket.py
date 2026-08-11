@@ -1259,7 +1259,7 @@ async def websocket_endpoint(
             return False
         try:
             principal = await current_principal_check()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- authentication revalidation must fail closed
             return False
         return await _ws_has_logic_debug_access(db, principal, graph_id)
 

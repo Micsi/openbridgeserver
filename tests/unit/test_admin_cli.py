@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -13,12 +13,12 @@ from obs.admin_cli import (
     _normalize_global_options,
     build_parser,
     create_backup,
+    create_first_owner,
     create_support_package,
     database_info,
     get_loglevel,
     list_adapters,
     list_bindings,
-    create_first_owner,
     recover_owner,
     resolve_database_path,
     set_adapter_enabled,
@@ -28,9 +28,9 @@ from obs.admin_cli import (
     status,
     validate_config,
 )
+from obs.admin_cli import main as admin_main
 from obs.api.auth import verify_password
 from obs.db.database import MIGRATIONS
-from obs.admin_cli import main as admin_main
 
 
 def _make_db(path: Path) -> dict[str, str]:

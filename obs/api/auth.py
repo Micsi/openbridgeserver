@@ -1121,9 +1121,8 @@ async def set_mqtt_password(
     if not target:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"User '{username}' not found")
 
-    from obs.core.mqtt_passwd import mosquitto_hash
-
     from obs.api.audit import AuditLogWriter, build_audit_context
+    from obs.core.mqtt_passwd import mosquitto_hash
 
     writer = AuditLogWriter(db, build_audit_context(request, current_user))
     async with db.transaction():

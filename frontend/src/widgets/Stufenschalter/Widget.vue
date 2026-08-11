@@ -184,9 +184,8 @@ async function writeValue(value: string, rollbackOverride?: string | null) {
   } catch (e) {
     const displayChangedDuringWrite = displayRevision.value !== writeDisplayRevision
     if (mode.value === 'sequence') {
-      if (optimisticValue.value === value) {
-        optimisticValue.value = displayChangedDuringWrite ? null : rollbackValue
-      }
+      sequenceWriteQueue.length = 0
+      optimisticValue.value = displayChangedDuringWrite ? null : rollbackValue
     } else {
       optimisticValue.value = displayChangedDuringWrite ? null : rollbackValue
     }

@@ -39,8 +39,8 @@ from obs.api.auth import (
     create_access_token,
     create_refresh_token,
     decode_token,
-    require_configured_owner,
     hash_password,
+    require_configured_owner,
 )
 from obs.api.v1.icons import (
     DeleteRequest,

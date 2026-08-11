@@ -337,9 +337,8 @@ class TestDeleteBackgrounds:
         from obs.api.v1.visu_backgrounds import DeleteRequest
 
         body = DeleteRequest(names=["floor", "../evil"])
-        with patch("obs.api.v1.visu_backgrounds._backgrounds_dir", return_value=tmp_path):
-            with pytest.raises(HTTPException) as exc:
-                await delete_backgrounds(body=body, _user="admin")
+        with patch("obs.api.v1.visu_backgrounds._backgrounds_dir", return_value=tmp_path), pytest.raises(HTTPException) as exc:
+            await delete_backgrounds(body=body, _user="admin")
         assert exc.value.status_code == 400
         assert (tmp_path / "floor.png").exists()
 
@@ -399,9 +398,8 @@ class TestImportBackgrounds:
         invalid = AsyncMock(filename="broken.png")
         invalid.read = AsyncMock(return_value=b"not an image")
 
-        with patch("obs.api.v1.visu_backgrounds._backgrounds_dir", return_value=tmp_path):
-            with pytest.raises(HTTPException) as exc:
-                await import_backgrounds(files=[valid, invalid], _user="admin")
+        with patch("obs.api.v1.visu_backgrounds._backgrounds_dir", return_value=tmp_path), pytest.raises(HTTPException) as exc:
+            await import_backgrounds(files=[valid, invalid], _user="admin")
         assert exc.value.status_code == 422
         assert list(tmp_path.iterdir()) == []
 

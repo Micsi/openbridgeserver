@@ -13,6 +13,7 @@ from fastapi import HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials
 from starlette.requests import Request
 
+from obs.api.audit import AuditLogWriter
 from obs.api.auth import (
     ApiKeyCreate,
     Principal,
@@ -31,19 +32,19 @@ from obs.api.auth import (
     set_mqtt_password,
     update_user,
 )
-from obs.api.audit import AuditLogWriter
 from obs.api.v1.autobackup import delete_autobackup, restore_autobackup
 from obs.api.v1.config import import_db
-from obs.api.v1.security_contract_registry import AuditEffect, AuditMode, ROUTE_SECURITY_CONTRACTS
+from obs.api.v1.security_contract_registry import ROUTE_SECURITY_CONTRACTS, AuditEffect, AuditMode
 from obs.api.v1.system import (
     AppSettingsIn,
     HistorySettingsIn,
-    test_history_connection as run_history_test,
     update_app_settings,
     update_history_settings,
 )
+from obs.api.v1.system import (
+    test_history_connection as run_history_test,
+)
 from obs.db.database import Database
-
 
 IDENTITY_AUDIT_ROUTES = {
     ("POST", "/api/v1/auth/login"),

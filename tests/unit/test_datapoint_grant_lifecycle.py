@@ -13,7 +13,6 @@ from obs.core.registry import DataPointRegistry
 from obs.db.database import Database
 from obs.models.datapoint import DataPointCreate, DataPointUpdate
 
-
 NOW = "2026-07-13T00:00:00+00:00"
 API_KEY_ID = "00000000-0000-0000-0000-000000000001"
 

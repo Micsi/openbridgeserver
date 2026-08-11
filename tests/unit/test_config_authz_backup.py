@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,8 +24,8 @@ async def db() -> Database:
 
 
 class _EmptyRegistry:
-    _points: dict = {}
-    _values: dict = {}
+    _points: ClassVar[dict] = {}
+    _values: ClassVar[dict] = {}
 
     def all(self) -> list:
         return []

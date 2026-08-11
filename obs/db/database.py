@@ -14,7 +14,8 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from types import TracebackType
+from typing import Any, Self
 from urllib.parse import parse_qsl, urlencode
 
 import aiosqlite
@@ -1238,11 +1239,16 @@ class _LoopReusableLock:
         except RuntimeError:
             return any(lock.locked() for lock in self._locks.values())
 
-    async def __aenter__(self) -> _LoopReusableLock:
+    async def __aenter__(self) -> Self:
         await self.acquire()
         return self
 
-    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.release()
 
 
@@ -1712,11 +1718,10 @@ class Database:
             finally:
                 self._legacy_write_owner = None
                 self._write_lock.release()
-        async with self._ordinary_operation():
-            async with self._write_lock:
-                cur = await self.conn.execute(sql, params)
-                await self.conn.commit()
-                return cur
+        async with self._ordinary_operation(), self._write_lock:
+            cur = await self.conn.execute(sql, params)
+            await self.conn.commit()
+            return cur
 
 
 # ---------------------------------------------------------------------------

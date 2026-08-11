@@ -4,7 +4,6 @@ import pytest
 
 from obs.db.database import Database, _migration_v44
 
-
 NOW = "2026-07-13T00:00:00+00:00"
 
 

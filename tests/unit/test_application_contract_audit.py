@@ -9,10 +9,9 @@ from fastapi import HTTPException
 from obs.api.auth import Principal
 from obs.api.v1.application_audit import audit_application_contract, write_application_success
 from obs.api.v1.route_classification_registry import ROUTE_CLASSIFICATIONS
-from obs.api.v1.security_contract_registry import AuditEffect, AuditMode, ROUTE_SECURITY_CONTRACTS
+from obs.api.v1.security_contract_registry import ROUTE_SECURITY_CONTRACTS, AuditEffect, AuditMode
 from obs.db.database import Database
 from tools.check_authz_contract import collect_live_routes
-
 
 _APPLICATION_PREFIXES = ("/api/v1/logic", "/api/v1/message-archives", "/api/v1/ringbuffer", "/api/v1/visu")
 

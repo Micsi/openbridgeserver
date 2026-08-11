@@ -365,7 +365,7 @@ def _row_to_datapoint(row: Any) -> DataPoint:
         mqtt_alias=row["mqtt_alias"],
         persist_value=bool(row["persist_value"]) if row["persist_value"] is not None else True,
         record_history=bool(row["record_history"]) if row["record_history"] is not None else True,
-        control_class=row["control_class"] if "control_class" in row.keys() else "room_local",
+        control_class=row["control_class"] if "control_class" in row.keys() else "room_local",  # noqa: SIM118 -- sqlite Row membership checks values
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )

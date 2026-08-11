@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: E402 -- repository root must be importable when run as a script
+
 """Fail CI when live v1 routes drift from their AuthZ contracts."""
 
 from __future__ import annotations
@@ -24,11 +24,11 @@ from obs.api.capabilities import CONFIG_CAPABILITIES
 from obs.api.router import router
 from obs.api.v1.route_classification_registry import ROUTE_CLASSIFICATIONS
 from obs.api.v1.security_contract_registry import (
+    ROUTE_SECURITY_CONTRACTS,
     AuditEffect,
     AuditMode,
     AuthorizationMode,
     PrincipalMode,
-    ROUTE_SECURITY_CONTRACTS,
 )
 
 _ACTION_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
@@ -143,13 +143,16 @@ def _synthetic_admin_principals(repo_root: Path) -> Counter[tuple[str, str, str]
     for path in api_root.rglob("*.py"):
         relative = path.relative_to(repo_root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        functions: list[str] = []
 
         class Visitor(ast.NodeVisitor):
+            def __init__(self, relative: str) -> None:
+                self.relative = relative
+                self.functions: list[str] = []
+
             def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                functions.append(node.name)
+                self.functions.append(node.name)
                 self.generic_visit(node)
-                functions.pop()
+                self.functions.pop()
 
             visit_AsyncFunctionDef = visit_FunctionDef
 
@@ -161,10 +164,10 @@ def _synthetic_admin_principals(repo_root: Path) -> Counter[tuple[str, str, str]
                             continue
                         expression = ast.unparse(keyword.value)
                         if expression == "True" or "'admin'" in expression or '"admin"' in expression:
-                            found[(relative, functions[-1] if functions else "<module>", expression)] += 1
+                            found[(self.relative, self.functions[-1] if self.functions else "<module>", expression)] += 1
                 self.generic_visit(node)
 
-        Visitor().visit(tree)
+        Visitor(relative).visit(tree)
     return found
 
 
@@ -174,13 +177,16 @@ def _literal_contract_audit_calls(repo_root: Path) -> dict[tuple[str, str], list
     for path in (repo_root / "obs" / "api").rglob("*.py"):
         relative = path.relative_to(repo_root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        functions: list[str] = []
 
         class Visitor(ast.NodeVisitor):
+            def __init__(self, relative: str) -> None:
+                self.relative = relative
+                self.functions: list[str] = []
+
             def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-                functions.append(node.name)
+                self.functions.append(node.name)
                 self.generic_visit(node)
-                functions.pop()
+                self.functions.pop()
 
             visit_AsyncFunctionDef = visit_FunctionDef
 
@@ -199,10 +205,10 @@ def _literal_contract_audit_calls(repo_root: Path) -> dict[tuple[str, str], list
                             keyword.arg == "commit" and isinstance(keyword.value, ast.Constant) and keyword.value.value is False
                             for keyword in node.keywords
                         )
-                        found.setdefault(signature, []).append((relative, functions[-1] if functions else "<module>", commit_false))
+                        found.setdefault(signature, []).append((self.relative, self.functions[-1] if self.functions else "<module>", commit_false))
                 self.generic_visit(node)
 
-        Visitor().visit(tree)
+        Visitor(relative).visit(tree)
     return found
 
 
@@ -406,9 +412,11 @@ def validate_contracts(repo_root: Path | None = None) -> list[str]:
                 errors.append(f"{signature}: {contract.principal.value} contract requires dependency {required.__name__}")
             if any(getattr(call, "__name__", "") == "optional_current_user" for call in dependencies):
                 errors.append(f"{signature}: config mutation must not use optional_current_user")
-            if contract.authorization in {AuthorizationMode.POLICY, AuthorizationMode.POLICY_OR_CAPABILITY}:
-                if not evidence_for(route).policy_enforcement_calls:
-                    errors.append(f"{signature}: declared policy checks have no reachable authorization enforcement call")
+            if (
+                contract.authorization in {AuthorizationMode.POLICY, AuthorizationMode.POLICY_OR_CAPABILITY}
+                and not evidence_for(route).policy_enforcement_calls
+            ):
+                errors.append(f"{signature}: declared policy checks have no reachable authorization enforcement call")
 
     for capability in CONFIG_CAPABILITIES:
         if capability == "*" or "*" in capability:

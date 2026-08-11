@@ -10,7 +10,6 @@ from obs.api.auth import Principal
 from obs.db.database import Database
 from obs.models.datapoint import DataPoint
 
-
 NOW = "2026-06-10T00:00:00+00:00"
 
 

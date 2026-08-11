@@ -135,7 +135,7 @@ async def test_authenticate_ws_rejects_deleted_user_bearer_token(monkeypatch):
     monkeypatch.setattr(ws_api, "get_db", lambda: _JwtScopeDbStub(is_admin=None))
     ws = _FakeWebSocket(headers={"authorization": "Bearer valid.jwt"})
 
-    ok, reason = await ws_api._authenticate_ws_request(ws)  # noqa: SLF001
+    ok, reason = await ws_api._authenticate_ws_request(ws)
 
     assert ok is False
     assert reason == "Invalid token"
@@ -144,7 +144,7 @@ async def test_authenticate_ws_rejects_deleted_user_bearer_token(monkeypatch):
 @pytest.mark.asyncio
 async def test_jwt_principal_rejects_deleted_user():
     with pytest.raises(HTTPException) as exc:
-        await ws_api._jwt_principal(_JwtScopeDbStub(is_admin=None), "deleted")  # noqa: SLF001
+        await ws_api._jwt_principal(_JwtScopeDbStub(is_admin=None), "deleted")
 
     assert exc.value.status_code == 401
     assert exc.value.detail == "User not found"
@@ -670,7 +670,7 @@ async def test_ws_log_access_revalidates_authenticated_user(monkeypatch):
     db = _LogAccessDbStub({"exists": 1})
     monkeypatch.setattr(ws_api, "get_db", lambda: db)
 
-    assert await ws_api._ws_has_log_access("regular-user", None) is True  # noqa: SLF001
+    assert await ws_api._ws_has_log_access("regular-user", None) is True
     assert "FROM users" in db.queries[0]
 
 
@@ -678,7 +678,7 @@ async def test_ws_log_access_revalidates_authenticated_user(monkeypatch):
 async def test_ws_log_access_rejects_deleted_user(monkeypatch):
     monkeypatch.setattr(ws_api, "get_db", lambda: _LogAccessDbStub(None))
 
-    assert await ws_api._ws_has_log_access("deleted", None) is False  # noqa: SLF001
+    assert await ws_api._ws_has_log_access("deleted", None) is False
 
 
 @pytest.mark.asyncio

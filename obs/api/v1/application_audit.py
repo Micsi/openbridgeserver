@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from functools import wraps
 import inspect
 import logging
-from typing import Any, Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from functools import wraps
+from typing import Any
 
 from fastapi import HTTPException, Request
 
@@ -85,8 +85,8 @@ def audit_application_contract(
             ):
                 return await endpoint(*args, **kwargs)
 
-        setattr(wrapped, "__audit_contract__", (method.upper(), path))
-        setattr(wrapped, "__audit_contract_delivery__", "failure_only")
+        wrapped.__audit_contract__ = method.upper(), path
+        wrapped.__audit_contract_delivery__ = "failure_only"
         return wrapped
 
     return decorate
@@ -94,7 +94,7 @@ def audit_application_contract(
 
 def mark_contract_audited(exc: HTTPException) -> HTTPException:
     """Mark an HTTP error whose route already wrote a richer canonical event."""
-    setattr(exc, "__audit_contract_written__", True)
+    exc.__audit_contract_written__ = True
     return exc
 
 

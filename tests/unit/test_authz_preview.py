@@ -9,7 +9,6 @@ from obs.api.v1 import authz as authz_api
 from obs.db.database import Database
 from obs.models.authz import AuthzPreviewGrant, AuthzPreviewPrincipal, AuthzPreviewRequest, AuthzPreviewTarget
 
-
 NOW = "2026-06-10T00:00:00+00:00"
 
 
@@ -78,6 +77,8 @@ async def _link_datapoint(db: Database, dp_id: str, node_id: str) -> None:
 async def _insert_persisted_grant(
     db: Database,
     *,
+    principal_type: str = "user",
+    principal_id: str = "alice",
     node_type: str = "hierarchy",
     node_id: str,
     role: str = "guest",
@@ -86,9 +87,9 @@ async def _insert_persisted_grant(
     await db.execute_and_commit(
         """
         INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
-        VALUES ('user', 'alice', ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (node_type, node_id, role, effect),
+        (principal_type, principal_id, node_type, node_id, role, effect),
     )
 
 
@@ -335,3 +336,45 @@ async def test_preview_direct_datapoint_read_ignores_descendant_hierarchy_deny(d
     assert result.reason == "allowed"
     assert result.effective_role == "guest"
     assert [(grant.node_type, grant.node_id, grant.effect) for grant in result.matching_grants] == [("datapoint", dp_id, "allow")]
+
+
+@pytest.mark.asyncio
+async def test_preview_api_key_alias_draft_replaces_canonical_persisted_grant(db: Database) -> None:
+    api_key_id = str(uuid.uuid4())
+    dp_id = str(uuid.uuid4())
+    await _insert_datapoint(db, dp_id)
+    await _insert_persisted_grant(
+        db,
+        principal_type="api_key",
+        principal_id=api_key_id,
+        node_type="datapoint",
+        node_id=dp_id,
+        role="resident",
+        effect="deny",
+    )
+
+    response = await authz_api.preview_permissions(
+        AuthzPreviewRequest(
+            principal=AuthzPreviewPrincipal(
+                principal_type="api_key",
+                principal_id=f"api_key:{api_key_id}",
+            ),
+            actions=["write"],
+            targets=[AuthzPreviewTarget(node_type="datapoint", node_id=dp_id)],
+            draft_grants=[
+                AuthzPreviewGrant(
+                    principal_type="api_key",
+                    principal_id=f"api_key:{api_key_id}",
+                    node_type="datapoint",
+                    node_id=dp_id,
+                    role="resident",
+                )
+            ],
+        ),
+        db=db,
+        _admin="admin",
+    )
+
+    result = response.results[0]
+    assert result.allowed is True
+    assert [(grant.principal_id, grant.effect) for grant in result.matching_grants] == [(f"api_key:{api_key_id}", "allow")]

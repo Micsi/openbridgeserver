@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator, Callable
-from hashlib import sha256
 from dataclasses import dataclass
 from enum import StrEnum
+from hashlib import sha256
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request
@@ -106,7 +106,7 @@ def _assert_safe_details(value: Any, *, path: str = "details") -> None:
             _assert_safe_details(nested, path=f"{path}[{index}]")
         return
     if isinstance(value, bytes):
-        raise ValueError(f"binary audit detail at {path}")
+        raise TypeError(f"binary audit detail at {path}")
 
 
 def audit_payload_sha256(value: Any) -> str:
@@ -213,9 +213,8 @@ class AuditLogWriter:
         unknown_detail_fields = set(details or {}) - contract.allowed_detail_fields
         if unknown_detail_fields:
             raise ValueError(f"audit details not declared by contract: {sorted(unknown_detail_fields)}")
-        if contract.audit_mode == AuditMode.ATOMIC and outcome_value == AuditOutcome.SUCCESS:
-            if commit or not self._db.in_transaction:
-                raise ValueError("successful atomic audit events must use the surrounding transaction")
+        if contract.audit_mode == AuditMode.ATOMIC and outcome_value == AuditOutcome.SUCCESS and (commit or not self._db.in_transaction):
+            raise ValueError("successful atomic audit events must use the surrounding transaction")
         return await self.write(
             contract.audit_action,
             resource_type=contract.scope,

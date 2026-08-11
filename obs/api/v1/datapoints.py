@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field, field_serializer
 
 from obs.api.audit import contract_audit, set_contract_audit_details, set_contract_audit_resource_id
 from obs.api.auth import Principal, get_admin_user, get_current_principal
-from obs.api.capabilities import ConfigCapability, audit_config_capability_use, require_config_capability
 from obs.api.authz import AuthzAction, AuthzTarget, RoleGrant, authorize
 from obs.api.authz_service import (
     _datapoint_read_grants,
@@ -32,6 +31,7 @@ from obs.api.authz_service import (
     load_role_grants,
     resolve_datapoint_targets,
 )
+from obs.api.capabilities import ConfigCapability, audit_config_capability_use, require_config_capability
 from obs.api.v1.application_audit import audit_application_contract, write_application_success
 from obs.api.v1.datapoint_config import collect_datapoint_ids_from_config
 from obs.api.v1.services.knx_traceability import KnxDatapointContextOut, build_datapoint_knx_context

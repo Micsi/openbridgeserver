@@ -7,7 +7,6 @@ from obs.api.auth import get_admin_user, get_current_principal
 from obs.api.v1 import adapters, logic, visu
 from obs.api.v1.route_classification_registry import ROUTE_CLASSIFICATIONS
 
-
 CREATION_ROUTE_MATRIX = (
     (adapters.router, "/instances", "POST", get_admin_user, "/api/v1/adapters/instances"),
     (

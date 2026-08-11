@@ -13,7 +13,6 @@ from obs.api.v1 import datapoints as dp_api
 from obs.core.registry import ValueState
 from obs.db.database import Database
 
-
 NOW = "2026-06-10T00:00:00+00:00"
 
 
@@ -425,9 +424,11 @@ async def test_write_value_explicit_deny_overrides_public_page_scope(monkeypatch
         VALUES ('page-public-deny-write', NULL, 'Public', 'PAGE', 0, NULL, 'public', NULL, ?, ?, ?)
         """,
         (
-            '{"grid_cols":12,"grid_row_height":80,"grid_cell_width":120,"background":null,'
-            f'"widgets":[{{"id":"w","name":"W","type":"value","datapoint_id":"{datapoint.id}",'
-            '"status_datapoint_id":null,"x":0,"y":0,"w":1,"h":1,"config":{}}]}',
+            (
+                '{"grid_cols":12,"grid_row_height":80,"grid_cell_width":120,"background":null,'
+                f'"widgets":[{{"id":"w","name":"W","type":"value","datapoint_id":"{datapoint.id}",'
+                '"status_datapoint_id":null,"x":0,"y":0,"w":1,"h":1,"config":{}}]}'
+            ),
             NOW,
             NOW,
         ),
@@ -472,9 +473,11 @@ async def test_write_value_user_page_scope_requires_assignment(monkeypatch, db: 
         VALUES ('page-user-write', NULL, 'User', 'PAGE', 0, NULL, 'user', NULL, ?, ?, ?)
         """,
         (
-            '{"grid_cols":12,"grid_row_height":80,"grid_cell_width":120,"background":null,'
-            f'"widgets":[{{"id":"w","name":"W","type":"value","datapoint_id":"{datapoint.id}",'
-            '"status_datapoint_id":null,"x":0,"y":0,"w":1,"h":1,"config":{}}]}',
+            (
+                '{"grid_cols":12,"grid_row_height":80,"grid_cell_width":120,"background":null,'
+                f'"widgets":[{{"id":"w","name":"W","type":"value","datapoint_id":"{datapoint.id}",'
+                '"status_datapoint_id":null,"x":0,"y":0,"w":1,"h":1,"config":{}}]}'
+            ),
             NOW,
             NOW,
         ),
@@ -532,9 +535,11 @@ async def test_write_value_preserves_public_page_scope(monkeypatch, db: Database
         VALUES ('page-public-write', NULL, 'Public', 'PAGE', 0, NULL, 'public', NULL, ?, ?, ?)
         """,
         (
-            '{"grid_cols":12,"grid_row_height":80,"grid_cell_width":120,"background":null,'
-            f'"widgets":[{{"id":"w","name":"W","type":"value","datapoint_id":"{datapoint.id}",'
-            '"status_datapoint_id":null,"x":0,"y":0,"w":1,"h":1,"config":{}}]}',
+            (
+                '{"grid_cols":12,"grid_row_height":80,"grid_cell_width":120,"background":null,'
+                f'"widgets":[{{"id":"w","name":"W","type":"value","datapoint_id":"{datapoint.id}",'
+                '"status_datapoint_id":null,"x":0,"y":0,"w":1,"h":1,"config":{}}]}'
+            ),
             NOW,
             NOW,
         ),
@@ -974,9 +979,11 @@ async def test_central_plant_write_blocked_via_page_scope(monkeypatch, db: Datab
         VALUES ('page-central-public', NULL, 'Central', 'PAGE', 0, NULL, 'public', NULL, ?, ?, ?)
         """,
         (
-            '{"grid_cols":12,"grid_row_height":80,"grid_cell_width":120,"background":null,'
-            f'"widgets":[{{"id":"w","name":"W","type":"value","datapoint_id":"{datapoint.id}",'
-            '"status_datapoint_id":null,"x":0,"y":0,"w":1,"h":1,"config":{}}]}',
+            (
+                '{"grid_cols":12,"grid_row_height":80,"grid_cell_width":120,"background":null,'
+                f'"widgets":[{{"id":"w","name":"W","type":"value","datapoint_id":"{datapoint.id}",'
+                '"status_datapoint_id":null,"x":0,"y":0,"w":1,"h":1,"config":{}}]}'
+            ),
             NOW,
             NOW,
         ),

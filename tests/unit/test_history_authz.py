@@ -12,7 +12,6 @@ from obs.api.auth import Principal
 from obs.api.v1 import history as history_api
 from obs.db.database import Database
 
-
 NOW = "2026-06-10T00:00:00+00:00"
 
 

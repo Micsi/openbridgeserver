@@ -16,7 +16,6 @@ from obs.api.v1 import knxproj as knxproj_api
 from obs.db.database import Database
 from obs.models.datapoint import DataPoint
 
-
 NOW = "2026-06-10T00:00:00+00:00"
 
 

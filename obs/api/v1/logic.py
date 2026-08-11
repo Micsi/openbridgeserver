@@ -25,8 +25,8 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from obs.api.auth import Principal, get_current_principal, get_current_user
 from obs.api.audit import AuditLogWriter, AuditOutcome, build_audit_context
+from obs.api.auth import Principal, get_current_principal, get_current_user
 from obs.api.authz import AuthzAction, AuthzDecision, AuthzTarget, RoleGrant, authorize
 from obs.api.authz_service import filter_authorized_datapoints, load_role_grants, resolve_datapoint_targets
 from obs.api.v1.application_audit import audit_application_contract, mark_contract_audited, write_application_success
@@ -358,7 +358,7 @@ async def _require_logic_graph_generate(
     if principal.type == "user" and principal.is_admin:
         return
     grants = await load_role_grants(db, principal)
-    current_control_class = row["control_class"] if "control_class" in row.keys() else "room_local"
+    current_control_class = row["control_class"] if "control_class" in row.keys() else "room_local"  # noqa: SIM118 -- sqlite Row membership checks values
     graph_targets = [
         AuthzTarget(
             node_type="logic_graph",
@@ -655,7 +655,7 @@ async def update_graph_full(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Graph nicht gefunden")
     control_class = (
-        body.control_class if "control_class" in body.model_fields_set else (row["control_class"] if "control_class" in row.keys() else "room_local")
+        body.control_class if "control_class" in body.model_fields_set else (row["control_class"] if "control_class" in row.keys() else "room_local")  # noqa: SIM118 -- sqlite Row membership checks values
     )
     await _require_logic_graph_generate(
         db,
@@ -719,7 +719,9 @@ async def update_graph_partial(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Graph nicht gefunden")
     proposed_flow = body.flow_data if body.flow_data is not None else _flow_from_row(row)
-    control_class = body.control_class or (row["control_class"] if "control_class" in row.keys() else "room_local")
+    control_class = body.control_class or (
+        row["control_class"] if "control_class" in row.keys() else "room_local"  # noqa: SIM118 -- sqlite Row membership checks values
+    )
     await _require_logic_graph_generate(
         db,
         _principal_from_mutation_dependency(_user),
@@ -806,7 +808,7 @@ async def delete_graph(
         principal,
         row,
         _flow_from_row(row),
-        control_class=row["control_class"] if "control_class" in row.keys() else "room_local",
+        control_class=row["control_class"] if "control_class" in row.keys() else "room_local",  # noqa: SIM118 -- sqlite Row membership checks values
     )
     async with db.transaction():
         await db.execute(

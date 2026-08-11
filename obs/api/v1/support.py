@@ -26,8 +26,8 @@ from pydantic import BaseModel, Field
 
 from obs import __version__
 from obs.adapters import registry as adapter_registry
-from obs.api.auth import get_admin_user
 from obs.api.audit import AuditLogWriter, AuditOutcome, build_audit_context
+from obs.api.auth import get_admin_user
 from obs.config import get_settings
 from obs.db.database import Database, get_db
 from obs.log_buffer import get_log_buffer, set_log_buffer_level

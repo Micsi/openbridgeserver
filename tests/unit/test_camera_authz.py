@@ -10,7 +10,6 @@ from fastapi.responses import StreamingResponse
 from obs.api.v1 import camera as camera_api
 from obs.db.database import Database
 
-
 NOW = "2026-06-10T00:00:00+00:00"
 CAMERA_URL = "http://camera.local/stream"
 
@@ -198,7 +197,7 @@ async def test_camera_auth_treats_stale_query_token_as_optional_with_page_scope(
         query_params={"page_id": "page-camera"},
     )
 
-    assert await camera_api._camera_auth(request, _token="stale.jwt") is None  # noqa: SLF001
+    assert await camera_api._camera_auth(request, _token="stale.jwt") is None
 
 
 @pytest.mark.asyncio
@@ -212,7 +211,7 @@ async def test_camera_auth_rejects_stale_query_token_without_page_scope(
     request = SimpleNamespace(headers={}, query_params={})
 
     with pytest.raises(HTTPException):
-        await camera_api._camera_auth(request, _token="stale.jwt")  # noqa: SLF001
+        await camera_api._camera_auth(request, _token="stale.jwt")
 
 
 @pytest.mark.asyncio
@@ -221,7 +220,7 @@ async def test_camera_auth_rejects_deleted_user_bearer_token(monkeypatch: pytest
     request = SimpleNamespace(headers={"Authorization": "Bearer valid.jwt"}, query_params={})
 
     with pytest.raises(HTTPException) as exc:
-        await camera_api._camera_auth(request, _token="", db=db)  # noqa: SLF001
+        await camera_api._camera_auth(request, _token="", db=db)
 
     assert exc.value.status_code == 401
     assert exc.value.detail == "User not found"

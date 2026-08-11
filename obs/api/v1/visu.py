@@ -31,7 +31,6 @@ from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from obs.api.auth import Principal, get_admin_user, get_current_principal, limiter
-from obs.api.capabilities import ConfigCapability, audit_config_capability_use, require_config_capability
 from obs.api.authz import AuthzAction, authorize
 from obs.api.authz_service import (
     authorize_visu_page,
@@ -39,6 +38,7 @@ from obs.api.authz_service import (
     load_role_grants,
     resolve_visu_page_targets,
 )
+from obs.api.capabilities import ConfigCapability, audit_config_capability_use, require_config_capability
 from obs.api.v1.application_audit import audit_application_contract, write_application_success
 from obs.api.v1.datapoint_config import collect_datapoint_ids_from_config, is_uuid_str
 from obs.api.v1.sessions import create_session, validate_session
@@ -119,7 +119,7 @@ async def _get_node_or_404(db: Database, node_id: str) -> VisuNode:
     )
     if not row:
         raise HTTPException(status_code=404, detail="Knoten nicht gefunden")
-    access = row["access_mode"] if "access_mode" in row.keys() else None
+    access = row["access_mode"] if "access_mode" in row.keys() else None  # noqa: SIM118 -- sqlite Row membership checks values
     return _row_to_node(row, access=access)
 
 
@@ -136,7 +136,7 @@ async def _resolve_access(db: Database, node_id: str) -> str:
         )
         if not row:
             break
-        access_mode = row["access_mode"] if "access_mode" in row.keys() else row["access"]
+        access_mode = row["access_mode"] if "access_mode" in row.keys() else row["access"]  # noqa: SIM118 -- sqlite Row membership checks values
         if access_mode is not None:
             return access_mode
         current_id = row["parent_id"]
@@ -158,7 +158,7 @@ async def _resolve_access_with_node(db: Database, node_id: str) -> tuple[str, st
         )
         if not row:
             break
-        access_mode = row["access_mode"] if "access_mode" in row.keys() else row["access"]
+        access_mode = row["access_mode"] if "access_mode" in row.keys() else row["access"]  # noqa: SIM118 -- sqlite Row membership checks values
         if access_mode is not None:
             return access_mode, current_id
         current_id = row["parent_id"]
@@ -185,7 +185,7 @@ async def _resolve_access_with_node_overrides(
         )
         if not row:
             break
-        stored_access = row["access_mode"] if "access_mode" in row.keys() else row["access"]
+        stored_access = row["access_mode"] if "access_mode" in row.keys() else row["access"]  # noqa: SIM118 -- sqlite Row membership checks values
         access = access_overrides[current_id] if access_overrides and current_id in access_overrides else stored_access
         if access is not None:
             return access, current_id
@@ -568,7 +568,7 @@ async def get_tree(
     return [
         _row_to_summary(
             row,
-            access=row["access_mode"] if "access_mode" in row.keys() else None,
+            access=row["access_mode"] if "access_mode" in row.keys() else None,  # noqa: SIM118 -- sqlite Row membership checks values
             parent_id=row["parent_id"] if row["parent_id"] in visible_ids else None,
         )
         for row in visible_rows
@@ -894,7 +894,7 @@ async def get_breadcrumb(
     return [
         _row_to_summary(
             row,
-            access=row["access_mode"] if "access_mode" in row.keys() else None,
+            access=row["access_mode"] if "access_mode" in row.keys() else None,  # noqa: SIM118 -- sqlite Row membership checks values
             parent_id=row["parent_id"] if row["parent_id"] in visible_ids else None,
         )
         for row in rows
@@ -922,7 +922,7 @@ async def get_children(
         (node_id,),
     )
     return [
-        _row_to_summary(row, access=row["access_mode"] if "access_mode" in row.keys() else None)
+        _row_to_summary(row, access=row["access_mode"] if "access_mode" in row.keys() else None)  # noqa: SIM118 -- sqlite Row membership checks values
         for row in rows
         if await _can_discover_node(db, row["id"], principal)
     ]

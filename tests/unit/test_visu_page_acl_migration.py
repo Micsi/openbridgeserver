@@ -203,7 +203,7 @@ async def test_config_export_import_keeps_policy_and_grants_but_never_pin(
     monkeypatch.setattr(icons_api, "_icons_dir", lambda: tmp_path)
     monkeypatch.setattr("obs.adapters.registry.stop_all", AsyncMock())
     monkeypatch.setattr("obs.adapters.registry.start_all", AsyncMock())
-    monkeypatch.setattr("obs.adapters.registry.get_all_instances", lambda: {})
+    monkeypatch.setattr("obs.adapters.registry.get_all_instances", dict)
     monkeypatch.setattr("obs.core.event_bus.get_event_bus", MagicMock())
     try:
         now = "2026-07-13T00:00:00Z"

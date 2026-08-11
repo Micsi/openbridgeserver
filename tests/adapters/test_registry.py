@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,11 +22,11 @@ from obs.adapters.registry import (
     register,
     reload_instance_bindings,
     restart_instance,
-    supports_delegation,
     start_all,
     start_instance,
     stop_all,
     stop_instance,
+    supports_delegation,
 )
 
 # ---------------------------------------------------------------------------
@@ -208,7 +209,7 @@ class TestLookup:
 
         class Malformed:
             adapter_type = "MALFORMED"
-            delegation_capabilities = {AdapterDelegationCapability.LINK_BINDING}
+            delegation_capabilities: ClassVar = {AdapterDelegationCapability.LINK_BINDING}
 
         reg._adapters.update(DELEGABLE=Delegable, LEGACY=Legacy, MALFORMED=Malformed)
 

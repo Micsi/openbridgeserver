@@ -5,14 +5,13 @@ import pytest
 from obs.api.auth import Principal
 from obs.api.authz import AuthzAction, GrantEffect, Role
 from obs.api.authz_service import (
-    filter_authorized_hierarchy_nodes,
     filter_authorized_datapoints,
+    filter_authorized_hierarchy_nodes,
     load_role_grants,
     resolve_datapoint_targets,
     resolve_hierarchy_targets,
 )
 from obs.db.database import Database
-
 
 NOW = "2026-06-10T00:00:00+00:00"
 

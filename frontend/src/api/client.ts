@@ -23,18 +23,14 @@ function extractDetail(body: unknown, fallback: string): string {
 }
 
 export class ApiRequestError extends Error {
-  readonly status?: number
-  readonly code?: string
-
   constructor(
     message: string,
-    statusOrCode?: number | string,
+    readonly status?: number,
+    readonly code?: string,
     readonly details?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'ApiRequestError'
-    if (typeof statusOrCode === 'number') this.status = statusOrCode
-    else this.code = statusOrCode
   }
 }
 
@@ -145,9 +141,9 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
       const details = detail as Record<string, unknown>
       const code = typeof details.code === 'string' ? details.code : undefined
-      throw new ApiRequestError(code ?? res.statusText, code, details)
+      throw new ApiRequestError(code ?? res.statusText, res.status, code, details)
     }
-    throw new ApiRequestError(extractDetail(body, res.statusText))
+    throw new ApiRequestError(extractDetail(body, res.statusText), res.status)
   }
 
   // 204 No Content

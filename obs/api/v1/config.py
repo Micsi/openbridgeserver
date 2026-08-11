@@ -25,8 +25,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Re
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from obs.api.auth import get_admin_user
 from obs.api.audit import AuditLogWriter, AuditOutcome, audit_payload_sha256, build_audit_context
+from obs.api.auth import get_admin_user
 from obs.api.v1.authz import _canonical_principal_id, _require_grant_targets
 from obs.api.v1.bindings import _json_config, _validate_adapter_binding
 from obs.api.v1.services.hierarchy_lifecycle import collect_hierarchy_tree_node_ids, delete_hierarchy_grants
@@ -408,7 +408,7 @@ async def export_config(
             description=r["description"] or "",
             enabled=bool(r["enabled"]),
             flow_data=json.loads(r["flow_data"]) if r["flow_data"] else {"nodes": [], "edges": []},
-            control_class=r["control_class"] if "control_class" in r.keys() else "room_local",
+            control_class=r["control_class"] if "control_class" in r.keys() else "room_local",  # noqa: SIM118 -- sqlite Row membership checks values
         )
         for r in graph_rows
     ]
@@ -564,7 +564,7 @@ async def export_config(
             node_id=row["node_id"],
             role=row["role"],
             effect=row["effect"],
-            central_control=bool(row["central_control"]) if "central_control" in row.keys() else False,
+            central_control=bool(row["central_control"]) if "central_control" in row.keys() else False,  # noqa: SIM118 -- sqlite Row membership checks values
         )
         for row in valid_grant_rows
     ]
@@ -1316,7 +1316,7 @@ async def import_config(
                     ),
                 )
             result.authz_grants_upserted += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- config import records per-item failures and continues
             result.errors.append(f"AuthzGrant {grant.principal_type}:{grant.principal_id}/{grant.node_type}:{grant.node_id}: {exc}")
 
     # --- API-key configuration capability sets ---
@@ -1339,7 +1339,7 @@ async def import_config(
                     (capability_set.key_id, capability_set.revision),
                 )
             result.api_key_capability_sets_upserted += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- config import records per-item failures and continues
             result.errors.append(f"ApiKeyCapabilitySet {capability_set.key_id}: {exc}")
 
     if request is not None:

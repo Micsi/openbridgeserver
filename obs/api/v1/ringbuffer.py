@@ -32,8 +32,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from obs.api.auth import Principal, get_admin_user, get_current_principal, get_current_user
 from obs.api.audit import audit_payload_sha256
+from obs.api.auth import Principal, get_admin_user, get_current_principal, get_current_user
 from obs.api.authz import AuthzAction, AuthzTarget, RoleGrant, authorize
 from obs.api.authz_service import filter_authorized_datapoints, load_role_grants
 from obs.api.v1.application_audit import audit_application_contract, write_application_success

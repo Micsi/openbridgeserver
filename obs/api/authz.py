@@ -155,9 +155,12 @@ def _authorize_target(*, action: AuthzAction, target: AuthzTarget, grants: Itera
 
     if any(_grant_allows(grant=grant, action=action, target=target) for grant in matching_grants):
         return AuthzDecision(True, "allowed")
-    if action != AuthzAction.READ and target.control_class == ControlClass.CENTRAL_PLANT:
-        if any(_role_allows(role=grant.role, action=action, target=target) for grant in matching_grants):
-            return AuthzDecision(False, "central_control_required")
+    if (
+        action != AuthzAction.READ
+        and target.control_class == ControlClass.CENTRAL_PLANT
+        and any(_role_allows(role=grant.role, action=action, target=target) for grant in matching_grants)
+    ):
+        return AuthzDecision(False, "central_control_required")
     return AuthzDecision(False, "missing_allow")
 
 

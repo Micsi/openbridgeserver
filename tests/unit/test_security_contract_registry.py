@@ -13,11 +13,11 @@ from obs.api.router import router as api_router
 from obs.api.v1.application_audit import audit_application_contract
 from obs.api.v1.route_classification_registry import ROUTE_CLASSIFICATIONS
 from obs.api.v1.security_contract_registry import (
+    ROUTE_SECURITY_CONTRACTS,
     AuditEffect,
     AuditMode,
     AuthorizationMode,
     PrincipalMode,
-    ROUTE_SECURITY_CONTRACTS,
     get_route_security_contract,
 )
 from obs.db.database import get_db

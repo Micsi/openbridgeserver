@@ -11,7 +11,6 @@ from obs.api.v1 import adapters as adapters_api
 from obs.api.v1 import config as config_api
 from obs.db.database import Database
 
-
 NOW = "2026-07-13T00:00:00+00:00"
 
 

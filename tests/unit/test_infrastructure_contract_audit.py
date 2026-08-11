@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import inspect
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -21,15 +21,15 @@ from obs.api.audit import (
     set_contract_audit_summary,
 )
 from obs.api.auth import Principal, get_admin_user
-from obs.api.v1.adapters import _bulk_mutation_result
 from obs.api.v1 import adapters as adapters_api
 from obs.api.v1 import bindings as bindings_api
 from obs.api.v1 import datapoints as datapoints_api
 from obs.api.v1 import hierarchy as hierarchy_api
 from obs.api.v1 import knxkeyfile as knxkeyfile_api
+from obs.api.v1.adapters import _bulk_mutation_result
 from obs.api.v1.datapoints import _audit_metadata_snapshot
 from obs.api.v1.route_classification_registry import ROUTE_CLASSIFICATIONS
-from obs.api.v1.security_contract_registry import AuditEffect, AuditMode, ROUTE_SECURITY_CONTRACTS
+from obs.api.v1.security_contract_registry import ROUTE_SECURITY_CONTRACTS, AuditEffect, AuditMode
 from obs.db.database import Database
 from obs.models.datapoint import DataPoint
 from tools.check_authz_contract import collect_live_routes

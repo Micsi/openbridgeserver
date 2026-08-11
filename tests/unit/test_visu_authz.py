@@ -15,7 +15,6 @@ from obs.api.v1 import visu as visu_api
 from obs.db.database import Database
 from obs.models.visu import PageConfig, WidgetInstance
 
-
 NOW = "2026-06-10T00:00:00+00:00"
 ALLOWED_DP_ID = uuid.UUID("00000000-0000-0000-0000-000000006181")
 BLOCKED_DP_ID = uuid.UUID("00000000-0000-0000-0000-000000006182")

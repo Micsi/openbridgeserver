@@ -24,8 +24,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
-from obs.api.auth import get_admin_user
 from obs.api.audit import AuditLogWriter, AuditOutcome, build_audit_context
+from obs.api.auth import get_admin_user
 from obs.db.database import Database, get_db
 
 logger = logging.getLogger(__name__)
