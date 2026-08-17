@@ -190,6 +190,9 @@ named sections there before acting; do not assume the root instruction budget co
   `Internationalisation (i18n)` section, including its hard gate and Weblate source-language rule.
 - Before changing backend startup, data flow, adapters, configuration, authentication, tests, or
   dependencies, read the applicable parts of `Architecture`.
+- Before adding or changing a Logic function block, read `docs/architecture/logic-nodes.md` — it
+  defines the node/registry contract, the allowed dependency direction, and the procedure for
+  adding a new block. Automated guardrail tests enforce these rules.
 - Before changing workflows, versioning, images, LXC packaging, runtime scripts, or release notes,
   read the applicable parts of `Release & CI`.
 

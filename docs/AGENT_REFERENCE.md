@@ -315,6 +315,25 @@ Adapters self-register at import time via `@register` (from `obs/adapters/regist
 4. Decorate the class with `@register`
 5. Add the import to the adapter block in `obs/main.py`
 
+### Logic Function Blocks
+
+Built-in Logic function blocks live in one module per block under `obs/logic/nodes/<category>/`,
+each exporting a single `NODE_TYPE`. The category package name always equals the node's `category`
+field, and each category `__init__.py` exports its own `NODE_TYPES` tuple. `obs/logic/registry.py`
+combines those tuples into the public catalogue (`BUILTIN_NODE_TYPES`, `NODE_TYPE_REGISTRY`,
+`get_node_type`, `list_node_types`); `obs/logic/node_types.py` is a deprecated compatibility facade
+that only re-exports them.
+
+Node behaviour stays in the two documented shared handlers — `GraphExecutor._eval_node`
+(`obs/logic/executor.py`, per-tick evaluation) and `LogicManager` (`obs/logic/manager.py`,
+scheduling and side-effect orchestration). Node-specific branches elsewhere are not allowed.
+
+**Adding a new block** touches its own module, one category `__init__.py`, `obs/logic/capabilities.py`,
+the dispatcher and its focused tests under `tests/unit/logic/nodes/<category>/`. The complete
+contract, dependency rules and step-by-step procedure are in
+[`docs/architecture/logic-nodes.md`](architecture/logic-nodes.md); the guardrails are enforced by
+`tests/unit/logic/test_node_architecture.py` and `tests/unit/logic/test_node_registry.py`.
+
 ### Configuration
 
 Priority (highest → lowest): environment variables → `config.yaml` → built-in defaults.
