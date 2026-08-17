@@ -149,6 +149,9 @@
           class="logic-canvas"
           @connect="onConnect"
           @node-click="onNodeClick"
+          @node-drag-start="onNodeDragStart"
+          @node-drag="onNodeDrag"
+          @node-drag-stop="onNodeDragStop"
         >
           <Background :pattern-color="bgPatternColor" :gap="snapGridSize" :offset="0.5" />
           <Controls class="logic-controls" />
@@ -166,6 +169,12 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M13 10V3L4 14h7v7l9-11h-7z"/>
           </svg>
           <p class="text-sm">{{ $t('logic.emptyHint') }}</p>
+        </div>
+
+        <!-- Block-sized crosshair overlay while dragging (issue #1118) -->
+        <div v-if="dragCrosshair" class="logic-crosshair pointer-events-none absolute inset-0" data-testid="logic-crosshair-overlay">
+          <div class="logic-crosshair__bar logic-crosshair__bar--h" :style="{ height: dragCrosshair.height + 'px', transform: `translateY(${dragCrosshair.top}px)` }" />
+          <div class="logic-crosshair__bar logic-crosshair__bar--v" :style="{ width: dragCrosshair.width + 'px', transform: `translateX(${dragCrosshair.left}px)` }" />
         </div>
       </div>
 
@@ -327,6 +336,40 @@ function updateSnapGridSize(event) {
   event.target.value = String(snapGridSize.value)
   localStorage.setItem(SNAP_SIZE_KEY, String(snapGridSize.value))
 }
+
+// ── Crosshair alignment overlay while dragging (issue #1118) ───────────────
+// Block-sized cross (h-bar as tall as the dragged block, v-bar as wide as
+// it) spanning the full canvas, so edges can be visually lined up against
+// any other block currently in view — independent of grid snapping.
+const dragCrosshair = ref(null)
+
+function updateDragCrosshair(node) {
+  if (!node?.dimensions?.width || !node?.dimensions?.height) {
+    dragCrosshair.value = null
+    return
+  }
+  const { getViewport } = useVueFlow('logic-canvas')
+  const { x, y, zoom } = getViewport()
+  // `node.computedPosition` is recalculated by vue-flow via a `watch()` on
+  // `node.position.x/y` — a deferred effect that hasn't run yet when this
+  // drag-event handler fires synchronously, so it can still hold the
+  // *previous* step's coordinates on whichever axis just changed (the
+  // rendered node itself doesn't show this because Vue's render flush runs
+  // after that watcher). `node.position` is written synchronously in the
+  // same tick as this event and is already absolute here — none of this
+  // editor's blocks nest under a parent node.
+  const pos = node.position
+  dragCrosshair.value = {
+    left:   pos.x * zoom + x,
+    top:    pos.y * zoom + y,
+    width:  node.dimensions.width * zoom,
+    height: node.dimensions.height * zoom,
+  }
+}
+
+function onNodeDragStart({ node }) { updateDragCrosshair(node) }
+function onNodeDrag({ node })      { updateDragCrosshair(node) }
+function onNodeDragStop()          { dragCrosshair.value = null }
 
 // ── Node type → component mapping ─────────────────────────────────────────
 const _generic      = markRaw(GenericNode)
@@ -1340,6 +1383,17 @@ function _onMinimapMouseUp(e) {
 .logic-controls { bottom: 1rem; left: 1rem; }
 .logic-minimap { bottom: 1rem; right: 1rem; background: var(--logic-minimap-bg); border: 1px solid var(--node-card-border); border-radius: 6px; cursor: grab; user-select: none; }
 .logic-minimap--dragging { cursor: grabbing; }
+
+/* Crosshair alignment overlay while dragging a block (issue #1118). Position
+   via `transform` (set inline, updated every drag event) rather than
+   top/left: vue-flow itself moves the dragged node with a transform, which
+   the compositor can repaint on its own thread; a top/left-animated overlay
+   forces a synchronous layout on every mousemove and visibly falls a step
+   behind the node once grid-snapping raises the update rate. */
+.logic-crosshair { z-index: 5; }
+.logic-crosshair__bar { position: absolute; background: rgba(59, 130, 246, 0.18); will-change: transform; }
+.logic-crosshair__bar--h { top: 0; left: 0; right: 0; }
+.logic-crosshair__bar--v { top: 0; left: 0; bottom: 0; }
 
 /* Edge interaction — breite unsichtbare Klickfläche */
 .logic-canvas .vue-flow__edge .vue-flow__edge-interaction {
