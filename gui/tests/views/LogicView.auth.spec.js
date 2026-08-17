@@ -451,6 +451,101 @@ describe('LogicView auth gates', () => {
   })
 })
 
+// ── Grid visibility, independent of snapping (#1075) ───────────────────────
+
+describe('LogicView grid visibility', () => {
+  async function mountWithStorage(storage = {}, { isAdmin = true } = {}) {
+    const graph = makeGraph('graph-1')
+    localStorage.getItem.mockImplementation(key => storage[key] ?? null)
+    return mountLogicView({
+      isAdmin,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+  }
+
+  it('shows the raster by default', async () => {
+    const { wrapper } = await mountWithStorage()
+
+    expect(wrapper.findComponent({ name: 'Background' }).exists()).toBe(true)
+    expect(wrapper.find('[data-testid="btn-grid-visible"]').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('keeps the raster hidden when the browser preference says so', async () => {
+    const { wrapper } = await mountWithStorage({ 'obs-logic-grid-visible': '0' })
+
+    expect(wrapper.findComponent({ name: 'Background' }).exists()).toBe(false)
+    expect(wrapper.find('[data-testid="btn-grid-visible"]').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('toggles the raster and persists the preference per browser', async () => {
+    const { wrapper } = await mountWithStorage()
+
+    await wrapper.find('[data-testid="btn-grid-visible"]').trigger('click')
+    expect(wrapper.findComponent({ name: 'Background' }).exists()).toBe(false)
+    expect(localStorage.setItem).toHaveBeenCalledWith('obs-logic-grid-visible', '0')
+
+    await wrapper.find('[data-testid="btn-grid-visible"]').trigger('click')
+    expect(wrapper.findComponent({ name: 'Background' }).exists()).toBe(true)
+    expect(localStorage.setItem).toHaveBeenCalledWith('obs-logic-grid-visible', '1')
+  })
+
+  it('hides the raster without touching graph data or node coordinates', async () => {
+    const { wrapper, logicApi } = await mountWithStorage()
+    const before = JSON.parse(JSON.stringify(wrapper.vm.nodes))
+
+    await wrapper.find('[data-testid="btn-grid-visible"]').trigger('click')
+
+    expect(JSON.parse(JSON.stringify(wrapper.vm.nodes))).toEqual(before)
+    expect(logicApi.saveGraph).not.toHaveBeenCalled()
+  })
+
+  it('leaves snapping untouched when the raster is hidden', async () => {
+    const { wrapper } = await mountWithStorage({ 'obs-logic-snap-to-grid': '1' })
+
+    await wrapper.find('[data-testid="btn-grid-visible"]').trigger('click')
+
+    expect(wrapper.findComponent({ name: 'Background' }).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'VueFlow' }).props('snapToGrid')).toBe(true)
+  })
+
+  it('keeps the raster visible when snapping is switched off', async () => {
+    const { wrapper } = await mountWithStorage({ 'obs-logic-snap-to-grid': '1' })
+
+    await wrapper.find('[data-testid="btn-snap-to-grid"]').trigger('click')
+
+    expect(wrapper.findComponent({ name: 'VueFlow' }).props('snapToGrid')).toBe(false)
+    expect(wrapper.findComponent({ name: 'Background' }).exists()).toBe(true)
+    expect(wrapper.find('[data-testid="input-snap-grid-size"]').exists()).toBe(true)
+  })
+
+  it('hides the grid size input once neither snapping nor the raster needs it', async () => {
+    const { wrapper } = await mountWithStorage({ 'obs-logic-grid-visible': '0' })
+
+    expect(wrapper.find('[data-testid="input-snap-grid-size"]').exists()).toBe(false)
+  })
+
+  it('offers the raster toggle without edit permissions but keeps snapping admin-only', async () => {
+    const { wrapper } = await mountWithStorage({}, { isAdmin: false })
+
+    expect(wrapper.find('[data-testid="btn-grid-visible"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="btn-snap-to-grid"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="input-snap-grid-size"]').exists()).toBe(false)
+
+    await wrapper.find('[data-testid="btn-grid-visible"]').trigger('click')
+    expect(wrapper.findComponent({ name: 'Background' }).exists()).toBe(false)
+    expect(localStorage.setItem).toHaveBeenCalledWith('obs-logic-grid-visible', '0')
+  })
+
+  it('offers no raster toggle before a logic sheet is opened', async () => {
+    localStorage.getItem.mockImplementation(() => null)
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+
+    expect(wrapper.find('[data-testid="btn-grid-visible"]').exists()).toBe(false)
+  })
+})
+
 describe('LogicView WebSocket', () => {
   let savedWebSocket
   beforeEach(() => { savedWebSocket = global.WebSocket })

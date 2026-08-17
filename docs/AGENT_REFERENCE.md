@@ -112,6 +112,24 @@ Default login: `admin` / `admin`
 - `frontend/` — Visu SPA (Vue 3 + TypeScript), built to `frontend_dist/` (served by FastAPI at `/visu`)
 - Both proxy `/api` to `localhost:8080` during dev via `vite.config`
 
+#### Logic editor node cards
+
+Every node component under `gui/src/components/logic/nodes/` must render its card on the shared
+opaque surface (issue #1074) so the configurable canvas raster (issue #1072) cannot show through
+the block body:
+
+- add the global `logic-node-surface` class (defined unlayered at the end of `gui/src/style.css`)
+  to the card element, and
+- pass the block's category colour as the inline `--node-tint` custom property, built with
+  `nodeTint()` from `gui/src/utils/logicNodeSurface.js` so all blocks share one tint alpha.
+
+The card element's own scoped styles must **not** declare `background`/`background-color` — scoped
+selectors (`.gn-card[data-v-…]`) outrank the shared class and would mask the opaque surface again.
+Card text, borders and handles use the `--node-*` / `--handle-*` theme tokens; hardcoded dark
+colours become unreadable on the light-mode surface. The spec
+`gui/tests/components/logic/nodes/nodeCardSurface.spec.js` asserts this for every node component —
+extend its `CARDS` table when adding one.
+
 ### Internationalisation (i18n)
 
 Both frontends use **vue-i18n v9** (Composition API mode, `legacy: false`).
