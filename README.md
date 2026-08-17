@@ -2000,6 +2000,10 @@ cp config.example.yaml config.yaml
 uvicorn obs.main:create_app --factory --reload --host 0.0.0.0 --port 8080
 ```
 
+### Extending the logic engine
+
+Every built-in logic block is defined in its own module below `obs/logic/nodes/<category>/`, and `obs/logic/registry.py` assembles the public block catalogue from the per-category registries. Adding a new block therefore touches only its own module, one category registration, its capability classification and its own tests. The contract, the dependency rules and the step-by-step procedure are documented in [`docs/architecture/logic-nodes.md`](docs/architecture/logic-nodes.md) and enforced by architectural tests.
+
 ### Database structure
 
 The database is updated automatically — each new version adds missing tables and columns without losing existing data. Current version: **V21**.

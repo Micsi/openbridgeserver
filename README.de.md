@@ -2004,6 +2004,10 @@ cp config.example.yaml config.yaml
 uvicorn obs.main:create_app --factory --reload --host 0.0.0.0 --port 8080
 ```
 
+### Logik-Engine erweitern
+
+Jeder eingebaute Logikbaustein ist in einem eigenen Modul unterhalb von `obs/logic/nodes/<kategorie>/` definiert; `obs/logic/registry.py` setzt den öffentlichen Bausteinkatalog aus den Kategorie-Registries zusammen. Ein neuer Baustein berührt dadurch nur sein eigenes Modul, eine Kategorie-Registrierung, seine Capability-Einstufung und seine eigenen Tests. Der Kontrakt, die Abhängigkeitsregeln und das Schritt-für-Schritt-Vorgehen sind in [`docs/architecture/logic-nodes.md`](docs/architecture/logic-nodes.md) dokumentiert und werden durch Architekturtests abgesichert.
+
 ### Datenbankstruktur
 
 Die Datenbank wird automatisch aktualisiert — jede neue Version fügt fehlende Tabellen und Spalten hinzu, ohne bestehende Daten zu verlieren. Aktuelle Version: **V21**.
