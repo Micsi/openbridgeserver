@@ -50,30 +50,46 @@
           </svg>
           {{ $t('logic.debugBtn') }}
         </button>
-        <div v-if="auth.isAdmin && activeGraphId" class="flex items-center gap-1">
+        <!-- Raster visibility is a purely local presentation preference and is
+             therefore available without edit permissions (#1075); snapping and
+             the grid size stay admin-only because they move blocks. -->
+        <div v-if="activeGraphId" class="flex items-center gap-1">
           <button
             type="button"
-            :class="['btn-secondary btn-sm', snapToGrid ? 'text-blue-400 ring-1 ring-blue-400/50' : 'text-slate-400']"
-            :title="$t('logic.snapToGridTitle')"
-            data-testid="btn-snap-to-grid"
-            @click="snapToGrid = !snapToGrid"
+            :class="['btn-secondary btn-sm', gridVisible ? 'text-blue-400 ring-1 ring-blue-400/50' : 'text-slate-400']"
+            :title="gridVisible ? $t('logic.gridHideTitle') : $t('logic.gridShowTitle')"
+            :aria-pressed="gridVisible ? 'true' : 'false'"
+            data-testid="btn-grid-visible"
+            @click="gridVisible = !gridVisible"
           >
-            # {{ $t('logic.snapToGrid') }}
+            ⊞ {{ $t('logic.gridVisible') }}
           </button>
-          <label v-if="snapToGrid" class="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
-            <span class="sr-only">{{ $t('logic.gridSize') }}</span>
-            <input
-              :value="snapGridSize"
-              type="number"
-              min="5"
-              max="100"
-              step="5"
-              class="input w-16 px-2 py-1 text-xs"
-              data-testid="input-snap-grid-size"
-              @change="updateSnapGridSize"
-            />
-            px
-          </label>
+          <template v-if="auth.isAdmin">
+            <button
+              type="button"
+              :class="['btn-secondary btn-sm', snapToGrid ? 'text-blue-400 ring-1 ring-blue-400/50' : 'text-slate-400']"
+              :title="$t('logic.snapToGridTitle')"
+              :aria-pressed="snapToGrid ? 'true' : 'false'"
+              data-testid="btn-snap-to-grid"
+              @click="snapToGrid = !snapToGrid"
+            >
+              # {{ $t('logic.snapToGrid') }}
+            </button>
+            <label v-if="snapToGrid || gridVisible" class="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+              <span class="sr-only">{{ $t('logic.gridSize') }}</span>
+              <input
+                :value="snapGridSize"
+                type="number"
+                min="5"
+                max="100"
+                step="5"
+                class="input w-16 px-2 py-1 text-xs"
+                data-testid="input-snap-grid-size"
+                @change="updateSnapGridSize"
+              />
+              px
+            </label>
+          </template>
         </div>
         <button v-if="auth.isAdmin && activeGraphId" @click="doToggleEnabled"
           :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-orange-400 ring-1 ring-orange-400/50']"
@@ -150,7 +166,7 @@
           @connect="onConnect"
           @node-click="onNodeClick"
         >
-          <Background :pattern-color="bgPatternColor" :gap="snapGridSize" :offset="0.5" />
+          <Background v-if="gridVisible" :pattern-color="bgPatternColor" :gap="snapGridSize" :offset="0.5" />
           <Controls class="logic-controls" />
           <MiniMap
             ref="minimapRef"
@@ -302,6 +318,9 @@ const edges = ref([])
 // ── Grid snapping ─────────────────────────────────────────────────────────
 const SNAP_ENABLED_KEY = 'obs-logic-snap-to-grid'
 const SNAP_SIZE_KEY = 'obs-logic-snap-grid-size'
+// Raster visibility is independent of snapping (#1075) — it is a per-browser
+// presentation preference and never touches graph data or node coordinates.
+const GRID_VISIBLE_KEY = 'obs-logic-grid-visible'
 const DEFAULT_SNAP_GRID_SIZE = 20
 const MIN_SNAP_GRID_SIZE = 5
 const MAX_SNAP_GRID_SIZE = 100
@@ -313,9 +332,16 @@ const snapGridSize = ref(
     : DEFAULT_SNAP_GRID_SIZE
 )
 const snapGrid = computed(() => [snapGridSize.value, snapGridSize.value])
+// Shown unless it was explicitly hidden, so existing installations keep the
+// raster they know until a user turns it off.
+const gridVisible = ref(localStorage.getItem(GRID_VISIBLE_KEY) !== '0')
 
 watch(snapToGrid, enabled => {
   localStorage.setItem(SNAP_ENABLED_KEY, enabled ? '1' : '0')
+})
+
+watch(gridVisible, visible => {
+  localStorage.setItem(GRID_VISIBLE_KEY, visible ? '1' : '0')
 })
 
 function updateSnapGridSize(event) {
