@@ -48,7 +48,7 @@ from obs.logic.models import (
     LogicUsageOut,
     NodeTypeDef,
 )
-from obs.logic.node_types import get_node_type, list_node_types
+from obs.logic.registry import get_node_type, list_node_types
 from obs.logic.validation import validate_timer_durations
 
 logger = logging.getLogger(__name__)
