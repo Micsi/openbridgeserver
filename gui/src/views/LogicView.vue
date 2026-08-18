@@ -127,14 +127,6 @@
       </div>
     </div>
 
-    <!-- Status bar -->
-    <div v-if="statusMsg" :class="['px-4 py-1.5 text-xs flex-shrink-0', statusMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']" data-testid="status-msg">
-      {{ statusMsg.text }}
-    </div>
-    <div v-else-if="validationWarnings.length" class="px-4 py-1.5 text-xs flex-shrink-0 bg-amber-500/10 text-amber-500">
-      {{ $t(hasDuplicateHandleWarning(validationWarnings) ? 'logic.graphValidationDuplicateHandle' : 'logic.graphValidationCycle', { count: validationWarnings.length }) }}
-    </div>
-
     <!-- Main area -->
     <div class="flex flex-1 overflow-hidden">
       <!-- Node Palette -->
@@ -148,6 +140,17 @@
       <!-- Canvas -->
       <div class="flex-1 relative" ref="canvasWrapper"
            @dragover.prevent @drop="onDrop">
+        <!-- Status bar — an overlay confined to the canvas, not a row in the
+             flex column: a normal-flow bar here would grow/shrink the whole
+             toolbar-below area on every message, shoving the palette, canvas
+             and properties panel up and down while editing. -->
+        <div v-if="statusMsg" :class="['absolute top-0 inset-x-0 z-20 px-4 py-1.5 text-xs pointer-events-none', statusMsg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400']" data-testid="status-msg">
+          {{ statusMsg.text }}
+        </div>
+        <div v-else-if="validationWarnings.length" class="absolute top-0 inset-x-0 z-20 px-4 py-1.5 text-xs pointer-events-none bg-amber-500/10 text-amber-500">
+          {{ $t(hasDuplicateHandleWarning(validationWarnings) ? 'logic.graphValidationDuplicateHandle' : 'logic.graphValidationCycle', { count: validationWarnings.length }) }}
+        </div>
+
         <VueFlow
           v-if="activeGraphId"
           id="logic-canvas"
