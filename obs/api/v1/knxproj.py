@@ -995,7 +995,7 @@ async def import_knxproj_file(
                 else {}
             ),
             **(
-                {"trades": ("Keine Gewerke-Daten aus dieser .knxproj importiert. Der trades-Hierarchieimport wurde übersprungen.")}
+                {"trades": ("Keine Gewerke-Daten aus dieser .knxproj importiert. Der Gewerke-Hierarchieimport wurde übersprungen.")}
                 if trades_count == 0
                 else {}
             ),

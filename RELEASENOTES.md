@@ -11,7 +11,7 @@
 * Security: Introduces a comprehensive role- and scope-based permissions concept for users and API keys across open bridge server. Administrators can centrally assign access according to responsibilities, with consistent enforcement throughout the server, Admin GUI, and Visu; existing installations are migrated conservatively without broadening access. https://github.com/abeggled/openbridgeserver/issues/583 https://github.com/abeggled/openbridgeserver/issues/629
 
 ### Fixes 🐞
-* none
+* Admin GUI/KNX: KNX project imports without trade data now use the localized German label “Gewerke” throughout the hierarchy result instead of exposing the internal `trades` mode name. https://github.com/abeggled/openbridgeserver/issues/1138
 
 ### Known Issues 🔔
 * none
