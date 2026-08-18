@@ -178,4 +178,11 @@ describe('LogicView drag crosshair overlay', () => {
 
     expect(wrapper.vm.dragCrosshair).toBeNull()
   })
+
+  it('clears the overlay when width is measured but height is still zero', async () => {
+    const { wrapper } = await mountLogicView()
+    wrapper.vm.onNodeDragStart({ node: { position: { x: 0, y: 0 }, dimensions: { width: 10, height: 0 } } })
+
+    expect(wrapper.vm.dragCrosshair).toBeNull()
+  })
 })
