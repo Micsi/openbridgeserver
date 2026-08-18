@@ -982,6 +982,144 @@ describe('LogicView graph cycle validation', () => {
   })
 })
 
+describe('LogicView duplicate target handle validation (#1116)', () => {
+  it('blocks connecting a second edge onto an already-connected input handle', async () => {
+    const graph = makeGraph('graph-1', {
+      flow_data: {
+        nodes: [
+          { id: 'a', type: 'const_value', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'const_value', position: { x: 0, y: 160 }, data: {} },
+          { id: 'c', type: 'datapoint_write', position: { x: 160, y: 0 }, data: {} },
+        ],
+        edges: [
+          { id: 'a-c', source: 'a', target: 'c', sourceHandle: 'value', targetHandle: 'value' },
+        ],
+      },
+    })
+    const { wrapper } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+
+    wrapper.vm.onConnect({ source: 'b', target: 'c', sourceHandle: 'value', targetHandle: 'value' })
+
+    expect(wrapper.vm.edges).toHaveLength(1)
+    expect(wrapper.vm.statusMsg.ok).toBe(false)
+  })
+
+  it('allows two edges that target different handles of the same node', async () => {
+    const graph = makeGraph('graph-1', {
+      flow_data: {
+        nodes: [
+          { id: 'a', type: 'const_value', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'const_value', position: { x: 0, y: 160 }, data: {} },
+          { id: 'c', type: 'compare', position: { x: 160, y: 0 }, data: {} },
+        ],
+        edges: [
+          { id: 'a-c', source: 'a', target: 'c', sourceHandle: 'value', targetHandle: 'in1' },
+        ],
+      },
+    })
+    const { wrapper } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+
+    wrapper.vm.onConnect({ source: 'b', target: 'c', sourceHandle: 'value', targetHandle: 'in2' })
+
+    expect(wrapper.vm.edges).toHaveLength(2)
+    expect(wrapper.vm.validationWarnings).toEqual([])
+  })
+
+  it('detects a duplicate on the default "in" handle when edges omit targetHandle', async () => {
+    const graph = makeGraph('graph-1', {
+      flow_data: {
+        nodes: [
+          { id: 'a', type: 'const_value', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'const_value', position: { x: 0, y: 160 }, data: {} },
+          { id: 'c', type: 'not', position: { x: 160, y: 0 }, data: {} },
+        ],
+        edges: [
+          { id: 'a-c', source: 'a', target: 'c', sourceHandle: 'value' },
+          { id: 'b-c', source: 'b', target: 'c', sourceHandle: 'value' },
+        ],
+      },
+    })
+    const { wrapper } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+
+    expect(wrapper.vm.validationWarnings).toEqual([
+      { node_id: 'c', code: 'duplicate_target_handle', message: expect.stringContaining('c.in') },
+    ])
+  })
+
+  it('blocks saving a graph with two edges on the same input handle and marks the target node', async () => {
+    const graph = makeGraph('graph-1', {
+      flow_data: {
+        nodes: [
+          { id: 'a', type: 'const_value', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'const_value', position: { x: 0, y: 160 }, data: {} },
+          { id: 'c', type: 'datapoint_write', position: { x: 160, y: 0 }, data: {} },
+        ],
+        edges: [
+          { id: 'a-c', source: 'a', target: 'c', sourceHandle: 'value', targetHandle: 'value' },
+          { id: 'b-c', source: 'b', target: 'c', sourceHandle: 'value', targetHandle: 'value' },
+        ],
+      },
+    })
+    const { wrapper, logicApi } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+
+    await wrapper.vm.saveGraph()
+
+    expect(logicApi.saveGraph).not.toHaveBeenCalled()
+    expect(wrapper.vm.statusMsg.ok).toBe(false)
+    expect(wrapper.vm.validationWarnings).toEqual([
+      { node_id: 'c', code: 'duplicate_target_handle', message: expect.stringContaining('c.value') },
+    ])
+    expect(wrapper.vm.lastRunOutputs.c.__diagnostic__).toBe('duplicate_target_handle')
+    expect(wrapper.vm.nodes.find(n => n.id === 'c').data._dbg).toBeTruthy()
+  })
+
+  it('reports the duplicate-handle warning on the live status bar for an already-saved graph', async () => {
+    const graph = makeGraph('graph-1', {
+      flow_data: {
+        nodes: [
+          { id: 'a', type: 'const_value', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'const_value', position: { x: 0, y: 160 }, data: {} },
+          { id: 'c', type: 'datapoint_write', position: { x: 160, y: 0 }, data: {} },
+        ],
+        edges: [
+          { id: 'a-c', source: 'a', target: 'c', sourceHandle: 'value', targetHandle: 'value' },
+          { id: 'b-c', source: 'b', target: 'c', sourceHandle: 'value', targetHandle: 'value' },
+        ],
+      },
+    })
+    const { wrapper } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+
+    expect(wrapper.vm.validationWarnings).toHaveLength(1)
+    expect(wrapper.find('[data-testid="status-msg"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Mehrfachverbindung')
+  })
+})
+
 describe('LogicView operation error handling', () => {
   it('shows error status when doDuplicateGraph fails', async () => {
     const graph = makeGraph('graph-1')

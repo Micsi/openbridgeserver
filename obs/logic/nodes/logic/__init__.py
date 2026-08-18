@@ -14,6 +14,7 @@ from obs.logic.nodes.logic.decision import NODE_TYPE as DECISION
 from obs.logic.nodes.logic.gate import NODE_TYPE as GATE
 from obs.logic.nodes.logic.hysteresis import NODE_TYPE as HYSTERESIS
 from obs.logic.nodes.logic.memory import NODE_TYPE as MEMORY
+from obs.logic.nodes.logic.merge import NODE_TYPE as MERGE
 from obs.logic.nodes.logic.not_node import NODE_TYPE as NOT
 from obs.logic.nodes.logic.or_node import NODE_TYPE as OR
 from obs.logic.nodes.logic.value_mapping import NODE_TYPE as VALUE_MAPPING
@@ -27,6 +28,7 @@ NODE_TYPES: tuple[NodeTypeDef, ...] = (
     XOR,
     GATE,
     MEMORY,
+    MERGE,
     COMPARE,
     HYSTERESIS,
     DECISION,

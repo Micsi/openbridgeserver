@@ -132,7 +132,7 @@
       {{ statusMsg.text }}
     </div>
     <div v-else-if="validationWarnings.length" class="px-4 py-1.5 text-xs flex-shrink-0 bg-amber-500/10 text-amber-500">
-      {{ $t('logic.graphValidationCycle', { count: validationWarnings.length }) }}
+      {{ $t(hasDuplicateHandleWarning(validationWarnings) ? 'logic.graphValidationDuplicateHandle' : 'logic.graphValidationCycle', { count: validationWarnings.length }) }}
     </div>
 
     <!-- Main area -->
@@ -368,7 +368,7 @@ const nodeTypeComponents = {
   // Comment (issue #1043)
   comment: _comment,
   // Logic
-  and: _generic, or: _generic, not: _generic, xor: _generic, gate: _generic, memory: _generic,
+  and: _generic, or: _generic, not: _generic, xor: _generic, gate: _generic, memory: _generic, merge: _generic,
   compare: _generic, hysteresis: _generic, decision: _generic, value_mapping: _generic,
   // Math
   math_formula: _generic, math_map: _generic,
@@ -498,13 +498,45 @@ function analyzeFlowWarnings(flowNodes, flowEdges) {
   const unresolved = new Set(flowNodes.map(n => n.id).filter(id => !ordered.has(id)))
   const cyclic = findCyclicNodeIds(adj, unresolved)
   const cycleList = flowNodes.filter(n => cyclic.has(n.id)).map(n => n.id)
-  return flowNodes
+  const cycleWarnings = flowNodes
     .filter(n => unresolved.has(n.id))
     .map(n => ({
       node_id: n.id,
       code: cyclic.has(n.id) ? 'graph_cycle' : 'graph_cycle_blocked',
       message: `${n.id}: ${cycleList.slice(0, 5).join(', ')}`,
     }))
+  return [...cycleWarnings, ...findDuplicateTargetHandleWarnings(flowEdges)]
+}
+
+// Multiple edges wired to the same (target node, target handle) pair are a
+// dead wire, not a merge: the executor's edge_map is a plain dict keyed by
+// (target, handle), so only the last edge in array order ever actually
+// reaches that input — the rest silently carry no value, permanently (#1116).
+// Every source targeting one handle needs its own handle; use a `merge` node
+// to combine several independent sources into one downstream path instead.
+function findDuplicateTargetHandleWarnings(flowEdges) {
+  const edgesByHandle = new Map()
+  for (const edge of flowEdges) {
+    const handle = edge.targetHandle || 'in'
+    const key = `${edge.target}#${handle}`
+    const list = edgesByHandle.get(key)
+    if (list) list.push(edge)
+    else edgesByHandle.set(key, [edge])
+  }
+  return [...edgesByHandle.values()]
+    .filter(edgesForHandle => edgesForHandle.length > 1)
+    .map(edgesForHandle => {
+      const handle = edgesForHandle[0].targetHandle || 'in'
+      return {
+        node_id: edgesForHandle[0].target,
+        code: 'duplicate_target_handle',
+        message: `${edgesForHandle[0].target}.${handle} (${edgesForHandle.length})`,
+      }
+    })
+}
+
+function hasDuplicateHandleWarning(warnings) {
+  return warnings.some(w => w.code === 'duplicate_target_handle')
 }
 
 function findCyclicNodeIds(adj, candidates) {
@@ -591,9 +623,13 @@ async function saveGraph() {
   if (!auth.isAdmin || !activeGraphId.value) return
   const graphWarnings = analyzeFlowWarnings(nodes.value, edges.value)
   if (graphWarnings.length) {
-    showStatus(false, t('logic.graphValidationSaveBlocked', { count: graphWarnings.length }), 6000)
+    const saveBlockedKey = hasDuplicateHandleWarning(graphWarnings) ? 'logic.graphValidationSaveBlockedDuplicateHandle' : 'logic.graphValidationSaveBlocked'
+    showStatus(false, t(saveBlockedKey, { count: graphWarnings.length }), 6000)
     applyDebugValues(Object.fromEntries(
-      graphWarnings.map(w => [w.node_id, { __error__: t('logic.graphValidationNodeError'), __diagnostic__: w.code }])
+      graphWarnings.map(w => [w.node_id, {
+        __error__: t(w.code === 'duplicate_target_handle' ? 'logic.graphValidationNodeErrorDuplicateHandle' : 'logic.graphValidationNodeError'),
+        __diagnostic__: w.code,
+      }])
     ))
     return
   }
@@ -1036,7 +1072,8 @@ function onConnect(params) {
   }, edges.value)
   const graphWarnings = analyzeFlowWarnings(nodes.value, nextEdges)
   if (graphWarnings.length) {
-    showStatus(false, t('logic.graphValidationConnectBlocked', { count: graphWarnings.length }), 6000)
+    const connectBlockedKey = hasDuplicateHandleWarning(graphWarnings) ? 'logic.graphValidationConnectBlockedDuplicateHandle' : 'logic.graphValidationConnectBlocked'
+    showStatus(false, t(connectBlockedKey, { count: graphWarnings.length }), 6000)
     return
   }
   edges.value = nextEdges

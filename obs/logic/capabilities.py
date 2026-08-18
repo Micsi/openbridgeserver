@@ -39,6 +39,7 @@ PURE_LOGIC_NODE_TYPES = frozenset(
         "math_formula",
         "math_map",
         "memory",
+        "merge",
         "min_max_tracker",
         "not",
         "operating_hours",
