@@ -324,6 +324,14 @@ watch(() => props.config, async (newCfg, oldCfg) => {
   await loadData()
 }, { deep: true })
 watch(selectedTimeRange, loadData)
+// The public display settings load asynchronously from App.vue's onMounted, which
+// Vue runs *after* this child mounted and already built its chart — so the axis
+// locale has to be refreshed once the real regional format arrives (issue #1073).
+watch(() => format.regionFormat, (regionFormat) => {
+  if (!chart) return
+  chart.options.locale = regionFormat
+  chart.update()
+})
 
 onUnmounted(() => {
   wsOff?.()

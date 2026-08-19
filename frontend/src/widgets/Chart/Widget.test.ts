@@ -8,6 +8,7 @@
  * formatter as every other widget.
  */
 import { mount, type VueWrapper } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useFormatStore } from '@/stores/format'
@@ -90,6 +91,19 @@ describe('Chart Widget.vue — regional number format (#1073)', () => {
     const label = config.options.plugins.tooltip.callbacks.label
 
     expect(label({ parsed: { y: 1234.5 }, datasetIndex: 0, dataset: { label: 'L1' } })).toBe('L1: 1.234,5')
+  })
+
+  it('updates the Chart.js locale when the settings arrive after mount', async () => {
+    // App.vue starts the public-settings load in its own onMounted, which Vue
+    // runs *after* the child widget has already constructed its chart.
+    const store = useFormatStore()
+    const config = await mountChart()
+    expect(config.options.locale).toBe('de-DE')
+
+    store.regionFormatSetting = 'de-CH'
+    await nextTick()
+
+    expect(config.options.locale).toBe('de-CH')
   })
 
   it('returns an empty label for a missing data point', async () => {

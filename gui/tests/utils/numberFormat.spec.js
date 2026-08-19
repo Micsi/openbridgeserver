@@ -100,6 +100,13 @@ describe('numberFormat (#1073)', () => {
       expect(formatCurrency(null, 'de-DE', 'EUR')).toBe('')
     })
 
+    it('degrades to a plain number when the currency code is unusable', () => {
+      // An invalid currency can reach the store through a hand-edited backup;
+      // it must not throw into a component render (#1073).
+      expect(formatCurrency(1234.5, 'de-DE', 'x')).toContain('1.234,5')
+      expect(formatCurrency(1234.5, 'not a locale', 'x')).toContain('1.234,5')
+    })
+
     it('uses the defaults when locale and currency are omitted', () => {
       expect(formatCurrency(1)).toBe(`1,00${NBSP}€`)
     })

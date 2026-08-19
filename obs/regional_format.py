@@ -5,8 +5,13 @@ formatting convention are two independent dimensions.  A German-speaking user in
 Switzerland expects ``1'234.50`` while one in Germany expects ``1.234,50`` — the
 UI language is identical in both cases.
 
-The separator table mirrors what ``Intl.NumberFormat`` produces in the browser,
-so backend-rendered text (e.g. MESSAGE templates) and the two frontends agree.
+The separator table is taken from ``Intl.NumberFormat`` (CLDR via ICU 78) so
+backend-rendered text — MESSAGE templates are the only such surface — reads the
+same as the two frontends. CLDR does revise separators between releases, and a
+browser on an older or data-reduced ICU build can therefore differ for
+individual locales; the table is a snapshot, not a guarantee of byte-identical
+output on every client.
+
 Only *display* text is affected — datapoint values, calculations, API payloads
 and stored history stay locale-neutral numbers.
 """
@@ -108,16 +113,36 @@ def resolve_currency(currency: str | None, region_format: str) -> str:
     return _REGION_CURRENCY.get(region_format, "EUR")
 
 
-def _natural_decimals(value: float | Decimal) -> int:
-    """Number of decimal places the value carries in its shortest repr."""
+def _to_decimal(value: float | Decimal) -> Decimal:
+    """Convert *value* without losing precision.
+
+    Integers are converted exactly — routing them through ``float`` would round
+    anything above 2**53 (e.g. a 64-bit counter register) to a different number.
+    Floats go through ``str``, which yields their shortest round-tripping form.
+    """
+    if isinstance(value, Decimal):
+        return value
     if isinstance(value, int):
-        return 0
-    text = repr(float(value)) if isinstance(value, float) else str(value)
-    if "e" in text or "E" in text:  # scientific notation — keep full precision
-        exponent = int(Decimal(text).as_tuple().exponent)
-        return -exponent if exponent < 0 else 0
-    _, _, fraction = text.partition(".")
-    return len(fraction)
+        return Decimal(value)
+    return Decimal(str(value))
+
+
+def _is_finite(value: float | Decimal) -> bool:
+    if isinstance(value, Decimal):
+        return value.is_finite()
+    if isinstance(value, int):
+        return True
+    return math.isfinite(value)
+
+
+def _natural_decimals(value: float | Decimal) -> int:
+    """Number of decimal places the value carries in its shortest form.
+
+    *value* must be finite — NaN and infinities carry a non-numeric exponent and
+    are filtered out by the only caller before it gets here.
+    """
+    exponent = int(_to_decimal(value).as_tuple().exponent)
+    return -exponent if exponent < 0 else 0
 
 
 def format_number(
@@ -134,11 +159,11 @@ def format_number(
     for one.  Infinities and NaN have no regional representation and are
     returned as their plain Python text.
     """
-    if not math.isfinite(float(value)):
+    if not _is_finite(value):
         return str(value)
     decimal_sep, group_sep = _SEPARATORS.get(region_format, _SEPARATORS["de-DE"])
     places = _natural_decimals(value) if decimals is None else max(0, decimals)
-    number = Decimal(str(float(value)))
+    number = _to_decimal(value)
     # Round half away from zero so the backend agrees with Intl.NumberFormat in
     # the browser; Python's default float formatting rounds half to even. The
     # context has to hold every digit of the result, otherwise quantize() raises

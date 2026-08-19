@@ -20,14 +20,32 @@ function getFormatter(locale, options) {
   const key = `${locale}|${JSON.stringify(options)}`
   let formatter = formatterCache.get(key)
   if (!formatter) {
-    try {
-      formatter = new Intl.NumberFormat(locale, options)
-    } catch {
-      formatter = new Intl.NumberFormat(FALLBACK_REGION_FORMAT, options)
-    }
+    formatter = buildFormatter(locale, options)
     formatterCache.set(key, formatter)
   }
   return formatter
+}
+
+/**
+ * Both the locale and the options can be rejected by `Intl` — an unsupported
+ * regional format, or a currency code that reached the database through an
+ * unvalidated config import. Degrade step by step instead of throwing into a
+ * component render.
+ */
+function buildFormatter(locale, options) {
+  try {
+    return new Intl.NumberFormat(locale, options)
+  } catch {
+    // Unusable locale — retry with the default, keeping the requested options.
+  }
+  try {
+    return new Intl.NumberFormat(FALLBACK_REGION_FORMAT, options)
+  } catch {
+    // Unusable options (e.g. an invalid currency code): drop to a plain number
+    // so the amount stays readable.
+    const { style: _style, currency: _currency, ...rest } = options
+    return new Intl.NumberFormat(FALLBACK_REGION_FORMAT, rest)
+  }
 }
 
 function clampDigits(digits) {

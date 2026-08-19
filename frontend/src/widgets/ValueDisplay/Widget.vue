@@ -366,6 +366,14 @@ onMounted(() => {
   updateMiniChart()
 })
 
+// See Chart/Widget.vue: the regional format arrives after the chart is built.
+watch(() => format.regionFormat, (regionFormat) => {
+  for (const instance of [miniChart, modalChart]) {
+    if (!instance) continue
+    instance.options.locale = regionFormat
+    instance.update()
+  }
+})
 watch(() => props.datapointId, updateMiniChart)
 watch(() => props.config.history_time_range, updateMiniChart)
 watch(modalTimeRange, updateModalChart)

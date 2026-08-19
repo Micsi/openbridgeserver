@@ -140,6 +140,16 @@ def test_format_number_rejects_negative_decimals_by_clamping():
     assert format_number(1234.9, "de-DE", decimals=-2) == "1.235"
 
 
+@pytest.mark.parametrize("value", [9007199254740993, 12345678901234567890, 2**63 - 1])
+def test_format_number_keeps_integers_exact_beyond_float_precision(value):
+    """Routing an int through float would round anything above 2**53."""
+    assert format_number(value, "en-US", grouping=False) == str(value)
+
+
+def test_format_number_groups_large_integers_exactly():
+    assert format_number(9007199254740993, "de-DE") == "9.007.199.254.740.993"
+
+
 @pytest.mark.parametrize("value", [1e30, 1e21, 1.5e300])
 def test_format_number_handles_magnitudes_beyond_the_default_decimal_precision(value):
     """quantize() raises InvalidOperation once the result exceeds the context precision."""

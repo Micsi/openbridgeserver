@@ -39,6 +39,7 @@ from obs.logic.models import FlowData
 from obs.logic.validation import validate_timer_durations
 from obs.models.authz import AuthzPrincipalGrant
 from obs.models.datapoint import DataPoint
+from obs.regional_format import REGIONAL_SETTING_KEYS, validate_regional_setting
 
 logger = logging.getLogger(__name__)
 
@@ -1168,17 +1169,22 @@ async def import_config(
             result.errors.append(f"NavLink {nl.id}: {exc}")
 
     # --- App Settings ---
+    # Display settings are validated on the way in exactly as PUT /system/settings
+    # does: an unchecked region_format or currency from a hand-edited backup would
+    # otherwise reach the frontends, where Intl rejects it (issue #1073).
     imported_datetime_settings: dict[str, str] = {}
     for s in body.app_settings:
         try:
             if s.key in DATETIME_SETTING_KEYS:
                 validate_datetime_setting(s.key, s.value)
+            elif s.key in REGIONAL_SETTING_KEYS:
+                validate_regional_setting(s.key, s.value)
             await db.execute_and_commit(
                 "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?,?)",
                 (s.key, s.value),
             )
             result.app_settings_upserted += 1
-            if s.key in DATETIME_SETTING_KEYS:
+            if s.key in DATETIME_SETTING_KEYS or s.key in REGIONAL_SETTING_KEYS:
                 imported_datetime_settings[s.key] = s.value
         except Exception as exc:
             logger.exception(f"AppSetting {s.key} failed")
