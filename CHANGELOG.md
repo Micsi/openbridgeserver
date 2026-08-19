@@ -34,6 +34,12 @@ Alle wesentlichen Änderungen an open bridge server werden hier festgehalten.
 - Fehler behoben: Der Trigger-Block löste angeschlossene Blöcke nicht aus, weil das interne Trigger-Signal nie weitergegeben wurde
 - Umbenannt: „CronTrigger" → **„Trigger"** (kürzer und verständlicher)
 
+**Logik-Editor — Ausrichtungshilfe beim Verschieben von Blöcken (#1118)**
+- Beim Ziehen eines Funktionsblocks wird ein Fadenkreuz eingeblendet: eine horizontale und eine vertikale Leiste, genau so dick wie der gezogene Block selbst
+- Die Leisten erstrecken sich über die komplette sichtbare Zeichenfläche, sodass sich Kanten auch mit weiter entfernten Blöcken ausrichten lassen
+- Halbtransparent — darunterliegende Blöcke bleiben sichtbar
+- Rein visuelle Hilfe unabhängig vom Raster-Snapping; funktioniert auch bei deaktiviertem Raster
+
 **Logik-Editor — Klemme-Block zum Zusammenführen mehrerer Quellen (#1117)**
 - Neuer Block **„Klemme"** bündelt 2–30 unabhängige Wertquellen auf einen gemeinsamen Ausgang: wer zuletzt einen neuen Wert liefert, wird durchgereicht (Edomi-Klemme)
 - Ersetzt das Verdrahten mehrerer Quellen auf denselben Eingang eines anderen Blocks — das unterstützt der Ausführungsmotor nicht (nur die zuletzt verdrahtete Verbindung wäre je aktiv)
