@@ -49,6 +49,19 @@ describe('numberFormat (#1073)', () => {
       expect(formatNumber(1234567.5, 'en-US', { decimals: 2 })).toBe('1,234,567.50')
     })
 
+    it('honours the locale minimum grouping digits (#1073)', () => {
+      // CLDR minimumGroupingDigits = 1 → a separator from four digits on …
+      expect(formatNumber(1234.5, 'de-DE')).toBe('1.234,5')
+      expect(formatNumber(1234.5, 'en-US')).toBe('1,234.5')
+      // … = 2 for Italian and Spanish → four digits stay ungrouped.
+      expect(formatNumber(1234.5, 'it-IT')).toBe('1234,5')
+      expect(formatNumber(1234.5, 'es-ES')).toBe('1234,5')
+      expect(formatNumber(1234.5, 'it-CH')).toBe('1234.5')
+      // Five digits group everywhere.
+      expect(formatNumber(12345.5, 'it-IT')).toBe('12.345,5')
+      expect(formatNumber(12345.5, 'es-ES')).toBe('12.345,5')
+    })
+
     it('can suppress grouping', () => {
       expect(formatNumber(1234567.5, 'de-DE', { decimals: 2, grouping: false })).toBe('1234567,50')
     })

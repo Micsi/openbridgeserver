@@ -83,7 +83,10 @@ export function formatNumber(value, locale = FALLBACK_REGION_FORMAT, options = {
   const { decimals = null, maxDecimals = null, grouping = true } = options
   const number = toFiniteNumber(value)
   if (number === null) return value === null || value === undefined ? '' : String(value)
-  const intlOptions = { useGrouping: grouping }
+  // `true` normalises to "always", which overrides the locale's CLDR
+  // minimumGroupingDigits; "auto" honours it (es/it group only from five
+  // digits). Pre-ES2023 engines coerce the string to true — today's behaviour.
+  const intlOptions = { useGrouping: grouping ? 'auto' : false }
   if (decimals !== null && decimals !== undefined) {
     const digits = clampDigits(decimals)
     intlOptions.minimumFractionDigits = digits

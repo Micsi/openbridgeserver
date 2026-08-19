@@ -81,6 +81,13 @@ _SEPARATORS: dict[str, tuple[str, str]] = {
     "es-ES": (",", "."),
 }
 
+# CLDR ``minimumGroupingDigits``: how many digits must precede the first group
+# before a separator is inserted at all. Most locales use 1 (group from four
+# digits), but Italian and Spanish use 2 — ``1234,5`` stays ungrouped there and
+# only ``12.345,5`` gets a separator.
+_MIN_GROUPING_DIGITS: dict[str, int] = {"it-IT": 2, "it-CH": 2, "es-ES": 2}
+_DEFAULT_MIN_GROUPING_DIGITS = 1
+
 # Regional formats that write the currency symbol/code before the amount.
 _CURRENCY_PREFIX: frozenset[str] = frozenset({"de-AT", "de-CH", "en-US", "en-GB", "it-CH"})
 
@@ -176,7 +183,8 @@ def format_number(
     if negative:
         text = text[1:]
     integer_part, _, fraction_part = text.partition(".")
-    if grouping and len(integer_part) > 3:
+    min_grouping = _MIN_GROUPING_DIGITS.get(region_format, _DEFAULT_MIN_GROUPING_DIGITS)
+    if grouping and len(integer_part) >= 3 + min_grouping:
         digits: list[str] = []
         for index, char in enumerate(reversed(integer_part)):
             if index and index % 3 == 0:

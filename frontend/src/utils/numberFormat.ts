@@ -22,9 +22,17 @@ export interface NumberFormatOptions {
   grouping?: boolean
 }
 
+/**
+ * `useGrouping` accepts "auto" | "always" | "min2" since ES2023, but the
+ * TypeScript lib in use still types it as a boolean.
+ */
+type IntlNumberOptions = Omit<Intl.NumberFormatOptions, 'useGrouping'> & {
+  useGrouping?: boolean | 'auto' | 'always' | 'min2'
+}
+
 const formatterCache = new Map<string, Intl.NumberFormat>()
 
-function getFormatter(locale: string, options: Intl.NumberFormatOptions): Intl.NumberFormat {
+function getFormatter(locale: string, options: IntlNumberOptions): Intl.NumberFormat {
   const key = `${locale}|${JSON.stringify(options)}`
   let formatter = formatterCache.get(key)
   if (!formatter) {
@@ -40,19 +48,19 @@ function getFormatter(locale: string, options: Intl.NumberFormatOptions): Intl.N
  * unvalidated config import. Degrade step by step instead of throwing into a
  * component render.
  */
-function buildFormatter(locale: string, options: Intl.NumberFormatOptions): Intl.NumberFormat {
+function buildFormatter(locale: string, options: IntlNumberOptions): Intl.NumberFormat {
   try {
-    return new Intl.NumberFormat(locale, options)
+    return new Intl.NumberFormat(locale, options as Intl.NumberFormatOptions)
   } catch {
     // Unusable locale — retry with the default, keeping the requested options.
   }
   try {
-    return new Intl.NumberFormat(FALLBACK_REGION_FORMAT, options)
+    return new Intl.NumberFormat(FALLBACK_REGION_FORMAT, options as Intl.NumberFormatOptions)
   } catch {
     // Unusable options (e.g. an invalid currency code): drop to a plain number
     // so the amount stays readable.
     const { style: _style, currency: _currency, ...rest } = options
-    return new Intl.NumberFormat(FALLBACK_REGION_FORMAT, rest)
+    return new Intl.NumberFormat(FALLBACK_REGION_FORMAT, rest as Intl.NumberFormatOptions)
   }
 }
 
@@ -92,7 +100,10 @@ export function formatNumber(
   const { decimals = null, maxDecimals = null, grouping = true } = options
   const number = toFiniteNumber(value)
   if (number === null) return passthrough(value)
-  const intlOptions: Intl.NumberFormatOptions = { useGrouping: grouping }
+  // `true` normalises to "always", which overrides the locale's CLDR
+  // minimumGroupingDigits; "auto" honours it (es/it group only from five
+  // digits). Pre-ES2023 engines coerce the string to true — today's behaviour.
+  const intlOptions: IntlNumberOptions = { useGrouping: grouping ? 'auto' : false }
   if (decimals !== null && decimals !== undefined) {
     const digits = clampDigits(decimals)
     intlOptions.minimumFractionDigits = digits

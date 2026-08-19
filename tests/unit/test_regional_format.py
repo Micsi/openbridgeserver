@@ -116,6 +116,41 @@ def test_format_number_grouping(region_format, expected):
     assert format_number(1234567.5, region_format, decimals=2) == expected
 
 
+@pytest.mark.parametrize(
+    ("region_format", "expected"),
+    [
+        # minimumGroupingDigits = 1: a separator appears from four digits on.
+        ("de-DE", "1.234,5"),
+        ("de-AT", f"1{NBSP}234,5"),
+        ("de-CH", "1'234.5"),
+        ("en-US", "1,234.5"),
+        ("en-GB", "1,234.5"),
+        ("fr-FR", f"1{NARROW_NBSP}234,5"),
+        ("fr-CH", "1'234,5"),
+        # minimumGroupingDigits = 2: four digits stay ungrouped.
+        ("it-IT", "1234,5"),
+        ("it-CH", "1234.5"),
+        ("es-ES", "1234,5"),
+    ],
+)
+def test_format_number_honours_minimum_grouping_digits(region_format, expected):
+    """Italian and Spanish only group from five digits (CLDR minimumGroupingDigits)."""
+    assert format_number(1234.5, region_format) == expected
+
+
+@pytest.mark.parametrize(
+    ("region_format", "expected"),
+    [("it-IT", "12.345,5"), ("it-CH", "12'345.5"), ("es-ES", "12.345,5")],
+)
+def test_format_number_groups_five_digits_in_minimum_two_locales(region_format, expected):
+    assert format_number(12345.5, region_format) == expected
+
+
+@pytest.mark.parametrize("region_format", [code for code in SUPPORTED_REGION_FORMATS if code != "auto"])
+def test_format_number_never_groups_three_digits(region_format):
+    assert format_number(999, region_format) == "999"
+
+
 def test_format_number_without_grouping():
     assert format_number(1234567.5, "de-DE", decimals=2, grouping=False) == "1234567,50"
 
@@ -191,7 +226,7 @@ def test_format_number_falls_back_to_default_separators_for_unknown_region():
         ("en-US", "USD", "$1,234.50"),
         ("en-GB", "GBP", "£1,234.50"),
         ("fr-FR", "EUR", f"1{NARROW_NBSP}234,50{NBSP}€"),
-        ("it-CH", "CHF", f"CHF{NBSP}1'234.50"),
+        ("it-CH", "CHF", f"CHF{NBSP}1234.50"),  # it-CH groups only from five digits
         ("de-DE", "XYZ", f"1.234,50{NBSP}XYZ"),  # unknown code renders verbatim
     ],
 )
