@@ -64,11 +64,19 @@ export const useFormatStore = defineStore('format', () => {
   function fmtDateTime(value: number | string | Date, options?: Intl.DateTimeFormatOptions): string {
     const date = value instanceof Date ? value : new Date(value)
     if (Number.isNaN(date.getTime())) return ''
-    const intlOptions: Intl.DateTimeFormatOptions = { ...options }
-    if (timezone.value) intlOptions.timeZone = timezone.value
+    // Server timezone as the default; an explicit caller option still wins.
+    const intlOptions: Intl.DateTimeFormatOptions = timezone.value
+      ? { timeZone: timezone.value, ...options }
+      : { ...options }
     try {
       return new Intl.DateTimeFormat(regionFormat.value, intlOptions).format(date)
     } catch {
+      // Unusable regional format — keep the configured timezone …
+    }
+    try {
+      return new Intl.DateTimeFormat(FALLBACK_REGION_FORMAT, intlOptions).format(date)
+    } catch {
+      // … and only drop it when the timezone itself is the unusable part.
       return new Intl.DateTimeFormat(FALLBACK_REGION_FORMAT, options).format(date)
     }
   }

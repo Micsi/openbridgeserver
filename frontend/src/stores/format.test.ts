@@ -124,14 +124,31 @@ describe('useFormatStore (#1073)', () => {
       expect(store.fmtDateTime('not a date')).toBe('')
     })
 
-    it('falls back to the default locale when the regional format is invalid', async () => {
-      getMock.mockResolvedValue(payload({ resolved_region_format: 'not a locale', timezone: '' }))
+    it('falls back to the default locale but keeps the configured timezone', async () => {
+      getMock.mockResolvedValue(payload({ resolved_region_format: 'not a locale', timezone: 'UTC' }))
       const store = useFormatStore()
       await store.load()
 
-      const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' }
+      expect(store.fmtDateTime('2026-06-08T23:30:00Z', { hour: '2-digit', minute: '2-digit' })).toBe('23:30')
+    })
 
-      expect(store.fmtDateTime('2026-06-08T00:00:00Z', options)).toBe('08.06.2026')
+    it('lets an explicit timeZone option win over the configured one', async () => {
+      getMock.mockResolvedValue(payload({ resolved_region_format: 'de-DE', timezone: 'Asia/Tokyo' }))
+      const store = useFormatStore()
+      await store.load()
+
+      const text = store.fmtDateTime('2026-06-08T23:30:00Z', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+
+      expect(text).toBe('23:30')
+    })
+
+    it('drops an unusable configured timezone rather than throwing', async () => {
+      getMock.mockResolvedValue(payload({ resolved_region_format: 'de-DE', timezone: 'Not/A_Zone' }))
+      const store = useFormatStore()
+      await store.load()
+
+      // No timeZone option — the broken configured zone is the only candidate.
+      expect(store.fmtDateTime('2026-06-08T12:00:00Z', { year: 'numeric' })).toBe('2026')
     })
   })
 })
