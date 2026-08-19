@@ -40,6 +40,15 @@ Alle wesentlichen Änderungen an open bridge server werden hier festgehalten.
 - Halbtransparent — darunterliegende Blöcke bleiben sichtbar
 - Rein visuelle Hilfe unabhängig vom Raster-Snapping; funktioniert auch bei deaktiviertem Raster
 
+**Logik-Editor — Klemme-Block zum Zusammenführen mehrerer Quellen (#1117)**
+- Neuer Block **„Klemme"** bündelt 2–30 unabhängige Wertquellen auf einen gemeinsamen Ausgang: wer zuletzt einen neuen Wert liefert, wird durchgereicht (Edomi-Klemme)
+- Ersetzt das Verdrahten mehrerer Quellen auf denselben Eingang eines anderen Blocks — das unterstützt der Ausführungsmotor nicht (nur die zuletzt verdrahtete Verbindung wäre je aktiv)
+
+**Logik-Editor — Mehrfachverbindungen auf einen Eingang werden erkannt (#1116)**
+- Fehler behoben: Mehrere Verbindungen auf denselben Eingang eines Blocks liessen sich anstandslos herstellen, aber nur die zuletzt gezogene Verbindung war tatsächlich aktiv — die übrigen waren stille, dauerhaft tote Drähte ohne jede Warnung
+- Neue Prüfung blockiert das Herstellen einer zweiten Verbindung auf denselben Eingang, blockiert das Speichern eines Graphen mit einer solchen Verbindung und markiert bereits gespeicherte betroffene Graphen mit einer Warnung
+- Für das Zusammenführen mehrerer Quellen jetzt die neue Klemme-Node verwenden
+
 **Einstellungen — Zeitzone**
 - Neue Zeitzone-Auswahl unter Einstellungen → Allgemein
 - Alle Zeitangaben in der Oberfläche werden in der gewählten Zeitzone dargestellt: Verlauf, Änderungsprotokoll, History-Suche, Astro-Block

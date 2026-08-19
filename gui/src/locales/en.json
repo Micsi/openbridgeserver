@@ -1616,6 +1616,7 @@
       "memory": "Memory",
       "compare": "Comparison",
       "hysteresis": "Hysteresis",
+      "merge": "Merge",
       "decision": "Decision",
       "value_mapping": "Mapping",
       "datapoint_read": "Read Object",
@@ -1724,6 +1725,10 @@
     "graphValidationConnectBlocked": "Connection not created: cycle detected ({count} node(s)). Use a Memory node for feedback.",
     "graphValidationSaveBlocked": "Save blocked: cycle detected ({count} node(s)). Use a Memory node for feedback.",
     "graphValidationNodeError": "Cycle detected; direct feedback needs a Memory node.",
+    "graphValidationDuplicateHandle": "Duplicate connection detected: {count} input(s) have more than one connection. Use a Merge node to combine several sources.",
+    "graphValidationConnectBlockedDuplicateHandle": "Connection not created: this input already has a connection. Use a Merge node to combine several sources.",
+    "graphValidationSaveBlockedDuplicateHandle": "Save blocked: {count} input(s) have more than one connection. Use a Merge node to combine several sources.",
+    "graphValidationNodeErrorDuplicateHandle": "Duplicate connection detected; only one connection per input is allowed. Use a Merge node.",
     "duplicated": "Graph duplicated as “{name}”",
     "errorDuplicate": "Error duplicating graph",
     "copiedNodes": "{count} block(s) copied",
@@ -2138,6 +2143,10 @@
         "data_type": "Data type",
         "persist_state": "Restore state on restart"
       },
+      "merge": {
+        "input_count": "Input count",
+        "persist_state": "Restore state on restart"
+      },
       "hysteresis": {
         "persist_state": "Restore state on restart"
       },
@@ -2399,6 +2408,7 @@
       "memory": "Outputs the stored value from the previous logic run and stores the current input value for the next run. Explicit tick boundary for controlled feedback.",
       "compare": "Compares two values (>, <, =, >=, <=, !=)",
       "hysteresis": "Switches ON when threshold is exceeded, OFF only when it falls below",
+      "merge": "Bundles several independent value sources into one shared output: whichever source last delivered a new value is passed through (Edomi-style terminal/junction).",
       "decision": "Checks one input value against multiple independent conditions. Each output returns TRUE or FALSE independently; multiple outputs can be TRUE at the same time.",
       "value_mapping": "Checks an ordered rule list and returns the value from the first matching rule. An optional default value is returned when no rule matches.",
       "datapoint_read": "Outputs the current value of a DataPoint. Triggers on value change.",
