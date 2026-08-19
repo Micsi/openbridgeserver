@@ -251,6 +251,46 @@ describe('LogicView auth gates', () => {
     expect(wrapper.find('[data-testid="run-preflight"]').exists()).toBe(false)
   })
 
+  it('shows the popup and reports an error when the preflight request itself fails', async () => {
+    const graph = makeGraph('graph-1')
+    const { wrapper, logicApi, logicRunAuthzApi } = await mountLogicView({
+      isAdmin: false,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+    logicRunAuthzApi.preflight.mockRejectedValueOnce({ response: { data: { detail: 'preflight down' } } })
+
+    await wrapper.get('[data-testid="btn-run"]').trigger('click')
+    await flushPromises()
+
+    expect(logicApi.runGraph).not.toHaveBeenCalled()
+    expect(wrapper.vm.runPreflightError).toBe('preflight down')
+    expect(wrapper.find('[data-testid="run-preflight"]').exists()).toBe(true)
+  })
+
+  it('runs the graph once a preflight already open in the dialog is confirmed', async () => {
+    // Reachable defensively (component API / future partial-allow call
+    // sites) rather than through today's UI — the dialog now only opens on
+    // a denial, which also disables its confirm button — but confirmGraphRun
+    // must still do the right thing if invoked with an approved snapshot.
+    const graph = makeGraph('graph-1')
+    const { wrapper, logicApi } = await mountLogicView({
+      isAdmin: false,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+    wrapper.vm.preflightGraphId = 'graph-1'
+    wrapper.vm.runPreflightItems = [{ id: 'x', label: 'x', allowed: true }]
+
+    await wrapper.vm.confirmGraphRun()
+
+    expect(logicApi.runGraph).toHaveBeenCalledWith('graph-1')
+    expect(wrapper.vm.showRunPreflight).toBe(false)
+    expect(wrapper.vm.preflightGraphId).toBe('')
+  })
+
   it('keeps a denied preflight from executing the graph', async () => {
     const graph = makeGraph('graph-1')
     const { wrapper, logicApi, logicRunAuthzApi } = await mountLogicView({
