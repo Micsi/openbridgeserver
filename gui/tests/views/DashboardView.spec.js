@@ -231,6 +231,14 @@ describe('DashboardView — live values list', () => {
     expect(wrapper.text()).toContain('22 °C')
   })
 
+  it('formats numeric values in the regional format and leaves strings alone (#1073)', async () => {
+    const { wrapper } = await mountDashboard({
+      dps: [makeDP({ id: 'dp-num', value: 1234.5, unit: 'W' }), makeDP({ id: 'dp-str', value: 'AN', unit: '' })],
+    })
+    expect(wrapper.text()).toContain('1.234,5 W')
+    expect(wrapper.text()).toContain('AN')
+  })
+
   it('shows live value from ws.liveValues when available', async () => {
     const dp = makeDP({ id: 'dp-x', value: 10, unit: '' })
     const { wrapper } = await mountDashboard({

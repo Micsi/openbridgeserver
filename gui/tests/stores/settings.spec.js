@@ -100,7 +100,8 @@ describe('useSettingsStore', () => {
   })
 
   it('keeps empty option lists when the public display settings are unreachable (#1073)', async () => {
-    settingsApiMock.get.mockResolvedValue({ data: { timezone: 'UTC' } })
+    // No timezone in the payload — the store keeps its detected default.
+    settingsApiMock.get.mockResolvedValue({ data: {} })
     settingsApiMock.displaySettings.mockRejectedValue(new Error('offline'))
     const { useSettingsStore } = await import('@/stores/settings')
     const store = useSettingsStore()

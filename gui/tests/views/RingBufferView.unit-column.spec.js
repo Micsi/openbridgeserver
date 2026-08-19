@@ -114,6 +114,28 @@ describe('RingBufferView unit column display (#434)', () => {
     expect(occurrences).toBeGreaterThanOrEqual(2)
   })
 
+  it('leaves non-numeric and boolean values verbatim (#1073)', async () => {
+    const { mountRingBufferView, makeRingbufferApiMock, flushPromises } = await import(
+      '../helpers/mountRingBufferView.js'
+    )
+
+    const ringbufferApi = makeRingbufferApiMock({
+      queryV2: vi.fn().mockResolvedValue({
+        data: [makeEntry({ unit: null, new_value: '1.05', old_value: true })],
+      }),
+    })
+
+    const { wrapper } = await mountRingBufferView({ ringbufferApi })
+    await flushPromises()
+
+    const html = wrapper.find('[data-testid="ringbuffer-entry"]').html()
+    // A string datapoint must not be reinterpreted as a number …
+    expect(html).toContain('1.05')
+    expect(html).not.toContain('1,05')
+    // … and booleans keep their own rendering.
+    expect(html).toContain('true')
+  })
+
   it('renders unit even when old_value is null (only new_value side)', async () => {
     const { mountRingBufferView, makeRingbufferApiMock, flushPromises } = await import(
       '../helpers/mountRingBufferView.js'
