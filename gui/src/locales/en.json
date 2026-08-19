@@ -1296,7 +1296,8 @@
       "export": "Export",
       "failed": "Export failed",
       "title": "Export",
-      "fileExtHint": "File extension: {ext}."
+      "fileExtHint": "File extension: {ext}.",
+      "escapeCharPlaceholder": "(empty)"
     },
     "topbar": {
       "activeTitle": "Active — click to deactivate (for me only)",

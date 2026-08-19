@@ -411,7 +411,9 @@
       "nodeTypePage": "Seite",
       "searchPage": "Seitenname suchen …",
       "selectPage": "Seite wählen …",
-      "type": "Typ"
+      "type": "Typ",
+      "qualityBad": "Qualität: schlecht",
+      "qualityUncertain": "Qualität: undefiniert"
     },
     "chart": {
       "title": "Verlauf",

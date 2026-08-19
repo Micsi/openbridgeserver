@@ -411,7 +411,9 @@
       "nodeTypePage": "Page",
       "searchPage": "Search page name …",
       "selectPage": "Select page …",
-      "type": "Type"
+      "type": "Type",
+      "qualityBad": "Quality: bad",
+      "qualityUncertain": "Quality: uncertain"
     },
     "chart": {
       "title": "History",

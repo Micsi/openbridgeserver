@@ -58,13 +58,13 @@
               maxlength="1"
               class="input font-mono w-16 text-center"
               data-testid="export-escape-char"
-              placeholder="(leer)"
+              :placeholder="$t('ringbuffer.export.escapeCharPlaceholder')"
             />
           </div>
         </div>
         <p class="text-xs text-slate-500 mt-1.5">
           <i18n-t keypath="ringbuffer.export.fileExtHint" tag="span">
-            <template #ext><code class="font-mono">.{{ form.delimiter === '\t' ? 'tsv' : 'csv' }}</code></template>
+            <template #ext><code class="font-mono">.{{ fileExtension }}</code></template>
           </i18n-t>
           {{ $t('ringbuffer.export.escapeHint') }}
         </p>
@@ -163,6 +163,8 @@ const pendingRowCount = ref(null)
 // Row counts follow the configured regional format (issue #1073).
 const { fmtNumber } = useRegionalFormat()
 const formattedPendingRowCount = computed(() => fmtNumber(pendingRowCount.value, { decimals: 0 }))
+// Technical file extension — derived in script so the i18n guard does not see a literal.
+const fileExtension = computed(() => (form.delimiter === '\t' ? 'tsv' : 'csv'))
 
 // delimiter and quote_char are required single characters. escape_char may be
 // empty (= no escape, RFC 4180 quote-doubling). Both backend Pydantic and the

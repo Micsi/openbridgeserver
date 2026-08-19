@@ -87,12 +87,12 @@ const extraEntries = computed<ExtraEntry[]>(() => {
       <span
         v-if="quality === 'bad'"
         class="ml-auto w-2 h-2 rounded-full bg-red-500 flex-shrink-0"
-        title="Qualität: schlecht"
+        :title="$t('widgets.common.qualityBad')"
       />
       <span
         v-else-if="quality === 'uncertain'"
         class="ml-auto w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0"
-        title="Qualität: undefiniert"
+        :title="$t('widgets.common.qualityUncertain')"
       />
     </div>
 
@@ -113,12 +113,12 @@ const extraEntries = computed<ExtraEntry[]>(() => {
           <span
             v-if="entry.quality === 'bad'"
             class="w-1.5 h-1.5 rounded-full bg-red-500"
-            title="Qualität: schlecht"
+            :title="$t('widgets.common.qualityBad')"
           />
           <span
             v-else-if="entry.quality === 'uncertain'"
             class="w-1.5 h-1.5 rounded-full bg-yellow-400"
-            title="Qualität: undefiniert"
+            :title="$t('widgets.common.qualityUncertain')"
           />
         </div>
       </div>
