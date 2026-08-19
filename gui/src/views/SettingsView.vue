@@ -2021,7 +2021,8 @@ function supportFormat(value) {
 
 function supportFormatNumber(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
-  return formatNumber(value, activeRegionFormat.value)
+  // `toLocaleString()` semantics: at most three fraction digits, no padding.
+  return formatNumber(value, activeRegionFormat.value, { maxDecimals: 3 })
 }
 
 function supportFormatBytes(value) {

@@ -432,7 +432,7 @@ const maxFileSizeForPrognosis = computed(() => totalMaxBytes.value)
 
 function formatSegmentAge(seconds) {
   const hours = seconds / SECONDS_PER_HOUR
-  return `${formatNumber(hours, regionFormat.value)} ${t('ringbuffer.unitHours')}`
+  return `${formatNumber(hours, regionFormat.value, { maxDecimals: 2 })} ${t('ringbuffer.unitHours')}`
 }
 
 function formatBytesCompact(value) {

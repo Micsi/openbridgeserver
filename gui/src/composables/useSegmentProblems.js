@@ -144,9 +144,9 @@ export function useSegmentProblems() {
     if (s === null) return null
     const hours = s / 3600
     if (hours < 48) {
-      return t('ringbuffer.prognosis.hours', { n: formatNumber(hours, regionFormat.value, { decimals: hours < 10 ? 1 : 0 }) })
+      return t('ringbuffer.prognosis.hours', { n: formatNumber(hours, regionFormat.value, { maxDecimals: hours < 10 ? 1 : 0 }) })
     }
-    return t('ringbuffer.prognosis.days', { n: formatNumber(hours / 24, regionFormat.value, { decimals: 0 }) })
+    return t('ringbuffer.prognosis.days', { n: formatNumber(hours / 24, regionFormat.value, { maxDecimals: 0 }) })
   }
 
   /**

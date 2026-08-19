@@ -15,7 +15,10 @@ export const FALLBACK_REGION_FORMAT = 'de-DE'
 const NARROW_NBSP = '\u202F'
 
 export interface NumberFormatOptions {
+  /** Exact fraction digits, padded with zeros. */
   decimals?: number | null
+  /** Upper bound on fraction digits (trailing zeros dropped); ignored when `decimals` is set. */
+  maxDecimals?: number | null
   grouping?: boolean
 }
 
@@ -48,6 +51,10 @@ export function toFiniteNumber(value: unknown): number | null {
   return null
 }
 
+function clampDigits(digits: number): number {
+  return Math.max(0, Math.min(20, Math.trunc(digits)))
+}
+
 function passthrough(value: unknown): string {
   return value === null || value === undefined ? '' : String(value)
 }
@@ -55,22 +62,25 @@ function passthrough(value: unknown): string {
 /**
  * Format a number for display.
  *
- * `decimals` fixes the fraction digits; `null`/omitted keeps the value's own
- * precision. Non-numeric input is returned unchanged.
+ * `decimals` fixes the fraction digits, `maxDecimals` only caps them; with
+ * neither, the value's own precision is kept. Non-numeric input is returned
+ * unchanged.
  */
 export function formatNumber(
   value: unknown,
   locale: string = FALLBACK_REGION_FORMAT,
   options: NumberFormatOptions = {},
 ): string {
-  const { decimals = null, grouping = true } = options
+  const { decimals = null, maxDecimals = null, grouping = true } = options
   const number = toFiniteNumber(value)
   if (number === null) return passthrough(value)
   const intlOptions: Intl.NumberFormatOptions = { useGrouping: grouping }
   if (decimals !== null && decimals !== undefined) {
-    const digits = Math.max(0, Math.min(20, Math.trunc(decimals)))
+    const digits = clampDigits(decimals)
     intlOptions.minimumFractionDigits = digits
     intlOptions.maximumFractionDigits = digits
+  } else if (maxDecimals !== null && maxDecimals !== undefined) {
+    intlOptions.maximumFractionDigits = clampDigits(maxDecimals)
   } else {
     intlOptions.maximumFractionDigits = 20
   }
@@ -87,7 +97,7 @@ export function formatCurrency(
   const { decimals = 2 } = options
   const number = toFiniteNumber(value)
   if (number === null) return passthrough(value)
-  const digits = Math.max(0, Math.min(20, Math.trunc(decimals)))
+  const digits = clampDigits(decimals)
   return getFormatter(locale, {
     style: 'currency',
     currency,

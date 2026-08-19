@@ -220,6 +220,17 @@ describe('retentionSignal (#919/#938)', () => {
     expect(long.text).not.toContain('12,0')
   })
 
+  it('drops a trailing zero instead of padding short retentions (#1073)', () => {
+    const { retentionSignal } = useApi()
+    const whole = retentionSignal(stats({
+      max_age: 5 * 24 * 3600,
+      prognosis: { estimated_retention_seconds: 5 * 3600, bytes_per_hour: 50 * 1024 * 1024 },
+    }))
+
+    expect(whole.text).toContain('5')
+    expect(whole.text).not.toContain('5,0')
+  })
+
   it('omits the budget recommendation when bytes_per_hour is unknown', () => {
     const { retentionSignal } = useApi()
     const sig = retentionSignal(stats({

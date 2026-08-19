@@ -30,6 +30,10 @@ function getFormatter(locale, options) {
   return formatter
 }
 
+function clampDigits(digits) {
+  return Math.max(0, Math.min(20, Math.trunc(digits)))
+}
+
 /**
  * Coerce a value to a finite number, or return `null` when it is not numeric.
  * Booleans are not numbers here — they are rendered as labels, not values.
@@ -49,20 +53,25 @@ export function toFiniteNumber(value) {
  * @param {unknown} value              value to format
  * @param {string}  locale             BCP-47 regional format, e.g. `de-CH`
  * @param {object}  [options]
- * @param {number|null} [options.decimals]  fixed fraction digits; `null` keeps
- *                                          the value's own precision
+ * @param {number|null} [options.decimals]     exact fraction digits, padded
+ *                                             with zeros
+ * @param {number|null} [options.maxDecimals]  upper bound on fraction digits,
+ *                                             trailing zeros dropped; ignored
+ *                                             when `decimals` is given
  * @param {boolean} [options.grouping] thousands grouping (default `true`)
  * @returns {string} formatted text; non-numeric input is returned unchanged
  */
 export function formatNumber(value, locale = FALLBACK_REGION_FORMAT, options = {}) {
-  const { decimals = null, grouping = true } = options
+  const { decimals = null, maxDecimals = null, grouping = true } = options
   const number = toFiniteNumber(value)
   if (number === null) return value === null || value === undefined ? '' : String(value)
   const intlOptions = { useGrouping: grouping }
   if (decimals !== null && decimals !== undefined) {
-    const digits = Math.max(0, Math.min(20, Math.trunc(decimals)))
+    const digits = clampDigits(decimals)
     intlOptions.minimumFractionDigits = digits
     intlOptions.maximumFractionDigits = digits
+  } else if (maxDecimals !== null && maxDecimals !== undefined) {
+    intlOptions.maximumFractionDigits = clampDigits(maxDecimals)
   } else {
     intlOptions.maximumFractionDigits = 20
   }
@@ -76,7 +85,7 @@ export function formatCurrency(value, locale = FALLBACK_REGION_FORMAT, currency 
   const { decimals = 2 } = options
   const number = toFiniteNumber(value)
   if (number === null) return value === null || value === undefined ? '' : String(value)
-  const digits = Math.max(0, Math.min(20, Math.trunc(decimals)))
+  const digits = clampDigits(decimals)
   return getFormatter(locale, {
     style: 'currency',
     currency,

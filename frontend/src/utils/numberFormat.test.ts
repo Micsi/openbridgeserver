@@ -63,6 +63,17 @@ describe('numberFormat (#1073)', () => {
       expect(formatNumber(1.5, 'de-DE', { decimals: 99 })).toContain('1,5')
     })
 
+    it('caps fraction digits without padding when maxDecimals is used', () => {
+      expect(formatNumber(6.3333, 'de-DE', { maxDecimals: 2 })).toBe('6,33')
+      expect(formatNumber(6, 'de-DE', { maxDecimals: 2 })).toBe('6')
+      expect(formatNumber(6.5, 'de-DE', { maxDecimals: 0 })).toBe('7')
+      expect(formatNumber(6.3333, 'de-DE', { maxDecimals: 99 })).toBe('6,3333')
+    })
+
+    it('lets decimals win over maxDecimals', () => {
+      expect(formatNumber(6, 'de-DE', { decimals: 2, maxDecimals: 0 })).toBe('6,00')
+    })
+
     it('returns non-numeric input unchanged', () => {
       expect(formatNumber('AN', 'de-DE')).toBe('AN')
       expect(formatNumber(null, 'de-DE')).toBe('')

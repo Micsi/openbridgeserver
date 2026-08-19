@@ -203,6 +203,8 @@ describe('SettingsView regional format (#1073)', () => {
     expect(wrapper.vm.formatBytes(5 * 1024 * 1024)).toBe('5,0 MB')
 
     expect(wrapper.vm.supportFormatNumber(1234567)).toBe('1.234.567')
+    // At most three fraction digits, never padded — matching toLocaleString().
+    expect(wrapper.vm.supportFormatNumber(1234.56789)).toBe('1.234,568')
     expect(wrapper.vm.supportFormatNumber('nope')).toBe('—')
     expect(wrapper.vm.supportFormatPercent(42.55)).toBe('42,6%')
     expect(wrapper.vm.supportFormatPercent(null)).toBe('—')
