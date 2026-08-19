@@ -100,7 +100,7 @@
         data-testid="export-warning"
       >
         <i18n-t keypath="ringbuffer.export.rowWarning" tag="span">
-          <template #n><strong>{{ pendingRowCount.toLocaleString() }}</strong></template>
+          <template #n><strong>{{ formattedPendingRowCount }}</strong></template>
         </i18n-t>
       </div>
 
@@ -121,6 +121,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ringbufferApi } from '@/api/client'
+import { useRegionalFormat } from '@/composables/useRegionalFormat'
 import Modal from '@/components/ui/Modal.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 
@@ -159,6 +160,9 @@ const form = reactive({
 const busy = ref(false)
 const errorMsg = ref('')
 const pendingRowCount = ref(null)
+// Row counts follow the configured regional format (issue #1073).
+const { fmtNumber } = useRegionalFormat()
+const formattedPendingRowCount = computed(() => fmtNumber(pendingRowCount.value, { decimals: 0 }))
 
 // delimiter and quote_char are required single characters. escape_char may be
 // empty (= no escape, RFC 4180 quote-doubling). Both backend Pydantic and the

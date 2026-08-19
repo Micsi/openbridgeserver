@@ -59,8 +59,9 @@ describe('RingBufferView unit column display (#434)', () => {
 
     // The value cell contains the value AND a unit span.
     const html = row.html()
-    expect(html).toContain('22.3')
-    expect(html).toContain('21.5')
+    // Numbers use the configured regional format — German default (issue #1073).
+    expect(html).toContain('22,3')
+    expect(html).toContain('21,5')
     // The unit text appears (at least once for new_value, once for old_value).
     const occurrences = (html.match(/°C/g) || []).length
     expect(occurrences).toBeGreaterThanOrEqual(2)
@@ -85,8 +86,8 @@ describe('RingBufferView unit column display (#434)', () => {
 
     // No unit span — and notably no stray whitespace/separator artifacts.
     const html = row.html()
-    // Sanity: value is still rendered.
-    expect(html).toContain('22.3')
+    // Sanity: value is still rendered (German regional format, issue #1073).
+    expect(html).toContain('22,3')
     // The tell-tale "ml-1" unit-span class must not appear in the row.
     expect(html).not.toMatch(/class="[^"]*ml-1[^"]*"/)
   })
@@ -106,8 +107,9 @@ describe('RingBufferView unit column display (#434)', () => {
     const rows = wrapper.findAll('[data-testid="ringbuffer-entry"]')
     expect(rows.length).toBe(1)
     const html = rows[0].html()
-    expect(html).toContain('1234')
-    expect(html).toContain('1000')
+    // Grouped by the configured regional format (issue #1073).
+    expect(html).toContain('1.234')
+    expect(html).toContain('1.000')
     const occurrences = (html.match(/\bW\b/g) || []).length
     expect(occurrences).toBeGreaterThanOrEqual(2)
   })
@@ -128,7 +130,7 @@ describe('RingBufferView unit column display (#434)', () => {
 
     const row = wrapper.find('[data-testid="ringbuffer-entry"]')
     const html = row.html()
-    expect(html).toContain('7.5')
+    expect(html).toContain('7,5')
     // old_value is rendered as "-" placeholder — no unit next to it.
     // new_value still has the unit.
     expect(html).toMatch(/kWh/)

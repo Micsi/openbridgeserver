@@ -1,0 +1,138 @@
+/**
+ * Locale-aware number/currency display formatting for the Visu (issue #1073).
+ *
+ * The formatting locale is the *regional format* setting, which is deliberately
+ * independent of the UI language: a German UI in Switzerland shows `1'234.50`,
+ * the same German UI in Germany shows `1.234,50`.
+ *
+ * These helpers are display-only. Datapoint values, widget configuration,
+ * calculations, API payloads and stored history keep locale-neutral numbers.
+ */
+
+export const FALLBACK_REGION_FORMAT = 'de-DE'
+
+/** Typographic separator between number and percent sign. */
+const NARROW_NBSP = '\u202F'
+
+export interface NumberFormatOptions {
+  decimals?: number | null
+  grouping?: boolean
+}
+
+const formatterCache = new Map<string, Intl.NumberFormat>()
+
+function getFormatter(locale: string, options: Intl.NumberFormatOptions): Intl.NumberFormat {
+  const key = `${locale}|${JSON.stringify(options)}`
+  let formatter = formatterCache.get(key)
+  if (!formatter) {
+    try {
+      formatter = new Intl.NumberFormat(locale, options)
+    } catch {
+      formatter = new Intl.NumberFormat(FALLBACK_REGION_FORMAT, options)
+    }
+    formatterCache.set(key, formatter)
+  }
+  return formatter
+}
+
+/**
+ * Coerce a value to a finite number, or return `null` when it is not numeric.
+ * Booleans are not numbers here — they are rendered as labels, not values.
+ */
+export function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function passthrough(value: unknown): string {
+  return value === null || value === undefined ? '' : String(value)
+}
+
+/**
+ * Format a number for display.
+ *
+ * `decimals` fixes the fraction digits; `null`/omitted keeps the value's own
+ * precision. Non-numeric input is returned unchanged.
+ */
+export function formatNumber(
+  value: unknown,
+  locale: string = FALLBACK_REGION_FORMAT,
+  options: NumberFormatOptions = {},
+): string {
+  const { decimals = null, grouping = true } = options
+  const number = toFiniteNumber(value)
+  if (number === null) return passthrough(value)
+  const intlOptions: Intl.NumberFormatOptions = { useGrouping: grouping }
+  if (decimals !== null && decimals !== undefined) {
+    const digits = Math.max(0, Math.min(20, Math.trunc(decimals)))
+    intlOptions.minimumFractionDigits = digits
+    intlOptions.maximumFractionDigits = digits
+  } else {
+    intlOptions.maximumFractionDigits = 20
+  }
+  return getFormatter(locale, intlOptions).format(number)
+}
+
+/** Format a monetary amount with the configured currency. */
+export function formatCurrency(
+  value: unknown,
+  locale: string = FALLBACK_REGION_FORMAT,
+  currency = 'EUR',
+  options: { decimals?: number } = {},
+): string {
+  const { decimals = 2 } = options
+  const number = toFiniteNumber(value)
+  if (number === null) return passthrough(value)
+  const digits = Math.max(0, Math.min(20, Math.trunc(decimals)))
+  return getFormatter(locale, {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(number)
+}
+
+/** Format a ratio already expressed in percent (e.g. `42.5` → `42,5 %`). */
+export function formatPercent(
+  value: unknown,
+  locale: string = FALLBACK_REGION_FORMAT,
+  options: { decimals?: number } = {},
+): string {
+  const { decimals = 1 } = options
+  const number = toFiniteNumber(value)
+  if (number === null) return passthrough(value)
+  return `${formatNumber(number, locale, { decimals })}${NARROW_NBSP}%`
+}
+
+const LANGUAGE_REGION: Record<string, string> = {
+  de: 'de-DE',
+  gsw: 'de-CH',
+  en: 'en-US',
+  fr: 'fr-FR',
+  it: 'it-IT',
+  es: 'es-ES',
+}
+
+const REGION_CURRENCY: Record<string, string> = {
+  'de-CH': 'CHF',
+  'fr-CH': 'CHF',
+  'it-CH': 'CHF',
+  'en-US': 'USD',
+  'en-GB': 'GBP',
+}
+
+/** Resolve `auto` against the UI language; anything else is used verbatim. */
+export function resolveRegionFormat(regionFormat?: string | null, language?: string | null): string {
+  if (regionFormat && regionFormat !== 'auto') return regionFormat
+  return LANGUAGE_REGION[language ?? ''] ?? FALLBACK_REGION_FORMAT
+}
+
+/** Resolve `auto` against the effective regional format. */
+export function resolveCurrency(currency?: string | null, regionFormat?: string | null): string {
+  if (currency && currency !== 'auto') return currency
+  return REGION_CURRENCY[regionFormat ?? ''] ?? 'EUR'
+}

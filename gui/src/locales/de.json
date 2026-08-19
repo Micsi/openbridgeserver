@@ -2488,7 +2488,13 @@
       "themeLightDesc": "Helles Erscheinungsbild",
       "themeDark": "Dunkel",
       "themeDarkDesc": "Dunkles Erscheinungsbild",
-      "tzSaved": "Zeitzone auf «{tz}» gesetzt"
+      "tzSaved": "Zeitzone auf «{tz}» gesetzt",
+      "regionFormat": "Regionalformat",
+      "regionFormatHint": "Bestimmt Zahlen-, Währungs- und Datumsformate. Unabhängig von der Sprache — Deutsch in der Schweiz formatiert anders als Deutsch in Deutschland.",
+      "regionFormatAuto": "Automatisch (aus Sprache: {format} · {sample})",
+      "currency": "Währung",
+      "currencyAuto": "Automatisch (aus Regionalformat: {currency})",
+      "formatPreview": "Vorschau"
     },
     "security": {
       "title": "URL-Ziel-Allowlist",

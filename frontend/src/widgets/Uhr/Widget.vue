@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { DataPointValue } from '@/types'
+import { useFormatStore } from '@/stores/format'
 
 const props = defineProps<{
   config: Record<string, unknown>
@@ -19,6 +20,9 @@ const label       = computed(() => (props.config.label       as string  | undefi
 const timezone    = computed(() => (props.config.timezone    as string  | undefined) ?? '')
 
 // ── Live-Zeit ─────────────────────────────────────────────────────────────────
+// Datums-/Zeitzonendarstellung folgt dem konfigurierten Regionalformat (Issue #1073).
+const format = useFormatStore()
+
 const now = ref(new Date())
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -38,8 +42,10 @@ const timeStr = computed(() => {
   return showSeconds.value ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`
 })
 
+// Datumsdarstellung folgt dem konfigurierten Regionalformat (Issue #1073)
+// statt einem fest verdrahteten `de-CH`.
 const dateStr = computed(() =>
-  now.value.toLocaleDateString('de-CH', {
+  now.value.toLocaleDateString(format.regionFormat, {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   }),
 )
@@ -75,7 +81,7 @@ const secondDeg  = computed(() => zonedTime.value.s * 6)
 const timezoneLabel = computed(() => {
   if (!timezone.value) return ''
   try {
-    return new Intl.DateTimeFormat('de-CH', {
+    return new Intl.DateTimeFormat(format.regionFormat, {
       timeZone: timezone.value,
       timeZoneName: 'short',
     }).formatToParts(now.value).find(p => p.type === 'timeZoneName')?.value ?? timezone.value

@@ -1450,7 +1450,9 @@ Sendet Benachrichtigungen, wenn sich ein verknüpfter Datenpunkt ändert und die
 | `cooldown_seconds` | Mindestabstand zwischen zwei gesendeten Nachrichten |
 | `enabled` | Aktiviert/deaktiviert die Verknüpfung |
 
-Platzhalter in der Nachricht: `###DP###` = Wert, `###DPU###` = Einheit, `###DPN###` = Datenpunktname, `###DPI###` = Datenpunkt-ID, `###TS###` = Zeitstempel.
+Platzhalter in der Nachricht: `###DP###` = Wert, `###DPU###` = Einheit, `###DPN###` = Datenpunktname, `###DPI###` = Datenpunkt-ID, `###TS###` = ISO-Zeitstempel, `###DATE###` / `###TIME###` = Datum und Uhrzeit in den konfigurierten Anzeigeformaten.
+
+Zahlenwerte in `###DP###` werden im konfigurierten **Regionalformat** ausgegeben (siehe [Einstellungen](#einstellungen)) — mit der deutschen Voreinstellung wird aus `1.05` also `1,05`. Nicht-numerische Werte (Zeichenketten, Wahrheitswerte, Objekte) behalten ihre locale-neutrale Darstellung, und `###TS###` bleibt immer ein locale-neutraler ISO-Zeitstempel.
 
 > **Hinweis:** Signal wird im MESSAGE-Adapter vorerst nicht angeboten, weil dafür ein separater Signal-Gateway-Dienst betrieben werden müsste.
 
@@ -1676,7 +1678,12 @@ Die Einstellungen sind über die Weboberfläche erreichbar (⚙ in der Seitenlei
 
 **Allgemein:**
 - **Zeitzone** — alle Zeitangaben in der Oberfläche werden in dieser Zeitzone dargestellt (Verlauf, RingBuffer, History-Suche, Astro-Block)
+- **Standard-Datumsformat / Standard-Zeitformat** — Token-Muster (`dd.MM.yyyy`, `HH:mm:ss`, …) für jede Datums- und Zeitanzeige
+- **Regionalformat** — Dezimaltrennzeichen, Tausendergruppierung sowie Datums- und Währungskonventionen für **alle** Zahlenausgaben in der Admin-GUI, der Visu und in servergenerierten Benachrichtigungstexten. Das ist eine **eigene Einstellung neben der Sprache**, weil beide unabhängig voneinander sind: Deutsch in der Schweiz formatiert `1'234.50`, Deutsch in Deutschland `1.234,50`. `Automatisch` leitet das Format aus der gewählten Sprache ab (`de` → `de-DE`, `gsw` → `de-CH`, `en` → `en-US`, …); jeder explizite Eintrag (`de-DE`, `de-AT`, `de-CH`, `en-US`, `en-GB`, `fr-FR`, `fr-CH`, `it-IT`, `it-CH`, `es-ES`) überschreibt sie. Datenpunktwerte, Berechnungen, API-Payloads, Exporte und gespeicherte History bleiben locale-neutrale Zahlen.
+- **Währung** — ISO-Währung (`EUR`, `CHF`, `USD`, `GBP`) für Geldbeträge. `Automatisch` leitet sie aus dem Regionalformat ab (`de-CH`/`fr-CH`/`it-CH` → `CHF`, `en-US` → `USD`, `en-GB` → `GBP`, sonst `EUR`).
 - **KNX-Projektdatei importieren** — ETS-Projektdatei (`.knxproj`) hochladen, um Gruppenadressen als Suchvorschläge im Verknüpfungs-Formular zu nutzen
+
+Das Regionalformat wird zusätzlich schreibgeschützt und ohne Anmeldung unter `GET /api/v1/system/display-settings` bereitgestellt, damit die Visu es auch für anonyme und PIN-Nutzer anwendet.
 
 **Verlauf:** Übersicht aller Datenpunkte mit History-Aufzeichnung. Datenpunkte mit deaktivierter Aufzeichnung (`record_history: false`) werden zuerst angezeigt. Aufzeichnung per Datenpunkt ein- und ausschalten.
 

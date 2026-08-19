@@ -2488,7 +2488,13 @@
       "themeLightDesc": "Light appearance",
       "themeDark": "Dark",
       "themeDarkDesc": "Dark appearance",
-      "tzSaved": "Timezone set to «{tz}»"
+      "tzSaved": "Timezone set to «{tz}»",
+      "regionFormat": "Regional format",
+      "regionFormatHint": "Controls number, currency and date formats. Independent of the language — German in Switzerland formats differently from German in Germany.",
+      "regionFormatAuto": "Automatic (from language: {format} · {sample})",
+      "currency": "Currency",
+      "currencyAuto": "Automatic (from regional format: {currency})",
+      "formatPreview": "Preview"
     },
     "security": {
       "title": "URL target allowlist",

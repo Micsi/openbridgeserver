@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useDatapointsStore } from '@/stores/datapoints'
+import { useFormatStore } from '@/stores/format'
 import type { DataPointValue } from '@/types'
 
 interface ExtraDatapoint {
@@ -19,13 +20,15 @@ const props = defineProps<{
 }>()
 
 const dpStore = useDatapointsStore()
+// Anzeige folgt dem konfigurierten Regionalformat (Issue #1073).
+const format = useFormatStore()
 
 const label = computed(() => (props.config.label as string | undefined) ?? '—')
 const decimals = computed(() => (props.config.decimals as number | undefined) ?? 1)
 const configUnit = computed(() => (props.config.unit as string | undefined) ?? '')
 
 function formatValue(v: unknown, dec: number): string {
-  if (typeof v === 'number') return v.toFixed(dec)
+  if (typeof v === 'number') return format.fmtNumber(v, { decimals: dec })
   if (typeof v === 'boolean') return v ? 'EIN' : 'AUS'
   return String(v ?? '—')
 }

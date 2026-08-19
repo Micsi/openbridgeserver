@@ -1470,9 +1470,20 @@ async def factory_reset(
         await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('date_format', 'dd.MM.yyyy')")
         await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('time_format', 'HH:mm:ss')")
         await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('language', 'de')")
+        await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('region_format', 'auto')")
+        await db.execute_and_commit("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('currency', 'auto')")
         from obs.logic.manager import get_logic_manager
 
-        get_logic_manager().update_app_config({"timezone": "Europe/Zurich", "date_format": "dd.MM.yyyy", "time_format": "HH:mm:ss", "language": "de"})
+        get_logic_manager().update_app_config(
+            {
+                "timezone": "Europe/Zurich",
+                "date_format": "dd.MM.yyyy",
+                "time_format": "HH:mm:ss",
+                "language": "de",
+                "region_format": "auto",
+                "currency": "auto",
+            }
+        )
     except Exception as exc:
         logger.exception("App settings reset failed")
         result.errors.append(f"App settings reset failed: {exc}")

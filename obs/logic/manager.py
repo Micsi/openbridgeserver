@@ -932,6 +932,8 @@ class LogicManager:
             "date_format": "dd.MM.yyyy",
             "time_format": "HH:mm:ss",
             "language": "de",
+            "region_format": "auto",
+            "currency": "auto",
         }
 
     async def start(self) -> None:
