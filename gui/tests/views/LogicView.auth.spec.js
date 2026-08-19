@@ -1118,6 +1118,41 @@ describe('LogicView duplicate target handle validation (#1116)', () => {
     expect(wrapper.find('[data-testid="status-msg"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('Mehrfachverbindung')
   })
+
+  it('scopes the reported count to duplicate-handle warnings when a cycle warning is also present', async () => {
+    const graph = makeGraph('graph-1', {
+      flow_data: {
+        nodes: [
+          { id: 'a', type: 'not', position: { x: 0, y: 0 }, data: {} },
+          { id: 'b', type: 'not', position: { x: 160, y: 0 }, data: {} },
+          { id: 'c', type: 'const_value', position: { x: 0, y: 160 }, data: {} },
+          { id: 'd', type: 'const_value', position: { x: 0, y: 320 }, data: {} },
+          { id: 'e', type: 'datapoint_write', position: { x: 320, y: 160 }, data: {} },
+        ],
+        edges: [
+          { id: 'a-b', source: 'a', target: 'b', sourceHandle: 'out', targetHandle: 'in1' },
+          { id: 'b-a', source: 'b', target: 'a', sourceHandle: 'out', targetHandle: 'in1' },
+          { id: 'c-e', source: 'c', target: 'e', sourceHandle: 'value', targetHandle: 'value' },
+          { id: 'd-e', source: 'd', target: 'e', sourceHandle: 'value', targetHandle: 'value' },
+        ],
+      },
+    })
+    const { wrapper, logicApi } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+
+    await wrapper.vm.saveGraph()
+
+    expect(logicApi.saveGraph).not.toHaveBeenCalled()
+    // Two cycle warnings (a, b) plus one duplicate-handle warning (e) — the
+    // duplicate-handle message must report "1", not the combined total "3".
+    expect(wrapper.vm.validationWarnings).toHaveLength(3)
+    expect(wrapper.vm.statusMsg.text).toContain('1 Eingang')
+    expect(wrapper.vm.statusMsg.text).not.toContain('3 Eingang')
+  })
 })
 
 describe('LogicView operation error handling', () => {

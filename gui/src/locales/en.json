@@ -2143,6 +2143,10 @@
         "data_type": "Data type",
         "persist_state": "Restore state on restart"
       },
+      "merge": {
+        "input_count": "Input count",
+        "persist_state": "Restore state on restart"
+      },
       "hysteresis": {
         "persist_state": "Restore state on restart"
       },

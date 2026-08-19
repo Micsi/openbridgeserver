@@ -2143,6 +2143,10 @@
         "data_type": "Datentyp",
         "persist_state": "Zustand nach Neustart wiederherstellen"
       },
+      "merge": {
+        "input_count": "Anzahl Eingänge",
+        "persist_state": "Zustand nach Neustart wiederherstellen"
+      },
       "hysteresis": {
         "persist_state": "Zustand nach Neustart wiederherstellen"
       },

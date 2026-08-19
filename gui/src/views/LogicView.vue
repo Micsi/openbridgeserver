@@ -148,7 +148,7 @@
           {{ statusMsg.text }}
         </div>
         <div v-else-if="validationWarnings.length" class="absolute top-0 inset-x-0 z-20 px-4 py-1.5 text-xs pointer-events-none bg-amber-500/10 text-amber-500">
-          {{ $t(hasDuplicateHandleWarning(validationWarnings) ? 'logic.graphValidationDuplicateHandle' : 'logic.graphValidationCycle', { count: validationWarnings.length }) }}
+          {{ $t(hasDuplicateHandleWarning(validationWarnings) ? 'logic.graphValidationDuplicateHandle' : 'logic.graphValidationCycle', { count: warningCountForDisplay(validationWarnings) }) }}
         </div>
 
         <VueFlow
@@ -585,6 +585,16 @@ function hasDuplicateHandleWarning(warnings) {
   return warnings.some(w => w.code === 'duplicate_target_handle')
 }
 
+// The two warning kinds are reported together but counted separately: mixing
+// cycle counts into a duplicate-handle message (or vice versa) would show a
+// number that doesn't match either sentence (#1116 review).
+function warningCountForDisplay(warnings) {
+  const isDuplicate = w => w.code === 'duplicate_target_handle'
+  return hasDuplicateHandleWarning(warnings)
+    ? warnings.filter(isDuplicate).length
+    : warnings.filter(w => !isDuplicate(w)).length
+}
+
 function findCyclicNodeIds(adj, candidates) {
   let index = 0
   const stack = []
@@ -670,7 +680,7 @@ async function saveGraph() {
   const graphWarnings = analyzeFlowWarnings(nodes.value, edges.value)
   if (graphWarnings.length) {
     const saveBlockedKey = hasDuplicateHandleWarning(graphWarnings) ? 'logic.graphValidationSaveBlockedDuplicateHandle' : 'logic.graphValidationSaveBlocked'
-    showStatus(false, t(saveBlockedKey, { count: graphWarnings.length }), 6000)
+    showStatus(false, t(saveBlockedKey, { count: warningCountForDisplay(graphWarnings) }), 6000)
     applyDebugValues(Object.fromEntries(
       graphWarnings.map(w => [w.node_id, {
         __error__: t(w.code === 'duplicate_target_handle' ? 'logic.graphValidationNodeErrorDuplicateHandle' : 'logic.graphValidationNodeError'),
@@ -1119,7 +1129,7 @@ function onConnect(params) {
   const graphWarnings = analyzeFlowWarnings(nodes.value, nextEdges)
   if (graphWarnings.length) {
     const connectBlockedKey = hasDuplicateHandleWarning(graphWarnings) ? 'logic.graphValidationConnectBlockedDuplicateHandle' : 'logic.graphValidationConnectBlocked'
-    showStatus(false, t(connectBlockedKey, { count: graphWarnings.length }), 6000)
+    showStatus(false, t(connectBlockedKey, { count: warningCountForDisplay(graphWarnings) }), 6000)
     return
   }
   edges.value = nextEdges
