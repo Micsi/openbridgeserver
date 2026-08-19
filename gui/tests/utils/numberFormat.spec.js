@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   FALLBACK_REGION_FORMAT,
   formatCurrency,
@@ -81,6 +81,42 @@ describe('numberFormat (#1073)', () => {
 
     it('lets decimals win over maxDecimals', () => {
       expect(formatNumber(6, 'de-DE', { decimals: 2, maxDecimals: 0 })).toBe('6,00')
+    })
+
+    it('never renders a nonzero value as zero (#1073)', () => {
+      // Intl rounds anything below the fraction-digit ceiling away entirely.
+      expect(formatNumber(1e-21, 'de-DE')).toBe('0,000000000000000000001')
+      expect(formatNumber(1e-101, 'de-DE')).toBe('1e-101')
+      expect(formatNumber(-1e-101, 'de-DE')).toBe('-1e-101')
+      // A real zero still formats as zero.
+      expect(formatNumber(0, 'de-DE')).toBe('0')
+      // An explicit precision is the caller's decision and is honoured as given.
+      expect(formatNumber(1e-21, 'de-DE', { decimals: 2 })).toBe('0,00')
+    })
+
+    it('falls back to the pre-ES2023 digit ceiling when the engine rejects 100', async () => {
+      // Engines older than ES2023 throw above 20 fraction digits; the module
+      // probes once at load time, so it has to be re-imported under the stub.
+      const RealNumberFormat = Intl.NumberFormat
+      class LimitedNumberFormat extends RealNumberFormat {
+        constructor(locale, options = {}) {
+          if ((options.maximumFractionDigits ?? 0) > 20) {
+            throw new RangeError('maximumFractionDigits value is out of range.')
+          }
+          super(locale, options)
+        }
+      }
+      vi.resetModules()
+      vi.stubGlobal('Intl', { ...Intl, NumberFormat: LimitedNumberFormat })
+      try {
+        const limited = await import('@/utils/numberFormat')
+        // No RangeError, and the tiny value still is not reported as zero.
+        expect(limited.formatNumber(1.5, 'de-DE')).toBe('1,5')
+        expect(limited.formatNumber(1e-21, 'de-DE')).toBe('1e-21')
+      } finally {
+        vi.unstubAllGlobals()
+        vi.resetModules()
+      }
     })
 
     it('returns non-numeric input unchanged', () => {

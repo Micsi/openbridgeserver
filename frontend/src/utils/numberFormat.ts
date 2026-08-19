@@ -30,6 +30,24 @@ type IntlNumberOptions = Omit<Intl.NumberFormatOptions, 'useGrouping'> & {
   useGrouping?: boolean | 'auto' | 'always' | 'min2'
 }
 
+/**
+ * ES2023 raised the `maximumFractionDigits` ceiling from 20 to 100; older
+ * engines throw a RangeError above 20, so probe once and use what is supported.
+ */
+const MAX_FRACTION_DIGITS = (() => {
+  try {
+    new Intl.NumberFormat('en', { maximumFractionDigits: 100 })
+    return 100
+  } catch {
+    return 20
+  }
+})()
+
+/** True when the rendered text carries no significant digit at all. */
+function collapsedToZero(text: string): boolean {
+  return !/[1-9]/.test(text)
+}
+
 const formatterCache = new Map<string, Intl.NumberFormat>()
 
 function getFormatter(locale: string, options: IntlNumberOptions): Intl.NumberFormat {
@@ -111,9 +129,13 @@ export function formatNumber(
   } else if (maxDecimals !== null && maxDecimals !== undefined) {
     intlOptions.maximumFractionDigits = clampDigits(maxDecimals)
   } else {
-    intlOptions.maximumFractionDigits = 20
+    intlOptions.maximumFractionDigits = MAX_FRACTION_DIGITS
   }
-  return getFormatter(locale, intlOptions).format(number)
+  const text = getFormatter(locale, intlOptions).format(number)
+  // Never report a nonzero measurement as 0 — below the digit ceiling Intl
+  // rounds tiny values away entirely (issue #1073). Truth beats formatting.
+  if (number !== 0 && decimals === null && collapsedToZero(text)) return String(number)
+  return text
 }
 
 /** Format a monetary amount with the configured currency. */

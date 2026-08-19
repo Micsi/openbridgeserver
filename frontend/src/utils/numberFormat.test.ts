@@ -87,6 +87,17 @@ describe('numberFormat (#1073)', () => {
       expect(formatNumber(6, 'de-DE', { decimals: 2, maxDecimals: 0 })).toBe('6,00')
     })
 
+    it('never renders a nonzero value as zero (#1073)', () => {
+      // Intl rounds anything below the fraction-digit ceiling away entirely.
+      expect(formatNumber(1e-21, 'de-DE')).toBe('0,000000000000000000001')
+      expect(formatNumber(1e-101, 'de-DE')).toBe('1e-101')
+      expect(formatNumber(-1e-101, 'de-DE')).toBe('-1e-101')
+      // A real zero still formats as zero.
+      expect(formatNumber(0, 'de-DE')).toBe('0')
+      // An explicit precision is the caller's decision and is honoured as given.
+      expect(formatNumber(1e-21, 'de-DE', { decimals: 2 })).toBe('0,00')
+    })
+
     it('returns non-numeric input unchanged', () => {
       expect(formatNumber('AN', 'de-DE')).toBe('AN')
       expect(formatNumber(null, 'de-DE')).toBe('')
