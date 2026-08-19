@@ -107,13 +107,61 @@ describe('useFormatStore (#1073)', () => {
       expect(text).toBe('14:05')
     })
 
-    it('renders date and time when no options are given', async () => {
+    it('renders date and time with the configured patterns when no options are given', async () => {
       getMock.mockResolvedValue(payload({ resolved_region_format: 'de-DE', timezone: 'UTC' }))
       const store = useFormatStore()
       await store.load()
 
-      // Intl.DateTimeFormat without component options would drop the time.
-      expect(store.fmtDateTime('2026-06-12T14:30:45Z')).toBe('12.06.2026, 14:30:45')
+      expect(store.fmtDateTime('2026-06-12T14:30:45Z')).toBe('12.06.2026 14:30:45')
+    })
+
+    it('honours administrator-configured date and time patterns (#1073)', async () => {
+      getMock.mockResolvedValue(payload({
+        timezone: 'UTC',
+        date_format: 'yyyy/MM/dd',
+        time_format: 'HH-mm',
+        resolved_region_format: 'en-GB',
+      }))
+      const store = useFormatStore()
+      await store.load()
+
+      expect(store.fmtDate('2026-06-08T14:05:00Z')).toBe('2026/06/08')
+      expect(store.fmtTime('2026-06-08T14:05:00Z')).toBe('14-05')
+      expect(store.fmtDateTime('2026-06-08T14:05:00Z')).toBe('2026/06/08 14-05')
+    })
+
+    it.each([
+      ['de', 'Montag, 8. Juni 2026'],
+      ['en', 'Monday, 8. June 2026'],
+    ])('takes weekday and month names from the %s UI language, not the region', async (uiLanguage, expected) => {
+      getMock.mockResolvedValue(payload({
+        timezone: 'UTC',
+        date_format: 'EEEE, d. MMMM yyyy',
+        // An explicitly Swiss/US region must not anglicise or germanise the names.
+        resolved_region_format: 'en-US',
+      }))
+      const store = useFormatStore()
+      store.setUiLanguage(uiLanguage)
+      await store.load()
+
+      expect(store.fmtDate('2026-06-08T12:00:00Z')).toBe(expected)
+    })
+
+    it('applies the configured patterns in the server timezone', async () => {
+      getMock.mockResolvedValue(payload({ timezone: 'Asia/Tokyo', date_format: 'dd.MM.yyyy', time_format: 'HH:mm' }))
+      const store = useFormatStore()
+      await store.load()
+
+      // 23:30 UTC is the next day in Tokyo.
+      expect(store.fmtDateTime('2026-06-08T23:30:00Z')).toBe('09.06.2026 08:30')
+    })
+
+    it('returns an empty string from the pattern path for an unparsable value', async () => {
+      const store = useFormatStore()
+
+      expect(store.fmtDate('not a date')).toBe('')
+      expect(store.fmtTime('not a date')).toBe('')
+      expect(store.fmtDateTime('not a date')).toBe('')
     })
 
     it('accepts Date and epoch-millisecond input', () => {

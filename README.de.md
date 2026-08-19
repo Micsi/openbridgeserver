@@ -1685,6 +1685,8 @@ Die Einstellungen sind über die Weboberfläche erreichbar (⚙ in der Seitenlei
 
 Das Regionalformat wird zusätzlich schreibgeschützt und ohne Anmeldung unter `GET /api/v1/system/display-settings` bereitgestellt, damit die Visu es auch für anonyme und PIN-Nutzer anwendet.
 
+Formatkonventionen und übersetzte Namen sind bewusst getrennt: **Trennzeichen, Datums-/Zeitmuster und Währung stammen aus diesen Server-Einstellungen und sind für jeden Betrachter identisch** — eine Anlage hat eine Zahlenkonvention —, während **Wochentags- und Monatsnamen der UI-Sprache des jeweiligen Betrachters folgen**. Eine in einem englischen Browser geöffnete Visu zeigt daher englische Monatsnamen mit dem konfigurierten deutschen Zahlen- und Datumsformat.
+
 **Verlauf:** Übersicht aller Datenpunkte mit History-Aufzeichnung. Datenpunkte mit deaktivierter Aufzeichnung (`record_history: false`) werden zuerst angezeigt. Aufzeichnung per Datenpunkt ein- und ausschalten.
 
 **Passwort:** Eigenes Anmeldepasswort ändern

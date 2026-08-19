@@ -134,7 +134,13 @@ def _to_decimal(value: float | Decimal) -> Decimal:
     return Decimal(str(value))
 
 
-def _is_finite(value: float | Decimal) -> bool:
+def is_finite_number(value: float | Decimal) -> bool:
+    """Whether *value* has a regional representation.
+
+    Integers are always finite and are checked *without* converting to float —
+    ``math.isfinite(10**309)`` would raise ``OverflowError`` on a perfectly
+    valid Python integer.
+    """
     if isinstance(value, Decimal):
         return value.is_finite()
     if isinstance(value, int):
@@ -166,7 +172,7 @@ def format_number(
     for one.  Infinities and NaN have no regional representation and are
     returned as their plain Python text.
     """
-    if not _is_finite(value):
+    if not is_finite_number(value):
         return str(value)
     decimal_sep, group_sep = _SEPARATORS.get(region_format, _SEPARATORS["de-DE"])
     places = _natural_decimals(value) if decimals is None else max(0, decimals)

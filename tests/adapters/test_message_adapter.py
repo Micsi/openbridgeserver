@@ -215,6 +215,21 @@ def test_render_message_keeps_non_finite_numbers_as_json(value, expected):
     assert rendered == expected
 
 
+def test_render_message_handles_integers_beyond_the_float_range():
+    """math.isfinite() would raise OverflowError on a valid Python int (#1073)."""
+    rendered = render_message(
+        "###DP###",
+        value=10**309,
+        unit=None,
+        name="Sensor",
+        datapoint_id=uuid.uuid4(),
+        ts=datetime(2026, 6, 28, 12, 0, tzinfo=UTC),
+        region_format="en-US",
+    )
+
+    assert rendered == "1" + "," + ",".join(["000"] * 103)
+
+
 def test_render_message_formats_very_large_numbers_without_raising():
     rendered = render_message(
         "###DP###",

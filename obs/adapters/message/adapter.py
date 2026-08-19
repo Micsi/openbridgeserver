@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import re
 import time
 import uuid
@@ -27,7 +26,13 @@ from obs.core.event_bus import DataValueEvent
 from obs.core.json import json_dumps
 from obs.datetime_format import DEFAULT_DATE_FORMAT, DEFAULT_TIME_FORMAT, format_datetime
 from obs.db.database import get_db
-from obs.regional_format import DEFAULT_CURRENCY, DEFAULT_REGION_FORMAT, format_number, resolve_region_format
+from obs.regional_format import (
+    DEFAULT_CURRENCY,
+    DEFAULT_REGION_FORMAT,
+    format_number,
+    is_finite_number,
+    resolve_region_format,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +228,7 @@ def _format_value(value: Any, region_format: str = "de-DE") -> str:
         return value
     if isinstance(value, bool):
         return json_dumps(value)
-    if isinstance(value, (int, float)) and math.isfinite(value):
+    if isinstance(value, (int, float)) and is_finite_number(value):
         return format_number(value, region_format)
     return json_dumps(value)
 
