@@ -767,10 +767,6 @@ let preflightRequestId = 0
 function applyDebugValues(outputs, captureDebugOutputs = debugMode.value) {
   lastRunOutputs.value = outputs
   if (captureDebugOutputs) lastRunDebugOutputs.value = outputs
-  if (debugMode.value) {
-    clearDebugValues()
-    return
-  }
   nodes.value = nodes.value.map(node => ({
     ...node,
     data: {
@@ -969,10 +965,10 @@ async function runGraph(graphId = activeGraphId.value) {
       diagnosticCount > 0 ? 6000 : 3000
     )
     // Always update lastRunOutputs (needed for extractor config panels)
-    if (acceptsDebugResponse || diagnosticCount > 0) applyDebugValues(outputs, acceptsDebugResponse)
+    if (debugMode.value || diagnosticCount > 0) applyDebugValues(outputs, acceptsDebugResponse)
     else {
       lastRunOutputs.value = outputs
-      if (!debugMode.value) clearDebugValues()
+      clearDebugValues()
     }
     if (acceptsDebugResponse) {
       lastRunMetadata.value = data.debug || { timestamp: new Date().toISOString(), used_overrides: false }
