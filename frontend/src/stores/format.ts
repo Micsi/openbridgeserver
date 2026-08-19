@@ -24,6 +24,16 @@ import {
   type NumberFormatOptions,
 } from '@/utils/numberFormat'
 
+/** Date *and* time, matching what `toLocaleString()` used to render. */
+const DEFAULT_DATETIME_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+}
+
 export const useFormatStore = defineStore('format', () => {
   const language = ref('de')
   // Holds the server-resolved format when the endpoint supplies one, otherwise
@@ -62,10 +72,16 @@ export const useFormatStore = defineStore('format', () => {
     return formatPercent(value, regionFormat.value, options)
   }
 
-  /** Locale-aware date/time text for chart axes, tooltips and timestamps. */
+  /**
+   * Locale-aware date/time text for chart axes, tooltips and timestamps.
+   *
+   * Without *options* a full date **and** time is rendered — `Intl.DateTimeFormat`
+   * on its own would silently fall back to a date-only output.
+   */
   function fmtDateTime(value: number | string | Date, options?: Intl.DateTimeFormatOptions): string {
     const date = value instanceof Date ? value : new Date(value)
     if (Number.isNaN(date.getTime())) return ''
+    options = options ?? DEFAULT_DATETIME_OPTIONS
     // Server timezone as the default; an explicit caller option still wins.
     const intlOptions: Intl.DateTimeFormatOptions = timezone.value
       ? { timeZone: timezone.value, ...options }

@@ -143,7 +143,9 @@ function windDir(deg: number): string {
 }
 
 function fmtTime(unixTs: number): string {
-  // Uhrzeit-Struktur (12h/24h) folgt dem Regionalformat (Issue #1073).
+  // Uhrzeit-Struktur (12h/24h) folgt dem Regionalformat, die Zone der
+  // konfigurierten Server-Zeitzone statt der Browser-Zone — wie überall sonst
+  // in OBS (Issue #1073).
   return format.fmtDateTime(unixTs * 1000, { hour: '2-digit', minute: '2-digit' })
 }
 

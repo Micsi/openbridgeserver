@@ -107,6 +107,15 @@ describe('useFormatStore (#1073)', () => {
       expect(text).toBe('14:05')
     })
 
+    it('renders date and time when no options are given', async () => {
+      getMock.mockResolvedValue(payload({ resolved_region_format: 'de-DE', timezone: 'UTC' }))
+      const store = useFormatStore()
+      await store.load()
+
+      // Intl.DateTimeFormat without component options would drop the time.
+      expect(store.fmtDateTime('2026-06-12T14:30:45Z')).toBe('12.06.2026, 14:30:45')
+    })
+
     it('accepts Date and epoch-millisecond input', () => {
       const store = useFormatStore()
       const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' }

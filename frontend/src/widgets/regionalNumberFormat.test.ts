@@ -48,10 +48,10 @@ afterEach(() => {
 
 describe('Info widget (#1073)', () => {
   it.each([
-    ['de-DE', '1,050'],
-    ['de-CH', '1.050'],
-    ['en-US', '1.050'],
-  ])('renders 1.05 with three decimals for %s', (region, expected) => {
+    ['de-DE', '1,050', '1.050'],
+    ['de-CH', '1.050', '1,050'],
+    ['en-US', '1.050', '1,050'],
+  ])('renders 1.05 with three decimals for %s', (region, expected, unexpected) => {
     useFormatStore().regionFormatSetting = region
 
     wrapper = mount(InfoWidget, {
@@ -64,6 +64,7 @@ describe('Info widget (#1073)', () => {
     })
 
     expect(wrapper.text()).toContain(expected)
+    expect(wrapper.text()).not.toContain(unexpected)
   })
 
   it('leaves non-numeric values untouched', () => {
