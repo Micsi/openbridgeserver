@@ -23,10 +23,12 @@
         </button>
         <button v-if="activeGraphId" @click="requestGraphRun"
           :class="['btn-secondary btn-sm', activeGraph?.enabled ? 'text-green-400' : 'text-slate-500 opacity-50 cursor-not-allowed']"
-          :disabled="!activeGraph?.enabled"
+          :disabled="!activeGraph?.enabled || runPreflightLoading"
           :title="activeGraph?.enabled ? $t('logic.runTitle') : $t('logic.runDisabledTitle')"
           data-testid="btn-run">
-          &#9654; {{ $t('logic.run') }}
+          <Spinner v-if="runPreflightLoading" size="sm" />
+          <template v-else>&#9654;</template>
+          {{ $t('logic.run') }}
         </button>
         <button v-if="auth.isAdmin && activeGraphId" @click="toggleDebug"
           :class="['btn-secondary btn-sm', debugMode ? 'text-amber-400 ring-1 ring-amber-400/50' : 'text-slate-400']"
@@ -415,6 +417,7 @@ const nodeTypeComponents = {
   comment: _comment,
   // Logic
   and: _generic, or: _generic, not: _generic, xor: _generic, gate: _generic, memory: _generic, merge: _generic,
+  change_filter: _generic,
   compare: _generic, hysteresis: _generic, decision: _generic, value_mapping: _generic,
   // Math
   math_formula: _generic, math_map: _generic,
@@ -766,10 +769,6 @@ let preflightRequestId = 0
 function applyDebugValues(outputs, captureDebugOutputs = debugMode.value) {
   lastRunOutputs.value = outputs
   if (captureDebugOutputs) lastRunDebugOutputs.value = outputs
-  if (debugMode.value) {
-    clearDebugValues()
-    return
-  }
   nodes.value = nodes.value.map(node => ({
     ...node,
     data: {
@@ -836,11 +835,20 @@ function normalizeRunPreflight(data) {
   }))
 }
 
+async function runApprovedGraph(graphId) {
+  preflightApproved.value = true
+  try {
+    await runGraph(graphId)
+  } finally {
+    preflightApproved.value = false
+    preflightGraphId.value = ''
+  }
+}
+
 async function requestGraphRun() {
   if (!activeGraphId.value || !activeGraph.value?.enabled) return
   const graphId = activeGraphId.value
   const requestId = ++preflightRequestId
-  showRunPreflight.value = true
   runPreflightLoading.value = true
   runPreflightError.value = ''
   runPreflightItems.value = []
@@ -849,10 +857,21 @@ async function requestGraphRun() {
     const { data } = await logicRunAuthzApi.preflight(graphId)
     if (requestId !== preflightRequestId || activeGraphId.value !== graphId || data.graph_id !== graphId) return
     preflightGraphId.value = graphId
-    runPreflightItems.value = normalizeRunPreflight(data)
+    const items = normalizeRunPreflight(data)
+    runPreflightItems.value = items
+    // Only interrupt with the confirmation dialog when a check is actually
+    // denied — a fully-allowed run (the common case for admins, who have no
+    // grant restrictions) proceeds immediately without the popup.
+    if (items.every(item => item.allowed !== false)) {
+      runPreflightLoading.value = false
+      await runApprovedGraph(graphId)
+      return
+    }
+    showRunPreflight.value = true
   } catch (err) {
     if (requestId !== preflightRequestId) return
     runPreflightError.value = err.response?.data?.detail ?? t('logic.preflightError')
+    showRunPreflight.value = true
   } finally {
     if (requestId === preflightRequestId) runPreflightLoading.value = false
   }
@@ -861,14 +880,8 @@ async function requestGraphRun() {
 async function confirmGraphRun() {
   const graphId = preflightGraphId.value
   if (!graphId || activeGraphId.value !== graphId || runPreflightItems.value.some(item => !item.allowed)) return
-  preflightApproved.value = true
   showRunPreflight.value = false
-  try {
-    await runGraph(graphId)
-  } finally {
-    preflightApproved.value = false
-    preflightGraphId.value = ''
-  }
+  await runApprovedGraph(graphId)
 }
 
 function parseOverride(text) {
@@ -968,10 +981,10 @@ async function runGraph(graphId = activeGraphId.value) {
       diagnosticCount > 0 ? 6000 : 3000
     )
     // Always update lastRunOutputs (needed for extractor config panels)
-    if (acceptsDebugResponse || diagnosticCount > 0) applyDebugValues(outputs, acceptsDebugResponse)
+    if (debugMode.value || diagnosticCount > 0) applyDebugValues(outputs, acceptsDebugResponse)
     else {
       lastRunOutputs.value = outputs
-      if (!debugMode.value) clearDebugValues()
+      clearDebugValues()
     }
     if (acceptsDebugResponse) {
       lastRunMetadata.value = data.debug || { timestamp: new Date().toISOString(), used_overrides: false }

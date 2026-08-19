@@ -234,7 +234,7 @@ describe('LogicView auth gates', () => {
     expect(wrapper.vm.activeGraphId).toBe('graph-new')
   })
 
-  it('preflights a delegated graph run and executes only after confirmation', async () => {
+  it('runs a graph immediately when the preflight is fully allowed, without showing the popup', async () => {
     const graph = makeGraph('graph-1')
     const { wrapper, logicApi, logicRunAuthzApi } = await mountLogicView({
       isAdmin: false,
@@ -245,12 +245,50 @@ describe('LogicView auth gates', () => {
 
     await wrapper.get('[data-testid="btn-run"]').trigger('click')
     await flushPromises()
-    expect(logicRunAuthzApi.preflight).toHaveBeenCalledWith('graph-1')
-    expect(logicApi.runGraph).not.toHaveBeenCalled()
 
-    await wrapper.get('[data-testid="preflight-confirm"]').trigger('click')
-    await flushPromises()
+    expect(logicRunAuthzApi.preflight).toHaveBeenCalledWith('graph-1')
     expect(logicApi.runGraph).toHaveBeenCalledWith('graph-1')
+    expect(wrapper.find('[data-testid="run-preflight"]').exists()).toBe(false)
+  })
+
+  it('shows the popup and reports an error when the preflight request itself fails', async () => {
+    const graph = makeGraph('graph-1')
+    const { wrapper, logicApi, logicRunAuthzApi } = await mountLogicView({
+      isAdmin: false,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+    logicRunAuthzApi.preflight.mockRejectedValueOnce({ response: { data: { detail: 'preflight down' } } })
+
+    await wrapper.get('[data-testid="btn-run"]').trigger('click')
+    await flushPromises()
+
+    expect(logicApi.runGraph).not.toHaveBeenCalled()
+    expect(wrapper.vm.runPreflightError).toBe('preflight down')
+    expect(wrapper.find('[data-testid="run-preflight"]').exists()).toBe(true)
+  })
+
+  it('runs the graph once a preflight already open in the dialog is confirmed', async () => {
+    // Reachable defensively (component API / future partial-allow call
+    // sites) rather than through today's UI — the dialog now only opens on
+    // a denial, which also disables its confirm button — but confirmGraphRun
+    // must still do the right thing if invoked with an approved snapshot.
+    const graph = makeGraph('graph-1')
+    const { wrapper, logicApi } = await mountLogicView({
+      isAdmin: false,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+    wrapper.vm.preflightGraphId = 'graph-1'
+    wrapper.vm.runPreflightItems = [{ id: 'x', label: 'x', allowed: true }]
+
+    await wrapper.vm.confirmGraphRun()
+
+    expect(logicApi.runGraph).toHaveBeenCalledWith('graph-1')
+    expect(wrapper.vm.showRunPreflight).toBe(false)
+    expect(wrapper.vm.preflightGraphId).toBe('')
   })
 
   it('keeps a denied preflight from executing the graph', async () => {
@@ -283,6 +321,16 @@ describe('LogicView auth gates', () => {
       graphs: [graphOne, graphTwo],
       routeQuery: { graph: 'graph-1' },
       graphDetails: { 'graph-1': graphOne, 'graph-2': graphTwo },
+    })
+    // Force the denied path so the popup stays open pending confirmation —
+    // a fully-allowed preflight now runs immediately (see the fast-path
+    // test above) and never leaves anything pending to discard.
+    logicRunAuthzApi.preflight.mockResolvedValueOnce({
+      data: {
+        graph_id: 'graph-1',
+        allowed: false,
+        checks: [{ target_type: 'logic_capability', target_id: 'sms', node_ids: ['n2'], allowed: false, reason: 'missing_allow' }],
+      },
     })
 
     await wrapper.get('[data-testid="btn-run"]').trigger('click')
@@ -373,8 +421,7 @@ describe('LogicView auth gates', () => {
     await wrapper.vm.runGraph()
     expect(wrapper.vm.lastRunOutputs.n1.value).toBe(42)
     expect(wrapper.vm.lastRunDebugOutputs.n1.value).toBe(42)
-    expect(wrapper.vm.nodes[0].data).not.toHaveProperty('_dbg')
-    expect(wrapper.vm.nodes[0].data).not.toHaveProperty('_dbg_title')
+    expect(wrapper.vm.nodes[0].data._dbg).toBe('= 42')
 
     await wrapper.vm.saveGraph()
     const savedPayload = logicApi.saveGraph.mock.calls.at(-1)[1]
@@ -606,8 +653,7 @@ describe('LogicView WebSocket', () => {
     expect(wrapper.vm.lastRunOutputs.n1.value).toEqual({ nested: true })
     expect(wrapper.vm.lastRunDebugOutputs.n1.value).toEqual({ nested: true })
     expect(wrapper.vm.lastRunInputs.n1.value.incoming).toBe(12)
-    expect(wrapper.vm.nodes[0].data).not.toHaveProperty('_dbg')
-    expect(wrapper.vm.nodes[0].data).not.toHaveProperty('_dbg_title')
+    expect(wrapper.vm.nodes[0].data._dbg).toContain('[object Object]')
   })
 
   it('ignores logic_run message for a different graph_id', async () => {
