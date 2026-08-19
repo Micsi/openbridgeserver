@@ -234,7 +234,7 @@ describe('LogicView auth gates', () => {
     expect(wrapper.vm.activeGraphId).toBe('graph-new')
   })
 
-  it('preflights a delegated graph run and executes only after confirmation', async () => {
+  it('runs a graph immediately when the preflight is fully allowed, without showing the popup', async () => {
     const graph = makeGraph('graph-1')
     const { wrapper, logicApi, logicRunAuthzApi } = await mountLogicView({
       isAdmin: false,
@@ -245,12 +245,10 @@ describe('LogicView auth gates', () => {
 
     await wrapper.get('[data-testid="btn-run"]').trigger('click')
     await flushPromises()
-    expect(logicRunAuthzApi.preflight).toHaveBeenCalledWith('graph-1')
-    expect(logicApi.runGraph).not.toHaveBeenCalled()
 
-    await wrapper.get('[data-testid="preflight-confirm"]').trigger('click')
-    await flushPromises()
+    expect(logicRunAuthzApi.preflight).toHaveBeenCalledWith('graph-1')
     expect(logicApi.runGraph).toHaveBeenCalledWith('graph-1')
+    expect(wrapper.find('[data-testid="run-preflight"]').exists()).toBe(false)
   })
 
   it('keeps a denied preflight from executing the graph', async () => {
@@ -283,6 +281,16 @@ describe('LogicView auth gates', () => {
       graphs: [graphOne, graphTwo],
       routeQuery: { graph: 'graph-1' },
       graphDetails: { 'graph-1': graphOne, 'graph-2': graphTwo },
+    })
+    // Force the denied path so the popup stays open pending confirmation —
+    // a fully-allowed preflight now runs immediately (see the fast-path
+    // test above) and never leaves anything pending to discard.
+    logicRunAuthzApi.preflight.mockResolvedValueOnce({
+      data: {
+        graph_id: 'graph-1',
+        allowed: false,
+        checks: [{ target_type: 'logic_capability', target_id: 'sms', node_ids: ['n2'], allowed: false, reason: 'missing_allow' }],
+      },
     })
 
     await wrapper.get('[data-testid="btn-run"]').trigger('click')
