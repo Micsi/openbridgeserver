@@ -258,8 +258,7 @@ async function onExport() {
     // Extract filename from Content-Disposition if present
     const cd = resp.headers?.['content-disposition'] || ''
     const match = cd.match(/filename="([^"]+)"/)
-    const fallbackExt = form.delimiter === '\t' ? 'tsv' : 'csv'
-    a.download = match ? match[1] : `ringbuffer_export.${fallbackExt}`
+    a.download = match ? match[1] : `ringbuffer_export.${fileExtension.value}`
     document.body.appendChild(a)
     a.click()
     a.remove()

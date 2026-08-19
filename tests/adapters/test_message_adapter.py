@@ -192,6 +192,43 @@ def test_render_message_keeps_non_numeric_values_locale_neutral():
     assert rendered == '{"a": 1.5}'
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (float("inf"), "Infinity"),
+        (float("-inf"), "-Infinity"),
+        (float("nan"), "NaN"),
+    ],
+)
+def test_render_message_keeps_non_finite_numbers_as_json(value, expected):
+    """Infinities and NaN have no regional form — and must not raise (#1073)."""
+    rendered = render_message(
+        "###DP###",
+        value=value,
+        unit=None,
+        name="Sensor",
+        datapoint_id=uuid.uuid4(),
+        ts=datetime(2026, 6, 28, 12, 0, tzinfo=UTC),
+        region_format="de-DE",
+    )
+
+    assert rendered == expected
+
+
+def test_render_message_formats_very_large_numbers_without_raising():
+    rendered = render_message(
+        "###DP###",
+        value=1e30,
+        unit=None,
+        name="Sensor",
+        datapoint_id=uuid.uuid4(),
+        ts=datetime(2026, 6, 28, 12, 0, tzinfo=UTC),
+        region_format="de-DE",
+    )
+
+    assert rendered == "1." + ".".join(["000"] * 10)
+
+
 def test_render_message_keeps_booleans_as_json():
     rendered = render_message(
         "###DP###",

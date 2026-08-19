@@ -140,6 +140,29 @@ def test_format_number_rejects_negative_decimals_by_clamping():
     assert format_number(1234.9, "de-DE", decimals=-2) == "1.235"
 
 
+@pytest.mark.parametrize("value", [1e30, 1e21, 1.5e300])
+def test_format_number_handles_magnitudes_beyond_the_default_decimal_precision(value):
+    """quantize() raises InvalidOperation once the result exceeds the context precision."""
+    formatted = format_number(value, "de-DE")
+
+    assert formatted.replace(".", "").isdigit()
+    assert formatted.startswith("1")
+
+
+def test_format_number_keeps_large_magnitudes_grouped_with_fixed_decimals():
+    assert format_number(1e30, "de-CH", decimals=2).endswith(".00")
+    assert format_number(1e30, "de-CH", decimals=2).count("'") == 10
+
+
+@pytest.mark.parametrize(("value", "expected"), [(float("inf"), "inf"), (float("-inf"), "-inf"), (float("nan"), "nan")])
+def test_format_number_returns_non_finite_values_verbatim(value, expected):
+    assert format_number(value, "de-DE") == expected
+
+
+def test_format_currency_does_not_raise_for_non_finite_values():
+    assert format_currency(float("inf"), "de-DE", "EUR") == f"inf{NBSP}€"
+
+
 def test_format_number_falls_back_to_default_separators_for_unknown_region():
     assert format_number(1234.5, "xx-XX", decimals=1) == "1.234,5"
 

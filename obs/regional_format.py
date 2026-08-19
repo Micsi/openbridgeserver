@@ -13,7 +13,8 @@ and stored history stay locale-neutral numbers.
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal
+import math
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 DEFAULT_REGION_FORMAT = "auto"
 DEFAULT_CURRENCY = "auto"
@@ -130,13 +131,21 @@ def format_number(
 
     *decimals* fixes the number of fraction digits; ``None`` keeps the value's
     own precision.  Integers never gain a fraction part unless *decimals* asks
-    for one.
+    for one.  Infinities and NaN have no regional representation and are
+    returned as their plain Python text.
     """
+    if not math.isfinite(float(value)):
+        return str(value)
     decimal_sep, group_sep = _SEPARATORS.get(region_format, _SEPARATORS["de-DE"])
     places = _natural_decimals(value) if decimals is None else max(0, decimals)
+    number = Decimal(str(float(value)))
     # Round half away from zero so the backend agrees with Intl.NumberFormat in
-    # the browser; Python's default float formatting rounds half to even.
-    quantized = Decimal(str(float(value))).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+    # the browser; Python's default float formatting rounds half to even. The
+    # context has to hold every digit of the result, otherwise quantize() raises
+    # InvalidOperation for magnitudes beyond the default 28-digit precision.
+    with localcontext() as ctx:
+        ctx.prec = max(ctx.prec, number.adjusted() + places + 2)
+        quantized = number.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
     text = f"{quantized:.{places}f}"
     negative = text.startswith("-")
     if negative:

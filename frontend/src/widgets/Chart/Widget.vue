@@ -108,6 +108,9 @@ function initChart() {
       responsive:          true,
       maintainAspectRatio: false,
       animation:           false,
+      // Chart.js formats axis ticks with Intl.NumberFormat under this locale;
+      // without it, it would silently follow the browser language (issue #1073).
+      locale:              format.regionFormat,
       plugins: {
         legend: { display: false },
         tooltip: {

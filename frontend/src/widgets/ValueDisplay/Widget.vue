@@ -353,6 +353,9 @@ onMounted(() => {
     data: { datasets: [makeDataset(activeColor.value)] },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
+      // Chart.js formats axis ticks with Intl.NumberFormat under this locale;
+      // without it, it would silently follow the browser language (issue #1073).
+      locale: format.regionFormat,
       plugins: { legend: { display: false }, tooltip: { enabled: false } },
       scales: {
         x: { type: 'linear', ticks: { display: false }, grid: { color: '#1f293766' } },
@@ -379,13 +382,17 @@ watch(modalOpen, async (open) => {
     data: { datasets: [{ ...makeDataset(activeColor.value), data: pts }] },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
+      locale: format.regionFormat,
       plugins: {
         legend: { display: false },
         tooltip: {
           mode: 'index', intersect: false,
           callbacks: {
             title: (items: any[]) => items[0]?.parsed.x != null ? fmtMs(items[0].parsed.x) : '',
-            label: (ctx: any) => histUnit ? `${ctx.parsed.y} ${histUnit}` : String(ctx.parsed.y),
+            label: (ctx: any) => {
+              const text = format.fmtNumber(ctx.parsed.y)
+              return histUnit ? `${text} ${histUnit}` : text
+            },
           },
         },
       },

@@ -26,6 +26,8 @@ import {
 
 export const useFormatStore = defineStore('format', () => {
   const language = ref('de')
+  // Holds the server-resolved format when the endpoint supplies one, otherwise
+  // the raw setting (possibly `auto`) — `regionFormat` below resolves either.
   const regionFormatSetting = ref('auto')
   const currencySetting = ref('auto')
   const timezone = ref<string | null>(null)

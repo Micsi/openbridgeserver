@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 import uuid
@@ -214,14 +215,15 @@ def _format_value(value: Any, region_format: str = "de-DE") -> str:
     """Render a datapoint value for a human-readable message.
 
     Numbers use the configured regional format so a German reader sees
-    ``1,05`` rather than the ambiguous ``1.05``; every other type keeps its
-    locale-neutral JSON representation.
+    ``1,05`` rather than the ambiguous ``1.05``; every other type — including
+    infinities and NaN, which have no regional form — keeps its locale-neutral
+    JSON representation.
     """
     if isinstance(value, str):
         return value
     if isinstance(value, bool):
         return json_dumps(value)
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float)) and math.isfinite(value):
         return format_number(value, region_format)
     return json_dumps(value)
 
