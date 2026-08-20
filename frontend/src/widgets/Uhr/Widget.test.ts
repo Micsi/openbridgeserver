@@ -76,13 +76,55 @@ describe('Uhr Widget.vue — date line (#1073)', () => {
     expect(text).toContain('19:00')
   })
 
-  it('keeps the digital time in the browser zone when the widget sets none', () => {
+  it('falls back to the installation timezone when the widget sets none', () => {
     const store = useFormatStore()
-    store.timezone = 'UTC'
+    store.dateFormat = 'dd.MM.yyyy'
+    store.timezone = 'Asia/Tokyo'
     vi.setSystemTime(new Date('2026-08-20T02:00:00Z'))
 
-    const expected = new Date('2026-08-20T02:00:00Z').getHours()
-    expect(mountClock({}).text()).toContain(`${String(expected).padStart(2, '0')}:00`)
+    // 02:00Z is 11:00 on the 20th in Tokyo — date and time must agree.
+    const text = mountClock({}).text()
+    expect(text).toContain('11:00')
+    expect(text).toContain('20.08.2026')
+  })
+
+  it('falls back to the browser zone when neither widget nor server sets one', () => {
+    const store = useFormatStore()
+    store.dateFormat = 'dd.MM.yyyy'
+    store.timezone = null
+    vi.setSystemTime(new Date('2026-08-20T02:00:00Z'))
+
+    const local = new Date('2026-08-20T02:00:00Z')
+    const text = mountClock({}).text()
+    expect(text).toContain(`${String(local.getHours()).padStart(2, '0')}:00`)
+    expect(text).toContain(
+      `${String(local.getDate()).padStart(2, '0')}.${String(local.getMonth() + 1).padStart(2, '0')}.${local.getFullYear()}`,
+    )
+  })
+
+  it.each([
+    ['widget zone wins over the server zone', 'America/Los_Angeles', 'Asia/Tokyo'],
+    ['server zone when the widget sets none', '', 'America/Los_Angeles'],
+    ['browser zone when neither sets one', '', null],
+  ])('renders date and time from one and the same zone — %s', (_name, widgetZone, serverZone) => {
+    const store = useFormatStore()
+    store.dateFormat = 'dd.MM.yyyy'
+    store.timezone = serverZone
+    const instant = new Date('2026-08-20T02:00:00Z')
+    vi.setSystemTime(instant)
+
+    const text = mountClock({ timezone: widgetZone, showSeconds: false }).text()
+
+    // Derive the expectation independently from the zone that should win, so a
+    // date/time split cannot slip through.
+    const zone = widgetZone || serverZone || undefined
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(instant).reduce<Record<string, string>>((acc, p) => ({ ...acc, [p.type]: p.value }), {})
+
+    expect(text).toContain(`${parts.hour}:${parts.minute}`)
+    expect(text).toContain(`${parts.day}.${parts.month}.${parts.year}`)
   })
 
   it('omits the date entirely when showDate is off', () => {

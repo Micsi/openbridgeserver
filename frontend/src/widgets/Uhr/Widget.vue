@@ -59,11 +59,18 @@ function getZonedTime(date: Date, tz: string): { h: number; m: number; s: number
   }
 }
 
-const zonedTime  = computed(() => getZonedTime(now.value, timezone.value))
+/**
+ * Eine einzige Quelle für Zeiger, Uhrzeit und Datum (Issue #1073).
+ *
+ * Reihenfolge: eigene Widget-Zone → konfigurierte Anlagen-Zeitzone →
+ * Browser-Zone. Alle drei Anzeigen leiten sich hiervon ab; würden sie ihre Zone
+ * je selbst bestimmen, könnten Datum und Uhrzeit wieder auseinanderlaufen.
+ */
+const effectiveTimeZone = computed(() => timezone.value || format.timezone || '')
+
+const zonedTime  = computed(() => getZonedTime(now.value, effectiveTimeZone.value))
 
 // ── Digital ───────────────────────────────────────────────────────────────────
-// Uhrzeit und Datum teilen sich die Widget-Zeitzone — sonst zeigt eine auf eine
-// andere Zone gestellte Uhr Datum und Uhrzeit aus verschiedenen Zonen (#1073).
 const timeStr = computed(() => {
   const { h, m, s } = zonedTime.value
   const hh = String(h).padStart(2, '0')
@@ -72,11 +79,11 @@ const timeStr = computed(() => {
   return showSeconds.value ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`
 })
 
-// Datum im konfigurierten `date_format`-Muster (Issue #1073) — mit der eigenen
-// Zeitzone des Widgets, damit die Datumszeile zu den Zeigern passt; Namen kommen
-// aus der UI-Sprache. Die Uhrzeit bleibt bewusst widget-eigen, weil dort die
-// `showSeconds`-Option des Widgets bestimmt, was angezeigt wird.
-const dateStr = computed(() => format.fmtDate(now.value, timezone.value || null))
+// Datum im konfigurierten `date_format`-Muster (Issue #1073), in derselben Zone
+// wie Uhrzeit und Zeiger; Namen kommen aus der UI-Sprache. Das Uhrzeit-*Muster*
+// bleibt bewusst widget-eigen, weil dort die `showSeconds`-Option bestimmt, was
+// angezeigt wird — nur die Zone ist gemeinsam.
+const dateStr = computed(() => format.fmtDate(now.value, effectiveTimeZone.value || null))
 
 // ── Analog ────────────────────────────────────────────────────────────────────
 const hourDeg    = computed(() => (zonedTime.value.h % 12) * 30 + zonedTime.value.m * 0.5)
