@@ -119,7 +119,6 @@ function onDpSelect(dp) {
     selectedDp.value     = ''
     selectedDpName.value = ''
     selectedDpUnit.value = ''
-    loadedTitle.value    = ''
   }
 }
 const fromTs      = ref(toDatetimeLocal(new Date(Date.now() - DEFAULT_HISTORY_HOURS * 3600 * 1000)))
@@ -145,12 +144,23 @@ const selectionTitle = computed(() => {
   return `${name} ${mode.value === 'aggregate' ? `(${aggFn.value} / ${aggInterval.value})` : '(raw)'}`
 })
 
-// Frozen at the last load that returned data. Picking another object or changing
-// the aggregation only arms the next Load, so until then the card header and the
-// dataset label have to keep describing the series that is actually drawn —
-// otherwise one object's curve gets relabelled with another object's name.
+// How the drawn series is described. Captured when the request is issued, not
+// when it returns: the user can change the aggregation — or pick another object
+// entirely — while it is in flight, and the response still belongs to whatever
+// was asked for. Empty means nothing is loaded, so the header falls back to
+// describing what the next Load would fetch.
 const loadedTitle = ref('')
+const loadedUnit  = ref('')
 const chartTitle  = computed(() => loadedTitle.value || selectionTitle.value)
+
+// A selection change invalidates whatever is on screen. Without this the canvas
+// is remounted for the new object while `points` still holds the old series, and
+// the watcher below happily redraws it under the new object's name and unit.
+watch(selectedDp, () => {
+  points.value      = []
+  loadedTitle.value = ''
+  loadedUnit.value  = ''
+})
 
 // defaultFrom is no longer needed — fromTs is initialized via toDatetimeLocal()
 
@@ -168,6 +178,13 @@ onMounted(async () => {
 
 async function load() {
   if (!selectedDp.value) return
+  // Everything describing this request is read before the first await, so a
+  // selection or aggregation change mid-flight cannot relabel the response.
+  const requestDp    = selectedDp.value
+  const requestTitle = selectionTitle.value
+  const requestUnit  = selectedDpUnit.value
+  const requestRaw   = mode.value === 'raw'
+
   loading.value = true
   points.value  = []
   loadedTitle.value = ''
@@ -175,14 +192,19 @@ async function load() {
     const from = fromDatetimeLocal(fromTs.value)
     const to   = fromDatetimeLocal(toTs.value)
 
-    if (mode.value === 'raw') {
-      const { data } = await historyApi.query(selectedDp.value, { from, to })
-      points.value = data
-    } else {
-      const { data } = await historyApi.aggregate(selectedDp.value, { fn: aggFn.value, interval: aggInterval.value, from, to })
-      points.value = data
+    const { data } = requestRaw
+      ? await historyApi.query(requestDp, { from, to })
+      : await historyApi.aggregate(requestDp, { fn: aggFn.value, interval: aggInterval.value, from, to })
+
+    // The user moved on while this was in flight — the response describes an
+    // object they are no longer looking at, so it must not reach the chart.
+    if (requestDp !== selectedDp.value) return
+
+    points.value = data
+    if (points.value.length) {
+      loadedTitle.value = requestTitle
+      loadedUnit.value  = requestUnit
     }
-    if (points.value.length) loadedTitle.value = selectionTitle.value
   } finally {
     loading.value = false
   }
@@ -220,7 +242,7 @@ function renderChart() {
   // Read once, here: the tooltip callbacks below run on hover, long after this
   // chart was built, and reading the live refs would describe this series with
   // whatever object the user has selected by then.
-  const seriesUnit = selectedDpUnit.value
+  const seriesUnit = loadedUnit.value
   const seriesMode = mode.value
 
   // Convert every point to {x: Unix-ms, y: value} so Chart.js never has to

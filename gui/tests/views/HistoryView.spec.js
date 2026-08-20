@@ -59,12 +59,15 @@ async function mountHistory({
   aggData = [],
   queryData = [],
   dpData = SAMPLE_DP,
+  aggPending = null,
 } = {}) {
   vi.doMock('vue-router', () => ({
     useRoute: () => ({ query: routeQuery }),
   }))
 
-  const histAgg   = vi.fn().mockResolvedValue({ data: aggData })
+  const histAgg   = aggPending
+    ? vi.fn().mockReturnValue(aggPending)
+    : vi.fn().mockResolvedValue({ data: aggData })
   const histQuery = vi.fn().mockResolvedValue({ data: queryData })
   const dpGet     = vi.fn().mockResolvedValue({ data: dpData })
 
@@ -381,17 +384,33 @@ describe('HistoryView — chart rendering', () => {
     expect(ChartMock).toHaveBeenCalledTimes(2)
   })
 
-  it('does not rebuild the chart when another data point is picked without reloading', async () => {
-    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+  // The drawn series belongs to the previously loaded object; it must not survive
+  // a selection change, or the canvas gets redrawn with the old data under the
+  // new object's name and unit.
+  it('clears the chart when another data point is picked', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
     expect(ChartMock).toHaveBeenCalledTimes(1)
 
-    // Selecting a dp only arms the next load — the still-displayed series belongs
-    // to the previous dp, so redrawing it here would just flicker the old data.
     _dpStubEmit({ id: 'dp-2', name: 'Anderer', unit: 'kW' })
     await nextTick()
 
+    expect(wrapper.find('canvas').exists()).toBe(false)
     expect(ChartMock).toHaveBeenCalledTimes(1)
-    expect(chartCalls[0].destroy).not.toHaveBeenCalled()
+    expect(chartCalls[0].destroy).toHaveBeenCalled()
+  })
+
+  it('does not redraw the old series after clearing and picking another data point', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    // Clearing unmounts the canvas; picking again would remount it, and a
+    // surviving `points` array would be redrawn as if it belonged to dp-2.
+    _dpStubEmit(null)
+    await nextTick()
+    _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
+    await nextTick()
+
+    expect(wrapper.find('canvas').exists()).toBe(false)
+    expect(ChartMock).toHaveBeenCalledTimes(1)
   })
 
   it('destroys the chart when a reload returns no points', async () => {
@@ -492,22 +511,7 @@ describe('HistoryView — loaded series description', () => {
   // Picking another object only arms the next Load. Until then the drawn curve
   // still belongs to the previous object, so neither the header nor the tooltip
   // may adopt the new object's name or unit.
-  it('keeps the loaded unit in the tooltip after another data point is picked', async () => {
-    await mountHistory({
-      routeQuery: { dp: 'dp-1' },
-      aggData:    [SAMPLE_POINT],
-      dpData:     { name: 'Temperatur', unit: '°C' },
-    })
-    const [, config] = ChartMock.mock.calls[0]
-
-    _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
-    await nextTick()
-
-    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, raw: { u: null } }))
-      .toBe('21.5 °C')
-  })
-
-  it('keeps the loaded title in the header after another data point is picked', async () => {
+  it('describes the newly picked data point once the stale series is cleared', async () => {
     const { wrapper } = await mountHistory({
       routeQuery: { dp: 'dp-1' },
       aggData:    [SAMPLE_POINT],
@@ -518,8 +522,8 @@ describe('HistoryView — loaded series description', () => {
     _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
     await nextTick()
 
-    expect(wrapper.text()).toContain('Temperatur (avg / 1h)')
-    expect(wrapper.text()).not.toContain('Leistung (avg / 1h)')
+    expect(wrapper.text()).toContain('Leistung (avg / 1h)')
+    expect(wrapper.text()).not.toContain('Temperatur (avg / 1h)')
   })
 
   it('keeps the loaded title after the aggregation function is changed', async () => {
@@ -566,6 +570,58 @@ describe('HistoryView — loaded series description', () => {
 
     expect(wrapper.text()).toContain('Verlauf')
     expect(wrapper.text()).not.toContain('Wohnzimmer Temp')
+  })
+})
+
+// ─── In-flight selection changes ─────────────────────────────────────────────
+
+describe('HistoryView — obsolete responses', () => {
+  // The response carries the values of the object that was requested. If the
+  // user has moved on by the time it lands, showing it would present one
+  // object's history as another's.
+  it('discards a response whose data point is no longer selected', async () => {
+    let resolveAgg
+    const pending = new Promise(resolve => { resolveAgg = resolve })
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggPending: pending })
+
+    _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
+    await nextTick()
+
+    resolveAgg({ data: [SAMPLE_POINT] })
+    await flushPromises()
+
+    expect(ChartMock).not.toHaveBeenCalled()
+    expect(wrapper.find('canvas').exists()).toBe(false)
+    expect(wrapper.findAll('tbody tr').length).toBe(0)
+  })
+
+  it('clears the spinner when an obsolete response is discarded', async () => {
+    let resolveAgg
+    const pending = new Promise(resolve => { resolveAgg = resolve })
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggPending: pending })
+
+    _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
+    resolveAgg({ data: [SAMPLE_POINT] })
+    await flushPromises()
+
+    expect(wrapper.find('button').attributes('disabled')).toBeUndefined()
+  })
+
+  it('keeps the requested description when the aggregation changes mid-flight', async () => {
+    let resolveAgg
+    const pending = new Promise(resolve => { resolveAgg = resolve })
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggPending: pending })
+
+    // Same object, so the response is still wanted — but it was aggregated with
+    // the function that was selected when the request went out.
+    const [, fnSelect] = wrapper.findAll('select')
+    await fnSelect.setValue('max')
+
+    resolveAgg({ data: [SAMPLE_POINT] })
+    await flushPromises()
+
+    expect(ChartMock.mock.calls[0][1].data.datasets[0].label).toContain('(avg / 1h)')
+    expect(wrapper.text()).toContain('Wohnzimmer Temp (avg / 1h)')
   })
 })
 
