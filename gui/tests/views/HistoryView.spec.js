@@ -289,14 +289,14 @@ describe('HistoryView — chart rendering', () => {
   it('passes the loaded points as {x: unix-ms, y: value} pairs', async () => {
     await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
     const [, config] = ChartMock.mock.calls[0]
-    expect(config.data.datasets[0].data).toEqual([{ x: Date.parse('2024-01-15T12:00:00Z'), y: 21.5 }])
+    expect(config.data.datasets[0].data).toEqual([{ x: Date.parse('2024-01-15T12:00:00Z'), y: 21.5, u: '°C' }])
   })
 
   it('reads aggregate buckets from the bucket field', async () => {
     const bucket = { bucket: '2024-01-15T12:00:00', v: 7 }
     await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [bucket] })
     const [, config] = ChartMock.mock.calls[0]
-    expect(config.data.datasets[0].data).toEqual([{ x: Date.parse('2024-01-15T12:00:00Z'), y: 7 }])
+    expect(config.data.datasets[0].data).toEqual([{ x: Date.parse('2024-01-15T12:00:00Z'), y: 7, u: null }])
   })
 
   it('does not construct a Chart when the load returns no points', async () => {
@@ -425,14 +425,39 @@ describe('HistoryView — chart rendering', () => {
     expect(chartCalls[0].destroy).toHaveBeenCalled()
   })
 
-  it('falls back to x=0 for a point without a timestamp', async () => {
+  it('drops a point that carries no timestamp', async () => {
     await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [{ v: 5 }] })
-    expect(ChartMock.mock.calls[0][1].data.datasets[0].data).toEqual([{ x: 0, y: 5 }])
+    expect(ChartMock.mock.calls[0][1].data.datasets[0].data).toEqual([])
   })
 
-  it('falls back to x=0 for an unparsable timestamp', async () => {
+  it('drops a point whose timestamp cannot be parsed', async () => {
     await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [{ ts: 'not-a-date', v: 5 }] })
-    expect(ChartMock.mock.calls[0][1].data.datasets[0].data).toEqual([{ x: 0, y: 5 }])
+    expect(ChartMock.mock.calls[0][1].data.datasets[0].data).toEqual([])
+  })
+
+  // The backend passes a malformed aggregate bucket through verbatim
+  // (_format_utc_bucket). Plotting it at epoch would stretch the linear x-axis
+  // from 1970 to now and squash the real series against the right edge.
+  it('keeps the valid points when one aggregate bucket is malformed', async () => {
+    await mountHistory({
+      routeQuery: { dp: 'dp-1' },
+      aggData:    [{ bucket: 'broken', v: 1 }, { bucket: '2024-01-15T12:00:00Z', v: 2 }],
+    })
+    expect(ChartMock.mock.calls[0][1].data.datasets[0].data)
+      .toEqual([{ x: Date.parse('2024-01-15T12:00:00Z'), y: 2, u: null }])
+  })
+
+  it('still lists a dropped point in the raw table', async () => {
+    const { wrapper, histQuery } = await mountHistory({ routeQuery: { dp: 'dp-1' } })
+    histQuery.mockResolvedValue({ data: [{ ts: 'not-a-date', v: 5, q: 'good', u: '', a: null }] })
+
+    const [modeSelect] = wrapper.findAll('select')
+    await modeSelect.setValue('raw')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(ChartMock.mock.calls[0][1].data.datasets[0].data).toEqual([])
+    expect(wrapper.findAll('tbody tr').length).toBe(1)
   })
 
   it('uses the dark theme colours when the dark class is set', async () => {
@@ -461,6 +486,89 @@ describe('HistoryView — chart rendering', () => {
   })
 })
 
+// ─── Card describes the loaded series, not the pending selection ─────────────
+
+describe('HistoryView — loaded series description', () => {
+  // Picking another object only arms the next Load. Until then the drawn curve
+  // still belongs to the previous object, so neither the header nor the tooltip
+  // may adopt the new object's name or unit.
+  it('keeps the loaded unit in the tooltip after another data point is picked', async () => {
+    await mountHistory({
+      routeQuery: { dp: 'dp-1' },
+      aggData:    [SAMPLE_POINT],
+      dpData:     { name: 'Temperatur', unit: '°C' },
+    })
+    const [, config] = ChartMock.mock.calls[0]
+
+    _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
+    await nextTick()
+
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, raw: { u: null } }))
+      .toBe('21.5 °C')
+  })
+
+  it('keeps the loaded title in the header after another data point is picked', async () => {
+    const { wrapper } = await mountHistory({
+      routeQuery: { dp: 'dp-1' },
+      aggData:    [SAMPLE_POINT],
+      dpData:     { name: 'Temperatur', unit: '°C' },
+    })
+    expect(wrapper.text()).toContain('Temperatur (avg / 1h)')
+
+    _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
+    await nextTick()
+
+    expect(wrapper.text()).toContain('Temperatur (avg / 1h)')
+    expect(wrapper.text()).not.toContain('Leistung (avg / 1h)')
+  })
+
+  it('keeps the loaded title after the aggregation function is changed', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    const [, fnSelect] = wrapper.findAll('select')
+    await fnSelect.setValue('max')
+
+    expect(wrapper.text()).toContain('Wohnzimmer Temp (avg / 1h)')
+  })
+
+  it('adopts the new description once the next load succeeds', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    const [, fnSelect] = wrapper.findAll('select')
+    await fnSelect.setValue('max')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Wohnzimmer Temp (max / 1h)')
+  })
+
+  it('shows the pending selection while nothing is loaded', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [] })
+    expect(wrapper.text()).toContain('Wohnzimmer Temp (avg / 1h)')
+  })
+
+  it('falls back to the pending selection when a reload returns no points', async () => {
+    const { wrapper, histAgg } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    histAgg.mockResolvedValue({ data: [] })
+
+    _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Leistung (avg / 1h)')
+  })
+
+  it('resets the header to the default title when the data point is cleared', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    _dpStubEmit(null)
+    await nextTick()
+
+    expect(wrapper.text()).toContain('Verlauf')
+    expect(wrapper.text()).not.toContain('Wohnzimmer Temp')
+  })
+})
+
 // ─── Chart callbacks ─────────────────────────────────────────────────────────
 
 describe('HistoryView — chart callbacks', () => {
@@ -481,7 +589,7 @@ describe('HistoryView — chart callbacks', () => {
       dpData:     { name: 'Außentemperatur', unit: '°C' },
     })
     const [, config] = ChartMock.mock.calls[0]
-    const label = config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, dataIndex: 0 })
+    const label = config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, raw: { u: null } })
     expect(label).toBe('21.5 °C')
   })
 
@@ -495,7 +603,7 @@ describe('HistoryView — chart callbacks', () => {
     await flushPromises()
 
     const [, config] = ChartMock.mock.calls[0]
-    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, dataIndex: 0 })).toBe('21.5 bar')
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, raw: { u: 'bar' } })).toBe('21.5 bar')
   })
 
   it('falls back to the data point unit in raw mode when the point carries none', async () => {
@@ -508,7 +616,7 @@ describe('HistoryView — chart callbacks', () => {
     await flushPromises()
 
     const [, config] = ChartMock.mock.calls[0]
-    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 4 }, dataIndex: 0 })).toBe('4 kW')
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 4 }, raw: { u: null } })).toBe('4 kW')
   })
 
   it('omits the unit in the tooltip label when none is known', async () => {
@@ -518,6 +626,6 @@ describe('HistoryView — chart callbacks', () => {
       dpData:     { name: 'Zähler' },
     })
     const [, config] = ChartMock.mock.calls[0]
-    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 3 }, dataIndex: 0 })).toBe('3')
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 3 }, raw: { u: null } })).toBe('3')
   })
 })

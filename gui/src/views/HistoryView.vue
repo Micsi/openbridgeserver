@@ -119,6 +119,7 @@ function onDpSelect(dp) {
     selectedDp.value     = ''
     selectedDpName.value = ''
     selectedDpUnit.value = ''
+    loadedTitle.value    = ''
   }
 }
 const fromTs      = ref(toDatetimeLocal(new Date(Date.now() - DEFAULT_HISTORY_HOURS * 3600 * 1000)))
@@ -137,11 +138,19 @@ const intervals = computed(() => [
   { v: '6h', l: t('history.intervals.6h') }, { v: '12h', l: t('history.intervals.12h') }, { v: '1d', l: t('history.intervals.1d') },
 ])
 
-const chartTitle = computed(() => {
+// What the next Load would fetch, i.e. the current state of the controls.
+const selectionTitle = computed(() => {
   if (!selectedDp.value) return t('history.chartTitleDefault')
   const name = selectedDpName.value || selectedDp.value
   return `${name} ${mode.value === 'aggregate' ? `(${aggFn.value} / ${aggInterval.value})` : '(raw)'}`
 })
+
+// Frozen at the last load that returned data. Picking another object or changing
+// the aggregation only arms the next Load, so until then the card header and the
+// dataset label have to keep describing the series that is actually drawn —
+// otherwise one object's curve gets relabelled with another object's name.
+const loadedTitle = ref('')
+const chartTitle  = computed(() => loadedTitle.value || selectionTitle.value)
 
 // defaultFrom is no longer needed — fromTs is initialized via toDatetimeLocal()
 
@@ -161,6 +170,7 @@ async function load() {
   if (!selectedDp.value) return
   loading.value = true
   points.value  = []
+  loadedTitle.value = ''
   try {
     const from = fromDatetimeLocal(fromTs.value)
     const to   = fromDatetimeLocal(toTs.value)
@@ -172,6 +182,7 @@ async function load() {
       const { data } = await historyApi.aggregate(selectedDp.value, { fn: aggFn.value, interval: aggInterval.value, from, to })
       points.value = data
     }
+    if (points.value.length) loadedTitle.value = selectionTitle.value
   } finally {
     loading.value = false
   }
@@ -206,15 +217,26 @@ function qualityLabel(q) {
 }
 
 function renderChart() {
+  // Read once, here: the tooltip callbacks below run on hover, long after this
+  // chart was built, and reading the live refs would describe this series with
+  // whatever object the user has selected by then.
+  const seriesUnit = selectedDpUnit.value
+  const seriesMode = mode.value
+
   // Convert every point to {x: Unix-ms, y: value} so Chart.js never has to
   // guess the scale type from label strings (which caused it to auto-activate
   // the TimeScale without an adapter and display raw ms).
-  const chartData = points.value.map(p => {
-    // A missing or unparsable timestamp yields null / an invalid Date, whose
-    // getTime() is NaN — plot those at 0 rather than feeding NaN to Chart.js.
-    const ms = toUtcDate(p.ts ?? p.bucket)?.getTime()
-    return { x: Number.isFinite(ms) ? ms : 0, y: p.v }
-  })
+  //
+  // Points whose timestamp is missing or unparsable are dropped instead of
+  // plotted — the backend passes a malformed aggregate bucket through verbatim
+  // (_format_utc_bucket in obs/api/v1/history.py), and a single such row placed
+  // at epoch would stretch the linear axis back to 1970 and squash the real
+  // series against the right edge. They remain visible in the raw table. The
+  // unit travels with the point because a filtered dataset no longer lines up
+  // index-wise with points.value.
+  const chartData = points.value
+    .map(p => ({ x: toUtcDate(p.ts ?? p.bucket)?.getTime(), y: p.v, u: p.u ?? null }))
+    .filter(p => Number.isFinite(p.x))
 
   const dark = document.documentElement.classList.contains('dark')
   const tickColor    = dark ? '#64748b' : '#94a3b8'
@@ -252,9 +274,7 @@ function renderChart() {
             title: (items) => fmtChartLabel(new Date(items[0].parsed.x).toISOString()),
             label: (ctx) => {
               const v = ctx.parsed.y
-              const unit = mode.value === 'raw'
-                ? (points.value[ctx.dataIndex]?.u ?? selectedDpUnit.value)
-                : selectedDpUnit.value
+              const unit = seriesMode === 'raw' ? (ctx.raw.u ?? seriesUnit) : seriesUnit
               return unit ? `${v} ${unit}` : String(v)
             },
           },
