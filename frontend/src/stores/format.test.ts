@@ -133,6 +133,11 @@ describe('useFormatStore (#1073)', () => {
     it.each([
       ['de', 'Montag, 8. Juni 2026'],
       ['en', 'Monday, 8. June 2026'],
+      ['fr', 'lundi, 8. juin 2026'],
+      ['es', 'lunes, 8. junio 2026'],
+      ['it', 'lunedì, 8. giugno 2026'],
+      ['gsw', 'Mäntig, 8. Juni 2026'],
+      ['xx', 'Monday, 8. June 2026'],  // unknown language falls back to English
     ])('takes weekday and month names from the %s UI language, not the region', async (uiLanguage, expected) => {
       getMock.mockResolvedValue(payload({
         timezone: 'UTC',

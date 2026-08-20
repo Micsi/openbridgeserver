@@ -27,6 +27,10 @@ import { ref, computed } from 'vue'
 import { displaySettings as displaySettingsApi } from '@/api/client'
 import deNames from '@/locales/de.json'
 import enNames from '@/locales/en.json'
+import esNames from '@/locales/es.json'
+import frNames from '@/locales/fr.json'
+import gswNames from '@/locales/gsw.json'
+import itNames from '@/locales/it.json'
 import { formatPattern, toUtcDate, type DateTimeNames } from '@/utils/datePattern'
 import {
   FALLBACK_REGION_FORMAT,
@@ -42,13 +46,22 @@ export const DEFAULT_DATE_FORMAT = 'dd.MM.yyyy'
 export const DEFAULT_TIME_FORMAT = 'HH:mm:ss'
 
 /**
- * Weekday/month names per UI language. They are translations, so they follow
- * what the viewer reads rather than the regional format; locales still awaiting
- * Weblate translations fall back to English, like vue-i18n does.
+ * Weekday/month names per UI language — one entry for every locale in
+ * `SUPPORTED_LOCALES`, mirroring `gui/src/composables/useTz.js`. They are
+ * translations, so they follow what the viewer reads rather than the regional
+ * format; an unknown language falls back to English, like vue-i18n does.
  */
+function namesOf(bundle: unknown): DateTimeNames {
+  return (bundle as { datetimeNames: DateTimeNames }).datetimeNames
+}
+
 const LOCALE_NAMES: Record<string, DateTimeNames> = {
-  de: (deNames as { datetimeNames: DateTimeNames }).datetimeNames,
-  en: (enNames as { datetimeNames: DateTimeNames }).datetimeNames,
+  de: namesOf(deNames),
+  en: namesOf(enNames),
+  es: namesOf(esNames),
+  fr: namesOf(frNames),
+  gsw: namesOf(gswNames),
+  it: namesOf(itNames),
 }
 
 export const useFormatStore = defineStore('format', () => {
