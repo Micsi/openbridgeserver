@@ -1453,7 +1453,9 @@ Sends notifications when a linked data point changes and the binding condition i
 | `cooldown_seconds` | Minimum delay between two sent messages |
 | `enabled` | Enables/disables the binding |
 
-Message placeholders: `###DP###` = value, `###DPU###` = unit, `###DPN###` = data point name, `###DPI###` = data point ID, `###TS###` = timestamp.
+Message placeholders: `###DP###` = value, `###DPU###` = unit, `###DPN###` = data point name, `###DPI###` = data point ID, `###TS###` = ISO timestamp, `###DATE###` / `###TIME###` = date and time in the configured display formats.
+
+Numeric values in `###DP###` are rendered in the configured **regional format** (see [Settings](#settings)) — with the German default, `1.05` becomes `1,05`. Non-numeric values (strings, booleans, objects) keep their locale-neutral representation, and `###TS###` always stays a locale-neutral ISO timestamp.
 
 > **Note:** Signal is not offered by the MESSAGE adapter for now because it would require operating a separate Signal gateway service.
 
@@ -1679,7 +1681,14 @@ Settings are accessible via the web interface (⚙ in the sidebar).
 
 **General:**
 - **Timezone** — all timestamps in the interface are displayed in this timezone (history, RingBuffer, history search, astro block)
+- **Default date format / default time format** — token patterns (`dd.MM.yyyy`, `HH:mm:ss`, …) used wherever a date or time is shown
+- **Regional format** — decimal separator, thousands grouping and date/currency conventions for **all** numeric output in the Admin GUI, the Visu and server-rendered notification text. This is a **separate setting from the language**, because the two are independent: German in Switzerland formats `1'234.50` while German in Germany formats `1.234,50`. `Automatic` derives the format from the selected language (`de` → `de-DE`, `gsw` → `de-CH`, `en` → `en-US`, …); any explicit entry (`de-DE`, `de-AT`, `de-CH`, `en-US`, `en-GB`, `fr-FR`, `fr-CH`, `it-IT`, `it-CH`, `es-ES`) overrides it. Data point values, calculations, API payloads, exports and stored history stay locale-neutral numbers.
+- **Currency** — ISO currency (`EUR`, `CHF`, `USD`, `GBP`) used for monetary output. `Automatic` derives it from the regional format (`de-CH`/`fr-CH`/`it-CH` → `CHF`, `en-US` → `USD`, `en-GB` → `GBP`, otherwise `EUR`).
 - **Import KNX project file** — upload ETS project file (`.knxproj`) to use group addresses as search suggestions in the binding form
+
+The regional format is also served read-only and without authentication at `GET /api/v1/system/display-settings`, so the Visu applies it for anonymous and PIN-only viewers as well.
+
+Formatting conventions and translated names are deliberately separated: **separators, date/time patterns and currency come from these server settings and are identical for every viewer** — one installation has one numeric convention — while **weekday and month names follow each viewer's own UI language**. A Visu opened in an English browser therefore shows English month names with the configured German number and date format.
 
 **History:** Overview of all data points with history recording. Data points with disabled recording (`record_history: false`) are shown first. Toggle recording per data point.
 
