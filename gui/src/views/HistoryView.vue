@@ -69,7 +69,7 @@
     </div>
 
     <!-- Raw table (raw mode only) -->
-    <div v-if="mode === 'raw' && points.length" class="card overflow-hidden">
+    <div v-if="loadedRaw && points.length" class="card overflow-hidden">
       <div class="card-header"><span class="text-sm font-semibold text-slate-800 dark:text-slate-100">{{ $t('history.rawData') }}</span></div>
       <div class="table-wrap max-h-64 overflow-y-auto">
         <table class="table">
@@ -151,6 +151,7 @@ const selectionTitle = computed(() => {
 // describing what the next Load would fetch.
 const loadedTitle = ref('')
 const loadedUnit  = ref('')
+const loadedRaw   = ref(false)
 const chartTitle  = computed(() => loadedTitle.value || selectionTitle.value)
 
 // A selection change invalidates whatever is on screen. Without this the canvas
@@ -160,6 +161,7 @@ watch(selectedDp, () => {
   points.value      = []
   loadedTitle.value = ''
   loadedUnit.value  = ''
+  loadedRaw.value   = false
 })
 
 // defaultFrom is no longer needed — fromTs is initialized via toDatetimeLocal()
@@ -204,6 +206,7 @@ async function load() {
     if (points.value.length) {
       loadedTitle.value = requestTitle
       loadedUnit.value  = requestUnit
+      loadedRaw.value   = requestRaw
     }
   } finally {
     loading.value = false
@@ -243,7 +246,7 @@ function renderChart() {
   // chart was built, and reading the live refs would describe this series with
   // whatever object the user has selected by then.
   const seriesUnit = loadedUnit.value
-  const seriesMode = mode.value
+  const seriesRaw  = loadedRaw.value
 
   // Convert every point to {x: Unix-ms, y: value} so Chart.js never has to
   // guess the scale type from label strings (which caused it to auto-activate
@@ -296,7 +299,7 @@ function renderChart() {
             title: (items) => fmtChartLabel(new Date(items[0].parsed.x).toISOString()),
             label: (ctx) => {
               const v = ctx.parsed.y
-              const unit = seriesMode === 'raw' ? (ctx.raw.u ?? seriesUnit) : seriesUnit
+              const unit = seriesRaw ? (ctx.raw.u ?? seriesUnit) : seriesUnit
               return unit ? `${v} ${unit}` : String(v)
             },
           },

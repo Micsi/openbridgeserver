@@ -60,6 +60,7 @@ async function mountHistory({
   queryData = [],
   dpData = SAMPLE_DP,
   aggPending = null,
+  queryPending = null,
 } = {}) {
   vi.doMock('vue-router', () => ({
     useRoute: () => ({ query: routeQuery }),
@@ -68,7 +69,9 @@ async function mountHistory({
   const histAgg   = aggPending
     ? vi.fn().mockReturnValue(aggPending)
     : vi.fn().mockResolvedValue({ data: aggData })
-  const histQuery = vi.fn().mockResolvedValue({ data: queryData })
+  const histQuery = queryPending
+    ? vi.fn().mockReturnValue(queryPending)
+    : vi.fn().mockResolvedValue({ data: queryData })
   const dpGet     = vi.fn().mockResolvedValue({ data: dpData })
 
   vi.doMock('@/api/client', () => ({
@@ -605,6 +608,53 @@ describe('HistoryView — obsolete responses', () => {
     await flushPromises()
 
     expect(wrapper.find('button').attributes('disabled')).toBeUndefined()
+  })
+
+  // A raw response must keep raw semantics — its per-point unit — even if the
+  // Mode control has been flipped to Aggregate since the request went out.
+  it('keeps the requested mode when it is switched mid-flight', async () => {
+    let resolveQuery
+    const pending = new Promise(resolve => { resolveQuery = resolve })
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, queryPending: pending })
+
+    const [modeSelect] = wrapper.findAll('select')
+    await modeSelect.setValue('raw')
+    await wrapper.find('button').trigger('click')
+    await modeSelect.setValue('aggregate')
+
+    resolveQuery({ data: [{ ts: '2024-01-15T12:00:00Z', v: 21.5, u: 'bar', q: 'good' }] })
+    await flushPromises()
+
+    const [, config] = ChartMock.mock.calls.at(-1)
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, raw: { u: 'bar' } }))
+      .toBe('21.5 bar')
+  })
+
+  it('keeps the raw table for a raw response when the mode is switched mid-flight', async () => {
+    let resolveQuery
+    const pending = new Promise(resolve => { resolveQuery = resolve })
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, queryPending: pending })
+
+    const [modeSelect] = wrapper.findAll('select')
+    await modeSelect.setValue('raw')
+    await wrapper.find('button').trigger('click')
+    await modeSelect.setValue('aggregate')
+
+    resolveQuery({ data: [SAMPLE_POINT] })
+    await flushPromises()
+
+    expect(wrapper.findAll('tbody tr').length).toBe(1)
+  })
+
+  it('hides the raw table when the mode is switched to raw without reloading', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    // The loaded series is aggregate; the table must not present buckets as raw rows.
+    const [modeSelect] = wrapper.findAll('select')
+    await modeSelect.setValue('raw')
+    await nextTick()
+
+    expect(wrapper.findAll('tbody tr').length).toBe(0)
   })
 
   it('keeps the requested description when the aggregation changes mid-flight', async () => {
