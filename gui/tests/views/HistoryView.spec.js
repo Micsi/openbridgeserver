@@ -641,6 +641,59 @@ describe('HistoryView — obsolete responses', () => {
     expect(wrapper.text()).toContain('Leistung (avg / 1h)')
   })
 
+  // Load is clickable before the ?dp=<id> metadata lookup resolves, so that
+  // click and the mount's own metadata-aware load overlap on the same object.
+  // Whichever response lands last, the newest request must be the one that wins.
+  it('lets the newest load win when two overlap on the same data point', async () => {
+    let resolveDp, resolveFirst, resolveSecond
+    const dpPending = new Promise(resolve => { resolveDp = resolve })
+    const first     = new Promise(resolve => { resolveFirst = resolve })
+    const second    = new Promise(resolve => { resolveSecond = resolve })
+
+    const { wrapper, histAgg } = await mountHistory({ routeQuery: { dp: 'dp-1' }, dpPending })
+    histAgg.mockImplementationOnce(() => first).mockImplementationOnce(() => second)
+
+    // Click Load while the metadata is still pending → request 1, no name/unit.
+    await wrapper.find('button').trigger('click')
+    // Metadata arrives, the mount's load starts → request 2, with name/unit.
+    resolveDp({ data: { name: 'Temperatur', unit: '°C' } })
+    await flushPromises()
+
+    // The newer response lands first, the stale one last.
+    resolveSecond({ data: [{ bucket: '2024-01-15T12:00:00Z', v: 2 }] })
+    await flushPromises()
+    resolveFirst({ data: [{ bucket: '2024-01-15T12:00:00Z', v: 1 }] })
+    await flushPromises()
+
+    expect(histAgg).toHaveBeenCalledTimes(2)
+    const [, config] = ChartMock.mock.calls.at(-1)
+    expect(config.data.datasets[0].label).toBe('Temperatur (avg / 1h)')
+    expect(config.data.datasets[0].data[0].y).toBe(2)
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 2 }, raw: { u: null } }))
+      .toBe('2 °C')
+    expect(wrapper.text()).toContain('Temperatur (avg / 1h)')
+  })
+
+  it('leaves the spinner to the newest load when a superseded one finishes first', async () => {
+    let resolveDp, resolveFirst
+    const dpPending = new Promise(resolve => { resolveDp = resolve })
+    const first     = new Promise(resolve => { resolveFirst = resolve })
+    const second    = new Promise(() => {})   // still in flight
+
+    const { wrapper, histAgg } = await mountHistory({ routeQuery: { dp: 'dp-1' }, dpPending })
+    histAgg.mockImplementationOnce(() => first).mockImplementationOnce(() => second)
+
+    await wrapper.find('button').trigger('click')
+    resolveDp({ data: { name: 'Temperatur', unit: '°C' } })
+    await flushPromises()
+
+    resolveFirst({ data: [SAMPLE_POINT] })
+    await flushPromises()
+
+    // Request 2 is still running, so the view must still read as loading.
+    expect(wrapper.find('button').attributes('disabled')).toBeDefined()
+  })
+
   it('keeps the requested mode when it is switched mid-flight', async () => {
     let resolveQuery
     const pending = new Promise(resolve => { resolveQuery = resolve })

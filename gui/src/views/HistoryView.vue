@@ -152,6 +152,11 @@ const selectionTitle = computed(() => {
 const loadedTitle = ref('')
 const loadedUnit  = ref('')
 const loadedRaw   = ref(false)
+
+// Loads can overlap — opening with ?dp=<id> starts one after the metadata
+// lookup, and Load is clickable before that resolves. Only the newest request
+// may write results, or an older response lands last and wins.
+let requestSeq = 0
 const chartTitle  = computed(() => loadedTitle.value || selectionTitle.value)
 
 // A selection change invalidates whatever is on screen. Without this the canvas
@@ -192,6 +197,7 @@ async function load() {
   const requestTitle = selectionTitle.value
   const requestUnit  = selectedDpUnit.value
   const requestRaw   = mode.value === 'raw'
+  const seq          = ++requestSeq
 
   loading.value = true
   points.value  = []
@@ -204,9 +210,9 @@ async function load() {
       ? await historyApi.query(requestDp, { from, to })
       : await historyApi.aggregate(requestDp, { fn: aggFn.value, interval: aggInterval.value, from, to })
 
-    // The user moved on while this was in flight — the response describes an
-    // object they are no longer looking at, so it must not reach the chart.
-    if (requestDp !== selectedDp.value) return
+    // Superseded by a newer load, or the user moved on while this was in
+    // flight — either way this response no longer describes what is on screen.
+    if (seq !== requestSeq || requestDp !== selectedDp.value) return
 
     points.value = data
     if (points.value.length) {
@@ -215,7 +221,8 @@ async function load() {
       loadedRaw.value   = requestRaw
     }
   } finally {
-    loading.value = false
+    // A superseded load must not clear the spinner for the one still running.
+    if (seq === requestSeq) loading.value = false
   }
 }
 
