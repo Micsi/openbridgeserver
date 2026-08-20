@@ -61,6 +61,7 @@ async function mountHistory({
   dpData = SAMPLE_DP,
   aggPending = null,
   queryPending = null,
+  dpPending = null,
 } = {}) {
   vi.doMock('vue-router', () => ({
     useRoute: () => ({ query: routeQuery }),
@@ -72,7 +73,9 @@ async function mountHistory({
   const histQuery = queryPending
     ? vi.fn().mockReturnValue(queryPending)
     : vi.fn().mockResolvedValue({ data: queryData })
-  const dpGet     = vi.fn().mockResolvedValue({ data: dpData })
+  const dpGet     = dpPending
+    ? vi.fn().mockReturnValue(dpPending)
+    : vi.fn().mockResolvedValue({ data: dpData })
 
   vi.doMock('@/api/client', () => ({
     historyApi:  { aggregate: histAgg, query: histQuery },
@@ -612,6 +615,32 @@ describe('HistoryView — obsolete responses', () => {
 
   // A raw response must keep raw semantics — its per-point unit — even if the
   // Mode control has been flipped to Aggregate since the request went out.
+  // ?dp=<id> resolves the object's name/unit on mount. If the user picks another
+  // object first, that lookup must not stamp the old metadata onto the new
+  // selection — the load itself already targets the new object.
+  it('discards the initial metadata lookup when another data point is picked', async () => {
+    let resolveDp
+    const pending = new Promise(resolve => { resolveDp = resolve })
+    const { wrapper, histAgg } = await mountHistory({
+      routeQuery: { dp: 'dp-1' },
+      aggData:    [{ bucket: '2024-01-15T12:00:00Z', v: 99 }],
+      dpPending:  pending,
+    })
+
+    _dpStubEmit({ id: 'dp-2', name: 'Leistung', unit: 'kW' })
+    await nextTick()
+
+    resolveDp({ data: { name: 'Temperatur', unit: '°C' } })
+    await flushPromises()
+
+    expect(histAgg).toHaveBeenLastCalledWith('dp-2', expect.anything())
+    const [, config] = ChartMock.mock.calls.at(-1)
+    expect(config.data.datasets[0].label).toBe('Leistung (avg / 1h)')
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 99 }, raw: { u: null } }))
+      .toBe('99 kW')
+    expect(wrapper.text()).toContain('Leistung (avg / 1h)')
+  })
+
   it('keeps the requested mode when it is switched mid-flight', async () => {
     let resolveQuery
     const pending = new Promise(resolve => { resolveQuery = resolve })

@@ -168,11 +168,17 @@ watch(selectedDp, () => {
 
 onMounted(async () => {
   // If opened with ?dp=<uuid>, resolve the name so the combobox shows it
-  if (selectedDp.value) {
+  const requestDp = selectedDp.value
+  if (requestDp) {
     try {
-      const { data } = await dpApi.get(selectedDp.value)
-      selectedDpName.value = data.name
-      selectedDpUnit.value = data.unit ?? ''
+      const { data } = await dpApi.get(requestDp)
+      // Another object may have been picked while this lookup was in flight —
+      // attaching this one's name and unit to that selection would label the
+      // series the user actually gets with the metadata of the one they left.
+      if (requestDp === selectedDp.value) {
+        selectedDpName.value = data.name
+        selectedDpUnit.value = data.unit ?? ''
+      }
     } catch { /* ignore */ }
     await load()
   }
