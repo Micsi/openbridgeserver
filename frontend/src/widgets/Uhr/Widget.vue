@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { DataPointValue } from '@/types'
 import { useI18n } from 'vue-i18n'
+import { useFormatStore } from '@/stores/format'
 
 const props = defineProps<{
   config: Record<string, unknown>
@@ -23,6 +24,7 @@ const timezone    = computed(() => (props.config.timezone    as string  | undefi
 // Wochentags-, Monats- und Zeitzonennamen sind Übersetzungen und folgen der
 // UI-Sprache — nicht dem Regionalformat (Issue #1073). Das Regionalformat regelt
 // Zahlen-/Datumskonventionen, nicht die Sprache der Namen.
+const format = useFormatStore()
 
 const { locale: uiLocale } = useI18n()
 
@@ -45,11 +47,11 @@ const timeStr = computed(() => {
   return showSeconds.value ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`
 })
 
-const dateStr = computed(() =>
-  now.value.toLocaleDateString(uiLocale.value, {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-  }),
-)
+// Datum im konfigurierten `date_format`-Muster (Issue #1073) — mit der eigenen
+// Zeitzone des Widgets, damit die Datumszeile zu den Zeigern passt; Namen kommen
+// aus der UI-Sprache. Die Uhrzeit bleibt bewusst widget-eigen, weil dort die
+// `showSeconds`-Option des Widgets bestimmt, was angezeigt wird.
+const dateStr = computed(() => format.fmtDate(now.value, timezone.value || null))
 
 // ── Analog ────────────────────────────────────────────────────────────────────
 

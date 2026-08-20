@@ -120,18 +120,23 @@ export const useFormatStore = defineStore('format', () => {
     return LOCALE_NAMES[uiLanguage.value] ?? LOCALE_NAMES.en
   }
 
-  /** Date only, in the administrator-configured `date_format` pattern. */
-  function fmtDate(value: number | string | Date): string {
+  /**
+   * Date only, in the administrator-configured `date_format` pattern.
+   *
+   * *timeZone* overrides the server timezone for widgets that carry their own
+   * (the clock widget renders a freely selectable zone).
+   */
+  function fmtDate(value: number | string | Date, timeZone?: string | null): string {
     const date = toUtcDate(value)
     if (!date) return ''
-    return formatPattern(date, dateFormat.value, timezone.value, localeNames())
+    return formatPattern(date, dateFormat.value, timeZone || timezone.value, localeNames())
   }
 
   /** Time only, in the administrator-configured `time_format` pattern. */
-  function fmtTime(value: number | string | Date): string {
+  function fmtTime(value: number | string | Date, timeZone?: string | null): string {
     const date = toUtcDate(value)
     if (!date) return ''
-    return formatPattern(date, timeFormat.value, timezone.value, localeNames())
+    return formatPattern(date, timeFormat.value, timeZone || timezone.value, localeNames())
   }
 
   /**
