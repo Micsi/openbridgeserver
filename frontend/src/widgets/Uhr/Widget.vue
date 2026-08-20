@@ -38,23 +38,7 @@ onUnmounted(() => {
   if (timer !== null) clearInterval(timer)
 })
 
-// ── Digital ───────────────────────────────────────────────────────────────────
-const timeStr = computed(() => {
-  const d  = now.value
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  const ss = String(d.getSeconds()).padStart(2, '0')
-  return showSeconds.value ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`
-})
-
-// Datum im konfigurierten `date_format`-Muster (Issue #1073) — mit der eigenen
-// Zeitzone des Widgets, damit die Datumszeile zu den Zeigern passt; Namen kommen
-// aus der UI-Sprache. Die Uhrzeit bleibt bewusst widget-eigen, weil dort die
-// `showSeconds`-Option des Widgets bestimmt, was angezeigt wird.
-const dateStr = computed(() => format.fmtDate(now.value, timezone.value || null))
-
-// ── Analog ────────────────────────────────────────────────────────────────────
-
+// ── Zeitzone ──────────────────────────────────────────────────────────────────
 /**
  * Gibt Stunden/Minuten/Sekunden für eine beliebige IANA-Zeitzone zurück.
  * Leerer String oder ungültige Zeitzone → lokale Zeit.
@@ -76,6 +60,25 @@ function getZonedTime(date: Date, tz: string): { h: number; m: number; s: number
 }
 
 const zonedTime  = computed(() => getZonedTime(now.value, timezone.value))
+
+// ── Digital ───────────────────────────────────────────────────────────────────
+// Uhrzeit und Datum teilen sich die Widget-Zeitzone — sonst zeigt eine auf eine
+// andere Zone gestellte Uhr Datum und Uhrzeit aus verschiedenen Zonen (#1073).
+const timeStr = computed(() => {
+  const { h, m, s } = zonedTime.value
+  const hh = String(h).padStart(2, '0')
+  const mm = String(m).padStart(2, '0')
+  const ss = String(s).padStart(2, '0')
+  return showSeconds.value ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`
+})
+
+// Datum im konfigurierten `date_format`-Muster (Issue #1073) — mit der eigenen
+// Zeitzone des Widgets, damit die Datumszeile zu den Zeigern passt; Namen kommen
+// aus der UI-Sprache. Die Uhrzeit bleibt bewusst widget-eigen, weil dort die
+// `showSeconds`-Option des Widgets bestimmt, was angezeigt wird.
+const dateStr = computed(() => format.fmtDate(now.value, timezone.value || null))
+
+// ── Analog ────────────────────────────────────────────────────────────────────
 const hourDeg    = computed(() => (zonedTime.value.h % 12) * 30 + zonedTime.value.m * 0.5)
 const minuteDeg  = computed(() => zonedTime.value.m * 6)
 const secondDeg  = computed(() => zonedTime.value.s * 6)

@@ -68,7 +68,21 @@ describe('Uhr Widget.vue — date line (#1073)', () => {
     // 02:00 UTC on the 20th is still 19:00 on the 19th in Los Angeles (UTC-7).
     vi.setSystemTime(new Date('2026-08-20T02:00:00Z'))
 
-    expect(mountClock({ timezone: 'America/Los_Angeles' }).text()).toContain('19.08.2026')
+    const text = mountClock({ timezone: 'America/Los_Angeles' }).text()
+
+    // Date *and* time must come from the same zone — showing the widget's date
+    // next to browser-local time would be worse than either alone.
+    expect(text).toContain('19.08.2026')
+    expect(text).toContain('19:00')
+  })
+
+  it('keeps the digital time in the browser zone when the widget sets none', () => {
+    const store = useFormatStore()
+    store.timezone = 'UTC'
+    vi.setSystemTime(new Date('2026-08-20T02:00:00Z'))
+
+    const expected = new Date('2026-08-20T02:00:00Z').getHours()
+    expect(mountClock({}).text()).toContain(`${String(expected).padStart(2, '0')}:00`)
   })
 
   it('omits the date entirely when showDate is off', () => {

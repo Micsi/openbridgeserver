@@ -119,6 +119,16 @@ describe('numberFormat (#1073)', () => {
       }
     })
 
+    it('tolerates a malformed persisted decimals value (#1073)', () => {
+      // Widget config is an arbitrary persisted dictionary, so `decimals` can be
+      // any junk from an import; Intl would otherwise throw into the render.
+      expect(() => formatNumber(1.05, 'de-DE', { decimals: 'bad' })).not.toThrow()
+      expect(formatNumber(1.05, 'de-DE', { decimals: 'bad' })).toBe('1')
+      expect(formatNumber(1.05, 'de-DE', { decimals: null })).toBe('1,05')
+      expect(formatNumber(1.05, 'de-DE', { maxDecimals: 'bad' })).toBe('1')
+      expect(formatCurrency(1.05, 'de-DE', 'EUR', { decimals: 'bad' })).toContain('1')
+    })
+
     it('returns non-numeric input unchanged', () => {
       expect(formatNumber('AN', 'de-DE')).toBe('AN')
       expect(formatNumber(null, 'de-DE')).toBe('')

@@ -119,6 +119,15 @@ describe('ValueDisplay Widget.vue — regional number format (#1073)', () => {
     expect(wrapper.find('[data-testid="widget-value"]').text()).toBe('1,1')
   })
 
+  it('still renders a page whose persisted decimals value is malformed (#1073)', () => {
+    // WidgetInstance.config is an arbitrary dictionary, so an import or API
+    // write can persist junk here; the page must not fail to render.
+    useFormatStore().regionFormatSetting = 'de-DE'
+
+    expect(() => mountWidget(1.05, 'bad' as unknown as number)).not.toThrow()
+    expect(wrapper!.find('[data-testid="widget-value"]').text()).toBe('1')
+  })
+
   it('falls back to one decimal when no rule matches the value type', () => {
     useFormatStore().regionFormatSetting = 'de-DE'
 

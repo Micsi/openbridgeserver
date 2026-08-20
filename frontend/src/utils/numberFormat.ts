@@ -96,7 +96,12 @@ export function toFiniteNumber(value: unknown): number | null {
 }
 
 function clampDigits(digits: number): number {
-  return Math.max(0, Math.min(20, Math.trunc(digits)))
+  // A widget config is an arbitrary persisted dictionary, so `decimals` can be
+  // a non-numeric value from an import or API write. Math.trunc() would yield
+  // NaN and Intl would then throw straight into the render (issue #1073).
+  const truncated = Math.trunc(Number(digits))
+  if (!Number.isFinite(truncated)) return 0
+  return Math.max(0, Math.min(MAX_FRACTION_DIGITS, truncated))
 }
 
 function passthrough(value: unknown): string {
