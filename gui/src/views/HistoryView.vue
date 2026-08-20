@@ -89,7 +89,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { historyApi, dpApi } from '@/api/client'
@@ -172,11 +172,33 @@ async function load() {
       const { data } = await historyApi.aggregate(selectedDp.value, { fn: aggFn.value, interval: aggInterval.value, from, to })
       points.value = data
     }
-    await nextTick()
-    renderChart()
   } finally {
     loading.value = false
   }
+}
+
+// A load swaps the canvas out for the spinner and back, so the chart is rebuilt
+// from a post-flush watcher — it runs after the DOM patch that assigns
+// `chartCanvas`, whereas rendering straight out of load() ran while the spinner
+// was still up and the ref was null, so the chart was never created at all.
+// Sources are the canvas and the data: whichever changes, the drawn chart is
+// stale. The template only mounts the canvas for a selected data point with
+// points loaded, so a non-null ref is the whole condition for having something
+// to draw.
+watch([chartCanvas, points], syncChart, { flush: 'post' })
+
+onBeforeUnmount(destroyChart)
+
+function syncChart() {
+  // Always drop the old chart first: it is bound to a canvas that has just been
+  // unmounted, replaced, or is about to be redrawn.
+  destroyChart()
+  if (chartCanvas.value) renderChart()
+}
+
+function destroyChart() {
+  chartInstance?.destroy()
+  chartInstance = null
 }
 
 function qualityLabel(q) {
@@ -184,16 +206,14 @@ function qualityLabel(q) {
 }
 
 function renderChart() {
-  if (!chartCanvas.value || !points.value.length) return
-  chartInstance?.destroy()
-
   // Convert every point to {x: Unix-ms, y: value} so Chart.js never has to
   // guess the scale type from label strings (which caused it to auto-activate
   // the TimeScale without an adapter and display raw ms).
   const chartData = points.value.map(p => {
-    const isoStr = p.ts ?? p.bucket ?? null
-    const ms = isoStr ? (toUtcDate(isoStr)?.getTime() ?? 0) : 0
-    return { x: ms, y: p.v }
+    // A missing or unparsable timestamp yields null / an invalid Date, whose
+    // getTime() is NaN — plot those at 0 rather than feeding NaN to Chart.js.
+    const ms = toUtcDate(p.ts ?? p.bucket)?.getTime()
+    return { x: Number.isFinite(ms) ? ms : 0, y: p.v }
   })
 
   const dark = document.documentElement.classList.contains('dark')

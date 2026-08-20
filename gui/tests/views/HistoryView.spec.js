@@ -272,3 +272,252 @@ describe('HistoryView — qualityLabel', () => {
     expect(text).toContain('Unbekannt')
   })
 })
+
+// ─── Chart rendering (regression for #1146) ──────────────────────────────────
+
+describe('HistoryView — chart rendering', () => {
+  it('constructs the Chart after a successful aggregate load', async () => {
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    expect(ChartMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('constructs the Chart on the canvas that is mounted in the DOM', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    expect(ChartMock.mock.calls[0][0]).toBe(wrapper.find('canvas').element)
+  })
+
+  it('passes the loaded points as {x: unix-ms, y: value} pairs', async () => {
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    const [, config] = ChartMock.mock.calls[0]
+    expect(config.data.datasets[0].data).toEqual([{ x: Date.parse('2024-01-15T12:00:00Z'), y: 21.5 }])
+  })
+
+  it('reads aggregate buckets from the bucket field', async () => {
+    const bucket = { bucket: '2024-01-15T12:00:00', v: 7 }
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [bucket] })
+    const [, config] = ChartMock.mock.calls[0]
+    expect(config.data.datasets[0].data).toEqual([{ x: Date.parse('2024-01-15T12:00:00Z'), y: 7 }])
+  })
+
+  it('does not construct a Chart when the load returns no points', async () => {
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [] })
+    expect(ChartMock).not.toHaveBeenCalled()
+  })
+
+  it('constructs the Chart and renders the table in raw mode', async () => {
+    const { wrapper, histQuery } = await mountHistory({ routeQuery: { dp: 'dp-1' } })
+    histQuery.mockResolvedValue({ data: [SAMPLE_POINT] })
+
+    const [modeSelect] = wrapper.findAll('select')
+    await modeSelect.setValue('raw')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(ChartMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.findAll('tbody tr').length).toBe(1)
+  })
+
+  it('redraws after switching the mode and reloading', async () => {
+    const { wrapper, histQuery } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    histQuery.mockResolvedValue({ data: [SAMPLE_POINT, { ...SAMPLE_POINT, v: 19 }] })
+    expect(ChartMock).toHaveBeenCalledTimes(1)
+
+    const [modeSelect] = wrapper.findAll('select')
+    await modeSelect.setValue('raw')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(ChartMock).toHaveBeenCalledTimes(2)
+    expect(ChartMock.mock.calls[1][1].data.datasets[0].data).toHaveLength(2)
+  })
+
+  it('destroys the previous chart instance before redrawing', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(chartCalls).toHaveLength(2)
+    expect(chartCalls[0].destroy).toHaveBeenCalled()
+  })
+
+  it('redraws with the new label after switching the aggregation function and reloading', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    const [, fnSelect] = wrapper.findAll('select')
+    await fnSelect.setValue('max')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(ChartMock).toHaveBeenCalledTimes(2)
+    expect(ChartMock.mock.calls[1][1].data.datasets[0].label).toContain('(max / 1h)')
+  })
+
+  it('reloads and redraws with the new interval after switching it', async () => {
+    const { wrapper, histAgg } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    const [, , intervalSelect] = wrapper.findAll('select')
+    await intervalSelect.setValue('1d')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(histAgg).toHaveBeenLastCalledWith('dp-1', expect.objectContaining({ fn: 'avg', interval: '1d' }))
+    expect(ChartMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('reloads and redraws with the new time range', async () => {
+    const { wrapper, histAgg } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    const [fromInput, toInput] = wrapper.findAll('input[type="datetime-local"]')
+    await fromInput.setValue('2024-01-01T00:00')
+    await toInput.setValue('2024-01-02T00:00')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(histAgg).toHaveBeenLastCalledWith('dp-1', expect.objectContaining({
+      from: new Date('2024-01-01T00:00').toISOString(),
+      to:   new Date('2024-01-02T00:00').toISOString(),
+    }))
+    expect(ChartMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not rebuild the chart when another data point is picked without reloading', async () => {
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    expect(ChartMock).toHaveBeenCalledTimes(1)
+
+    // Selecting a dp only arms the next load — the still-displayed series belongs
+    // to the previous dp, so redrawing it here would just flicker the old data.
+    _dpStubEmit({ id: 'dp-2', name: 'Anderer', unit: 'kW' })
+    await nextTick()
+
+    expect(ChartMock).toHaveBeenCalledTimes(1)
+    expect(chartCalls[0].destroy).not.toHaveBeenCalled()
+  })
+
+  it('destroys the chart when a reload returns no points', async () => {
+    const { wrapper, histAgg } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    histAgg.mockResolvedValue({ data: [] })
+
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('canvas').exists()).toBe(false)
+    expect(chartCalls).toHaveLength(1)
+    expect(chartCalls[0].destroy).toHaveBeenCalled()
+  })
+
+  it('destroys the chart when the data point is cleared', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    expect(chartCalls).toHaveLength(1)
+
+    _dpStubEmit(null)
+    await nextTick()
+
+    expect(wrapper.find('canvas').exists()).toBe(false)
+    expect(chartCalls[0].destroy).toHaveBeenCalled()
+  })
+
+  it('destroys the chart when the view is unmounted', async () => {
+    const { wrapper } = await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+
+    wrapper.unmount()
+
+    expect(chartCalls[0].destroy).toHaveBeenCalled()
+  })
+
+  it('falls back to x=0 for a point without a timestamp', async () => {
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [{ v: 5 }] })
+    expect(ChartMock.mock.calls[0][1].data.datasets[0].data).toEqual([{ x: 0, y: 5 }])
+  })
+
+  it('falls back to x=0 for an unparsable timestamp', async () => {
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [{ ts: 'not-a-date', v: 5 }] })
+    expect(ChartMock.mock.calls[0][1].data.datasets[0].data).toEqual([{ x: 0, y: 5 }])
+  })
+
+  it('uses the dark theme colours when the dark class is set', async () => {
+    document.documentElement.classList.add('dark')
+    try {
+      await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    } finally {
+      document.documentElement.classList.remove('dark')
+    }
+    const [, config] = ChartMock.mock.calls[0]
+    expect(config.options.scales.x.ticks.color).toBe('#64748b')
+    expect(config.options.plugins.tooltip.backgroundColor).toBe('#1e2435')
+  })
+
+  it('uses the light theme colours by default', async () => {
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    const [, config] = ChartMock.mock.calls[0]
+    expect(config.options.scales.x.ticks.color).toBe('#94a3b8')
+    expect(config.options.plugins.tooltip.backgroundColor).toBe('#ffffff')
+  })
+
+  it('drops point markers for large series', async () => {
+    const many = Array.from({ length: 201 }, (_, i) => ({ ...SAMPLE_POINT, v: i }))
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: many })
+    expect(ChartMock.mock.calls[0][1].data.datasets[0].pointRadius).toBe(0)
+  })
+})
+
+// ─── Chart callbacks ─────────────────────────────────────────────────────────
+
+describe('HistoryView — chart callbacks', () => {
+  it('formats the x-axis ticks and the tooltip title as local date/time', async () => {
+    await mountHistory({ routeQuery: { dp: 'dp-1' }, aggData: [SAMPLE_POINT] })
+    const [, config] = ChartMock.mock.calls[0]
+    const ms = Date.parse('2024-01-15T12:00:00Z')
+
+    const tick = config.options.scales.x.ticks.callback(ms)
+    expect(tick).toMatch(/\d/)
+    expect(config.options.plugins.tooltip.callbacks.title([{ parsed: { x: ms } }])).toBe(tick)
+  })
+
+  it('appends the data point unit to the tooltip label in aggregate mode', async () => {
+    await mountHistory({
+      routeQuery: { dp: 'dp-1' },
+      aggData:    [{ bucket: '2024-01-15T12:00:00Z', v: 21.5 }],
+      dpData:     { name: 'Außentemperatur', unit: '°C' },
+    })
+    const [, config] = ChartMock.mock.calls[0]
+    const label = config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, dataIndex: 0 })
+    expect(label).toBe('21.5 °C')
+  })
+
+  it('uses the per-point unit in the tooltip label in raw mode', async () => {
+    const { wrapper, histQuery } = await mountHistory({ routeQuery: { dp: 'dp-1' }, dpData: { name: 'X', unit: 'kW' } })
+    histQuery.mockResolvedValue({ data: [{ ...SAMPLE_POINT, u: 'bar' }] })
+
+    const [modeSelect] = wrapper.findAll('select')
+    await modeSelect.setValue('raw')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    const [, config] = ChartMock.mock.calls[0]
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 21.5 }, dataIndex: 0 })).toBe('21.5 bar')
+  })
+
+  it('falls back to the data point unit in raw mode when the point carries none', async () => {
+    const { wrapper, histQuery } = await mountHistory({ routeQuery: { dp: 'dp-1' }, dpData: { name: 'X', unit: 'kW' } })
+    histQuery.mockResolvedValue({ data: [{ ts: '2024-01-15T12:00:00Z', v: 4 }] })
+
+    const [modeSelect] = wrapper.findAll('select')
+    await modeSelect.setValue('raw')
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    const [, config] = ChartMock.mock.calls[0]
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 4 }, dataIndex: 0 })).toBe('4 kW')
+  })
+
+  it('omits the unit in the tooltip label when none is known', async () => {
+    await mountHistory({
+      routeQuery: { dp: 'dp-1' },
+      aggData:    [{ bucket: '2024-01-15T12:00:00Z', v: 3 }],
+      dpData:     { name: 'Zähler' },
+    })
+    const [, config] = ChartMock.mock.calls[0]
+    expect(config.options.plugins.tooltip.callbacks.label({ parsed: { y: 3 }, dataIndex: 0 })).toBe('3')
+  })
+})
