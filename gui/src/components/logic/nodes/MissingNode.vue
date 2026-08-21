@@ -6,7 +6,7 @@
       <div class="missing-node__text">
         <div class="missing-node__title">{{ $t('logic.missingNode.title') }}</div>
         <div v-if="customLabel" class="missing-node__name">{{ customLabel }}</div>
-        <div class="missing-node__type">{{ data.original_type ?? data.label }}</div>
+        <div class="missing-node__type">{{ missingType }}</div>
       </div>
     </div>
     <Handle v-for="h in outputs" :key="h.id" type="source" :id="h.id" :position="Position.Right" />
@@ -25,10 +25,19 @@ const props = defineProps({ data: { type: Object, default: () => ({}) } })
 const MISSING_COLOR = '#ef4444'
 const cardTint = nodeTint(MISSING_COLOR)
 
+// The type this placeholder stands in for. Very old placeholders carry it in
+// `label` instead of `original_type`.
+const missingType = computed(() => String(props.data?.original_type ?? props.data?.label ?? '').trim())
+
 // User-defined block name (issue #1157), carried over by the import when the
-// block's type disappeared. Only meaningful once `original_type` names the
-// missing type — in legacy placeholders `label` *is* that type marker.
-const customLabel = computed(() => (props.data?.original_type ? String(props.data?.label ?? '').trim() : ''))
+// block's type disappeared. Never repeat the string already shown as the
+// missing type — that is a type marker, not a name the user typed. The
+// generated `[Fehlend: …]` marker of pre-#1157 placeholders is stripped by the
+// API before the sheet reaches the editor.
+const customLabel = computed(() => {
+  const label = String(props.data?.label ?? '').trim()
+  return label === missingType.value ? '' : label
+})
 
 const inputs  = computed(() => [{ id: 'in' }])
 const outputs = computed(() => [{ id: 'out' }])

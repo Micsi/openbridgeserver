@@ -99,10 +99,31 @@ def _normalized_without_positions(raw: dict) -> dict:
     return _without_positions(json.loads(flow_data.model_dump_json()))
 
 
+def _drop_legacy_missing_node_labels(flow_data: FlowData) -> None:
+    """Remove the generated placeholder marker from ``missing_node`` blocks.
+
+    Imports before issue #1157 wrote a hardcoded German type marker
+    (``[Fehlend: <type>]``) into ``data.label`` of every placeholder. That key
+    now holds the user-defined block name, so leaving the marker in place would
+    present a string the server generated as a name the user typed — on the
+    block card and in the rename field of the properties panel alike.
+
+    Dropping it at the read boundary keeps every consumer free of it, and the
+    clean shape is written back the next time the sheet is saved.
+    """
+    for node in flow_data.nodes:
+        if node.type != "missing_node":
+            continue
+        original_type = node.data.get("original_type")
+        if original_type and node.data.get("label") == f"[Fehlend: {original_type}]":
+            node.data.pop("label", None)
+
+
 def _row_to_out(row: dict) -> LogicGraphOut:
     raw = json.loads(row["flow_data"]) if row["flow_data"] else {}
     flow_data = FlowData.model_validate(raw)
     _migrate_legacy_api_client_field_names(flow_data)
+    _drop_legacy_missing_node_labels(flow_data)
     return LogicGraphOut(
         id=row["id"],
         name=row["name"],

@@ -267,3 +267,74 @@ async def test_patch_config_change_alongside_rename_is_not_layout_only(monkeypat
 
     manager.update_cached_graph.assert_not_called()
     manager.reinitialize_graph.assert_awaited_once()
+
+
+def test_row_to_out_strips_the_legacy_missing_node_marker():
+    """The read boundary every response goes through must hand out the cleaned
+    shape — the block card and the rename field both read `data.label`."""
+    from obs.api.v1.logic import _row_to_out
+
+    stored = {
+        "nodes": [
+            {
+                "id": "x1",
+                "type": "missing_node",
+                "position": {"x": 0, "y": 0},
+                "data": {"original_type": "gone_v9", "label": "[Fehlend: gone_v9]"},
+            },
+            {"id": "n1", "type": "and", "position": {"x": 0, "y": 0}, "data": {"label": "Treppenhaus"}},
+        ],
+        "edges": [],
+    }
+    out = _row_to_out(_row(json.dumps(stored)))
+
+    assert "label" not in out.flow_data.nodes[0].data
+    assert out.flow_data.nodes[0].data["original_type"] == "gone_v9"
+    # A genuine block name on a working block is untouched.
+    assert out.flow_data.nodes[1].data["label"] == "Treppenhaus"
+
+
+def test_drop_legacy_missing_node_labels_removes_the_generated_marker():
+    """Placeholders written before issue #1157 carry a generated German type
+    marker in `label`, which now means "user-defined block name"."""
+    from obs.api.v1.logic import _drop_legacy_missing_node_labels
+
+    flow = FlowData.model_validate(
+        {
+            "nodes": [
+                {
+                    "id": "x1",
+                    "type": "missing_node",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"original_type": "gone_v9", "label": "[Fehlend: gone_v9]"},
+                }
+            ],
+            "edges": [],
+        }
+    )
+    _drop_legacy_missing_node_labels(flow)
+    assert flow.nodes[0].data == {"original_type": "gone_v9"}
+
+
+def test_drop_legacy_missing_node_labels_keeps_a_real_block_name():
+    from obs.api.v1.logic import _drop_legacy_missing_node_labels
+
+    flow = FlowData.model_validate(
+        {
+            "nodes": [
+                {"id": "x1", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {"original_type": "gone_v9", "label": "Treppenhaus"}},
+                # A marker naming a *different* type is not this node's marker.
+                {"id": "x2", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {"original_type": "gone_v9", "label": "[Fehlend: other]"}},
+                # Not a placeholder at all — a renamed working block.
+                {"id": "n1", "type": "and", "position": {"x": 0, "y": 0}, "data": {"label": "[Fehlend: and]"}},
+                # No `original_type` to build the marker from.
+                {"id": "x3", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {"label": "[Fehlend: gone_v9]"}},
+            ],
+            "edges": [],
+        }
+    )
+    _drop_legacy_missing_node_labels(flow)
+    assert flow.nodes[0].data["label"] == "Treppenhaus"
+    assert flow.nodes[1].data["label"] == "[Fehlend: other]"
+    assert flow.nodes[2].data["label"] == "[Fehlend: and]"
+    assert flow.nodes[3].data["label"] == "[Fehlend: gone_v9]"
