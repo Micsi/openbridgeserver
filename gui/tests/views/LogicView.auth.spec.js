@@ -795,17 +795,26 @@ describe('LogicView inspector inputs', () => {
       graphDetails: { 'graph-1': graph },
     })
 
-    wrapper.vm.debugNode = { id: 'gate', type: 'and', data: { input_count: 3 } }
+    wrapper.vm.selectedNode = { id: 'gate', type: 'and', data: { input_count: 3 } }
     expect(wrapper.vm.debugInputs.map(input => input.id)).toEqual(['in1', 'in2', 'in3'])
 
-    wrapper.vm.debugNode = { id: 'average', type: 'avg_multi', data: { input_count: 4 } }
+    wrapper.vm.selectedNode = { id: 'average', type: 'avg_multi', data: { input_count: 4 } }
     expect(wrapper.vm.debugInputs.map(input => input.id)).toEqual(['in_1', 'in_2', 'in_3', 'in_4'])
 
-    wrapper.vm.debugNode = { id: 'concat', type: 'string_concat', data: { count: 3 } }
+    wrapper.vm.selectedNode = { id: 'concat', type: 'string_concat', data: { count: 3 } }
     wrapper.vm.edges = [{ id: 'custom', source: 'n1', target: 'concat', sourceHandle: 'value', targetHandle: 'in_4' }]
     expect(wrapper.vm.debugInputs.map(input => input.id)).toEqual(['in_1', 'in_2', 'in_3', 'in_4'])
 
-    wrapper.vm.debugNode = { id: 'source', type: 'datapoint_read', data: {} }
+    // Without a configured count the block falls back to its two inputs, and an
+    // edge without an explicit handle targets the default 'in' port.
+    wrapper.vm.selectedNode = { id: 'concat', type: 'string_concat', data: {} }
+    wrapper.vm.edges = [{ id: 'default-handle', source: 'n1', target: 'concat', sourceHandle: 'out' }]
+    wrapper.vm.lastRunDebugOutputs = { n1: { out: 'from default handle' } }
+    expect(wrapper.vm.debugInputs.map(input => input.id)).toEqual(['in_1', 'in_2', 'in'])
+    expect(wrapper.vm.debugInputs.find(input => input.id === 'in').incoming).toBe('from default handle')
+    wrapper.vm.lastRunDebugOutputs = {}
+
+    wrapper.vm.selectedNode = { id: 'source', type: 'datapoint_read', data: {} }
     wrapper.vm.edges = []
     wrapper.vm.lastRunInputs = {
       source: { value: { incoming: 23, effective: 99, overridden: true } },
@@ -821,11 +830,11 @@ describe('LogicView inspector inputs', () => {
       }),
     ])
 
-    wrapper.vm.debugNode = { id: 'script', type: 'python_script', data: {} }
+    wrapper.vm.selectedNode = { id: 'script', type: 'python_script', data: {} }
     wrapper.vm.lastRunInputs = {}
     expect(wrapper.vm.debugInputs.map(input => input.id)).toEqual(['a', 'b', 'c'])
 
-    wrapper.vm.debugNode = { id: 'gate', type: 'and', data: { input_count: 2 } }
+    wrapper.vm.selectedNode = { id: 'gate', type: 'and', data: { input_count: 2 } }
     wrapper.vm.edges = [{ id: 'stale', source: 'source', target: 'gate', sourceHandle: 'out', targetHandle: 'in1' }]
     wrapper.vm.lastRunOutputs = { source: { out: 'ordinary-run' } }
     wrapper.vm.lastRunDebugOutputs = {}
@@ -833,7 +842,7 @@ describe('LogicView inspector inputs', () => {
     wrapper.vm.lastRunDebugOutputs = { source: { out: 'debug-run' } }
     expect(wrapper.vm.debugInputs.find(input => input.id === 'in1').incoming).toBe('debug-run')
 
-    wrapper.vm.debugNode = null
+    wrapper.vm.selectedNode = null
     expect(wrapper.vm.debugInputs).toEqual([])
   })
 
@@ -854,8 +863,7 @@ describe('LogicView inspector inputs', () => {
 
     wrapper.vm.toggleDebug()
     wrapper.vm.onNodeClick({ node: wrapper.vm.nodes[0] })
-    expect(wrapper.vm.debugNode.id).toBe('n1')
-    expect(wrapper.vm.selectedNode).toBe(null)
+    expect(wrapper.vm.selectedNode.id).toBe('n1')
 
     wrapper.vm.setDebugOverride('value', '{"nested":true}')
     wrapper.vm.setDebugOverride('label', 'plain text')
@@ -872,7 +880,6 @@ describe('LogicView inspector inputs', () => {
     wrapper.vm.setDebugOverride('label', '   ')
     wrapper.vm.clearAllDebugOverrides()
     wrapper.vm.toggleDebug()
-    expect(wrapper.vm.debugNode).toBe(null)
     expect(wrapper.vm.lastRunMetadata).toBe(null)
     expect(wrapper.vm.lastRunDebugOutputs).toEqual({})
     expect(wrapper.vm.lastRunOutputs.n1.value).toBe(7)
@@ -880,7 +887,49 @@ describe('LogicView inspector inputs', () => {
     wrapper.vm.toggleDebug()
     wrapper.vm.onNodeClick({ node: wrapper.vm.nodes[0] })
     await wrapper.vm.$nextTick()
-    expect(wrapper.findComponent({ name: 'DebugInspector' }).props('outputs')).toEqual({})
+    const panel = wrapper.findComponent({ name: 'NodeConfigPanel' })
+    expect(panel.props('debugMode')).toBe(true)
+    expect(panel.props('debugOutputs')).toEqual({})
+  })
+
+  it('ignores override edits without edit permission', async () => {
+    const { wrapper } = await mountLogicView({ isAdmin: false })
+
+    wrapper.vm.setDebugOverride('value', '42')
+
+    expect(wrapper.vm.debugOverrides).toEqual({})
+  })
+
+  it('keeps the selected block editable while debug mode is on (issue #1128)', async () => {
+    const graph = makeGraph('graph-1')
+    const { wrapper, logicApi } = await mountLogicView({
+      isAdmin: true,
+      graphs: [graph],
+      routeQuery: { graph: 'graph-1' },
+      graphDetails: { 'graph-1': graph },
+    })
+
+    wrapper.vm.toggleDebug()
+    wrapper.vm.onNodeClick({ node: wrapper.vm.nodes[0] })
+    await wrapper.vm.$nextTick()
+
+    // One panel serves both tabs: it stays open on the same block and carries
+    // that block's debug data alongside its settings.
+    const panel = wrapper.findComponent({ name: 'NodeConfigPanel' })
+    expect(panel.exists()).toBe(true)
+    expect(panel.props('node').id).toBe('n1')
+    expect(panel.props('debugMode')).toBe(true)
+    wrapper.vm.lastRunInputs = { n1: { value: { incoming: 5, effective: 5, overridden: false } } }
+    await wrapper.vm.$nextTick()
+    expect(panel.props('debugInputs').map(input => input.id)).toEqual(['value'])
+
+    wrapper.vm.onNodeDataUpdate({ label: 'renamed in debug mode' })
+    vi.advanceTimersByTime(500)
+    await flushPromises()
+
+    expect(wrapper.vm.nodes[0].data.label).toBe('renamed in debug mode')
+    expect(logicApi.saveGraph).toHaveBeenCalled()
+    expect(wrapper.vm.debugMode).toBe(true)
   })
 
   it('ignores debug state from a run completed after debug mode is disabled', async () => {

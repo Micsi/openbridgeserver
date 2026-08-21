@@ -865,6 +865,11 @@ Shows calculated intermediate values directly on the blocks — live and automat
 2. Click the **🔍 Debug** button in the toolbar
 3. Each block shows a yellow band with its current output values
 4. The display updates automatically after each execution (value change, schedule, manual start)
+5. Click a block to open its configuration panel — while debug mode is active it offers a
+   **Debug values** tab (appended to the tab bar of Read/Write Object blocks, next to a
+   **Settings** tab for all other blocks), so the block can still be configured during a
+   debug session. The **Debug values** tab shows the complete inputs and outputs, execution
+   metadata and allows temporary input overrides for a single test run
 
 | Type | Display |
 |---|---|

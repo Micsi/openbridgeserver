@@ -199,23 +199,20 @@
         </div>
       </div>
 
-      <!-- Config Panel -->
+      <!-- Config Panel — settings and, in debug mode, the debug values of the
+           selected block as a second tab (issue #1128) -->
       <NodeConfigPanel
-        v-if="selectedNode && auth.isAdmin && !debugNode"
+        v-if="selectedNode && auth.isAdmin"
         :node="selectedNode"
         :node-types="store.nodeTypes"
         :node-outputs="lastRunOutputs"
+        :debug-mode="debugMode"
+        :debug-inputs="debugInputs"
+        :debug-outputs="lastRunDebugOutputs[selectedNode.id] || {}"
+        :debug-metadata="lastRunMetadata"
+        :has-debug-overrides="hasDebugOverrides"
         @update="onNodeDataUpdate"
         @close="selectedNode = null"
-      />
-      <DebugInspector
-        v-if="auth.isAdmin && debugNode"
-        :node="debugNode"
-        :inputs="debugInputs"
-        :outputs="lastRunDebugOutputs[debugNode.id] || {}"
-        :metadata="lastRunMetadata"
-        :has-overrides="hasDebugOverrides"
-        @close="debugNode = null"
         @set-override="setDebugOverride"
         @clear-override="clearDebugOverride"
         @clear-all="clearAllDebugOverrides"
@@ -300,7 +297,6 @@ import { cloneSelectionForClipboard, remapClipboardForPaste } from '@/utils/logi
 import { AUTH_TOKEN_REFRESHED_EVENT } from '@/utils/authEvents'
 import NodePalette         from '@/components/logic/NodePalette.vue'
 import NodeConfigPanel     from '@/components/logic/NodeConfigPanel.vue'
-import DebugInspector      from '@/components/logic/DebugInspector.vue'
 import ActionPreflightDialog from '@/components/authz/ActionPreflightDialog.vue'
 import Modal               from '@/components/ui/Modal.vue'
 import ConfirmDialog       from '@/components/ui/ConfirmDialog.vue'
@@ -704,9 +700,13 @@ async function saveGraph() {
   }
 }
 
+// ── Node selection & config ────────────────────────────────────────────────
+// One selected block feeds both the settings and the debug values of the
+// config panel, so switching tabs never targets a different block.
+const selectedNode = ref(null)
+
 // ── Debug mode ─────────────────────────────────────────────────────────────
 const debugMode = ref(false)
-const debugNode = ref(null)
 const debugOverrides = ref({})
 const lastRunMetadata = ref(null)
 const lastRunInputs = ref({})
@@ -804,7 +804,6 @@ function toggleDebug() {
   clearDebugValues()
   if (!debugMode.value) {
     clearAllDebugOverrides()
-    debugNode.value = null
     lastRunMetadata.value = null
     lastRunInputs.value = {}
     lastRunDebugOutputs.value = {}
@@ -890,11 +889,11 @@ function parseOverride(text) {
 }
 
 function setDebugOverride(inputId, text) {
-  if (!auth.isAdmin || !debugNode.value) return
-  const nodeValues = { ...(debugOverrides.value[debugNode.value.id] || {}) }
+  if (!auth.isAdmin || !selectedNode.value) return
+  const nodeValues = { ...(debugOverrides.value[selectedNode.value.id] || {}) }
   if (!text.trim()) delete nodeValues[inputId]
   else nodeValues[inputId] = text
-  debugOverrides.value = { ...debugOverrides.value, [debugNode.value.id]: nodeValues }
+  debugOverrides.value = { ...debugOverrides.value, [selectedNode.value.id]: nodeValues }
 }
 
 function clearDebugOverride(inputId) { setDebugOverride(inputId, '') }
@@ -902,40 +901,40 @@ function clearAllDebugOverrides() { debugOverrides.value = {} }
 const hasDebugOverrides = computed(() => Object.values(debugOverrides.value).some(values => Object.keys(values).length > 0))
 
 const debugInputs = computed(() => {
-  if (!debugNode.value) return []
-  const definition = store.nodeTypes.find(type => type.type === debugNode.value.type)
+  if (!selectedNode.value) return []
+  const definition = store.nodeTypes.find(type => type.type === selectedNode.value.type)
   let ports = definition?.inputs || []
-  const count = Number(debugNode.value.data?.input_count) || 2
-  if (['and', 'or', 'xor'].includes(debugNode.value.type)) {
+  const count = Number(selectedNode.value.data?.input_count) || 2
+  if (['and', 'or', 'xor'].includes(selectedNode.value.type)) {
     ports = Array.from({ length: Math.max(2, Math.min(30, count)) }, (_, i) => ({ id: `in${i + 1}`, label: `${i + 1}` }))
-  } else if (debugNode.value.type === 'avg_multi') {
+  } else if (selectedNode.value.type === 'avg_multi') {
     ports = Array.from({ length: Math.max(2, Math.min(20, count)) }, (_, i) => ({ id: `in_${i + 1}`, label: `${i + 1}` }))
-  } else if (debugNode.value.type === 'string_concat') {
-    const stringCount = Number(debugNode.value.data?.count) || 2
+  } else if (selectedNode.value.type === 'string_concat') {
+    const stringCount = Number(selectedNode.value.data?.count) || 2
     ports = Array.from({ length: Math.max(2, Math.min(20, stringCount)) }, (_, i) => ({ id: `in_${i + 1}`, label: `${i + 1}` }))
-  } else if (debugNode.value.type === 'python_script') {
+  } else if (selectedNode.value.type === 'python_script') {
     ports = ['a', 'b', 'c'].map(id => ({ id, label: id }))
   }
   const known = new Set(ports.map(port => port.id))
-  for (const edge of edges.value.filter(item => item.target === debugNode.value.id)) {
+  for (const edge of edges.value.filter(item => item.target === selectedNode.value.id)) {
     const id = edge.targetHandle || 'in'
     if (!known.has(id)) {
       ports = [...ports, { id, label: id }]
       known.add(id)
     }
   }
-  for (const id of Object.keys(lastRunInputs.value[debugNode.value.id] || {})) {
+  for (const id of Object.keys(lastRunInputs.value[selectedNode.value.id] || {})) {
     if (!known.has(id)) {
       ports = [...ports, { id, label: id }]
       known.add(id)
     }
   }
   return ports.map(port => {
-    const edge = edges.value.find(item => item.target === debugNode.value.id && (item.targetHandle || 'in') === port.id)
-    const captured = lastRunInputs.value[debugNode.value.id]?.[port.id]
+    const edge = edges.value.find(item => item.target === selectedNode.value.id && (item.targetHandle || 'in') === port.id)
+    const captured = lastRunInputs.value[selectedNode.value.id]?.[port.id]
     const hasCapturedInput = captured && Object.prototype.hasOwnProperty.call(captured, 'incoming')
     const incoming = hasCapturedInput ? captured.incoming : (edge ? lastRunDebugOutputs.value[edge.source]?.[edge.sourceHandle || 'out'] : undefined)
-    const overrideText = debugOverrides.value[debugNode.value.id]?.[port.id]
+    const overrideText = debugOverrides.value[selectedNode.value.id]?.[port.id]
     const locallyOverridden = overrideText !== undefined
     const capturedOverridden = captured?.overridden === true
     return {
@@ -1176,15 +1175,8 @@ function onDrop(event) {
   nodes.value = [...nodes.value, newNode]
 }
 
-// ── Node selection & config ────────────────────────────────────────────────
-const selectedNode = ref(null)
-
+// ── Node selection ─────────────────────────────────────────────────────────
 function onNodeClick({ node }) {
-  if (auth.isAdmin && debugMode.value) {
-    debugNode.value = { ...node }
-    selectedNode.value = null
-    return
-  }
   if (!auth.isAdmin) return
   selectedNode.value = { ...node }
 }
@@ -1356,7 +1348,6 @@ watch(activeGraphId, (id, previousId) => {
     debugStateGeneration += 1
     sendDebugSubscription(previousId, false)
     debugMode.value = false
-    debugNode.value = null
     debugOverrides.value = {}
     lastRunOutputs.value = {}
     lastRunInputs.value = {}

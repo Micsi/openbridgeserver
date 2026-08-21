@@ -861,6 +861,11 @@ Zeigt berechnete Zwischenwerte direkt auf den Blöcken an — live und automatis
 2. **🔍 Debug**-Button in der Werkzeugleiste klicken
 3. Jeder Block zeigt ein gelbes Band mit seinen aktuellen Ausgangswerten
 4. Die Anzeige aktualisiert sich automatisch nach jeder Ausführung (Wertänderung, Zeitplan, manueller Start)
+5. Ein Klick auf einen Block öffnet dessen Konfigurationspanel — im Debug-Modus mit einem Tab
+   **Debug-Werte** (bei Objekt-Lesen/-Schreiben an die vorhandene Tab-Leiste angehängt, bei allen
+   anderen Blöcken neben einem Tab **Einstellungen**), der Block bleibt also während einer
+   Debug-Sitzung konfigurierbar. Der Tab **Debug-Werte** zeigt die vollständigen Ein- und Ausgänge
+   sowie Ausführungs-Metadaten und erlaubt temporäre Eingangs-Überschreibungen für einen Testlauf
 
 | Typ | Darstellung |
 |---|---|

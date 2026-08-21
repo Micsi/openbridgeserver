@@ -1670,7 +1670,6 @@
     "errorToggle": "Error changing status",
     "debugBtn": "Debug",
     "debugInspector": {
-      "title": "Debug inspector",
       "inputs": "Inputs",
       "outputs": "Outputs",
       "incoming": "Incoming value",
@@ -1682,7 +1681,6 @@
       "copyAll": "Copy payload",
       "copy": "Copy",
       "copied": "Copied!",
-      "close": "Close",
       "noValues": "No inputs",
       "noExecution": "Run the sheet to inspect outputs.",
       "timestamp": "Executed",
@@ -1827,6 +1825,10 @@
         "text": "Text",
         "textPlaceholder": "Note text…",
         "empty": "Empty comment — edit in the panel"
+      },
+      "panelTabs": {
+        "settings": "Settings",
+        "debug": "Debug values"
       },
       "tabs": {
         "connection": "Connection",
