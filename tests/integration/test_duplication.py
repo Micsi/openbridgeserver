@@ -358,6 +358,56 @@ async def test_import_graph_strips_the_legacy_missing_node_marker(client, auth_h
     await _delete_graph(client, auth_headers, imported["id"])
 
 
+async def test_import_graph_promotes_a_missing_type_carried_in_label(client, auth_headers):
+    """`label` is the user-defined block name since #1157, so a placeholder that
+    keeps its missing type there must have it moved to `original_type` — the
+    rename field would otherwise present the type as a name and overwrite the
+    only copy of it on the next save.
+    """
+    payload = {
+        "obs_export": "logic_graph",
+        "version": 1,
+        "name": "Platzhalter ohne original_type",
+        "description": "",
+        "enabled": True,
+        "flow_data": {
+            "nodes": [
+                {
+                    "id": "u1",
+                    "type": "missing_node",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"label": "does_not_exist_v99"},
+                },
+            ],
+            "edges": [],
+        },
+    }
+    resp = await client.post("/api/v1/logic/graphs/import", json=payload, headers=auth_headers)
+    assert resp.status_code == 201, resp.text
+    imported = resp.json()
+
+    node = imported["flow_data"]["nodes"][0]
+    assert node["data"] == {"original_type": "does_not_exist_v99"}
+
+    # Renaming the placeholder now leaves the missing type intact.
+    node["data"]["label"] = "Treppenhaus"
+    resp = await client.put(
+        f"/api/v1/logic/graphs/{imported['id']}",
+        json={
+            "name": imported["name"],
+            "description": imported["description"],
+            "enabled": imported["enabled"],
+            "flow_data": imported["flow_data"],
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    saved = resp.json()["flow_data"]["nodes"][0]
+    assert saved["data"] == {"original_type": "does_not_exist_v99", "label": "Treppenhaus"}
+
+    await _delete_graph(client, auth_headers, imported["id"])
+
+
 async def test_import_graph_wrong_format(client, auth_headers):
     resp = await client.post(
         "/api/v1/logic/graphs/import",

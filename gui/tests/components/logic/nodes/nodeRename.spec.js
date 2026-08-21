@@ -226,17 +226,10 @@ describe('MissingNode shows a carried-over block name (#1157)', () => {
     expect(w.text()).toContain('gone_v9')
   })
 
-  it('treats a very old placeholder label as the type marker, not as a name', async () => {
-    // Placeholders that predate `original_type` carry the type in `label`;
-    // it must not be repeated as a custom name.
-    const w = await mountMissing({ label: 'gone_v9' })
-    expect(w.find('.missing-node__name').exists()).toBe(false)
-    expect(w.get('.missing-node__type').text()).toBe('gone_v9')
-  })
-
-  it('shows no custom name for a pre-#1157 placeholder cleaned up by the API', async () => {
-    // The generated `[Fehlend: …]` marker is stripped at the read boundary
-    // (`_drop_legacy_missing_node_labels`), so the card sees no label at all.
+  it('shows no custom name for a placeholder that was never renamed', async () => {
+    // Older placeholders reach the editor canonicalized by the API
+    // (`_normalize_missing_node_placeholders`): the missing type always lives
+    // in `original_type`, so `label` here means one thing only — a user name.
     const w = await mountMissing({ original_type: 'gone_v9' })
     expect(w.find('.missing-node__name').exists()).toBe(false)
     expect(w.get('.missing-node__type').text()).toBe('gone_v9')

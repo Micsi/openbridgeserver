@@ -25,19 +25,13 @@ const props = defineProps({ data: { type: Object, default: () => ({}) } })
 const MISSING_COLOR = '#ef4444'
 const cardTint = nodeTint(MISSING_COLOR)
 
-// The type this placeholder stands in for. Very old placeholders carry it in
-// `label` instead of `original_type`.
-const missingType = computed(() => String(props.data?.original_type ?? props.data?.label ?? '').trim())
-
-// User-defined block name (issue #1157), carried over by the import when the
-// block's type disappeared. Never repeat the string already shown as the
-// missing type — that is a type marker, not a name the user typed. The
-// generated `[Fehlend: …]` marker of pre-#1157 placeholders is stripped by the
-// API before the sheet reaches the editor.
-const customLabel = computed(() => {
-  const label = String(props.data?.label ?? '').trim()
-  return label === missingType.value ? '' : label
-})
+// The two keys mean exactly one thing each: `original_type` is the type this
+// placeholder stands in for, `label` is the user-defined block name (#1157).
+// Older placeholders that used `label` for the type — or for a generated
+// `[Fehlend: …]` marker — are canonicalized by the API before the sheet
+// reaches the editor (`_normalize_missing_node_placeholders`).
+const missingType = computed(() => String(props.data?.original_type ?? '').trim())
+const customLabel = computed(() => String(props.data?.label ?? '').trim())
 
 const inputs  = computed(() => [{ id: 'in' }])
 const outputs = computed(() => [{ id: 'out' }])

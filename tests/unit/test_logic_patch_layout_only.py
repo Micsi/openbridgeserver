@@ -294,10 +294,10 @@ def test_row_to_out_strips_the_legacy_missing_node_marker():
     assert out.flow_data.nodes[1].data["label"] == "Treppenhaus"
 
 
-def test_drop_legacy_missing_node_labels_removes_the_generated_marker():
+def test_normalize_missing_node_placeholders_removes_the_generated_marker():
     """Placeholders written before issue #1157 carry a generated German type
     marker in `label`, which now means "user-defined block name"."""
-    from obs.api.v1.logic import _drop_legacy_missing_node_labels
+    from obs.api.v1.logic import _normalize_missing_node_placeholders
 
     flow = FlowData.model_validate(
         {
@@ -312,12 +312,12 @@ def test_drop_legacy_missing_node_labels_removes_the_generated_marker():
             "edges": [],
         }
     )
-    _drop_legacy_missing_node_labels(flow)
+    _normalize_missing_node_placeholders(flow)
     assert flow.nodes[0].data == {"original_type": "gone_v9"}
 
 
-def test_drop_legacy_missing_node_labels_keeps_a_real_block_name():
-    from obs.api.v1.logic import _drop_legacy_missing_node_labels
+def test_normalize_missing_node_placeholders_keeps_a_real_block_name():
+    from obs.api.v1.logic import _normalize_missing_node_placeholders
 
     flow = FlowData.model_validate(
         {
@@ -327,14 +327,36 @@ def test_drop_legacy_missing_node_labels_keeps_a_real_block_name():
                 {"id": "x2", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {"original_type": "gone_v9", "label": "[Fehlend: other]"}},
                 # Not a placeholder at all — a renamed working block.
                 {"id": "n1", "type": "and", "position": {"x": 0, "y": 0}, "data": {"label": "[Fehlend: and]"}},
-                # No `original_type` to build the marker from.
-                {"id": "x3", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {"label": "[Fehlend: gone_v9]"}},
             ],
             "edges": [],
         }
     )
-    _drop_legacy_missing_node_labels(flow)
+    _normalize_missing_node_placeholders(flow)
     assert flow.nodes[0].data["label"] == "Treppenhaus"
     assert flow.nodes[1].data["label"] == "[Fehlend: other]"
     assert flow.nodes[2].data["label"] == "[Fehlend: and]"
-    assert flow.nodes[3].data["label"] == "[Fehlend: gone_v9]"
+
+
+def test_normalize_missing_node_placeholders_promotes_a_type_carried_in_label():
+    """A placeholder whose missing type sits in `label` alone would have that
+    type presented — and overwritten — by the panel's rename field, so the type
+    is moved to `original_type` where renaming cannot reach it."""
+    from obs.api.v1.logic import _normalize_missing_node_placeholders
+
+    flow = FlowData.model_validate(
+        {
+            "nodes": [
+                {"id": "x1", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {"label": " gone_v9 "}},
+                # Nothing to promote — left exactly as it is.
+                {"id": "x2", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {}},
+                {"id": "x3", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {"label": "   "}},
+                {"id": "x4", "type": "missing_node", "position": {"x": 0, "y": 0}, "data": {"label": 7}},
+            ],
+            "edges": [],
+        }
+    )
+    _normalize_missing_node_placeholders(flow)
+    assert flow.nodes[0].data == {"original_type": "gone_v9"}
+    assert flow.nodes[1].data == {}
+    assert flow.nodes[2].data == {"label": "   "}
+    assert flow.nodes[3].data == {"label": 7}
