@@ -1670,7 +1670,6 @@
     "errorToggle": "Fehler beim Ändern des Status",
     "debugBtn": "Debug",
     "debugInspector": {
-      "title": "Debug-Inspektor",
       "inputs": "Eingänge",
       "outputs": "Ausgänge",
       "incoming": "Eingehender Wert",
@@ -1682,7 +1681,6 @@
       "copyAll": "Nutzdaten kopieren",
       "copy": "Kopieren",
       "copied": "Kopiert!",
-      "close": "Schließen",
       "noValues": "Keine Eingänge",
       "noExecution": "Logikblatt ausführen, um Ausgänge zu prüfen.",
       "timestamp": "Ausgeführt",
@@ -1827,6 +1825,10 @@
         "text": "Text",
         "textPlaceholder": "Notiztext…",
         "empty": "Leerer Kommentar — im Panel bearbeiten"
+      },
+      "panelTabs": {
+        "settings": "Einstellungen",
+        "debug": "Debug-Werte"
       },
       "tabs": {
         "connection": "Verbindung",

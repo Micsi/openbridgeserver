@@ -17,18 +17,27 @@
       </button>
     </div>
 
-    <!-- ── DataPoint nodes: tab UI ────────────────────────────────────── -->
-    <template v-if="isDatapointNode">
+    <!-- ── Tab bar — the block's own setting tabs plus, while debug mode is
+             active, the debug values of that block (issue #1128) ────────── -->
+    <div v-if="panelTabs.length > 1" class="flex border-b border-slate-200 dark:border-slate-700/60" data-testid="node-panel-tabs">
+      <button v-for="tab in panelTabs" :key="tab.id"
+        :data-testid="'node-panel-tab-' + tab.id"
+        @click="selectPanelTab(tab)"
+        :title="tab.label"
+        :class="['tab-btn', isPanelTabActive(tab) && 'tab-btn--active', tab.debug && 'tab-btn--debug']">
+        <span class="tab-btn__label">{{ tab.label }}</span>
+        <span v-if="tab.dot" class="tab-dot">•</span>
+      </button>
+    </div>
 
-      <!-- Tab bar -->
-      <div class="flex border-b border-slate-200 dark:border-slate-700/60">
-        <button v-for="tab in tabs" :key="tab.id"
-          @click="activeTab = tab.id"
-          :class="['tab-btn', activeTab === tab.id && 'tab-btn--active']">
-          {{ tab.label }}
-          <span v-if="tab.dot" class="tab-dot">•</span>
-        </button>
-      </div>
+    <!-- Block settings — hidden while the debug tab is shown. Wrapped in a
+         render-only template element so the existing per-type layout keeps its
+         own flex child of the panel root; edits in progress live in script
+         state and are unaffected by the switch. -->
+    <template v-if="!debugMode || panelTab === 'settings'">
+
+    <!-- ── DataPoint nodes: one pane per setting tab of the bar above ─── -->
+    <template v-if="isDatapointNode">
 
       <div class="flex-1 overflow-y-auto">
 
@@ -1300,6 +1309,19 @@
       </div>
     </template>
 
+    </template>
+
+    <DebugInspector
+      v-if="debugMode && panelTab === 'debug'"
+      :inputs="debugInputs"
+      :outputs="debugOutputs"
+      :metadata="debugMetadata"
+      :has-overrides="hasDebugOverrides"
+      @set-override="(inputId, text) => emit('set-override', inputId, text)"
+      @clear-override="inputId => emit('clear-override', inputId)"
+      @clear-all="emit('clear-all')"
+    />
+
   </div>
 </template>
 
@@ -1310,6 +1332,7 @@ import { adapterApi, dpApi, messageArchivesApi, searchApi, securityApi } from '@
 import { useAuthStore } from '@/stores/auth'
 import { getAutoContrastText } from '@/utils/colorContrast'
 import { useResizablePanel } from '@/composables/useResizablePanel'
+import DebugInspector from './DebugInspector.vue'
 
 const { t, te } = useI18n()
 const auth = useAuthStore()
@@ -1318,11 +1341,16 @@ const { width: panelWidth, isResizing: isResizingPanel, startResize: startPanelR
   useResizablePanel({ storageKey: 'obs.logic.nodeConfigPanelWidth', defaultWidth: 288, min: 260, max: 800 })
 
 const props = defineProps({
-  node:        { type: Object, default: null },
-  nodeTypes:   { type: Array,  default: () => [] },
-  nodeOutputs: { type: Object, default: () => ({}) },
+  node:              { type: Object,  default: null },
+  nodeTypes:         { type: Array,   default: () => [] },
+  nodeOutputs:       { type: Object,  default: () => ({}) },
+  debugMode:         { type: Boolean, default: false },
+  debugInputs:       { type: Array,   default: () => [] },
+  debugOutputs:      { type: Object,  default: () => ({}) },
+  debugMetadata:     { type: Object,  default: null },
+  hasDebugOverrides: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update', 'close'])
+const emit = defineEmits(['update', 'close', 'set-override', 'clear-override', 'clear-all'])
 
 const EXTRACTOR_OUTPUT_BG = 'rgba(30, 41, 59, 0.6)'
 const EXTRACTOR_OUTPUT_FG = getAutoContrastText(EXTRACTOR_OUTPUT_BG)
@@ -1336,6 +1364,11 @@ const localData          = ref({})
 const dpSearch           = ref('')
 const dpResults          = ref([])
 const activeTab          = ref('connection')
+// Outer pane switch (issue #1128): 'debug' can only occur while debug mode is
+// on. Enabling debug mode jumps to the debug values, disabling it returns to
+// the settings; a manual choice then sticks across block selections.
+// `activeTab` stays the setting sub-tab of DataPoint blocks.
+const panelTab           = ref(props.debugMode ? 'debug' : 'settings')
 const valueMapPreset     = ref('')
 const valueMapCustom     = ref('')
 const valueMapCustomError = ref('')
@@ -2089,6 +2122,30 @@ const hasFilter    = computed(() => {
          !!(d.min_delta || d.min_delta_pct || d.throttle_value)
 })
 
+// One tab bar per block: the setting tabs a block already has (DataPoint
+// blocks) or a single "Settings" tab, plus the debug values while debug mode
+// is on. Blocks without setting tabs therefore show a bar only in debug mode.
+const panelTabs = computed(() => {
+  const settingsTabs = isDatapointNode.value
+    ? tabs.value.map(tab => ({ ...tab, debug: false }))
+    : [{ id: 'settings', label: t('logic.nodeConfig.panelTabs.settings'), dot: false, debug: false }]
+  if (!props.debugMode) return settingsTabs
+  return [...settingsTabs, { id: 'debug', label: t('logic.nodeConfig.panelTabs.debug'), dot: false, debug: true }]
+})
+
+function selectPanelTab(tab) {
+  panelTab.value = tab.debug ? 'debug' : 'settings'
+  if (!tab.debug && isDatapointNode.value) activeTab.value = tab.id
+}
+
+function isPanelTabActive(tab) {
+  if (tab.debug) return panelTab.value === 'debug'
+  if (panelTab.value === 'debug') return false
+  return !isDatapointNode.value || activeTab.value === tab.id
+}
+
+watch(() => props.debugMode, isDebugMode => { panelTab.value = isDebugMode ? 'debug' : 'settings' })
+
 const tabs = computed(() => [
   { id: 'connection', label: t('logic.nodeConfig.tabs.connection'), dot: false              },
   { id: 'transform',  label: t('logic.nodeConfig.tabs.transform'),  dot: hasTransform.value },
@@ -2528,15 +2585,31 @@ function emitBoundedUpdate(key, schema) {
   align-items: center;
   justify-content: center;
   gap: 3px;
+  /* Four tabs (DataPoint setting tabs + debug values) must still fit into the
+     narrowest panel width, so labels shrink and ellipsize instead of pushing
+     the bar wider than the panel. */
+  min-width: 0;
+}
+.tab-btn__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tab-btn:hover   { color: #334155; }
 .tab-btn--active { color: #0f172a; border-bottom-color: #0d9488; }
 .tab-dot { color: #0d9488; font-size: 14px; line-height: 1; }
+.tab-btn--debug              { color: #b45309; }
+.tab-btn--debug:hover        { color: #92400e; }
+.tab-btn--debug.tab-btn--active { color: #b45309; border-bottom-color: #f59e0b; }
 
 :global(.dark) .tab-btn          { color: #64748b; }
 :global(.dark) .tab-btn:hover    { color: #94a3b8; }
 :global(.dark) .tab-btn--active  { color: #e2e8f0; border-bottom-color: #14b8a6; }
 :global(.dark) .tab-dot          { color: #14b8a6; }
+:global(.dark) .tab-btn--debug                  { color: #d97706; }
+:global(.dark) .tab-btn--debug:hover            { color: #fbbf24; }
+:global(.dark) .tab-btn--debug.tab-btn--active  { color: #fbbf24; border-bottom-color: #f59e0b; }
 
 .section-label {
   font-size: 9px;
