@@ -62,24 +62,95 @@ def _cached_value_equals(current_value: Any, cached_value: Any) -> bool:
     return current_value == cached_value
 
 
+def _unwrap_mqtt_set_payload(raw_payload: str) -> tuple[Any, bool]:
+    try:
+        payload = json.loads(raw_payload)
+    except (json.JSONDecodeError, TypeError):
+        return raw_payload, False
+
+    if isinstance(payload, dict) and "v" in payload:
+        return payload["v"], True
+    return payload, True
+
+
+def _coerce_mqtt_boolean(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value in {0, 1}:
+            return bool(value)
+        raise ValueError(f"Invalid boolean numeric value: {value!r}")
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    raise ValueError(f"Invalid boolean value: {value!r}")
+
+
+def _coerce_mqtt_integer(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float) and not isinstance(value, bool) and value == int(value):
+        return int(value)
+    raise ValueError(f"Invalid integer value: {value!r}")
+
+
+def _coerce_mqtt_float(value: Any) -> float:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    raise ValueError(f"Invalid float value: {value!r}")
+
+
+def _deserialize_typed_mqtt_set_value(dt: Any, raw_payload: str, payload_value: Any, payload_was_json: bool) -> Any:
+    if dt.name == "BOOLEAN":
+        value = payload_value if payload_was_json else raw_payload
+        return _coerce_mqtt_boolean(value)
+    if dt.name == "INTEGER":
+        value = payload_value if payload_was_json else json.loads(raw_payload)
+        return _coerce_mqtt_integer(value)
+    if dt.name == "FLOAT":
+        value = payload_value if payload_was_json else json.loads(raw_payload)
+        return _coerce_mqtt_float(value)
+    if dt.name == "STRING" and not payload_was_json:
+        return raw_payload
+    if dt.name in {"DATE", "TIME", "DATETIME"} and not payload_was_json:
+        return dt.mqtt_deserializer(json.dumps(raw_payload))
+    return dt.mqtt_deserializer(json.dumps(payload_value) if payload_was_json else raw_payload)
+
+
+def _row_is_enabled(row: Any) -> bool:
+    return _row_value(row, "enabled") in {1, "1"}
+
+
 class WriteRouter:
-    def __init__(self, db: Any, registry: Any) -> None:
+    def __init__(self, db: Any, registry: Any, event_bus: Any | None = None) -> None:
         from obs.core.registry import DataPointRegistry
         from obs.db.database import Database
 
         self._db: Database = db
         self._registry: DataPointRegistry = registry
+        self._bus = event_bus
         # binding_id → timestamp of last successful send (monotonic seconds)
         self._last_sent: dict[uuid.UUID, float] = {}
         # binding_id → last successfully sent value (for on-change / delta checks)
         self._last_value: dict[uuid.UUID, Any] = {}
+        from obs.adapters.base import ConfirmationOrderTracker
+
+        self._confirmation_order_tracker = ConfirmationOrderTracker()
 
     # ------------------------------------------------------------------
     # Path 1 — inbound MQTT dp/{uuid}/set
     # ------------------------------------------------------------------
 
     async def handle(self, dp_id: uuid.UUID, raw_payload: str) -> None:
-        """Deserialize payload and write to all DEST/BOTH bindings."""
+        """Deserialize an inbound MQTT set payload.
+
+        External MQTT commands may only target explicit writable adapter
+        bindings. Bindingless datapoints are OBS-internal state and must not be
+        converted into trusted DataValueEvent updates from this path.
+        """
         from obs.models.types import DataTypeRegistry
 
         logger.info("WriteRouter.handle: dp_id=%s payload=%r", dp_id, raw_payload)
@@ -88,17 +159,46 @@ class WriteRouter:
             logger.warning("Write request for unknown DataPoint %s — ignored", dp_id)
             return
 
+        rows = await self._db.fetchall(
+            """SELECT direction, enabled, adapter_type FROM adapter_bindings
+               WHERE datapoint_id=?""",
+            (str(dp_id),),
+        )
+        active_rows = [row for row in rows if _row_is_enabled(row)]
+        write_semantic_rows = [row for row in active_rows if _row_value(row, "adapter_type") != "MESSAGE"]
+        has_write_semantic_bindings = bool(write_semantic_rows)
+        has_writable_bindings = any(_row_value(row, "direction") in {"DEST", "BOTH"} for row in write_semantic_rows)
+        if has_write_semantic_bindings and not has_writable_bindings:
+            logger.warning("Write request for non-writable DataPoint %s — ignored", dp_id)
+            return
+
         dt = DataTypeRegistry.get(dp.data_type)
-        try:
-            value = dt.mqtt_deserializer(raw_payload)
-        except Exception:
+        payload_value, payload_was_json = _unwrap_mqtt_set_payload(raw_payload)
+        if dt.name == "UNKNOWN":
+            value = payload_value if payload_was_json else raw_payload
+        else:
             try:
-                value = json.loads(raw_payload)
-            except Exception:
-                value = raw_payload
+                value = _deserialize_typed_mqtt_set_value(dt, raw_payload, payload_value, payload_was_json)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                logger.warning(
+                    "WriteRouter: invalid MQTT set payload for dp=%s data_type=%s payload=%r",
+                    dp_id,
+                    dp.data_type,
+                    raw_payload,
+                )
+                return
         logger.info("WriteRouter: dp=%s value=%r (type=%s)", dp.name, value, dp.data_type)
 
-        await self._write_to_dest_bindings(dp_id, value, skip_binding_id=None)
+        if has_writable_bindings:
+            await self._write_to_dest_bindings(
+                dp_id,
+                value,
+                skip_binding_id=None,
+                suppress_confirmation_actions=False,
+            )
+            return
+
+        logger.warning("Write request for bindingless internal DataPoint %s — ignored", dp_id)
 
     # ------------------------------------------------------------------
     # Path 2 — internal DataValueEvent propagation
@@ -148,7 +248,20 @@ class WriteRouter:
                 return
 
         await self._clear_type_mismatch(event.datapoint_id)
-        await self._write_to_dest_bindings(event.datapoint_id, value, skip_binding_id=event.binding_id)
+        if getattr(event, "suppress_write_propagation", False):
+            logger.debug(
+                "WriteRouter: state-only confirmation for dp=%s binding=%s — propagation skipped",
+                event.datapoint_id,
+                event.binding_id,
+            )
+            return
+
+        await self._write_to_dest_bindings(
+            event.datapoint_id,
+            value,
+            skip_binding_id=event.binding_id,
+            suppress_confirmation_actions=True,
+        )
 
     # ------------------------------------------------------------------
     # Shared helper
@@ -159,13 +272,15 @@ class WriteRouter:
         dp_id: uuid.UUID,
         value: Any,
         skip_binding_id: uuid.UUID | None,
+        suppress_confirmation_actions: bool = False,
     ) -> None:
         from obs.adapters import registry as adapter_registry
+        from obs.adapters.base import ConfirmationActionToken, ConfirmationOrderTracker
         from obs.adapters.registry import _row_to_binding
 
         rows = await self._db.fetchall(
             """SELECT * FROM adapter_bindings
-               WHERE datapoint_id=? AND direction IN ('DEST','BOTH') AND enabled=1""",
+               WHERE datapoint_id=? AND direction IN ('DEST','BOTH') AND enabled=1 AND adapter_type <> 'MESSAGE'""",
             (str(dp_id),),
         )
         if not rows:
@@ -173,19 +288,29 @@ class WriteRouter:
             return
 
         logger.info("WriteRouter: %d writable binding(s) for dp %s", len(rows), dp_id)
+        confirmation_action_token = None if suppress_confirmation_actions else ConfirmationActionToken()
+        confirmation_order_tracker = getattr(self, "_confirmation_order_tracker", None)
+        if confirmation_order_tracker is None:
+            confirmation_order_tracker = ConfirmationOrderTracker()
+            self._confirmation_order_tracker = confirmation_order_tracker
+        confirmation_write_order = confirmation_order_tracker.issue(dp_id)
+        if suppress_confirmation_actions:
+            confirmation_write_order.activate()
         for row in rows:
             try:
                 binding = _row_to_binding(row)
-            except Exception as exc:
-                logger.error(
-                    "WriteRouter: invalid writable binding skipped for dp=%s binding=%s: %s",
+            except Exception:
+                logger.exception(
+                    "WriteRouter: invalid writable binding skipped for dp=%s binding=%s",
                     dp_id,
                     _row_value(row, "id") or "<unknown>",
-                    exc,
                 )
                 continue
             if skip_binding_id and binding.id == skip_binding_id:
                 logger.debug("WriteRouter: skipping originating binding %s", binding.id)
+                continue
+            if binding.adapter_type == "MESSAGE":
+                logger.debug("WriteRouter: skipping MESSAGE observer binding %s", binding.id)
                 continue
 
             # Phase 5: Lookup per Instance-ID (bevorzugt), Fallback auf Typ
@@ -281,7 +406,19 @@ class WriteRouter:
                 )
 
             try:
-                await instance.write(binding, write_value)
+                context_writer = getattr(type(instance), "write_with_context", None)
+                if callable(context_writer):
+                    await context_writer(
+                        instance,
+                        binding,
+                        write_value,
+                        logical_value=value,
+                        suppress_confirmation_actions=suppress_confirmation_actions,
+                        confirmation_action_token=confirmation_action_token,
+                        confirmation_write_order=confirmation_write_order,
+                    )
+                else:
+                    await instance.write(binding, write_value)
                 self._last_sent[binding.id] = time.monotonic()
 
                 needs_value_cache = binding.send_on_change or binding.send_min_delta is not None or binding.send_min_delta_pct is not None
@@ -326,7 +463,7 @@ class WriteRouter:
 def _row_value(row: Any, key: str) -> str | None:
     try:
         value = row[key]
-    except Exception:
+    except (KeyError, IndexError, TypeError):
         return None
     return str(value) if value is not None else None
 
@@ -350,7 +487,7 @@ def reset_write_router() -> None:
     _write_router = None
 
 
-def init_write_router(db: Any, registry: Any) -> WriteRouter:
+def init_write_router(db: Any, registry: Any, event_bus: Any | None = None) -> WriteRouter:
     global _write_router
-    _write_router = WriteRouter(db, registry)
+    _write_router = WriteRouter(db, registry, event_bus=event_bus)
     return _write_router

@@ -10,9 +10,108 @@ from __future__ import annotations
 
 import uuid
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel
+
+
+class AdapterDelegationCapability(StrEnum):
+    """Adapter-owned operations that a scoped non-admin may perform."""
+
+    CREATE_DEVICE = "create_device"
+    CREATE_DATAPOINT = "create_datapoint"
+    LINK_BINDING = "link_binding"
+    CONFIGURE_INSTANCE = "configure_instance"
+
+
+class ConfirmationActionToken:
+    """Allow exactly one outbound confirmation to trigger actions."""
+
+    def __init__(self) -> None:
+        self._claimed = False
+
+    def claim(self) -> bool:
+        if self._claimed:
+            return False
+        self._claimed = True
+        return True
+
+
+class ConfirmationOrderTracker:
+    """Order logical writes across every adapter instance reached by one router."""
+
+    def __init__(self) -> None:
+        self._next_sequence = 0
+        self._latest_activated: dict[str, int] = {}
+
+    def issue(self, datapoint_id: Any) -> ConfirmationWriteOrder:
+        self._next_sequence += 1
+        datapoint_key = str(datapoint_id)
+        return ConfirmationWriteOrder(
+            tracker=self,
+            datapoint_id=datapoint_key,
+            sequence=self._next_sequence,
+        )
+
+    def activate(self, datapoint_id: str, sequence: int) -> None:
+        latest = self._latest_activated.get(datapoint_id)
+        if latest is None or sequence > latest:
+            self._latest_activated[datapoint_id] = sequence
+
+    def accept(self, datapoint_id: str, sequence: int) -> bool:
+        return sequence >= self._latest_activated.get(datapoint_id, sequence)
+
+
+class ConfirmationWriteOrder:
+    """A router-issued logical write sequence shared by destination bindings."""
+
+    def __init__(
+        self,
+        *,
+        tracker: ConfirmationOrderTracker,
+        datapoint_id: str,
+        sequence: int,
+    ) -> None:
+        self._tracker = tracker
+        self._datapoint_id = datapoint_id
+        self._sequence = sequence
+
+    def activate(self) -> None:
+        self._tracker.activate(self._datapoint_id, self._sequence)
+
+    def accept_confirmation(self) -> bool:
+        return self._tracker.accept(self._datapoint_id, self._sequence)
+
+    def is_newer_than(self, other: ConfirmationWriteOrder) -> bool:
+        """Return whether this order supersedes another order from the same router."""
+        return self._tracker is other._tracker and self._sequence > other._sequence
+
+
+class ConfirmationActionContext:
+    """Resolve action suppression when an adapter publishes a confirmation."""
+
+    def __init__(
+        self,
+        *,
+        suppress: bool,
+        token: ConfirmationActionToken | None,
+        write_order: ConfirmationWriteOrder | None,
+    ) -> None:
+        self._suppress = suppress
+        self._token = token
+        self.write_order = write_order
+
+    @property
+    def shares_action_token(self) -> bool:
+        return self._token is not None
+
+    def suppress_actions_at_confirmation(self) -> bool:
+        if self._suppress:
+            return True
+        if self._token is None:
+            return False
+        return not self._token.claim()
 
 
 class AdapterBase(ABC):
@@ -30,6 +129,7 @@ class AdapterBase(ABC):
     config_schema: type[BaseModel]  # API: /adapters/{type}/schema
     binding_config_schema: type[BaseModel]  # API: /adapters/{type}/binding-schema
     hidden: bool = False  # True = not shown in "create instance" UI
+    delegation_capabilities: frozenset[AdapterDelegationCapability] = frozenset()
 
     def __init__(
         self,
@@ -50,6 +150,13 @@ class AdapterBase(ABC):
         # subscribing to the EventBus (GUI polls /adapters/instances).
         self._last_severity: str = "ok"
         self._last_detail: str = ""
+        # i18n (issue #779): status details are emitted as a stable key suffix
+        # (`detail_code`, under `adapters.statusDetail.*` in the locale files)
+        # plus interpolation `detail_params`. The frontend translates the code;
+        # `_last_detail` stays as a human-readable fallback for codeless/dynamic
+        # messages (e.g. raw exception text).
+        self._last_detail_code: str | None = None
+        self._last_detail_params: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -94,6 +201,20 @@ class AdapterBase(ABC):
         """Write *value* to the protocol endpoint for *binding*."""
         ...
 
+    async def write_with_context(
+        self,
+        binding: Any,
+        value: Any,
+        *,
+        logical_value: Any,
+        suppress_confirmation_actions: bool = False,
+        confirmation_action_token: ConfirmationActionToken | None = None,
+        confirmation_write_order: ConfirmationWriteOrder | None = None,
+    ) -> bool:
+        """Write a transformed value while retaining its pre-transform logical value."""
+        await self.write(binding, value)
+        return True
+
     # ------------------------------------------------------------------
     # Status helpers
     # ------------------------------------------------------------------
@@ -110,7 +231,30 @@ class AdapterBase(ABC):
     def last_detail(self) -> str:
         return self._last_detail
 
-    async def _publish_status(self, connected: bool, detail: str = "", severity: str = "ok") -> None:
+    @property
+    def last_detail_code(self) -> str | None:
+        return self._last_detail_code
+
+    @property
+    def last_detail_params(self) -> dict[str, Any]:
+        return self._last_detail_params
+
+    async def _publish_status(
+        self,
+        connected: bool,
+        detail: str = "",
+        severity: str = "ok",
+        *,
+        code: str | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> None:
+        """Publish an adapter status change.
+
+        For i18n (issue #779) prefer a stable `code` (key suffix under
+        `adapters.statusDetail.*`) plus `params` for interpolation; the frontend
+        translates it. `detail` is the human-readable fallback shown when no code
+        is given or the locale key is missing (e.g. raw exception text).
+        """
         from obs.core.event_bus import AdapterStatusEvent
 
         # severity="warning" signals degraded operation without changing the
@@ -119,6 +263,8 @@ class AdapterBase(ABC):
             self._connected = connected
         self._last_severity = severity
         self._last_detail = detail
+        self._last_detail_code = code
+        self._last_detail_params = params or {}
         await self._bus.publish(
             AdapterStatusEvent(
                 adapter_type=self.adapter_type,
@@ -127,5 +273,7 @@ class AdapterBase(ABC):
                 connected=self._connected,
                 detail=detail,
                 severity=severity,
+                detail_code=code,
+                detail_params=params or {},
             ),
         )

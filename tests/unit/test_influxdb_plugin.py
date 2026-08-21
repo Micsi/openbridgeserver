@@ -14,23 +14,22 @@ import pytest
 
 from obs.history.influxdb_plugin import InfluxDBHistoryPlugin, _to_rfc3339
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
 def _plugin(version: int = 2, **kwargs) -> InfluxDBHistoryPlugin:
-    defaults = dict(
-        url="http://localhost:8086",
-        version=version,
-        token="mytoken",
-        org="myorg",
-        bucket="mybucket",
-        database="mydb",
-        username="user",
-        password="pass",
-    )
+    defaults = {
+        "url": "http://localhost:8086",
+        "version": version,
+        "token": "mytoken",
+        "org": "myorg",
+        "bucket": "mybucket",
+        "database": "mydb",
+        "username": "user",
+        "password": "pass",
+    }
     defaults.update(kwargs)
     return InfluxDBHistoryPlugin(**defaults)
 
@@ -40,7 +39,11 @@ def _ts(offset: int = 0) -> datetime:
 
 
 def _make_httpx_mock(status=204, json_body=None):
-    """Return a (ctx, client) pair where ctx is usable as AsyncClient(...)."""
+    """Return a (ctx, client) pair where ctx is usable as AsyncClient(...).
+
+    The Influx plugin uses AsyncClient directly for writes and as an async
+    context manager for queries/pings, so the mock supports both styles.
+    """
     resp = mock.MagicMock()
     resp.status_code = status
     resp.raise_for_status = mock.MagicMock()
@@ -52,6 +55,10 @@ def _make_httpx_mock(status=204, json_body=None):
     client.get = mock.AsyncMock(return_value=resp)
 
     ctx = mock.MagicMock()
+    ctx.post = client.post
+    ctx.get = client.get
+    ctx.aclose = mock.AsyncMock()
+    ctx.is_closed = False
     ctx.__aenter__ = mock.AsyncMock(return_value=client)
     ctx.__aexit__ = mock.AsyncMock(return_value=False)
     return ctx, client
@@ -69,7 +76,7 @@ class TestToRfc3339:
         assert result == "2024-01-15T10:30:00.123Z"
 
     def test_naive_datetime_treated_as_utc(self):
-        dt = datetime(2024, 1, 15, 10, 30, 0)
+        dt = datetime(2024, 1, 15, 10, 30, 0)  # noqa: DTZ001 -- naive-datetime handling is exactly what this test verifies
         result = _to_rfc3339(dt)
         assert result.endswith("Z")
 
@@ -251,17 +258,44 @@ class TestInfluxDBWrite:
         resp = mock.MagicMock()
         resp.raise_for_status = mock.MagicMock(side_effect=Exception("HTTP 500"))
         ctx = mock.MagicMock()
-        ctx.__aenter__ = mock.AsyncMock(return_value=mock.MagicMock(post=mock.AsyncMock(return_value=resp)))
-        ctx.__aexit__ = mock.AsyncMock(return_value=False)
-        with mock.patch("obs.history.influxdb_plugin.httpx.AsyncClient", return_value=ctx):
-            with pytest.raises(Exception, match="HTTP 500"):
-                await _plugin().write(uuid.uuid4(), 1.0, None, "ok", ts=_ts())
+        ctx.post = mock.AsyncMock(return_value=resp)
+        ctx.aclose = mock.AsyncMock()
+        ctx.is_closed = False
+        with mock.patch("obs.history.influxdb_plugin.httpx.AsyncClient", return_value=ctx), pytest.raises(Exception, match="HTTP 500"):
+            await _plugin().write(uuid.uuid4(), 1.0, None, "ok", ts=_ts())
+        ctx.aclose.assert_awaited_once()
 
     async def test_write_without_ts_uses_now(self):
         ctx, client = _make_httpx_mock(status=204)
         with mock.patch("obs.history.influxdb_plugin.httpx.AsyncClient", return_value=ctx):
             await _plugin().write(uuid.uuid4(), 1.0, None, "ok")
         client.post.assert_awaited_once()
+
+    async def test_write_reuses_single_client(self):
+        ctx, client = _make_httpx_mock(status=204)
+        plugin = _plugin()
+        with mock.patch("obs.history.influxdb_plugin.httpx.AsyncClient", return_value=ctx) as client_factory:
+            await plugin.write(uuid.uuid4(), 1.0, None, "ok", ts=_ts())
+            await plugin.write(uuid.uuid4(), 2.0, None, "ok", ts=_ts())
+        assert client_factory.call_count == 1
+        assert client.post.await_count == 2
+
+    async def test_write_backoff_suppresses_followup_attempt(self):
+        resp = mock.MagicMock()
+        resp.raise_for_status = mock.MagicMock(side_effect=Exception("HTTP 500"))
+        ctx = mock.MagicMock()
+        ctx.post = mock.AsyncMock(return_value=resp)
+        ctx.aclose = mock.AsyncMock()
+        ctx.is_closed = False
+
+        plugin = _plugin()
+        with mock.patch("obs.history.influxdb_plugin.httpx.AsyncClient", return_value=ctx):
+            with pytest.raises(Exception, match="HTTP 500"):
+                await plugin.write(uuid.uuid4(), 1.0, None, "ok", ts=_ts())
+            await plugin.write(uuid.uuid4(), 2.0, None, "ok", ts=_ts())
+
+        ctx.post.assert_awaited_once()
+        ctx.aclose.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +383,7 @@ class TestInfluxDBAggregate:
 
     async def test_aggregate_all_fns(self):
         for fn in ("avg", "min", "max", "last"):
-            ctx, client = _make_httpx_mock(status=200, json_body=self._agg_response())
+            ctx, _client = _make_httpx_mock(status=200, json_body=self._agg_response())
             with mock.patch("obs.history.influxdb_plugin.httpx.AsyncClient", return_value=ctx):
                 result = await _plugin().aggregate(uuid.uuid4(), fn, "1h", _ts(0), _ts(1))
             assert isinstance(result, list)

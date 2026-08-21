@@ -23,13 +23,14 @@
           {{ displayVal }}
         </div>
         <div class="text-xs text-slate-500">
-          {{ liveState?.ts ? new Date(liveState.ts).toLocaleString('de-CH') : dp.updated_at }}
+          {{ liveState?.ts ? fmtDateTime(liveState.ts) : fmtDateTime(dp.updated_at) }}
         </div>
         <div class="font-mono text-xs text-slate-600 break-all">{{ dp.mqtt_topic }}</div>
         <div v-if="dp.mqtt_alias" class="font-mono text-xs text-slate-600 break-all">{{ dp.mqtt_alias }}</div>
         <div class="border-t border-slate-200 dark:border-slate-700 pt-4 mt-1">
           <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{{ $t('datapoints.detail.writeValue') }}</div>
-          <div v-if="hasWritableBinding" class="flex flex-wrap items-center gap-2">
+          <div v-if="bindingsLoading" class="flex items-center py-1"><Spinner size="sm" /></div>
+          <div v-else-if="canWriteValue" class="flex flex-wrap items-center gap-2">
             <template v-if="dp.data_type === 'BOOLEAN'">
               <button
                 @click="writeDetailValue(true)"
@@ -89,8 +90,8 @@
           <dd>
             <Badge :variant="dp.record_history ? 'success' : 'muted'" size="xs" data-testid="badge-record-history">{{ dp.record_history ? $t('common.active') : $t('common.disabled') }}</Badge>
           </dd>
-          <dt class="text-slate-500">{{ $t('datapoints.detail.createdAt') }}</dt>   <dd class="text-slate-400 text-xs">{{ new Date(dp.created_at).toLocaleString('de-CH') }}</dd>
-          <dt class="text-slate-500">{{ $t('datapoints.detail.updatedAt') }}</dt>   <dd class="text-slate-400 text-xs">{{ new Date(dp.updated_at).toLocaleString('de-CH') }}</dd>
+          <dt class="text-slate-500">{{ $t('datapoints.detail.createdAt') }}</dt>   <dd class="text-slate-400 text-xs">{{ fmtDateTime(dp.created_at) }}</dd>
+          <dt class="text-slate-500">{{ $t('datapoints.detail.updatedAt') }}</dt>   <dd class="text-slate-400 text-xs">{{ fmtDateTime(dp.updated_at) }}</dd>
         </dl>
         <div class="flex gap-3 mt-5">
           <button @click="showEdit = true" class="btn-secondary btn-sm">{{ $t('common.edit') }}</button>
@@ -119,12 +120,46 @@
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ b.adapter_type }}</span>
-                <Badge :variant="b.direction === 'SOURCE' ? 'info' : b.direction === 'DEST' ? 'warning' : 'success'" size="xs">
-                  {{ b.direction === 'SOURCE' ? $t('datapoints.detail.bindingRead') : b.direction === 'DEST' ? $t('datapoints.detail.bindingWrite') : $t('datapoints.detail.bindingReadWrite') }}
+                <Badge :variant="bindingBadgeVariant(b)" size="xs">
+                  {{ bindingDirectionLabel(b) }}
                 </Badge>
                 <Badge v-if="!b.enabled" variant="danger" size="xs">{{ $t('datapoints.detail.bindingDisabled') }}</Badge>
               </div>
-              <div class="text-xs text-slate-500 font-mono mt-1 truncate">{{ JSON.stringify(b.config) }}</div>
+              <div v-if="b.adapter_type?.toUpperCase() === 'KNX'" class="mt-2 flex flex-col gap-2" data-testid="datapoint-knx-context">
+                <div v-if="knxContextLoading" class="text-xs text-slate-500">
+                  {{ $t('common.loading') }}
+                </div>
+                <div
+                  v-for="ga in bindingKnxGroupAddresses(b)"
+                  :key="`${b.id}:${ga.role}:${ga.address}`"
+                  class="rounded border border-slate-200 dark:border-slate-700 px-2 py-1.5"
+                >
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-mono text-xs text-blue-600 dark:text-blue-300">{{ ga.address }}</span>
+                    <Badge variant="muted" size="xs">{{ knxRoleLabel(ga.role) }}</Badge>
+                    <span class="truncate text-xs text-slate-700 dark:text-slate-200">{{ knxGaLabel(ga.address) }}</span>
+                    <span v-if="knxGaContext(ga.address)?.dpt" class="font-mono text-xs text-slate-500">{{ knxGaContext(ga.address).dpt }}</span>
+                  </div>
+                  <div v-if="knxGaContext(ga.address)?.devices?.length" class="mt-1 flex flex-col gap-1">
+                    <div
+                      v-for="device in knxGaContext(ga.address).devices"
+                      :key="`${ga.address}:${device.pa}`"
+                      class="text-xs text-slate-500"
+                    >
+                      <span class="font-mono text-slate-700 dark:text-slate-200">{{ device.pa }}</span>
+                      <span v-if="device.name" class="text-slate-700 dark:text-slate-200"> {{ device.name }}</span>
+                      <span v-if="device.comm_objects?.length">
+                        · {{ device.comm_objects.map(co => [co.number, co.name].filter(Boolean).join(' ')).filter(Boolean).join(', ') }}
+                      </span>
+                    </div>
+                  </div>
+                  <div v-else class="mt-1 text-xs text-slate-500">{{ $t('datapoints.detail.knxNoDevices') }}</div>
+                </div>
+                <div v-if="!bindingKnxGroupAddresses(b).length" class="text-xs text-slate-500 font-mono truncate">
+                  {{ JSON.stringify(b.config) }}
+                </div>
+              </div>
+              <div v-else class="text-xs text-slate-500 font-mono mt-1 truncate">{{ JSON.stringify(b.config) }}</div>
             </div>
             <div class="flex gap-1 shrink-0">
               <button @click="openEditBinding(b)" class="btn-icon" :title="$t('common.edit')">
@@ -160,10 +195,10 @@
                 <Badge v-if="!u.graph_enabled" variant="muted" size="xs">{{ $t('datapoints.detail.graphDisabled') }}</Badge>
               </div>
               <div class="text-xs text-slate-500 mt-1">
-                {{ u.node_type === 'datapoint_read' ? $t('datapoints.detail.logicReads') : $t('datapoints.detail.logicWrites') }}
+                {{ u.direction === 'SOURCE' ? $t('datapoints.detail.logicReads') : $t('datapoints.detail.logicWrites') }}
               </div>
             </div>
-            <RouterLink :to="`/logic?graph=${u.graph_id}`" class="btn-icon shrink-0" title="Logic-Sheet öffnen">
+            <RouterLink :to="`/logic?graph=${u.graph_id}`" class="btn-icon shrink-0" :title="$t('datapoints.detail.openLogicSheet')">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
             </RouterLink>
           </div>
@@ -196,6 +231,8 @@ import { useI18n } from 'vue-i18n'
 import { dpApi, logicApi } from '@/api/client'
 import { useDatapointStore } from '@/stores/datapoints'
 import { useWebSocketStore } from '@/stores/websocket'
+import { useTz } from '@/composables/useTz'
+import { useRegionalFormat } from '@/composables/useRegionalFormat'
 import Badge          from '@/components/ui/Badge.vue'
 import Spinner        from '@/components/ui/Spinner.vue'
 import Modal          from '@/components/ui/Modal.vue'
@@ -206,12 +243,18 @@ import DataPointHierarchyCard from '@/components/datapoints/DataPointHierarchyCa
 
 const props   = defineProps({ id: { type: String, required: true } })
 const { t } = useI18n()
+// Timestamps follow the configured timezone and date/time format (issue #1073).
+const { fmtDateTime } = useTz()
+const { fmtNumber } = useRegionalFormat()
 const dpStore = useDatapointStore()
 const ws      = useWebSocketStore()
 
 const dp                  = ref(null)
 const bindings            = ref([])
 const bindingsLoading     = ref(false)
+const bindingsLoaded      = ref(false)
+const knxContext          = ref(null)
+const knxContextLoading   = ref(false)
 const logicUsages         = ref([])
 const logicUsagesLoading  = ref(false)
 const showEdit            = ref(false)
@@ -227,14 +270,18 @@ let unsubWs = null
 const liveState  = computed(() => ws.liveValues[props.id])
 const currentRawValue = computed(() => liveState.value?.value ?? dp.value?.value)
 const displayVal = computed(() => {
+  // Display only — numbers use the configured regional format (issue #1073),
+  // while the edit field below keeps the raw, locale-neutral value.
   const v = currentRawValue.value
   if (v === null || v === undefined) return '—'
-  return dp.value?.unit ? `${v} ${dp.value.unit}` : String(v)
+  const text = typeof v === 'number' && Number.isFinite(v) ? fmtNumber(v) : String(v)
+  return dp.value?.unit ? `${text} ${dp.value.unit}` : text
 })
-const hasWritableBinding = computed(() =>
-  bindings.value.some(b => b.enabled && ['DEST', 'BOTH'].includes(b.direction))
+const activeBindings = computed(() => bindings.value.filter(b => b.enabled))
+const activeWritableBindings = computed(() => activeBindings.value.filter(b => b.adapter_type !== 'MESSAGE'))
+const canWriteValue = computed(() =>
+  bindingsLoaded.value && (activeWritableBindings.value.length === 0 || activeWritableBindings.value.some(b => ['DEST', 'BOTH'].includes(b.direction)))
 )
-
 watch(currentRawValue, (value) => {
   if (!writeBusy.value && value !== undefined && value !== null) writeDraft.value = String(value)
 })
@@ -248,14 +295,42 @@ onMounted(async () => {
   unsubWs = ws.onValue((id, value, quality) => {
     if (id === props.id && dp.value) { dp.value.value = value; dp.value.quality = quality }
   })
-  await Promise.all([loadBindings(), loadLogicUsages()])
+  await Promise.all([loadBindings(), loadLogicUsages(), loadKnxContext()])
 })
 onUnmounted(() => unsubWs?.())
 
+function bindingBadgeVariant(binding) {
+  if (binding.adapter_type === 'MESSAGE') return 'info'
+  return binding.direction === 'SOURCE' ? 'info' : binding.direction === 'DEST' ? 'warning' : 'success'
+}
+
+function bindingDirectionLabel(binding) {
+  if (binding.direction === 'SOURCE') return t('datapoints.detail.bindingRead')
+  if (binding.direction === 'DEST') return t('datapoints.detail.bindingWrite')
+  return t('datapoints.detail.bindingReadWrite')
+}
+
 async function loadBindings() {
   bindingsLoading.value = true
-  try { const { data } = await dpApi.listBindings(props.id); bindings.value = data }
+  bindingsLoaded.value = false
+  try {
+    const { data } = await dpApi.listBindings(props.id)
+    bindings.value = data
+    bindingsLoaded.value = true
+  }
   finally { bindingsLoading.value = false }
+}
+
+async function loadKnxContext() {
+  knxContextLoading.value = true
+  try {
+    const { data } = await dpApi.knxContext(props.id)
+    knxContext.value = data
+  } catch {
+    knxContext.value = { datapoint_id: props.id, group_addresses: [] }
+  } finally {
+    knxContextLoading.value = false
+  }
 }
 
 async function loadLogicUsages() {
@@ -271,19 +346,77 @@ async function onEditSave(payload) {
 }
 
 function openEditBinding(b) { editBinding.value = b; showBindingForm.value = true }
-async function onBindingSave() { showBindingForm.value = false; await loadBindings() }
+async function onBindingSave() { showBindingForm.value = false; await Promise.all([loadBindings(), loadKnxContext()]) }
 
 function confirmDeleteBinding(b) { deleteBindingTarget.value = b; showBindingConfirm.value = true }
 async function doDeleteBinding() {
   await dpApi.deleteBinding(props.id, deleteBindingTarget.value.id)
-  await loadBindings()
+  await Promise.all([loadBindings(), loadKnxContext()])
+}
+
+function bindingKnxGroupAddresses(binding) {
+  const cfg = binding?.config || {}
+  const pairs = [
+    { role: 'group_address', address: cfg.group_address },
+    { role: 'state_group_address', address: cfg.state_group_address },
+  ]
+  const seen = new Set()
+  return pairs
+    .map(item => ({ ...item, address: String(item.address || '').trim() }))
+    .filter((item) => {
+      const key = `${item.role}:${item.address}`
+      if (!item.address || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function knxGaContext(address) {
+  return (knxContext.value?.group_addresses || []).find(item => item.address === address)
+}
+
+function knxGaLabel(address) {
+  const ctx = knxGaContext(address)
+  return ctx?.name || ctx?.description || t('datapoints.detail.knxUnnamedGa')
+}
+
+function knxRoleLabel(role) {
+  return role === 'state_group_address' ? t('datapoints.detail.knxStateGa') : t('datapoints.detail.knxMainGa')
 }
 
 function coerceWriteValue(raw) {
   if (dp.value?.data_type === 'BOOLEAN') return raw === true || raw === 'true' || raw === '1' || raw === 1
   if (dp.value?.data_type === 'INTEGER') return Number.parseInt(raw, 10)
   if (dp.value?.data_type === 'FLOAT') return Number.parseFloat(raw)
+  if (dp.value?.data_type === 'DATE') return coerceDate(raw)
+  if (dp.value?.data_type === 'TIME') return coerceTime(raw)
+  if (dp.value?.data_type === 'DATETIME') return coerceDateTime(raw)
   return raw
+}
+
+function coerceDate(raw) {
+  const value = String(raw).trim()
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) throw new Error(t('datapoints.detail.invalidTemporal'))
+  const [, year, month, day] = match.map(Number)
+  const dt = new Date(Date.UTC(year, month - 1, day))
+  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
+    throw new Error(t('datapoints.detail.invalidTemporal'))
+  }
+  return value
+}
+
+function coerceTime(raw) {
+  const value = String(raw).trim()
+  const match = value.match(/^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.\d{1,6})?)?$/)
+  if (!match) throw new Error(t('datapoints.detail.invalidTemporal'))
+  return value
+}
+
+function coerceDateTime(raw) {
+  const value = String(raw).trim()
+  if (!value || Number.isNaN(Date.parse(value))) throw new Error(t('datapoints.detail.invalidTemporal'))
+  return value
 }
 
 async function writeDetailValue(raw) {

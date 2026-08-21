@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -55,6 +57,8 @@ _INFLUX_AGGFN: dict[str, str] = {
     "max": "MAX",
     "last": "LAST",
 }
+_WRITE_BACKOFF_INITIAL_SECONDS = 5.0
+_WRITE_BACKOFF_MAX_SECONDS = 60.0
 
 
 class InfluxDBHistoryPlugin(HistoryPlugin):
@@ -79,6 +83,10 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         self._database = database  # v1/v3 db name
         self._username = username
         self._password = password
+        self._client: httpx.AsyncClient | None = None
+        self._write_backoff_until = 0.0
+        self._write_backoff_seconds = _WRITE_BACKOFF_INITIAL_SECONDS
+        self._write_skip_logged = False
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -129,6 +137,16 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
+    def _get_write_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=10)
+        return self._client
+
+    async def disconnect(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
     def _escape_tag(self, s: str) -> str:
         """Escape InfluxDB line-protocol tag value (no comma, space, equals)."""
         return s.replace(",", r"\,").replace(" ", r"\ ").replace("=", r"\=")
@@ -159,7 +177,7 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         ]
         try:
             v_float = float(value)
-            if v_float == v_float:  # not NaN
+            if not math.isnan(v_float):
                 fields.append(f"v={v_float}")
         except (TypeError, ValueError):
             pass
@@ -186,7 +204,7 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
                 raw = row[col_idx.get("raw", 0)] if "raw" in col_idx else None
                 try:
                     v = json.loads(raw) if raw is not None else None
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
                     v = raw
                 q = row[col_idx.get("quality", 0)] if "quality" in col_idx else ""
                 u = row[col_idx.get("unit", 0)] if "unit" in col_idx else None
@@ -229,17 +247,37 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         url, params = self._write_url_params()
         headers = self._headers(content_type="text/plain; charset=utf-8")
 
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.post(
-                    url,
-                    content=line.encode(),
-                    params=params,
-                    headers=headers,
+        now = time.monotonic()
+        if now < self._write_backoff_until:
+            if not self._write_skip_logged:
+                logger.warning(
+                    "InfluxDB write suppressed for %.1fs after previous failure",
+                    self._write_backoff_until - now,
                 )
-                r.raise_for_status()
-        except Exception as exc:
-            logger.error("InfluxDB write failed: %s", exc)
+                self._write_skip_logged = True
+            return
+
+        try:
+            client = self._get_write_client()
+            r = await client.post(
+                url,
+                content=line.encode(),
+                params=params,
+                headers=headers,
+            )
+            r.raise_for_status()
+            self._write_backoff_until = 0.0
+            self._write_backoff_seconds = _WRITE_BACKOFF_INITIAL_SECONDS
+            self._write_skip_logged = False
+        except Exception:
+            try:
+                await self.disconnect()
+            except Exception:
+                logger.exception("InfluxDB disconnect after write failure also failed")
+            self._write_backoff_until = time.monotonic() + self._write_backoff_seconds
+            self._write_backoff_seconds = min(self._write_backoff_seconds * 2, _WRITE_BACKOFF_MAX_SECONDS)
+            self._write_skip_logged = False
+            logger.exception("InfluxDB write failed")
             raise
 
     async def query(
@@ -263,8 +301,8 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         try:
             data = await self._run_influxql(q)
             return self._parse_influxql_series(data, raw_field=True)
-        except Exception as exc:
-            logger.error("InfluxDB query failed: %s", exc)
+        except Exception:
+            logger.exception("InfluxDB query failed")
             return []
 
     async def aggregate(
@@ -290,8 +328,8 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
         try:
             data = await self._run_influxql(q)
             return self._parse_influxql_series(data, raw_field=False)
-        except Exception as exc:
-            logger.error("InfluxDB aggregate failed: %s", exc)
+        except Exception:
+            logger.exception("InfluxDB aggregate failed")
             return []
 
     # ------------------------------------------------------------------
@@ -316,8 +354,8 @@ class InfluxDBHistoryPlugin(HistoryPlugin):
                 # Try a trivial InfluxQL query against the database
                 data = await self._run_influxql(f'SHOW MEASUREMENTS ON "{self._database}" LIMIT 1')
                 return "results" in data
-        except Exception as exc:
-            logger.debug("InfluxDB ping failed: %s", exc)
+        except Exception:
+            logger.exception("InfluxDB ping failed")
             return False
 
 

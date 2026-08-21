@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { datapoints, getWriteContext } from '@/api/client'
+import type { WriteContext } from '@/api/client'
 import VisuIcon from '@/components/VisuIcon.vue'
 import type { DataPointValue } from '@/types'
 
@@ -14,6 +15,7 @@ interface ButtonConfig {
   resetEnabled: boolean
   resetValue: string
   resetDelayMs: number
+  preserveIconColor: boolean
 }
 
 const props = defineProps<{
@@ -23,6 +25,7 @@ const props = defineProps<{
   statusValue: DataPointValue | null
   editorMode: boolean
   readonly?: boolean
+  writeContext?: WriteContext
 }>()
 
 const { t } = useI18n()
@@ -46,6 +49,7 @@ const buttons = computed<ButtonConfig[]>(() => {
     resetEnabled: parseBoolean(button.resetEnabled, false),
     resetValue: String(button.resetValue ?? 'false'),
     resetDelayMs: parseDelay(button.resetDelayMs),
+    preserveIconColor: parseBoolean(button.preserveIconColor, false),
   }))
 })
 
@@ -109,7 +113,7 @@ function setFeedback(id: string, value: 'success' | 'error') {
 async function press(button: ButtonConfig) {
   if (props.editorMode || props.readonly || !props.datapointId || pendingId.value) return
   const datapointId = props.datapointId
-  const writeContext = { ...getWriteContext() }
+  const writeContext = { ...(props.writeContext ?? getWriteContext()) }
   pendingId.value = button.id
   feedback.value = {}
   try {
@@ -165,7 +169,7 @@ onUnmounted(() => {
             class="text-xl leading-none"
             :style="{ color: button.color }"
           >
-            <VisuIcon :icon="button.icon" />
+            <VisuIcon :icon="button.icon" :preserve-color="button.preserveIconColor" />
           </span>
           <span
             class="max-w-full truncate leading-tight"

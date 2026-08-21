@@ -1,0 +1,44 @@
+name: actionlint
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - '[0-9][0-9][0-9][0-9].[0-9]*'  # release maintenance lines, e.g. 2026.6, 2026.7
+      - bug/*
+      - bugfix/*
+      - feat/*
+      - feature/*
+    paths:
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - main
+      - '[0-9][0-9][0-9][0-9].[0-9]*'  # release maintenance lines, e.g. 2026.6, 2026.7
+    paths:
+      - '.github/workflows/**'
+
+permissions: {}
+
+jobs:
+  actionlint:
+    name: "actionlint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install actionlint v1.7.12
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
+          ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+        run: |
+          curl -sSfL \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            -o actionlint.tar.gz
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum --check --strict
+          tar xzf actionlint.tar.gz actionlint
+
+      - name: Run actionlint
+        run: ./actionlint -color

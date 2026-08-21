@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - '[0-9][0-9][0-9][0-9].[0-9]*'  # release maintenance lines, e.g. 2026.6, 2026.7
       - bug/*
       - bugfix/*
       - feat/*
@@ -11,6 +12,7 @@ on:
   pull_request:
     branches:
       - main
+      - '[0-9][0-9][0-9][0-9].[0-9]*'  # release maintenance lines, e.g. 2026.6, 2026.7
 
 jobs:
   test:
@@ -21,10 +23,10 @@ jobs:
         python-version: ["3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -62,12 +64,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: gui/package-lock.json
 

@@ -20,7 +20,7 @@ import asyncio
 import logging
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from obs.adapters.base import AdapterBase
 from obs.adapters.modbus_base import (
@@ -75,7 +75,7 @@ class ModbusRtuAdapter(AdapterBase):
             from pymodbus.client import AsyncModbusSerialClient
         except ImportError:
             logger.error("pymodbus not installed — Modbus RTU disabled. Run: pip install pymodbus")
-            await self._publish_status(False, "pymodbus not installed")
+            await self._publish_status(False, "pymodbus not installed", code="libNotInstalled", params={"lib": "pymodbus"})
             return
 
         cfg = ModbusRtuAdapterConfig(**self._config)
@@ -90,10 +90,15 @@ class ModbusRtuAdapter(AdapterBase):
         try:
             await self._client.connect()
             if self._client.connected:
-                await self._publish_status(True, f"{cfg.port}@{cfg.baudrate}")
+                await self._publish_status(
+                    True,
+                    f"{cfg.port}@{cfg.baudrate}",
+                    code="modbusSerialConnected",
+                    params={"port": cfg.port, "baudrate": cfg.baudrate},
+                )
                 logger.info("Modbus RTU connected: %s @ %d baud", cfg.port, cfg.baudrate)
             else:
-                await self._publish_status(False, f"Could not open {cfg.port}")
+                await self._publish_status(False, f"Could not open {cfg.port}", code="couldNotOpenPort", params={"port": cfg.port})
         except Exception as exc:
             await self._publish_status(False, str(exc))
             logger.exception("Modbus RTU connect failed")
@@ -104,7 +109,7 @@ class ModbusRtuAdapter(AdapterBase):
         self._poll_tasks.clear()
         if self._client:
             self._client.close()
-        await self._publish_status(False, "Disconnected")
+        await self._publish_status(False, "Disconnected", code="disconnected")
 
     # ------------------------------------------------------------------
     # Bindings
@@ -133,7 +138,7 @@ class ModbusRtuAdapter(AdapterBase):
     async def _poll_loop(self, binding: Any) -> None:
         try:
             bc = ModbusBindingConfig(**binding.config)
-        except Exception:
+        except (ValidationError, TypeError):
             logger.warning("Invalid Modbus RTU binding config %s — skipped", binding.id)
             return
 
@@ -161,8 +166,8 @@ class ModbusRtuAdapter(AdapterBase):
                 )
             except asyncio.CancelledError:
                 return
-            except Exception as exc:
-                logger.warning("Modbus RTU poll error (binding %s): %s", binding.id, exc)
+            except Exception:
+                logger.exception("Modbus RTU poll error (binding %s)", binding.id)
                 await self._bus.publish(
                     DataValueEvent(
                         datapoint_id=binding.datapoint_id,

@@ -6,7 +6,7 @@
       <Handle type="target" id="trigger" :position="Position.Left" :style="{ top: port2Top }" />
     </template>
 
-    <div class="gn-card" ref="cardRef">
+    <div class="gn-card logic-node-surface" ref="cardRef" :style="{ '--node-tint': cardTint }">
       <div class="gn-header">
         <span class="gn-label">{{ isWrite ? $t('logic.nodeTypes.datapoint_write') : $t('logic.nodeTypes.datapoint_read') }}</span>
         <span v-if="hasFilter" class="gn-filter-badge" :title="$t('logic.filterBadge')">⊘</span>
@@ -28,7 +28,7 @@
           <span ref="portRef2" class="gn-port-label">{{ $t('logic.ports.changed') }}</span>
         </div>
       </div>
-      <div v-if="data._dbg" class="gn-debug" data-testid="debug-band">{{ data._dbg }}</div>
+      <div v-if="data._dbg" class="gn-debug" :title="data._dbg_title || data._dbg" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <template v-if="!isWrite">
@@ -42,12 +42,18 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
+import { nodeTint } from '@/utils/logicNodeSurface'
 
 const props = defineProps({
   id:   { type: String, required: true },
   type: { type: String, required: true },
   data: { type: Object, default: () => ({}) },
 })
+
+// Category colour of the datapoint blocks — also used for the top border and
+// the header accent below. Tinted over the opaque card surface (issue #1074).
+const DATAPOINT_COLOR = '#0f766e'
+const cardTint = nodeTint(DATAPOINT_COLOR)
 
 const isWrite   = computed(() => props.type === 'datapoint_write')
 const hovered   = ref(false)
@@ -110,8 +116,8 @@ const hasFilter = computed(() => {
 }
 
 .gn-card {
-  min-width: 160px;
-  background: var(--node-card-bg);
+  width: 160px;
+  /* background: provided by `.logic-node-surface` (opaque surface + tint). */
   border: 1px solid var(--node-card-border);
   border-top: 3px solid #0f766e;
   border-radius: 8px;
@@ -138,6 +144,9 @@ const hasFilter = computed(() => {
 .gn-port-col { display:flex; flex-direction:column; gap:2px; }
 .gn-port-label { font-size:9px; color:var(--node-port-label); }
 .gn-debug {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   font-size: 9px;
   color: var(--node-debug-color);
   font-family: ui-monospace, monospace;

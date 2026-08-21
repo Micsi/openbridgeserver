@@ -34,6 +34,7 @@ function makeSet(overrides = {}) {
     is_active: true,
     topbar_active: true,
     topbar_order: 0,
+    can_write: true,
     ...overrides,
   }
 }
@@ -64,7 +65,7 @@ async function mountChips(props = {}) {
 
   const { useAuthStore } = await import('@/stores/auth')
   const auth = useAuthStore()
-  auth.user = { username: 'tester', is_admin: true }
+  auth.user = props.authUser ?? { username: 'tester', is_admin: true }
 
   const mod = await import('@/views/ringbuffer/TopbarFilterChips.vue')
   const TopbarFilterChips = mod.default
@@ -233,11 +234,11 @@ describe('TopbarFilterChips', () => {
     await flushPromises()
     // All three visible initially
     expect(bodyFindAll('[data-testid^="topbar-add-filter-item-"]').length).toBe(3)
-    // Typing "hei" narrows to Heizung
-    await bodyFind('[data-testid="topbar-add-filter-search"]').setValue('hei')
+    // Diacritics do not have to be typed exactly.
+    await bodyFind('[data-testid="topbar-add-filter-search"]').setValue('luft')
     const items = bodyFindAll('[data-testid^="topbar-add-filter-item-"]')
     expect(items.length).toBe(1)
-    expect(items[0].text()).toContain('Heizung')
+    expect(items[0].text()).toContain('Lüftung')
   })
 
   it('shows "Keine Treffer" when search yields no results', async () => {
@@ -246,6 +247,60 @@ describe('TopbarFilterChips', () => {
     await flushPromises()
     await bodyFind('[data-testid="topbar-add-filter-search"]').setValue('zzz-no-match')
     expect(bodyFind('[data-testid="topbar-add-filter-empty"]').text()).toContain('Keine Treffer')
+  })
+
+  it('shows the new-filter action for non-admin user principals', async () => {
+    const { wrapper } = await mountChips({ authUser: { username: 'viewer', is_admin: false } })
+
+    await wrapper.find('[data-testid="topbar-add-filter-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(document.body.querySelector('[data-testid="topbar-add-filter-new"]')).not.toBeNull()
+  })
+
+  it('uses the projected central write decision for the lock marker', async () => {
+    const api = makeApi({
+      listFiltersets: vi.fn().mockResolvedValue({
+        data: [makeSet({ id: 'readonly', created_by: 'alice', can_write: false })],
+      }),
+    })
+    const { wrapper } = await mountChips({ api, authUser: { username: 'viewer', is_admin: false } })
+
+    expect(wrapper.find('[data-testid="topbar-chip-owner-lock-readonly"]').exists()).toBe(true)
+  })
+
+  it('keeps the dropdown open for inside clicks and closes it on outside clicks', async () => {
+    const { wrapper } = await mountChips()
+
+    await wrapper.find('[data-testid="topbar-add-filter-btn"]').trigger('click')
+    await flushPromises()
+    const menu = document.body.querySelector('[data-testid="topbar-add-filter-menu"]')
+    expect(menu).not.toBeNull()
+
+    wrapper.vm.onDocumentClick({ target: menu })
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="topbar-add-filter-menu"]')).not.toBeNull()
+
+    wrapper.vm.onDocumentClick({ target: document.createElement('div') })
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="topbar-add-filter-menu"]')).toBeNull()
+  })
+
+  it('keeps menu scroll local and closes the dropdown on document scroll', async () => {
+    const { wrapper } = await mountChips()
+
+    await wrapper.find('[data-testid="topbar-add-filter-btn"]').trigger('click')
+    await flushPromises()
+    const menu = document.body.querySelector('[data-testid="topbar-add-filter-menu"]')
+    expect(menu).not.toBeNull()
+
+    wrapper.vm.onDocumentScroll({ target: menu })
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="topbar-add-filter-menu"]')).not.toBeNull()
+
+    wrapper.vm.onDocumentScroll({ target: document.createElement('div') })
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="topbar-add-filter-menu"]')).toBeNull()
   })
 
   // ---------------------------------------------------------------------

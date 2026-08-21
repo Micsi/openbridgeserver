@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import unittest.mock as mock
+from unittest import mock
 
 import pytest
 
@@ -165,6 +165,18 @@ class TestOnMessageValueMap:
         await adapter._on_message("t", b"1")
         event = mock_bus.publish.call_args[0][0]
         assert event.value == "on"
+
+    @pytest.mark.asyncio
+    async def test_value_map_matches_case_insensitive_string_payload(self, adapter, mock_bus):
+        binding = make_binding(
+            {"topic": "t"},
+            value_map={"on": "true", "off": "false"},
+        )
+        adapter._topic_map["t"] = [binding]
+
+        await adapter._on_message("t", b"OFF")
+        event = mock_bus.publish.call_args[0][0]
+        assert event.value == "false"
 
     @pytest.mark.asyncio
     async def test_value_map_no_match_passthrough(self, adapter, mock_bus):
@@ -679,13 +691,12 @@ class TestSubscriberLoop:
         mock_aiomqtt = mock.MagicMock()
         mock_aiomqtt.Client.return_value = FailingCM()
 
-        with mock.patch.dict("sys.modules", {"aiomqtt": mock_aiomqtt}):
-            with mock.patch("asyncio.sleep", new_callable=mock.AsyncMock):
-                task = asyncio.create_task(adapter._subscriber_loop())
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        with mock.patch.dict("sys.modules", {"aiomqtt": mock_aiomqtt}), mock.patch("asyncio.sleep", new_callable=mock.AsyncMock):
+            task = asyncio.create_task(adapter._subscriber_loop())
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
         assert attempt >= 3
 
@@ -738,10 +749,10 @@ class TestPublisherLoop:
         connected_event = asyncio.Event()
         original_publish_status = adapter._publish_status
 
-        async def track_status(connected, detail="", severity="ok"):
+        async def track_status(connected, detail="", severity="ok", *, code=None, params=None):
             if connected:
                 connected_event.set()
-            await original_publish_status(connected, detail, severity)
+            await original_publish_status(connected, detail, severity, code=code, params=params)
 
         adapter._publish_status = track_status
 
@@ -786,12 +797,11 @@ class TestPublisherLoop:
         mock_aiomqtt = mock.MagicMock()
         mock_aiomqtt.Client.return_value = FailingCM()
 
-        with mock.patch.dict("sys.modules", {"aiomqtt": mock_aiomqtt}):
-            with mock.patch("asyncio.sleep", new_callable=mock.AsyncMock):
-                task = asyncio.create_task(adapter._publisher_loop())
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        with mock.patch.dict("sys.modules", {"aiomqtt": mock_aiomqtt}), mock.patch("asyncio.sleep", new_callable=mock.AsyncMock):
+            task = asyncio.create_task(adapter._publisher_loop())
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
         assert attempt >= 3

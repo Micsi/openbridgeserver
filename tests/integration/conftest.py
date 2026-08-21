@@ -4,7 +4,7 @@ Session-scoped setup:
   1. mosquitto  — Eclipse Mosquitto in Docker (anonymous, dynamic localhost port)
   2. app        — FastAPI app with lifespan, SQLite file DB, test MQTT port
   3. client     — httpx.AsyncClient via ASGITransport
-  4. auth_headers — Bearer token from admin/admin login
+  4. auth_headers — Bearer token from the explicitly seeded test owner
 
 Requirements (install alongside regular deps):
   pip install pytest-asyncio asgi-lifespan httpx
@@ -39,10 +39,9 @@ def mosquitto_port():
         port = sock.getsockname()[1]
 
     # Write a minimal mosquitto config that allows anonymous connections
-    cfg = tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False, prefix="obs_test_mosquitto_")
-    cfg.write("listener 1883\nallow_anonymous true\n")
-    cfg.flush()
-    cfg.close()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False, prefix="obs_test_mosquitto_") as cfg:
+        cfg.write("listener 1883\nallow_anonymous true\n")
+        cfg.flush()
 
     cid = (
         subprocess.check_output(
@@ -101,6 +100,7 @@ async def app(mosquitto_port):
     """
     # Isolate the test from any host config.yaml in the CWD — the fixture
     # constructs Settings explicitly and must not merge external config.
+    _orig_obs_config = os.environ.get("OBS_CONFIG")
     os.environ["OBS_CONFIG"] = os.path.join(tempfile.gettempdir(), "obs_nonexistent_test_config.yaml")
 
     from obs.config import (
@@ -110,10 +110,11 @@ async def app(mosquitto_port):
         SecuritySettings,
         Settings,
         override_settings,
+        reset_settings,
     )
 
-    db_file = tempfile.NamedTemporaryFile(mode="w", suffix=".db", delete=False, prefix="obs_test_db_")
-    db_file.close()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".db", delete=False, prefix="obs_test_db_") as db_file:
+        pass
     db_path = db_file.name
     allowlist_path = db_path.replace(".db", "_url_targets.yaml")
 
@@ -144,7 +145,14 @@ async def app(mosquitto_port):
         ),
     )
 
+    from obs.admin_cli import create_first_owner
+    from obs.db.database import Database
     from obs.main import create_app
+
+    bootstrap_db = Database(db_path)
+    await bootstrap_db.connect()
+    await bootstrap_db.disconnect()
+    create_first_owner(db_path, username="admin", password="integration-test-password", backup=False)
 
     _app = create_app()
 
@@ -160,6 +168,7 @@ async def app(mosquitto_port):
         ("obs.core.write_router", "reset_write_router"),
         ("obs.core.mqtt_client", "reset_mqtt_client"),
         ("obs.history.factory", "reset_history_plugin"),
+        ("obs.message_archive", "reset_message_archive_store"),
         ("obs.ringbuffer.ringbuffer", "reset_ringbuffer"),
         ("obs.core.registry", "reset_registry"),
         ("obs.core.event_bus", "reset_event_bus"),
@@ -171,8 +180,8 @@ async def app(mosquitto_port):
 
             mod = importlib.import_module(module_path)
             getattr(mod, fn_name)()
-        except Exception:
-            pass  # best-effort — never fail teardown
+        except Exception:  # noqa: S110, BLE001 -- best-effort teardown across many optional modules, must never fail the test
+            pass
 
     cleanup_paths = [
         db_path,
@@ -181,6 +190,9 @@ async def app(mosquitto_port):
         db_path.replace(".db", "_ringbuffer.db"),
         db_path.replace(".db", "_ringbuffer.db-wal"),
         db_path.replace(".db", "_ringbuffer.db-shm"),
+        os.path.join(os.path.dirname(db_path), "archives", "messages.sqlite3"),
+        os.path.join(os.path.dirname(db_path), "archives", "messages.sqlite3-wal"),
+        os.path.join(os.path.dirname(db_path), "archives", "messages.sqlite3-shm"),
         allowlist_path,
     ]
     for cleanup_path in cleanup_paths:
@@ -188,6 +200,14 @@ async def app(mosquitto_port):
             os.unlink(cleanup_path)
         except OSError:
             pass
+
+    # Restore settings singleton and OBS_CONFIG env var so unit tests that run
+    # after the integration suite (in a full `pytest tests/` run) see a clean state.
+    reset_settings()
+    if _orig_obs_config is None:
+        os.environ.pop("OBS_CONFIG", None)
+    else:
+        os.environ["OBS_CONFIG"] = _orig_obs_config
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -202,10 +222,10 @@ async def client(app):
 
 @pytest_asyncio.fixture(scope="session")
 async def auth_headers(client):
-    """Login once as admin and return the Authorization header dict."""
+    """Login once as the explicitly seeded test owner."""
     resp = await client.post(
         "/api/v1/auth/login",
-        json={"username": "admin", "password": "admin"},
+        json={"username": "admin", "password": "integration-test-password"},
     )
     assert resp.status_code == 200, f"Login failed: {resp.text}"
     token = resp.json()["access_token"]
@@ -229,6 +249,7 @@ _DATAPOINT_OUT_FIELDS = {
     "mqtt_alias",
     "persist_value",
     "record_history",
+    "control_class",
     "created_at",
     "updated_at",
     "value",

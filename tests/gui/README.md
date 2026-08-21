@@ -6,7 +6,7 @@ They drive a real Chromium against a running open bridge server instance.
 ## Prerequisites
 
 1. Backend stack reachable on the resolved base URL (see below).
-2. Node.js 20.19+ or 22+, the version pinned by the repo's `.nvmrc`.
+2. Node.js 24, the version pinned by the repo's `.nvmrc`.
 3. Browser binaries installed once after `npm ci`:
    ```bash
    npx playwright install --with-deps
@@ -44,8 +44,8 @@ cd tests/gui && npx playwright test --project=admin
 cd tests/gui && npx playwright test admin/ringbuffer.spec.ts
 ```
 
-Default credentials for `auth.setup.ts` are `admin / admin`; override with
-`E2E_USER` / `E2E_PASS` if your instance has them changed.
+Set `E2E_USER` / `E2E_PASS` to an explicitly bootstrapped test owner before
+running the suite. The server deliberately ships no default credentials.
 
 ## Common failure modes
 

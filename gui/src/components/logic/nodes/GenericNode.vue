@@ -8,17 +8,20 @@
       :style="hStyle(i, def.inputs.length)"
     />
 
-    <!-- Card — height controlled so handles align with rows -->
-    <div class="gn-card"
-         :style="{ borderTopColor: def.color, background: def.color + '12', minHeight: cardH + 'px' }">
+    <!-- Card — height controlled so handles align with rows.
+         The category tint rides on top of the opaque theme surface via
+         `--node-tint` (see `.logic-node-surface` in style.css) so the canvas
+         raster cannot show through the block body. -->
+    <div class="gn-card logic-node-surface"
+         :style="{ borderTopColor: def.color, '--node-tint': cardTint, minHeight: cardH + 'px' }">
 
       <div class="gn-header" :style="{ background: def.color + '28' }">
-        <span class="gn-title">{{ def.label }}</span>
+        <span class="gn-title" :title="def.label">{{ def.label }}</span>
         <button class="gn-del nodrag" :style="{ visibility: hovered ? 'visible' : 'hidden' }" @click.stop="remove">✕</button>
       </div>
 
       <div class="gn-body">
-        <div v-if="summary" class="gn-summary">{{ summary }}</div>
+        <div v-if="summary" class="gn-summary" :title="summary">{{ summary }}</div>
 
         <!-- Port rows — height matches handle spacing -->
         <div class="gn-ports-rows">
@@ -49,9 +52,7 @@
           </div>
         </div>
       </div>
-
-      <!-- Debug value strip -->
-      <div v-if="data._dbg" class="gn-debug" data-testid="debug-band">{{ data._dbg }}</div>
+      <div v-if="data._dbg" class="gn-debug" :title="data._dbg_title || data._dbg" data-testid="debug-band">{{ data._dbg }}</div>
     </div>
 
     <!-- Output handles (RIGHT) -->
@@ -69,6 +70,7 @@
 import { ref, computed } from 'vue'
 import { Handle, Position, useVueFlow } from '@vue-flow/core'
 import { useI18n } from 'vue-i18n'
+import { nodeTint } from '@/utils/logicNodeSurface'
 
 const { updateNodeData } = useVueFlow()
 const { t, te } = useI18n()
@@ -79,6 +81,21 @@ const props = defineProps({
   data: { type: Object, default: () => ({}) },
 })
 
+function parseRowList(raw) {
+  if (Array.isArray(raw)) {
+    return raw.filter(row => row && typeof row === 'object' && !Array.isArray(row))
+  }
+  if (typeof raw !== 'string') return []
+  try {
+    const parsed = JSON.parse(raw || '[]')
+    return Array.isArray(parsed)
+      ? parsed.filter(row => row && typeof row === 'object' && !Array.isArray(row))
+      : []
+  } catch (_) {
+    return []
+  }
+}
+
 // ── Node definitions ───────────────────────────────────────────────────────
 const NODE_DEFS = computed(() => ({
   const_value:  { label: 'Festwert',    color: '#475569', inputs: [],                                                                                                  outputs: [{id:'value',      label:t('logic.ports.value')}]       },
@@ -86,14 +103,21 @@ const NODE_DEFS = computed(() => ({
   or:           { label: 'OR',          color: '#1d4ed8', inputs: [{id:'in1',label:t('logic.ports.in_n',{n:1})},{id:'in2',label:t('logic.ports.in_n',{n:2})}],         outputs: [{id:'out',        label:t('logic.ports.out')}]         },
   not:          { label: 'NOT',         color: '#1d4ed8', inputs: [{id:'in1',label:t('logic.ports.in_n',{n:1})}],                                                      outputs: [{id:'out',        label:t('logic.ports.out')}]         },
   xor:          { label: 'XOR',         color: '#1d4ed8', inputs: [{id:'in1',label:t('logic.ports.in_n',{n:1})},{id:'in2',label:t('logic.ports.in_n',{n:2})}],         outputs: [{id:'out',        label:t('logic.ports.out')}]         },
+  merge:        { label: 'Klemme',      color: '#1d4ed8', inputs: [{id:'in1',label:t('logic.ports.in_n',{n:1})},{id:'in2',label:t('logic.ports.in_n',{n:2})}],         outputs: [{id:'out',        label:t('logic.ports.out')}]         },
   gate:         { label: 'TOR',         color: '#1d4ed8', inputs: [{id:'in',label:t('logic.ports.input')},{id:'enable',label:t('logic.ports.enable')}],                 outputs: [{id:'out',        label:t('logic.ports.output')}]      },
+  memory:       { label: 'Speicher',    color: '#1d4ed8', inputs: [{id:'in',label:t('logic.ports.input')},{id:'reset',label:t('logic.ports.reset')}],                  outputs: [{id:'out',        label:t('logic.ports.output')}]      },
+  change_filter:{ label: t('logic.nodeTypes.change_filter'), color: '#1d4ed8', inputs: [{id:'in',label:t('logic.ports.input')}],                                        outputs: [{id:'out',label:t('logic.ports.output')},{id:'changed',label:t('logic.ports.changed')}] },
   compare:      { label: 'Vergleich',   color: '#1d4ed8', inputs: [{id:'in1',label:t('logic.ports.in_n',{n:1})},{id:'in2',label:t('logic.ports.in_n',{n:2})}],         outputs: [{id:'out',        label:t('logic.portLabels.resultShort')}] },
   hysteresis:   { label: 'Hysterese',   color: '#1d4ed8', inputs: [{id:'value',label:t('logic.ports.value')}],                                                         outputs: [{id:'out',        label:t('logic.ports.out')}]         },
+  decision:     { label: 'Entscheidung', color: '#1d4ed8', inputs: [{id:'value',label:t('logic.ports.value')}],                                                         outputs: [{id:'out_1',label:t('logic.nodeConfig.decision.defaultOutput', { n: 1 })},{id:'out_2',label:t('logic.nodeConfig.decision.defaultOutput', { n: 2 })}] },
+  value_mapping:{ label: 'Zuordnung',    color: '#1d4ed8', inputs: [{id:'value',label:t('logic.ports.value')}],                                                         outputs: [{id:'result',     label:t('logic.portLabels.resultShort')}] },
   math_formula: { label: 'Formel',      color: '#7c3aed', inputs: [{id:'in1',label:t('logic.ports.in_n',{n:1})},{id:'in2',label:t('logic.ports.in_n',{n:2})}],          outputs: [{id:'result',     label:t('logic.portLabels.resultShort')}] },
   math_map:     { label: 'Skalieren',   color: '#7c3aed', inputs: [{id:'value',label:t('logic.ports.value')}],                                                         outputs: [{id:'result',     label:t('logic.portLabels.resultShort')}] },
   timer_delay:  { label: 'Verzögerung', color: '#b45309', inputs: [{id:'trigger',label:t('logic.ports.trigger')}],                                                     outputs: [{id:'trigger',    label:t('logic.ports.trigger')}]     },
   timer_pulse:  { label: 'Impuls',      color: '#b45309', inputs: [{id:'trigger',label:t('logic.ports.trigger')}],                                                     outputs: [{id:'out',        label:t('logic.ports.out')}]         },
+  value_sequence: { label: t('logic.nodeTypes.value_sequence'), color: '#b45309', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'condition',label:t('logic.ports.condition')}], outputs: [] },
   timer_cron:   { label: 'Trigger',     color: '#b45309', inputs: [],                                                                                                  outputs: [{id:'trigger',    label:t('logic.ports.trigger')}]     },
+  datetime:     { label: t('logic.nodeTypes.datetime'), color: '#b45309', inputs: [], outputs: [{id:'date',label:t('logic.ports.date')},{id:'time',label:t('logic.ports.time')},{id:'custom',label:t('logic.ports.custom')}] },
   mcp_tool:     { label: 'MCP Tool',    color: '#0e7490', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'input',label:t('logic.ports.input')}],            outputs: [{id:'result',     label:t('logic.portLabels.resultShort')},{id:'done',label:t('logic.ports.done')}] },
   python_script:{ label: 'Python',      color: '#be185d', inputs: [{id:'in1',label:t('logic.ports.in_n',{n:1})},{id:'in2',label:t('logic.ports.in_n',{n:2})},{id:'in3',label:t('logic.ports.in_n',{n:3})}], outputs: [{id:'result',label:t('logic.portLabels.resultShort')}] },
   // Astro
@@ -108,8 +132,12 @@ const NODE_DEFS = computed(() => ({
   // Timer (extended)
   operating_hours:    { label: 'Betriebsstd.',   color: '#b45309', inputs: [{id:'active',label:t('logic.ports.active')},{id:'reset',label:t('logic.ports.reset')}],     outputs: [{id:'hours',      label:t('logic.ports.hours')}]       },
   // Notification
+  notify_message:     { label: 'Benachrichtigung', color: '#e11d48', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'message',label:t('logic.ports.message')}], outputs: [{id:'sent',label:t('logic.ports.sent')}] },
   notify_pushover:    { label: 'Pushover',       color: '#e11d48', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'message',label:t('logic.ports.message')},{id:'url',label:'URL'},{id:'url_title',label:t('logic.portLabels.urlTitle')},{id:'image_url',label:t('logic.portLabels.imageUrl')}], outputs: [{id:'sent',label:t('logic.ports.sent')}] },
   notify_sms:         { label: 'SMS (seven.io)', color: '#e11d48', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'message',label:t('logic.ports.message')}], outputs: [{id:'sent',     label:t('logic.ports.sent')}]        },
+  message_archive:    { label: t('logic.nodeTypes.message_archive'), color: '#2563eb', inputs: [{id:'trigger',label:t('logic.ports.trigger')},{id:'message',label:t('logic.ports.message')},{id:'title',label:t('logic.portLabels.title')}], outputs: [{id:'stored', label:t('logic.ports.stored')}] },
+  wake_on_lan:        { label: 'Wake on LAN',    color: '#e11d48', inputs: [{id:'trigger',label:t('logic.ports.trigger')}],                                              outputs: [{id:'sent',     label:t('logic.ports.sent')}]        },
+  host_check:         { label: t('logic.nodeTypes.host_check'), color: '#0369a1', inputs: [{id:'trigger',label:t('logic.ports.trigger')}],                                              outputs: [{id:'reachable',label:t('logic.portLabels.reachable')},{id:'latency_ms',label:t('logic.portLabels.latencyMs')}] },
   // Math — avg_multi (dynamic inputs, fixed outputs)
   avg_multi: { label: 'Mittelwert', color: '#7c3aed',
     inputs: [{id:'in_1',label:t('logic.ports.in_n',{n:1})},{id:'in_2',label:t('logic.ports.in_n',{n:2})}],
@@ -139,12 +167,16 @@ const NODE_DEFS = computed(() => ({
 const isGateNode = computed(() =>
   props.type === 'and' || props.type === 'or' || props.type === 'xor'
 )
+// merge shares and/or/xor's dynamic in1..inN port generation, but its inputs
+// are plain values (not booleans) — kept separate from isGateNode so the
+// per-port negation toggles (boolean-only) never render for it.
+const isMergeNode = computed(() => props.type === 'merge')
 
 // ── Computed def — expands gate + string_concat inputs dynamically
 const def = computed(() => {
   const base = NODE_DEFS.value[props.type] ?? { label: props.type, color: '#475569', inputs: [], outputs: [] }
   const label = te(`logic.nodeTypes.${props.type}`) ? t(`logic.nodeTypes.${props.type}`) : base.label
-  if (isGateNode.value) {
+  if (isGateNode.value || isMergeNode.value) {
     const count = Math.max(2, Math.min(30, Number(props.data?.input_count) || 2))
     const inputs = Array.from({ length: count }, (_, i) => ({
       id:    `in${i + 1}`,
@@ -188,6 +220,20 @@ const def = computed(() => {
     }
     return { ...base, label, outputs }
   }
+  if (props.type === 'decision') {
+    let conditions = parseRowList(props.data?.conditions)
+    if (conditions.length === 0) {
+      conditions = [
+        { handle: 'out_1', name: t('logic.nodeConfig.decision.defaultOutput', { n: 1 }) },
+        { handle: 'out_2', name: t('logic.nodeConfig.decision.defaultOutput', { n: 2 }) },
+      ]
+    }
+    const outputs = conditions.map((entry, i) => ({
+      id:    entry?.handle || `out_${i + 1}`,
+      label: entry?.name || t('logic.nodeConfig.decision.defaultOutput', { n: i + 1 }),
+    }))
+    return { ...base, label, outputs }
+  }
   if (props.type === 'json_extractor') {
     let pathList = []
     try { pathList = JSON.parse(props.data?.json_paths || '[]') } catch (_) { pathList = [] }
@@ -215,6 +261,9 @@ const def = computed(() => {
   return { ...base, label }
 })
 
+// Category tint painted over the opaque card surface (issue #1074)
+const cardTint = computed(() => nodeTint(def.value.color))
+
 // ── Inline negation toggle (AND / OR / XOR) ────────────────────────────────
 function toggleNegate(portId) {
   const key = `negate_${portId}`
@@ -227,11 +276,27 @@ const summary = computed(() => {
   if (props.type === 'const_value')  return `${d.data_type ?? 'number'} = ${d.value ?? '0'}`
   if (props.type === 'compare')      return `A ${d.operator ?? '>'} B`
   if (props.type === 'hysteresis')   return `ON≥${d.threshold_on ?? 25}  OFF≤${d.threshold_off ?? 20}`
+  if (props.type === 'memory')       return `${d.data_type ?? 'auto'} · ${d.initial_value ?? '—'}`
+  if (props.type === 'decision') {
+    const conditions = parseRowList(d.conditions)
+    return t('logic.summary.rules', { n: conditions.length || 2 })
+  }
+  if (props.type === 'value_mapping') {
+    const rules = parseRowList(d.rules)
+    const type = d.output_type || 'string'
+    return `${type} · ${t('logic.summary.rules', { n: rules.length || 2 })}`
+  }
   if (props.type === 'math_formula') return d.formula || 'a + b'
   if (props.type === 'math_map')     return `[${d.in_min ?? 0}‒${d.in_max ?? 100}] → [${d.out_min ?? 0}‒${d.out_max ?? 1}]`
   if (props.type === 'timer_delay')  return `${d.delay_s ?? 1} s`
   if (props.type === 'timer_pulse')  return `${d.duration_s ?? 1} s`
+  if (props.type === 'value_sequence') {
+    const mode = d.run_mode || 'once'
+    const key = `logic.nodeConfig.value_sequence.modes.${mode}`
+    return t('logic.summary.sequence', { n: parseRowList(d.steps).length, mode: te(key) ? t(key) : mode })
+  }
   if (props.type === 'timer_cron')   return d.cron || '0 7 * * *'
+  if (props.type === 'datetime')     return d.custom_format || 'EEEE, MMMM d, yyyy HH:mm:ss'
   if (props.type === 'mcp_tool')     return d.tool_name || '—'
   if (props.type === 'astro_sun')       return `${d.latitude ?? 47.37}° N  ${d.longitude ?? 8.54}° E`
   if (props.type === 'clamp')           return `[${d.min ?? 0} … ${d.max ?? 100}]`
@@ -240,6 +305,8 @@ const summary = computed(() => {
   if (props.type === 'operating_hours') return null
   if (props.type === 'notify_pushover')     return d.title || 'open bridge server'
   if (props.type === 'notify_sms')          return d.to || '—'
+  if (props.type === 'wake_on_lan')         return d.mac_address || '—'
+  if (props.type === 'host_check')          return d.host || '—'
   if (props.type === 'avg_multi') {
     const count = Math.max(2, Math.min(20, Number(d.input_count) || 2))
     return t('logic.summary.inputs', { n: count })
@@ -284,7 +351,7 @@ const summary = computed(() => {
     const behavior = d.closed_behavior === 'default_value' ? `→ ${d.default_value ?? 0}` : t('logic.summary.hold')
     return d.negate_enable ? `${t('logic.summary.negateEnable')}  ${behavior}` : behavior
   }
-  if (props.type === 'and' || props.type === 'or' || props.type === 'xor') {
+  if (props.type === 'and' || props.type === 'or' || props.type === 'xor' || props.type === 'merge') {
     const count = Math.max(2, Math.min(30, Number(props.data?.input_count) || 2))
     return count > 2 ? t('logic.summary.inputs', { n: count }) : null
   }
@@ -299,7 +366,7 @@ const DEBUG_H  = 18   // px  debug value strip height (only when present)
 
 const rowCount  = computed(() => Math.max(def.value.inputs.length, def.value.outputs.length, 1))
 const summaryPx = computed(() => summary.value ? SUMMARY_H : 0)
-const debugPx   = computed(() => props.data._dbg   ? DEBUG_H  : 0)
+const debugPx   = computed(() => props.data._dbg ? DEBUG_H : 0)
 const cardH     = computed(() => HEADER_H + summaryPx.value + rowCount.value * PORT_H + debugPx.value + 8)
 
 // port row indices (0..rowCount-1)
@@ -334,13 +401,14 @@ function remove() { removeNodes([props.id]) }
 .gn-root  { position: relative; }
 
 .gn-card  {
-  min-width: 130px;
+  width: 130px;
   border: 1px solid var(--node-card-border);
   border-top: 3px solid #475569;
   border-radius: 8px;
   box-shadow: 0 4px 14px rgba(0,0,0,.3);
-  background: var(--node-card-bg);
   overflow: visible;
+  /* background: intentionally not set here — `.logic-node-surface` provides
+     the opaque theme surface plus the inline `--node-tint` overlay. */
 }
 
 .gn-header {
@@ -350,18 +418,33 @@ function remove() { removeNodes([props.id]) }
   padding: 4px 10px;
   border-radius: 5px 5px 0 0;
 }
-.gn-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--node-title-color); }
-.gn-del   { font-size:11px; color:var(--node-del-color); background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; }
+.gn-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--node-title-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gn-del   { flex-shrink:0; font-size:11px; color:var(--node-del-color); background:none; border:none; cursor:pointer; padding:0 2px; line-height:1; transition:color .15s; }
 .gn-del:hover { color:#f87171; }
 
 .gn-body  { padding: 0; }
 
 .gn-summary {
+  box-sizing: border-box;
+  width: 100%;
   font-size: 10px;
   color: var(--node-summary-color);
   padding: 2px 10px;
   font-family: ui-monospace, monospace;
   border-bottom: 1px solid var(--node-card-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gn-ports-rows { padding: 0 10px; }
@@ -386,11 +469,16 @@ function remove() { removeNodes([props.id]) }
   line-height: 1;
   transition: background .12s, color .12s;
 }
-.gn-port-negate:hover          { background: rgba(255,255,255,.10); color: #7dd3fc; }
+/* Neutral grey rather than white/10 %: the card body is an opaque light or dark
+   theme surface (#1074), and a white wash is invisible on the light one. */
+.gn-port-negate:hover          { background: rgba(148,163,184,.28); color: var(--node-accent-hover); }
 .gn-port-negate--active        { color: #f87171; font-weight: 700; }
 .gn-port-negate--right         { margin-left: auto; }
 
 .gn-debug {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   font-size: 9px;
   color: var(--node-debug-color);
   font-family: ui-monospace, monospace;

@@ -25,6 +25,10 @@ from obs.models.types import DataTypeRegistry
 
 logger = logging.getLogger(__name__)
 
+_INSERT_DATAPOINT_SQL = """INSERT INTO datapoints
+   (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, persist_value, record_history, control_class, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
 
 # ---------------------------------------------------------------------------
 # ValueState — last known value per DataPoint
@@ -103,17 +107,16 @@ class DataPointRegistry:
                 import json as _json
 
                 value = _json.loads(row["value"])
-            except Exception:
+            except (_json.JSONDecodeError, TypeError):
                 value = row["value"]
             if dp.data_type in {"DATE", "TIME", "DATETIME"}:
                 try:
                     value = DataTypeRegistry.get(dp.data_type).mqtt_deserializer(row["value"])
-                except Exception as exc:
+                except (_json.JSONDecodeError, ValueError, TypeError):
                     logger.debug(
-                        "DataPointRegistry: persisted %s value for %s could not be deserialized: %s",
+                        "DataPointRegistry: persisted %s value for %s could not be deserialized",
                         dp.data_type,
                         dp.id,
-                        exc,
                     )
             state.value = value
             state.quality = "good"
@@ -121,7 +124,7 @@ class DataPointRegistry:
 
             try:
                 state.ts = datetime.fromisoformat(row["ts"])
-            except Exception:
+            except (ValueError, TypeError):
                 state.ts = datetime.now(UTC)
             restored += 1
         if restored:
@@ -179,34 +182,50 @@ class DataPointRegistry:
     # Write (CRUD)
     # ------------------------------------------------------------------
 
-    async def create(self, payload: DataPointCreate) -> DataPoint:
-        dp = DataPoint(**payload.model_dump())
-        await self._db.execute_and_commit(
-            """INSERT INTO datapoints
-               (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, persist_value, record_history, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                str(dp.id),
-                dp.name,
-                dp.data_type,
-                dp.unit,
-                json.dumps(dp.tags),
-                dp.mqtt_topic,
-                dp.mqtt_alias,
-                int(dp.persist_value),
-                int(dp.record_history),
-                dp.created_at.isoformat(),
-                dp.updated_at.isoformat(),
-            ),
+    @staticmethod
+    def prepare_create(payload: DataPointCreate) -> DataPoint:
+        """Build a datapoint without persisting or publishing it."""
+        return DataPoint(**payload.model_dump())
+
+    @staticmethod
+    def _insert_params(dp: DataPoint) -> tuple[Any, ...]:
+        return (
+            str(dp.id),
+            dp.name,
+            dp.data_type,
+            dp.unit,
+            json.dumps(dp.tags),
+            dp.mqtt_topic,
+            dp.mqtt_alias,
+            int(dp.persist_value),
+            int(dp.record_history),
+            dp.control_class,
+            dp.created_at.isoformat(),
+            dp.updated_at.isoformat(),
         )
+
+    async def insert(self, dp: DataPoint, *, connection: Any | None = None) -> None:
+        """Insert a datapoint into the current database transaction."""
+        await (connection or self._db).execute(_INSERT_DATAPOINT_SQL, self._insert_params(dp))
+
+    def publish(self, dp: DataPoint) -> None:
+        """Publish a committed datapoint to the in-memory registry."""
         self._points[dp.id] = dp
         self._values[dp.id] = ValueState()
         logger.debug("DataPoint created: %s (%s)", dp.name, dp.id)
+
+    async def create(self, payload: DataPointCreate) -> DataPoint:
+        dp = self.prepare_create(payload)
+        await self._db.execute_and_commit(_INSERT_DATAPOINT_SQL, self._insert_params(dp))
+        self.publish(dp)
         return dp
 
     async def update(self, dp_id: uuid.UUID, payload: DataPointUpdate) -> DataPoint:
         dp = self.get_or_raise(dp_id)
-        updates = payload.model_dump(exclude_none=True)
+        updates = payload.model_dump(exclude_none=True, exclude={"value"})
+        for clearable_field in ("unit", "mqtt_alias"):
+            if clearable_field in payload.model_fields_set:
+                updates[clearable_field] = getattr(payload, clearable_field)
         now = datetime.now(UTC)
 
         old_name = dp.name
@@ -216,7 +235,7 @@ class DataPointRegistry:
 
         await self._db.execute_and_commit(
             """UPDATE datapoints
-               SET name=?, data_type=?, unit=?, tags=?, mqtt_alias=?, persist_value=?, record_history=?, updated_at=?
+               SET name=?, data_type=?, unit=?, tags=?, mqtt_alias=?, persist_value=?, record_history=?, control_class=?, updated_at=?
                WHERE id=?""",
             (
                 dp.name,
@@ -226,6 +245,7 @@ class DataPointRegistry:
                 dp.mqtt_alias,
                 int(dp.persist_value),
                 int(dp.record_history),
+                dp.control_class,
                 now.isoformat(),
                 str(dp_id),
             ),
@@ -246,7 +266,12 @@ class DataPointRegistry:
 
     async def delete(self, dp_id: uuid.UUID) -> None:
         self.get_or_raise(dp_id)  # raises KeyError if not found
-        await self._db.execute_and_commit("DELETE FROM datapoints WHERE id=?", (str(dp_id),))
+        async with self._db.transaction():
+            await self._db.execute(
+                "DELETE FROM authz_node_roles WHERE node_type='datapoint' AND node_id=?",
+                (str(dp_id),),
+            )
+            await self._db.execute("DELETE FROM datapoints WHERE id=?", (str(dp_id),))
         del self._points[dp_id]
         del self._values[dp_id]
         logger.debug("DataPoint deleted: %s", dp_id)
@@ -340,6 +365,7 @@ def _row_to_datapoint(row: Any) -> DataPoint:
         mqtt_alias=row["mqtt_alias"],
         persist_value=bool(row["persist_value"]) if row["persist_value"] is not None else True,
         record_history=bool(row["record_history"]) if row["record_history"] is not None else True,
+        control_class=row["control_class"] if "control_class" in row.keys() else "room_local",  # noqa: SIM118 -- sqlite Row membership checks values
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )

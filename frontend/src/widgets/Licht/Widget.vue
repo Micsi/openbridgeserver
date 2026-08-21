@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { datapoints } from '@/api/client'
+import type { WriteContext } from '@/api/client'
 import { useDatapointsStore } from '@/stores/datapoints'
 import type { DataPointValue } from '@/types'
 
@@ -11,13 +12,15 @@ const props = defineProps<{
   statusValue: DataPointValue | null
   editorMode: boolean
   readonly?: boolean
+  writeContext?: WriteContext
 }>()
 
 const dpStore = useDatapointsStore()
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const label     = computed(() => (props.config.label as string) ?? '—')
-const mode      = computed(() => (props.config.mode  as string) ?? 'on_off')
+const label         = computed(() => (props.config.label          as string)  ?? '—')
+const mode          = computed(() => (props.config.mode           as string)  ?? 'on_off')
+const showStateText = computed(() => props.config.show_state_text !== false)
 const hasTw     = computed(() => mode.value === 'tw')
 const hasColor  = computed(() => ['rgb', 'rgbw'].includes(mode.value))
 const hasWhite  = computed(() => mode.value === 'rgbw')
@@ -64,7 +67,10 @@ function getNumber(id: string | null): number | null {
 
 async function write(id: string | null, value: unknown) {
   if (!id || props.editorMode || props.readonly) return
-  try { await datapoints.write(id, value) } catch { /* ignore */ }
+  try {
+    if (props.writeContext) await datapoints.write(id, value, props.writeContext)
+    else await datapoints.write(id, value)
+  } catch { /* ignore */ }
 }
 
 // ── Switch ────────────────────────────────────────────────────────────────────
@@ -377,7 +383,7 @@ onUnmounted(() => {
           :class="{ 'translate-x-6': isOn }"
         />
       </button>
-      <span class="text-xs font-medium" :class="isOn ? 'text-blue-500' : 'text-gray-400'">
+      <span v-if="showStateText" class="text-xs font-medium" :class="isOn ? 'text-blue-500' : 'text-gray-400'">
         {{ isOn ? 'EIN' : 'AUS' }}
       </span>
     </div>
@@ -411,7 +417,7 @@ onUnmounted(() => {
             :class="{ 'translate-x-5': isOn }"
           />
         </button>
-        <span class="text-xs font-medium" :class="isOn ? 'text-blue-500' : 'text-gray-400'">
+        <span v-if="showStateText" class="text-xs font-medium" :class="isOn ? 'text-blue-500' : 'text-gray-400'">
           {{ isOn ? 'EIN' : 'AUS' }}
         </span>
       </div>

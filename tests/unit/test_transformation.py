@@ -12,6 +12,8 @@ Covers:
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from obs.core.transformation import _extract_nested, apply_source_type, apply_value_map
@@ -41,7 +43,7 @@ class TestApplyValueMapBasic:
 class TestApplyValueMapNValues:
     """N-value maps with numeric keys — the primary use case from issue #208."""
 
-    MAP_11 = {
+    MAP_11: ClassVar[dict[str, str]] = {
         "0": "Aus",
         "1": "Initialisierung",
         "2": "Isolationsmessung",
@@ -78,7 +80,7 @@ class TestApplyValueMapFloatNormalisation:
     The lookup must normalise 5.0 → "5" so the map is applied correctly.
     """
 
-    MAP = {"0": "Aus", "5": "Betrieb", "10": "Standby"}
+    MAP: ClassVar[dict[str, str]] = {"0": "Aus", "5": "Betrieb", "10": "Standby"}
 
     def test_float_zero_matches(self):
         assert apply_value_map(0.0, self.MAP) == "Aus"
@@ -116,6 +118,13 @@ class TestApplyValueMapBoolNormalisation:
         # If both "true" and "1" exist, "true" wins (bool key has priority)
         assert apply_value_map(True, {"true": "bool-on", "1": "num-on"}) == "bool-on"
 
+    def test_bool_true_prefers_case_insensitive_true_key_over_numeric(self):
+        assert apply_value_map(True, {"1": "num-on", "TRUE": "bool-on"}) == "bool-on"
+
+    def test_bool_text_key_lookup_is_case_insensitive(self):
+        assert apply_value_map(True, {"TRUE": "on"}) == "on"
+        assert apply_value_map(False, {"FALSE": "off"}) == "off"
+
     def test_bool_no_match_returns_original(self):
         # Neither "true" nor "1" in map → original value returned
         assert apply_value_map(True, {"foo": "bar"}) is True
@@ -144,6 +153,15 @@ class TestApplyValueMapStringValues:
         assert apply_value_map(0, m) == "1"
         assert apply_value_map(1, m) == "0"
 
+    def test_string_lookup_is_case_insensitive(self):
+        m = {"on": "true", "off": "false"}
+        assert apply_value_map("OFF", m) == "false"
+        assert apply_value_map("On", m) == "true"
+
+    def test_exact_key_wins_before_case_insensitive_fallback(self):
+        m = {"off": "lowercase", "OFF": "uppercase"}
+        assert apply_value_map("OFF", m) == "uppercase"
+
 
 # ===========================================================================
 # apply_source_type
@@ -155,7 +173,7 @@ def _run(raw, source_data_type=None, json_key=None, xml_path=None):
         import json
 
         auto = json.loads(raw)
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         auto = raw
     return apply_source_type(raw, auto, source_data_type, json_key, xml_path)
 

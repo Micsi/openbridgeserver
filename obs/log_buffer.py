@@ -22,10 +22,29 @@ _loop: asyncio.AbstractEventLoop | None = None
 _NON_PROPAGATING_LOGGER_NAMES = ("uvicorn.error",)
 _IGNORED_LOGGER_NAMES = {"uvicorn.access"}
 
+# Third-party loggers whose DEBUG output is extremely high-volume with little
+# diagnostic value (e.g. aiosqlite emits two DEBUG lines for every single SQL
+# operation). They are floored at INFO so that enabling DEBUG globally — at
+# startup, via PUT /system/log-level, or via the support debug-log window —
+# does not flood the logs and pin a CPU core. See issue #798.
+_NOISY_DEBUG_LOGGER_NAMES = ("aiosqlite",)
+_NOISY_DEBUG_FLOOR = logging.INFO
+
 
 def get_log_buffer() -> list[dict[str, Any]]:
     """Return a snapshot of the current buffer (newest entry last)."""
     return list(_buffer)
+
+
+def _apply_noisy_logger_floors() -> None:
+    """Pin high-volume third-party loggers to a sane minimum level.
+
+    Setting an explicit level on these loggers makes them ignore the root
+    logger level, so their DEBUG spam is suppressed even while DEBUG is active
+    globally for genuine diagnostics.
+    """
+    for name in _NOISY_DEBUG_LOGGER_NAMES:
+        logging.getLogger(name).setLevel(_NOISY_DEBUG_FLOOR)
 
 
 def set_log_buffer_level(level: int | str) -> None:
@@ -33,6 +52,7 @@ def set_log_buffer_level(level: int | str) -> None:
     logging.getLogger().setLevel(level)
     for handler in _iter_log_buffer_handlers():
         handler.setLevel(level)
+    _apply_noisy_logger_floors()
 
 
 class LogBufferHandler(logging.Handler):
@@ -54,9 +74,11 @@ class LogBufferHandler(logging.Handler):
             # Fire-and-forget WS broadcast — must never block the logging call.
             if _loop is not None and _loop.is_running():
                 _loop.call_soon_threadsafe(_broadcast_nowait, entry)
-        except Exception:
+        except Exception:  # noqa: S110, BLE001
             # During interpreter shutdown sys.meta_path is None and imports/loop
-            # operations raise — a logging handler must never crash its caller.
+            # operations raise — a logging handler must never crash its caller,
+            # and must not log here either (this IS a logging handler; calling
+            # logger.exception() would recursively re-enter this same emit()).
             pass
 
     @classmethod
@@ -74,6 +96,7 @@ class LogBufferHandler(logging.Handler):
             logger = logging.getLogger(logger_name)
             if not logger.propagate:
                 logger.addHandler(handler)
+        _apply_noisy_logger_floors()
 
 
 def _iter_log_buffer_handlers() -> list[LogBufferHandler]:

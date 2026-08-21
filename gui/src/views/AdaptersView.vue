@@ -58,12 +58,16 @@
               v-else-if="newForm.adapter_type === 'KNX'"
               v-model="newForm.config"
             />
+            <MessageConfigForm
+              v-else-if="newForm.adapter_type === 'MESSAGE'"
+              v-model="newForm.config"
+            />
             <template v-else>
               <SchemaForm
                 :schema="newSchema"
                 v-model="newForm.config"
                 :adapter-type="newForm.adapter_type"
-                :exclude="newForm.adapter_type.toLowerCase() === 'zeitschaltuhr' ? ['custom_holidays'] : []"
+                :exclude="excludedSchemaFields(newForm.adapter_type)"
               />
               <ZeitschaltuhrCustomHolidaysEditor
                 v-if="newForm.adapter_type.toLowerCase() === 'zeitschaltuhr'"
@@ -122,7 +126,7 @@
 
         <!-- Status-Detail bei Warning/Error -->
         <div
-          v-if="a.severity && a.severity !== 'ok' && a.status_detail"
+          v-if="a.severity && a.severity !== 'ok' && (a.status_detail || a.status_detail_code)"
           :class="[
             'mx-5 mb-3 flex items-start gap-2 p-3 rounded-lg text-sm',
             a.severity === 'error'
@@ -135,7 +139,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
           </svg>
-          <span>{{ a.status_detail }}</span>
+          <span>{{ statusDetailText(a) }}</span>
         </div>
 
         <!-- Expanded Config Panel -->
@@ -171,12 +175,16 @@
                 v-else-if="a.adapter_type === 'KNX'"
                 v-model="drafts[a.id].config"
               />
+              <MessageConfigForm
+                v-else-if="a.adapter_type === 'MESSAGE'"
+                v-model="drafts[a.id].config"
+              />
               <template v-else>
                 <SchemaForm
                   :schema="schemas[a.adapter_type]"
                   v-model="drafts[a.id].config"
                   :adapter-type="a.adapter_type"
-                  :exclude="a.adapter_type.toLowerCase() === 'zeitschaltuhr' ? ['custom_holidays'] : []"
+                  :exclude="excludedSchemaFields(a.adapter_type)"
                 />
                 <ZeitschaltuhrCustomHolidaysEditor
                   v-if="a.adapter_type.toLowerCase() === 'zeitschaltuhr'"
@@ -204,11 +212,11 @@
               <path v-if="feedback[a.id].success" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
               <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
             </svg>
-            {{ feedback[a.id].detail }}
+            {{ feedbackText(feedback[a.id]) }}
           </div>
 
           <div v-if="!isDemo" class="flex gap-3 flex-wrap">
-            <button v-if="a.adapter_type !== 'ANWESENHEITSSIMULATION' && a.adapter_type !== 'SNMP'" @click="testConnection(a)" class="btn-secondary btn-sm" :disabled="busy[a.id] === 'test'"
+            <button v-if="a.adapter_type !== 'ANWESENHEITSSIMULATION' && a.adapter_type !== 'SNMP' && a.adapter_type !== 'MESSAGE'" @click="testConnection(a)" class="btn-secondary btn-sm" :disabled="busy[a.id] === 'test'"
               :title="$t('adapters.testConnectionTitle')">
               <Spinner v-if="busy[a.id] === 'test'" size="xs" color="slate" />
               {{ $t('adapters.testConnection') }}
@@ -402,10 +410,39 @@ import ZeitschaltuhrCustomHolidaysEditor from '@/components/adapters/Zeitschaltu
 import AnwesenheitDatapointSelector from '@/components/adapters/AnwesenheitDatapointSelector.vue'
 import AnwesenheitConfigForm from '@/components/adapters/AnwesenheitConfigForm.vue'
 import KnxConfigForm        from '@/components/adapters/KnxConfigForm.vue'
+import MessageConfigForm    from '@/components/adapters/MessageConfigForm.vue'
 import Modal         from '@/components/ui/Modal.vue'
-import { adapterDotClass as dotClass, adapterBadgeVariant as statusBadgeVariant, adapterStatusLabel as statusLabel } from '@/utils/adapterStatus'
+import { adapterDotClass as dotClass, adapterBadgeVariant as statusBadgeVariant, adapterStatusLabel as statusLabel, adapterStatusDetailText } from '@/utils/adapterStatus'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
+const statusDetailText = (a) => adapterStatusDetailText(a, t, te)
+// Fields rendered by a dedicated component instead of the generic SchemaForm.
+function excludedSchemaFields(adapterType) {
+  const type = adapterType.toLowerCase()
+  if (type === 'zeitschaltuhr') return ['custom_holidays']
+  if (type === 'onewire') return ['aliases'] // edited inline via the binding-form sensor scan
+  return []
+}
+// Subset of excludedSchemaFields() that is edited entirely outside drafts[a.id].config
+// (e.g. onewire aliases, mutated via a separate PATCH from the binding-form sensor scan)
+// and can therefore go stale in the draft — saveInstance() merges the live value back in
+// for these only. zeitschaltuhr's custom_holidays is excluded from SchemaForm too, but its
+// dedicated editor writes directly into drafts[a.id].config, so merging the live value here
+// would discard the user's in-form edit instead of protecting it.
+function fieldsEditedOutsideDraft(adapterType) {
+  return adapterType.toLowerCase() === 'onewire' ? ['aliases'] : []
+}
+// Issue #779: TestResult / action feedback may carry a backend detail_code
+// (adapters.testResult.*) with params; translate it, else show the raw detail.
+function feedbackText(fb) {
+  if (!fb) return ''
+  const code = fb.detail_code
+  if (code) {
+    const key = `adapters.testResult.${code}`
+    if (te(key)) return t(key, fb.detail_params ?? {})
+  }
+  return fb.detail ?? ''
+}
 const store          = useAdapterStore()
 const auth           = useAuthStore()
 const isDemo         = computed(() => auth.username === 'demo')
@@ -627,9 +664,24 @@ async function saveInstance(a) {
   busy[a.id] = 'save'
   delete feedback[a.id]
   try {
+    // Fields in fieldsEditedOutsideDraft() are edited outside this form (e.g. onewire
+    // aliases via the binding-form sensor scan) and can have changed on the backend
+    // since drafts[a.id] was initialized. The 10 s background poll is silent and only
+    // patches status fields (see stores/adapters.js), so it cannot be relied on to
+    // have picked up such a change — refresh explicitly and merge the live value for
+    // those fields instead of the possibly-stale draft copy, so this save can't
+    // clobber them. Skipped for adapter types without such fields to avoid an
+    // unnecessary round-trip/loading flash on every save.
+    const excluded = fieldsEditedOutsideDraft(a.adapter_type)
+    if (excluded.length) await refreshInstances()
+    const live = store.instances.find(i => i.id === a.id) ?? a
+    const config = { ...drafts[a.id].config }
+    for (const key of excluded) {
+      if (key in live.config) config[key] = live.config[key]
+    }
     await store.updateInstance(a.id, {
       name:    drafts[a.id].name,
-      config:  drafts[a.id].config,
+      config,
       enabled: drafts[a.id].enabled,
     })
     feedback[a.id] = { success: true, detail: t('adapters.savedReconnected') }

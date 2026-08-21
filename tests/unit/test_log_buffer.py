@@ -23,7 +23,7 @@ def clear_buffer():
     Integration tests may leave a LogBufferHandler on the root logger. Without cleanup,
     log messages propagate to it and produce duplicate buffer entries in unit tests.
     """
-    from obs.log_buffer import LogBufferHandler, _NON_PROPAGATING_LOGGER_NAMES, _buffer
+    from obs.log_buffer import _NON_PROPAGATING_LOGGER_NAMES, LogBufferHandler, _buffer
 
     def _remove_handlers():
         loggers = [logging.getLogger(), *(logging.getLogger(name) for name in _NON_PROPAGATING_LOGGER_NAMES)]
@@ -66,6 +66,37 @@ def test_emit_adds_entry_to_buffer():
     assert entries[0]["level"] == "INFO"
     assert entries[0]["logger"] == "test.capture"
     assert "hello log viewer" in entries[0]["message"]
+
+
+def test_emit_swallows_broadcast_scheduling_failure(monkeypatch):
+    """``emit()`` must never crash its caller. If the fire-and-forget WS broadcast
+    scheduling itself raises (e.g. ``call_soon_threadsafe`` failing during interpreter
+    shutdown chaos, per the noqa comment on the except clause), the exception must be
+    swallowed silently — but the entry, already appended before the broadcast attempt,
+    must still land in the buffer.
+    """
+    import obs.log_buffer as log_buffer_module
+    from obs.log_buffer import get_log_buffer
+
+    class _FlakyLoop:
+        def is_running(self):
+            return True
+
+        def call_soon_threadsafe(self, *args, **kwargs):
+            raise RuntimeError("simulated scheduling failure during shutdown")
+
+    monkeypatch.setattr(log_buffer_module, "_loop", _FlakyLoop())
+
+    logger = logging.getLogger("test.emit_broadcast_failure")
+    logger.addHandler(_make_handler())
+    logger.setLevel(logging.DEBUG)
+
+    # Must not raise despite the broadcast scheduling blowing up.
+    logger.info("still buffered despite broadcast failure")
+
+    entries = get_log_buffer()
+    assert len(entries) == 1
+    assert "still buffered despite broadcast failure" in entries[0]["message"]
 
 
 def test_entry_contains_all_fields():
@@ -288,3 +319,72 @@ def test_broadcast_nowait_without_ws_manager_is_silent():
 
     # No WS manager initialised — should silently return
     _broadcast_nowait({"ts": "x", "level": "INFO", "logger": "test", "message": "x"})
+
+
+# ---------------------------------------------------------------------------
+# Noisy-logger floor (issue #798) — keep DEBUG from flooding via aiosqlite et al.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def restore_noisy_levels():
+    """Save/restore explicit levels of the floored loggers around a test."""
+    from obs.log_buffer import _NOISY_DEBUG_LOGGER_NAMES
+
+    saved = {name: logging.getLogger(name).level for name in _NOISY_DEBUG_LOGGER_NAMES}
+    yield
+    for name, level in saved.items():
+        logging.getLogger(name).setLevel(level)
+
+
+def test_apply_noisy_logger_floors_sets_info(restore_noisy_levels):
+    from obs.log_buffer import _NOISY_DEBUG_FLOOR, _NOISY_DEBUG_LOGGER_NAMES, _apply_noisy_logger_floors
+
+    # Force a logger below the floor first to prove the call raises it.
+    for name in _NOISY_DEBUG_LOGGER_NAMES:
+        logging.getLogger(name).setLevel(logging.DEBUG)
+
+    _apply_noisy_logger_floors()
+
+    for name in _NOISY_DEBUG_LOGGER_NAMES:
+        assert logging.getLogger(name).level == _NOISY_DEBUG_FLOOR
+
+
+def test_set_log_buffer_level_debug_still_floors_noisy_loggers(restore_noisy_levels):
+    """Enabling DEBUG globally must not let aiosqlite DEBUG spam through."""
+    from obs.log_buffer import _NOISY_DEBUG_FLOOR, _NOISY_DEBUG_LOGGER_NAMES, get_log_buffer, set_log_buffer_level
+
+    root = logging.getLogger()
+    root.addHandler(_make_handler(level=logging.DEBUG))
+
+    set_log_buffer_level("DEBUG")
+    assert root.level == logging.DEBUG
+
+    noisy = _NOISY_DEBUG_LOGGER_NAMES[0]
+    assert logging.getLogger(noisy).level == _NOISY_DEBUG_FLOOR
+
+    # A DEBUG record on the noisy logger is filtered at the logger; a DEBUG record
+    # on a normal logger still reaches the buffer.
+    logging.getLogger(noisy).debug("sqlite-spam-should-be-dropped")
+    logging.getLogger("some.app.module").debug("app-debug-should-pass")
+
+    messages = [e["message"] for e in get_log_buffer()]
+    assert "sqlite-spam-should-be-dropped" not in messages
+    assert "app-debug-should-pass" in messages
+
+
+def test_install_applies_noisy_logger_floor(restore_noisy_levels):
+    import asyncio
+
+    from obs.log_buffer import _NOISY_DEBUG_FLOOR, _NOISY_DEBUG_LOGGER_NAMES, LogBufferHandler
+
+    for name in _NOISY_DEBUG_LOGGER_NAMES:
+        logging.getLogger(name).setLevel(logging.DEBUG)
+
+    loop = asyncio.new_event_loop()
+    try:
+        LogBufferHandler.install(loop, level=logging.DEBUG)
+        for name in _NOISY_DEBUG_LOGGER_NAMES:
+            assert logging.getLogger(name).level == _NOISY_DEBUG_FLOOR
+    finally:
+        loop.close()

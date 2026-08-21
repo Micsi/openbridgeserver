@@ -51,6 +51,23 @@ def get_class(adapter_type: str) -> type | None:
     return _adapters.get(adapter_type)
 
 
+def supports_delegation(adapter_type: str, capability: Any) -> bool:
+    """Return whether *adapter_type* explicitly delegates *capability*.
+
+    Unknown adapter types, missing declarations, and malformed declarations are
+    denied.  This keeps authorization fail-closed for legacy and future adapters.
+    """
+    from obs.adapters.base import AdapterDelegationCapability
+
+    if not isinstance(capability, AdapterDelegationCapability):
+        return False
+    cls = _adapters.get(adapter_type)
+    declared = getattr(cls, "delegation_capabilities", None) if cls is not None else None
+    if not isinstance(declared, frozenset) or not all(isinstance(item, AdapterDelegationCapability) for item in declared):
+        return False
+    return capability in declared
+
+
 def all_types() -> list[str]:
     return list(_adapters.keys())
 
@@ -308,7 +325,7 @@ def load_valid_bindings(rows: list[Any]) -> tuple[list[Any], list[BindingLoadIss
     for row in rows:
         try:
             bindings.append(_row_to_binding(row))
-        except Exception as exc:
+        except (KeyError, ValueError, TypeError) as exc:
             issue = BindingLoadIssue(
                 binding_id=_row_value(row, "id") or "<unknown>",
                 adapter_instance_id=_row_value(row, "adapter_instance_id"),
@@ -333,32 +350,59 @@ async def reload_instance_from_rows(instance: Any, rows: list[Any]) -> tuple[lis
 
 async def _publish_binding_load_status(instance: Any, issues: list[BindingLoadIssue]) -> None:
     if not issues:
-        if getattr(instance, "last_detail", "").startswith(_BINDING_LOAD_DETAIL_PREFIX):
+        # Clear a previously raised binding-load warning. Match on the i18n code
+        # (issue #779) and fall back to the legacy detail prefix for safety.
+        is_binding_warning = getattr(instance, "last_detail_code", None) == "invalidBindingsSkipped" or getattr(
+            instance,
+            "last_detail",
+            "",
+        ).startswith(_BINDING_LOAD_DETAIL_PREFIX)
+        if is_binding_warning:
             await _set_instance_status(instance, "ok", "")
         return
 
-    detail = _format_binding_load_detail(issues)
-    await _set_instance_status(instance, "warning", detail)
+    examples = _format_binding_load_examples(issues)
+    detail = f"{_BINDING_LOAD_DETAIL_PREFIX}: {len(issues)} invalid binding(s) skipped ({examples})"
+    await _set_instance_status(
+        instance,
+        "warning",
+        detail,
+        code="invalidBindingsSkipped",
+        params={"count": len(issues), "examples": examples},
+    )
+
+
+def _format_binding_load_examples(issues: list[BindingLoadIssue]) -> str:
+    examples = "; ".join(f"{i.binding_id}: {i.reason}" for i in issues[:3])
+    suffix = f"; +{len(issues) - 3} more" if len(issues) > 3 else ""
+    return f"{examples}{suffix}"
 
 
 def _format_binding_load_detail(issues: list[BindingLoadIssue]) -> str:
-    examples = "; ".join(f"{i.binding_id}: {i.reason}" for i in issues[:3])
-    suffix = f"; +{len(issues) - 3} more" if len(issues) > 3 else ""
-    return f"{_BINDING_LOAD_DETAIL_PREFIX}: {len(issues)} invalid binding(s) skipped ({examples}{suffix})"
+    return f"{_BINDING_LOAD_DETAIL_PREFIX}: {len(issues)} invalid binding(s) skipped ({_format_binding_load_examples(issues)})"
 
 
-async def _set_instance_status(instance: Any, severity: str, detail: str) -> None:
+async def _set_instance_status(
+    instance: Any,
+    severity: str,
+    detail: str,
+    *,
+    code: str | None = None,
+    params: dict | None = None,
+) -> None:
     publish = getattr(instance, "_publish_status", None)
     if publish is not None:
-        await publish(getattr(instance, "connected", False), detail=detail, severity=severity)
+        await publish(getattr(instance, "connected", False), detail=detail, severity=severity, code=code, params=params)
         return
     instance._last_severity = severity
     instance._last_detail = detail
+    instance._last_detail_code = code
+    instance._last_detail_params = params or {}
 
 
 def _row_value(row: Any, key: str) -> str | None:
     try:
         value = row[key]
-    except Exception:
+    except (KeyError, IndexError):
         return None
     return str(value) if value is not None else None

@@ -1,6 +1,7 @@
 # open bridge multiprotocol ai server
 
-![**open bridge server** Logo](logo/obs_logo_dark.svg)
+![**open bridge server** Logo](logo/obs_logo_light.svg#gh-light-mode-only)
+![**open bridge server** Logo](logo/obs_logo_dark.svg#gh-dark-mode-only)
 
 ![Version](https://img.shields.io/github/v/release/abeggled/openbridgeserver?style=for-the-badge)
 [![Tests][tests-badge]][tests]
@@ -50,15 +51,26 @@ open bridge verbindet verschiedene Gebäudetechnik-Protokolle zu einem einheitli
 13. [Live-Verbindung (WebSocket)](#live-verbindung-websocket)
 14. [Logik-Editor](#logik-editor)
 15. [Adapter-Konfiguration](#adapter-konfiguration)
+    - [KNX-Adapter](#knx-adapter)
+    - [Modbus-TCP-Adapter](#modbus-tcp-adapter)
+    - [Modbus-RTU-Adapter](#modbus-rtu-adapter)
+    - [1-Wire-Adapter](#1-wire-adapter)
+    - [MQTT-Adapter (externer Broker)](#mqtt-adapter-externer-broker)
+    - [MESSAGE-Adapter](#message-adapter)
+    - [Home-Assistant-Adapter](#home-assistant-adapter)
+    - [ioBroker-Adapter](#iobroker-adapter)
+    - [SNMP-Adapter](#snmp-adapter)
+    - [Anwesenheitssimulation-Adapter](#anwesenheitssimulation-adapter)
+    - [Zeitschaltuhr-Adapter](#zeitschaltuhr-adapter)
 16. [MQTT-Topics](#mqtt-topics)
 17. [Datentypen](#datentypen)
 18. [Einstellungen](#einstellungen)
 19. [Hilfsskripte](#hilfsskripte)
 20. [Visualisierung (Visu)](#visualisierung-visu)
-   - [Grundriss- und Anlagenschema-Widget](#grundriss--und-anlagenschema-widget)
+    - [Grundriss- und Anlagenschema-Widget](#grundriss--und-anlagenschema-widget)
 21. [Entwicklung](#entwicklung)
-   - [Lokale Entwicklung mit PyCharm](#lokale-entwicklung-mit-pycharm)
-   - [Lokale Git-Hooks (Pre-Push Gate)](#lokale-git-hooks-pre-push-gate)
+    - [Lokale Entwicklung mit PyCharm](#lokale-entwicklung-mit-pycharm)
+    - [Lokale Git-Hooks (Pre-Push Gate)](#lokale-git-hooks-pre-push-gate)
 
 ---
 
@@ -68,15 +80,27 @@ Das LXC-Template enthält ein vollständiges Ubuntu 26.04-System mit **open brid
 
 **Schritt 1 — Template herunterladen**
 
-1. Auf der [Release-Seite](../../releases/latest) die URL der `.tar.zst`-Datei sowie den SHA512-Hash aus dem Abschnitt **LXC Template** kopieren.
+1. Auf der [Release-Seite](../../releases/latest) die Assets aufklappen und via rechter Maustaste die URL der `.tar.zst`-Datei der gewünschten Architektur kopieren:
+
+   ![ProxmoxDownloadFromURL](docs/Release-Assets.png)
+
 2. In der Proxmox-Weboberfläche zu **Datacenter → Storage → local → CT Templates** navigieren.
 3. **Download from URL** klicken.
 4. Die kopierte URL einfügen und auf **Query URL** klicken.
-5. Als Hash-Algorithmus **SHA512** auswählen.
-6. Den kopierten Hash einfügen.
-7. Auf **Download** klicken.
+5. Wenn nicht bereits aktiviert, im Popup unten rechts **Advanced** aktivieren.
+6. Als Hash-Algorithmus **SHA256** auswählen.
+7. Auf der [Release-Seite](../../releases/latest) im Abschnitt **Checksums** via Copy-Button die Checksumme des gewünschten Templates kopieren:
 
-![ProxmoxDownloadFromURL](docs/ProxmoxDownloadFromURL.png)
+   ![ProxmoxDownloadFromURL](docs/Release-Asset-Checksums.png)
+
+   Achtung: Wenn die Checksummen direkt aus der Spalte neben den Assets kopiert wurden, muss der Prefix `SHA256:` entfernt werden, da Proxmox diesen nicht erwartet!
+8. Zurück auf der Proxmox-Weboberfläche den kopierten Hash unter **Checksum** einfügen.
+9. Das sollte jetzt beispielsweise so aussehen:
+
+   ![ProxmoxDownloadFromURL](docs/ProxmoxDownloadFromURL.png)
+
+10. Auf **Download** klicken.
+
 
 **Schritt 2 — Container erstellen**
 
@@ -91,8 +115,13 @@ Das LXC-Template enthält ein vollständiges Ubuntu 26.04-System mit **open brid
 |---|---|
 | **open bridge server** Weboberfläche + API | `http://<container-ip>:8080` |
 
-**Standardzugang:** Benutzername `admin`, Passwort `admin`
-⚠️ Das Passwort sofort nach der ersten Anmeldung ändern (Einstellungen → Passwort).
+OBS liefert bewusst keine Standard-Zugangsdaten aus. Der erste Start initialisiert die
+Datenbank und stoppt dann mit einem Einrichtungshinweis. Lege genau einen Eigentümer
+lokal an, bevor der Dienst neu gestartet wird:
+
+```bash
+obs-admin auth first-owner <benutzername> --password-stdin
+```
 
 **Sicherheitskonfiguration** (erforderlich):
 
@@ -132,6 +161,9 @@ mqtt:
 database:
   path: /data/obs.db      # Datenbankdatei
 
+message_archive:
+  path: /data/archives/messages.sqlite3  # separate Archiv-DB für Meldungsarchive
+
 ringbuffer:
   storage: file               # Änderungsprotokoll: file-only (Datei)
   max_entries: 10000          # Maximale Anzahl Einträge
@@ -148,6 +180,40 @@ security:
 ```
 
 > **Hinweis:** Der `mqtt`-Abschnitt betrifft den **internen** Mosquitto-Broker. Externe MQTT-Broker werden als separate Adapter-Instanzen eingerichtet (siehe [MQTT-Adapter](#mqtt-adapter-externer-broker)).
+
+### Offline-Administration mit `obs-admin`
+
+Für Support- und Fehlerfälle gibt es ein Offline-CLI, das direkt auf die SQLite-Konfigurationsdatenbank zugreift und keinen laufenden OBS-HTTP-Server benötigt.
+
+Im LXC-Template wird der Befehl direkt im Container ausgeführt:
+
+```bash
+obs-admin status
+obs-admin db info
+obs-admin adapters list
+obs-admin adapters disable <instanz-id-oder-name>
+obs-admin adapters enable <instanz-id-oder-name>
+obs-admin bindings list --adapter <instanz-id-oder-name>
+obs-admin bindings disable <binding-id>
+obs-admin loglevel set DEBUG
+obs-admin support-package create --output /tmp/obs-support.json
+```
+
+Im Docker-Betrieb wird der Befehl auf dem Host im OBS-Container ausgeführt, zum Beispiel:
+
+```bash
+docker compose exec obs obs-admin status
+docker compose exec obs obs-admin adapters disable <instanz-id-oder-name>
+```
+
+Falls die Datenbank nicht am normalen Pfad liegt, kann sie explizit angegeben werden:
+
+```bash
+obs-admin --db /data/obs.db adapters list --json
+obs-admin --db /data/obs.db db backup --output /var/backups/obs/
+```
+
+Schreibende Befehle erzeugen standardmäßig vor der Änderung ein SQLite-Backup neben der Datenbank. Das Offline-Supportpaket verwendet dieselbe zentrale Sanitizing-Logik wie die Support-API und redigiert Secrets, Tokens, Passwörter, Endpunkte und vollständige Pfade.
 
 ### URL-Ziel-Allowlist für interne Dienste
 
@@ -284,7 +350,7 @@ Optional: eine Tabelle, die Rohwerte auf andere Werte abbildet — nützlich z. 
 { "value_map": { "0": "Aus", "1": "Ein", "2": "Standby" } }
 ```
 
-Der Schlüssel ist immer ein String (der Rohwert wird intern umgewandelt). Gibt es keinen passenden Eintrag, wird der Originalwert unverändert weitergegeben. `value_map` wird nach `value_formula` angewendet.
+Der Schlüssel ist immer ein String (der Rohwert wird intern umgewandelt). Die Zuordnung prüft zuerst den exakten Schlüssel und danach ohne Beachtung der Gross-/Kleinschreibung, sodass `OFF` auch einen Eintrag wie `"off"` trifft. Gibt es keinen passenden Eintrag, wird der Originalwert unverändert weitergegeben. `value_map` wird nach `value_formula` angewendet.
 
 **Sendefilter** (nur für DEST/BOTH, werden der Reihe nach geprüft):
 
@@ -428,7 +494,8 @@ Der Parameter `q` durchsucht sowohl den Namen als auch die ID des Datenpunkts.
 - Pagination über `pagination.limit` + `pagination.offset`, Sortierung über `sort.field` (`id|ts`) und `sort.order` (`asc|desc`).
 - Das versionierte Metadatenmodell ist dokumentiert in `docs/ringbuffer-metadata-model-v1.md` (`metadata_version: 1`).
 
-`POST /api/v1/ringbuffer/export/csv` nutzt denselben Request-Body wie `/query`, exportiert aber immer die vollständige gefilterte Ergebnismenge (Pagination der UI wird ignoriert).  
+`POST /api/v1/ringbuffer/export/csv` nutzt denselben Request-Body wie `/query`, exportiert aber immer die vollständige gefilterte Ergebnismenge (Pagination der UI wird ignoriert).
+
 CSV-Spalten: `id`, `ts`, `datapoint_id`, `name`, `topic`, `old_value_json`, `new_value_json`, `source_adapter`, `quality`, `metadata_version`, `metadata_json`.
 
 ---
@@ -558,7 +625,11 @@ Der Logik-Editor ermöglicht das visuelle Erstellen von Automatisierungsregeln �
 
 Der Graph kann auch manuell über den **▶ Ausführen**-Button gestartet werden.
 
-**Zustände** (Hysterese, Statistik, Betriebsstunden, Min/Max-Tracker, Verbrauchszähler) werden in der Datenbank gespeichert und überleben einen Neustart.
+**Zustände** (Hysterese, Speicher, Statistik, Betriebsstunden, Min/Max-Tracker, Verbrauchszähler) werden in der Datenbank gespeichert und überleben einen Neustart.
+
+Direkte Rückkopplungen werden im Editor validiert und beim Verbinden oder Speichern blockiert. Für kontrollierte Rückkopplungen wird ein **Speicher**-Block als explizite Tick-Grenze verwendet: Er gibt den Wert aus dem vorherigen Graph-Lauf aus und speichert den aktuellen Eingang für den nächsten Lauf.
+
+Ein oder mehrere Blöcke lassen sich markieren (Shift + Rahmen aufziehen, oder Strg/Cmd-Klick für einzelne Blöcke) und per **Kopieren** / **Einfügen** (bzw. Strg/Cmd+C / Strg/Cmd+V) inklusive ihrer Einstellungen vervielfältigen — auch seitenübergreifend, indem man vor dem Einfügen auf ein anderes Logikblatt wechselt. Eingefügte Blöcke erscheinen leicht versetzt und bereits markiert, sodass sie sich sofort an die gewünschte Stelle verschieben lassen.
 
 ---
 
@@ -578,8 +649,14 @@ Der Graph kann auch manuell über den **▶ Ausführen**-Button gestartet werden
 | **ODER** | A, B | Aus | Wahr wenn **mindestens ein** Eingang wahr ist. |
 | **NICHT** | Ein | Aus | Kehrt den Eingang um. |
 | **EXKLUSIV-ODER** | A, B | Aus | Wahr wenn **genau ein** Eingang wahr ist. |
+| **Speicher** | Ein, Zurücksetzen | Aus | Gibt den gespeicherten Wert aus dem vorherigen Graph-Lauf aus und speichert den aktuellen Eingang für den nächsten Lauf. Für kontrollierte Rückkopplungen verwenden. |
 | **Vergleich** | A, B | Ergebnis | Vergleicht zwei Werte. Auswahl: `>` `<` `=` `>=` `<=` `≠` |
 | **Hysterese** | Wert | Aus | Schaltet ein wenn der Wert über „Schwelle EIN" steigt, und erst wieder aus wenn er unter „Schwelle AUS" fällt. Verhindert schnelles Hin- und Herschalten. |
+| **Klemme** | IN 1, IN 2, … (2-30) | Aus | Bündelt mehrere unabhängige Wertquellen auf einen gemeinsamen Ausgang: wer zuletzt einen neuen Wert liefert, wird durchgereicht (Edomi-Klemme). Ersetzt das Verdrahten mehrerer Quellen auf denselben Eingang eines anderen Blocks — das wird nicht unterstützt und beim Verbinden/Speichern blockiert. |
+| **Entscheidung** | Wert | 2-n boolesche Ausgänge | Prüft mehrere unabhängige Bedingungen gegen einen Eingang. Jeder Ausgang hat eigenen Namen und eigene Bedingung; mehrere Ausgänge können gleichzeitig wahr sein. |
+| **Zuordnung** | Wert | Ergebnis | Prüft geordnete Regeln und gibt das Ergebnis der ersten passenden Regel aus. Ausgangstyp wählbar als Bool, Int, Float oder String; optionaler Sonst-Wert für nicht passende Eingänge. |
+
+Entscheidung und Zuordnung teilen dieselben Bedingungsoperatoren: gleich, ungleich, größer/kleiner als, größer/kleiner oder gleich, Wertebereich, Textvergleich, enthält, beginnt mit, endet mit und regulärer Ausdruck.
 
 #### Datenpunkt
 
@@ -784,6 +861,11 @@ Zeigt berechnete Zwischenwerte direkt auf den Blöcken an — live und automatis
 2. **🔍 Debug**-Button in der Werkzeugleiste klicken
 3. Jeder Block zeigt ein gelbes Band mit seinen aktuellen Ausgangswerten
 4. Die Anzeige aktualisiert sich automatisch nach jeder Ausführung (Wertänderung, Zeitplan, manueller Start)
+5. Ein Klick auf einen Block öffnet dessen Konfigurationspanel — im Debug-Modus mit einem Tab
+   **Debug-Werte** (bei Objekt-Lesen/-Schreiben an die vorhandene Tab-Leiste angehängt, bei allen
+   anderen Blöcken neben einem Tab **Einstellungen**), der Block bleibt also während einer
+   Debug-Sitzung konfigurierbar. Der Tab **Debug-Werte** zeigt die vollständigen Ein- und Ausgänge
+   sowie Ausführungs-Metadaten und erlaubt temporäre Eingangs-Überschreibungen für einen Testlauf
 
 | Typ | Darstellung |
 |---|---|
@@ -1139,23 +1221,196 @@ Gleiche Verknüpfungs-Konfiguration wie TCP. Zusätzliche Instanz-Felder: `port`
 
 ### 1-Wire-Adapter
 
-Liest Temperatursensoren über den Linux-Systemordner (`/sys/bus/w1/…`). Auf Windows funktioniert der Adapter nicht, startet aber ohne Fehlermeldung.
+Verbindet sich mit einem **externen** `owserver`-Prozess (dem [OWFS](https://owfs.org)-1-Wire-Bus-Server) über das `pyownet`-TCP-Protokoll — dieselbe "OBS ist Client eines externen Diensts"-Beziehung, die der MQTT-Adapter zu Mosquitto hat. `owserver` abstrahiert USB-Busmaster (einfache USB-Sticks wie den DS9490, die mehrfachen Kanäle des ElabNET PBM) und den nativen Kernel-1-Wire-Bus hinter einem einheitlichen Gerätebaum — der Adapter selbst muss nie wissen, welche Hardware tatsächlich dahintersteckt.
+
+`owserver` wird **nicht von OBS selbst gestartet** — es läuft als optionaler Docker-Compose-Sidecar oder, im Proxmox-LXC-Template, als systemd-Dienst. Die komplette Einrichtung besteht aus fünf Schritten — die ersten drei finden auf dem Proxmox-/Docker-**Host** statt, die letzten beiden sind OBS-seitige Konfiguration:
+
+1. 1-Wire-Gerät(e) identifizieren — Busmaster und/oder PBM
+2. udev-Regeln für stabile Gerätepfade anlegen
+3. Gerät(e) an den Container durchreichen
+4. `/etc/owfs.conf` konfigurieren
+5. 1-Wire-Adapter in OBS konfigurieren
+
+#### 1. Gerät(e) identifizieren
+
+Zuerst mit `lsusb` prüfen, welche Hardware überhaupt angeschlossen ist — nicht jeder Host hat beide Typen gleichzeitig. Ein einfacher USB-Busmaster (DS9490R, DS1490F, …) meldet sich mit der festen VID:PID `04fa:2490`, das ElabNET PBM als FTDI-Chip mit Vendor `0403` (die genaue Produkt-ID hängt von der jeweiligen FTDI-Chip-Variante ab):
+
+```bash
+lsusb
+```
+
+Beispielhafte Ausgabe für einen Host mit beiden Gerätetypen:
+
+```
+$ lsusb
+Bus 001 Device 004: ID 04fa:2490 Dallas Semiconductor DS1490F 2-in-1 Fob, 1-Wire adapter
+Bus 002 Device 004: ID 0403:6015 Future Technology Devices International, Ltd Bridge(I2C/SPI/UART/FIFO)
+```
+
+Anschließend für das tatsächlich vorhandene Gerät Vendor-/Produkt-/Seriennummer auslesen — beim Busmaster über den `/dev/bus/usb/<bus>/<device>`-Pfad aus `lsusb` (hier `001`/`004`), beim PBM entweder direkt über den von udev bereits angelegten `/dev/serial/by-id/...`-Eintrag (`ls /dev/serial/by-id/`) oder über den zugewiesenen `/dev/ttyUSB*`:
+
+```bash
+# einfacher USB-Busmaster (nur falls oben mit 04fa:2490 in lsusb gelistet)
+udevadm info -a -n /dev/bus/usb/001/004 | grep -E 'idVendor|idProduct|serial' | head -5
+
+# PBM / Serial-Gerät (nur falls oben mit 0403:xxxx in lsusb gelistet)
+udevadm info -a -n /dev/serial/by-id/usb-ElabNET_PBM01-USB_BM_00000401-if00-port0 | grep -E 'idVendor|idProduct|serial' | head -5
+```
+
+Beispielhafte Ausgabe für obige Geräte:
+
+```
+$ udevadm info -a -n /dev/bus/usb/001/004 | grep -E 'idVendor|idProduct|serial' | head -5
+    ATTR{idProduct}=="2490"
+    ATTR{idVendor}=="04fa"
+    ATTRS{idProduct}=="0024"
+    ATTRS{idVendor}=="8087"
+
+$ ls /dev/serial/by-id/
+usb-ElabNET_PBM01-USB_BM_00000401-if00-port0
+
+$ udevadm info -a -n /dev/serial/by-id/usb-ElabNET_PBM01-USB_BM_00000401-if00-port0 | grep -E 'idVendor|idProduct|serial' | head -5
+    SUBSYSTEMS=="usb-serial"
+    ATTRS{idProduct}=="6015"
+    ATTRS{idVendor}=="0403"
+    ATTRS{serial}=="BM_00000401"
+    ATTRS{idProduct}=="0024"
+```
+
+Zwei Dinge fallen dabei auf:
+
+- Beim Busmaster taucht **kein** `serial`-Attribut auf — dieses Fob-Gerät meldet schlicht keine Seriennummer. Die Regel kann sich hier also nur auf `idVendor`/`idProduct` stützen; bei mehreren identischen Busmastern am selben Host reicht das allein nicht zur Unterscheidung (dann stattdessen z. B. über den festen `KERNELS`/Bus-Pfad matchen).
+- Beim PBM zeigt `udevadm info -a` `ATTRS{...}` (Plural), nicht `ATTR{...}` — `idVendor`/`idProduct`/`serial` sitzen auf dem übergeordneten USB-Gerät in der sysfs-Kette, nicht auf dem `tty`-Gerät selbst. In der udev-Regel muss deshalb ebenfalls `ATTRS{}` (Attribut eines Parent-Geräts) statt `ATTR{}` (Attribut des Geräts selbst) verwendet werden — sonst matcht die Regel nie, weil das `tty`-Gerät diese Attribute gar nicht besitzt. Beim einfachen USB-Busmaster (`SUBSYSTEM=="usb"` matcht direkt das Busmaster-Gerät selbst) ist dagegen `ATTR{}` richtig.
+
+`serial` bevorzugen, wenn das Gerät eine Seriennummer meldet — anders als `idVendor`/`idProduct` ist sie pro physischem Gerät eindeutig, sodass die Regel auch bei einem zweiten Gerät desselben Modells noch das richtige trifft.
+
+#### 2. udev-Regeln für stabile Gerätepfade anlegen
+
+Der Gerätepfad eines 1-Wire-Busmasters ist über Reboots hinweg oder beim Anschließen weiterer USB-/Serial-Geräte nicht garantiert stabil:
+
+- Ein einfacher USB-Busmaster (z. B. DS9490) meldet sich als `/dev/bus/usb/<bus>/<device>` — Bus-/Device-Nummern können sich verschieben.
+- Das ElabNET PBM meldet sich als FTDI-Serial-Gerät (`/dev/ttyUSB0`, `/dev/ttyUSB1`, …) — die laufende Nummer hängt von der Anschlussreihenfolge ab.
+
+Für das PBM ist `/dev/serial/by-id/usb-FTDI_...` in der Regel bereits ein stabiler Pfad, den udev automatisch für jedes Serial-Gerät mit Seriennummer anlegt — ohne eigene Regel (siehe die `ls /dev/serial/by-id/`-Ausgabe in Schritt 1) — `OBS_ONEWIRE__PBM_DEVICES` direkt auf diesen Pfad zu setzen reicht aus, dann kann direkt zu Schritt 3 übergegangen werden. Einfache USB-Busmaster bekommen kein vergleichbares automatisches Alias, hier ist eine eigene udev-Regel der zuverlässige Weg. Eine eigene Regel für das PBM lohnt sich nur, wenn ein kurzer, selbst gewählter Name statt des langen `by-id`-Pfads gewünscht ist.
+
+Die Regel auf dem **Proxmox-Host** anlegen (nicht im Container — Proxmox löst den LXC-Passthrough-Mount gegen den Gerätebaum des Hosts auf, bevor der Container startet, der Symlink muss dort also schon existieren), z. B. `/etc/udev/rules.d/99-onewire.rules`:
+
+```
+# DS9490/DS1490F einfacher USB-Busmaster — idVendor/idProduct sind für diese Gerätefamilie
+# fix (04fa:2490). Keine serial-Bedingung, da dieses Gerät keine Seriennummer meldet (siehe
+# Schritt 1) — bei mehreren identischen Busmastern reicht dieses Match nicht zur Unterscheidung.
+SUBSYSTEM=="usb", ATTR{idVendor}=="04fa", ATTR{idProduct}=="2490", SYMLINK+="onewire-busmaster"
+
+# ElabNET PBM (FTDI) — ATTRS{} statt ATTR{}, da idVendor/idProduct/serial auf dem
+# übergeordneten USB-Gerät sitzen, nicht auf dem tty-Gerät selbst (siehe Schritt 1).
+# idProduct ist je nach FTDI-Chip-Variante unterschiedlich (hier 6015) — mit lsusb/udevadm
+# die eigene Variante und Seriennummer prüfen.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", ATTRS{serial}=="BM_00000401", SYMLINK+="onewire-pbm"
+```
+
+Nur die Blöcke übernehmen, deren Hardware auch tatsächlich vorhanden ist (siehe `lsusb`-Ausgabe in Schritt 1) — eine Regel für nicht angeschlossene Hardware ist harmlos, erzeugt aber logischerweise auch keinen Symlink.
+
+Ohne Neustart anwenden und den entstandenen Symlink prüfen:
+
+```bash
+udevadm control --reload-rules && udevadm trigger
+ls -l /dev/onewire-busmaster /dev/onewire-pbm
+```
+
+Beispielhafte Ausgabe für die Geräte aus Schritt 1 (beide Regeln angewendet):
+
+```
+$ ls -l /dev/onewire-busmaster /dev/onewire-pbm
+lrwxrwxrwx 1 root root 15 Jul 26 14:02 /dev/onewire-busmaster -> bus/usb/001/004
+lrwxrwxrwx 1 root root  7 Jul 26 14:02 /dev/onewire-pbm -> ttyUSB0
+```
+
+Falls nur eine der beiden Regeln zur eigenen Hardware passt, meldet `ls` für den anderen Symlink `No such file or directory` — das ist erwartet, kein Fehler (siehe Hinweis oben). Das Symlink-**Ziel** (`ttyUSB0`, `bus/usb/001/004`, …) kann sich über Reboots oder Neuanstecken hinweg ebenfalls ändern — die Regel matcht auf feste Geräteattribute, nicht auf den vom Kernel vergebenen Namen, udev richtet den Symlink also bei jedem Mal neu auf den tatsächlichen Ort aus. Das ist unkritisch: Stabil bleiben muss nur der Symlink-Name selbst (`/dev/onewire-pbm`), denn genau darauf beziehen sich Schritt 3 und 4 — nie auf den rohen Gerätepfad.
+
+#### 3. Gerät(e) an den Container durchreichen
+
+- **Proxmox-LXC**: Container öffnen → **Resources** → **Add** → **Device Passthrough**, bei **Device Path** den stabilen Symlink aus Schritt 2 eintragen (z. B. `/dev/onewire-busmaster`), bestätigen. Pro zutreffendem Gerät wiederholen (Busmaster und/oder PBM):
+
+  ![Proxmox-Container-Resources-Tab mit zwei durchgereichten 1-Wire-Geräten](docs/device-passthrough1.jpeg)
+  ![Proxmox-Device-Passthrough-Bearbeitungsdialog](docs/device-passthrough2.jpeg)
+
+  Proxmox schreibt den passenden Mount-Eintrag und die cgroup-Geräteberechtigung selbst — kein manuelles Editieren von `lxc.mount.entry`/`lxc.cgroup2.devices.allow`, und kein Risiko, die cgroup-Zeile zu vergessen (der häufigste Fehler beim manuellen Weg). Anschließend den Container neu starten (`pct reboot <CTID>`), damit der Passthrough greift.
+
+- **Docker Compose** (`docker-compose.yml`):
+  ```yaml
+  devices:
+    - "/dev/onewire-busmaster:/dev/onewire-busmaster"
+    - "/dev/onewire-pbm:/dev/ttyUSB0"
+  ```
+
+#### 4. `/etc/owfs.conf` konfigurieren
+
+`/etc/owfs.conf` ist die eigene Konfigurationsdatei von `owserver` — sie legt fest, welche(n) Bus(se) `owserver` bedient. Bei OBS' eigenem `owserver`-Packaging (dem systemd-Dienst im Proxmox-LXC-Template und dem Docker-Compose-Sidecar) wird diese Datei nie von Hand bearbeitet: Beide erzeugen sie bei jedem Start komplett neu aus einer kleinen Menge `OBS_ONEWIRE__*`-Umgebungsvariablen, über dasselbe gemeinsame Skript (`scripts/obs-onewire-configure.sh`), das hinter beiden Deployment-Wegen steckt. „`/etc/owfs.conf` konfigurieren" bedeutet also, ein paar Umgebungsvariablen an der richtigen Stelle zu setzen, nicht die Datei selbst zu editieren — dabei die stabilen, symlinkten Pfade aus Schritt 2 verwenden (nicht das rohe `/dev/bus/usb/...` bzw. `/dev/ttyUSB0`).
+
+**Proxmox-LXC** — `/etc/obs.env` im Container bearbeiten (auskommentieren/ergänzen):
+
+```bash
+OBS_ONEWIRE__USB_ALL=true                    # falls ein einfacher Busmaster durchgereicht wurde
+OBS_ONEWIRE__PBM_DEVICES=/dev/onewire-pbm    # kommagetrennt für mehrere PBMs
+# OBS_ONEWIRE__PORT=4304                     # optional, nur falls der Standardport geändert wurde
+```
+
+Anschließend den Dienst neu starten — `ExecCondition=` wird bei jedem Startversuch neu ausgewertet, das regeneriert also sowohl `/etc/owfs.conf` als auch startet `owserver` jetzt, wo es tatsächlich etwas zu bedienen gibt:
+
+```bash
+systemctl restart owserver
+systemctl status owserver          # sollte "active (running)" zeigen, nicht "inactive (dead)"
+journalctl -u owserver -n 20 --no-pager
+```
+
+**Docker Compose** — `.env` bearbeiten (siehe den auskommentierten `OBS_ONEWIRE_*`-Block; hier mit *einfachem* Unterstrich im Gegensatz zu `OBS_ONEWIRE__*` oben — `docker-compose.yml` übernimmt das Mapping):
+
+```bash
+OBS_ONEWIRE_USB_ALL=true
+OBS_ONEWIRE_PBM_DEVICES=/dev/onewire-pbm
+COMPOSE_PROFILES=onewire
+```
+
+```bash
+docker compose up -d owserver
+docker compose logs owserver
+```
+
+In beiden Fällen sieht die erzeugte Datei so aus (Beispiel für einen Host mit Busmaster **und** PBM):
+
+```
+# Generated by obs-onewire-configure.sh — do not edit by hand.
+server: port = 4304
+server: usb = all
+server: pbm = /dev/onewire-pbm
+```
+
+> **Hinweis:** Diese beiden Umgebungsvariablen (plus der optionale Port) sind alles, was OBS' eigenes `owserver`-Packaging anbietet. Falls das eigene Setup eine `/etc/owfs.conf`-Direktive jenseits von `usb`/`pbm`/`port` braucht — siehe die [OWFS-Konfigurationsdokumentation](https://owfs.org) für die vollständige Syntax —, läuft `owserver` außerhalb von OBS' LXC-/Docker-Packaging, und die Datei wird eigenständig gepflegt; dann die beiden oben beschriebenen Deployment-Wege überspringen und die Datei direkt von Hand schreiben.
+
+#### 5. 1-Wire-Adapter in OBS konfigurieren
+
+Sobald `owserver` läuft und erreichbar ist, eine **1-Wire**-Adapterinstanz in OBS anlegen, die darauf zeigt:
+
+> **Hinweis:** Im Normalfall können die untenstehenden Standardwerte unverändert übernommen werden — beim Proxmox-LXC-Template laufen `owserver` und OBS im selben Container, `host: localhost` / `port: 4304` funktionieren daher ohne Anpassung. Bei Docker Compose läuft `owserver` in einem eigenen Sidecar-Container: hier `host` auf den Compose-Service-Namen `owserver` statt `localhost` setzen (alles andere bleibt beim Standard).
 
 **Instanz-Konfiguration:**
 
 | Feld | Standard | Beschreibung |
 |---|---|---|
+| `host` | `localhost` | Hostname oder IP-Adresse des owserver-Prozesses |
+| `port` | `4304` | owserver-TCP-Port |
 | `poll_interval` | `30.0` | Abfrageintervall in Sekunden |
-| `w1_path` | `/sys/bus/w1/devices` | Pfad zum 1-Wire-Systemordner |
+| `request_timeout` | `10.0` | Timeout in Sekunden pro owserver-Aufruf |
+| `aliases` | — | ROM-ID → Label-Zuordnung; wird nicht hier bearbeitet, sondern über den Sensor-Scan im Verknüpfungsformular gepflegt (siehe unten) |
 
 **Verknüpfungs-Konfiguration:**
 
-| Feld | Beschreibung |
-|---|---|
-| `sensor_id` | Sensor-ID, z. B. `28-0000012345ab` |
-| `sensor_type` | Sensortyp, z. B. `DS18B20` (Standard) |
+| Feld | Standard | Beschreibung |
+|---|---|---|
+| `sensor_id` | — | ROM-ID, z. B. `28.4B057F0A1C10` |
+| `property` | `temperature` | OWFS-Property ("Datei"), z. B. `temperature`, `humidity`, `PIO.0` |
 
-Verfügbare Sensor-IDs können über den Verbindungstest abgerufen werden.
+Der **Scan**-Button im Verknüpfungsformular durchsucht die verbundene owserver-Instanz nach angeschlossenen Sensoren und deren verfügbaren Properties und erlaubt das Vergeben eines dauerhaften Alias-Labels je ROM-ID.
 
 ---
 
@@ -1172,6 +1427,39 @@ Verbindet sich mit einem **externen** MQTT-Broker (getrennt vom internen Mosquit
 | `topic` | Topic zum Empfangen (SOURCE/BOTH) |
 | `publish_topic` | Topic zum Senden (DEST/BOTH) — Standard: gleich wie `topic` |
 | `retain` | Retain-Flag beim Senden setzen |
+
+---
+
+### MESSAGE-Adapter
+
+Sendet Benachrichtigungen, wenn sich ein verknüpfter Datenpunkt ändert und die Bedingung der Verknüpfung erfüllt ist. Der Adapter ist als lesende Verknüpfung (`SOURCE`) konfiguriert, weil er Wertänderungen beobachtet und daraus Nachrichten auslöst.
+
+**Unterstützte Provider:**
+
+| Provider | Instanz-Felder | Ziel-Felder |
+|---|---|---|
+| `pushover` | `api_token` | `user_key` |
+| `telegram` | `bot_token` | `chat_id` |
+| `seven.io` | `api_key`, optional `sender` | `to`, `channel` (`sms`/`voice`) |
+
+**Verknüpfungs-Konfiguration:**
+
+| Feld | Beschreibung |
+|---|---|
+| `operator` | Bedingung: `any`, `==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `contains not`, `starts with`, `ends with` |
+| `compare_value` | Vergleichswert; bei `any` nicht nötig |
+| `message` | Nachrichtenvorlage mit Platzhaltern |
+| `title` | Optionaler Nachrichtentitel |
+| `providers` | Liste aus Provider und Zielname, an die gesendet wird |
+| `send_on_change` | Sendet nur beim Wechsel in den erfüllten Zustand; bei `any` nur bei geändertem Wert |
+| `cooldown_seconds` | Mindestabstand zwischen zwei gesendeten Nachrichten |
+| `enabled` | Aktiviert/deaktiviert die Verknüpfung |
+
+Platzhalter in der Nachricht: `###DP###` = Wert, `###DPU###` = Einheit, `###DPN###` = Datenpunktname, `###DPI###` = Datenpunkt-ID, `###TS###` = ISO-Zeitstempel, `###DATE###` / `###TIME###` = Datum und Uhrzeit in den konfigurierten Anzeigeformaten.
+
+Zahlenwerte in `###DP###` werden im konfigurierten **Regionalformat** ausgegeben (siehe [Einstellungen](#einstellungen)) — mit der deutschen Voreinstellung wird aus `1.05` also `1,05`. Nicht-numerische Werte (Zeichenketten, Wahrheitswerte, Objekte) behalten ihre locale-neutrale Darstellung, und `###TS###` bleibt immer ein locale-neutraler ISO-Zeitstempel.
+
+> **Hinweis:** Signal wird im MESSAGE-Adapter vorerst nicht angeboten, weil dafür ein separater Signal-Gateway-Dienst betrieben werden müsste.
 
 ---
 
@@ -1395,7 +1683,14 @@ Die Einstellungen sind über die Weboberfläche erreichbar (⚙ in der Seitenlei
 
 **Allgemein:**
 - **Zeitzone** — alle Zeitangaben in der Oberfläche werden in dieser Zeitzone dargestellt (Verlauf, RingBuffer, History-Suche, Astro-Block)
+- **Standard-Datumsformat / Standard-Zeitformat** — Token-Muster (`dd.MM.yyyy`, `HH:mm:ss`, …) für jede Datums- und Zeitanzeige
+- **Regionalformat** — Dezimaltrennzeichen, Tausendergruppierung sowie Datums- und Währungskonventionen für **alle** Zahlenausgaben in der Admin-GUI, der Visu und in servergenerierten Benachrichtigungstexten. Das ist eine **eigene Einstellung neben der Sprache**, weil beide unabhängig voneinander sind: Deutsch in der Schweiz formatiert `1'234.50`, Deutsch in Deutschland `1.234,50`. `Automatisch` leitet das Format aus der gewählten Sprache ab (`de` → `de-DE`, `gsw` → `de-CH`, `en` → `en-US`, …); jeder explizite Eintrag (`de-DE`, `de-AT`, `de-CH`, `en-US`, `en-GB`, `fr-FR`, `fr-CH`, `it-IT`, `it-CH`, `es-ES`) überschreibt sie. Datenpunktwerte, Berechnungen, API-Payloads, Exporte und gespeicherte History bleiben locale-neutrale Zahlen.
+- **Währung** — ISO-Währung (`EUR`, `CHF`, `USD`, `GBP`) für Geldbeträge. `Automatisch` leitet sie aus dem Regionalformat ab (`de-CH`/`fr-CH`/`it-CH` → `CHF`, `en-US` → `USD`, `en-GB` → `GBP`, sonst `EUR`).
 - **KNX-Projektdatei importieren** — ETS-Projektdatei (`.knxproj`) hochladen, um Gruppenadressen als Suchvorschläge im Verknüpfungs-Formular zu nutzen
+
+Das Regionalformat wird zusätzlich schreibgeschützt und ohne Anmeldung unter `GET /api/v1/system/display-settings` bereitgestellt, damit die Visu es auch für anonyme und PIN-Nutzer anwendet.
+
+Formatkonventionen und übersetzte Namen sind bewusst getrennt: **Trennzeichen, Datums-/Zeitmuster und Währung stammen aus diesen Server-Einstellungen und sind für jeden Betrachter identisch** — eine Anlage hat eine Zahlenkonvention —, während **Wochentags- und Monatsnamen der UI-Sprache des jeweiligen Betrachters folgen**. Eine in einem englischen Browser geöffnete Visu zeigt daher englische Monatsnamen mit dem konfigurierten deutschen Zahlen- und Datumsformat.
 
 **Verlauf:** Übersicht aller Datenpunkte mit History-Aufzeichnung. Datenpunkte mit deaktivierter Aufzeichnung (`record_history: false`) werden zuerst angezeigt. Aufzeichnung per Datenpunkt ein- und ausschalten.
 
@@ -1497,7 +1792,7 @@ Das **Grundriss-Widget** ermöglicht es, einen Gebäudegrundriss oder ein Anlage
 
 Im Konfigurations-Panel des Widgets kann ein Bild hochgeladen werden (SVG, PNG oder JPG). Das Bild wird als Base64-Data-URL direkt im Konfig-JSON gespeichert — kein separater Upload-Endpunkt nötig. Bei Dateien über 2 MB erscheint ein Hinweis; für Grundrisse wird **SVG empfohlen**, da es verlustfrei skaliert.
 
-Die **Rotation** des Bildes lässt sich in 90°-Schritten einstellen (0° / 90° / 180° / 270°), um Landscape-Grafiken direkt im Portrait-Modus verwenden zu können. 
+Die **Rotation** des Bildes lässt sich in 90°-Schritten einstellen (0° / 90° / 180° / 270°), um Landscape-Grafiken direkt im Portrait-Modus verwenden zu können.
 
 #### Bereiche (Polygone) zeichnen
 
@@ -1619,7 +1914,12 @@ Die `.env`-Datei enthält das MQTT-Passwort, mit dem der Docker-Mosquitto initia
 | API (Swagger) | http://localhost:8080/docs |
 | MQTT | localhost:1883 |
 
-**Standardzugang:** `admin` / `admin`
+Lege nach dem ersten, die Datenbank initialisierenden Backend-Start einmalig den
+Eigentümer an, bevor du das Backend neu startest:
+
+```bash
+tools/with-venv python -m obs.admin_cli auth first-owner <benutzername> --password-stdin
+```
 
 #### Tests ausführen
 
@@ -1655,10 +1955,12 @@ Versionierte Hooks liegen in `.githooks/`. Um sie in einem Klon zu aktivieren, `
 
 Bei jedem `git push` führt der Hook aus:
 
-- `./scripts/check-i18n-hardcoded-strings.sh`
+- `./tools/check-i18n-hardcoded-strings.sh`
 - `python3 -m ruff check .`
 - `python3 -m ruff format . --check`
 - `pytest tests/ -v --cov=obs --cov-report=xml --cov-report=term --junitxml="${TMPDIR:-/tmp}/openbridge-pre-push-junit.xml"`
+
+Das i18n-Gate prüft geänderte GUI-/Visu-Dateien auf hart codierte sichtbare Texte, Locale-Key-Parität und rohe Übersetzungsausdrücke wie `$t(...)`, die als Template-Text gerendert würden.
 
 Einmalig umgehen:
 
@@ -1716,6 +2018,10 @@ cp config.example.yaml config.yaml
 # Server mit automatischem Neustart bei Codeänderungen
 uvicorn obs.main:create_app --factory --reload --host 0.0.0.0 --port 8080
 ```
+
+### Logik-Engine erweitern
+
+Jeder eingebaute Logikbaustein ist in einem eigenen Modul unterhalb von `obs/logic/nodes/<kategorie>/` definiert; `obs/logic/registry.py` setzt den öffentlichen Bausteinkatalog aus den Kategorie-Registries zusammen. Ein neuer Baustein berührt dadurch nur sein eigenes Modul, eine Kategorie-Registrierung, seine Capability-Einstufung und seine eigenen Tests. Der Kontrakt, die Abhängigkeitsregeln und das Schritt-für-Schritt-Vorgehen sind in [`docs/architecture/logic-nodes.md`](docs/architecture/logic-nodes.md) dokumentiert und werden durch Architekturtests abgesichert.
 
 ### Datenbankstruktur
 

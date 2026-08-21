@@ -44,20 +44,28 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useFloating, autoUpdate, offset, flip, shift } from '@floating-ui/vue'
 import { ringbufferApi } from '@/api/client'
 import { useWebSocketStore } from '@/stores/websocket'
 import { formatDurationDeutsch } from '@/composables/useTimeFilterParser'
+import { useRegionalFormat } from '@/composables/useRegionalFormat'
+import { formatNumber } from '@/utils/numberFormat'
 
+const { t } = useI18n()
+// Counts and sizes follow the configured regional format (issue #1073).
+const { regionFormat } = useRegionalFormat()
 const stats = ref(null)
 const helpIcon = ref(null)
 const tooltip = ref(null)
 const tipOpen = ref(false)
 const wsStore = useWebSocketStore()
+const emit = defineEmits(['stats'])
 let stopAutoUpdate = null
 let pollTimer = null
 let wsUnsubscribe = null
 let wsRefreshDebounce = null
+let mounted = false
 
 const total = computed(() => Number(stats.value?.total ?? 0))
 const maxEntries = computed(() => {
@@ -66,15 +74,12 @@ const maxEntries = computed(() => {
   const value = Number(raw)
   return Number.isFinite(value) ? value : null
 })
-const storage = computed(() => stats.value?.storage ?? '—')
+const enabled = computed(() => stats.value?.enabled !== false)
+const storage = computed(() => (enabled.value ? (stats.value?.storage ?? '—') : t('ringbuffer.disabledStatus')))
 
 function fmt(n) {
   if (!Number.isFinite(n)) return '—'
-  try {
-    return new Intl.NumberFormat('de-DE').format(n)
-  } catch {
-    return String(n)
-  }
+  return formatNumber(n, regionFormat.value, { decimals: 0 })
 }
 
 const formattedTotal = computed(() => fmt(total.value))
@@ -98,11 +103,8 @@ function fmtBytes(n) {
     v /= 1024
     i += 1
   }
-  const formatter = new Intl.NumberFormat('de-DE', {
-    minimumFractionDigits: v >= 100 || i === 0 ? 0 : 1,
-    maximumFractionDigits: v >= 100 || i === 0 ? 0 : 1,
-  })
-  return `${formatter.format(v)} ${units[i]}`
+  const digits = v >= 100 || i === 0 ? 0 : 1
+  return `${formatNumber(v, regionFormat.value, { decimals: digits })} ${units[i]}`
 }
 
 const formattedDiskSize = computed(() => fmtBytes(fileSizeBytes.value))
@@ -142,18 +144,37 @@ function hideTip() {
   stopAutoUpdateFn()
 }
 
+function startPolling() {
+  if (mounted && !pollTimer) {
+    pollTimer = setInterval(() => { void load() }, 10000)
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 async function load() {
   try {
     const { data } = await ringbufferApi.stats()
+    if (!mounted) return data
     stats.value = data
+    emit('stats', data)
+    startPolling()
+    return data
   } catch {
-    stats.value = null
+    if (mounted) stats.value = null
+    return null
   }
 }
 
 onMounted(() => {
+  mounted = true
   void load()
-  pollTimer = setInterval(() => { void load() }, 10000)
+  startPolling()
   wsUnsubscribe = wsStore.onRingbufferEntry(() => {
     clearTimeout(wsRefreshDebounce)
     wsRefreshDebounce = setTimeout(() => { void load() }, 250)
@@ -161,11 +182,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  mounted = false
   stopAutoUpdateFn()
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
+  stopPolling()
   if (wsRefreshDebounce) {
     clearTimeout(wsRefreshDebounce)
     wsRefreshDebounce = null

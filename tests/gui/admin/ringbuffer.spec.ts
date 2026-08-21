@@ -11,9 +11,10 @@ import {
 // Filtersets are global state. Start every test from an empty, unfiltered
 // feed so a leftover topbar-active set cannot gate out live pushes.
 test.beforeEach(async () => {
-  // Monitor tests wait for a real WebSocket ("Live" badge) plus live pushes —
-  // the default 30s per-test budget is too tight under CI load.
-  test.setTimeout(60_000)
+  // Monitor tests wait for a real WebSocket ("Live" badge) plus live pushes.
+  // The auto-scroll case intentionally persists 46 values; serialized SQLite
+  // writes can push that end-to-end path just beyond 60 s under CI load.
+  test.setTimeout(90_000)
   await deleteAllFiltersets()
 })
 
@@ -246,10 +247,15 @@ test('RingBuffer Monitor-Modal hält Speicher-/Retention-State und sendet Limits
 
   await expect.poll(() => postedBody).not.toBeNull()
   expect(postedBody).toEqual({
+    enabled: true,
     storage: 'file',
+    segmented: true,
     max_entries: 50000,
     max_file_size_bytes: 2147483648,
     max_age: 63072000,
+    segment_max_age: 21600,
+    segment_max_bytes: null,
+    segment_max_rows: null,
   })
 })
 
@@ -319,7 +325,7 @@ test('RingBuffer Monitor-Modal Statistik rendert stabil bei leerem und gefüllte
   await waitForMonitorReady(page)
   await page.click('[data-testid="btn-open-monitor-config"]')
   await expect(page.locator('[data-testid="rb-config-stats-total"]')).toContainText('25')
-  await expect(page.locator('[data-testid="rb-config-stats-file-size"]')).toContainText('1.00 MB')
+  await expect(page.locator('[data-testid="rb-config-stats-file-size"]')).toContainText('1,0 MiB')
   await expect(page.locator('[data-testid="rb-config-stats-retention"]')).toContainText('2d')
 })
 
@@ -384,10 +390,15 @@ test('RingBuffer Monitor-Modal unterstützt Max.-Einträge ohne Limit und schlie
 
   await expect.poll(() => postedBody).not.toBeNull()
   expect(postedBody).toEqual({
+    enabled: true,
     storage: 'file',
+    segmented: true,
     max_entries: null,
     max_file_size_bytes: 10485760,
     max_age: 86400,
+    segment_max_age: 21600,
+    segment_max_bytes: null,
+    segment_max_rows: null,
   })
 
   await expect(page.locator('text=Monitor-Konfiguration gespeichert')).toBeVisible()

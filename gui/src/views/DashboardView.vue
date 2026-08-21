@@ -53,8 +53,8 @@
                 {{ a.severity === 'error' ? $t('common.error') : $t('common.warning') }}
               </Badge>
             </div>
-            <div v-if="a.status_detail" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              {{ a.status_detail }}
+            <div v-if="a.status_detail || a.status_detail_code" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {{ statusDetailText(a) }}
             </div>
           </div>
         </RouterLink>
@@ -63,6 +63,9 @@
 
     <!-- Adapter status + recent values -->
     <div class="grid lg:grid-cols-2 gap-4">
+      <!-- RingBuffer / Retention (#919/#938) -->
+      <RingBufferCard />
+
       <!-- Adapters -->
       <div class="card">
         <div class="card-header">
@@ -117,14 +120,21 @@ import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { systemApi } from '@/api/client'
 import { useDatapointStore } from '@/stores/datapoints'
 import { useWebSocketStore } from '@/stores/websocket'
+import { useRegionalFormat } from '@/composables/useRegionalFormat'
 import { useAdapterStore } from '@/stores/adapters'
 import Badge   from '@/components/ui/Badge.vue'
 import Spinner from '@/components/ui/Spinner.vue'
 import StatCard from '@/components/ui/StatCard.vue'
-import { adapterDotClass as adapterDot, adapterBadgeVariant, adapterStatusLabel } from '@/utils/adapterStatus'
+import RingBufferCard from '@/components/dashboard/RingBufferCard.vue'
+import { adapterDotClass as adapterDot, adapterBadgeVariant, adapterStatusLabel, adapterStatusDetailText } from '@/utils/adapterStatus'
+import { useI18n } from 'vue-i18n'
+
+const { t, te } = useI18n()
+const statusDetailText = (a) => adapterStatusDetailText(a, t, te)
 
 const dpStore  = useDatapointStore()
 const ws       = useWebSocketStore()
+const { fmtNumber } = useRegionalFormat()
 const adStore  = useAdapterStore()
 
 const health   = ref({ status: '…', datapoints: '…', adapters_running: '…' })
@@ -161,12 +171,14 @@ onMounted(async () => {
 onUnmounted(() => { unsubWs?.() })
 
 function displayValue(dp) {
+  // Display only — numbers use the configured regional format (issue #1073).
   const live = ws.liveValues[dp.id]
   const val  = live?.value ?? dp.value
   if (val === null || val === undefined) return '—'
   if (typeof val === 'boolean') return val ? 'true' : 'false'
-  if (dp.unit) return `${val} ${dp.unit}`
-  return String(val)
+  const text = typeof val === 'number' && Number.isFinite(val) ? fmtNumber(val) : String(val)
+  if (dp.unit) return `${text} ${dp.unit}`
+  return text
 }
 
 function liveClass(dp) {

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     from obs.adapters import registry as adapter_registry
-    from obs.api.auth import ensure_default_user
+    from obs.api.auth import require_configured_owner
     from obs.api.v1.websocket import init_ws_manager
     from obs.config import get_settings
     from obs.core.event_bus import DataValueEvent, init_event_bus
@@ -39,12 +39,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     from obs.core.write_router import init_write_router
     from obs.db.database import get_db, init_db
     from obs.history.factory import init_history_plugin
-    from obs.ringbuffer.persisted_config import load_persisted_ringbuffer_config
-    from obs.ringbuffer.ringbuffer import init_ringbuffer
 
     settings = get_settings()
 
-    log_level = getattr(logging, settings.server.log_level.upper(), logging.INFO)
+    configured_log_level = settings.server.log_level.upper()
+    log_level = getattr(logging, configured_log_level, logging.INFO)
     logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     import asyncio
@@ -56,7 +55,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # 1. Database
     db = await init_db(settings.database.path)
-    await ensure_default_user(db)
+    from obs.message_archive import init_message_archive_store
+
+    await init_message_archive_store(settings)
+    persistent_log_level = await _read_persistent_log_level(db)
+    if persistent_log_level and persistent_log_level != configured_log_level:
+        log_level = getattr(logging, persistent_log_level, log_level)
+        logging.getLogger().setLevel(log_level)
+        try:
+            from obs.log_buffer import set_log_buffer_level
+
+            set_log_buffer_level(persistent_log_level)
+        except Exception:
+            logger.exception("Failed to apply persistent log level")
+        logger.info("Applied persistent log level from app_settings: %s", persistent_log_level)
+    await require_configured_owner(db)
 
     # Rebuild Mosquitto passwd file from DB on every startup (keeps it in sync).
     # SIGHUP is sent after MQTT connects (see below) so Mosquitto reloads cleanly.
@@ -87,16 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # 5. RingBuffer — config is persisted in app_settings (see persisted_config.py).
     # Defaults apply only when nothing has been configured via the API yet.
-    rb_path = settings.database.path.replace(".db", "_ringbuffer.db")
-    rb_cfg = await load_persisted_ringbuffer_config(db)
-    rb = await init_ringbuffer(
-        storage="file",
-        max_entries=rb_cfg["max_entries"],
-        disk_path=rb_path,
-        max_file_size_bytes=rb_cfg["max_file_size_bytes"],
-        max_age=rb_cfg["max_age"],
-    )
-    bus.subscribe(DataValueEvent, rb.handle_value_event)
+    await _init_persisted_ringbuffer(db, bus, settings.database.path, DataValueEvent)
 
     # 6. History plugin
     await init_history_plugin(db)
@@ -111,7 +115,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # 6. Write Router
     #    Path A: MQTT dp/{uuid}/set → adapters (external commands)
     #    Path B: DataValueEvent → DEST/BOTH bindings (cross-protocol propagation)
-    write_router = init_write_router(db, registry)
+    write_router = init_write_router(db, registry, event_bus=bus)
     mqtt.on_write_request(write_router.handle)
     bus.subscribe(DataValueEvent, write_router.handle_value_event)
 
@@ -121,15 +125,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await _reload_mqtt(_m.reload_command, _m.reload_pid)
 
     # 8. Adapters — import triggers @register, then start_all loads DB configs + bindings
+    import obs.adapters.anwesenheit.adapter
     import obs.adapters.homeassistant.adapter
     import obs.adapters.iobroker.adapter
     import obs.adapters.knx.adapter
+    import obs.adapters.message.adapter
     import obs.adapters.modbus_rtu.adapter
     import obs.adapters.modbus_tcp.adapter
     import obs.adapters.mqtt.adapter
     import obs.adapters.onewire.adapter
-    import obs.adapters.snmp.adapter  # noqa: F401
-    import obs.adapters.anwesenheit.adapter  # noqa: F401
+    import obs.adapters.snmp.adapter
     import obs.adapters.zeitschaltuhr.adapter  # noqa: F401
 
     await adapter_registry.start_all(bus, db, value_getter=registry.get_value)
@@ -145,22 +150,133 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     autobackup_scheduler = init_autobackup_scheduler(db=db)
 
+    # 11. DB-Wartung — periodischer WAL-TRUNCATE-Checkpoint (siehe issue #908)
+    from obs.db.maintenance import init_db_maintenance_scheduler
+
+    db_maintenance_scheduler = init_db_maintenance_scheduler(db=db)
+
     logger.info(
         "open bridge server ready — %d datapoints, %d adapters registered",
         registry.count(),
         len(adapter_registry.all_types()),
     )
+    try:
+        from obs.message_archive import get_message_archive_service
+
+        await get_message_archive_service().record(
+            "system",
+            type="system",
+            severity="info",
+            source="system.startup",
+            title="OBS started",
+            message=f"open bridge server v{__version__} ready",
+            payload={"datapoints": registry.count(), "adapters_registered": len(adapter_registry.all_types())},
+        )
+    except Exception:
+        logger.exception("Failed to write startup event to message archive")
 
     yield  # ← application running
 
     # Shutdown (reverse order)
+    await db_maintenance_scheduler.stop()
     await autobackup_scheduler.stop()
     await logic_mgr.stop()
     await adapter_registry.stop_all()
     await mqtt.stop()
-    await rb.stop()
+    await _stop_optional_ringbuffer()
+    from obs.message_archive import close_message_archive_store
+
+    await close_message_archive_store()
     await get_db().disconnect()
     logger.info("open bridge server stopped.")
+
+
+async def _init_persisted_ringbuffer(db, bus, database_path: str, data_value_event_type) -> None:
+    from obs.ringbuffer.persisted_config import (
+        LEGACY_DECISION_PENDING,
+        LEGACY_DECISIONS_PROTECTED,
+        ensure_legacy_migration_decision,
+        finalize_committed_migration_decision,
+        load_persisted_ringbuffer_config,
+    )
+    from obs.ringbuffer.ringbuffer import (
+        _is_sqlite_memory_path,
+        default_ringbuffer_disk_path,
+        init_ringbuffer,
+        reset_ringbuffer,
+        set_ringbuffer_enabled,
+    )
+
+    rb_path = default_ringbuffer_disk_path(database_path)
+    # storage_path an den Loader durchreichen (#951 [P3]): fehlt die Config-Zeile,
+    # unterscheidet er anhand vorhandenen Ringbuffer-Storages Upgrade (10 MiB) von
+    # Fresh-Install (100 MiB).
+    rb_cfg = await load_persisted_ringbuffer_config(db, storage_path=rb_path)
+    if not rb_cfg["enabled"]:
+        reset_ringbuffer()
+        set_ringbuffer_enabled(False)
+        return
+    set_ringbuffer_enabled(True)
+
+    # Memory-DB-Pfade (``:memory:`` bzw. ``file:...mode=memory``) sind nicht
+    # segmentierbar (Codex #951): der segmentierte Startup leitet aus dem Disk-Pfad
+    # ein reales ``*_segments``-Verzeichnis ab und schriebe Manifest-/Segment-Dateien
+    # auf die Platte, während das Memory-Cleanup ein No-op ist. Konsistent zur
+    # API-seitigen Normalisierung (memory ⇒ nicht segmentiert) hier erzwingen.
+    segmented = rb_cfg.get("segmented", False) and not _is_sqlite_memory_path(rb_path)
+
+    # Migrations-Assistent (#964): liegt eine Legacy-Single-DB vor und wurde noch
+    # nie entschieden, wird ``pending`` persistiert. Ohne informierte Entscheidung
+    # (pending/skipped) bleibt das attachte Legacy-Segment retention-geschützt.
+    try:
+        decision = await ensure_legacy_migration_decision(db, legacy_db_path=rb_path if segmented else None)
+    except Exception:
+        # Die Reparatur eines mitkopierten Terminalmarkers ist best-effort. Bei
+        # einem transienten app-DB-Schreibfehler konservativ wie ``pending``
+        # starten: so bleibt eine attachte Legacy-Quelle im Speicher geschützt,
+        # während der Status-Endpoint den Write später erneut versucht.
+        logger.exception(
+            "RingBuffer: Startup-Abgleich der Legacy-Entscheidung fehlgeschlagen "
+            "(Server startet retention-geschützt, Retry beim nächsten Status-Poll)"
+        )
+        decision = LEGACY_DECISION_PENDING
+
+    rb = await init_ringbuffer(
+        storage="file",
+        max_entries=rb_cfg["max_entries"],
+        disk_path=rb_path,
+        max_file_size_bytes=rb_cfg["max_file_size_bytes"],
+        max_age=rb_cfg["max_age"],
+        # Segmentierter Store (#919) — OPT-IN; Default AUS = unveränderter Legacy-Pfad.
+        segmented=segmented,
+        segment_max_bytes=rb_cfg.get("segment_max_bytes"),
+        segment_max_rows=rb_cfg.get("segment_max_rows"),
+        segment_max_age=rb_cfg.get("segment_max_age"),
+        legacy_retention_protected=decision in LEGACY_DECISIONS_PROTECTED,
+    )
+    # Ist ein Offline-Migrations-Commit durch (Kopien promotet, Legacy detached), aber die
+    # ``migrated``-Entscheidung wurde nie terminal persistiert (im Commit-Fenster unterbrochen
+    # und vom Startup-Reconciler vollendet, oder eine frühere ``on_success``-Persistenz schlug
+    # fehl), state-basiert nachziehen (#968, Codex :449/:326). No-op, wenn bereits terminal oder
+    # noch eine Legacy-Quelle attached ist. Best-effort wie der Runtime-Config-Pfad (#968, Codex
+    # :231): ein transienter app-DB-Schreibfehler (locked/voll) darf den Boot NICHT blockieren –
+    # der Datenpfad ist bereits committed, der nächste ``/migration``-Poll zieht die Entscheidung
+    # nach.
+    try:
+        await finalize_committed_migration_decision(db, rb)
+    except Exception:
+        logger.exception(
+            "RingBuffer: Startup-Finalisierung der Migrations-Entscheidung fehlgeschlagen (Server startet, Retry beim nächsten Status-Poll)"
+        )
+    bus.subscribe(data_value_event_type, rb.handle_value_event)
+
+
+async def _stop_optional_ringbuffer() -> None:
+    from obs.ringbuffer.ringbuffer import get_optional_ringbuffer
+
+    active_rb = get_optional_ringbuffer()
+    if active_rb is not None:
+        await active_rb.stop()
 
 
 def create_app() -> FastAPI:
@@ -193,7 +309,8 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors.origins,
         allow_credentials=settings.cors.allow_credentials,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "X-API-Key", "Content-Type"],
+        allow_headers=["Authorization", "X-API-Key", "Content-Type", "If-Match"],
+        expose_headers=["ETag"],
     )
 
     app.include_router(router, prefix="/api/v1")
@@ -227,12 +344,40 @@ def create_app() -> FastAPI:
         async def favicon():
             return FileResponse(_gui_dist / "favicon.svg")
 
+        @app.get("/manifest.webmanifest", include_in_schema=False)
+        async def admin_manifest():
+            return FileResponse(_gui_dist / "manifest.webmanifest")
+
+        @app.get("/apple-touch-icon.png", include_in_schema=False)
+        async def admin_apple_touch_icon():
+            return FileResponse(_gui_dist / "apple-touch-icon.png")
+
+        @app.get("/obs_logo_light.svg", include_in_schema=False)
+        async def obs_logo_light():
+            return FileResponse(_gui_dist / "obs_logo_light.svg")
+
+        @app.get("/obs_logo_dark.svg", include_in_schema=False)
+        async def obs_logo_dark():
+            return FileResponse(_gui_dist / "obs_logo_dark.svg")
+
     # ── Serve Visu SPA (frontend_dist → /visu) ────────────────────────────
     _visu_dist = Path(__file__).parent.parent / "frontend_dist"
     if _visu_dist.is_dir():
         _visu_assets = _visu_dist / "assets"
         if _visu_assets.is_dir():
             app.mount("/visu/assets", StaticFiles(directory=_visu_assets), name="visu_assets")
+
+        @app.get("/visu/favicon.svg", include_in_schema=False)
+        async def visu_favicon():
+            return FileResponse(_visu_dist / "favicon.svg")
+
+        @app.get("/visu/manifest.webmanifest", include_in_schema=False)
+        async def visu_manifest():
+            return FileResponse(_visu_dist / "manifest.webmanifest")
+
+        @app.get("/visu/apple-touch-icon.png", include_in_schema=False)
+        async def visu_apple_touch_icon():
+            return FileResponse(_visu_dist / "apple-touch-icon.png")
 
         @app.get("/visu/{path:path}", include_in_schema=False)
         async def visu_spa(path: str):
@@ -260,6 +405,20 @@ def create_app() -> FastAPI:
         return JSONResponse({"detail": "Not found"}, status_code=404)
 
     return app
+
+
+async def _read_persistent_log_level(db: object) -> str | None:
+    try:
+        row = await db.fetchone("SELECT value FROM app_settings WHERE key='server.log_level'")
+    except Exception:
+        logger.exception("Could not read persisted log level — using default")
+        return None
+    if row is None:
+        return None
+    level = str(row["value"] or "").upper()
+    if level in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        return level
+    return None
 
 
 async def main() -> None:

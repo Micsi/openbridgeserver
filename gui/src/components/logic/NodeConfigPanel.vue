@@ -1,5 +1,11 @@
 <template>
-  <div v-if="node" class="h-full flex flex-col bg-surface-800 border-l border-slate-200 dark:border-slate-700/60 w-72">
+  <div v-if="node" class="h-full flex flex-col bg-surface-800 border-l border-slate-200 dark:border-slate-700/60 relative flex-shrink-0" :style="{ width: panelWidth + 'px' }">
+    <div
+      class="absolute top-0 left-0 h-full w-1.5 -translate-x-1/2 cursor-ew-resize z-10 hover:bg-teal-500/40"
+      :class="{ 'bg-teal-500/40': isResizingPanel }"
+      @pointerdown="startPanelResize"
+      :title="$t('logic.nodeConfig.resizeHandle')"
+    />
 
     <!-- Header -->
     <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-700/60 flex items-center justify-between">
@@ -11,18 +17,27 @@
       </button>
     </div>
 
-    <!-- ── DataPoint nodes: tab UI ────────────────────────────────────── -->
-    <template v-if="isDatapointNode">
+    <!-- ── Tab bar — the block's own setting tabs plus, while debug mode is
+             active, the debug values of that block (issue #1128) ────────── -->
+    <div v-if="panelTabs.length > 1" class="flex border-b border-slate-200 dark:border-slate-700/60" data-testid="node-panel-tabs">
+      <button v-for="tab in panelTabs" :key="tab.id"
+        :data-testid="'node-panel-tab-' + tab.id"
+        @click="selectPanelTab(tab)"
+        :title="tab.label"
+        :class="['tab-btn', isPanelTabActive(tab) && 'tab-btn--active', tab.debug && 'tab-btn--debug']">
+        <span class="tab-btn__label">{{ tab.label }}</span>
+        <span v-if="tab.dot" class="tab-dot">•</span>
+      </button>
+    </div>
 
-      <!-- Tab bar -->
-      <div class="flex border-b border-slate-200 dark:border-slate-700/60">
-        <button v-for="tab in tabs" :key="tab.id"
-          @click="activeTab = tab.id"
-          :class="['tab-btn', activeTab === tab.id && 'tab-btn--active']">
-          {{ tab.label }}
-          <span v-if="tab.dot" class="tab-dot">•</span>
-        </button>
-      </div>
+    <!-- Block settings — hidden while the debug tab is shown. Wrapped in a
+         render-only template element so the existing per-type layout keeps its
+         own flex child of the panel root; edits in progress live in script
+         state and are unaffected by the switch. -->
+    <template v-if="!debugMode || panelTab === 'settings'">
+
+    <!-- ── DataPoint nodes: one pane per setting tab of the bar above ─── -->
+    <template v-if="isDatapointNode">
 
       <div class="flex-1 overflow-y-auto">
 
@@ -282,6 +297,47 @@
       </div>
     </template>
 
+    <!-- ── value_sequence: GUI-first step editor ─────────────────────── -->
+    <template v-else-if="isValueSequenceNode">
+      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <p class="text-xs text-slate-500">{{ nodeDescription(nodeDef) }}</p>
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.value_sequence.run_mode') }}</label>
+          <select v-model="localData.run_mode" class="input text-sm" @change="emitUpdate">
+            <option value="once">{{ $t('logic.nodeConfig.value_sequence.modes.once') }}</option>
+            <option value="repeat_count">{{ $t('logic.nodeConfig.value_sequence.modes.repeat_count') }}</option>
+            <option value="while_condition">{{ $t('logic.nodeConfig.value_sequence.modes.while_condition') }}</option>
+          </select>
+        </div>
+        <div v-if="localData.run_mode === 'repeat_count'" class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.value_sequence.repeat_count') }}</label>
+          <input v-model.number="localData.repeat_count" type="number" min="1" class="input text-sm" @change="emitUpdate" />
+        </div>
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.value_sequence.restart_policy') }}</label>
+          <select v-model="localData.restart_policy" class="input text-sm" @change="emitUpdate">
+            <option value="ignore">{{ $t('logic.nodeConfig.value_sequence.policies.ignore') }}</option>
+            <option value="restart">{{ $t('logic.nodeConfig.value_sequence.policies.restart') }}</option>
+            <option value="queue">{{ $t('logic.nodeConfig.value_sequence.policies.queue') }}</option>
+          </select>
+        </div>
+        <label class="flex gap-2 text-xs text-slate-600 dark:text-slate-300"><input v-model="localData.cancel_when_condition_false" type="checkbox" @change="emitUpdate" />{{ $t('logic.nodeConfig.value_sequence.cancel_when_condition_false') }}</label>
+        <div class="flex gap-2">
+          <button type="button" class="btn-secondary btn-sm" data-testid="sequence-add" @click="addSequenceStep">{{ $t('logic.nodeConfig.value_sequence.add') }}</button>
+          <button type="button" class="btn-secondary btn-sm" data-testid="sequence-blink" @click="applySequencePreset">{{ $t('logic.nodeConfig.value_sequence.blink') }}</button>
+        </div>
+        <div v-for="(step, index) in sequenceSteps" :key="index" class="border border-slate-700 rounded-lg p-3 flex flex-col gap-2" :data-testid="`sequence-step-${index}`">
+          <div class="flex justify-between items-center"><span class="text-xs font-semibold text-amber-400">{{ $t('logic.nodeConfig.value_sequence.step', { n: index + 1 }) }}</span><div class="flex gap-2"><button class="text-xs" @click="moveSequenceStep(index, -1)">↑</button><button class="text-xs" @click="moveSequenceStep(index, 1)">↓</button><button class="text-xs text-teal-400" @click="duplicateSequenceStep(index)">{{ $t('logic.nodeConfig.value_sequence.duplicate') }}</button><button class="text-xs text-red-400" @click="removeSequenceStep(index)">×</button></div></div>
+          <input v-model="sequenceSearches[index]" class="input text-xs" :placeholder="$t('logic.nodeConfig.value_sequence.object')" @input="onSequenceSearchInput(index)" />
+          <div v-if="sequenceDpResults[index]?.length" class="max-h-24 overflow-y-auto border border-slate-700 rounded">
+            <button v-for="dp in sequenceDpResults[index]" :key="dp.id" class="block w-full text-left px-2 py-1 text-xs hover:bg-slate-700" @click="selectSequenceDp(index, dp)">{{ dp.name }} <span class="text-slate-500">{{ dp.data_type }}</span></button>
+          </div>
+          <input v-model="step.value" class="input text-xs" :placeholder="$t('logic.nodeConfig.value_sequence.value')" @change="saveSequenceSteps" />
+          <div class="flex gap-2"><input v-model.number="step.delay_ms" type="number" min="0" class="input text-xs" @change="saveSequenceSteps" /><span class="text-xs self-center">ms</span></div>
+        </div>
+      </div>
+    </template>
+
     <!-- ── api_client: special rendering with conditional auth fields ──── -->
     <template v-else-if="isApiClientNode">
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
@@ -307,6 +363,67 @@
           </div>
           <div v-if="urlTargetMsg" :class="['mt-2 p-2 rounded text-xs', urlTargetMsg.ok ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500']">{{ urlTargetMsg.text }}</div>
         </div>
+        <div class="section-label flex items-center justify-between mt-1">
+          <span>{{ $t('logic.nodeConfig.apiClient.variablesSection') }}</span>
+          <button type="button" class="btn-secondary btn-sm text-teal-400" @click="addApiVariable" data-testid="api-client-add-variable">
+            {{ $t('logic.nodeConfig.apiClient.addVariable') }}
+          </button>
+        </div>
+        <p class="text-xs text-slate-500 -mt-2">{{ $t('logic.nodeConfig.apiClient.variablesHint') }}</p>
+        <div v-if="apiVariables.length === 0" class="text-xs text-slate-500 italic">
+          {{ $t('logic.nodeConfig.apiClient.noVariables') }}
+        </div>
+        <div
+          v-for="(variable, i) in apiVariables"
+          :key="variable.slot || i"
+          class="border border-slate-700 rounded-lg p-3 flex flex-col gap-2 bg-slate-900/40"
+          :data-testid="`api-client-variable-${i}`"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <span class="text-xs font-semibold text-teal-400">OBS{{ variable.slot || i + 1 }}</span>
+              <code class="ml-2 text-xs text-slate-400 break-all">###OBS{{ variable.slot || i + 1 }}###</code>
+            </div>
+            <button
+              type="button"
+              class="text-xs text-red-400 hover:text-red-300 shrink-0"
+              @click="removeApiVariable(i)"
+              :data-testid="`api-client-variable-remove-${i}`"
+            >
+              {{ $t('logic.nodeConfig.apiClient.removeVariable') }}
+            </button>
+          </div>
+          <div class="form-group">
+            <label class="label">{{ $t('logic.ports.object') }}</label>
+            <input
+              :value="apiVariableSearches[i] ?? variable.datapoint_name ?? ''"
+              type="text"
+              class="input text-sm"
+              :placeholder="$t('logic.nodeConfig.connection.searchPlaceholder')"
+              @input="onApiVariableSearchInput(i, $event)"
+              :data-testid="`api-client-variable-search-${i}`"
+            />
+            <div
+              v-if="apiVariableResults[i]?.length"
+              class="mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden max-h-40 overflow-y-auto"
+            >
+              <button
+                v-for="dp in apiVariableResults[i]"
+                :key="dp.id"
+                type="button"
+                @click="selectApiVariableDp(i, dp)"
+                class="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200"
+                :data-testid="`api-client-variable-result-${i}`"
+              >
+                {{ dp.name }}
+                <span class="text-slate-500 ml-1">{{ dp.data_type }}</span>
+              </button>
+            </div>
+            <div v-if="variable.datapoint_name" class="mt-1 text-xs text-teal-400">
+              ✓ {{ variable.datapoint_name }}
+            </div>
+          </div>
+        </div>
         <div class="form-group">
           <label class="label">{{ $t('logic.nodeConfig.apiClient.methodLabel') }}</label>
           <select v-model="localData.method" class="input text-sm" @change="emitUpdate"
@@ -331,11 +448,19 @@
         <div class="form-group">
           <label class="label">{{ $t('logic.nodeConfig.apiClient.headersLabel') }}</label>
           <input v-model="localData.headers" type="text" class="input text-sm font-mono" @change="emitUpdate"
-            placeholder='{"X-Api-Key": "abc"}' />
+            :placeholder="$t('logic.nodeConfig.apiClient.headersPlaceholder')" />
         </div>
         <div class="form-group">
           <label class="label">{{ $t('logic.nodeConfig.apiClient.timeoutLabel') }}</label>
-          <input v-model="localData.timeout_s" type="number" class="input text-sm" @change="emitUpdate" />
+          <input
+            v-model="localData.timeout_s"
+            type="number"
+            min="1"
+            step="any"
+            class="input text-sm"
+            data-testid="api-client-timeout"
+            @change="emitBoundedUpdate('timeout_s', { type: 'number', min: 1 })"
+          />
         </div>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" v-model="localData.verify_ssl" @change="emitUpdate" class="accent-teal-500" />
@@ -424,6 +549,141 @@
       </div>
     </template>
 
+    <!-- ── decision / value_mapping ─────────────────────────────────────── -->
+    <template v-else-if="isDecisionNode || isValueMappingNode">
+      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <p class="text-xs text-slate-500">{{ nodeDescription(nodeDef) }}</p>
+
+        <template v-if="isValueMappingNode">
+          <div class="form-group">
+            <label class="label">{{ $t('logic.nodeConfig.mapping.outputType') }}</label>
+            <select v-model="localData.output_type" class="input text-sm" @change="emitUpdate" data-testid="mapping-output-type">
+              <option value="bool">BOOL</option>
+              <option value="int">INT</option>
+              <option value="float">FLOAT</option>
+              <option value="string">STRING</option>
+            </select>
+          </div>
+        </template>
+
+        <div class="flex items-center justify-between">
+          <span class="section-label">{{ isDecisionNode ? $t('logic.nodeConfig.decision.conditions') : $t('logic.nodeConfig.mapping.rules') }}</span>
+          <button
+            @click="isDecisionNode ? addDecisionCondition() : addMappingRule()"
+            class="btn-secondary btn-sm text-teal-400"
+            data-testid="rule-add"
+          >{{ $t('logic.nodeConfig.rules.add') }}</button>
+        </div>
+
+        <div
+          v-for="(rule, i) in conditionRows" :key="rule.handle || i"
+          class="rule-row"
+          :data-testid="`rule-row-${i}`"
+        >
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-mono text-slate-400 w-5 shrink-0">{{ i + 1 }}</span>
+            <input
+              :value="conditionRowName(rule, i)"
+              @input="updateConditionRow(i, 'name', $event.target.value)"
+              class="input text-xs flex-1"
+              :placeholder="$t('logic.nodeConfig.rules.namePlaceholder')"
+            />
+            <button
+              @click="removeConditionRow(i)"
+              class="text-xs text-red-400 hover:text-red-300 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="conditionRows.length <= 2"
+              :title="$t('logic.nodeConfig.rules.remove')"
+            >{{ $t('logic.nodeConfig.rules.removeShort') }}</button>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div class="form-group">
+              <label class="label">{{ $t('logic.nodeConfig.rules.operator') }}</label>
+              <select
+                :value="rule.operator || 'eq'"
+                @change="updateConditionRow(i, 'operator', $event.target.value)"
+                class="input text-xs"
+              >
+                <option v-for="op in CONDITION_OPERATOR_OPTIONS" :key="op.value" :value="op.value">{{ op.label }}</option>
+              </select>
+            </div>
+            <div v-if="rule.operator === 'range'" class="form-group">
+              <label class="label">{{ $t('logic.nodeConfig.rules.maxValue') }}</label>
+              <input
+                :value="rule.max ?? rule.value_to ?? ''"
+                @input="updateConditionRow(i, 'max', $event.target.value)"
+                class="input text-xs"
+                :placeholder="$t('logic.nodeConfig.rules.maxPlaceholder')"
+              />
+            </div>
+            <div v-else class="form-group">
+              <label class="label">{{ $t('logic.nodeConfig.rules.compareValue') }}</label>
+              <input
+                :value="rule.value ?? ''"
+                @input="updateConditionRow(i, 'value', $event.target.value)"
+                class="input text-xs"
+                :placeholder="rule.operator === 'regex' ? $t('logic.nodeConfig.rules.regexPlaceholder') : $t('logic.nodeConfig.rules.valuePlaceholder')"
+              />
+            </div>
+          </div>
+
+          <div v-if="rule.operator === 'range'" class="form-group">
+            <label class="label">{{ $t('logic.nodeConfig.rules.minValue') }}</label>
+            <input
+              :value="rule.min ?? rule.value ?? ''"
+              @input="updateConditionRow(i, 'min', $event.target.value)"
+              class="input text-xs"
+              :placeholder="$t('logic.nodeConfig.rules.minPlaceholder')"
+            />
+          </div>
+
+          <label v-if="isTextCondition(rule.operator)" class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              :checked="!!rule.case_sensitive"
+              @change="updateConditionRow(i, 'case_sensitive', $event.target.checked)"
+              class="accent-teal-500"
+            />
+            <span class="text-xs text-slate-600 dark:text-slate-300">{{ $t('logic.nodeConfig.rules.caseSensitive') }}</span>
+          </label>
+
+          <div v-if="isValueMappingNode" class="form-group">
+            <label class="label">{{ $t('logic.nodeConfig.mapping.resultValue') }}</label>
+            <input
+              :value="rule.result ?? ''"
+              @input="updateConditionRow(i, 'result', $event.target.value)"
+              class="input text-xs"
+              :placeholder="$t('logic.nodeConfig.mapping.resultPlaceholder')"
+              data-testid="mapping-result"
+            />
+          </div>
+        </div>
+
+        <template v-if="isValueMappingNode">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              :checked="boolVal('has_default')"
+              @change="e => { setBool('has_default', e.target.checked); emitUpdate() }"
+              class="accent-teal-500"
+              data-testid="mapping-has-default"
+            />
+            <span class="text-xs text-slate-600 dark:text-slate-300">{{ $t('logic.nodeConfig.mapping.hasDefault') }}</span>
+          </label>
+          <div v-if="boolVal('has_default')" class="form-group">
+            <label class="label">{{ $t('logic.nodeConfig.mapping.defaultValue') }}</label>
+            <input
+              v-model="localData.default_value"
+              @change="emitUpdate"
+              class="input text-sm"
+              :placeholder="$t('logic.nodeConfig.mapping.defaultPlaceholder')"
+              data-testid="mapping-default"
+            />
+          </div>
+        </template>
+      </div>
+    </template>
+
     <!-- ── json_extractor / xml_extractor ───────────────────────────────── -->
     <template v-else-if="isExtractorNode">
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
@@ -457,6 +717,7 @@
             </div>
           </template>
 
+          <div @focusout="onExtractorControlsFocusOut">
           <!-- Multi-path path picker dropdown (one shared, fills active row) -->
           <div v-if="extractorPaths.length" class="form-group">
             <label class="label">
@@ -481,6 +742,7 @@
 
             <div
               v-for="(entry, i) in jsonPaths" :key="i"
+              @focusin="activeExtractorRow = i"
               class="extractor-output-row mt-2 p-2 rounded-lg border border-slate-700/50 flex flex-col gap-1"
               :style="extractorOutputRowStyle"
             >
@@ -502,7 +764,6 @@
                 :value="entry.path"
                 @input="updateJsonPath(i, 'path', $event.target.value)"
                 @focus="activeExtractorRow = i"
-                @blur="activeExtractorRow = null"
                 class="input text-xs font-mono w-full"
                 :class="activeExtractorRow === i ? 'ring-1 ring-teal-500/60' : ''"
                 :placeholder="$t('logic.nodeConfig.extractor.pathExample')"
@@ -516,6 +777,7 @@
             <p v-if="!jsonPaths.length && !localData.json_path" class="text-xs text-slate-500 mt-2 text-center py-2">
               Klicke <strong>+</strong> um Ausgänge hinzuzufügen.
             </p>
+          </div>
           </div>
         </template>
 
@@ -533,6 +795,7 @@
             </div>
           </template>
 
+          <div @focusout="onExtractorControlsFocusOut">
           <!-- Multi-path path picker dropdown (one shared, fills active row) -->
           <div v-if="extractorPaths.length" class="form-group">
             <label class="label">
@@ -557,6 +820,7 @@
 
             <div
               v-for="(entry, i) in xmlPaths" :key="i"
+              @focusin="activeExtractorRow = i"
               class="extractor-output-row mt-2 p-2 rounded-lg border border-slate-700/50 flex flex-col gap-1"
               :style="extractorOutputRowStyle"
             >
@@ -578,7 +842,6 @@
                 :value="entry.path"
                 @input="updateXmlPath(i, 'path', $event.target.value)"
                 @focus="activeExtractorRow = i"
-                @blur="activeExtractorRow = null"
                 class="input text-xs font-mono w-full"
                 :class="activeExtractorRow === i ? 'ring-1 ring-teal-500/60' : ''"
                 :placeholder="$t('logic.nodeConfig.extractor.xmlPathPlaceholder')"
@@ -592,6 +855,7 @@
             <p v-if="!xmlPaths.length && !localData.xml_path" class="text-xs text-slate-500 mt-2 text-center py-2">
               {{ $t('logic.nodeConfig.extractor.clickPlusToAddOutputs') }}
             </p>
+          </div>
           </div>
         </template>
       </div>
@@ -725,6 +989,16 @@
           <p class="text-xs text-slate-500 mt-1">{{ $t('logic.nodeConfig.ical.refreshHint') }}</p>
         </div>
 
+        <!-- Maximum payload size -->
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.ical.maxPayloadSizeLabel') }}</label>
+          <input v-model.number="localData.max_payload_size_mb" type="number" min="1" max="50" step="1"
+            class="input text-sm"
+            @change="emitBoundedUpdate('max_payload_size_mb', ICAL_PAYLOAD_SIZE_SCHEMA)"
+            data-testid="ical-max-payload-size" />
+          <p class="text-xs text-slate-500 mt-1">{{ $t('logic.nodeConfig.ical.maxPayloadSizeHint') }}</p>
+        </div>
+
         <!-- RAW output info -->
         <p class="text-xs text-slate-400">
           {{ $t('logic.nodeConfig.ical.rawInfo') }}
@@ -812,9 +1086,199 @@
       </div>
     </template>
 
+    <!-- ── wake_on_lan: MAC validation ─────────────────────────────────── -->
+    <template v-else-if="isWakeOnLanNode">
+      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <p class="text-xs text-slate-500">{{ nodeDescription(nodeDef) }}</p>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.wake_on_lan.mac_address') }}</label>
+          <input
+            v-model="localData.mac_address"
+            type="text"
+            :class="['input text-sm font-mono', macAddressError ? 'border-red-500 focus:ring-red-500' : '']"
+            placeholder="AA:BB:CC:DD:EE:FF"
+            @change="emitUpdate"
+            data-testid="wol-mac-address"
+          />
+          <p v-if="macAddressError" class="text-xs text-red-400 mt-1">{{ macAddressError }}</p>
+        </div>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.wake_on_lan.broadcast_ip') }}</label>
+          <input
+            v-model="localData.broadcast_ip"
+            type="text"
+            :class="['input text-sm font-mono', broadcastIpError ? 'border-red-500 focus:ring-red-500' : '']"
+            placeholder="255.255.255.255"
+            @change="emitUpdate"
+            data-testid="wol-broadcast-ip"
+          />
+          <p v-if="broadcastIpError" class="text-xs text-red-400 mt-1">{{ broadcastIpError }}</p>
+        </div>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.wake_on_lan.port') }}</label>
+          <input
+            v-model.number="localData.port"
+            type="number"
+            min="1"
+            max="65535"
+            :class="['input text-sm', portError ? 'border-red-500 focus:ring-red-500' : '']"
+            @change="emitUpdate"
+            data-testid="wol-port"
+          />
+          <p v-if="portError" class="text-xs text-red-400 mt-1">{{ portError }}</p>
+        </div>
+      </div>
+    </template>
+
+    <!-- ── host_check: host + timeout + count ─────────────────────────── -->
+    <template v-else-if="isHostCheckNode">
+      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <p class="text-xs text-slate-500">{{ nodeDescription(nodeDef) }}</p>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.host_check.host') }}</label>
+          <input
+            v-model="localData.host"
+            type="text"
+            class="input text-sm font-mono"
+            :placeholder="$t('logic.nodeConfig.host_check.hostPlaceholder')"
+            @change="emitUpdate"
+            data-testid="hc-host"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.host_check.timeout_s') }}</label>
+          <input
+            v-model.number="localData.timeout_s"
+            type="number"
+            min="1"
+            max="30"
+            class="input text-sm"
+            @change="emitUpdate"
+            data-testid="hc-timeout"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.host_check.count') }}</label>
+          <input
+            v-model.number="localData.count"
+            type="number"
+            min="1"
+            max="10"
+            class="input text-sm"
+            @change="emitUpdate"
+            data-testid="hc-count"
+          />
+        </div>
+      </div>
+    </template>
+
+    <!-- ── message_archive: archive selection by display name ────────────── -->
+    <template v-else-if="isMessageArchiveNode">
+      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <p class="text-xs text-slate-500">{{ nodeDescription(nodeDef) }}</p>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.messageArchive.archive') }}</label>
+          <select v-model="localData.archive_id" class="input text-sm" @change="emitUpdate">
+            <option value="">{{ $t('logic.nodeConfig.messageArchive.selectArchive') }}</option>
+            <option v-for="archive in messageArchives" :key="archive.id" :value="archive.id">
+              {{ archive.name || archive.id }}
+            </option>
+            <option v-if="selectedMessageArchiveMissing" :value="localData.archive_id">
+              {{ $t('logic.nodeConfig.messageArchive.missingArchive') }}
+            </option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div class="form-group">
+            <label class="label">{{ $t('logic.nodeConfig.messageArchive.type') }}</label>
+            <select v-model="localData.type" class="input text-sm" @change="emitUpdate">
+              <option v-for="type in MESSAGE_TYPE_OPTIONS" :key="type" :value="type">
+                {{ $t(`messageArchives.types.${type}`) }}
+              </option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="label">{{ $t('logic.nodeConfig.messageArchive.severity') }}</label>
+            <select v-model="localData.severity" class="input text-sm" @change="emitUpdate">
+              <option v-for="severity in MESSAGE_SEVERITY_OPTIONS" :key="severity" :value="severity">
+                {{ $t(`messageArchives.severities.${severity}`) }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.messageArchive.title') }}</label>
+          <input
+            v-model="localData.title"
+            class="input text-sm"
+            :placeholder="$t('logic.nodeConfig.messageArchive.titlePlaceholder')"
+            @change="emitUpdate"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.messageArchive.message') }}</label>
+          <textarea
+            v-model="localData.message"
+            class="input text-sm min-h-24 resize-y"
+            :placeholder="$t('logic.nodeConfig.messageArchive.messagePlaceholder')"
+            @change="emitUpdate"
+          />
+        </div>
+      </div>
+    </template>
+
+    <template v-else-if="isNotifyMessageNode">
+      <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <p class="text-xs text-slate-500">{{ nodeDescription(nodeDef) }}</p>
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.notification.adapter') }}</label>
+          <select v-model="localData.adapter_instance_id" class="input text-sm" @change="onNotificationAdapterChange">
+            <option value="">{{ $t('logic.nodeConfig.notification.selectAdapter') }}</option>
+            <option v-for="instance in messageAdapters" :key="instance.id" :value="instance.id">{{ instance.name }}</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="label">{{ $t('logic.nodeConfig.notification.targets') }}</label>
+          <label v-for="target in notificationTargets" :key="target.key" class="flex items-center gap-2 text-sm">
+            <input type="checkbox" :checked="notificationTargetSelected(target)" @change="toggleNotificationTarget(target, $event.target.checked)" />
+            <span>{{ target.key }}</span>
+          </label>
+          <p v-if="localData.adapter_instance_id && !notificationTargets.length" class="text-xs text-amber-500">{{ $t('logic.nodeConfig.notification.noTargets') }}</p>
+        </div>
+        <div class="form-group"><label class="label">{{ $t('logic.nodeConfig.notification.title') }}</label><input v-model="localData.title" class="input text-sm" @change="emitUpdate" /></div>
+        <div class="form-group"><label class="label">{{ $t('logic.nodeConfig.notification.fallback') }}</label><textarea v-model="localData.message" class="input text-sm min-h-24" @change="emitUpdate" /><p class="text-xs text-slate-500 mt-1">{{ $t('logic.nodeConfig.notification.placeholders') }}</p></div>
+        <div class="form-group"><label class="label">{{ $t('logic.nodeConfig.notification.priority') }}</label><input v-model.number="localData.priority" type="number" min="-2" max="1" class="input text-sm" @change="emitUpdate" /></div>
+      </div>
+    </template>
+
+    <template v-else-if="isCommentNode">
+      <div class="flex-1 overflow-hidden p-4 flex flex-col gap-2">
+        <p class="text-xs text-slate-500 shrink-0">{{ nodeDescription(nodeDef) }}</p>
+        <label class="label shrink-0">{{ $t('logic.nodeConfig.comment.text') }}</label>
+        <textarea
+          v-model="localData.text"
+          class="input text-sm flex-1 resize-none"
+          :placeholder="$t('logic.nodeConfig.comment.textPlaceholder')"
+          data-testid="comment-text"
+          @change="emit('update', { text: localData.text })"
+        />
+      </div>
+    </template>
+
     <!-- ── All other node types: generic rendering ─────────────────────── -->
     <template v-else>
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        <p v-if="nodeDef?.legacy" class="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-300">{{ $t('logic.nodeConfig.notification.legacy') }}</p>
         <p v-if="nodeDef?.description" class="text-xs text-slate-500">{{ nodeDescription(nodeDef) }}</p>
         <template v-if="nodeDef?.config_schema">
           <div v-for="(schema, key) in configFields" :key="key" class="form-group">
@@ -831,13 +1295,32 @@
               class="text-sm" @change="emitUpdate" />
             <input v-else
               v-model="localData[key]"
-              :type="schema.subtype === 'password' ? 'password' : schema.type === 'number' ? 'number' : 'text'"
-              class="input text-sm" @change="emitUpdate" />
+              :type="schema.subtype === 'password' ? 'password' : ['number', 'integer'].includes(schema.type) ? 'number' : 'text'"
+              :min="schema.min ?? schema.minimum"
+              :max="schema.max ?? schema.maximum"
+              :step="schema.step ?? (schema.type === 'integer' ? 1 : schema.type === 'number' ? 'any' : undefined)"
+              class="input text-sm" @change="onSchemaFieldChange(key, schema)" />
+            <p v-if="node?.type === 'datetime' && key === 'custom_format'" class="text-xs text-slate-500 mt-1">
+              {{ $t('logic.nodeConfig.datetime.tokens') }}
+            </p>
           </div>
 
         </template>
       </div>
     </template>
+
+    </template>
+
+    <DebugInspector
+      v-if="debugMode && panelTab === 'debug'"
+      :inputs="debugInputs"
+      :outputs="debugOutputs"
+      :metadata="debugMetadata"
+      :has-overrides="hasDebugOverrides"
+      @set-override="(inputId, text) => emit('set-override', inputId, text)"
+      @clear-override="inputId => emit('clear-override', inputId)"
+      @clear-all="emit('clear-all')"
+    />
 
   </div>
 </template>
@@ -845,19 +1328,29 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { dpApi, searchApi, securityApi } from '@/api/client'
+import { adapterApi, dpApi, messageArchivesApi, searchApi, securityApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { getAutoContrastText } from '@/utils/colorContrast'
+import { useResizablePanel } from '@/composables/useResizablePanel'
+import DebugInspector from './DebugInspector.vue'
 
 const { t, te } = useI18n()
 const auth = useAuthStore()
 
+const { width: panelWidth, isResizing: isResizingPanel, startResize: startPanelResize } =
+  useResizablePanel({ storageKey: 'obs.logic.nodeConfigPanelWidth', defaultWidth: 288, min: 260, max: 800 })
+
 const props = defineProps({
-  node:        { type: Object, default: null },
-  nodeTypes:   { type: Array,  default: () => [] },
-  nodeOutputs: { type: Object, default: () => ({}) },
+  node:              { type: Object,  default: null },
+  nodeTypes:         { type: Array,   default: () => [] },
+  nodeOutputs:       { type: Object,  default: () => ({}) },
+  debugMode:         { type: Boolean, default: false },
+  debugInputs:       { type: Array,   default: () => [] },
+  debugOutputs:      { type: Object,  default: () => ({}) },
+  debugMetadata:     { type: Object,  default: null },
+  hasDebugOverrides: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update', 'close'])
+const emit = defineEmits(['update', 'close', 'set-override', 'clear-override', 'clear-all'])
 
 const EXTRACTOR_OUTPUT_BG = 'rgba(30, 41, 59, 0.6)'
 const EXTRACTOR_OUTPUT_FG = getAutoContrastText(EXTRACTOR_OUTPUT_BG)
@@ -871,13 +1364,58 @@ const localData          = ref({})
 const dpSearch           = ref('')
 const dpResults          = ref([])
 const activeTab          = ref('connection')
+// Outer pane switch (issue #1128): 'debug' can only occur while debug mode is
+// on. Enabling debug mode jumps to the debug values, disabling it returns to
+// the settings; a manual choice then sticks across block selections.
+// `activeTab` stays the setting sub-tab of DataPoint blocks.
+const panelTab           = ref(props.debugMode ? 'debug' : 'settings')
 const valueMapPreset     = ref('')
 const valueMapCustom     = ref('')
 const valueMapCustomError = ref('')
+const sequenceDpResults = ref([])
+const sequenceSearches = ref([])
+const sequenceSearchDrafts = ref([])
+const sequenceSearchNodeId = ref(null)
 const urlTargetChecking = ref(false)
 const urlTargetSaving = ref(false)
 const urlTargetDecision = ref(null)
 const urlTargetMsg = ref(null)
+const apiVariableSearches = ref([])
+const apiVariableResults = ref([])
+const messageArchives = ref([])
+const messageAdapters = ref([])
+const MESSAGE_TYPE_OPTIONS = ['automation', 'notification', 'system', 'security', 'adapter', 'diagnostic']
+const MESSAGE_SEVERITY_OPTIONS = ['info', 'success', 'warning', 'error', 'critical']
+const ICAL_PAYLOAD_SIZE_SCHEMA = { type: 'integer', min: 1, max: 50 }
+
+function normaliseIcalPayloadSize(rawValue) {
+  if (typeof rawValue === 'boolean' || rawValue === null || rawValue === undefined) return 2
+  let value
+  if (typeof rawValue === 'number') {
+    value = rawValue
+  } else if (typeof rawValue === 'string' && /^[+-]?\d+$/.test(rawValue.trim())) {
+    value = Number(rawValue)
+  } else {
+    return 2
+  }
+  if (!Number.isFinite(value)) return 2
+  return Math.min(50, Math.max(1, Math.trunc(value)))
+}
+
+const CONDITION_OPERATOR_OPTIONS = computed(() => [
+  { value: 'eq',          label: t('logic.nodeConfig.rules.operators.eq') },
+  { value: 'ne',          label: t('logic.nodeConfig.rules.operators.ne') },
+  { value: 'gt',          label: t('logic.nodeConfig.rules.operators.gt') },
+  { value: 'lt',          label: t('logic.nodeConfig.rules.operators.lt') },
+  { value: 'gte',         label: t('logic.nodeConfig.rules.operators.gte') },
+  { value: 'lte',         label: t('logic.nodeConfig.rules.operators.lte') },
+  { value: 'range',       label: t('logic.nodeConfig.rules.operators.range') },
+  { value: 'text_eq',     label: t('logic.nodeConfig.rules.operators.text_eq') },
+  { value: 'contains',    label: t('logic.nodeConfig.rules.operators.contains') },
+  { value: 'starts_with', label: t('logic.nodeConfig.rules.operators.starts_with') },
+  { value: 'ends_with',   label: t('logic.nodeConfig.rules.operators.ends_with') },
+  { value: 'regex',       label: t('logic.nodeConfig.rules.operators.regex') },
+])
 
 // ── Value Map Presets ──────────────────────────────────────────────────────
 const VALUE_MAP_PRESETS = computed(() => [
@@ -1037,6 +1575,56 @@ const isExtractorNode  = computed(() =>
 const isSubstringExtractorNode = computed(() => props.node?.type === 'substring_extractor')
 const isStringConcatNode = computed(() => props.node?.type === 'string_concat')
 const isICalNode          = computed(() => props.node?.type === 'ical')
+const apiVariables = computed(() => Array.isArray(localData.value.variables) ? localData.value.variables : [])
+const isWakeOnLanNode     = computed(() => props.node?.type === 'wake_on_lan')
+const isHostCheckNode     = computed(() => props.node?.type === 'host_check')
+const isMessageArchiveNode = computed(() => props.node?.type === 'message_archive')
+const isNotifyMessageNode = computed(() => props.node?.type === 'notify_message')
+const selectedMessageAdapter = computed(() => messageAdapters.value.find(instance => instance.id === localData.value.adapter_instance_id))
+function notificationProviderEnabled(config) {
+  if (config?.enabled === true || config?.enabled === 1) return true
+  if (typeof config?.enabled === 'string') {
+    return ['true', '1', 'yes', 'on'].includes(config.enabled.trim().toLowerCase())
+  }
+  return false
+}
+const notificationTargets = computed(() => {
+  const providers = selectedMessageAdapter.value?.config?.providers || {}
+  return Object.entries(providers).flatMap(([provider, config]) => notificationProviderEnabled(config)
+    ? Object.keys(config.targets || {}).map(target => ({ provider, target, key: `${provider}/${target}` }))
+    : [])
+})
+const isDecisionNode      = computed(() => props.node?.type === 'decision')
+const isValueMappingNode  = computed(() => props.node?.type === 'value_mapping')
+const isValueSequenceNode = computed(() => props.node?.type === 'value_sequence')
+const isCommentNode       = computed(() => props.node?.type === 'comment')
+const sequenceSteps = computed(() => Array.isArray(localData.value.steps) ? localData.value.steps : [])
+const selectedMessageArchiveMissing = computed(() => {
+  const id = localData.value.archive_id
+  return !!id && !messageArchives.value.some((archive) => archive.id === id)
+})
+
+const MAC_RE = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/
+const macAddressError = computed(() => {
+  const mac = (localData.value.mac_address || '').trim()
+  if (!mac) return ''
+  return MAC_RE.test(mac) ? '' : t('logic.nodeConfig.wake_on_lan.invalidMac')
+})
+
+const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)$/
+const broadcastIpError = computed(() => {
+  const ip = (localData.value.broadcast_ip || '').trim()
+  if (!ip) return ''
+  return IPV4_RE.test(ip) ? '' : t('logic.nodeConfig.wake_on_lan.invalidBroadcastIp')
+})
+
+const portError = computed(() => {
+  const p = localData.value.port
+  if (p === '' || p === null || p === undefined) return ''
+  const n = Number(p)
+  if (!Number.isInteger(n) || n < 1 || n > 65535) return t('logic.nodeConfig.wake_on_lan.invalidPort')
+  return ''
+})
 
 // ── iCal: filter management ───────────────────────────────────────────────
 const icalFilters = computed(() => {
@@ -1085,6 +1673,119 @@ function onConcatCountChange(e) {
   const v = Math.max(2, Math.min(20, parseInt(e.target.value) || 2))
   localData.value.count = v
   emitUpdate()
+}
+
+// ── Decision / value_mapping: shared condition row management ─────────────
+function _parseRows(raw) {
+  if (Array.isArray(raw)) {
+    return raw.filter(row => row && typeof row === 'object' && !Array.isArray(row))
+  }
+  if (typeof raw !== 'string') return []
+  try {
+    const parsed = JSON.parse(raw || '[]')
+    return Array.isArray(parsed)
+      ? parsed.filter(row => row && typeof row === 'object' && !Array.isArray(row))
+      : []
+  } catch { return [] }
+}
+
+function _defaultDecisionRows() {
+  return [
+    { handle: 'out_1', operator: 'eq' },
+    { handle: 'out_2', operator: 'eq' },
+  ]
+}
+
+function _defaultMappingRows() {
+  return [
+    { operator: 'eq', result: '' },
+    { operator: 'eq', result: '' },
+  ]
+}
+
+const decisionConditions = computed(() => {
+  const rows = _parseRows(localData.value.conditions)
+  return rows.length ? rows : _defaultDecisionRows()
+})
+
+const mappingRules = computed(() => {
+  const rows = _parseRows(localData.value.rules)
+  return rows.length ? rows : _defaultMappingRows()
+})
+
+const conditionRows = computed(() =>
+  isDecisionNode.value ? decisionConditions.value : mappingRules.value
+)
+
+function conditionRowName(row, i) {
+  if (row.name) return row.name
+  return isDecisionNode.value
+    ? t('logic.nodeConfig.decision.defaultOutput', { n: i + 1 })
+    : t('logic.nodeConfig.mapping.defaultRule', { n: i + 1 })
+}
+
+function _saveConditionRows(rows) {
+  if (isDecisionNode.value) {
+    localData.value.conditions = JSON.stringify(rows.map((row, i) => ({
+      ...row,
+      handle: row.handle || `out_${i + 1}`,
+    })).map(row => {
+      if (!row.name) delete row.name
+      return row
+    }))
+  } else {
+    localData.value.rules = JSON.stringify(rows.map(row => {
+      const next = { ...row }
+      if (!next.name) delete next.name
+      return next
+    }))
+  }
+  emitUpdate()
+}
+
+function addDecisionCondition() {
+  const rows = decisionConditions.value.map(r => ({ ...r }))
+  const nextNumber = rows.reduce((max, row) => {
+    const match = String(row.handle || '').match(/^out_(\d+)$/)
+    return match ? Math.max(max, Number(match[1])) : max
+  }, 0) + 1
+  rows.push({
+    handle: `out_${nextNumber}`,
+    operator: 'eq',
+  })
+  _saveConditionRows(rows)
+}
+
+function addMappingRule() {
+  const rows = mappingRules.value.map(r => ({ ...r }))
+  rows.push({
+    operator: 'eq',
+    result: '',
+  })
+  _saveConditionRows(rows)
+}
+
+function updateConditionRow(i, key, value) {
+  const rows = conditionRows.value.map(r => ({ ...r }))
+  if (!rows[i]) return
+  rows[i][key] = value
+  if (key === 'operator' && value !== 'range') {
+    delete rows[i].min
+    delete rows[i].max
+    delete rows[i].value_to
+  }
+  _saveConditionRows(rows)
+}
+
+function removeConditionRow(i) {
+  const rows = conditionRows.value.map(r => ({ ...r }))
+  if (rows.length <= 2) return
+  rows.splice(i, 1)
+  _saveConditionRows(rows)
+}
+
+function isTextCondition(operator) {
+  return ['text_eq', 'contains', 'starts_with', 'ends_with', 'regex'].includes(operator)
 }
 
 // ── Extractor: preview + path helpers ─────────────────────────────────────
@@ -1421,6 +2122,30 @@ const hasFilter    = computed(() => {
          !!(d.min_delta || d.min_delta_pct || d.throttle_value)
 })
 
+// One tab bar per block: the setting tabs a block already has (DataPoint
+// blocks) or a single "Settings" tab, plus the debug values while debug mode
+// is on. Blocks without setting tabs therefore show a bar only in debug mode.
+const panelTabs = computed(() => {
+  const settingsTabs = isDatapointNode.value
+    ? tabs.value.map(tab => ({ ...tab, debug: false }))
+    : [{ id: 'settings', label: t('logic.nodeConfig.panelTabs.settings'), dot: false, debug: false }]
+  if (!props.debugMode) return settingsTabs
+  return [...settingsTabs, { id: 'debug', label: t('logic.nodeConfig.panelTabs.debug'), dot: false, debug: true }]
+})
+
+function selectPanelTab(tab) {
+  panelTab.value = tab.debug ? 'debug' : 'settings'
+  if (!tab.debug && isDatapointNode.value) activeTab.value = tab.id
+}
+
+function isPanelTabActive(tab) {
+  if (tab.debug) return panelTab.value === 'debug'
+  if (panelTab.value === 'debug') return false
+  return !isDatapointNode.value || activeTab.value === tab.id
+}
+
+watch(() => props.debugMode, isDebugMode => { panelTab.value = isDebugMode ? 'debug' : 'settings' })
+
 const tabs = computed(() => [
   { id: 'connection', label: t('logic.nodeConfig.tabs.connection'), dot: false              },
   { id: 'transform',  label: t('logic.nodeConfig.tabs.transform'),  dot: hasTransform.value },
@@ -1447,6 +2172,33 @@ function fieldLabel(nodeType, fieldKey, fallback) {
   return te(key) ? t(key) : (fallback ?? fieldKey)
 }
 
+function normaliseApiVariables(raw) {
+  let variables = raw
+  if (typeof variables === 'string') {
+    try {
+      variables = JSON.parse(variables)
+    } catch {
+      variables = []
+    }
+  }
+  return Array.isArray(variables)
+    ? variables.map((v, i) => {
+        const slot = Number.parseInt(v?.slot, 10)
+        return {
+          slot: Number.isInteger(slot) && slot > 0 ? slot : i + 1,
+          datapoint_id: v?.datapoint_id || '',
+          datapoint_name: v?.datapoint_name || '',
+        }
+      })
+    : []
+}
+
+function syncApiVariableUiState() {
+  const vars = apiVariables.value
+  apiVariableSearches.value = vars.map((v, i) => apiVariableSearches.value[i] ?? v.datapoint_name ?? '')
+  apiVariableResults.value = vars.map((_, i) => apiVariableResults.value[i] ?? [])
+}
+
 // ── Watchers ───────────────────────────────────────────────────────────────
 watch(() => props.node, (n) => {
   if (n) {
@@ -1462,6 +2214,37 @@ watch(() => props.node, (n) => {
     }
     if (n.type === 'api_client' && !localData.value.auth_type) {
       localData.value.auth_type = 'none'
+    }
+    if (n.type === 'ical') {
+      localData.value.max_payload_size_mb = normaliseIcalPayloadSize(localData.value.max_payload_size_mb)
+    }
+    if (n.type === 'api_client') {
+      localData.value.variables = normaliseApiVariables(localData.value.variables)
+      apiVariableSearches.value = localData.value.variables.map(v => v.datapoint_name || '')
+      apiVariableResults.value = localData.value.variables.map(() => [])
+    } else {
+      apiVariableSearches.value = []
+      apiVariableResults.value = []
+    }
+    if (n.type === 'message_archive') {
+      if (!localData.value.type) localData.value.type = 'automation'
+      if (!localData.value.severity) localData.value.severity = 'info'
+      if (localData.value.archive_id) localData.value.archive_id = String(localData.value.archive_id).toLowerCase()
+      loadMessageArchives()
+    }
+    if (n.type === 'notify_message') loadMessageAdapters()
+    if (n.type === 'value_sequence') {
+      if (sequenceSearchNodeId.value !== n.id) {
+        sequenceSearchNodeId.value = n.id
+        sequenceSearchDrafts.value = []
+      }
+      let steps = n.data.steps
+      if (typeof steps === 'string') {
+        try { steps = JSON.parse(steps) } catch { steps = [] }
+      }
+      localData.value.steps = Array.isArray(steps) ? steps.filter(step => step && typeof step === 'object' && !Array.isArray(step)) : []
+      sequenceSearches.value = localData.value.steps.map((step, index) => step.datapoint_name || sequenceSearchDrafts.value[index] || '')
+      sequenceDpResults.value = localData.value.steps.map(() => [])
     }
     if (n.type === 'datapoint_read' || n.type === 'datapoint_write') {
       searchDps()
@@ -1539,6 +2322,15 @@ function onExtractorPathSelect(e) {
     activeExtractorRow.value = 0
   }
   e.target.value = ''
+  activeExtractorRow.value = null
+}
+
+function onExtractorControlsFocusOut(e) {
+  // Keep the selected row while focus moves between the shared picker and any
+  // output controls, including reverse keyboard traversal through a row.
+  // Clear it once focus leaves the complete control group.
+  if (e.currentTarget.contains(e.relatedTarget)) return
+  activeExtractorRow.value = null
 }
 
 function onValueMapCustomInput(e) {
@@ -1581,6 +2373,77 @@ function selectDp(dp) {
   localData.value.datapoint_name = dp.name
   dpSearch.value  = dp.name
   dpResults.value = []
+  emitUpdate()
+}
+
+function syncSequencePickerState() { sequenceSearches.value = sequenceSteps.value.map(step => step.datapoint_name || ''); sequenceDpResults.value = sequenceSteps.value.map(() => []) }
+function onSequenceSearchInput(index) { const steps = [...sequenceSteps.value]; if (steps[index]?.datapoint_id && sequenceSearches.value[index] !== steps[index].datapoint_name) { sequenceSearchDrafts.value[index] = sequenceSearches.value[index]; steps[index] = { ...steps[index], datapoint_id: '', datapoint_name: '' }; localData.value.steps = steps; emitUpdate() }; searchSequenceDps(index, sequenceSearches.value[index]) }
+function saveSequenceSteps() { localData.value.steps = sequenceSteps.value; syncSequencePickerState(); emitUpdate() }
+function addSequenceStep() { localData.value.steps = [...sequenceSteps.value, { datapoint_id: '', datapoint_name: '', value: '', delay_ms: 0 }]; syncSequencePickerState(); emitUpdate() }
+function removeSequenceStep(index) { const steps = [...sequenceSteps.value]; steps.splice(index, 1); localData.value.steps = steps; syncSequencePickerState(); emitUpdate() }
+function duplicateSequenceStep(index) { const steps = [...sequenceSteps.value]; steps.splice(index + 1, 0, { ...steps[index] }); localData.value.steps = steps; syncSequencePickerState(); emitUpdate() }
+function moveSequenceStep(index, delta) { const target = index + delta; if (target < 0 || target >= sequenceSteps.value.length) return; const steps = [...sequenceSteps.value]; [steps[index], steps[target]] = [steps[target], steps[index]]; localData.value.steps = steps; syncSequencePickerState(); emitUpdate() }
+function applySequencePreset() { localData.value.steps = [{ datapoint_id: '', datapoint_name: '', value: true, delay_ms: 500 }, { datapoint_id: '', datapoint_name: '', value: false, delay_ms: 500 }]; syncSequencePickerState(); emitUpdate() }
+async function searchSequenceDps(index, query) { try { const { data } = (query || '').length < 1 ? await dpApi.list(0, 50) : await searchApi.search({ q: query, size: 50 }); const next = sequenceDpResults.value.slice(); next[index] = data.items || data; sequenceDpResults.value = next } catch { sequenceDpResults.value = [] } }
+function selectSequenceDp(index, dp) { const steps = [...sequenceSteps.value]; steps[index] = { ...steps[index], datapoint_id: dp.id, datapoint_name: dp.name }; localData.value.steps = steps; sequenceSearchDrafts.value[index] = ''; sequenceSearches.value[index] = dp.name; const next = sequenceDpResults.value.slice(); next[index] = []; sequenceDpResults.value = next; emitUpdate() }
+
+function addApiVariable() {
+  const variables = normaliseApiVariables(localData.value.variables)
+  const maxSlot = variables.reduce((max, variable) => Math.max(max, variable.slot || 0), 0)
+  variables.push({ slot: maxSlot + 1, datapoint_id: '', datapoint_name: '' })
+  localData.value.variables = variables
+  syncApiVariableUiState()
+  emitUpdate()
+}
+
+function removeApiVariable(index) {
+  const variables = normaliseApiVariables(localData.value.variables)
+  variables.splice(index, 1)
+  localData.value.variables = variables
+  apiVariableSearches.value.splice(index, 1)
+  apiVariableResults.value.splice(index, 1)
+  syncApiVariableUiState()
+  emitUpdate()
+}
+
+async function searchApiVariableDps(index, query) {
+  try {
+    let items
+    if ((query || '').length < 1) {
+      const { data } = await dpApi.list(0, 50)
+      items = data.items || data
+    } else {
+      const { data } = await searchApi.search({ q: query, size: 50 })
+      items = data.items || data
+    }
+    const next = apiVariableResults.value.slice()
+    next[index] = items
+    apiVariableResults.value = next
+  } catch {
+    const next = apiVariableResults.value.slice()
+    next[index] = []
+    apiVariableResults.value = next
+  }
+}
+
+function onApiVariableSearchInput(index, event) {
+  const query = event.target.value
+  const searches = apiVariableSearches.value.slice()
+  searches[index] = query
+  apiVariableSearches.value = searches
+  searchApiVariableDps(index, query)
+}
+
+function selectApiVariableDp(index, dp) {
+  const variables = normaliseApiVariables(localData.value.variables)
+  variables[index] = { slot: variables[index]?.slot || index + 1, datapoint_id: dp.id, datapoint_name: dp.name }
+  localData.value.variables = variables
+  const searches = apiVariableSearches.value.slice()
+  searches[index] = dp.name
+  apiVariableSearches.value = searches
+  const results = apiVariableResults.value.slice()
+  results[index] = []
+  apiVariableResults.value = results
   emitUpdate()
 }
 
@@ -1628,9 +2491,80 @@ async function allowApiClientTarget() {
   }
 }
 
+async function loadMessageArchives() {
+  try {
+    const { data } = await messageArchivesApi.list()
+    messageArchives.value = Array.isArray(data) ? data : (data?.archives ?? [])
+  } catch {
+    messageArchives.value = []
+  }
+}
+
+async function loadMessageAdapters() {
+  try {
+    const { data } = await adapterApi.listInstances()
+    messageAdapters.value = (Array.isArray(data) ? data : []).filter(instance => instance.adapter_type === 'MESSAGE' && instance.enabled)
+  } catch {
+    messageAdapters.value = []
+  }
+}
+
+function onNotificationAdapterChange() {
+  localData.value.providers = []
+  emitUpdate()
+}
+
+function notificationTargetSelected(target) {
+  const refs = Array.isArray(localData.value.providers) ? localData.value.providers : []
+  return refs.some(ref => ref.provider === target.provider && ref.target === target.target)
+}
+
+function toggleNotificationTarget(target, selected) {
+  const validKeys = new Set(notificationTargets.value.map(item => item.key))
+  const refs = (Array.isArray(localData.value.providers) ? localData.value.providers : [])
+    .filter(ref => validKeys.has(`${ref.provider}/${ref.target}`))
+  localData.value.providers = selected
+    ? [...refs.filter(ref => ref.provider !== target.provider || ref.target !== target.target), { provider: target.provider, target: target.target }]
+    : refs.filter(ref => ref.provider !== target.provider || ref.target !== target.target)
+  emitUpdate()
+}
+
 // ── Emit ───────────────────────────────────────────────────────────────────
 function emitUpdate() {
   emit('update', { ...localData.value })
+}
+
+function onSchemaFieldChange(key, schema) {
+  if (schema.type === 'number' || schema.type === 'integer') {
+    emitBoundedUpdate(key, schema)
+    return
+  }
+  emitUpdate()
+}
+
+function emitBoundedUpdate(key, schema) {
+  if (key === 'max_payload_size_mb') {
+    localData.value[key] = normaliseIcalPayloadSize(localData.value[key])
+    emitUpdate()
+    return
+  }
+  const rawValue = localData.value[key]
+  if (rawValue === '' || rawValue === null || rawValue === undefined) {
+    emitUpdate()
+    return
+  }
+
+  const value = Number(rawValue)
+  if (Number.isFinite(value)) {
+    const minimum = schema.min ?? schema.minimum
+    const maximum = schema.max ?? schema.maximum
+    let bounded = value
+    if (minimum !== undefined) bounded = Math.max(minimum, bounded)
+    if (maximum !== undefined) bounded = Math.min(maximum, bounded)
+    if (schema.type === 'integer') bounded = Math.round(bounded)
+    localData.value[key] = bounded
+  }
+  emitUpdate()
 }
 </script>
 
@@ -1651,15 +2585,31 @@ function emitUpdate() {
   align-items: center;
   justify-content: center;
   gap: 3px;
+  /* Four tabs (DataPoint setting tabs + debug values) must still fit into the
+     narrowest panel width, so labels shrink and ellipsize instead of pushing
+     the bar wider than the panel. */
+  min-width: 0;
+}
+.tab-btn__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tab-btn:hover   { color: #334155; }
 .tab-btn--active { color: #0f172a; border-bottom-color: #0d9488; }
 .tab-dot { color: #0d9488; font-size: 14px; line-height: 1; }
+.tab-btn--debug              { color: #b45309; }
+.tab-btn--debug:hover        { color: #92400e; }
+.tab-btn--debug.tab-btn--active { color: #b45309; border-bottom-color: #f59e0b; }
 
 :global(.dark) .tab-btn          { color: #64748b; }
 :global(.dark) .tab-btn:hover    { color: #94a3b8; }
 :global(.dark) .tab-btn--active  { color: #e2e8f0; border-bottom-color: #14b8a6; }
 :global(.dark) .tab-dot          { color: #14b8a6; }
+:global(.dark) .tab-btn--debug                  { color: #d97706; }
+:global(.dark) .tab-btn--debug:hover            { color: #fbbf24; }
+:global(.dark) .tab-btn--debug.tab-btn--active  { color: #fbbf24; border-bottom-color: #f59e0b; }
 
 .section-label {
   font-size: 9px;
@@ -1726,6 +2676,16 @@ function emitUpdate() {
 
 .extractor-output-row {
   background: var(--extractor-output-bg);
+}
+
+.rule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.35);
 }
 
 .extractor-output-index {

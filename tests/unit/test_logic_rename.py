@@ -19,7 +19,6 @@ from obs.core.event_bus import DataPointRenamedEvent
 from obs.logic.manager import LogicManager
 from obs.logic.models import FlowData
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -146,6 +145,37 @@ async def test_rename_uses_current_graph_after_cache_mutation():
 
 
 @pytest.mark.asyncio
+async def test_rename_persist_failure_is_logged_and_swallowed():
+    """A DB failure while persisting the renamed flow must not propagate —
+    it is logged and the rename loop continues to the next graph."""
+    dp_id = uuid.uuid4()
+    flow = _flow_with_nodes({"datapoint_id": str(dp_id), "datapoint_name": "Alt"})
+    mgr, db = _make_manager({"g1": ("MyGraph", True, flow)})
+    db.execute_and_commit.side_effect = RuntimeError("db write failed")
+
+    event = DataPointRenamedEvent(dp_id=dp_id, old_name="Alt", new_name="Neu")
+    await mgr._on_datapoint_renamed(event)  # must not raise
+
+    assert flow.nodes[0].data["datapoint_name"] == "Neu"
+    db.execute_and_commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rename_ignores_malformed_json_variables_string():
+    """A 'variables' field holding malformed JSON is left untouched (returned
+    as-is) instead of raising — the node itself still doesn't need persisting."""
+    dp_id = uuid.uuid4()
+    flow = _flow_with_nodes({"variables": "not valid json {"})
+    mgr, db = _make_manager({"g1": ("MyGraph", True, flow)})
+
+    event = DataPointRenamedEvent(dp_id=dp_id, old_name="Alt", new_name="Neu")
+    await mgr._on_datapoint_renamed(event)
+
+    assert flow.nodes[0].data["variables"] == "not valid json {"
+    db.execute_and_commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_rename_handles_node_without_datapoint_id():
     """Nodes that have no datapoint_id (e.g. math nodes) must not be touched."""
     dp_id = uuid.uuid4()
@@ -170,3 +200,58 @@ async def test_rename_handles_node_without_datapoint_id():
 
     assert flow.nodes[1].data["datapoint_name"] == "Neu"
     db.execute_and_commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rename_updates_api_client_variable_references():
+    dp_id = uuid.uuid4()
+    other_id = uuid.uuid4()
+    flow = _flow_with_nodes(
+        {
+            "variables": [
+                {"datapoint_id": str(dp_id), "datapoint_name": "Alt"},
+                {"datapoint_id": str(other_id), "datapoint_name": "Other"},
+                "invalid",
+            ],
+        },
+    )
+    mgr, db = _make_manager({"g1": ("MyGraph", True, flow)})
+
+    event = DataPointRenamedEvent(dp_id=dp_id, old_name="Alt", new_name="Neu")
+    await mgr._on_datapoint_renamed(event)
+
+    variables = flow.nodes[0].data["variables"]
+    assert variables[0]["datapoint_name"] == "Neu"
+    assert variables[1]["datapoint_name"] == "Other"
+    db.execute_and_commit.assert_awaited_once()
+    saved_flow = json.loads(db.execute_and_commit.call_args[0][1][0])
+    assert saved_flow["nodes"][0]["data"]["variables"][0]["datapoint_name"] == "Neu"
+
+
+@pytest.mark.asyncio
+async def test_rename_updates_api_client_variable_references_in_json_string():
+    dp_id = uuid.uuid4()
+    other_id = uuid.uuid4()
+    flow = _flow_with_nodes(
+        {
+            "variables": json.dumps(
+                [
+                    {"slot": 1, "datapoint_id": str(dp_id), "datapoint_name": "Alt"},
+                    {"slot": 2, "datapoint_id": str(other_id), "datapoint_name": "Other"},
+                    "invalid",
+                ],
+            ),
+        },
+    )
+    mgr, db = _make_manager({"g1": ("MyGraph", True, flow)})
+
+    event = DataPointRenamedEvent(dp_id=dp_id, old_name="Alt", new_name="Neu")
+    await mgr._on_datapoint_renamed(event)
+
+    variables = json.loads(flow.nodes[0].data["variables"])
+    assert variables[0]["datapoint_name"] == "Neu"
+    assert variables[1]["datapoint_name"] == "Other"
+    db.execute_and_commit.assert_awaited_once()
+    saved_flow = json.loads(db.execute_and_commit.call_args[0][1][0])
+    saved_variables = json.loads(saved_flow["nodes"][0]["data"]["variables"])
+    assert saved_variables[0]["datapoint_name"] == "Neu"

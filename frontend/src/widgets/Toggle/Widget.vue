@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { datapoints } from '@/api/client'
+import type { WriteContext } from '@/api/client'
 import { useIcons } from '@/composables/useIcons'
 import type { DataPointValue } from '@/types'
 
@@ -19,12 +20,19 @@ const props = defineProps<{
   statusValue: DataPointValue | null
   editorMode: boolean
   readonly?: boolean
+  writeContext?: WriteContext
 }>()
 
 const { getSvg, isSvgIcon, svgIconName } = useIcons()
 
 const label = computed(() => (props.config.label as string | undefined) ?? '')
 const mode  = computed<DisplayMode>(() => (props.config.mode as DisplayMode | undefined) ?? 'switch')
+
+const labelSize = computed(() => {
+  const s = props.config.label_size as string | undefined
+  const map: Record<string, string> = { xs: 'text-xs', sm: 'text-sm', md: 'text-base', lg: 'text-lg', xl: 'text-xl' }
+  return map[s ?? ''] ?? 'text-xs'
+})
 
 const onRule = computed<StateRule>(() => {
   const r = props.config.on as Partial<StateRule> | undefined
@@ -68,7 +76,8 @@ async function toggle() {
   optimisticValue.value = next
   pending.value = true
   try {
-    await datapoints.write(props.datapointId, next)
+    if (props.writeContext) await datapoints.write(props.datapointId, next, props.writeContext)
+    else await datapoints.write(props.datapointId, next)
   } catch {
     // Optimistischen Wert bei Fehler zurücksetzen
     optimisticValue.value = null
@@ -173,7 +182,7 @@ const coloredSvg = computed(() => {
     :class="[editorMode || readonly ? 'opacity-60 cursor-default' : 'cursor-pointer']"
     @click="toggle"
   >
-    <span class="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-center">{{ label }}</span>
+    <span class="text-gray-500 dark:text-gray-400 truncate w-full text-center" :class="labelSize">{{ label }}</span>
 
     <!-- Optionales Icon (wenn konfiguriert) -->
     <div
@@ -206,7 +215,8 @@ const coloredSvg = computed(() => {
     </button>
 
     <span
-      class="text-xs font-medium"
+      class="font-medium"
+      :class="labelSize"
       :style="{ color: activeColor }"
       data-testid="toggle-text"
     >{{ activeText }}</span>
@@ -219,7 +229,11 @@ const coloredSvg = computed(() => {
     :class="[editorMode || readonly ? 'opacity-60 cursor-default' : 'cursor-pointer']"
     @click="toggle"
   >
-    <span v-if="label" class="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0 mb-1">{{ label }}</span>
+    <span
+      v-if="label"
+      class="text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0 mb-1"
+      :class="labelSize"
+    >{{ label }}</span>
 
     <!-- Abstandhalter oben: zentriert das Icon vertikal -->
     <div style="flex: 1" />
@@ -257,7 +271,11 @@ const coloredSvg = computed(() => {
     :class="[editorMode || readonly ? 'opacity-60 cursor-default' : 'cursor-pointer']"
     @click="toggle"
   >
-    <span v-if="label" class="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0 mb-1">{{ label }}</span>
+    <span
+      v-if="label"
+      class="text-gray-500 dark:text-gray-400 truncate w-full text-center shrink-0 mb-1"
+      :class="labelSize"
+    >{{ label }}</span>
 
     <!-- Icon: 3 flex-Anteile -->
     <div

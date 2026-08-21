@@ -67,6 +67,8 @@ class TestAdapterBaseInit:
         assert a.connected is False
         assert a.last_severity == "ok"
         assert a.last_detail == ""
+        assert a.last_detail_code is None
+        assert a.last_detail_params == {}
 
     def test_custom_instance_id_preserved(self, mock_bus):
         iid = uuid.uuid4()
@@ -106,6 +108,22 @@ class TestConcreteHelpers:
         a._last_detail = "reconnecting"
         assert a.last_detail == "reconnecting"
 
+    @pytest.mark.asyncio
+    async def test_write_with_context_delegates_wire_value_to_write(self, mock_bus):
+        a = _MinimalAdapter(event_bus=mock_bus)
+        a.write = AsyncMock()
+        binding = object()
+
+        queued = await a.write_with_context(
+            binding,
+            5.0,
+            logical_value=50.0,
+            suppress_confirmation_actions=True,
+        )
+
+        assert queued is True
+        a.write.assert_awaited_once_with(binding, 5.0)
+
 
 # ---------------------------------------------------------------------------
 # _publish_status
@@ -135,6 +153,29 @@ class TestPublishStatus:
         await a._publish_status(False, severity="warning")
         assert a.connected is True  # warning never flips connected
         assert a.last_severity == "warning"
+
+    @pytest.mark.asyncio
+    async def test_code_and_params_cached_and_published(self, mock_bus):
+        a = _MinimalAdapter(event_bus=mock_bus)
+        await a._publish_status(True, detail="Connected to h:1", code="connectedTo", params={"host": "h", "port": 1})
+        assert a.last_detail_code == "connectedTo"
+        assert a.last_detail_params == {"host": "h", "port": 1}
+        event = mock_bus.publish.call_args.args[0]
+        assert event.detail_code == "connectedTo"
+        assert event.detail_params == {"host": "h", "port": 1}
+        assert event.detail == "Connected to h:1"
+
+    @pytest.mark.asyncio
+    async def test_code_defaults_to_none_and_params_to_empty_dict(self, mock_bus):
+        a = _MinimalAdapter(event_bus=mock_bus)
+        a._last_detail_code = "stale"
+        a._last_detail_params = {"x": 1}
+        await a._publish_status(False, detail="raw error text")
+        assert a.last_detail_code is None
+        assert a.last_detail_params == {}
+        event = mock_bus.publish.call_args.args[0]
+        assert event.detail_code is None
+        assert event.detail_params == {}
 
 
 # ---------------------------------------------------------------------------
