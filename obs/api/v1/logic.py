@@ -21,6 +21,7 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -65,11 +66,24 @@ def _validate_timer_durations(flow_data: FlowData) -> None:
 
 
 def _without_positions(raw: dict) -> dict:
-    """Strip node positions and purely visual comment nodes for layout-only
-    save detection — neither affects execution semantics.
+    """Strip node positions, user-defined block names and purely visual comment
+    nodes for layout-only save detection — none of them affects execution
+    semantics.
+
+    ``data.label`` is the block name a user typed on the sheet (issue #1157).
+    Treating a rename as an execution change would re-initialize the graph and
+    reset persisted block state (memory, counters, statistics) over a purely
+    cosmetic edit. The renamed flow still reaches the runtime: the layout-only
+    path hands it to ``LogicManager.update_cached_graph``, so the one place
+    that does read the name — the ``node_label`` of an archived message — sees
+    the new one on the next tick.
     """
     raw = dict(raw)
-    raw["nodes"] = [{k: v for k, v in node.items() if k != "position"} for node in raw.get("nodes", []) if node.get("type") != "comment"]
+    raw["nodes"] = [
+        {k: v for k, v in node.items() if k != "position"} | {"data": {k: v for k, v in (node.get("data") or {}).items() if k != "label"}}
+        for node in raw.get("nodes", [])
+        if node.get("type") != "comment"
+    ]
     return raw
 
 
@@ -867,15 +881,19 @@ async def import_graph(
     processed_nodes: list[LogicNode] = []
     for node in body.flow_data.nodes:
         if node.type not in known_types and node.type != "missing_node":
+            placeholder_data: dict[str, Any] = {"original_type": node.type}
+            # Keep the user-defined block name (issue #1157) so a renamed block
+            # stays identifiable after its type disappeared; the frontend
+            # renders the missing type from `original_type` and localizes the
+            # placeholder heading itself.
+            if custom_label := str(node.data.get("label") or "").strip():
+                placeholder_data["label"] = custom_label
             processed_nodes.append(
                 LogicNode(
                     id=node.id,
                     type="missing_node",
                     position=node.position,
-                    data={
-                        "original_type": node.type,
-                        "label": f"[Fehlend: {node.type}]",
-                    },
+                    data=placeholder_data,
                 ),
             )
         else:

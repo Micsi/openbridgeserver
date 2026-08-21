@@ -3,8 +3,9 @@
     <Handle v-for="h in inputs" :key="h.id" type="target" :id="h.id" :position="Position.Left" />
     <div class="missing-node__body">
       <span class="missing-node__badge" :aria-label="$t('logic.missingNode.ariaLabel')">!</span>
-      <div>
+      <div class="missing-node__text">
         <div class="missing-node__title">{{ $t('logic.missingNode.title') }}</div>
+        <div v-if="customLabel" class="missing-node__name">{{ customLabel }}</div>
         <div class="missing-node__type">{{ data.original_type ?? data.label }}</div>
       </div>
     </div>
@@ -23,6 +24,11 @@ const props = defineProps({ data: { type: Object, default: () => ({}) } })
 // Tinted over the opaque card surface (issue #1074).
 const MISSING_COLOR = '#ef4444'
 const cardTint = nodeTint(MISSING_COLOR)
+
+// User-defined block name (issue #1157), carried over by the import when the
+// block's type disappeared. Only meaningful once `original_type` names the
+// missing type — in legacy placeholders `label` *is* that type marker.
+const customLabel = computed(() => (props.data?.original_type ? String(props.data?.label ?? '').trim() : ''))
 
 const inputs  = computed(() => [{ id: 'in' }])
 const outputs = computed(() => [{ id: 'out' }])
@@ -54,6 +60,14 @@ const outputs = computed(() => [{ id: 'out' }])
   font-weight: 700;
   font-size: 0.85rem;
   flex-shrink: 0;
+}
+.missing-node__text { min-width: 0; }
+.missing-node__name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--node-title-color);
+  margin-top: 1px;
+  word-break: break-word;
 }
 .missing-node__title {
   font-size: 0.7rem;

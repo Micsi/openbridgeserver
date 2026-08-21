@@ -267,7 +267,47 @@ async def test_import_graph_unknown_type_becomes_missing_node(client, auth_heade
 
     assert nodes_by_id["u1"]["type"] == "missing_node"
     assert nodes_by_id["u1"]["data"]["original_type"] == "does_not_exist_v99"
+    # The user-defined block name survives the placeholder conversion (#1157)
+    # so a renamed block stays identifiable after its type disappeared.
+    assert nodes_by_id["u1"]["data"]["label"] == "Unbekannt"
     assert nodes_by_id["u2"]["type"] == "and"
+    await _delete_graph(client, auth_headers, imported["id"])
+
+
+async def test_import_graph_unknown_type_without_block_name(client, auth_headers):
+    """A block that was never renamed produces a placeholder without a `label`,
+    so the frontend renders its own localized heading (#1157)."""
+    payload = {
+        "obs_export": "logic_graph",
+        "version": 1,
+        "name": "Import ohne Blockname",
+        "description": "",
+        "enabled": True,
+        "flow_data": {
+            "nodes": [
+                {
+                    "id": "u1",
+                    "type": "does_not_exist_v99",
+                    "position": {"x": 0, "y": 0},
+                    "data": {"label": "   "},
+                },
+                {
+                    "id": "u2",
+                    "type": "also_gone_v99",
+                    "position": {"x": 100, "y": 0},
+                    "data": {},
+                },
+            ],
+            "edges": [],
+        },
+    }
+    resp = await client.post("/api/v1/logic/graphs/import", json=payload, headers=auth_headers)
+    assert resp.status_code == 201, resp.text
+    imported = resp.json()
+    nodes_by_id = {n["id"]: n for n in imported["flow_data"]["nodes"]}
+
+    assert nodes_by_id["u1"]["data"] == {"original_type": "does_not_exist_v99"}
+    assert nodes_by_id["u2"]["data"] == {"original_type": "also_gone_v99"}
     await _delete_graph(client, auth_headers, imported["id"])
 
 

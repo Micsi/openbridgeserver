@@ -28,9 +28,29 @@ def _row(flow_data: str) -> dict:
     }
 
 
-def test_without_positions_strips_only_positions():
-    raw = {"nodes": [{"id": "n1", "position": {"x": 1, "y": 2}, "data": {"a": 1}}], "edges": []}
+def test_without_positions_strips_positions_and_block_names():
+    """Positions and the user-defined block name (issue #1157) are cosmetic;
+    every other data field stays part of the execution comparison."""
+    raw = {"nodes": [{"id": "n1", "position": {"x": 1, "y": 2}, "data": {"a": 1, "label": "Küche"}}], "edges": []}
     assert _without_positions(raw) == {"nodes": [{"id": "n1", "data": {"a": 1}}], "edges": []}
+
+
+def test_without_positions_keeps_nodes_without_data():
+    """A node without a `data` key normalizes to an empty one, so both sides of
+    the layout-only comparison are shaped identically."""
+    raw = {"nodes": [{"id": "n1", "position": {"x": 0, "y": 0}}], "edges": []}
+    assert _without_positions(raw) == {"nodes": [{"id": "n1", "data": {}}], "edges": []}
+
+
+def test_without_positions_drops_comment_nodes():
+    raw = {
+        "nodes": [
+            {"id": "c1", "type": "comment", "position": {"x": 0, "y": 0}, "data": {"text": "hi"}},
+            {"id": "n1", "type": "and", "position": {"x": 0, "y": 0}, "data": {}},
+        ],
+        "edges": [],
+    }
+    assert _without_positions(raw) == {"nodes": [{"id": "n1", "type": "and", "data": {}}], "edges": []}
 
 
 @pytest.mark.asyncio
@@ -184,3 +204,66 @@ async def test_patch_comment_edit_is_layout_only(monkeypatch):
     assert result.id == "g1"
     manager.update_cached_graph.assert_called_once()
     manager.initialize_graph.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_patch_rename_only_is_layout_only(monkeypatch):
+    """Renaming a block (issue #1157) is cosmetic: the sheet must keep running
+    with its persisted block state instead of being re-initialized."""
+    manager = MagicMock()
+    manager.reload = AsyncMock()
+    manager.initialize_graph = AsyncMock()
+    monkeypatch.setattr("obs.logic.manager._manager", manager)
+
+    stored_flow = {
+        "nodes": [{"id": "n1", "type": "memory", "position": {"x": 0, "y": 0}, "data": {"initial_value": "0"}}],
+        "edges": [],
+    }
+    renamed = FlowData.model_validate(
+        {
+            "nodes": [{"id": "n1", "type": "memory", "position": {"x": 0, "y": 0}, "data": {"initial_value": "0", "label": "Lüftung Stufe"}}],
+            "edges": [],
+        }
+    )
+    db = MagicMock()
+    db.fetchone = AsyncMock(side_effect=[_row(json.dumps(stored_flow)), _row(renamed.model_dump_json())])
+    db.execute = AsyncMock()
+
+    result = await update_graph_partial("g1", LogicGraphUpdate(flow_data=renamed), _user="admin", db=db)
+
+    assert result.id == "g1"
+    manager.initialize_graph.assert_not_awaited()
+    # The renamed flow must still reach the runtime cache — `message_archive`
+    # blocks stamp `data.label` onto every message they archive.
+    manager.update_cached_graph.assert_called_once()
+    cached_flow = manager.update_cached_graph.call_args.args[-1]
+    assert cached_flow.nodes[0].data["label"] == "Lüftung Stufe"
+
+
+@pytest.mark.asyncio
+async def test_patch_config_change_alongside_rename_is_not_layout_only(monkeypatch):
+    """The rename exemption must not hide a real configuration change that is
+    saved in the same request."""
+    manager = MagicMock()
+    manager.reload = AsyncMock()
+    manager.reinitialize_graph = AsyncMock()
+    monkeypatch.setattr("obs.logic.manager._manager", manager)
+
+    stored_flow = {
+        "nodes": [{"id": "n1", "type": "memory", "position": {"x": 0, "y": 0}, "data": {"initial_value": "0"}}],
+        "edges": [],
+    }
+    changed = FlowData.model_validate(
+        {
+            "nodes": [{"id": "n1", "type": "memory", "position": {"x": 0, "y": 0}, "data": {"initial_value": "1", "label": "Lüftung Stufe"}}],
+            "edges": [],
+        }
+    )
+    db = MagicMock()
+    db.fetchone = AsyncMock(side_effect=[_row(json.dumps(stored_flow)), _row(changed.model_dump_json())])
+    db.execute = AsyncMock()
+
+    await update_graph_partial("g1", LogicGraphUpdate(flow_data=changed), _user="admin", db=db)
+
+    manager.update_cached_graph.assert_not_called()
+    manager.reinitialize_graph.assert_awaited_once()
