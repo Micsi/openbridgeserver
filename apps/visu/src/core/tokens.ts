@@ -103,6 +103,11 @@ export function cssVars(theme: Theme, accent: AccentToken | string): Record<stri
 
   for (const key of Object.keys(PALETTE) as AccentToken[]) {
     const hex = PALETTE[key];
+    // Raw vivid deco token: the palette base value, unmodified. It feeds ONLY
+    // contrast-exempt decoration (the 4px tile top-bar), never text/icon — those
+    // stay on the AA-derived `readable` accent below. This split keeps the vivid
+    // template look without breaking AA (raw #ec8b3a is only ~2.31:1 on light).
+    vars[`--vz-acc-${key}`] = hex;
     vars[`--vz-acc-${key}-ink`] = ink(hex);
     vars[`--vz-acc-${key}-readable`] = readableOn(hex, surface);
   }

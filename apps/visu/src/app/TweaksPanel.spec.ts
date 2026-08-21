@@ -132,7 +132,7 @@ describe('TweaksPanel — defaults + controlled values (skin owns no state)', ()
     const payload = emitted?.[0]?.[0] as Record<string, unknown>;
     expect(payload.stil).toBe('ios');
     // untouched keys carry their defaults (the panel emits the merged set).
-    expect(payload.accentStyle).toBe('glow');
+    expect(payload.accentStyle).toBe('bar');
     expect(payload.glassBlur).toBe(22);
   });
 

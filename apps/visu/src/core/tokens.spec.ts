@@ -102,8 +102,10 @@ describe('core/tokens — readableOn() clears AA across ALL palette × theme', (
 describe('core/tokens — cssVars()', () => {
   it('emits per-palette ink + readable custom properties and accent props', () => {
     const vars = cssVars('light', 'orange');
-    // every palette key gets an ink + readable var
+    // every palette key gets a raw vivid deco var + an ink + readable var
     for (const key of PALETTE_KEYS) {
+      // raw vivid deco token equals the unmodified palette base (theme-independent)
+      expect(vars[`--vz-acc-${key}`]).toBe(PALETTE[key]);
       expect(vars[`--vz-acc-${key}-ink`]).toBeDefined();
       expect(vars[`--vz-acc-${key}-readable`]).toBeDefined();
     }
@@ -118,6 +120,15 @@ describe('core/tokens — cssVars()', () => {
     const byKey = cssVars('dark', 'teal');
     const byHex = cssVars('dark', PALETTE.teal);
     expect(byKey['--vz-accent-readable']).toBe(byHex['--vz-accent-readable']);
+  });
+
+  it('raw vivid deco tokens are theme-independent (the palette base, unmodified)', () => {
+    const light = cssVars('light', 'orange');
+    const dark = cssVars('dark', 'orange');
+    for (const key of PALETTE_KEYS) {
+      expect(light[`--vz-acc-${key}`]).toBe(dark[`--vz-acc-${key}`]);
+      expect(light[`--vz-acc-${key}`]).toBe(PALETTE[key]);
+    }
   });
 
   it('clock ink clears AA on every theme', () => {
