@@ -17,13 +17,13 @@ export type IconSlot =
 export type AccentToken =
   | 'orange' | 'teal' | 'violet' | 'green' | 'blue' | 'rose' | 'amber' | 'slate';
 
-/** The stable core widget types of the contract (v1.2: + media, camera). */
+/** The stable core widget types of the contract (v1.2: + media, camera; v1.4: + climate). */
 export type CoreWidgetType =
-  | 'light' | 'switch' | 'blind' | 'jalousie' | 'sensor' | 'scene' | 'media' | 'camera';
+  | 'light' | 'switch' | 'blind' | 'jalousie' | 'sensor' | 'scene' | 'media' | 'camera' | 'climate';
 
 /** Reserved widget types — declared so skins can opt out deliberately. */
 export type ReservedWidgetType =
-  | 'climate' | 'weather' | 'energy' | 'chart' | 'alarm';
+  | 'weather' | 'energy' | 'chart' | 'alarm';
 
 export type WidgetType = CoreWidgetType | ReservedWidgetType;
 
@@ -36,6 +36,8 @@ interface DeviceBase {
   readonly room: string;
   readonly label: string;
   readonly accent: AccentToken;
+  /** Optionales Etagen-/Geschoss-Label für den Crumb-Pfad im Detail (v1.4). */
+  readonly floor?: string;
 }
 
 /** `light` — on/off plus optional brightness (`dim`, null = nicht dimmbar). */
@@ -82,6 +84,14 @@ export interface SensorDevice extends DeviceBase {
   readonly value: number | string;
   readonly unit: string;
   readonly status?: string;
+  /** Optionales Akzent-Icon (analog {@link SceneDevice.icon}) — Wetter/Strom (v1.4). */
+  readonly icon?: string;
+  /** Optionale Zeitreihe für Verlauf/Chart (2×2) (v1.4). */
+  readonly series?: readonly number[];
+  /** Reihen-Minimum für den „min … · max …"-Fuß (v1.4). */
+  readonly min?: number;
+  /** Reihen-Maximum für den „min … · max …"-Fuß (v1.4). */
+  readonly max?: number;
 }
 
 /** `scene` — activatable scene with its own icon slot + optional subtitle. */
@@ -109,6 +119,15 @@ export interface CameraDevice extends DeviceBase {
   readonly streamUrl?: string | null;
 }
 
+/** `climate` (Klima/Heizung/RTR) — Soll-/Ist-Temperatur plus Betriebsmodus (v1.4). */
+export interface ClimateDevice extends DeviceBase {
+  readonly type: 'climate';
+  readonly setpoint: number;
+  readonly current: number;
+  readonly mode: 'heat' | 'cool' | 'off' | 'auto';
+  readonly unit: string;
+}
+
 /** Discriminated union of every core device. Read-only for skins (golden rule 1/4). */
 export type Device =
   | LightDevice
@@ -118,7 +137,8 @@ export type Device =
   | SensorDevice
   | SceneDevice
   | MediaDevice
-  | CameraDevice;
+  | CameraDevice
+  | ClimateDevice;
 
 /* ----------------------------------------------------- Tokens / Ctx (§5) -- */
 
@@ -141,6 +161,13 @@ export interface Tokens {
 export interface Ctx {
   /** "Aus" · "Ein" · "Ein — 45 %" · "62 % · Teil" — centralised footer text. */
   stateText(d: Device): string;
+  /**
+   * Zerlegt den {@link Ctx.stateText} in Zustandswort (z. B. "Ein"/"Aus"/"An"/"Zu")
+   * und Rest (z. B. " — 45 %"), damit Skins das Wort fett und den Rest gemutet rendern
+   * (Vorlage: `<b>Ein</b> — 45 %`) (v1.4). {@link Ctx.stateText} bleibt unverändert
+   * (rückwärtskompatibel); die Implementierung liefert der Host.
+   */
+  stateParts(d: Device): { readonly word: string; readonly rest: string };
   /** softHyphenate(): insert weiche Trennstellen into long labels. */
   hyphenate(text: string): string;
   /** Resolve an icon for a device: skin set → default fallback. */
@@ -171,6 +198,7 @@ export type WidgetAction =
   | 'setDim'
   | 'setPosition'
   | 'setSlat'
+  | 'setSetpoint'
   | 'lock'
   | 'unlock'
   | 'activateScene'

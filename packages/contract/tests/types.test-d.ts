@@ -9,11 +9,13 @@ import type {
   SceneDevice,
   MediaDevice,
   CameraDevice,
+  ClimateDevice,
   Tokens,
   Ctx,
   Renderer,
   SkinManifest,
   SupportReport,
+  WidgetAction,
 } from '../src/types.js';
 
 describe('Device unions (§5) — readonly', () => {
@@ -26,6 +28,27 @@ describe('Device unions (§5) — readonly', () => {
     expectTypeOf<SceneDevice>().toMatchTypeOf<Device>();
     expectTypeOf<MediaDevice>().toMatchTypeOf<Device>();
     expectTypeOf<CameraDevice>().toMatchTypeOf<Device>();
+    expectTypeOf<ClimateDevice>().toMatchTypeOf<Device>();
+  });
+
+  it('climate (v1.4) carries its discriminant and fields', () => {
+    expectTypeOf<ClimateDevice['type']>().toEqualTypeOf<'climate'>();
+    expectTypeOf<ClimateDevice['setpoint']>().toEqualTypeOf<number>();
+    expectTypeOf<ClimateDevice['current']>().toEqualTypeOf<number>();
+    expectTypeOf<ClimateDevice['mode']>().toEqualTypeOf<'heat' | 'cool' | 'off' | 'auto'>();
+    expectTypeOf<ClimateDevice['unit']>().toEqualTypeOf<string>();
+  });
+
+  it('sensor (v1.4) carries optional icon/series/min/max', () => {
+    expectTypeOf<SensorDevice['icon']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<SensorDevice['series']>().toEqualTypeOf<readonly number[] | undefined>();
+    expectTypeOf<SensorDevice['min']>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<SensorDevice['max']>().toEqualTypeOf<number | undefined>();
+  });
+
+  it('every device carries the optional base field floor (v1.4)', () => {
+    expectTypeOf<LightDevice['floor']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<ClimateDevice['floor']>().toEqualTypeOf<string | undefined>();
   });
 
   it('media/camera (v1.2) carry their discriminants and fields', () => {
@@ -68,6 +91,9 @@ describe('Tokens (§5)', () => {
 describe('Ctx (§5) — sandbox helpers', () => {
   it('exposes stateText/hyphenate/icon/nf/warn', () => {
     expectTypeOf<Ctx['stateText']>().toEqualTypeOf<(d: Device) => string>();
+    expectTypeOf<Ctx['stateParts']>().toEqualTypeOf<
+      (d: Device) => { readonly word: string; readonly rest: string }
+    >();
     expectTypeOf<Ctx['hyphenate']>().toEqualTypeOf<(text: string) => string>();
     expectTypeOf<Ctx['icon']>().toEqualTypeOf<(d: Device, slot: string) => string>();
     expectTypeOf<Ctx['warn']>().toEqualTypeOf<(d: Device) => boolean>();
@@ -86,6 +112,12 @@ describe('Renderer (§5)', () => {
   it('is a pure function (d,t,ctx) => string | VNode', () => {
     expectTypeOf<Renderer>().parameters.toEqualTypeOf<[Device, Tokens, Ctx]>();
     expectTypeOf<Renderer>().returns.toMatchTypeOf<string | unknown>();
+  });
+});
+
+describe('WidgetAction (§6)', () => {
+  it('includes the v1.4 climate action setSetpoint', () => {
+    expectTypeOf<'setSetpoint'>().toMatchTypeOf<WidgetAction>();
   });
 });
 

@@ -6,8 +6,8 @@ import schema from '../contract.schema.json' with { type: 'json' };
 import fixtures from '../fixtures.json' with { type: 'json' };
 
 // Kern-Typen (stabiler Kern v1) und ihre erwarteten Fixture-Zustände — CONTRACT-v1.md §3/§4.
-const CORE_TYPES = ['light', 'switch', 'blind', 'jalousie', 'sensor', 'scene', 'media', 'camera'] as const;
-const RESERVED_TYPES = ['climate', 'weather', 'energy', 'chart', 'alarm'] as const;
+const CORE_TYPES = ['light', 'switch', 'blind', 'jalousie', 'sensor', 'scene', 'media', 'camera', 'climate'] as const;
+const RESERVED_TYPES = ['weather', 'energy', 'chart', 'alarm'] as const;
 const EXPECTED_STATES: Record<(typeof CORE_TYPES)[number], string[]> = {
   light: ['off', 'on', 'dimmed'],
   switch: ['off', 'on'],
@@ -17,6 +17,7 @@ const EXPECTED_STATES: Record<(typeof CORE_TYPES)[number], string[]> = {
   scene: ['film', 'morgen'],
   media: ['playing', 'paused', 'stopped'],
   camera: ['online', 'offline'],
+  climate: ['heat', 'off'],
 };
 
 const ROLES = ['compact', 'default', 'wide', 'tall', 'feature', 'banner'];
@@ -29,8 +30,8 @@ const s = schema as Record<string, any>;
 const f = fixtures as Record<string, any>;
 
 describe('contract.schema.json — Globals (§2)', () => {
-  it('declares version 1.3', () => {
-    expect(s.version).toBe('1.3');
+  it('declares version 1.4', () => {
+    expect(s.version).toBe('1.4');
   });
 
   it('declares roles exactly [compact,default,wide,tall,feature,banner]', () => {
@@ -47,13 +48,13 @@ describe('contract.schema.json — Globals (§2)', () => {
 });
 
 describe('contract.schema.json — widget types (§3)', () => {
-  it('declares all 8 core types', () => {
+  it('declares all 9 core types', () => {
     for (const t of CORE_TYPES) {
       expect(s.widgets, `core type ${t}`).toHaveProperty(t);
     }
   });
 
-  it('declares all 5 remaining reserved types', () => {
+  it('declares all 4 remaining reserved types', () => {
     for (const t of RESERVED_TYPES) {
       expect(s.widgets, `reserved type ${t}`).toHaveProperty(t);
     }
@@ -117,12 +118,40 @@ describe('contract.schema.json — widget types (§3)', () => {
     expect(w.roles).toEqual({ allow: ['default', 'wide', 'tall', 'feature'], default: 'wide' });
   });
 
-  it('sensor: read-only (no actions) per §3', () => {
+  it('sensor: read-only (no actions) per §3, + optional icon/series/min/max (v1.4)', () => {
     const w = s.widgets.sensor;
-    expect(Object.keys(w.data).sort()).toEqual(['accent', 'label', 'room', 'status', 'unit', 'value'].sort());
+    expect(Object.keys(w.data).sort()).toEqual(
+      ['accent', 'icon', 'label', 'max', 'min', 'room', 'series', 'status', 'unit', 'value'].sort(),
+    );
     expect(Object.keys(w.actions)).toEqual([]);
     expect(w.icon).toBe('thermo');
     expect(w.roles).toEqual({ allow: ['compact', 'default'], default: 'compact' });
+    // v1.4: additive optional series/chart fields validate in the dataSchema.
+    expect(w.dataSchema.properties.series).toEqual({ type: 'array', items: { type: 'number' } });
+    expect(w.dataSchema.properties.min).toEqual({ type: 'number' });
+    expect(w.dataSchema.properties.max).toEqual({ type: 'number' });
+    expect(w.dataSchema.properties.icon).toEqual({ type: 'string' });
+  });
+
+  it('climate (v1.4 core): setpoint/current/mode/unit, setSetpoint per §3', () => {
+    const w = s.widgets.climate;
+    expect(w.reserved).not.toBe(true);
+    expect(Object.keys(w.data).sort()).toEqual(
+      ['accent', 'current', 'label', 'mode', 'room', 'setpoint', 'unit'].sort(),
+    );
+    expect(Object.keys(w.actions)).toEqual(['setSetpoint']);
+    expect(w.icon).toBe('thermo');
+    expect(w.roles).toEqual({ allow: ['compact', 'default', 'wide', 'tall'], default: 'default' });
+    expect(w.dataSchema.properties.mode).toEqual({
+      type: 'string',
+      enum: ['heat', 'cool', 'off', 'auto'],
+    });
+  });
+
+  it('every core dataSchema permits the optional base field floor (v1.4)', () => {
+    for (const t of CORE_TYPES) {
+      expect(s.widgets[t].dataSchema.properties.floor, `${t}.floor`).toEqual({ type: 'string' });
+    }
   });
 
   it('scene: icon/sub, activateScene per §3', () => {
@@ -135,8 +164,8 @@ describe('contract.schema.json — widget types (§3)', () => {
 });
 
 describe('fixtures.json — completeness (§4)', () => {
-  it('declares contractVersion 1.2', () => {
-    expect(f.contractVersion).toBe('1.2');
+  it('declares contractVersion 1.4', () => {
+    expect(f.contractVersion).toBe('1.4');
   });
 
   it('provides every core type with its expected states', () => {

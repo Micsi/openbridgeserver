@@ -9,6 +9,14 @@
       "closed": "Closed",
       "partial": "Partial",
       "position": "{position} % · {word}"
+    },
+    "climate": {
+      "mode": {
+        "heat": "Heat",
+        "cool": "Cool",
+        "off": "Off",
+        "auto": "Auto"
+      }
     }
   },
   "shell": {

@@ -9,6 +9,14 @@
       "closed": "Zu",
       "partial": "Teil",
       "position": "{position} % · {word}"
+    },
+    "climate": {
+      "mode": {
+        "heat": "Heizen",
+        "cool": "Kühlen",
+        "off": "Aus",
+        "auto": "Auto"
+      }
     }
   },
   "shell": {

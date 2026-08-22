@@ -4,9 +4,13 @@
  * Ported 1:1 in shape from reference/vue-ionic/store.js (the `list` device
  * dataset and the `mobileGroups` room grouping). Data shapes follow
  * CONTRACT-v1 §3 — every device here is a contract *core* `Device`
- * (light | switch | blind | jalousie, plus the v1.2 additions media | camera).
- * The reserved tablet/desktop widget types (climate, weather, energy, chart,
- * alarm) are out of scope for the mobile model and intentionally not ported.
+ * (light | switch | blind | jalousie, the v1.2 additions media | camera, and the
+ * v1.4 additions sensor | scene | climate). The still-reserved tablet/desktop
+ * types (weather, energy, chart, alarm) stay out of the mobile model.
+ *
+ * The v1.4 "Technik" showcase block rounds out the overview floor so every stable
+ * core type — including the new `climate` (Heizung/RTR) and the enriched `sensor`
+ * (Zeitreihe/Icon) — renders on one wall for the skin-to-reference comparison.
  *
  * The v1.2 `media`/`camera` devices live in a dedicated "Medien" demo block
  * ({@link demoRooms}) kept OUT of the mobile overview ({@link rooms}): they are
@@ -34,8 +38,11 @@ import type {
   SwitchDevice,
   BlindDevice,
   JalousieDevice,
+  SensorDevice,
+  SceneDevice,
   MediaDevice,
   CameraDevice,
+  ClimateDevice,
   Role,
 } from '@obs/visu-contract';
 
@@ -104,7 +111,9 @@ function media(
   room: string,
   label: MediaDevice['label'],
   accent: MediaDevice['accent'],
-  extra: Partial<Pick<MediaDevice, 'playState' | 'title' | 'subtitle' | 'volume' | 'artUrl'>> = {},
+  extra: Partial<
+    Pick<MediaDevice, 'playState' | 'title' | 'subtitle' | 'volume' | 'artUrl' | 'floor'>
+  > = {},
 ): MediaDevice {
   return {
     id,
@@ -125,9 +134,53 @@ function camera(
   room: string,
   label: CameraDevice['label'],
   accent: CameraDevice['accent'],
-  extra: Partial<Pick<CameraDevice, 'online' | 'snapshotUrl' | 'streamUrl'>> = {},
+  extra: Partial<Pick<CameraDevice, 'online' | 'snapshotUrl' | 'streamUrl' | 'floor'>> = {},
 ): CameraDevice {
   return { id, type: 'camera', room, label, accent, online: false, snapshotUrl: null, ...extra };
+}
+
+function sensor(
+  id: string,
+  room: string,
+  label: SensorDevice['label'],
+  accent: SensorDevice['accent'],
+  value: SensorDevice['value'],
+  unit: SensorDevice['unit'],
+  extra: Partial<Pick<SensorDevice, 'status' | 'icon' | 'series' | 'min' | 'max' | 'floor'>> = {},
+): SensorDevice {
+  return { id, type: 'sensor', room, label, accent, value, unit, ...extra };
+}
+
+function scene(
+  id: string,
+  room: string,
+  label: SceneDevice['label'],
+  accent: SceneDevice['accent'],
+  icon: SceneDevice['icon'],
+  extra: Partial<Pick<SceneDevice, 'sub' | 'floor'>> = {},
+): SceneDevice {
+  return { id, type: 'scene', room, label, accent, icon, ...extra };
+}
+
+function climate(
+  id: string,
+  room: string,
+  label: ClimateDevice['label'],
+  accent: ClimateDevice['accent'],
+  extra: Partial<Pick<ClimateDevice, 'setpoint' | 'current' | 'mode' | 'unit' | 'floor'>> = {},
+): ClimateDevice {
+  return {
+    id,
+    type: 'climate',
+    room,
+    label,
+    accent,
+    setpoint: 21,
+    current: 21,
+    mode: 'heat',
+    unit: '°C',
+    ...extra,
+  };
 }
 
 /* ------------------------------------------------------- device dataset §3 */
@@ -181,6 +234,48 @@ const list: readonly Device[] = [
   blind('gaeste-roll', 'EG Gästez.', 'Rollladen', 'orange'),
   light('treppe-eingang', 'EG Treppe', 'Hauseingang', 'orange'),
   light('treppe-haus', 'EG Treppe', 'Treppenhaus', 'orange'),
+
+  // ── Technik (v1.4 showcase — every core type in the mobile overview) ──
+  // Rounds out the overview floor so all stable core types (v1.4: + climate)
+  // render on one wall for the skin-to-reference visual comparison. `floor`
+  // carries the Geschoss label for the detail crumb path (CONTRACT v1.4).
+  climate('rtr-wohnen', 'Technik', 'Heizung Wohnen', 'orange', {
+    setpoint: 21.5,
+    current: 20.8,
+    mode: 'heat',
+    unit: '°C',
+    floor: 'Erdgeschoss',
+  }),
+  sensor('voc-wc', 'Technik', 'VOC', 'teal', 287, 'ppm', {
+    status: 'erhöht',
+    series: [46, 120, 288, 250, 210],
+    min: 46,
+    max: 288,
+    floor: 'Erdgeschoss',
+  }),
+  sensor('wetter-aussen', 'Technik', 'Außentemperatur', 'blue', 8.4, '°C', {
+    status: 'komfort',
+    icon: 'cloud',
+    floor: 'Außen',
+  }),
+  scene('szene-abend', 'Technik', 'Guten Abend', 'violet', 'sparkle', {
+    sub: 'Licht · Rollladen · TV',
+    floor: 'Erdgeschoss',
+  }),
+  media('tech-sonos', 'Technik', 'Sonos Bad', 'blue', {
+    playState: 'playing',
+    title: 'La Femme d’Argent',
+    subtitle: 'Air',
+    volume: 22,
+    artUrl: 'https://example.invalid/art/moon-safari.jpg',
+    floor: 'Erdgeschoss',
+  }),
+  camera('tech-cam', 'Technik', 'Kamera Terrasse', 'slate', {
+    online: true,
+    snapshotUrl: 'https://example.invalid/cam/terrasse/snapshot.jpg',
+    streamUrl: 'https://example.invalid/cam/terrasse/stream.m3u8',
+    floor: 'Erdgeschoss',
+  }),
 
   // ── Medien (v1.2 demo block — not in the mobile overview floor) ──
   media('wohn-sonos', 'Medien', 'Sonos Wohnzimmer', 'blue', {
@@ -280,6 +375,16 @@ export const rooms: readonly RoomGroup[] = Object.freeze([
   { room: 'Schlafzimmer', entries: ['schlaf-ost', 'schlaf-sued'].map((id) => e(id)) },
   { room: 'Wohnzimmer', entries: ['wohn-west', 'wohn-balkon', 'wohn-sued'].map((id) => e(id)) },
   { room: 'Gäste & Treppe', entries: ['gaeste-roll', 'treppe-eingang', 'treppe-haus'].map((id) => e(id)) },
+  {
+    room: 'Technik',
+    entries: [
+      e('voc-wc'),
+      e('wetter-aussen'),
+      e('szene-abend', 2),
+      e('tech-sonos', 2),
+      e('tech-cam', 2),
+    ],
+  },
 ] satisfies RoomGroup[]);
 
 /**
@@ -294,6 +399,25 @@ export const demoRooms: readonly RoomGroup[] = Object.freeze([
     room: 'Medien',
     entries: [e('wohn-sonos', 2), e('kueche-radio', 2), e('hof-cam', 2), e('garage-cam', 2)],
   },
+] satisfies RoomGroup[]);
+
+/**
+ * The v1.4 `climate` showcase block — the {@link ClimateDevice} instance grouped
+ * as its own room, kept SEPARATE from the mounted floors ({@link rooms} /
+ * {@link demoRooms}).
+ *
+ * `climate` is a new v1.4 core type; neither the ionic nor the terminal skin ships
+ * a climate renderer or declares it `unsupported` yet (a follow-up etappe). The
+ * type-addressed host correctly treats an undeclared type as a hard *gap* rather
+ * than a silent default (golden rule 2/3), so mounting a climate tile against a
+ * skin without a renderer would surface that gap. This block therefore keeps the
+ * climate device a first-class, grouped model device (part of the single model —
+ * no data fork; `byId` resolves it) that a page can render the moment the skins
+ * ship their climate renderers, without breaking the current overview/terminal
+ * walls. Data ahead of behaviour (Daten=JSON, Verhalten=Code).
+ */
+export const climateRooms: readonly RoomGroup[] = Object.freeze([
+  { room: 'Klima', entries: [e('rtr-wohnen', 2)] },
 ] satisfies RoomGroup[]);
 
 /* ----------------------------------------------------------- span/row → role */
@@ -320,6 +444,7 @@ const DEFAULT_ROLE: Record<Device['type'], Role> = {
   scene: 'default',
   media: 'wide',
   camera: 'wide',
+  climate: 'default',
 };
 
 /**
@@ -332,6 +457,7 @@ const WIDE_ALLOWED: ReadonlySet<Device['type']> = new Set<Device['type']>([
   'blind',
   'jalousie',
   'scene',
+  'climate',
 ]);
 
 /**

@@ -7,6 +7,7 @@ import {
   byId,
   rooms,
   demoRooms,
+  climateRooms,
   layoutRole,
   type RoomGroup,
   type LayoutEntry,
@@ -27,8 +28,8 @@ describe('core/model — loads', () => {
   });
 
   it('only carries stable core widget types (no reserved/tablet-only types)', () => {
-    // v1.2 added media + camera to the core types (Issue #122); reserved
-    // tablet-only types (climate/weather/energy/chart/alarm) stay out of the model.
+    // v1.2 added media + camera; v1.4 added climate (and sensor/scene enrichment)
+    // to the core types. Still-reserved types (weather/energy/chart/alarm) stay out.
     const coreTypes = new Set([
       'light',
       'switch',
@@ -38,6 +39,7 @@ describe('core/model — loads', () => {
       'scene',
       'media',
       'camera',
+      'climate',
     ]);
     for (const d of devices) {
       expect(coreTypes.has(d.type)).toBe(true);
@@ -88,6 +90,7 @@ describe('core/model — room grouping', () => {
       'Schlafzimmer',
       'Wohnzimmer',
       'Gäste & Treppe',
+      'Technik',
     ]);
   });
 
@@ -109,11 +112,12 @@ describe('core/model — room grouping', () => {
     ]);
   });
 
-  it('covers exactly the devices reachable from the room groups (overview + demo)', () => {
+  it('covers exactly the devices reachable from the room groups (overview + demo + climate)', () => {
     // Every model device is reachable from some exported group set: the mobile
-    // overview floor (`rooms`) plus the v1.2 Medien demo block (`demoRooms`).
+    // overview floor (`rooms`), the v1.2 Medien demo block (`demoRooms`), and the
+    // v1.4 climate showcase block (`climateRooms`).
     const grouped = new Set(
-      [...rooms, ...demoRooms].flatMap((g) => g.entries.map((e) => e.id)),
+      [...rooms, ...demoRooms, ...climateRooms].flatMap((g) => g.entries.map((e) => e.id)),
     );
     expect(grouped.size).toBe(devices.length);
     for (const d of devices) {
@@ -155,6 +159,49 @@ describe('core/model — v1.2 media/camera demo block (Issue #122)', () => {
   });
 });
 
+describe('core/model — v1.4 climate + enriched sensor showcase', () => {
+  it('seeds a ClimateDevice with setpoint/current/mode/unit + floor', () => {
+    const c = byId['rtr-wohnen'];
+    expect(c?.type).toBe('climate');
+    if (c?.type !== 'climate') return;
+    expect(c.setpoint).toBe(21.5);
+    expect(c.current).toBe(20.8);
+    expect(c.mode).toBe('heat');
+    expect(c.unit).toBe('°C');
+    expect(c.floor).toBe('Erdgeschoss');
+  });
+
+  it('groups the climate device in the separate climate showcase (not the overview/terminal floor)', () => {
+    // climate has no skin renderer yet (follow-up), so it stays out of the mounted
+    // overview floor but remains a first-class grouped model device.
+    expect(rooms.flatMap((g) => g.entries.map((e) => e.id))).not.toContain('rtr-wohnen');
+    expect(climateRooms.flatMap((g) => g.entries.map((e) => e.id))).toContain('rtr-wohnen');
+    expect(Object.isFrozen(climateRooms)).toBe(true);
+  });
+
+  it('seeds a sensor with a series + min/max (Verlauf) and one with an accent icon', () => {
+    const voc = byId['voc-wc'];
+    expect(voc?.type).toBe('sensor');
+    if (voc?.type !== 'sensor') return;
+    expect(voc.series).toEqual([46, 120, 288, 250, 210]);
+    expect(voc.min).toBe(46);
+    expect(voc.max).toBe(288);
+    expect(voc.floor).toBe('Erdgeschoss');
+
+    const wetter = byId['wetter-aussen'];
+    expect(wetter?.type).toBe('sensor');
+    if (wetter?.type !== 'sensor') return;
+    expect(wetter.icon).toBe('cloud');
+  });
+
+  it('rounds out the overview "Technik" room with sensor · scene · media · camera', () => {
+    const technik = rooms.find((g) => g.room === 'Technik') as RoomGroup;
+    expect(technik).toBeDefined();
+    const types = technik.entries.map((e) => byId[e.id]?.type);
+    expect(new Set(types)).toEqual(new Set(['sensor', 'scene', 'media', 'camera']));
+  });
+});
+
 describe('core/model — span/row → role', () => {
   it('maps a plain entry to the device type default role', () => {
     const plain: LayoutEntry = { id: 'kueche-wand' };
@@ -169,6 +216,13 @@ describe('core/model — span/row → role', () => {
   it('keeps the jalousie default role even with span/row hints', () => {
     const jal: LayoutEntry = { id: 'wiga-jalousie', span: 2, row: 3 };
     expect(layoutRole(jal, byId[jal.id]!)).toBe('wide');
+  });
+
+  it('maps a plain climate entry to "default" and a span≥2 climate to "wide" (v1.4)', () => {
+    // CONTRACT v1.4: climate roles.allow includes wide, default is "default".
+    const climateDev = byId['rtr-wohnen']!;
+    expect(layoutRole({ id: 'rtr-wohnen' }, climateDev)).toBe('default');
+    expect(layoutRole({ id: 'rtr-wohnen', span: 2 }, climateDev)).toBe('wide');
   });
 
   it('does not promote a span≥2 switch/sensor to "wide" (not in their allowed roles)', () => {

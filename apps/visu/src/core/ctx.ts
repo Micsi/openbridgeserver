@@ -11,7 +11,7 @@
  *  - footer `stateText`      ← reference/vue-ionic/widgets.js (vz-tile-foot block)
  *  - `DEFAULT_ICONS`         ← reference/vue-ionic/store.js → ICONS
  */
-import type { Ctx, Device } from '@obs/visu-contract';
+import type { Ctx, Device, ClimateDevice } from '@obs/visu-contract';
 
 /** Soft hyphen (U+00AD) — invisible until the browser needs to break the line. */
 const SHY = '­';
@@ -80,6 +80,22 @@ function positionWord(position: number, t?: Translate): string {
   return t ? t('widgets.state.partial') : 'Teil';
 }
 
+/** German climate-mode literals (fallback when no translator is injected). */
+const CLIMATE_MODE_DE: Readonly<Record<ClimateDevice['mode'], string>> = {
+  heat: 'Heizen',
+  cool: 'Kühlen',
+  off: 'Aus',
+  auto: 'Auto',
+};
+
+/**
+ * Climate operating-mode word: "Heizen"/"Kühlen"/"Aus"/"Auto" (v1.4).
+ * With a translator → `widgets.climate.mode.{heat,cool,off,auto}`; without → German literals.
+ */
+function climateMode(mode: ClimateDevice['mode'], t?: Translate): string {
+  return t ? t(`widgets.climate.mode.${mode}`) : CLIMATE_MODE_DE[mode];
+}
+
 /**
  * Centralised footer text so every skin phrases it identically (§5):
  * "Aus" · "Ein" · "Ein — 45 %" · "62 % · Teil". Mirrors the vz-tile-foot
@@ -119,9 +135,57 @@ function makeStateText(t?: Translate) {
         return d.status ?? '';
       case 'scene':
         return d.sub ?? '';
+      case 'climate':
+        // "Heizen — 20,8°": the operating-mode word plus the current temperature.
+        // The mode word is bold-able via {@link Ctx.stateParts}; the "— …°" is the rest.
+        return `${climateMode(d.mode, t)} — ${nf(d.current)}°`;
       default:
         return '';
     }
+  };
+}
+
+/* ----------------------------------------------------------- stateParts --- */
+
+/**
+ * Split {@link makeStateText}'s output into the leading Zustandswort and the rest,
+ * so a skin can render `<b>{word}</b>{rest}` (Vorlage: `<b>Ein</b> — 45 %`) (v1.4).
+ *
+ * The invariant is `word + rest === stateText(d)` for every device: the pieces are
+ * always derived from the exact `stateText` output, never rebuilt, so the two
+ * helpers can never drift — including through the optional translator (`Ctx.t`).
+ *
+ *  - dimmed light   → word = the "on" word ("Ein"), rest = " — 45 %"
+ *  - blind/jalousie → word = the position ("62 %"), rest = " · Teil"
+ *  - climate        → word = the mode ("Heizen"), rest = " — 20,8°"
+ *  - everything else (plain light/switch, sensor, scene) → the whole text is the
+ *    word, rest = "" (there is no separable qualifier to mute).
+ */
+function makeStateParts(t?: Translate) {
+  const stateText = makeStateText(t);
+
+  /** Split off a known leading `word`; if it is not a prefix, the whole text is the word. */
+  const byWord = (full: string, word: string): { word: string; rest: string } =>
+    full.startsWith(word) ? { word, rest: full.slice(word.length) } : { word: full, rest: '' };
+
+  /** Split at the first " · " separator (the blind/jalousie "N % · Wort" shape). */
+  const bySeparator = (full: string): { word: string; rest: string } => {
+    const i = full.indexOf(' · ');
+    return i === -1 ? { word: full, rest: '' } : { word: full.slice(0, i), rest: full.slice(i) };
+  };
+
+  return function stateParts(d: Device): { word: string; rest: string } {
+    const full = stateText(d);
+    if (d.type === 'light' && d.dim != null && d.on) {
+      return byWord(full, t ? t('widgets.state.on') : 'Ein');
+    }
+    if (d.type === 'blind' || d.type === 'jalousie') {
+      return bySeparator(full);
+    }
+    if (d.type === 'climate') {
+      return byWord(full, climateMode(d.mode, t));
+    }
+    return { word: full, rest: '' };
   };
 }
 
@@ -189,6 +253,7 @@ function icon(_d: Device, slot: string): string {
 export function makeCtx(t?: Translate): Ctx {
   return Object.freeze({
     stateText: makeStateText(t),
+    stateParts: makeStateParts(t),
     hyphenate,
     icon,
     nf,

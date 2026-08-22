@@ -62,6 +62,7 @@ const fakeTokens = {
 };
 const fakeCtx = {
   stateText: () => '',
+  stateParts: () => ({ word: '', rest: '' }),
   hyphenate: (t: string) => t,
   icon: () => '',
   nf: (v: number | string) => String(v),

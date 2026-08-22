@@ -23,6 +23,35 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.4.0] — 2026-08-22
+
+v1.4: `climate` wird Kern-Typ; Sensor bekommt Zeitreihe/Icon; `Ctx.stateParts` und `DeviceBase.floor`
+– die Datengrundlage für die Design-System-Vorlage (Klima/Heizung-Kachel, Verlaufs-Chart,
+fett/gemutetes Zustandswort, Crumb-Pfad).
+
+### Added
+
+- **Stabiler Kern (§3):** `climate` (Klima/Heizung/RTR) rückt von *reserved* in den stabilen
+  Kern auf (`CoreWidgetType`), mit `data`, `actions`, `icon`, `roles` und maschinell
+  validierbarem `dataSchema` (`since: "1.4"`). Additive Minor-Änderung (§9): bestehende
+  Skins bleiben gültig; solange sie `climate` weder rendern noch als `unsupported`
+  deklarieren, erscheint der Typ in ihrer Fixture-Wand als `gap`.
+  - `ClimateDevice` (read-only): `setpoint`, `current`, `mode` (`heat|cool|off|auto`), `unit`.
+- **Aktionen (§6):** `WidgetAction` um `setSetpoint` (climate) erweitert.
+- **Sensor (§3):** additive optionale Felder `icon` (Akzent-Icon analog `SceneDevice.icon`),
+  `series` (`readonly number[]` — Verlauf/Chart), `min`, `max` (Fuß „min … · max …").
+  Rückwärtskompatibel; `SensorDevice`-Bestand bleibt gültig.
+- **DeviceBase (§3):** additives optionales Feld `floor` (Etagen-/Geschoss-Label für den
+  Crumb-Pfad im Detail) — für **alle** Device-Typen.
+- **Ctx (§5):** neuer Helfer `stateParts(d): { word, rest }` — trennt das Zustandswort
+  (z. B. „Ein"/„Aus") vom Rest (z. B. „ — 45 %"), damit Skins das Wort fett und den Rest
+  gemutet rendern (Vorlage: `<b>Ein</b> — 45 %`). `stateText` bleibt unverändert
+  (rückwärtskompatibel); die Implementierung liefert der Host.
+- **Schema/Fixtures:** `contract.schema.json` deklariert `version: "1.4"`, promotet den
+  `climate`-Block und ergänzt die neuen Sensor-/Base-Felder in den `dataSchema`s. Da v1.4
+  die Datenform ändert (neuer Kern-Typ + Felder), ziehen die `fixtures` auf
+  `contractVersion: "1.4"` nach (neue `climate`-Zustände, angereicherte Sensor-Fixtures).
+
 ## [1.3.0] — 2026-06-12
 
 v1.3: universelle **Host-Aktionen** (`openDetail` · `close` · `stop`-momentary) werden Vertragsbestandteil.
@@ -102,6 +131,8 @@ Erste stabile Vertragsversion (`version: "1.0"`).
 - **Exports:** `index.ts` exportiert `schema`, `fixtures`, `version` (= `"1.0"`) und die
   Typen.
 
+[1.4.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
+[1.3.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.2.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.1.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.0.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract

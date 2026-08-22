@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.2",
+  "contractVersion": "1.4",
 
   "light": {
     "off":    { "on": false, "dim": null, "room": "EG Küche",  "label": "Wandleuchten",  "accent": "orange" },
@@ -25,8 +25,8 @@
                 "room": "Wintergarten", "label": "Jalousie Ost", "accent": "green", "statuses": [] }
   },
   "sensor": {
-    "ok":   { "value": "20.4", "unit": "°C",  "status": "komfort", "room": "Schlafz.", "label": "Temp", "accent": "blue" },
-    "warn": { "value": 287,    "unit": "ppm", "status": "erhöht",  "room": "EG WC",    "label": "VOC",  "accent": "teal" }
+    "ok":   { "value": "20.4", "unit": "°C",  "status": "komfort", "icon": "cloud", "room": "Schlafz.", "label": "Temp", "accent": "blue" },
+    "warn": { "value": 287,    "unit": "ppm", "status": "erhöht",  "series": [46, 120, 288, 250, 210], "min": 46, "max": 288, "room": "EG WC", "label": "VOC", "accent": "teal" }
   },
   "scene": {
     "film":   { "icon": "sparkle", "sub": "Licht · Rollladen · TV", "room": "Szenen", "label": "Filmabend",    "accent": "violet" },
@@ -40,5 +40,9 @@
   "camera": {
     "online":  { "online": true,  "snapshotUrl": "https://cam.local/front/snapshot.jpg", "streamUrl": "https://cam.local/front/stream", "room": "Eingang", "label": "Haustür", "accent": "slate" },
     "offline": { "online": false, "snapshotUrl": null, "room": "Garage", "label": "Garage", "accent": "slate" }
+  },
+  "climate": {
+    "heat": { "setpoint": 21.5, "current": 20.4, "mode": "heat", "unit": "°C", "floor": "Erdgeschoss", "room": "Wohnz.", "label": "Heizung", "accent": "orange" },
+    "off":  { "setpoint": 18,   "current": 19.2, "mode": "off",  "unit": "°C", "room": "Gäste-WC", "label": "Thermostat", "accent": "slate" }
   }
 }

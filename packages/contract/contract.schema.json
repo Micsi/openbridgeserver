@@ -1,6 +1,6 @@
 {
   "$schema": "https://obs.visu/contract/v1",
-  "version": "1.3",
+  "version": "1.4",
 
   "roles": ["compact", "default", "wide", "tall", "feature", "banner"],
 
@@ -38,7 +38,8 @@
           "dim": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
           "room": { "type": "string" },
           "label": { "type": "string" },
-          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
+          "floor": { "type": "string" }
         }
       }
     },
@@ -63,7 +64,8 @@
           "on": { "type": "boolean" },
           "room": { "type": "string" },
           "label": { "type": "string" },
-          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
+          "floor": { "type": "string" }
         }
       }
     },
@@ -90,7 +92,8 @@
           "locked": { "type": "boolean" },
           "room": { "type": "string" },
           "label": { "type": "string" },
-          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
+          "floor": { "type": "string" }
         }
       }
     },
@@ -143,7 +146,8 @@
           "room": { "type": "string" },
           "label": { "type": "string" },
           "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
-          "mode": { "const": "jalousie" }
+          "mode": { "const": "jalousie" },
+          "floor": { "type": "string" }
         }
       }
     },
@@ -153,6 +157,10 @@
         "value": "number|string",
         "unit": "string  (°C · ppm · %)",
         "status": "string|undefined  (komfort | erhöht | …)",
+        "icon": "string|undefined  (Akzent-Icon-Slot, z. B. 'cloud' | 'bolt')",
+        "series": "number[]|undefined  (Zeitreihe für Verlauf/Chart)",
+        "min": "number|undefined  (Reihen-Minimum, Fuß 'min … · max …')",
+        "max": "number|undefined  (Reihen-Maximum)",
         "room": "string",
         "label": "string",
         "accent": "token"
@@ -170,9 +178,14 @@
           "value": { "type": ["number", "string"] },
           "unit": { "type": "string" },
           "status": { "type": "string" },
+          "icon": { "type": "string" },
+          "series": { "type": "array", "items": { "type": "number" } },
+          "min": { "type": "number" },
+          "max": { "type": "number" },
           "room": { "type": "string" },
           "label": { "type": "string" },
-          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
+          "floor": { "type": "string" }
         }
       }
     },
@@ -205,15 +218,43 @@
           "sub": { "type": "string" },
           "room": { "type": "string" },
           "label": { "type": "string" },
-          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
+          "floor": { "type": "string" }
         }
       }
     },
 
     "climate": {
-      "reserved": true,
-      "since": "1.1",
-      "data": { "target": "number", "current": "number", "mode": "string" }
+      "since": "1.4",
+      "data": {
+        "setpoint": "number  (Solltemperatur)",
+        "current": "number  (Isttemperatur)",
+        "mode": "'heat'|'cool'|'off'|'auto'",
+        "unit": "string  (°C · °F)",
+        "room": "string",
+        "label": "string",
+        "accent": "token"
+      },
+      "actions": { "setSetpoint": { "value": "Zieltemperatur" } },
+      "icon": "thermo",
+      "roles": { "allow": ["compact", "default", "wide", "tall"], "default": "default" },
+      "dataSchema": {
+        "type": "object",
+        "required": ["setpoint", "current", "mode", "unit", "room", "label", "accent"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "const": "climate" },
+          "id": { "type": "string" },
+          "setpoint": { "type": "number" },
+          "current": { "type": "number" },
+          "mode": { "type": "string", "enum": ["heat", "cool", "off", "auto"] },
+          "unit": { "type": "string" },
+          "room": { "type": "string" },
+          "label": { "type": "string" },
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
+          "floor": { "type": "string" }
+        }
+      }
     },
     "weather": {
       "reserved": true,
@@ -265,7 +306,8 @@
           "artUrl": { "type": ["string", "null"] },
           "room": { "type": "string" },
           "label": { "type": "string" },
-          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
+          "floor": { "type": "string" }
         }
       }
     },
@@ -294,7 +336,8 @@
           "streamUrl": { "type": ["string", "null"] },
           "room": { "type": "string" },
           "label": { "type": "string" },
-          "accent": { "$ref": "https://obs.visu/contract/v1/accent" }
+          "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
+          "floor": { "type": "string" }
         }
       }
     },

@@ -8,6 +8,7 @@ import type {
   JalousieDevice,
   SensorDevice,
   SceneDevice,
+  ClimateDevice,
 } from '@obs/visu-contract';
 import { ctx, makeCtx, DEFAULT_ICONS } from './ctx';
 
@@ -34,6 +35,7 @@ const f = fixtures as unknown as {
   jalousie: { open: JalousieDevice; tilted: JalousieDevice; locked: JalousieDevice };
   sensor: { ok: SensorDevice; warn: SensorDevice };
   scene: { film: SceneDevice; morgen: SceneDevice };
+  climate: { heat: ClimateDevice; off: ClimateDevice };
 };
 
 // fixtures omit `type`; restore the discriminant for the typed helpers.
@@ -133,6 +135,106 @@ describe('ctx.stateText — centralised footer text (§5)', () => {
     expect(ctx.stateText(withType<SceneDevice>(f.scene.film, 'scene'))).toBe(
       'Licht · Rollladen · TV',
     );
+  });
+
+  it('climate → "<Modus> — <Ist>°" (v1.4)', () => {
+    // fixture heat: current 20.4 → de-DE "20,4"; mode heat → "Heizen".
+    expect(ctx.stateText(withType<ClimateDevice>(f.climate.heat, 'climate'))).toBe('Heizen — 20,4°');
+    expect(ctx.stateText(withType<ClimateDevice>(f.climate.off, 'climate'))).toBe('Aus — 19,2°');
+  });
+
+  it('a type without a footer phrasing (media/camera) → empty string', () => {
+    const media = { type: 'media', room: 'r', label: 'l', accent: 'blue' } as unknown as Device;
+    expect(ctx.stateText(media)).toBe('');
+  });
+});
+
+describe('ctx.stateParts — leading state word vs. rest (v1.4)', () => {
+  // The single invariant: `word + rest === stateText(d)` for every device, so a
+  // skin can render `<b>{word}</b>{rest}` without ever drifting from stateText.
+  const light = (extra: Partial<LightDevice>): LightDevice =>
+    ({ type: 'light', room: 'r', label: 'l', accent: 'orange', on: false, dim: null, ...extra });
+
+  it('plain light/switch: the whole word, no rest', () => {
+    expect(ctx.stateParts(withType<LightDevice>(f.light.off, 'light'))).toEqual({
+      word: 'Aus',
+      rest: '',
+    });
+    expect(ctx.stateParts(withType<LightDevice>(f.light.on, 'light'))).toEqual({
+      word: 'Ein',
+      rest: '',
+    });
+    expect(ctx.stateParts(withType<SwitchDevice>(f.switch.on, 'switch'))).toEqual({
+      word: 'An',
+      rest: '',
+    });
+  });
+
+  it('dimmed light: word "Ein", rest " — 45 %"', () => {
+    const parts = ctx.stateParts(withType<LightDevice>(f.light.dimmed, 'light'));
+    expect(parts).toEqual({ word: 'Ein', rest: ` — 45${NBSP}%` });
+    // consistency with stateText
+    expect(parts.word + parts.rest).toBe(ctx.stateText(withType<LightDevice>(f.light.dimmed, 'light')));
+  });
+
+  it('dimmable-but-off light: whole word (dim set, on false)', () => {
+    // covers the `d.on` = false arm of the dimmed guard.
+    const dev = light({ dim: 0, on: false });
+    expect(ctx.stateParts(dev)).toEqual({ word: 'Aus', rest: '' });
+  });
+
+  it('blind/jalousie: word "62 %", rest " · Teil"', () => {
+    const blind = ctx.stateParts(withType<BlindDevice>(f.blind.half, 'blind'));
+    expect(blind).toEqual({ word: `62${NBSP}%`, rest: ' · Teil' });
+    expect(blind.word + blind.rest).toBe(ctx.stateText(withType<BlindDevice>(f.blind.half, 'blind')));
+    const jal = ctx.stateParts(withType<JalousieDevice>(f.jalousie.tilted, 'jalousie'));
+    expect(jal).toEqual({ word: `62${NBSP}%`, rest: ' · Teil' });
+  });
+
+  it('climate: word = mode label, rest = " — <Ist>°"', () => {
+    const parts = ctx.stateParts(withType<ClimateDevice>(f.climate.heat, 'climate'));
+    expect(parts).toEqual({ word: 'Heizen', rest: ' — 20,4°' });
+    expect(parts.word + parts.rest).toBe(
+      ctx.stateText(withType<ClimateDevice>(f.climate.heat, 'climate')),
+    );
+  });
+
+  it('sensor/scene: the whole text is the word', () => {
+    expect(ctx.stateParts(withType<SensorDevice>(f.sensor.warn, 'sensor'))).toEqual({
+      word: 'erhöht',
+      rest: '',
+    });
+    expect(ctx.stateParts(withType<SceneDevice>(f.scene.film, 'scene'))).toEqual({
+      word: 'Licht · Rollladen · TV',
+      rest: '',
+    });
+  });
+});
+
+describe('ctx.stateParts — with an injected translator (CONTRACT v1.1/v1.4)', () => {
+  const t = (key: string, params?: Record<string, unknown>): string =>
+    params ? `[${key} ${JSON.stringify(params)}]` : `[${key}]`;
+  const tctx = makeCtx(t);
+
+  it('climate resolves the mode i18n key and keeps word+rest === stateText', () => {
+    const dev = withType<ClimateDevice>(f.climate.heat, 'climate');
+    const parts = tctx.stateParts(dev);
+    expect(parts.word).toBe('[widgets.climate.mode.heat]');
+    expect(parts.word + parts.rest).toBe(tctx.stateText(dev));
+  });
+
+  it('falls back to the whole word when the leading word is not a prefix (dimmed via i18n key)', () => {
+    // The dimmed string is one opaque i18n key, so the "on" word is not its prefix:
+    // stateParts keeps consistency by returning the whole text as the word.
+    const dev = withType<LightDevice>(f.light.dimmed, 'light');
+    const parts = tctx.stateParts(dev);
+    expect(parts).toEqual({ word: tctx.stateText(dev), rest: '' });
+  });
+
+  it('blind with no " · " separator in the translated text → whole word', () => {
+    const dev = withType<BlindDevice>(f.blind.half, 'blind');
+    const parts = tctx.stateParts(dev);
+    expect(parts).toEqual({ word: tctx.stateText(dev), rest: '' });
   });
 });
 

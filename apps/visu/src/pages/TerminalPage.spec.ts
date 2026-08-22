@@ -8,6 +8,8 @@ import de from '../locales/de.json';
 import en from '../locales/en.json';
 import { useDeviceStore } from '../core/store';
 import { MockDataSource } from '../core/datasource';
+import { byId } from '../core/model';
+import { resolveSkin } from '../skin-host/skins';
 import { resolvePage } from './pages';
 
 /**
@@ -58,6 +60,16 @@ function terminalItemCount(): number {
   return resolvePage('terminal').groups.reduce((n, g) => n + g.entries.length, 0);
 }
 
+/** Split the terminal floor into skin-rendered vs. declared-unsupported item counts.
+ *  The terminal skin declares `media`/`camera` as unsupported → the host draws a
+ *  quiet placeholder for those (a declared gap), a `.t-row` for the rest. */
+function terminalRenderSplit(): { rows: number; unsupported: number } {
+  const ids = resolvePage('terminal').groups.flatMap((g) => g.entries.map((e) => e.id));
+  const skipped = new Set(resolveSkin('terminal').manifest.unsupported);
+  const unsupported = ids.filter((id) => skipped.has(byId[id]!.type)).length;
+  return { rows: ids.length - unsupported, unsupported };
+}
+
 async function seedStore(): Promise<void> {
   const store = useDeviceStore();
   await store.init(new MockDataSource());
@@ -92,9 +104,14 @@ describe('SkinPage(terminal) — renders the devices through the terminal skin',
     const cells = wrapper.findAll('.skin-host-cell');
     expect(cells.length).toBe(terminalItemCount());
 
-    // the terminal skin renders each device as a `.t-row` list line (not a tile)
+    // the terminal skin renders each supported device as a `.t-row` list line (not a
+    // tile); the media/camera it declares unsupported render a quiet placeholder.
+    const split = terminalRenderSplit();
     const rows = wrapper.findAll('.t-row');
-    expect(rows.length).toBe(terminalItemCount());
+    expect(rows.length).toBe(split.rows);
+    expect(wrapper.findAll('.skin-host-unsupported').length).toBe(split.unsupported);
+    expect(wrapper.find('.skin-host-unsupported[data-type="media"]').exists()).toBe(true);
+    expect(wrapper.find('.skin-host-unsupported[data-type="camera"]').exists()).toBe(true);
     expect(wrapper.find('.vz-tile').exists()).toBe(false);
 
     // the core mobile types are present, addressed by type through the terminal skin
@@ -102,6 +119,8 @@ describe('SkinPage(terminal) — renders the devices through the terminal skin',
     expect(wrapper.find('.t-row[data-type="switch"]').exists()).toBe(true);
     expect(wrapper.find('.t-row[data-type="blind"]').exists()).toBe(true);
     expect(wrapper.find('.t-row[data-type="jalousie"]').exists()).toBe(true);
+    expect(wrapper.find('.t-row[data-type="sensor"]').exists()).toBe(true);
+    expect(wrapper.find('.t-row[data-type="scene"]').exists()).toBe(true);
   });
 
   it('tapping a terminal light row dispatches its canonical action to the store', async () => {
