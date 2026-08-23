@@ -26,8 +26,8 @@ from obs.models.types import DataTypeRegistry
 logger = logging.getLogger(__name__)
 
 _INSERT_DATAPOINT_SQL = """INSERT INTO datapoints
-   (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, persist_value, record_history, control_class, created_at, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+   (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, persist_value, record_history, control_class, external_write_enabled, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +200,7 @@ class DataPointRegistry:
             int(dp.persist_value),
             int(dp.record_history),
             dp.control_class,
+            int(dp.external_write_enabled),
             dp.created_at.isoformat(),
             dp.updated_at.isoformat(),
         )
@@ -235,7 +236,7 @@ class DataPointRegistry:
 
         await self._db.execute_and_commit(
             """UPDATE datapoints
-               SET name=?, data_type=?, unit=?, tags=?, mqtt_alias=?, persist_value=?, record_history=?, control_class=?, updated_at=?
+               SET name=?, data_type=?, unit=?, tags=?, mqtt_alias=?, persist_value=?, record_history=?, control_class=?, external_write_enabled=?, updated_at=?
                WHERE id=?""",
             (
                 dp.name,
@@ -246,6 +247,7 @@ class DataPointRegistry:
                 int(dp.persist_value),
                 int(dp.record_history),
                 dp.control_class,
+                int(dp.external_write_enabled),
                 now.isoformat(),
                 str(dp_id),
             ),
@@ -366,6 +368,7 @@ def _row_to_datapoint(row: Any) -> DataPoint:
         persist_value=bool(row["persist_value"]) if row["persist_value"] is not None else True,
         record_history=bool(row["record_history"]) if row["record_history"] is not None else True,
         control_class=row["control_class"] if "control_class" in row.keys() else "room_local",  # noqa: SIM118 -- sqlite Row membership checks values
+        external_write_enabled=bool(row["external_write_enabled"]) if "external_write_enabled" in row.keys() else False,  # noqa: SIM118
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
