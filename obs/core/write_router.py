@@ -4,6 +4,10 @@ Two write paths:
 
 1. MQTT dp/{uuid}/set  →  handle(dp_id, raw_payload)
    External write command: deserialize payload, write to all DEST/BOTH bindings.
+   A bindingless DataPoint is rejected unless it opted in via
+   DataPoint.external_write_enabled (see handle()'s docstring) — unrelated to the
+   control_class/central_plant gate on the authenticated REST value-write path in
+   obs/api/v1/datapoints.py, which governs a different write entry point.
 
 2. DataValueEvent  →  handle_value_event(event)
    Internal propagation: a SOURCE/BOTH binding received a value → write it to all
@@ -148,8 +152,11 @@ class WriteRouter:
         """Deserialize an inbound MQTT set payload.
 
         External MQTT commands may only target explicit writable adapter
-        bindings. Bindingless datapoints are OBS-internal state and must not be
-        converted into trusted DataValueEvent updates from this path.
+        bindings. A bindingless datapoint is OBS-internal state and its set
+        payload is only converted into a trusted DataValueEvent from this path
+        when the DataPoint has explicitly opted in via `external_write_enabled`
+        (see issue #1169) — otherwise it is ignored, same as before that opt-in
+        existed.
         """
         from obs.models.types import DataTypeRegistry
 
@@ -195,6 +202,14 @@ class WriteRouter:
                 value,
                 skip_binding_id=None,
                 suppress_confirmation_actions=False,
+            )
+            return
+
+        if getattr(dp, "external_write_enabled", False):
+            from obs.core.event_bus import DataValueEvent
+
+            await self._bus.publish(
+                DataValueEvent(datapoint_id=dp_id, value=value, quality="good", source_adapter="mqtt_set")
             )
             return
 

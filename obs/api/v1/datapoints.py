@@ -54,6 +54,7 @@ _AUDITABLE_METADATA_FIELDS = (
     "persist_value",
     "record_history",
     "control_class",
+    "external_write_enabled",
 )
 
 
@@ -106,6 +107,7 @@ class DataPointOut(BaseModel):
     persist_value: bool
     record_history: bool
     control_class: Literal["room_local", "central_plant"] = "room_local"
+    external_write_enabled: bool = False
     created_at: str
     updated_at: str
     # Runtime
@@ -212,6 +214,7 @@ def _enrich(dp: Any) -> DataPointOut:
         persist_value=dp.persist_value,
         record_history=dp.record_history,
         control_class=getattr(dp, "control_class", "room_local"),
+        external_write_enabled=getattr(dp, "external_write_enabled", False),
         created_at=dp.created_at.isoformat(),
         updated_at=dp.updated_at.isoformat(),
         value=state.value if state else None,

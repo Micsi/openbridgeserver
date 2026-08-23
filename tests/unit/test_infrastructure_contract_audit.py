@@ -322,6 +322,7 @@ def test_datapoint_metadata_snapshot_excludes_runtime_value_and_secrets() -> Non
         "persist_value",
         "record_history",
         "control_class",
+        "external_write_enabled",
     }
     assert "value" not in snapshot
     assert "mqtt_topic" not in snapshot

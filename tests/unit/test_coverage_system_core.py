@@ -1175,6 +1175,30 @@ class TestWriteRouterHandle:
         router._bus.publish.assert_not_awaited()
         router._write_to_dest_bindings.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_handle_publishes_for_external_write_enabled_bindingless_datapoint(self):
+        from obs.core.event_bus import DataValueEvent
+        from obs.core.write_router import WriteRouter
+
+        dp = SimpleNamespace(name="dp", data_type="FLOAT", external_write_enabled=True)
+        router = WriteRouter.__new__(WriteRouter)
+        router._db = _DbStub()
+        router._registry = SimpleNamespace(get=lambda _: dp)
+        router._bus = SimpleNamespace(publish=AsyncMock())
+        router._last_sent = {}
+        router._last_value = {}
+        router._write_to_dest_bindings = AsyncMock()
+
+        dp_id = uuid.uuid4()
+        await router.handle(dp_id, "42.0")
+        router._write_to_dest_bindings.assert_not_awaited()
+        router._bus.publish.assert_awaited_once()
+        (event,), _kwargs = router._bus.publish.call_args
+        assert isinstance(event, DataValueEvent)
+        assert event.datapoint_id == dp_id
+        assert event.value == 42.0
+        assert event.source_adapter == "mqtt_set"
+
 
 class TestWriteRouterHandleValueEvent:
     @pytest.mark.asyncio
