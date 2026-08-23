@@ -12,7 +12,9 @@
         <h2 :class="[titleSpacerClass, 'flex-shrink-0 overflow-hidden whitespace-nowrap text-sm font-bold text-slate-800 dark:text-slate-100']">{{ $t('logic.title') }}</h2>
         <!-- Logikblatt selector -->
         <select v-model="activeGraphId" @change="loadGraph"
-          class="input text-xs py-1 px-2 max-w-[200px]" data-testid="select-graph">
+          class="input text-xs py-1 px-2 flex-shrink-0"
+          :style="{ width: graphSelectWidthCh + 'ch', maxWidth: '280px' }"
+          data-testid="select-graph">
           <option value="">{{ $t('logic.selectGraph') }}</option>
           <option v-for="g in store.graphs" :key="g.id" :value="g.id">{{ g.name }}{{ g.enabled ? '' : $t('logic.graphDisabledSuffix') }}</option>
         </select>
@@ -445,6 +447,19 @@ const nodeTypeComponents = {
 // ── Active graph ───────────────────────────────────────────────────────────
 const activeGraphId = ref('')
 const activeGraph   = computed(() => store.graphs.find(g => g.id === activeGraphId.value))
+
+// Sized to the longest visible option text (in `ch` units) so the graph-name
+// select never shrinks below what's needed to show the selected name — a flex
+// item's default min-width:auto lets a <select> collapse to just its dropdown
+// arrow under space pressure otherwise, hiding the graph name entirely.
+const graphSelectWidthCh = computed(() => {
+  const texts = [
+    t('logic.selectGraph'),
+    ...store.graphs.map(g => g.name + (g.enabled ? '' : t('logic.graphDisabledSuffix'))),
+  ]
+  const longest = texts.reduce((max, text) => Math.max(max, text.length), 0)
+  return Math.min(Math.max(longest, 12), 40)
+})
 
 // ── Edge options — animated only when graph is enabled ─────────────────────
 const defaultEdgeOptions = computed(() => {
