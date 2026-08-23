@@ -126,6 +126,8 @@
       "persistValueHint": "nach Neustart sofort verfügbar",
       "recordHistory": "Historisierung aktiv",
       "recordHistoryHint": "Werte in der Historie-DB speichern",
+      "externalWriteEnabled": "Externes Schreiben erlauben",
+      "externalWriteEnabledHint": "jeder MQTT-Client mit Broker-Zugriff kann diesen Wert dann setzen",
       "saveError": "Fehler beim Speichern"
     },
     "delete": {

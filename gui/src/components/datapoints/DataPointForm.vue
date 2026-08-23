@@ -53,6 +53,11 @@
       <span class="text-sm text-slate-700 dark:text-slate-200">{{ $t('datapoints.form.recordHistory') }} <span class="text-slate-500 font-normal">({{ $t('datapoints.form.recordHistoryHint') }})</span></span>
     </label>
 
+    <label class="flex items-center gap-2 cursor-pointer select-none" data-testid="label-external-write-enabled">
+      <input v-model="form.external_write_enabled" type="checkbox" class="w-4 h-4 rounded accent-blue-500" data-testid="checkbox-external-write-enabled" />
+      <span class="text-sm text-slate-700 dark:text-slate-200">{{ $t('datapoints.form.externalWriteEnabled') }} <span class="text-slate-500 font-normal">({{ $t('datapoints.form.externalWriteEnabledHint') }})</span></span>
+    </label>
+
     <div v-if="error" class="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
       {{ error }}
     </div>
@@ -164,6 +169,7 @@ const form = reactive({
   mqtt_alias:     '',
   persist_value:  true,
   record_history: true,
+  external_write_enabled: false,
 })
 
 // Helper: initialise unit controls from a raw string
@@ -188,11 +194,13 @@ watch(() => props.initial, (val) => {
     form.mqtt_alias     = val.mqtt_alias ?? ''
     form.persist_value  = val.persist_value ?? true
     form.record_history = val.record_history ?? true
+    form.external_write_enabled = val.external_write_enabled ?? false
     tagsInput.value     = val.tags?.join(', ') ?? ''
     applyUnit(val.unit)
   } else {
     form.name = ''; form.data_type = 'FLOAT'; form.mqtt_alias = ''
     form.persist_value = true; form.record_history = true
+    form.external_write_enabled = false
     tagsInput.value = ''
     applyUnit('')
   }
@@ -211,6 +219,7 @@ async function submit() {
       mqtt_alias:     form.mqtt_alias || null,
       persist_value:  form.persist_value,
       record_history: form.record_history,
+      external_write_enabled: form.external_write_enabled,
     })
   } catch (e) {
     error.value = e.response?.data?.detail ?? e.message ?? t('datapoints.form.saveError')

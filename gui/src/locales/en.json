@@ -126,6 +126,8 @@
       "persistValueHint": "immediately available after restart",
       "recordHistory": "History active",
       "recordHistoryHint": "store values in history DB",
+      "externalWriteEnabled": "Allow external write",
+      "externalWriteEnabledHint": "any MQTT client that can reach the broker can then set this value",
       "saveError": "Error saving"
     },
     "delete": {
