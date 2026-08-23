@@ -208,9 +208,7 @@ class WriteRouter:
         if getattr(dp, "external_write_enabled", False):
             from obs.core.event_bus import DataValueEvent
 
-            await self._bus.publish(
-                DataValueEvent(datapoint_id=dp_id, value=value, quality="good", source_adapter="mqtt_set")
-            )
+            await self._bus.publish(DataValueEvent(datapoint_id=dp_id, value=value, quality="good", source_adapter="mqtt_set"))
             return
 
         logger.warning("Write request for bindingless internal DataPoint %s — ignored", dp_id)

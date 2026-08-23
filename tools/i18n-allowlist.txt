@@ -60,3 +60,12 @@ Français
 # SchemaForm.vue — defaultPlaceholder() returns a schema default value (e.g. "502", "3.0")
 # from the backend JSON schema, not a hardcoded user-facing string.
 re:^defaultPlaceholder\(
+
+# DataPointForm.vue — UNIT_CATEGORIES optgroup labels. Single-word category names
+# (Temperatur, Druck, Licht, ...) already auto-pass via is_technical_token; only the
+# multi-word combined categories below need an explicit entry.
+Feuchte & Luftqualität
+Elektrizität
+Geschwindigkeit & Beschleunigung
+Volumen & Durchfluss
+Länge & Fläche

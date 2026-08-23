@@ -509,9 +509,7 @@ async def test_handle_ignores_unknown_raw_payload_for_bindingless_datapoint():
 async def test_handle_publishes_value_event_for_external_write_enabled_bindingless_datapoint():
     dp_id = uuid.uuid4()
     router = _make_router([])
-    router._registry = SimpleNamespace(
-        get=lambda _dp_id: SimpleNamespace(name="dp", data_type="BOOLEAN", external_write_enabled=True)
-    )
+    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="dp", data_type="BOOLEAN", external_write_enabled=True))
     bus = SimpleNamespace(publish=AsyncMock())
     router._bus = bus
 
@@ -530,9 +528,7 @@ async def test_handle_publishes_value_event_for_external_write_enabled_bindingle
 async def test_handle_ignores_invalid_payload_for_external_write_enabled_bindingless_datapoint():
     dp_id = uuid.uuid4()
     router = _make_router([])
-    router._registry = SimpleNamespace(
-        get=lambda _dp_id: SimpleNamespace(name="dp", data_type="INTEGER", external_write_enabled=True)
-    )
+    router._registry = SimpleNamespace(get=lambda _dp_id: SimpleNamespace(name="dp", data_type="INTEGER", external_write_enabled=True))
     bus = SimpleNamespace(publish=AsyncMock())
     router._bus = bus
 
