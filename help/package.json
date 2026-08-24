@@ -4,9 +4,10 @@
   "description": "open bridge server integriertes Hilfesystem (VitePress)",
   "type": "module",
   "scripts": {
-    "dev": "vitepress dev",
-    "build": "vitepress build",
-    "preview": "vitepress preview --port 4175"
+    "dev": "npm run help-index && vitepress dev",
+    "build": "npm run help-index && vitepress build",
+    "preview": "vitepress preview --port 4175",
+    "help-index": "node scripts/generate-help-index.mjs"
   },
   "devDependencies": {
     "vitepress": "^1.6.4"
