@@ -28,7 +28,10 @@
 
       <!-- Zeitzone -->
       <div class="card" :class="{ 'pointer-events-none select-none opacity-60': isDemo }">
-        <div class="card-header"><h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.general.title') }}</h3></div>
+        <div class="card-header">
+          <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.general.title') }}</h3>
+          <HelpButton help-id="settings-general" />
+        </div>
         <div class="card-body flex flex-col gap-4">
           <div class="form-group">
             <label class="label">{{ $t('settings.general.timezone') }}</label>
@@ -105,6 +108,7 @@
       <div class="card">
         <div class="card-header">
           <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.general.appearance') }}</h3>
+          <HelpButton help-id="settings-appearance" />
         </div>
         <div class="card-body flex flex-col gap-3">
           <p class="text-sm text-slate-500">{{ $t('settings.general.appearanceHint') }}</p>
@@ -1540,6 +1544,7 @@ import ConfirmDialog  from '@/components/ui/ConfirmDialog.vue'
 import IconPicker     from '@/components/ui/IconPicker.vue'
 import VisuIcon       from '@/components/ui/VisuIcon.vue'
 import LocaleSwitcher from '@/components/ui/LocaleSwitcher.vue'
+import HelpButton     from '@/components/ui/HelpButton.vue'
 import { formatCurrency, formatNumber } from '@/utils/numberFormat'
 import { resolveCurrency, resolveRegionFormat, useRegionalFormat } from '@/composables/useRegionalFormat'
 

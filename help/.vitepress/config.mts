@@ -26,6 +26,10 @@ export default defineConfig({
             text: 'Erste Schritte',
             items: [{ text: 'Übersicht', link: '/' }],
           },
+          {
+            text: 'Einstellungen',
+            items: [{ text: 'Allgemeine Einstellungen', link: '/settings/general' }],
+          },
         ],
         outline: { label: 'Auf dieser Seite' },
         docFooter: { prev: 'Vorherige Seite', next: 'Nächste Seite' },
@@ -45,6 +49,10 @@ export default defineConfig({
           {
             text: 'Getting Started',
             items: [{ text: 'Overview', link: '/en/' }],
+          },
+          {
+            text: 'Settings',
+            items: [{ text: 'General Settings', link: '/en/settings/general' }],
           },
         ],
       },

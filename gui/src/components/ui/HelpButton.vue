@@ -4,6 +4,7 @@
     class="btn-icon"
     :aria-label="$t('help.openLabel')"
     :title="$t('help.openLabel')"
+    :data-testid="`help-button-${helpId}`"
     @click="helpStore.open(props.helpId)"
   >
     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
