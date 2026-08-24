@@ -1,0 +1,14 @@
+{
+  "name": "obs-help",
+  "version": "0.0.0-dev",
+  "description": "open bridge server integriertes Hilfesystem (VitePress)",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview --port 4175"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}
