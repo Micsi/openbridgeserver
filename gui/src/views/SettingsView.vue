@@ -1016,11 +1016,11 @@
       <!-- Objekt-Filter -->
       <div class="card" data-testid="history-filter-card">
         <div class="card-header">
-          <div class="flex items-center gap-1">
-            <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.history.filterTitle') }}</h3>
+          <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.history.filterTitle') }}</h3>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-500">{{ $t('settings.history.filterCount', { excluded: histFilterExcludedCount, total: histAllDps.length }) }}</span>
             <HelpButton help-id="settings-history-filter" />
           </div>
-          <span class="text-xs text-slate-500">{{ $t('settings.history.filterCount', { excluded: histFilterExcludedCount, total: histAllDps.length }) }}</span>
         </div>
         <div class="card-body flex flex-col gap-3">
           <p class="text-sm text-slate-500">{{ $t('settings.history.filterDesc') }}</p>
@@ -1100,8 +1100,8 @@
       <!-- Toolbar -->
       <div class="flex flex-wrap items-center gap-3">
         <span class="text-sm text-slate-400" data-testid="icons-count">{{ $t('settings.icons.count', { n: iconsFiltered.length }) }}</span>
-        <HelpButton help-id="settings-icons" />
         <div class="flex-1" />
+        <HelpButton help-id="settings-icons" />
         <button v-if="iconsSelected.size > 0" @click="doIconsExport" class="btn-secondary btn-sm" data-testid="btn-icons-export">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/></svg>
           {{ $t('settings.icons.export', { n: iconsSelected.size }) }}
