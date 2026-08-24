@@ -16,7 +16,16 @@
           data-testid="help-drawer-resize-handle"
         />
 
-        <div class="card-header shrink-0">
+        <!--
+          Not .card-header: that class sizes itself from padding + content
+          (py-4 around whichever child is tallest), which the drawer's own
+          32px-tall icon buttons stretch to 65px — a few px taller than the
+          Admin-GUI's own TopBar (issue feedback). TopBar avoids that same
+          text-vs-button height mismatch with a fixed h-14 + items-center
+          instead of vertical padding, so this mirrors that composition
+          exactly to land on the same 56px header height.
+        -->
+        <div class="h-14 shrink-0 px-5 border-b border-slate-200 dark:border-slate-700/60 flex items-center justify-between">
           <h3 class="text-base font-semibold text-slate-800 dark:text-slate-100">
             {{ $t('help.title') }}
           </h3>
