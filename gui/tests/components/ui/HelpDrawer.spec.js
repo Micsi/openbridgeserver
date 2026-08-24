@@ -104,9 +104,23 @@ describe('HelpDrawer — open with a resolved URL', () => {
 
   it('calls store.close() when the close button is clicked', async () => {
     await mountOpen()
-    document.querySelector('.card-header .btn-icon').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    document.querySelector('[data-testid="help-drawer-close"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
     expect(helpStoreMock.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens currentUrl in a new tab and closes the drawer (narrow-monitor escape hatch)', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+    await mountOpen('/help/datapoints/overview.html#datapoints-overview')
+
+    document.querySelector('[data-testid="help-drawer-open-new-tab"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+
+    expect(openSpy).toHaveBeenCalledWith(
+      '/help/datapoints/overview.html#datapoints-overview', '_blank', 'noopener,noreferrer'
+    )
+    expect(helpStoreMock.close).toHaveBeenCalledTimes(1)
+    openSpy.mockRestore()
   })
 
   it('calls store.close() on Escape', async () => {
@@ -138,5 +152,15 @@ describe('HelpDrawer — open with no resolvable URL', () => {
     const body = document.querySelector('.card-body')
     expect(body).toBeTruthy()
     expect(body.textContent.length).toBeGreaterThan(0)
+  })
+
+  it('does not render the open-in-new-tab button — nothing to open', async () => {
+    helpStoreMock.isOpen = true
+    helpStoreMock.currentUrl = null
+    const { default: HelpDrawer } = await import('@/components/ui/HelpDrawer.vue')
+    mount(HelpDrawer, { attachTo: document.body })
+    await flushPromises()
+
+    expect(document.querySelector('[data-testid="help-drawer-open-new-tab"]')).toBeFalsy()
   })
 })
