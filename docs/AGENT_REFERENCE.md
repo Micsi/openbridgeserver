@@ -174,6 +174,7 @@ Admin GUI (`gui/src/locales/`):
 | `settings.*` | Settings view |
 | `common.*` | Shared across views (save, cancel, delete, error, warning, …) |
 | `hierarchy.*` | Hierarchy manager |
+| `help.*` | Integrated help drawer (#896) — `HelpButton.vue`/`HelpDrawer.vue` |
 
 Visu SPA (`frontend/src/locales/`):
 

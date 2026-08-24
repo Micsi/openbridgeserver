@@ -6,6 +6,7 @@
     <component :is="layout">
       <router-view />
     </component>
+    <HelpDrawer />
   </div>
 </template>
 
@@ -15,13 +16,16 @@ import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useSettingsStore } from '@/stores/settings'
+import { useHelpStore } from '@/stores/help'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import PlainLayout from '@/components/layout/PlainLayout.vue'
+import HelpDrawer from '@/components/ui/HelpDrawer.vue'
 
 const route    = useRoute()
 const auth     = useAuthStore()
 const ws       = useWebSocketStore()
 const settings = useSettingsStore()
+const help     = useHelpStore()
 
 const layout = computed(() => route.meta.public ? PlainLayout : AppLayout)
 const instanceName = (import.meta.env.VITE_INSTANCE_NAME || '').trim()
@@ -40,6 +44,10 @@ const runtimeStripClass = computed(() => {
 })
 
 onMounted(async () => {
+  // Public, unauthenticated static content — prefetch regardless of login
+  // state so the first "?" click doesn't wait on a round-trip.
+  help.loadIndex()
+
   if (auth.isLoggedIn) {
     // Open the WebSocket first — it must not wait behind the loadMe/settings
     // round-trips, otherwise live pushes that arrive during the handshake gap
