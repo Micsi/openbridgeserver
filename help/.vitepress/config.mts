@@ -13,6 +13,23 @@ export default defineConfig({
   outDir: '../help_dist',
   title: 'open bridge server Hilfe',
 
+  // The Admin-GUI (HelpDrawer.vue) appends ?appearance=dark|light to the
+  // iframe src to carry its own current dark/light state across the
+  // same-origin-but-independent iframe document. This inline script reads
+  // that param and seeds VitePress's own localStorage key *before*
+  // VitePress's built-in anti-FOUC "check-dark-mode" script runs (that
+  // script is appended by VitePress itself, always after any user-supplied
+  // `head` entries — see resolveSiteDataHead() in vitepress/dist/node) — so
+  // the very first paint already matches, no flash of the wrong theme.
+  // Without this, the iframe falls back to its own prefers-color-scheme
+  // detection, which can silently disagree with the Admin-GUI's theme.
+  head: [
+    ['script', {}, `(function(){
+      var m = location.search.match(/[?&]appearance=(dark|light)/);
+      if (m) localStorage.setItem('vitepress-theme-appearance', m[1]);
+    })();`],
+  ],
+
   locales: {
     root: {
       label: 'Deutsch',

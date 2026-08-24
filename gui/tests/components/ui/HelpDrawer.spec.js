@@ -42,7 +42,33 @@ describe('HelpDrawer — open with a resolved URL', () => {
     expect(panel).toBeTruthy()
     const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')
     expect(iframe).toBeTruthy()
-    expect(iframe.getAttribute('src')).toBe('/help/datapoints/overview.html#datapoints-overview')
+    expect(iframe.getAttribute('src')).toBe(
+      '/help/datapoints/overview.html?appearance=light#datapoints-overview'
+    )
+  })
+
+  it("carries the Admin-GUI's current dark mode into the iframe src so VitePress doesn't fall back to its own detection", async () => {
+    document.documentElement.classList.add('dark')
+    await mountOpen('/help/datapoints/overview.html#datapoints-overview')
+    const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')
+    expect(iframe.getAttribute('src')).toBe(
+      '/help/datapoints/overview.html?appearance=dark#datapoints-overview'
+    )
+    document.documentElement.classList.remove('dark')
+  })
+
+  it('appends appearance with & when the URL already carries a query string', async () => {
+    await mountOpen('/help/datapoints/overview.html?foo=bar#datapoints-overview')
+    const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')
+    expect(iframe.getAttribute('src')).toBe(
+      '/help/datapoints/overview.html?foo=bar&appearance=light#datapoints-overview'
+    )
+  })
+
+  it('handles a currentUrl with no #hash fragment', async () => {
+    await mountOpen('/help/settings/')
+    const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')
+    expect(iframe.getAttribute('src')).toBe('/help/settings/?appearance=light')
   })
 
   it('does not block the rest of the page — no full-viewport overlay element (regression, feedback after first release)', async () => {
@@ -117,7 +143,7 @@ describe('HelpDrawer — open with a resolved URL', () => {
     await flushPromises()
 
     expect(openSpy).toHaveBeenCalledWith(
-      '/help/datapoints/overview.html#datapoints-overview', '_blank', 'noopener,noreferrer'
+      '/help/datapoints/overview.html?appearance=light#datapoints-overview', '_blank', 'noopener,noreferrer'
     )
     expect(helpStoreMock.close).toHaveBeenCalledTimes(1)
     openSpy.mockRestore()

@@ -22,7 +22,7 @@
           </h3>
           <div class="flex items-center gap-1">
             <button
-              v-if="helpStore.currentUrl"
+              v-if="iframeSrc"
               class="btn-icon"
               :aria-label="$t('help.openInNewTab')"
               :title="$t('help.openInNewTab')"
@@ -48,8 +48,8 @@
 
         <div class="flex-1 min-h-0">
           <iframe
-            v-if="helpStore.currentUrl"
-            :src="helpStore.currentUrl"
+            v-if="iframeSrc"
+            :src="iframeSrc"
             class="w-full h-full border-0"
             :title="$t('help.title')"
             data-testid="help-drawer-iframe"
@@ -70,7 +70,7 @@
 // a slide-in drawer over a modal was to keep working context usable.
 // Close only via ESC or the X button; there is no "click outside" area
 // left to catch a close click, same trade-off as Modal.vue's softBackdrop.
-import { onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useHelpStore } from '@/stores/help'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
@@ -87,6 +87,24 @@ const { width, startResize } = useResizablePanel({
 // fields near the right edge were disappearing behind the drawer).
 watch(width, (w) => helpStore.setDrawerWidth(w), { immediate: true })
 
+// The help site is a separate document (own <html>, own localStorage key)
+// even though it's same-origin — it doesn't know the Admin-GUI's current
+// dark/light state on its own and would otherwise fall back to the
+// browser's prefers-color-scheme, which can disagree (issue feedback: the
+// help site's dark palette looked "slightly different" — turned out the
+// iframe wasn't even reliably in dark mode to begin with). Passing it via
+// query param lets help/.vitepress/config.mts seed VitePress's own
+// localStorage key before VitePress's anti-FOUC script runs.
+function withAppearance(url) {
+  if (!url) return url
+  const isDark = document.documentElement.classList.contains('dark')
+  const [path, hash] = url.split('#')
+  const separator = path.includes('?') ? '&' : '?'
+  return `${path}${separator}appearance=${isDark ? 'dark' : 'light'}${hash ? '#' + hash : ''}`
+}
+
+const iframeSrc = computed(() => withAppearance(helpStore.currentUrl))
+
 function close() {
   helpStore.close()
 }
@@ -95,7 +113,7 @@ function openInNewTab() {
   // Also closes the drawer: this button exists specifically for narrow
   // monitors where the reserved side-panel space is precious, so once the
   // content lives in its own tab there is no reason to keep it narrowed.
-  window.open(helpStore.currentUrl, '_blank', 'noopener,noreferrer')
+  window.open(iframeSrc.value, '_blank', 'noopener,noreferrer')
   close()
 }
 
