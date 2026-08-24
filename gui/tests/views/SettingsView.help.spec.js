@@ -156,3 +156,96 @@ describe('SettingsView — help button on the Password tab (#896)', () => {
     expect(helpStore.currentHelpId).toBe('settings-password')
   })
 })
+
+describe('SettingsView — help buttons on the Users tab (#896)', () => {
+  it('renders a help button for the user list (covers rights editor content too)', async () => {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = 'users'
+    await flushPromises()
+
+    expect(helpButton(wrapper, 'settings-users').exists()).toBe(true)
+  })
+
+  it('opens the help store with settings-users when its button is clicked', async () => {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = 'users'
+    await flushPromises()
+    const { useHelpStore } = await import('@/stores/help')
+    const helpStore = useHelpStore()
+
+    await helpButton(wrapper, 'settings-users').trigger('click')
+
+    expect(helpStore.isOpen).toBe(true)
+    expect(helpStore.currentHelpId).toBe('settings-users')
+  })
+})
+
+describe('SettingsView — help button on the API Keys tab (#896)', () => {
+  it('renders a help button for the API keys list', async () => {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = 'apikeys'
+    await flushPromises()
+
+    expect(helpButton(wrapper, 'settings-apikeys').exists()).toBe(true)
+  })
+
+  it('opens the help store with settings-apikeys when its button is clicked', async () => {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = 'apikeys'
+    await flushPromises()
+    const { useHelpStore } = await import('@/stores/help')
+    const helpStore = useHelpStore()
+
+    await helpButton(wrapper, 'settings-apikeys').trigger('click')
+
+    expect(helpStore.isOpen).toBe(true)
+    expect(helpStore.currentHelpId).toBe('settings-apikeys')
+  })
+})
+
+describe('SettingsView — help buttons on the Security tab (#896)', () => {
+  async function mountOnSecurityTab() {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = 'security'
+    await flushPromises()
+    return wrapper
+  }
+
+  it('renders a help button for each of the three security cards', async () => {
+    const wrapper = await mountOnSecurityTab()
+
+    expect(helpButton(wrapper, 'settings-security').exists()).toBe(true)
+    expect(helpButton(wrapper, 'settings-security-check').exists()).toBe(true)
+    expect(helpButton(wrapper, 'settings-security-entries').exists()).toBe(true)
+  })
+
+  it('opens the help store with settings-security when the allowlist-intro button is clicked', async () => {
+    const wrapper = await mountOnSecurityTab()
+    const { useHelpStore } = await import('@/stores/help')
+    const helpStore = useHelpStore()
+
+    await helpButton(wrapper, 'settings-security').trigger('click')
+
+    expect(helpStore.currentHelpId).toBe('settings-security')
+  })
+
+  it('opens the help store with settings-security-check when that button is clicked', async () => {
+    const wrapper = await mountOnSecurityTab()
+    const { useHelpStore } = await import('@/stores/help')
+    const helpStore = useHelpStore()
+
+    await helpButton(wrapper, 'settings-security-check').trigger('click')
+
+    expect(helpStore.currentHelpId).toBe('settings-security-check')
+  })
+
+  it('opens the help store with settings-security-entries when that button is clicked', async () => {
+    const wrapper = await mountOnSecurityTab()
+    const { useHelpStore } = await import('@/stores/help')
+    const helpStore = useHelpStore()
+
+    await helpButton(wrapper, 'settings-security-entries').trigger('click')
+
+    expect(helpStore.currentHelpId).toBe('settings-security-entries')
+  })
+})

@@ -48,6 +48,9 @@ export default defineConfig({
             items: [
               { text: 'Allgemeine Einstellungen', link: '/settings/general' },
               { text: 'Passwort ändern', link: '/settings/password' },
+              { text: 'Benutzer', link: '/settings/users' },
+              { text: 'API Keys', link: '/settings/apikeys' },
+              { text: 'Sicherheit', link: '/settings/security' },
             ],
           },
         ],
@@ -75,6 +78,9 @@ export default defineConfig({
             items: [
               { text: 'General Settings', link: '/en/settings/general' },
               { text: 'Change Password', link: '/en/settings/password' },
+              { text: 'Users', link: '/en/settings/users' },
+              { text: 'API Keys', link: '/en/settings/apikeys' },
+              { text: 'Security', link: '/en/settings/security' },
             ],
           },
         ],

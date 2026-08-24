@@ -168,6 +168,7 @@
     <div v-if="activeTab === 'users' && (auth.isAdmin || isDemo)" :class="{ 'pointer-events-none select-none opacity-60': isDemo }">
       <div class="flex items-center gap-3 mb-4">
         <span class="flex-1 text-sm text-slate-400">{{ $t('settings.users.count', { n: users.length }) }}</span>
+        <HelpButton help-id="settings-users" />
         <button @click="openCreateUser" class="btn-primary btn-sm">{{ $t('settings.users.addButton') }}</button>
       </div>
       <div class="card">
@@ -261,6 +262,7 @@
     <div v-if="activeTab === 'apikeys'" :class="{ 'pointer-events-none select-none opacity-60': isDemo }">
       <div class="flex items-center gap-3 mb-4">
         <span class="flex-1 text-sm text-slate-400">{{ $t('settings.apikeys.count', { n: apiKeys.length }) }}</span>
+        <HelpButton help-id="settings-apikeys" />
         <button @click="createApiKey" class="btn-primary btn-sm">{{ $t('settings.apikeys.addButton') }}</button>
       </div>
       <div class="card overflow-hidden mb-4">
@@ -293,7 +295,10 @@
     <!-- ── Sicherheit ── -->
     <div v-if="activeTab === 'security' && (auth.isAdmin || isDemo)" class="flex flex-col gap-4 max-w-3xl" :class="{ 'pointer-events-none select-none opacity-60': isDemo }">
       <div class="card">
-        <div class="card-header"><h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.security.title') }}</h3></div>
+        <div class="card-header">
+          <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.security.title') }}</h3>
+          <HelpButton help-id="settings-security" />
+        </div>
         <div class="card-body flex flex-col gap-4">
           <p class="text-sm text-slate-500">{{ $t('settings.security.description') }}</p>
           <div class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm text-amber-700 dark:text-amber-300">{{ $t('settings.security.warning') }}</div>
@@ -304,7 +309,10 @@
       </div>
 
       <div class="card">
-        <div class="card-header"><h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.security.checkTitle') }}</h3></div>
+        <div class="card-header">
+          <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.security.checkTitle') }}</h3>
+          <HelpButton help-id="settings-security-check" />
+        </div>
         <div class="card-body flex flex-col gap-3">
           <div class="grid gap-3 md:grid-cols-[1fr_auto]">
             <input v-model="urlTargetCheckInput" class="input text-sm font-mono" placeholder="http://10.38.113.23/api/v1/status" @keydown.enter.prevent="checkUrlTarget" data-testid="security-url-target-check-input" />
@@ -331,7 +339,10 @@
       <div class="card overflow-hidden">
         <div class="card-header flex items-center justify-between">
           <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.security.allowlistTitle') }}</h3>
-          <button class="btn-secondary btn-sm" @click="loadUrlTargets">{{ $t('settings.security.reload') }}</button>
+          <div class="flex items-center gap-1">
+            <HelpButton help-id="settings-security-entries" />
+            <button class="btn-secondary btn-sm" @click="loadUrlTargets">{{ $t('settings.security.reload') }}</button>
+          </div>
         </div>
         <div class="card-body flex flex-col gap-4">
           <form class="grid gap-3 md:grid-cols-[1fr_1fr_auto]" @submit.prevent="addManualUrlTarget">
