@@ -28,7 +28,10 @@ export default defineConfig({
           },
           {
             text: 'Einstellungen',
-            items: [{ text: 'Allgemeine Einstellungen', link: '/settings/general' }],
+            items: [
+              { text: 'Allgemeine Einstellungen', link: '/settings/general' },
+              { text: 'Passwort ändern', link: '/settings/password' },
+            ],
           },
         ],
         outline: { label: 'Auf dieser Seite' },
@@ -52,7 +55,10 @@ export default defineConfig({
           },
           {
             text: 'Settings',
-            items: [{ text: 'General Settings', link: '/en/settings/general' }],
+            items: [
+              { text: 'General Settings', link: '/en/settings/general' },
+              { text: 'Change Password', link: '/en/settings/password' },
+            ],
           },
         ],
       },

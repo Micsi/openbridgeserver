@@ -133,3 +133,26 @@ describe('SettingsView — help buttons on the General tab (#896)', () => {
     expect(helpStore.currentHelpId).toBe('settings-appearance')
   })
 })
+
+describe('SettingsView — help button on the Password tab (#896)', () => {
+  it('renders a help button for the password card', async () => {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = 'password'
+    await flushPromises()
+
+    expect(helpButton(wrapper, 'settings-password').exists()).toBe(true)
+  })
+
+  it('opens the help store with settings-password when its button is clicked', async () => {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = 'password'
+    await flushPromises()
+    const { useHelpStore } = await import('@/stores/help')
+    const helpStore = useHelpStore()
+
+    await helpButton(wrapper, 'settings-password').trigger('click')
+
+    expect(helpStore.isOpen).toBe(true)
+    expect(helpStore.currentHelpId).toBe('settings-password')
+  })
+})

@@ -137,7 +137,10 @@
 
     <!-- ── Passwort ── -->
     <div v-if="activeTab === 'password'" class="card max-w-md" :class="{ 'pointer-events-none select-none opacity-60': isDemo }">
-      <div class="card-header"><h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.password.title') }}</h3></div>
+      <div class="card-header">
+        <h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">{{ $t('settings.password.title') }}</h3>
+        <HelpButton help-id="settings-password" />
+      </div>
       <div class="card-body">
         <form @submit.prevent="changePassword" class="flex flex-col gap-4">
           <div class="form-group">
