@@ -43,11 +43,18 @@ Der App-Test `ionic-skin-link` erzwingt `manifest.targetsContract === contract.v
 1. **Skins zuerst:** `obs-visu-skins` `feat/visu-designsystem-live` (Contract-1.4-Renderer + `targetsContract:1.4`) nach `obs-visu-skins/main` mergen.
 2. **Dann App:** die Contract-1.4-Welle (App) mergen. Zwischen 1 und 2 ist die Linie kurz rot (bekannt).
 
-### 3.3 Branch-Trennung (authz vs. Design-System)
-`integ/authz-upstream` stapelt **zwei Wellen**: (a) den authz-Upstream-Merge (`f737dfaa` + 1765 Commits, Design-Dok `f91dc318`) und (b) den Design-System-Loop (`1a3534e1`, `f17eb625`). Vor einer Upstream-Lieferung entscheiden:
-- **Option kumulativer Stack** (AGENTS.md-konform): authz-Welle zuerst, Design-System als Folge-Welle auf deren HEAD — Commit-Ancestry hält beides kumulativ.
-- **Option Trennung**: Design-System-Commits (`1a3534e1`, `f17eb625`) auf einen frischen Branch von `feat/visu-mobile-skins` cherry-picken, unabhängig von authz liefern.
-Empfehlung: erst klären, ob authz und Design-System als **eine** oder **zwei** Upstream-Lieferwellen gehen — das bestimmt die Trennung.
+### 3.3 Branch-Lage — geklärt: alles Fork-intern, kein Upstream
+**authz ist bereits Teil von Upstream `main`.** Der Merge `f737dfaa` in `integ/authz-upstream` ist daher reines **Einholen von Upstream in den Fork** (normale Fork-Pflege), kein separater Liefer-Track. Es gibt keine „authz-Welle" mehr zu trennen.
+
+**Die Visu bleibt bis zur Fertigstellung ausschließlich im Fork** (U-Boot, AGENTS.md: kein Upstream-PR bis Release-Reife). Folgen:
+- **Keine** Branch-Trennung authz↔Design-System nötig. `integ/authz-upstream` = aktueller Fork-Integrationsstand (Upstream `main` inkl. authz **+** Visu Contract 1.4 + Host). Es ist der natürliche, upstream-nahe Nachfolger von `feat/visu-mobile-skins`.
+- **Kein** Upstream-PR jetzt. Der Landeanflug ist rein **Fork-intern** — es geht nur darum, dass die Fork-CI grün ist und die Arbeitsbasis konsolidiert bleibt.
+
+### 3.4 Fork-interne Konsolidierung (wenn gewünscht)
+1. **Skins zuerst** (Wächter, §3.2): `obs-visu-skins` `feat/visu-designsystem-live` (ionic Contract-1.4-Renderer, `targetsContract:1.4`) → `obs-visu-skins/main` (Fork `Micsi`).
+2. **App-Basis nachziehen**: `integ/authz-upstream` als neue Sprint-Basis etablieren (bzw. in `feat/visu-mobile-skins` mergen), damit Contract 1.4 + Upstream-authz + Host auf der Fork-Arbeitslinie liegen.
+3. **Links auf kanonische Auflösung** bringen (die lokalen `link:`-Umbiegungen sind Loop-Verkabelung, kein Commit-Ziel).
+Alles ohne Upstream-Bezug; erst bei Visu-Release-Reife wird ein Upstream-Liefer­weg überhaupt Thema.
 
 ## 4. Infrastruktur-Notizen (für die Fortsetzung)
 - **vite + cross-package `link:`**: vite verankert den Skin-Worktree-Pfad im Modul-Graph; Symlink-Umbiegen allein greift nicht — den `link:`-Pfad in `package.json` ändern + `pnpm install` + dev-server-Neustart mit `.vite`-Cache-Leerung. Marker-Test (`outline:magenta`) verifiziert, welche Kopie geladen wird.
