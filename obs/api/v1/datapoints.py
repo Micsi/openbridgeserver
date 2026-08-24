@@ -600,12 +600,20 @@ async def update_datapoint(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
     before = _audit_metadata_snapshot(current_dp)
 
-    if body.external_write_enabled and "external_write_enabled" in body.model_fields_set and not (principal.type == "user" and principal.is_admin):
+    if (
+        body.external_write_enabled
+        and "external_write_enabled" in body.model_fields_set
+        and not getattr(current_dp, "external_write_enabled", False)
+        and not (principal.type == "user" and principal.is_admin)
+    ):
         # Enabling this flag opens the DataPoint to any MQTT-broker-capable
         # client (see obs/core/write_router.py), a broader trust boundary than
         # ordinary datapoint WRITE authorization covers — require admin,
         # unlike other metadata fields (e.g. control_class) that a delegated
-        # WRITE grant may already change. Disabling it stays unrestricted.
+        # WRITE grant may already change. Disabling it, and re-submitting an
+        # already-true value unchanged (the GUI form always resends the full
+        # state on save), both stay unrestricted — only a false-to-true
+        # transition needs admin.
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Enabling external_write_enabled requires admin")
 
     if used_capability:

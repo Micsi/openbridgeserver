@@ -325,6 +325,29 @@ async def test_non_admin_write_grant_cannot_enable_external_write_enabled(monkey
 
 
 @pytest.mark.asyncio
+async def test_non_admin_write_grant_can_edit_other_fields_when_flag_already_true(monkeypatch, db: Database):
+    # The GUI form always resends the full form state on save, including an
+    # already-true external_write_enabled — only an actual false-to-true
+    # transition should require admin, not merely including `true` in the body.
+    datapoint = _dp("00000000-0000-0000-0000-000000000047", "Already enabled")
+    datapoint.external_write_enabled = True
+    await _insert_datapoint(db, datapoint)
+    await _insert_grant(db, str(datapoint.id), node_type="datapoint", role="resident")
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    result = await dp_api.update_datapoint(
+        dp_id=datapoint.id,
+        body=dp_api.DataPointUpdate(name="Renamed", external_write_enabled=True),
+        request=None,
+        _user=Principal(subject="alice", type="user", is_admin=False),
+        db=db,
+    )
+
+    assert result.name == "Renamed"
+    assert result.external_write_enabled is True
+
+
+@pytest.mark.asyncio
 async def test_non_admin_write_grant_can_disable_external_write_enabled(monkeypatch, db: Database):
     datapoint = _dp("00000000-0000-0000-0000-000000000044", "Delegated write target")
     await _insert_datapoint(db, datapoint)
