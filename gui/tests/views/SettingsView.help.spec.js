@@ -249,3 +249,53 @@ describe('SettingsView — help buttons on the Security tab (#896)', () => {
     expect(helpStore.currentHelpId).toBe('settings-security-entries')
   })
 })
+
+// Support, Links, Hierarchie, Datenmanagement, Icons, Historie DB, Gefahrenzone (#896).
+// Data-driven instead of one hand-written block per tab: each tab lists the help_ids
+// its HelpButtons should carry, matching the help_id headings documented in the
+// corresponding help/settings/<tab>.md page.
+const remainingTabCases = [
+  { tab: 'support', ids: ['settings-support-debug', 'settings-support-package', 'settings-support-viewer'] },
+  { tab: 'links', ids: ['settings-links'] },
+  { tab: 'hierarchy', ids: ['settings-hierarchy'] },
+  {
+    tab: 'importexport',
+    ids: [
+      'settings-importexport-config',
+      'settings-importexport-db',
+      'settings-importexport-messagearchive',
+      'settings-importexport-autobackup',
+      'settings-importexport-knx',
+    ],
+  },
+  { tab: 'icons', ids: ['settings-icons', 'settings-icons-import', 'settings-icons-knxuf', 'settings-icons-fontawesome'] },
+  { tab: 'history', ids: ['settings-history-db', 'settings-history-filter'] },
+  { tab: 'dangerzone', ids: ['settings-dangerzone'] },
+]
+
+describe('SettingsView — help buttons on the remaining tabs (#896)', () => {
+  it.each(remainingTabCases)('renders all expected help buttons on the $tab tab', async ({ tab, ids }) => {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = tab
+    await flushPromises()
+
+    for (const id of ids) {
+      expect(helpButton(wrapper, id).exists()).toBe(true)
+    }
+  })
+
+  const remainingButtonCases = remainingTabCases.flatMap(({ tab, ids }) => ids.map((id) => ({ tab, id })))
+
+  it.each(remainingButtonCases)('opens the help store with $id when its button on the $tab tab is clicked', async ({ tab, id }) => {
+    const wrapper = await mountSettingsView()
+    wrapper.vm.activeTab = tab
+    await flushPromises()
+    const { useHelpStore } = await import('@/stores/help')
+    const helpStore = useHelpStore()
+
+    await helpButton(wrapper, id).trigger('click')
+
+    expect(helpStore.isOpen).toBe(true)
+    expect(helpStore.currentHelpId).toBe(id)
+  })
+})
