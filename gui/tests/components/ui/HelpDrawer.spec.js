@@ -19,7 +19,7 @@ describe('HelpDrawer — closed', () => {
   it('renders nothing when the store is closed', async () => {
     const { default: HelpDrawer } = await import('@/components/ui/HelpDrawer.vue')
     mount(HelpDrawer, { attachTo: document.body })
-    expect(document.querySelector('[data-testid="help-drawer-overlay"]')).toBeFalsy()
+    expect(document.querySelector('[data-testid="help-drawer-panel"]')).toBeFalsy()
   })
 })
 
@@ -33,13 +33,39 @@ describe('HelpDrawer — open with a resolved URL', () => {
     return w
   }
 
-  it('renders the overlay and an iframe pointing at currentUrl', async () => {
+  it('renders the panel and an iframe pointing at currentUrl', async () => {
     await mountOpen('/help/datapoints/overview.html#datapoints-overview')
-    const overlay = document.querySelector('[data-testid="help-drawer-overlay"]')
-    expect(overlay).toBeTruthy()
+    const panel = document.querySelector('[data-testid="help-drawer-panel"]')
+    expect(panel).toBeTruthy()
     const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')
     expect(iframe).toBeTruthy()
     expect(iframe.getAttribute('src')).toBe('/help/datapoints/overview.html#datapoints-overview')
+  })
+
+  it('does not block the rest of the page — no full-viewport overlay element (regression, feedback after first release)', async () => {
+    // A prior version wrapped the panel in a `fixed inset-0` backdrop div that
+    // swallowed clicks everywhere, defeating the point of a slide-in drawer
+    // ("keep working while help is open"). The panel itself must only cover
+    // its own width, anchored to the right edge, not the whole viewport.
+    await mountOpen()
+    expect(document.querySelector('.fixed.inset-0')).toBeFalsy()
+    const panel = document.querySelector('[data-testid="help-drawer-panel"]')
+    expect(panel.className).toContain('fixed')
+    expect(panel.className).toContain('right-0')
+    expect(panel.className).not.toContain('inset-0')
+  })
+
+  it('leaves elements outside the drawer clickable while open', async () => {
+    const outside = document.createElement('button')
+    outside.setAttribute('data-testid', 'page-behind-drawer')
+    const onClick = vi.fn()
+    outside.addEventListener('click', onClick)
+    document.body.appendChild(outside)
+
+    await mountOpen()
+    outside.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(onClick).toHaveBeenCalledTimes(1)
   })
 
   it('renders the resize handle', async () => {
@@ -49,7 +75,7 @@ describe('HelpDrawer — open with a resolved URL', () => {
 
   it('resizes the panel by dragging the handle (delegates to useResizablePanel)', async () => {
     await mountOpen()
-    const panel = document.querySelector('.card.shadow-2xl')
+    const panel = document.querySelector('[data-testid="help-drawer-panel"]')
     const startWidth = parseInt(panel.style.width, 10)
     const handle = document.querySelector('[data-testid="help-drawer-resize-handle"]')
 
@@ -65,14 +91,6 @@ describe('HelpDrawer — open with a resolved URL', () => {
   it('calls store.close() when the close button is clicked', async () => {
     await mountOpen()
     document.querySelector('.card-header .btn-icon').dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    await flushPromises()
-    expect(helpStoreMock.close).toHaveBeenCalledTimes(1)
-  })
-
-  it('calls store.close() when clicking the overlay outside the panel', async () => {
-    await mountOpen()
-    const overlay = document.querySelector('[data-testid="help-drawer-overlay"]')
-    overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
     await flushPromises()
     expect(helpStoreMock.close).toHaveBeenCalledTimes(1)
   })
