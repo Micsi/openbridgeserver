@@ -17,7 +17,7 @@ afterEach(() => {
   vi.doUnmock('@/stores/help')
 })
 
-async function mountApp({ isLoggedIn = false } = {}) {
+async function mountApp({ isLoggedIn = false, helpIsOpen = false, helpDrawerWidth = 0 } = {}) {
   vi.doMock('vue-router', () => ({
     useRoute: () => ({ meta: {}, name: 'Dashboard' }),
   }))
@@ -31,7 +31,7 @@ async function mountApp({ isLoggedIn = false } = {}) {
     useSettingsStore: () => ({ theme: 'system', load: vi.fn(), applyTheme: vi.fn() }),
   }))
   vi.doMock('@/stores/help', () => ({
-    useHelpStore: () => ({ loadIndex: loadIndexMock }),
+    useHelpStore: () => ({ loadIndex: loadIndexMock, isOpen: helpIsOpen, drawerWidth: helpDrawerWidth }),
   }))
 
   const pinia = createPinia()
@@ -67,5 +67,19 @@ describe('App — help drawer wiring (#896)', () => {
   it('still prefetches the help index when logged in', async () => {
     await mountApp({ isLoggedIn: true })
     expect(loadIndexMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('App — reserves layout space for the open drawer (issue feedback: it must not cover content)', () => {
+  it('applies no right margin to the layout while the drawer is closed', async () => {
+    const w = await mountApp({ helpIsOpen: false, helpDrawerWidth: 480 })
+    const layout = w.find('[data-testid="app-layout"]')
+    expect(layout.attributes('style')).toContain('margin-right: 0px')
+  })
+
+  it('applies a right margin matching the drawer width while it is open', async () => {
+    const w = await mountApp({ helpIsOpen: true, helpDrawerWidth: 480 })
+    const layout = w.find('[data-testid="app-layout"]')
+    expect(layout.attributes('style')).toContain('margin-right: 480px')
   })
 })

@@ -51,7 +51,7 @@
 // a slide-in drawer over a modal was to keep working context usable.
 // Close only via ESC or the X button; there is no "click outside" area
 // left to catch a close click, same trade-off as Modal.vue's softBackdrop.
-import { onMounted, onBeforeUnmount } from 'vue'
+import { onMounted, onBeforeUnmount, watch } from 'vue'
 import { useHelpStore } from '@/stores/help'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
@@ -62,6 +62,11 @@ const { width, startResize } = useResizablePanel({
   min: 320,
   max: 960,
 })
+
+// The main layout (App.vue) reserves this much space on the right instead of
+// letting the drawer float on top of page content (issue feedback: form
+// fields near the right edge were disappearing behind the drawer).
+watch(width, (w) => helpStore.setDrawerWidth(w), { immediate: true })
 
 function close() {
   helpStore.close()

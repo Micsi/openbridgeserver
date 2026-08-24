@@ -43,6 +43,19 @@ describe('useHelpStore', () => {
     expect(store.currentUrl).toBe(null)
   })
 
+  it('starts with a zero drawerWidth until HelpDrawer reports its actual width', async () => {
+    const { useHelpStore } = await import('@/stores/help')
+    const store = useHelpStore()
+    expect(store.drawerWidth).toBe(0)
+  })
+
+  it('setDrawerWidth updates drawerWidth', async () => {
+    const { useHelpStore } = await import('@/stores/help')
+    const store = useHelpStore()
+    store.setDrawerWidth(420)
+    expect(store.drawerWidth).toBe(420)
+  })
+
   it('loadIndex fetches once and populates helpIndex', async () => {
     helpApiMock.index.mockResolvedValue({ data: SAMPLE_INDEX })
     const { useHelpStore } = await import('@/stores/help')

@@ -3,7 +3,7 @@
     <div v-if="showRuntimeStrip" :class="runtimeStripClass">
       {{ runtimeStripText }}
     </div>
-    <component :is="layout">
+    <component :is="layout" :style="contentAreaStyle">
       <router-view />
     </component>
     <HelpDrawer />
@@ -33,6 +33,15 @@ const instanceColor = (import.meta.env.VITE_INSTANCE_COLOR || 'amber').trim().to
 const showRuntimeStrip = computed(() => !!instanceName)
 
 const runtimeStripText = computed(() => showRuntimeStrip.value ? `Instanz: ${instanceName}` : '')
+
+// Reserve space for the help drawer instead of letting it float on top of
+// page content (issue feedback: fields near the right edge, e.g. in Settings,
+// disappeared behind the drawer). AppLayout's/PlainLayout's single root
+// element receives this via Vue's automatic non-prop-attribute fallthrough.
+const contentAreaStyle = computed(() => ({
+  marginRight: help.isOpen ? `${help.drawerWidth}px` : '0px',
+  transition: 'margin-right 200ms ease',
+}))
 
 const runtimeStripClass = computed(() => {
   const base = 'w-full py-1 px-3 text-center text-xs font-semibold tracking-wide text-white'

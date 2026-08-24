@@ -7,7 +7,10 @@ let helpStoreMock
 vi.mock('@/stores/help', () => ({ useHelpStore: () => helpStoreMock }))
 
 beforeEach(() => {
-  helpStoreMock = reactive({ isOpen: false, currentUrl: null, close: vi.fn() })
+  helpStoreMock = reactive({
+    isOpen: false, currentUrl: null, drawerWidth: 0,
+    close: vi.fn(), setDrawerWidth: vi.fn((w) => { helpStoreMock.drawerWidth = w }),
+  })
   document.body.innerHTML = ''
 })
 
@@ -86,6 +89,17 @@ describe('HelpDrawer — open with a resolved URL', () => {
 
     // Dragging the left-edge handle leftwards widens a right-anchored panel.
     expect(parseInt(panel.style.width, 10)).toBeGreaterThan(startWidth)
+  })
+
+  it('mirrors its width into the store so the main layout can reserve space for it', async () => {
+    // The layout can't float the drawer on top of page content (issue
+    // feedback: fields near the right edge disappeared behind it) — it needs
+    // to know the current drawer width to reserve that much space instead.
+    await mountOpen()
+    expect(helpStoreMock.setDrawerWidth).toHaveBeenCalled()
+    const lastCallWidth = helpStoreMock.setDrawerWidth.mock.calls.at(-1)[0]
+    expect(helpStoreMock.drawerWidth).toBe(lastCallWidth)
+    expect(lastCallWidth).toBeGreaterThan(0)
   })
 
   it('calls store.close() when the close button is clicked', async () => {

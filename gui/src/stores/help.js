@@ -14,7 +14,15 @@ export const useHelpStore = defineStore('help', () => {
   const currentHelpId = ref(null)
   const helpIndex = ref(null)
   const loadError = ref(false)
+  // Mirrors HelpDrawer's own resizable width (useResizablePanel, component-owned
+  // for correct mount/unmount lifecycle) so the main layout can reserve exactly
+  // that much space instead of the drawer floating on top of page content.
+  const drawerWidth = ref(0)
   let loadPromise = null
+
+  function setDrawerWidth(w) {
+    drawerWidth.value = w
+  }
 
   function loadIndex() {
     if (helpIndex.value || loadPromise) return loadPromise
@@ -50,5 +58,5 @@ export const useHelpStore = defineStore('help', () => {
     isOpen.value = false
   }
 
-  return { isOpen, currentHelpId, helpIndex, loadError, currentUrl, loadIndex, open, close }
+  return { isOpen, currentHelpId, helpIndex, loadError, drawerWidth, currentUrl, loadIndex, open, close, setDrawerWidth }
 })
