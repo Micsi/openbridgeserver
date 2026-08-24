@@ -288,6 +288,20 @@ The Playwright suite lives in `tests/gui/` and requires a running full stack (ba
 
 **Weblate** components are named `gui-admin` (Admin GUI) and `frontend-visu` (Visu SPA) under the `openbridgeserver` project on [hosted.weblate.org](https://hosted.weblate.org/projects/openbridgeserver/). Source language is `de`; file format is `JSON (simple)`. CLI tool: `pip install wlc`; credentials in `~/.config/weblate` or via `WLC_URL` / `WLC_KEY` env vars.
 
+#### Help site translations (Weblate) — #896
+
+The `help/` VitePress site (issue #896 — no dedicated architecture doc yet, this section is the reference) is content, not UI strings, so it doesn't fit the `de.json`/`en.json` pattern above. Weblate supports it via a different mechanism — see `.weblate` for the exact recommended "Component discovery" add-on configuration (not wired up yet as of this writing; `.weblate` documents the plan for whoever sets up the Weblate-side component).
+
+**The one rule that matters for anyone editing `help/*.md` by hand or reviewing a Weblate-sourced translation:**
+
+Every `help_id` lives *inside* the heading it belongs to, as an explicit anchor:
+
+```md
+## Zeitzone, Datums- und Zeitformat {#settings-general}
+```
+
+If Weblate (or a human translator) changes or drops the `{#settings-general}` part while translating the heading text, that locale's `help_id` silently stops resolving — the Admin-GUI's `HelpButton` for that section will show "no help available" for that language instead of erroring loudly. `help/scripts/generate-help-index.mjs` does warn (non-blocking) when a `help_id` exists in one locale but not another, which catches this *after the fact* — check that warning after pulling new translations, don't rely on it as a preventive gate. When reviewing a Weblate-translated heading, always verify the `{#...}` suffix survived unchanged.
+
 ## Architecture
 
 ### Startup Sequence (`obs/main.py`)
