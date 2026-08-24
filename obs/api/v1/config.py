@@ -61,6 +61,7 @@ class ExportedDataPoint(BaseModel):
     tags: list[str]
     mqtt_alias: str | None
     control_class: Literal["room_local", "central_plant"] = "room_local"
+    external_write_enabled: bool = False
 
 
 class ExportedBinding(BaseModel):
@@ -355,6 +356,7 @@ async def export_config(
             tags=dp.tags,
             mqtt_alias=dp.mqtt_alias,
             control_class=getattr(dp, "control_class", "room_local"),
+            external_write_enabled=getattr(dp, "external_write_enabled", False),
         )
         for dp in all_dps
     ]
@@ -791,6 +793,7 @@ async def import_config(
                         tags=dp_data.tags,
                         mqtt_alias=dp_data.mqtt_alias,
                         control_class=dp_data.control_class,
+                        external_write_enabled=dp_data.external_write_enabled,
                     ),
                 )
                 result.datapoints_updated += 1
@@ -803,11 +806,12 @@ async def import_config(
                     tags=dp_data.tags,
                     mqtt_alias=dp_data.mqtt_alias,
                     control_class=dp_data.control_class,
+                    external_write_enabled=dp_data.external_write_enabled,
                 )
                 await db.execute_and_commit(
                     """INSERT OR IGNORE INTO datapoints
-                       (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, control_class, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                       (id, name, data_type, unit, tags, mqtt_topic, mqtt_alias, control_class, external_write_enabled, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         str(dp.id),
                         dp.name,
@@ -817,6 +821,7 @@ async def import_config(
                         dp.mqtt_topic,
                         dp.mqtt_alias,
                         dp.control_class,
+                        int(dp.external_write_enabled),
                         now,
                         now,
                     ),

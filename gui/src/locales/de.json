@@ -153,7 +153,7 @@
     "duplicate": {
       "action": "Duplizieren",
       "title": "Objekt duplizieren",
-      "hint": "Alle Eigenschaften und Adapter-Verknüpfungen werden kopiert. Aktuelle Werte und Historie werden nicht übernommen.",
+      "hint": "Alle Eigenschaften und Adapter-Verknüpfungen werden kopiert, mit Ausnahme der Zentraltechnik-Einstufung und der externen Schreibfreigabe — beide sind bei der Kopie immer deaktiviert. Aktuelle Werte und Historie werden nicht übernommen.",
       "defaultName": "Kopie von {name}",
       "saving": "Wird dupliziert …",
       "error": "Das Objekt konnte nicht dupliziert werden."

@@ -307,6 +307,93 @@ async def test_user_write_grant_can_update_datapoint_metadata_without_api_key_ca
 
 
 @pytest.mark.asyncio
+async def test_non_admin_write_grant_cannot_enable_external_write_enabled(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000043", "Delegated write target")
+    await _insert_datapoint(db, datapoint)
+    await _insert_grant(db, str(datapoint.id), node_type="datapoint", role="resident")
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dp_api.update_datapoint(
+            dp_id=datapoint.id,
+            body=dp_api.DataPointUpdate(external_write_enabled=True),
+            request=None,
+            _user=Principal(subject="alice", type="user", is_admin=False),
+            db=db,
+        )
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_non_admin_write_grant_can_disable_external_write_enabled(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000044", "Delegated write target")
+    await _insert_datapoint(db, datapoint)
+    await _insert_grant(db, str(datapoint.id), node_type="datapoint", role="resident")
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    result = await dp_api.update_datapoint(
+        dp_id=datapoint.id,
+        body=dp_api.DataPointUpdate(external_write_enabled=False),
+        request=None,
+        _user=Principal(subject="alice", type="user", is_admin=False),
+        db=db,
+    )
+
+    assert result.external_write_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_admin_can_enable_external_write_enabled(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000045", "Admin write target")
+    await _insert_datapoint(db, datapoint)
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    result = await dp_api.update_datapoint(
+        dp_id=datapoint.id,
+        body=dp_api.DataPointUpdate(external_write_enabled=True),
+        request=None,
+        _user=Principal(subject="admin", type="user", is_admin=True),
+        db=db,
+    )
+
+    assert result.external_write_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_api_key_metadata_capability_cannot_enable_external_write_enabled(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000046", "API key write target")
+    await _insert_datapoint(db, datapoint)
+    key_id = "00000000-0000-0000-0000-000000000990"
+    await db.execute_and_commit(
+        "INSERT INTO api_keys (id, name, key_hash, owner, created_at) VALUES (?, 'key', 'hash-990', 'admin', ?)",
+        (key_id, NOW),
+    )
+    await db.execute_and_commit(
+        "INSERT INTO api_key_capabilities (key_id, capability) VALUES (?, 'datapoint.metadata.write')",
+        (key_id,),
+    )
+    await db.execute_and_commit(
+        """
+        INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+        VALUES ('api_key', ?, 'datapoint', ?, 'resident', 'allow')
+        """,
+        (key_id, str(datapoint.id)),
+    )
+    principal = Principal(subject=f"api_key:{key_id}", type="api_key", is_admin=False, owner="admin")
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dp_api.update_datapoint(
+            dp_id=datapoint.id,
+            body=dp_api.DataPointUpdate(external_write_enabled=True),
+            request=None,
+            _user=principal,
+            db=db,
+        )
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_write_value_requires_write_grant_for_authenticated_principal(monkeypatch, db: Database):
     datapoint = _dp("00000000-0000-0000-0000-000000000061", "Writable")
     await _insert_tree(db)
