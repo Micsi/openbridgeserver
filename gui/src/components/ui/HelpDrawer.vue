@@ -106,25 +106,20 @@ watch(width, (w) => helpStore.setDrawerWidth(w), { immediate: true })
 // iframe wasn't even reliably in dark mode to begin with). Passing it via
 // query param lets help/.vitepress/config.mts seed VitePress's own
 // localStorage key before VitePress's anti-FOUC script runs.
-function withAppearance(url) {
+function withAppearance(url, isDark) {
   if (!url) return url
-  const isDark = document.documentElement.classList.contains('dark')
   const [path, hash] = url.split('#')
   const separator = path.includes('?') ? '&' : '?'
   return `${path}${separator}appearance=${isDark ? 'dark' : 'light'}${hash ? '#' + hash : ''}`
 }
 
-const iframeSrc = computed(() => {
-  // settings.theme is read only to make this computed reactively depend on
-  // it — withAppearance() itself still reads the resolved <html class="dark">
-  // state (settings.applyTheme() already updated it synchronously by the
-  // time setTheme() returns), since `theme` alone doesn't resolve the
-  // 'system' case. Without this dependency, switching themes while the
-  // drawer is open wouldn't update the already-loaded iframe's appearance
-  // until currentUrl changed for an unrelated reason.
-  void settings.theme
-  return withAppearance(helpStore.currentUrl)
-})
+// settings.isDarkResolved is a reactive mirror of the <html class="dark">
+// state applyTheme() sets — reading it (instead of the DOM class directly)
+// makes this computed correctly re-run both when the theme is switched
+// explicitly and when it's 'system' and the OS-level color scheme changes
+// while the drawer is already open (App.vue's prefers-color-scheme
+// listener calls applyTheme() too, without ever touching settings.theme).
+const iframeSrc = computed(() => withAppearance(helpStore.currentUrl, settings.isDarkResolved))
 
 function close() {
   helpStore.close()

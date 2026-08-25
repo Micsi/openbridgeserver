@@ -48,13 +48,33 @@ describe('HelpDrawer — open with a resolved URL', () => {
   })
 
   it("carries the Admin-GUI's current dark mode into the iframe src so VitePress doesn't fall back to its own detection", async () => {
-    document.documentElement.classList.add('dark')
+    const { useSettingsStore } = await import('@/stores/settings')
+    useSettingsStore().setTheme('dark')
     await mountOpen('/help/datapoints/overview.html#datapoints-overview')
     const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')
     expect(iframe.getAttribute('src')).toBe(
       '/help/datapoints/overview.html?appearance=dark#datapoints-overview'
     )
     document.documentElement.classList.remove('dark')
+  })
+
+  it('updates the iframe when the OS-level color scheme changes while theme is "system" (issue feedback: applyTheme() runs without setTheme() ever touching settings.theme)', async () => {
+    const { useSettingsStore } = await import('@/stores/settings')
+    const settings = useSettingsStore()
+    settings.setTheme('system')
+    await mountOpen('/help/datapoints/overview.html#datapoints-overview')
+    const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')
+    expect(iframe.getAttribute('src')).toContain('appearance=light')
+
+    // Mirrors App.vue's prefers-color-scheme listener: it calls applyTheme()
+    // directly without ever assigning settings.theme.value.
+    vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true })
+    settings.applyTheme()
+    await flushPromises()
+
+    expect(iframe.getAttribute('src')).toContain('appearance=dark')
+    document.documentElement.classList.remove('dark')
+    vi.restoreAllMocks()
   })
 
   it("updates the iframe's appearance when the theme changes while the drawer stays open (issue feedback: reactive dependency, not just a one-time DOM read at mount)", async () => {
@@ -109,6 +129,18 @@ describe('HelpDrawer — open with a resolved URL', () => {
     outside.dispatchEvent(new MouseEvent('click', { bubbles: true }))
 
     expect(onClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('clamps the initial width to its configured minimum on a narrow viewport with no persisted width (issue feedback: defaultWidth = 40% of viewport could go below the 320px minimum)', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    localStorage.removeItem('obs-help-drawer-width')
+
+    await mountOpen()
+    const panel = document.querySelector('[data-testid="help-drawer-panel"]')
+    expect(parseInt(panel.style.width, 10)).toBeGreaterThanOrEqual(320)
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
   })
 
   it('renders the resize handle', async () => {
