@@ -20,6 +20,7 @@ class _RegistryStub:
     def __init__(self, dps=None):
         self._dps = {dp.id: dp for dp in dps or []}
         self._values: dict[uuid.UUID, ValueState] = {}
+        self.last_update_payload = None
 
     def all(self):
         return list(self._dps.values())
@@ -31,6 +32,7 @@ class _RegistryStub:
         return self._values.get(dp_id)
 
     async def update(self, dp_id, body):
+        self.last_update_payload = body
         datapoint = self._dps[dp_id]
         for field in body.model_fields_set:
             value = getattr(body, field)
@@ -362,6 +364,35 @@ async def test_non_admin_write_grant_can_edit_other_fields_when_flag_already_tru
 
     assert result.name == "Renamed"
     assert result.external_write_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_non_admin_resubmitted_true_never_reaches_the_registry_write(monkeypatch, db: Database):
+    # TOCTOU (Codex review): the gate above only sees a snapshot of
+    # current_dp at check time. If a non-admin's already-gate-passed PATCH
+    # (submitted while the flag already read true) is delayed and a
+    # concurrent admin PATCH disables the flag in between, the delayed
+    # request must not be able to persist a stale `true` and silently
+    # revert the disable. Verified structurally here: a non-admin's `true`
+    # must never even reach the registry's update payload, regardless of
+    # current_dp's state at check time — which is what makes the race
+    # impossible in the first place, independent of any timing.
+    datapoint = _dp("00000000-0000-0000-0000-000000000052", "Already enabled")
+    datapoint.external_write_enabled = True
+    await _insert_datapoint(db, datapoint)
+    await _insert_grant(db, str(datapoint.id), node_type="datapoint", role="resident")
+    registry = _RegistryStub([datapoint])
+    monkeypatch.setattr(dp_api, "get_registry", lambda: registry)
+
+    await dp_api.update_datapoint(
+        dp_id=datapoint.id,
+        body=dp_api.DataPointUpdate(name="Renamed", external_write_enabled=True),
+        request=None,
+        _user=Principal(subject="alice", type="user", is_admin=False),
+        db=db,
+    )
+
+    assert registry.last_update_payload.external_write_enabled is None
 
 
 @pytest.mark.asyncio

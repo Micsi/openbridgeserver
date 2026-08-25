@@ -16,7 +16,7 @@
         <label class="label">{{ $t('datapoints.form.unit') }}</label>
         <select v-model="unitSelect" class="input" data-testid="select-unit">
           <option value="">{{ $t('datapoints.form.noUnit') }}</option>
-          <optgroup v-for="cat in UNIT_CATEGORIES" :key="cat.label" :label="cat.label">
+          <optgroup v-for="cat in unitCategories" :key="cat.key" :label="cat.label">
             <option v-for="u in cat.units" :key="u" :value="u">{{ u }}</option>
           </optgroup>
           <option value="__other__">{{ $t('datapoints.form.otherUnit') }}</option>
@@ -80,63 +80,66 @@ import Spinner from '@/components/ui/Spinner.vue'
 // ---------------------------------------------------------------------------
 // ISO-Einheiten — kategorisiert
 // ---------------------------------------------------------------------------
-const UNIT_CATEGORIES = [
+// labelKey resolves via datapoints.form.unitCategories.<key> so the <optgroup>
+// labels stay reactive to the active locale.
+const UNIT_CATEGORY_DEFS = [
   {
-    label: 'Temperatur',
+    labelKey: 'temperature',
     units: ['°C', '°F', 'K'],
   },
   {
-    label: 'Feuchte & Luftqualität',
+    labelKey: 'humidityAirQuality',
     units: ['%', '%rH', 'ppm', 'ppb', 'g/m³', 'μg/m³', 'mg/m³'],
   },
   {
-    label: 'Druck',
+    labelKey: 'pressure',
     units: ['Pa', 'hPa', 'kPa', 'bar', 'mbar'],
   },
   {
-    label: 'Elektrizität',
+    labelKey: 'electricity',
     units: ['V', 'mV', 'A', 'mA', 'W', 'kW', 'MW', 'VA', 'kVA', 'var', 'kvar', 'Wh', 'kWh', 'MWh', 'Ω', 'Hz', 'cos φ'],
   },
   {
-    label: 'Licht',
+    labelKey: 'light',
     units: ['lx', 'lm', 'cd', 'W/m²'],
   },
   {
-    label: 'Geschwindigkeit & Beschleunigung',
+    labelKey: 'speedAcceleration',
     units: ['m/s', 'km/h', 'm/s²'],
   },
   {
-    label: 'Winkel',
+    labelKey: 'angle',
     units: ['°'],
   },
   {
-    label: 'Volumen & Durchfluss',
+    labelKey: 'volumeFlow',
     units: ['m³', 'l', 'dl', 'cl', 'm³/h', 'l/h', 'l/min', 'mm/h'],
   },
   {
-    label: 'Länge & Fläche',
+    labelKey: 'lengthArea',
     units: ['mm', 'cm', 'm', 'km', 'm²', 'km²'],
   },
   {
-    label: 'Masse',
+    labelKey: 'mass',
     units: ['g', 'kg', 't'],
   },
   {
-    label: 'Zeit',
+    labelKey: 'time',
     units: ['ms', 's', 'min', 'h', 'd'],
   },
   {
-    label: 'Strahlung',
+    labelKey: 'radiation',
     units: ['nSv/h', 'mSv/h'],
   },
   {
-    label: 'Sonstiges',
+    labelKey: 'other',
     units: ['1', 'dB', 'dBA', 'pH', 'Bq/m³'],
   },
 ]
 
-// Flat set for fast lookup
-const KNOWN_UNITS = new Set(UNIT_CATEGORIES.flatMap(c => c.units))
+// Flat set for fast lookup — unit symbols are not translated, so this can
+// stay a plain derived value independent of locale.
+const KNOWN_UNITS = new Set(UNIT_CATEGORY_DEFS.flatMap(c => c.units))
 
 // ---------------------------------------------------------------------------
 // Props / emits
@@ -152,6 +155,14 @@ const { t } = useI18n()
 const saving    = ref(false)
 const error     = ref(null)
 const tagsInput = ref('')
+
+const unitCategories = computed(() =>
+  UNIT_CATEGORY_DEFS.map(cat => ({
+    key: cat.labelKey,
+    label: t(`datapoints.form.unitCategories.${cat.labelKey}`),
+    units: cat.units,
+  }))
+)
 
 // Dropdown selection & free-text fallback
 const unitSelect = ref('')

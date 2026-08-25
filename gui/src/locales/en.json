@@ -128,7 +128,22 @@
       "recordHistoryHint": "store values in history DB",
       "externalWriteEnabled": "Allow external write",
       "externalWriteEnabledHint": "any MQTT client that can reach the broker can then set this value",
-      "saveError": "Error saving"
+      "saveError": "Error saving",
+      "unitCategories": {
+        "temperature": "Temperature",
+        "humidityAirQuality": "Humidity & air quality",
+        "pressure": "Pressure",
+        "electricity": "Electricity",
+        "light": "Light",
+        "speedAcceleration": "Speed & acceleration",
+        "angle": "Angle",
+        "volumeFlow": "Volume & flow",
+        "lengthArea": "Length & area",
+        "mass": "Mass",
+        "time": "Time",
+        "radiation": "Radiation",
+        "other": "Other"
+      }
     },
     "delete": {
       "confirm": "Really delete data point?",

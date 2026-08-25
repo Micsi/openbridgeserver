@@ -613,6 +613,7 @@ async def update_datapoint(
     # `body.external_write_enabled` can only be truthy if the field was
     # explicitly submitted (its default is None), so no separate
     # `model_fields_set` check is needed here.
+    can_set_external_write_true = principal.type == "user" and principal.is_admin
     enabling_external_write = bool(body.external_write_enabled) and not getattr(current_dp, "external_write_enabled", False)
     if enabling_external_write and await _has_write_semantic_binding(db, dp_id):
         # A DataPoint with any enabled, non-MESSAGE adapter binding already
@@ -647,7 +648,7 @@ async def update_datapoint(
                 request=request,
             )
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Datapoint write scope required")
-    elif enabling_external_write and not (principal.type == "user" and principal.is_admin):
+    elif enabling_external_write and not can_set_external_write_true:
         # Enabling this flag opens the DataPoint to any MQTT-broker-capable
         # client (see obs/core/write_router.py), a broader trust boundary than
         # ordinary datapoint WRITE authorization covers — require admin,
@@ -685,8 +686,17 @@ async def update_datapoint(
 
     # --- Mutation phase (all validation passed) ---
     # value=None in model_copy keeps value updates out of DataPoint metadata;
-    # DataPoint has no value field.
-    dp = await reg.update(dp_id, body.model_copy(update={"value": None}))
+    # DataPoint has no value field. external_write_enabled is neutralized
+    # here too — at the latest possible point, using the principal's own
+    # (request-invariant) authorization instead of the `enabling_external_write`
+    # snapshot computed above — so a non-admin's already-gate-passed PATCH
+    # (submitted while the flag already read true) can never persist a stale
+    # `true` and silently revert a concurrent admin PATCH that disabled it in
+    # between (Codex review: TOCTOU between the check above and this write).
+    persisted_body = body
+    if body.external_write_enabled and not can_set_external_write_true:
+        persisted_body = persisted_body.model_copy(update={"external_write_enabled": None})
+    dp = await reg.update(dp_id, persisted_body.model_copy(update={"value": None}))
     after = _audit_metadata_snapshot(dp)
     details: dict[str, Any] = {
         "before": before,
