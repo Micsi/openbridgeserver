@@ -16,10 +16,10 @@ describe('ionic skin dev-link (cross-repo)', () => {
     // targeten — kein hartcodiertes Literal, das bei jedem Contract-Bump erneut bricht.
     expect(manifest.targetsContract).toBe(version);
     expect(manifest.layout.model).toBe('grid');
-    // Seit Contract 1.2 unterstützt ionic alle Kern-Typen inkl. camera/media — nichts abgewählt.
+    // Seit Contract 1.4 unterstützt ionic alle Kern-Typen inkl. camera/media/climate — nichts abgewählt.
     expect(manifest.unsupported).toEqual([]);
     // Kern-Typen sind deklariert (sonst meldet der Generator gap).
-    expect(Object.keys(manifest.widgets).sort()).toEqual(['blind', 'camera', 'jalousie', 'light', 'media', 'scene', 'sensor', 'switch']);
+    expect(Object.keys(manifest.widgets).sort()).toEqual(['blind', 'camera', 'climate', 'jalousie', 'light', 'media', 'scene', 'sensor', 'switch']);
   });
 
   it('resolves the ionic renderer maps (typed stubs in M2)', () => {

@@ -7,7 +7,6 @@ import {
   byId,
   rooms,
   demoRooms,
-  climateRooms,
   layoutRole,
   type RoomGroup,
   type LayoutEntry,
@@ -69,7 +68,7 @@ describe('core/model — byId', () => {
     const light = byId['kueche-wand'];
     expect(light).toBeDefined();
     expect(light?.type).toBe('light');
-    expect(light?.room).toBe('EG Küche');
+    expect(light?.room).toBe('Küche');
   });
 
   it('has no duplicate ids', () => {
@@ -112,12 +111,12 @@ describe('core/model — room grouping', () => {
     ]);
   });
 
-  it('covers exactly the devices reachable from the room groups (overview + demo + climate)', () => {
+  it('covers exactly the devices reachable from the room groups (overview + demo)', () => {
     // Every model device is reachable from some exported group set: the mobile
-    // overview floor (`rooms`), the v1.2 Medien demo block (`demoRooms`), and the
-    // v1.4 climate showcase block (`climateRooms`).
+    // overview floor (`rooms`, which now includes the v1.4 climate tile) and the
+    // v1.2 Medien demo block (`demoRooms`).
     const grouped = new Set(
-      [...rooms, ...demoRooms, ...climateRooms].flatMap((g) => g.entries.map((e) => e.id)),
+      [...rooms, ...demoRooms].flatMap((g) => g.entries.map((e) => e.id)),
     );
     expect(grouped.size).toBe(devices.length);
     for (const d of devices) {
@@ -171,12 +170,13 @@ describe('core/model — v1.4 climate + enriched sensor showcase', () => {
     expect(c.floor).toBe('Erdgeschoss');
   });
 
-  it('groups the climate device in the separate climate showcase (not the overview/terminal floor)', () => {
-    // climate has no skin renderer yet (follow-up), so it stays out of the mounted
-    // overview floor but remains a first-class grouped model device.
-    expect(rooms.flatMap((g) => g.entries.map((e) => e.id))).not.toContain('rtr-wohnen');
-    expect(climateRooms.flatMap((g) => g.entries.map((e) => e.id))).toContain('rtr-wohnen');
-    expect(Object.isFrozen(climateRooms)).toBe(true);
+  it('mounts the climate device in the overview wall (Wohnzimmer), wide role', () => {
+    // Its skin renderer ships now, so climate is a first-class overview tile in
+    // the Wohnzimmer block (B3) — no longer parked in a separate showcase.
+    const wohn = rooms.find((g) => g.room === 'Wohnzimmer') as RoomGroup;
+    const entry = wohn.entries.find((e) => e.id === 'rtr-wohnen');
+    expect(entry).toBeDefined();
+    expect(layoutRole(entry!, byId['rtr-wohnen']!)).toBe('wide');
   });
 
   it('seeds a sensor with a series + min/max (Verlauf) and one with an accent icon', () => {
@@ -218,10 +218,11 @@ describe('core/model — span/row → role', () => {
     expect(layoutRole(jal, byId[jal.id]!)).toBe('wide');
   });
 
-  it('maps a plain climate entry to "default" and a span≥2 climate to "wide" (v1.4)', () => {
-    // CONTRACT v1.4: climate roles.allow includes wide, default is "default".
+  it('maps climate to "wide" — its promoted default role and via a span≥2 hint (v1.4/B3)', () => {
+    // CONTRACT v1.4: climate roles.allow includes wide. B3 promotes the climate
+    // default role to "wide" so the RTR reads as a feature tile in the wall.
     const climateDev = byId['rtr-wohnen']!;
-    expect(layoutRole({ id: 'rtr-wohnen' }, climateDev)).toBe('default');
+    expect(layoutRole({ id: 'rtr-wohnen' }, climateDev)).toBe('wide');
     expect(layoutRole({ id: 'rtr-wohnen', span: 2 }, climateDev)).toBe('wide');
   });
 

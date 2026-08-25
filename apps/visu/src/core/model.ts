@@ -8,9 +8,10 @@
  * v1.4 additions sensor | scene | climate). The still-reserved tablet/desktop
  * types (weather, energy, chart, alarm) stay out of the mobile model.
  *
- * The v1.4 "Technik" showcase block rounds out the overview floor so every stable
- * core type — including the new `climate` (Heizung/RTR) and the enriched `sensor`
- * (Zeitreihe/Icon) — renders on one wall for the skin-to-reference comparison.
+ * The v1.4 additions render in the overview wall too: the enriched `sensor`
+ * (Zeitreihe/Icon), `scene` and the media/camera in the "Technik" showcase block,
+ * and the `climate` (Heizung/RTR) tile grouped in the Wohnzimmer — one wall for
+ * the skin-to-reference comparison.
  *
  * The v1.2 `media`/`camera` devices live in a dedicated "Medien" demo block
  * ({@link demoRooms}) kept OUT of the mobile overview ({@link rooms}): they are
@@ -55,7 +56,7 @@ function light(
   room: string,
   label: LightDevice['label'],
   accent: LightDevice['accent'],
-  extra: Partial<Pick<LightDevice, 'on' | 'dim'>> = {},
+  extra: Partial<Pick<LightDevice, 'on' | 'dim' | 'floor'>> = {},
 ): LightDevice {
   return { id, type: 'light', room, label, accent, on: false, dim: null, ...extra };
 }
@@ -65,7 +66,7 @@ function swtch(
   room: string,
   label: SwitchDevice['label'],
   accent: SwitchDevice['accent'],
-  extra: Partial<Pick<SwitchDevice, 'on'>> = {},
+  extra: Partial<Pick<SwitchDevice, 'on' | 'floor'>> = {},
 ): SwitchDevice {
   return { id, type: 'switch', room, label, accent, on: false, ...extra };
 }
@@ -75,7 +76,7 @@ function blind(
   room: string,
   label: BlindDevice['label'],
   accent: BlindDevice['accent'],
-  extra: Partial<Pick<BlindDevice, 'position' | 'locked'>> = {},
+  extra: Partial<Pick<BlindDevice, 'position' | 'locked' | 'floor'>> = {},
 ): BlindDevice {
   return { id, type: 'blind', room, label, accent, position: 0, locked: false, ...extra };
 }
@@ -86,7 +87,7 @@ function jalousie(
   label: JalousieDevice['label'],
   accent: JalousieDevice['accent'],
   extra: Partial<
-    Pick<JalousieDevice, 'position' | 'slat' | 'locked' | 'invert' | 'moving' | 'statuses'>
+    Pick<JalousieDevice, 'position' | 'slat' | 'locked' | 'invert' | 'moving' | 'statuses' | 'floor'>
   > = {},
 ): JalousieDevice {
   return {
@@ -188,24 +189,28 @@ function climate(
 // its own state; screens reference them by id.
 
 const list: readonly Device[] = [
-  // ── Küche ──
-  light('kueche-wand', 'EG Küche', 'Wandleuchten', 'orange'),
-  light('kueche-pendel', 'EG Küche', 'Pendelleuchten', 'orange', { dim: 0 }),
-  light('kueche-arbeit', 'EG Küche', 'Arbeitslicht', 'orange', { dim: 0 }),
-  blind('kueche-roll', 'EG Küche', 'Rollladen', 'orange'),
+  // ── Küche (Erdgeschoss) ──
+  // `floor` carries the Geschoss for the detail crumb ("<floor> / <room>",
+  // CONTRACT v1.4). The room label drops the "EG " prefix so the crumb does not
+  // repeat the floor ("Erdgeschoss / Küche", not "Erdgeschoss / EG Küche").
+  light('kueche-wand', 'Küche', 'Wandleuchten', 'orange', { floor: 'Erdgeschoss' }),
+  light('kueche-pendel', 'Küche', 'Pendelleuchten', 'orange', { dim: 0, floor: 'Erdgeschoss' }),
+  light('kueche-arbeit', 'Küche', 'Arbeitslicht', 'orange', { dim: 0, floor: 'Erdgeschoss' }),
+  blind('kueche-roll', 'Küche', 'Rollladen', 'orange', { floor: 'Erdgeschoss' }),
 
-  // ── WC & Bad ──
-  light('wc-spiegel', 'EG WC', 'Spiegellicht', 'teal', { on: true }),
-  swtch('wc-luefter', 'EG WC', 'Lüfter (10 Min)', 'teal', { on: true }),
-  light('bad-spiegel', 'EG Bad', 'Spiegellicht', 'violet'),
+  // ── WC & Bad (Erdgeschoss) ──
+  light('wc-spiegel', 'WC', 'Spiegellicht', 'teal', { on: true, floor: 'Erdgeschoss' }),
+  swtch('wc-luefter', 'WC', 'Lüfter (10 Min)', 'teal', { on: true, floor: 'Erdgeschoss' }),
+  light('bad-spiegel', 'Bad', 'Spiegellicht', 'violet', { floor: 'Erdgeschoss' }),
 
-  // ── Wintergarten ──
-  light('wiga-pendel', 'Wintergarten', 'Pendelleuchten', 'green', { dim: 0 }),
-  light('wiga-wand', 'Wintergarten', 'Wandleuchten', 'green', { dim: 0 }),
-  blind('wiga-roll', 'Wintergarten', 'Rollladen', 'green', { locked: true }),
+  // ── Wintergarten (Erdgeschoss) ──
+  light('wiga-pendel', 'Wintergarten', 'Pendelleuchten', 'green', { dim: 0, floor: 'Erdgeschoss' }),
+  light('wiga-wand', 'Wintergarten', 'Wandleuchten', 'green', { dim: 0, floor: 'Erdgeschoss' }),
+  blind('wiga-roll', 'Wintergarten', 'Rollladen', 'green', { locked: true, floor: 'Erdgeschoss' }),
   jalousie('wiga-jalousie', 'Wintergarten', 'Jalousie Süd', 'green', {
     position: 62,
     slat: 35,
+    floor: 'Erdgeschoss',
     statuses: [
       { label: 'Sturm', val: false },
       { label: 'Sonne', val: true },
@@ -215,37 +220,41 @@ const list: readonly Device[] = [
   jalousie('wiga-jalousie-2', 'Wintergarten', 'Jalousie Ost', 'green', {
     position: 40,
     slat: 60,
+    floor: 'Erdgeschoss',
     statuses: [
       { label: 'Sturm', val: false },
       { label: 'Sonne', val: true },
     ],
   }),
 
-  // ── Schlafzimmer ──
-  blind('schlaf-ost', 'EG Schlafz.', 'Rollladen Ost', 'orange'),
-  blind('schlaf-sued', 'EG Schlafz.', 'Rollladen Süd', 'orange'),
+  // ── Schlafzimmer (Erdgeschoss) ──
+  blind('schlaf-ost', 'Schlafz.', 'Rollladen Ost', 'orange', { floor: 'Erdgeschoss' }),
+  blind('schlaf-sued', 'Schlafz.', 'Rollladen Süd', 'orange', { floor: 'Erdgeschoss' }),
 
-  // ── Wohnzimmer ──
-  blind('wohn-west', 'EG Wohnz.', 'Rollladen West', 'orange'),
-  blind('wohn-balkon', 'EG Wohnz.', 'Rolladen Balkon', 'orange'),
-  blind('wohn-sued', 'EG Wohnz.', 'Rollladen Süd', 'orange'),
-
-  // ── Gäste & Treppe ──
-  blind('gaeste-roll', 'EG Gästez.', 'Rollladen', 'orange'),
-  light('treppe-eingang', 'EG Treppe', 'Hauseingang', 'orange'),
-  light('treppe-haus', 'EG Treppe', 'Treppenhaus', 'orange'),
-
-  // ── Technik (v1.4 showcase — every core type in the mobile overview) ──
-  // Rounds out the overview floor so all stable core types (v1.4: + climate)
-  // render on one wall for the skin-to-reference visual comparison. `floor`
-  // carries the Geschoss label for the detail crumb path (CONTRACT v1.4).
-  climate('rtr-wohnen', 'Technik', 'Heizung Wohnen', 'orange', {
+  // ── Wohnzimmer (Erdgeschoss) ──
+  blind('wohn-west', 'Wohnz.', 'Rollladen West', 'orange', { floor: 'Erdgeschoss' }),
+  blind('wohn-balkon', 'Wohnz.', 'Rolladen Balkon', 'orange', { floor: 'Erdgeschoss' }),
+  blind('wohn-sued', 'Wohnz.', 'Rollladen Süd', 'orange', { floor: 'Erdgeschoss' }),
+  // v1.4 climate (RTR) now renders in the overview wall (its skin renderer ships):
+  // a first-class Wohnzimmer device, wide (2×1) tile per its contract role.
+  climate('rtr-wohnen', 'Wohnz.', 'Heizung Wohnen', 'orange', {
     setpoint: 21.5,
     current: 20.8,
     mode: 'heat',
     unit: '°C',
     floor: 'Erdgeschoss',
   }),
+
+  // ── Gäste & Treppe (Erdgeschoss) ──
+  blind('gaeste-roll', 'Gästez.', 'Rollladen', 'orange', { floor: 'Erdgeschoss' }),
+  light('treppe-eingang', 'Treppe', 'Hauseingang', 'orange', { floor: 'Erdgeschoss' }),
+  light('treppe-haus', 'Treppe', 'Treppenhaus', 'orange', { floor: 'Erdgeschoss' }),
+
+  // ── Technik (v1.4 showcase — sensor · scene · media · camera on one wall) ──
+  // Rounds out the overview floor so those core types render alongside the rest
+  // for the skin-to-reference visual comparison. `floor` carries the Geschoss
+  // label for the detail crumb path (CONTRACT v1.4). (climate lives in the
+  // Wohnzimmer block above, now that its skin renderer ships.)
   sensor('voc-wc', 'Technik', 'VOC', 'teal', 287, 'ppm', {
     status: 'erhöht',
     series: [46, 120, 288, 250, 210],
@@ -373,7 +382,11 @@ export const rooms: readonly RoomGroup[] = Object.freeze([
     ],
   },
   { room: 'Schlafzimmer', entries: ['schlaf-ost', 'schlaf-sued'].map((id) => e(id)) },
-  { room: 'Wohnzimmer', entries: ['wohn-west', 'wohn-balkon', 'wohn-sued'].map((id) => e(id)) },
+  {
+    room: 'Wohnzimmer',
+    // The climate tile takes a wide (2×1) cell, its contract role in the wall.
+    entries: [e('wohn-west'), e('wohn-balkon'), e('wohn-sued'), e('rtr-wohnen', 2)],
+  },
   { room: 'Gäste & Treppe', entries: ['gaeste-roll', 'treppe-eingang', 'treppe-haus'].map((id) => e(id)) },
   {
     room: 'Technik',
@@ -401,25 +414,6 @@ export const demoRooms: readonly RoomGroup[] = Object.freeze([
   },
 ] satisfies RoomGroup[]);
 
-/**
- * The v1.4 `climate` showcase block — the {@link ClimateDevice} instance grouped
- * as its own room, kept SEPARATE from the mounted floors ({@link rooms} /
- * {@link demoRooms}).
- *
- * `climate` is a new v1.4 core type; neither the ionic nor the terminal skin ships
- * a climate renderer or declares it `unsupported` yet (a follow-up etappe). The
- * type-addressed host correctly treats an undeclared type as a hard *gap* rather
- * than a silent default (golden rule 2/3), so mounting a climate tile against a
- * skin without a renderer would surface that gap. This block therefore keeps the
- * climate device a first-class, grouped model device (part of the single model —
- * no data fork; `byId` resolves it) that a page can render the moment the skins
- * ship their climate renderers, without breaking the current overview/terminal
- * walls. Data ahead of behaviour (Daten=JSON, Verhalten=Code).
- */
-export const climateRooms: readonly RoomGroup[] = Object.freeze([
-  { room: 'Klima', entries: [e('rtr-wohnen', 2)] },
-] satisfies RoomGroup[]);
-
 /* ----------------------------------------------------------- span/row → role */
 // CONTRACT-v1 §2: the page speaks ROLES (prominence), not pixels. The store.js
 // layout hints map onto contract roles as follows:
@@ -444,7 +438,10 @@ const DEFAULT_ROLE: Record<Device['type'], Role> = {
   scene: 'default',
   media: 'wide',
   camera: 'wide',
-  climate: 'default',
+  // climate: promoted to a prominent wide (2×1) tile so the RTR reads as a
+  // feature in the wall (contract `climate.roles.allow` includes wide, not
+  // feature — wide is the largest allowed prominence).
+  climate: 'wide',
 };
 
 /**
