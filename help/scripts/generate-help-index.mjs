@@ -22,7 +22,7 @@
 // adding a new locale in config.mts, add its directory prefix to LOCALE_DIRS
 // below too.
 
-import { readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -79,10 +79,19 @@ function extractHelpIds(absPath) {
   return ids
 }
 
-function generate() {
+/**
+ * Pure computation over `root`'s Markdown tree — no I/O beyond reading the
+ * source files. Split out from `generate()` so the discovery/anchor-
+ * extraction/duplicate-detection/locale-parity logic can be exercised
+ * directly against a throwaway fixture directory in tests, independent of
+ * HELP_ROOT and of writing the real help-index.json.
+ *
+ * @returns {{helpIds: Record<string, Record<string, string>>, duplicates: string[], incomplete: {id: string, missing: string[]}[]}}
+ */
+export function buildHelpIndex(root) {
   // Sorted for deterministic output and reproducible duplicate-detection
   // messages — readdir order is not guaranteed across filesystems.
-  const files = findMarkdownFiles(HELP_ROOT).sort()
+  const files = findMarkdownFiles(root).sort()
   /** @type {Record<string, Record<string, string>>} */
   const helpIds = {}
   /** @type {Map<string, Set<string>>} locale -> set of help_ids seen in that locale */
@@ -90,7 +99,7 @@ function generate() {
   const duplicates = []
 
   for (const absPath of files) {
-    const relPath = relative(HELP_ROOT, absPath)
+    const relPath = relative(root, absPath)
     const { locale, routeParts } = localeAndRoutePath(relPath)
     const url = routePartsToUrl(routeParts)
     const ids = extractHelpIds(absPath)
@@ -109,38 +118,54 @@ function generate() {
     }
   }
 
+  const allLocales = new Set([DEFAULT_LOCALE, ...Object.values(LOCALE_DIRS)])
+  const incomplete = Object.entries(helpIds)
+    .filter(([, byLocale]) => allLocales.difference(new Set(Object.keys(byLocale))).size > 0)
+    .map(([id, byLocale]) => ({ id, missing: [...allLocales].filter((l) => !(l in byLocale)) }))
+
+  return { helpIds, duplicates, incomplete }
+}
+
+/**
+ * CLI-orchestration wrapper: runs buildHelpIndex(), logs locale-parity
+ * warnings, writes help-index.json, and throws on duplicate help_ids
+ * instead of calling process.exit() directly — only the bottom-of-file CLI
+ * guard decides the process exit code, so this stays safely callable from
+ * tests even for fixtures that deliberately contain a duplicate.
+ */
+export function generate(root = HELP_ROOT, outDir = join(root, 'public')) {
+  const { helpIds, duplicates, incomplete } = buildHelpIndex(root)
+
   if (duplicates.length > 0) {
-    console.error('generate-help-index: duplicate help_id(s) found — fix before building:')
-    for (const d of duplicates) console.error(`  - ${d}`)
-    process.exit(1)
+    throw new Error(
+      ['generate-help-index: duplicate help_id(s) found — fix before building:', ...duplicates.map((d) => `  - ${d}`)].join('\n')
+    )
   }
 
-  const allLocales = new Set([DEFAULT_LOCALE, ...Object.values(LOCALE_DIRS)])
-  const incomplete = Object.entries(helpIds).filter(
-    ([, byLocale]) => allLocales.difference(new Set(Object.keys(byLocale))).size > 0
-  )
   if (incomplete.length > 0) {
     console.warn('generate-help-index: help_id(s) missing in at least one locale (non-blocking):')
-    for (const [id, byLocale] of incomplete) {
-      const missing = [...allLocales].filter((l) => !(l in byLocale))
+    for (const { id, missing } of incomplete) {
       console.warn(`  - "${id}" missing in: ${missing.join(', ')}`)
     }
   }
 
-  const outDir = join(HELP_ROOT, 'public')
   mkdirSync(outDir, { recursive: true })
   const outFile = join(outDir, 'help-index.json')
   writeFileSync(
     outFile,
     JSON.stringify({ generatedAt: new Date().toISOString(), helpIds }, null, 2) + '\n'
   )
-  console.log(
-    `generate-help-index: wrote ${Object.keys(helpIds).length} help_id(s) to ${relative(HELP_ROOT, outFile)}`
-  )
+  console.log(`generate-help-index: wrote ${Object.keys(helpIds).length} help_id(s) to ${relative(root, outFile)}`)
+  return outFile
 }
 
 // Only run when executed directly (`node generate-help-index.mjs`), not when
 // imported for unit testing (see generate-help-index.test.mjs).
 if (import.meta.url === `file://${process.argv[1]}`) {
-  generate()
+  try {
+    generate()
+  } catch (err) {
+    console.error(err.message)
+    process.exit(1)
+  }
 }

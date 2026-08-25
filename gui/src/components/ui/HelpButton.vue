@@ -1,7 +1,11 @@
 <template>
+  <!-- pointer-events-auto: several Settings tabs wrap their whole body in
+       pointer-events-none while in demo mode (read-only), and this button
+       often sits inside that wrapper — help is informational, not an edit
+       action, so it must stay clickable even there. -->
   <button
     type="button"
-    class="btn-icon"
+    class="btn-icon pointer-events-auto"
     :aria-label="$t('help.openLabel')"
     :title="$t('help.openLabel')"
     :data-testid="`help-button-${helpId}`"

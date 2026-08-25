@@ -406,10 +406,12 @@ def create_app() -> FastAPI:
         if request.url.path.startswith("/visu/"):
             # Bereits durch visu_spa abgedeckt — sollte nicht hier landen
             return JSONResponse({"detail": "Not found"}, status_code=404)
-        if request.url.path.startswith("/help/"):
+        if request.url.path == "/help" or request.url.path.startswith("/help/"):
             # Der /help-Mount serviert seine eigene help_dist/404.html bereits
             # via StaticFiles(html=True) — landet nur hier, wenn help_dist/
             # gar nicht existiert (Dev-Umgebung ohne gebauten Help-Site).
+            # Das nackte "/help" (ohne Slash) muss explizit dazu, sonst faellt
+            # es durch auf den Admin-GUI-SPA-Fallback statt JSON-404.
             return JSONResponse({"detail": "Not found"}, status_code=404)
         if _gui_dist.is_dir():
             index = _gui_dist / "index.html"

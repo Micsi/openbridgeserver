@@ -365,3 +365,13 @@ async def test_help_path_returns_json_404_when_dist_missing(no_help_dist_client)
     resp = await no_help_dist_client.get("/help/anything")
     assert resp.status_code == 404
     assert resp.json() == {"detail": "Not found"}
+
+
+@pytest.mark.asyncio
+async def test_bare_help_path_returns_json_404_when_dist_missing(no_help_dist_client):
+    """The bare "/help" (no trailing slash/path) is a distinct request path from
+    "/help/..." — without this exact-match guard it fell through to the Admin-GUI
+    SPA fallback instead of the same JSON 404 every other /help/... path gets."""
+    resp = await no_help_dist_client.get("/help")
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not found"}

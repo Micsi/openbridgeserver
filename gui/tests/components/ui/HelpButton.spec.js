@@ -44,4 +44,14 @@ describe('HelpButton', () => {
 
     expect(store.currentHelpId).toBe('logic-nodes')
   })
+
+  it('stays clickable when nested inside a pointer-events-none ancestor (issue feedback: several Settings tabs wrap their whole body in pointer-events-none in demo mode, and the help button often sits inside that wrapper)', () => {
+    const w = mountButton()
+    // pointer-events-auto on the button's own element lets it opt back in
+    // even though a demo-mode ancestor sets pointer-events-none — real
+    // browser cascade behaviour, not something happy-dom's layout engine
+    // resolves, so this asserts the class is present rather than a computed
+    // style or a simulated click through an actual pointer-events-none parent.
+    expect(w.find('button').classes()).toContain('pointer-events-auto')
+  })
 })
