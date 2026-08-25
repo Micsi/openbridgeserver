@@ -13,6 +13,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -228,43 +229,56 @@ class DataPointRegistry:
             if clearable_field in payload.model_fields_set:
                 updates[clearable_field] = getattr(payload, clearable_field)
         now = datetime.now(UTC)
-
         old_name = dp.name
-        # Stage the new values on a copy and persist first — `dp` is the same
-        # object stored live in `self._points`, so mutating it before the DB
-        # write commits would let a field like external_write_enabled (read
-        # directly by WriteRouter, with no DB re-check) take effect in memory
-        # even if the write then fails (disk full, I/O error, ...).
-        updated = dp.model_copy(update=updates)
-        updated.updated_at = now
 
-        await self._db.execute_and_commit(
-            """UPDATE datapoints
-               SET name=?, data_type=?, unit=?, tags=?, mqtt_alias=?, persist_value=?, record_history=?, control_class=?, external_write_enabled=?, updated_at=?
-               WHERE id=?""",
-            (
-                updated.name,
-                updated.data_type,
-                updated.unit,
-                json.dumps(updated.tags),
-                updated.mqtt_alias,
-                int(updated.persist_value),
-                int(updated.record_history),
-                updated.control_class,
-                int(updated.external_write_enabled),
-                now.isoformat(),
-                str(dp_id),
-            ),
-        )
-        for key, val in updates.items():
-            setattr(dp, key, val)
-        dp.updated_at = now
+        def _column_value(key: str, val: Any) -> Any:
+            if key == "tags":
+                return json.dumps(val)
+            if key in ("persist_value", "record_history", "external_write_enabled"):
+                return int(val)
+            return val
 
-        # If persistence was just disabled, remove any stored last value
-        if not dp.persist_value:
-            await self._db.execute_and_commit("DELETE FROM datapoint_last_values WHERE datapoint_id=?", (str(dp_id),))
+        # Only the columns actually being changed — a full-row UPDATE built
+        # from a snapshot of the whole object would silently lose a second,
+        # concurrently-committed PATCH to an unrelated field: both requests
+        # would snapshot the same pre-update row, so whichever commits last
+        # overwrites the first request's already-persisted change with its
+        # own now-stale value for that column (Codex review).
+        set_clause = ", ".join([*(f"{key}=?" for key in updates), "updated_at=?"])
+        params = [*(_column_value(key, val) for key, val in updates.items()), now.isoformat(), str(dp_id)]
 
-        self._points[dp_id] = dp
+        async def _persist_and_apply() -> None:
+            await self._db.execute_and_commit(f"UPDATE datapoints SET {set_clause} WHERE id=?", params)
+            # Only mutate the live, shared registry object — the same
+            # instance WriteRouter reads directly, with no DB re-check —
+            # after the write commits, so a failed write never leaves e.g.
+            # external_write_enabled live in memory without it actually
+            # having persisted (Codex review).
+            for key, val in updates.items():
+                setattr(dp, key, val)
+            dp.updated_at = now
+            # If persistence was just disabled, remove any stored last value
+            if not dp.persist_value:
+                await self._db.execute_and_commit("DELETE FROM datapoint_last_values WHERE datapoint_id=?", (str(dp_id),))
+            self._points[dp_id] = dp
+
+        # Run the whole persist-then-apply sequence as a real Task, shielded
+        # from the caller's own cancellation: without this, a request
+        # cancelled (e.g. client disconnect, server timeout) right after the
+        # UPDATE physically commits but before these lines run would leave
+        # the live registry object stale relative to what's now actually in
+        # the database — e.g. WriteRouter still accepting external MQTT
+        # writes after a disabling PATCH whose DB write in fact succeeded
+        # (Codex review). Mirrors the asyncio.shield() pattern already used
+        # for this exact class of problem in
+        # obs/api/v1/datapoints.py::duplicate_datapoint().
+        task = asyncio.create_task(_persist_and_apply())
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
         logger.debug("DataPoint updated: %s (%s)", dp.name, dp_id)
 
         if dp.name != old_name:

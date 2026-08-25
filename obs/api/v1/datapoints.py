@@ -567,6 +567,16 @@ async def get_datapoint_knx_context(
     return await build_datapoint_knx_context(dp_id, db)
 
 
+async def _has_write_semantic_binding(db: Database, dp_id: uuid.UUID) -> bool:
+    """Mirrors WriteRouter's has_write_semantic_bindings (obs/core/write_router.py):
+    any enabled, non-MESSAGE adapter binding, regardless of direction."""
+    row = await db.fetchone(
+        "SELECT 1 FROM adapter_bindings WHERE datapoint_id=? AND enabled=1 AND adapter_type != 'MESSAGE' LIMIT 1",
+        (str(dp_id),),
+    )
+    return row is not None
+
+
 @router.patch(
     "/{dp_id}",
     response_model=DataPointOut,
@@ -604,6 +614,18 @@ async def update_datapoint(
     # explicitly submitted (its default is None), so no separate
     # `model_fields_set` check is needed here.
     enabling_external_write = bool(body.external_write_enabled) and not getattr(current_dp, "external_write_enabled", False)
+    if enabling_external_write and await _has_write_semantic_binding(db, dp_id):
+        # A DataPoint with any enabled, non-MESSAGE adapter binding already
+        # has an authoritative external source/sink — a SOURCE-only binding
+        # in particular means the value is meant to be a passive read-out of
+        # a real device, and WriteRouter's existing non-writable-binding
+        # guard (obs/core/write_router.py) rejects the MQTT set for it
+        # regardless of this flag, silently making the toggle a no-op. Only
+        # a genuinely bindingless DataPoint may opt in (Codex review).
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "external_write_enabled can only be set on a DataPoint with no adapter binding",
+        )
 
     if used_capability:
         allowed = await filter_authorized_datapoints(db, principal, [str(dp_id)], action=AuthzAction.WRITE)

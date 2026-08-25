@@ -115,6 +115,23 @@ async def _link_datapoint(db: Database, dp_id: uuid.UUID, node_id: str) -> None:
     )
 
 
+async def _insert_binding(
+    db: Database,
+    dp_id: uuid.UUID,
+    *,
+    adapter_type: str = "MQTT",
+    direction: str = "SOURCE",
+    enabled: bool = True,
+) -> None:
+    await db.execute_and_commit(
+        """
+        INSERT INTO adapter_bindings (id, datapoint_id, adapter_type, direction, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (str(uuid.uuid4()), str(dp_id), adapter_type, direction, int(enabled), NOW, NOW),
+    )
+
+
 async def _insert_grant(
     db: Database,
     node_id: str,
@@ -369,6 +386,84 @@ async def test_non_admin_write_grant_can_disable_external_write_enabled(monkeypa
 async def test_admin_can_enable_external_write_enabled(monkeypatch, db: Database):
     datapoint = _dp("00000000-0000-0000-0000-000000000045", "Admin write target")
     await _insert_datapoint(db, datapoint)
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    result = await dp_api.update_datapoint(
+        dp_id=datapoint.id,
+        body=dp_api.DataPointUpdate(external_write_enabled=True),
+        request=None,
+        _user=Principal(subject="admin", type="user", is_admin=True),
+        db=db,
+    )
+
+    assert result.external_write_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_enable_external_write_enabled_on_a_source_bound_datapoint(monkeypatch, db: Database):
+    # A SOURCE-only binding means the value is meant to be a passive read-out
+    # of a real device — WriteRouter's non-writable-binding guard rejects the
+    # MQTT set regardless of this flag, so accepting the PATCH would silently
+    # make the toggle a no-op (Codex review).
+    datapoint = _dp("00000000-0000-0000-0000-000000000048", "Source-bound target")
+    await _insert_datapoint(db, datapoint)
+    await _insert_binding(db, datapoint.id, direction="SOURCE")
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dp_api.update_datapoint(
+            dp_id=datapoint.id,
+            body=dp_api.DataPointUpdate(external_write_enabled=True),
+            request=None,
+            _user=Principal(subject="admin", type="user", is_admin=True),
+            db=db,
+        )
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_enable_external_write_enabled_on_a_dest_bound_datapoint(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000049", "Dest-bound target")
+    await _insert_datapoint(db, datapoint)
+    await _insert_binding(db, datapoint.id, direction="DEST")
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dp_api.update_datapoint(
+            dp_id=datapoint.id,
+            body=dp_api.DataPointUpdate(external_write_enabled=True),
+            request=None,
+            _user=Principal(subject="admin", type="user", is_admin=True),
+            db=db,
+        )
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_can_enable_external_write_enabled_when_only_a_disabled_binding_exists(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000050", "Disabled-binding target")
+    await _insert_datapoint(db, datapoint)
+    await _insert_binding(db, datapoint.id, direction="SOURCE", enabled=False)
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+
+    result = await dp_api.update_datapoint(
+        dp_id=datapoint.id,
+        body=dp_api.DataPointUpdate(external_write_enabled=True),
+        request=None,
+        _user=Principal(subject="admin", type="user", is_admin=True),
+        db=db,
+    )
+
+    assert result.external_write_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_admin_can_enable_external_write_enabled_when_only_a_message_binding_exists(monkeypatch, db: Database):
+    # MESSAGE-type bindings are pass-through observers, not real bindings —
+    # WriteRouter itself excludes them from has_write_semantic_bindings.
+    datapoint = _dp("00000000-0000-0000-0000-000000000051", "Message-bound target")
+    await _insert_datapoint(db, datapoint)
+    await _insert_binding(db, datapoint.id, adapter_type="MESSAGE", direction="SOURCE")
     monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
 
     result = await dp_api.update_datapoint(
