@@ -57,6 +57,20 @@ describe('HelpDrawer — open with a resolved URL', () => {
     document.documentElement.classList.remove('dark')
   })
 
+  it("updates the iframe's appearance when the theme changes while the drawer stays open (issue feedback: reactive dependency, not just a one-time DOM read at mount)", async () => {
+    const { useSettingsStore } = await import('@/stores/settings')
+    const settings = useSettingsStore()
+    await mountOpen('/help/datapoints/overview.html#datapoints-overview')
+    const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')
+    expect(iframe.getAttribute('src')).toContain('appearance=light')
+
+    settings.setTheme('dark')
+    await flushPromises()
+
+    expect(iframe.getAttribute('src')).toContain('appearance=dark')
+    document.documentElement.classList.remove('dark')
+  })
+
   it('appends appearance with & when the URL already carries a query string', async () => {
     await mountOpen('/help/datapoints/overview.html?foo=bar#datapoints-overview')
     const iframe = document.querySelector('[data-testid="help-drawer-iframe"]')

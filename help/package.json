@@ -7,7 +7,8 @@
     "dev": "npm run help-index && vitepress dev",
     "build": "npm run help-index && vitepress build",
     "preview": "vitepress preview --port 4175",
-    "help-index": "node scripts/generate-help-index.mjs"
+    "help-index": "node scripts/generate-help-index.mjs",
+    "test": "node --test scripts/*.test.mjs"
   },
   "devDependencies": {
     "vitepress": "^1.6.4"

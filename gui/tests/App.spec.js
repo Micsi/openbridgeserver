@@ -78,8 +78,17 @@ describe('App — reserves layout space for the open drawer (issue feedback: it 
   })
 
   it('applies a right margin matching the drawer width while it is open', async () => {
+    // Asserted against the component's own computed value rather than the
+    // rendered style attribute: happy-dom's CSSStyleDeclaration doesn't
+    // recognize the CSS min() function and silently drops the declaration
+    // from the serialized style string, even though real browsers apply it
+    // correctly (broadly supported since ~2020).
     const w = await mountApp({ helpIsOpen: true, helpDrawerWidth: 480 })
-    const layout = w.find('[data-testid="app-layout"]')
-    expect(layout.attributes('style')).toContain('margin-right: 480px')
+    expect(w.vm.contentAreaStyle.marginRight).toBe('min(480px, 90vw)')
+  })
+
+  it("caps the reserved margin at 90vw via CSS min(), matching HelpDrawer.vue's own maxWidth (issue feedback: a persisted wide drawerWidth on a narrower viewport must not reserve more margin than the drawer actually renders at)", async () => {
+    const w = await mountApp({ helpIsOpen: true, helpDrawerWidth: 960 })
+    expect(w.vm.contentAreaStyle.marginRight).toBe('min(960px, 90vw)')
   })
 })

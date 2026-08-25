@@ -48,16 +48,20 @@ function findMarkdownFiles(dir, base = dir) {
   return files
 }
 
-function localeAndRoutePath(relPath) {
+export function localeAndRoutePath(relPath) {
+  // The locale directory (e.g. `en/`) is only stripped from the URL for the
+  // *root* locale — VitePress serves other locales at their own prefixed
+  // path (e.g. `/help/en/...`), it does not relocate them to the site root.
+  // routeParts therefore keeps the full path for a non-root locale.
   const parts = relPath.split(sep)
   const [maybeLocaleDir] = parts
   if (maybeLocaleDir in LOCALE_DIRS) {
-    return { locale: LOCALE_DIRS[maybeLocaleDir], routeParts: parts.slice(1) }
+    return { locale: LOCALE_DIRS[maybeLocaleDir], routeParts: parts }
   }
   return { locale: DEFAULT_LOCALE, routeParts: parts }
 }
 
-function routePartsToUrl(routeParts) {
+export function routePartsToUrl(routeParts) {
   const withoutExt = routeParts.join('/').replace(/\.md$/, '')
   if (withoutExt === 'index' || withoutExt.endsWith('/index')) {
     const dir = withoutExt.slice(0, withoutExt.length - 'index'.length)
@@ -135,4 +139,8 @@ function generate() {
   )
 }
 
-generate()
+// Only run when executed directly (`node generate-help-index.mjs`), not when
+// imported for unit testing (see generate-help-index.test.mjs).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  generate()
+}

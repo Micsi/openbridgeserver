@@ -81,9 +81,11 @@
 // left to catch a close click, same trade-off as Modal.vue's softBackdrop.
 import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useHelpStore } from '@/stores/help'
+import { useSettingsStore } from '@/stores/settings'
 import { useResizablePanel } from '@/composables/useResizablePanel'
 
 const helpStore = useHelpStore()
+const settings = useSettingsStore()
 const { width, startResize } = useResizablePanel({
   storageKey: 'obs-help-drawer-width',
   defaultWidth: Math.round(window.innerWidth * 0.4),
@@ -112,7 +114,17 @@ function withAppearance(url) {
   return `${path}${separator}appearance=${isDark ? 'dark' : 'light'}${hash ? '#' + hash : ''}`
 }
 
-const iframeSrc = computed(() => withAppearance(helpStore.currentUrl))
+const iframeSrc = computed(() => {
+  // settings.theme is read only to make this computed reactively depend on
+  // it — withAppearance() itself still reads the resolved <html class="dark">
+  // state (settings.applyTheme() already updated it synchronously by the
+  // time setTheme() returns), since `theme` alone doesn't resolve the
+  // 'system' case. Without this dependency, switching themes while the
+  // drawer is open wouldn't update the already-loaded iframe's appearance
+  // until currentUrl changed for an unrelated reason.
+  void settings.theme
+  return withAppearance(helpStore.currentUrl)
+})
 
 function close() {
   helpStore.close()
