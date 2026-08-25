@@ -230,28 +230,36 @@ class DataPointRegistry:
         now = datetime.now(UTC)
 
         old_name = dp.name
-        for key, val in updates.items():
-            setattr(dp, key, val)
-        dp.updated_at = now
+        # Stage the new values on a copy and persist first — `dp` is the same
+        # object stored live in `self._points`, so mutating it before the DB
+        # write commits would let a field like external_write_enabled (read
+        # directly by WriteRouter, with no DB re-check) take effect in memory
+        # even if the write then fails (disk full, I/O error, ...).
+        updated = dp.model_copy(update=updates)
+        updated.updated_at = now
 
         await self._db.execute_and_commit(
             """UPDATE datapoints
                SET name=?, data_type=?, unit=?, tags=?, mqtt_alias=?, persist_value=?, record_history=?, control_class=?, external_write_enabled=?, updated_at=?
                WHERE id=?""",
             (
-                dp.name,
-                dp.data_type,
-                dp.unit,
-                json.dumps(dp.tags),
-                dp.mqtt_alias,
-                int(dp.persist_value),
-                int(dp.record_history),
-                dp.control_class,
-                int(dp.external_write_enabled),
+                updated.name,
+                updated.data_type,
+                updated.unit,
+                json.dumps(updated.tags),
+                updated.mqtt_alias,
+                int(updated.persist_value),
+                int(updated.record_history),
+                updated.control_class,
+                int(updated.external_write_enabled),
                 now.isoformat(),
                 str(dp_id),
             ),
         )
+        for key, val in updates.items():
+            setattr(dp, key, val)
+        dp.updated_at = now
+
         # If persistence was just disabled, remove any stored last value
         if not dp.persist_value:
             await self._db.execute_and_commit("DELETE FROM datapoint_last_values WHERE datapoint_id=?", (str(dp_id),))

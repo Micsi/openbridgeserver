@@ -600,25 +600,21 @@ async def update_datapoint(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
     before = _audit_metadata_snapshot(current_dp)
 
-    if (
-        body.external_write_enabled
-        and "external_write_enabled" in body.model_fields_set
-        and not getattr(current_dp, "external_write_enabled", False)
-        and not (principal.type == "user" and principal.is_admin)
-    ):
-        # Enabling this flag opens the DataPoint to any MQTT-broker-capable
-        # client (see obs/core/write_router.py), a broader trust boundary than
-        # ordinary datapoint WRITE authorization covers — require admin,
-        # unlike other metadata fields (e.g. control_class) that a delegated
-        # WRITE grant may already change. Disabling it, and re-submitting an
-        # already-true value unchanged (the GUI form always resends the full
-        # state on save), both stay unrestricted — only a false-to-true
-        # transition needs admin.
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Enabling external_write_enabled requires admin")
+    # `body.external_write_enabled` can only be truthy if the field was
+    # explicitly submitted (its default is None), so no separate
+    # `model_fields_set` check is needed here.
+    enabling_external_write = bool(body.external_write_enabled) and not getattr(current_dp, "external_write_enabled", False)
 
     if used_capability:
         allowed = await filter_authorized_datapoints(db, principal, [str(dp_id)], action=AuthzAction.WRITE)
-        if not allowed or "value" in body.model_fields_set:
+        if not allowed or "value" in body.model_fields_set or enabling_external_write:
+            # API-key principals are never administrative (see obs/api/authz.py),
+            # so an API key attempting a false-to-true external_write_enabled
+            # transition is always denied here — same admin-only rule as the
+            # plain-user branch below, but funneled through this audit trail
+            # instead of a bare HTTPException, so repeated attempts to cross
+            # this gate stay visible in the capability-use audit log rather
+            # than only the generic route/request logs.
             await audit_config_capability_use(
                 db,
                 principal,
@@ -629,6 +625,17 @@ async def update_datapoint(
                 request=request,
             )
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Datapoint write scope required")
+    elif enabling_external_write and not (principal.type == "user" and principal.is_admin):
+        # Enabling this flag opens the DataPoint to any MQTT-broker-capable
+        # client (see obs/core/write_router.py), a broader trust boundary than
+        # ordinary datapoint WRITE authorization covers — require admin,
+        # unlike other metadata fields (e.g. control_class) that a delegated
+        # WRITE grant may already change. Disabling it, and re-submitting an
+        # already-true value unchanged (the GUI form always resends the full
+        # state on save), both stay unrestricted — only a false-to-true
+        # transition needs admin. The `used_capability` branch above handles
+        # the equivalent case for API keys, with its own audit trail.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Enabling external_write_enabled requires admin")
 
     # --- Validation phase (no side effects) ---
     if body.data_type is not None:

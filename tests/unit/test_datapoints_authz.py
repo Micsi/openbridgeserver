@@ -415,6 +415,12 @@ async def test_api_key_metadata_capability_cannot_enable_external_write_enabled(
         )
     assert exc_info.value.status_code == 403
 
+    # The denial must go through the same capability-use audit trail as any
+    # other rejected use of this API key's granted capability, not bypass it.
+    audit = await db.fetchall("SELECT details_json FROM audit_log_entries WHERE action='api_key.capability.use' ORDER BY id")
+    assert audit
+    assert '"result":"denied"' in audit[-1]["details_json"]
+
 
 @pytest.mark.asyncio
 async def test_write_value_requires_write_grant_for_authenticated_principal(monkeypatch, db: Database):

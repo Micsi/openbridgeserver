@@ -997,6 +997,34 @@ class TestDataPointRegistryCRUD:
         assert event.new_name == "New"
 
     @pytest.mark.asyncio
+    async def test_update_leaves_live_object_unchanged_when_persistence_fails(self):
+        from obs.core.registry import DataPointRegistry
+        from obs.models.datapoint import DataPoint, DataPointUpdate
+
+        class _FailingDb(_DbStub):
+            async def execute_and_commit(self, query, params=()):
+                raise RuntimeError("simulated disk full")
+
+        db = _FailingDb()
+        reg = DataPointRegistry.__new__(DataPointRegistry)
+        reg._db = db
+        reg._mqtt = AsyncMock()
+        reg._bus = AsyncMock()
+
+        dp = DataPoint(name="Virtual Switch", external_write_enabled=False)
+        reg._points = {dp.id: dp}
+        reg._values = {dp.id: MagicMock()}
+
+        payload = DataPointUpdate(external_write_enabled=True)
+        with pytest.raises(RuntimeError, match="simulated disk full"):
+            await reg.update(dp.id, payload)
+
+        # The live registry object — the same instance WriteRouter reads
+        # directly, with no DB re-check — must not reflect the failed write.
+        assert reg._points[dp.id].external_write_enabled is False
+        assert reg._points[dp.id] is dp
+
+    @pytest.mark.asyncio
     async def test_update_nonexistent_raises(self):
         from obs.core.registry import DataPointRegistry
         from obs.models.datapoint import DataPointUpdate
