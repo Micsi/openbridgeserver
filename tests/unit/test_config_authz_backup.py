@@ -646,3 +646,43 @@ async def test_factory_reset_clears_reset_resource_grants_while_preserving_filte
     ]
     assert reset_result.errors == []
     assert [row["node_type"] for row in grants_after_reset] == ["ringbuffer_filterset"]
+
+
+@pytest.mark.asyncio
+async def test_import_records_an_error_when_the_deferred_external_write_opt_in_itself_fails(monkeypatch: pytest.MonkeyPatch, db: Database) -> None:
+    """The post-bindings opt-in pass (Codex review, PR #1170 round 7) follows
+    the same per-item try/except pattern as every other loop in import_config —
+    one item's unexpected failure is recorded and does not abort the import."""
+    registry = _registry(db)
+    await registry.load_from_db()
+    monkeypatch.setattr(config_api, "get_registry", lambda: registry)
+
+    dp_id = str(uuid.uuid4())
+    payload = config_api.ConfigExport(
+        obs_version="5",
+        exported_at="2026-07-13T00:00:00+00:00",
+        datapoints=[
+            config_api.ExportedDataPoint(
+                id=dp_id,
+                name="Opt-in failure target",
+                data_type="BOOLEAN",
+                unit=None,
+                tags=[],
+                mqtt_alias=None,
+                external_write_enabled=True,
+            )
+        ],
+        bindings=[],
+    )
+
+    monkeypatch.setattr(registry, "update", AsyncMock(side_effect=RuntimeError("simulated disk full")))
+    with (
+        patch("obs.adapters.registry.stop_all", new_callable=AsyncMock),
+        patch("obs.adapters.registry.start_all", new_callable=AsyncMock),
+        patch("obs.adapters.registry.get_all_instances", return_value={}),
+        patch("obs.core.event_bus.get_event_bus", return_value=MagicMock()),
+    ):
+        result = await config_api.import_config(body=payload, _user="admin", db=db)
+
+    assert result.datapoints_created == 1
+    assert any("external_write_enabled opt-in failed" in e and "simulated disk full" in e for e in result.errors)

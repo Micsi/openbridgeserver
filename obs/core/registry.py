@@ -81,6 +81,12 @@ class DataPointRegistry:
         self._bus: EventBus = event_bus
         self._points: dict[uuid.UUID, DataPoint] = {}
         self._values: dict[uuid.UUID, ValueState] = {}
+        # Serializes external_write_enabled enable-transitions (datapoints.py)
+        # against binding creation/update's own opt-in cleanup (bindings.py):
+        # without it, an enable-PATCH's "no write-semantic binding" check and
+        # a concurrent create_binding() race, and neither side's check
+        # observes the other's not-yet-committed change (Codex review).
+        self._external_write_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Startup
@@ -136,6 +142,10 @@ class DataPointRegistry:
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
+
+    @property
+    def external_write_lock(self) -> asyncio.Lock:
+        return self._external_write_lock
 
     def get(self, dp_id: uuid.UUID) -> DataPoint | None:
         return self._points.get(dp_id)

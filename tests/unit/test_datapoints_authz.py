@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ class _RegistryStub:
         self._dps = {dp.id: dp for dp in dps or []}
         self._values: dict[uuid.UUID, ValueState] = {}
         self.last_update_payload = None
+        self.external_write_lock = asyncio.Lock()
 
     def all(self):
         return list(self._dps.values())
@@ -1291,3 +1293,48 @@ async def test_central_plant_write_blocked_via_page_scope(monkeypatch, db: Datab
 
     assert exc_info.value.status_code == 403
     event_bus.publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_patch_with_value_rejects_a_value_incompatible_with_the_datapoints_type(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000070", "PatchValueCoerce")
+    await _insert_datapoint(db, datapoint)
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+    event_bus = MagicMock()
+    event_bus.publish = AsyncMock()
+    monkeypatch.setattr(dp_api, "get_event_bus", lambda: event_bus)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dp_api.update_datapoint(
+            dp_id=datapoint.id,
+            body=dp_api.DataPointUpdate(value="not-a-number"),
+            request=None,
+            _user=Principal(subject="admin", type="user", is_admin=True),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 422
+    event_bus.publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_patch_with_explicit_none_value_publishes_uncertain_quality(monkeypatch, db: Database):
+    datapoint = _dp("00000000-0000-0000-0000-000000000071", "PatchValueNone")
+    await _insert_datapoint(db, datapoint)
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([datapoint]))
+    event_bus = MagicMock()
+    event_bus.publish = AsyncMock()
+    monkeypatch.setattr(dp_api, "get_event_bus", lambda: event_bus)
+
+    await dp_api.update_datapoint(
+        dp_id=datapoint.id,
+        body=dp_api.DataPointUpdate(value=None),
+        request=None,
+        _user=Principal(subject="admin", type="user", is_admin=True),
+        db=db,
+    )
+
+    event_bus.publish.assert_awaited_once()
+    published_event = event_bus.publish.call_args[0][0]
+    assert published_event.quality == "uncertain"
+    assert published_event.value is None

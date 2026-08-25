@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from datetime import UTC, datetime
@@ -340,6 +341,8 @@ async def test_datapoint_patch_persists_safe_before_after_and_changed_fields(db:
     )
 
     class RegistryStub:
+        external_write_lock = asyncio.Lock()
+
         def get(self, dp_id):
             return datapoint if dp_id == datapoint.id else None
 

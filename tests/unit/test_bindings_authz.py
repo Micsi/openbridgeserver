@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -18,6 +19,7 @@ NOW = "2026-06-10T00:00:00+00:00"
 class _RegistryStub:
     def __init__(self, dp_id: uuid.UUID):
         self._dp = SimpleNamespace(id=dp_id)
+        self.external_write_lock = asyncio.Lock()
 
     def get(self, dp_id: uuid.UUID):
         if dp_id == self._dp.id:
