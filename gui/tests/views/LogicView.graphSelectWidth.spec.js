@@ -104,3 +104,41 @@ describe('LogicView — graph select width (#1171)', () => {
     expect(select.element.style.width).toBe('25ch')
   })
 })
+
+describe('LogicView — graph select width uses real glyph measurement when canvas is available (Codex review, PR #1172)', () => {
+  // jsdom has no real canvas, so the tests above only exercise the
+  // text.length fallback. Real browsers do have canvas.measureText(), so a
+  // shorter but wide-glyph name (e.g. many uppercase letters) can need MORE
+  // pixels than a longer narrow-glyph one — text.length alone would pick the
+  // narrow one as "longest" and clip the wide one. Mock getContext() to
+  // prove the fix picks the actually-widest option instead of the
+  // longest-by-character-count one.
+  const widthOf = (char) => (char === 'W' ? 15 : char === '0' ? 7 : 5)
+  let getContextSpy
+
+  beforeEach(() => {
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      font: '',
+      measureText: (str) => ({
+        width: [...str].reduce((sum, ch) => sum + widthOf(ch), 0),
+      }),
+    })
+  })
+
+  afterEach(() => {
+    getContextSpy.mockRestore()
+  })
+
+  it('sizes to the widest-in-pixels option, not the longest-by-character-count one', async () => {
+    const narrowButLonger = 'i'.repeat(20)  // 20 * 5px = 100px, but 20 chars
+    const wideButShorter = 'W'.repeat(14)   // 14 * 15px = 210px, but only 14 chars
+    const w = await mountLogicView([
+      graph({ id: 'g1', name: narrowButLonger }),
+      graph({ id: 'g2', name: wideButShorter }),
+    ])
+    // chPx = widthOf('0') = 7; widest required = 210px → ceil(210/7) = 30ch.
+    // The old text.length heuristic would have picked 20ch (narrowButLonger)
+    // and clipped the wide name, whose required width is 210px > 20*7=140px.
+    expect(w.vm.graphSelectWidthCh).toBe(30)
+  })
+})

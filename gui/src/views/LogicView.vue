@@ -11,7 +11,7 @@
              instead of crowding the title. -->
         <h2 :class="[titleSpacerClass, 'flex-shrink-0 overflow-hidden whitespace-nowrap text-sm font-bold text-slate-800 dark:text-slate-100']">{{ $t('logic.title') }}</h2>
         <!-- Logikblatt selector -->
-        <select v-model="activeGraphId" @change="loadGraph"
+        <select ref="graphSelectEl" v-model="activeGraphId" @change="loadGraph"
           class="input text-xs py-1 px-2 flex-shrink-0"
           :style="{ width: graphSelectWidthCh + 'ch', maxWidth: '280px' }"
           data-testid="select-graph">
@@ -452,11 +452,34 @@ const activeGraph   = computed(() => store.graphs.find(g => g.id === activeGraph
 // select never shrinks below what's needed to show the selected name — a flex
 // item's default min-width:auto lets a <select> collapse to just its dropdown
 // arrow under space pressure otherwise, hiding the graph name entirely.
+const graphSelectEl = ref(null)
+let _measureCtx // lazily created, reused across computations
+// 1ch is only as wide as the "0" glyph — in a proportional font a shorter
+// but wide-glyph name (e.g. many uppercase letters, CJK) can need more
+// pixels than a longer narrow-glyph one, so plain text.length undercounts
+// it and clips the option text (Codex review on PR #1172). Measuring against
+// the select's own computed font gives the real rendered width instead.
+function measureTextPx(text, font) {
+  if (_measureCtx === undefined) {
+    _measureCtx = document.createElement('canvas').getContext('2d')
+  }
+  if (!_measureCtx) return null
+  _measureCtx.font = font
+  return _measureCtx.measureText(text).width
+}
+
 const graphSelectWidthCh = computed(() => {
   const texts = [
     t('logic.selectGraph'),
     ...store.graphs.map(g => g.name + (g.enabled ? '' : t('logic.graphDisabledSuffix'))),
   ]
+  const el = graphSelectEl.value
+  const font = el ? getComputedStyle(el).font : ''
+  const chPx = font ? measureTextPx('0', font) : null
+  if (chPx) {
+    const widestPx = texts.reduce((max, text) => Math.max(max, measureTextPx(text, font)), 0)
+    return Math.min(Math.max(Math.ceil(widestPx / chPx), 12), 40)
+  }
   const longest = texts.reduce((max, text) => Math.max(max, text.length), 0)
   return Math.min(Math.max(longest, 12), 40)
 })
