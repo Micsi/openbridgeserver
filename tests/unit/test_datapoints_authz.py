@@ -549,6 +549,48 @@ async def test_api_key_metadata_capability_cannot_enable_external_write_enabled(
 
 
 @pytest.mark.asyncio
+async def test_api_key_without_target_grant_gets_same_denial_regardless_of_binding_topology(monkeypatch, db: Database):
+    # An API key with the metadata capability but no WRITE grant for this
+    # specific target must be denied identically whether the target has a
+    # binding or not — the binding-topology 422 check must never run before
+    # target authorization, or its distinct status code (422 vs 403) leaks
+    # whether the target has a binding to a caller unauthorized to know that
+    # at all (Codex review).
+    bound_dp = _dp("00000000-0000-0000-0000-000000000047", "Bound, no grant")
+    bare_dp = _dp("00000000-0000-0000-0000-000000000048", "Bindingless, no grant")
+    await _insert_datapoint(db, bound_dp)
+    await _insert_datapoint(db, bare_dp)
+    await _insert_binding(db, bound_dp.id, direction="SOURCE")
+
+    key_id = "00000000-0000-0000-0000-000000000991"
+    await db.execute_and_commit(
+        "INSERT INTO api_keys (id, name, key_hash, owner, created_at) VALUES (?, 'key', 'hash-991', 'admin', ?)",
+        (key_id, NOW),
+    )
+    await db.execute_and_commit(
+        "INSERT INTO api_key_capabilities (key_id, capability) VALUES (?, 'datapoint.metadata.write')",
+        (key_id,),
+    )
+    # deliberately no authz_node_roles grant for either datapoint
+    principal = Principal(subject=f"api_key:{key_id}", type="api_key", is_admin=False, owner="admin")
+    monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub([bound_dp, bare_dp]))
+
+    statuses = []
+    for dp in (bound_dp, bare_dp):
+        with pytest.raises(HTTPException) as exc_info:
+            await dp_api.update_datapoint(
+                dp_id=dp.id,
+                body=dp_api.DataPointUpdate(external_write_enabled=True),
+                request=None,
+                _user=principal,
+                db=db,
+            )
+        statuses.append(exc_info.value.status_code)
+
+    assert statuses == [403, 403]
+
+
+@pytest.mark.asyncio
 async def test_write_value_requires_write_grant_for_authenticated_principal(monkeypatch, db: Database):
     datapoint = _dp("00000000-0000-0000-0000-000000000061", "Writable")
     await _insert_tree(db)

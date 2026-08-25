@@ -615,19 +615,14 @@ async def update_datapoint(
     # `model_fields_set` check is needed here.
     can_set_external_write_true = principal.type == "user" and principal.is_admin
     enabling_external_write = bool(body.external_write_enabled) and not getattr(current_dp, "external_write_enabled", False)
-    if enabling_external_write and await _has_write_semantic_binding(db, dp_id):
-        # A DataPoint with any enabled, non-MESSAGE adapter binding already
-        # has an authoritative external source/sink — a SOURCE-only binding
-        # in particular means the value is meant to be a passive read-out of
-        # a real device, and WriteRouter's existing non-writable-binding
-        # guard (obs/core/write_router.py) rejects the MQTT set for it
-        # regardless of this flag, silently making the toggle a no-op. Only
-        # a genuinely bindingless DataPoint may opt in (Codex review).
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "external_write_enabled can only be set on a DataPoint with no adapter binding",
-        )
 
+    # Authorization must be resolved before any check that queries this
+    # target's internal state (the binding-topology check below): otherwise
+    # a principal with the metadata capability but no WRITE grant for this
+    # specific target would get a different status code (422 vs 403) purely
+    # depending on whether the target happens to have a binding, leaking
+    # that internal state to a caller who isn't authorized to see it at all
+    # (Codex review).
     if used_capability:
         allowed = await filter_authorized_datapoints(db, principal, [str(dp_id)], action=AuthzAction.WRITE)
         if not allowed or "value" in body.model_fields_set or enabling_external_write:
@@ -659,6 +654,19 @@ async def update_datapoint(
         # transition needs admin. The `used_capability` branch above handles
         # the equivalent case for API keys, with its own audit trail.
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Enabling external_write_enabled requires admin")
+
+    if enabling_external_write and await _has_write_semantic_binding(db, dp_id):
+        # A DataPoint with any enabled, non-MESSAGE adapter binding already
+        # has an authoritative external source/sink — a SOURCE-only binding
+        # in particular means the value is meant to be a passive read-out of
+        # a real device, and WriteRouter's existing non-writable-binding
+        # guard (obs/core/write_router.py) rejects the MQTT set for it
+        # regardless of this flag, silently making the toggle a no-op. Only
+        # a genuinely bindingless DataPoint may opt in (Codex review).
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "external_write_enabled can only be set on a DataPoint with no adapter binding",
+        )
 
     # --- Validation phase (no side effects) ---
     if body.data_type is not None:

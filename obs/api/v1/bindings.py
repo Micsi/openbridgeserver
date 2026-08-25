@@ -38,6 +38,23 @@ from obs.models.binding import (
 router = APIRouter(tags=["bindings"])
 
 
+async def _clear_stale_external_write_enabled(dp_id: uuid.UUID, *, adapter_type: str, enabled: bool) -> None:
+    """A newly enabled, non-MESSAGE binding takes precedence over the
+    external_write_enabled opt-in at request time (see WriteRouter.handle()
+    and datapoints.py's has_write_semantic_binding), but the flag itself
+    stays stored on the DataPoint. Left untouched, it would silently
+    reactivate — without a fresh admin decision — if this binding is later
+    deleted or disabled (Codex review, issue #1169 follow-up)."""
+    if not enabled or adapter_type == "MESSAGE":
+        return
+    reg = get_registry()
+    dp = reg.get(dp_id)
+    if dp is not None and getattr(dp, "external_write_enabled", False):
+        from obs.models.datapoint import DataPointUpdate
+
+        await reg.update(dp_id, DataPointUpdate(external_write_enabled=False))
+
+
 # ---------------------------------------------------------------------------
 # Response model
 # ---------------------------------------------------------------------------
@@ -402,6 +419,7 @@ async def create_binding(
         ),
     )
     await _reload_adapter_instance(str(body.adapter_instance_id), db)
+    await _clear_stale_external_write_enabled(dp_id, adapter_type=adapter_type, enabled=body.enabled)
 
     row = await db.fetchone("SELECT * FROM adapter_bindings WHERE id=?", (binding_id,))
     name_map = await _get_instance_name_map(db)
@@ -497,6 +515,7 @@ async def update_binding(
     instance_id = row["adapter_instance_id"]
     if instance_id:
         await _reload_adapter_instance(instance_id, db)
+    await _clear_stale_external_write_enabled(dp_id, adapter_type=row["adapter_type"], enabled=bool(enabled))
 
     updated = await db.fetchone("SELECT * FROM adapter_bindings WHERE id=?", (str(binding_id),))
     name_map = await _get_instance_name_map(db)
