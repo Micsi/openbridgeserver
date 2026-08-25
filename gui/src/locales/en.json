@@ -3353,5 +3353,11 @@
       "acknowledged": "Acknowledged",
       "closed": "Closed"
     }
+  },
+  "help": {
+    "title": "Help",
+    "openLabel": "Open help for this section",
+    "unavailable": "No help is available for this section yet.",
+    "openInNewTab": "Open in new tab"
   }
 }
