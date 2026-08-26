@@ -6,6 +6,8 @@ import {
   mapTree,
   applyDp,
   planWrite,
+  resolveEffectiveAccess,
+  deviceWriteDps,
   toBool,
   toNum,
   type ObsWidget,
@@ -226,6 +228,53 @@ describe('mapTree — flatten visu tree to devices, room = PAGE name', () => {
     expect(mapped.map((m) => m.device.id)).toEqual(['w-licht', 'w-toggle', 'w-jal']);
     expect(mapped[0].device.room).toBe('Küche');
     expect(mapped[2].device.room).toBe('Wintergarten');
+  });
+
+  it('stamps each mapped widget with its owning PAGE id (X-Page-Id source)', () => {
+    const mapped = mapTree(tree);
+    expect(mapped.map((m) => m.pageId)).toEqual(['page-1', 'page-1', 'page-2']);
+  });
+});
+
+/* ------------------------------------------------- resolveEffectiveAccess */
+
+describe('resolveEffectiveAccess — parent-traversal to the first set access', () => {
+  const tree: ObsVisuNode[] = [
+    { id: 'root', parent_id: null, name: 'Haus', type: 'LOCATION', page_config: null, access: null },
+    { id: 'pub', parent_id: 'root', name: 'Flur', type: 'PAGE', page_config: null, access: null },
+    { id: 'prot', parent_id: 'root', name: 'Büro', type: 'PAGE', page_config: null, access: 'protected' },
+    { id: 'sec', parent_id: null, name: 'Technik', type: 'LOCATION', page_config: null, access: 'readonly' },
+    { id: 'child', parent_id: 'sec', name: 'Heizung', type: 'PAGE', page_config: null, access: null },
+    { id: 'orphan', parent_id: 'gone', name: 'Solo', type: 'PAGE', page_config: null, access: null },
+  ];
+
+  it('resolves inheritance, explicit access and the public fallback', () => {
+    const access = resolveEffectiveAccess(tree);
+    expect(access.get('pub')).toBe('public'); // inherits, nothing set → public
+    expect(access.get('prot')).toBe('protected'); // own access wins
+    expect(access.get('child')).toBe('readonly'); // inherits readonly from parent
+    expect(access.get('sec')).toBe('readonly'); // own access
+    expect(access.get('orphan')).toBe('public'); // absent parent → public fallback
+  });
+
+  it('does not loop on a parent_id cycle', () => {
+    const cyclic: ObsVisuNode[] = [
+      { id: 'a', parent_id: 'b', name: 'A', type: 'PAGE', page_config: null, access: null },
+      { id: 'b', parent_id: 'a', name: 'B', type: 'PAGE', page_config: null, access: null },
+    ];
+    const access = resolveEffectiveAccess(cyclic);
+    expect(access.get('a')).toBe('public');
+    expect(access.get('b')).toBe('public');
+  });
+});
+
+/* -------------------------------------------------------- deviceWriteDps */
+
+describe('deviceWriteDps — the distinct write datapoints of a device', () => {
+  it('collects the configured write targets, dropping nulls and duplicates', () => {
+    expect(deviceWriteDps(mapWidget(lichtDim(), 'K')!.writes)).toEqual(['dp-d-sw', 'dp-dim']);
+    expect(deviceWriteDps(mapWidget(jalousie(), 'WG')!.writes)).toEqual(['dp-jp', 'dp-js', 'dp-jl']);
+    expect(deviceWriteDps({})).toEqual([]);
   });
 });
 

@@ -1,17 +1,28 @@
 /**
- * core/obs/client — the thin obs REST + WebSocket transport.
+ * core/obs/client — the thin obs REST + WebSocket transport (page-scoped auth).
  *
  * Mirrors the reference Visu (`frontend/src/api/client.ts`,
- * `frontend/src/composables/useWebSocket.ts`):
- *  - JWT login at `POST /api/v1/auth/login` (default admin/admin), Bearer in
- *    every REST request; on 401 it logs in again once and retries (the obs
- *    backend hands out short-lived tokens — re-login is the refresh path).
- *  - WebSocket at `/api/v1/ws` authenticated via the `obs.jwt.<token>`
- *    subprotocol (exactly as `useWebSocket.ts` does), with `{action:"subscribe",
- *    ids:[…]}` messages and `{id,v,u,t,q}` value-events, plus reconnect/backoff.
+ * `frontend/src/composables/useWebSocket.ts`) in its v1 **page-scoped**
+ * authorization model — there is no admin JWT login:
+ *  - **public / readonly** pages need no auth at all; datapoint ops only carry an
+ *    `X-Page-Id` header so the server can scope the request to that page.
+ *  - **protected** pages use a PIN → session-token flow
+ *    (`POST /visu/nodes/{id}/auth` → `{ session_token, expires_in }`); the token
+ *    then rides along as `X-Session-Token` next to `X-Page-Id`.
+ *  - **user** pages (real per-user JWT login) are NOT supported in v1 — the
+ *    server answers 401 and this client surfaces it as {@link ObsAuthError} so the
+ *    caller can treat the page as "not available" instead of crashing.
  *
- * Uses only the platform `fetch` / `WebSocket` — no new dependency. A `WsLike`
- * factory and an injectable `fetch` keep it unit-testable against mocks.
+ * Error taxonomy (kept apart so callers can react locally vs. globally):
+ *  - 401 → {@link ObsAuthError}     (global: auth required / not available in v1)
+ *  - 403 → {@link ObsForbiddenError} (local + still: this write is locked)
+ *  - 404 → {@link ObsConcealedError} (a filtered/concealed datapoint → empty value)
+ *
+ * The WebSocket authenticates page-scoped via the query string
+ * (`?page_id=&session_token=`) exactly like `useWebSocket.ts`; a `4001` close is
+ * the server rejecting auth, so we do NOT reconnect on it (a plain reconnect
+ * would loop). Uses only the platform `fetch` / `WebSocket`; an injectable
+ * `fetch` and `WsLike` factory keep it unit-testable against mocks.
  */
 
 /* ------------------------------------------------------------------ config */
@@ -21,8 +32,6 @@ export interface ObsClientConfig {
   readonly apiBase?: string;
   /** WebSocket URL, e.g. "/api/v1/ws" (resolved against location) or absolute. */
   readonly wsUrl?: string;
-  readonly username?: string;
-  readonly password?: string;
   /** Injectable for tests; defaults to global fetch. */
   readonly fetchImpl?: typeof fetch;
   /** Injectable WebSocket constructor for tests; defaults to global WebSocket. */
@@ -48,6 +57,41 @@ export interface ObsValueEvent {
   readonly q?: string;
 }
 
+/** Page-scoped auth context for the value WebSocket (query-string auth). */
+export interface WsAuthContext {
+  readonly pageId?: string | null;
+  readonly sessionToken?: string | null;
+}
+
+/* ------------------------------------------------------------- error types */
+
+/** 401 — auth required / not available in v1 (user pages). Handle globally. */
+export class ObsAuthError extends Error {
+  readonly status = 401;
+  constructor(message = 'obs: unauthorized') {
+    super(message);
+    this.name = 'ObsAuthError';
+  }
+}
+
+/** 403 — the caller may not write this datapoint. Handle locally + silently. */
+export class ObsForbiddenError extends Error {
+  readonly status = 403;
+  constructor(message = 'obs: forbidden') {
+    super(message);
+    this.name = 'ObsForbiddenError';
+  }
+}
+
+/** 404 — a filtered/concealed datapoint. Read yields an empty value, no crash. */
+export class ObsConcealedError extends Error {
+  readonly status = 404;
+  constructor(message = 'obs: concealed') {
+    super(message);
+    this.name = 'ObsConcealedError';
+  }
+}
+
 const DEFAULT_API_BASE = '/api/v1';
 const DEFAULT_WS_PATH = '/api/v1/ws';
 
@@ -68,83 +112,87 @@ function resolveWsUrl(wsUrl: string | undefined): string {
 export class ObsClient {
   private readonly apiBase: string;
   private readonly wsUrl: string;
-  private readonly username: string;
-  private readonly password: string;
   private readonly doFetch: typeof fetch;
   private readonly makeWs: (url: string, protocols?: string | string[]) => WsLike;
 
-  private token: string | null = null;
-  /** De-duplicates concurrent logins into one in-flight request. */
-  private loginInFlight: Promise<string> | null = null;
+  /** node id → held PIN session (token + absolute expiry ms). Protected pages only. */
+  private readonly sessions = new Map<string, { token: string; expiresAt: number }>();
 
   constructor(config: ObsClientConfig = {}) {
     this.apiBase = config.apiBase ?? DEFAULT_API_BASE;
     this.wsUrl = resolveWsUrl(config.wsUrl);
-    this.username = config.username ?? 'admin';
-    this.password = config.password ?? 'admin';
     this.doFetch = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.makeWs =
       config.wsFactory ??
       ((url, protocols) => new WebSocket(url, protocols) as unknown as WsLike);
   }
 
-  /* -------------------------------------------------------------- auth */
+  /* -------------------------------------------------------------- PIN auth */
 
-  /** Ensure a JWT is held, logging in if necessary. Concurrent calls share one login. */
-  async ensureToken(): Promise<string> {
-    if (this.token) return this.token;
-    return this.login();
+  /**
+   * Authenticate a protected node with its PIN. On success the session token is
+   * cached under `nodeId` (respecting `expires_in`) and used for later
+   * `X-Session-Token` headers automatically. A wrong PIN is a 401 → thrown as
+   * {@link ObsAuthError} so the caller can show a PIN error without crashing.
+   */
+  async authenticatePin(
+    nodeId: string,
+    pin: string,
+  ): Promise<{ sessionToken: string; expiresIn: number }> {
+    const res = await this.doFetch(`${this.apiBase}/visu/nodes/${nodeId}/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin }),
+    });
+    if (res.status === 401) throw new ObsAuthError('obs: wrong PIN');
+    if (!res.ok) throw new Error(`obs-datasource: PIN auth failed (HTTP ${res.status})`);
+    const body = (await res.json()) as { session_token?: string; expires_in?: number };
+    if (!body.session_token) throw new Error('obs-datasource: auth response had no session_token');
+    const expiresIn = typeof body.expires_in === 'number' ? body.expires_in : 3600;
+    this.sessions.set(nodeId, {
+      token: body.session_token,
+      expiresAt: Date.now() + expiresIn * 1000,
+    });
+    return { sessionToken: body.session_token, expiresIn };
   }
 
-  /** Current token (may be null before the first login). For WS subprotocol use. */
-  get currentToken(): string | null {
-    return this.token;
-  }
-
-  private login(): Promise<string> {
-    if (this.loginInFlight) return this.loginInFlight;
-    this.loginInFlight = (async () => {
-      const res = await this.doFetch(`${this.apiBase}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: this.username, password: this.password }),
-      });
-      if (!res.ok) {
-        throw new Error(`obs-datasource: login failed (HTTP ${res.status})`);
-      }
-      const body = (await res.json()) as { access_token?: string };
-      if (!body.access_token) throw new Error('obs-datasource: login response had no token');
-      this.token = body.access_token;
-      return this.token;
-    })();
-    try {
-      return this.loginInFlight;
-    } finally {
-      // Clear the in-flight handle once it settles (success or failure) so a
-      // later expiry can trigger a fresh login.
-      void this.loginInFlight.finally(() => {
-        this.loginInFlight = null;
-      });
+  /** The valid (non-expired) session token held for `nodeId`, or null. */
+  sessionToken(nodeId: string): string | null {
+    const s = this.sessions.get(nodeId);
+    if (!s) return null;
+    if (s.expiresAt <= Date.now()) {
+      this.sessions.delete(nodeId);
+      return null;
     }
+    return s.token;
   }
 
   /* -------------------------------------------------------------- REST */
 
-  /** Authenticated JSON request with a single 401-driven re-login + retry. */
-  private async request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
-    const token = await this.ensureToken();
+  /** Build the page-scoped headers for a datapoint / writable request. */
+  private pageHeaders(pageId?: string | null, sessionToken?: string | null): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (pageId) headers['X-Page-Id'] = pageId;
+    const token = sessionToken ?? (pageId ? this.sessionToken(pageId) : null);
+    if (token) headers['X-Session-Token'] = token;
+    return headers;
+  }
+
+  /**
+   * A JSON request with the page-scoped error taxonomy. No admin login, no
+   * retry: 401/403/404 become their typed errors so callers separate a global
+   * auth problem from a locally-silent lock or a concealed datapoint.
+   */
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
       ...(init.headers as Record<string, string> | undefined),
     };
     const res = await this.doFetch(`${this.apiBase}${path}`, { ...init, headers });
 
-    if (res.status === 401 && retry) {
-      // Token expired/invalid → drop it, log in afresh, retry once (refresh path).
-      this.token = null;
-      return this.request<T>(path, init, false);
-    }
+    if (res.status === 401) throw new ObsAuthError(`obs: ${init.method ?? 'GET'} ${path} unauthorized`);
+    if (res.status === 403) throw new ObsForbiddenError(`obs: ${init.method ?? 'GET'} ${path} forbidden`);
+    if (res.status === 404) throw new ObsConcealedError(`obs: ${path} concealed`);
     if (!res.ok) {
       throw new Error(`obs-datasource: ${init.method ?? 'GET'} ${path} failed (HTTP ${res.status})`);
     }
@@ -152,20 +200,47 @@ export class ObsClient {
     return (await res.json()) as T;
   }
 
-  /** GET /visu/tree — the whole visu node tree (flat list). */
+  /** GET /visu/tree — the (server-filtered) visu node tree (flat list). Public read. */
   getVisuTree<T>(): Promise<T> {
     return this.request<T>('/visu/tree');
   }
 
-  /** GET /datapoints/{id}/value — one datapoint's current value. */
-  getValue(id: string): Promise<{ value: unknown; unit?: string | null }> {
-    return this.request(`/datapoints/${id}/value`);
+  /**
+   * POST /visu/nodes/{pageId}/writable — the per-datapoint writability verdict
+   * for the datapoints placed on a page, computed with the same authorization
+   * the real write path enforces. Page-scoped (`X-Page-Id` + optional
+   * `X-Session-Token`); readonly pages yield an all-false map server-side.
+   */
+  getWritable(pageId: string, sessionToken?: string | null): Promise<Record<string, boolean>> {
+    return this.request<{ writable?: Record<string, boolean> }>(
+      `/visu/nodes/${pageId}/writable`,
+      { method: 'POST', headers: this.pageHeaders(pageId, sessionToken) },
+    ).then((r) => r.writable ?? {});
   }
 
-  /** POST /datapoints/{id}/value — write a value (KNX etc. via the WriteRouter). */
-  writeValue(id: string, value: unknown): Promise<void> {
+  /** GET /datapoints/{id}/value — one datapoint's current value (page-scoped). */
+  getValue(
+    id: string,
+    pageId?: string | null,
+    sessionToken?: string | null,
+  ): Promise<{ value: unknown; unit?: string | null }> {
+    return this.request(`/datapoints/${id}/value`, { headers: this.pageHeaders(pageId, sessionToken) });
+  }
+
+  /**
+   * POST /datapoints/{id}/value — write a value (page-scoped). A 403 becomes
+   * {@link ObsForbiddenError} so the caller can treat the control as locked
+   * without surfacing an error.
+   */
+  writeValue(
+    id: string,
+    value: unknown,
+    pageId?: string | null,
+    sessionToken?: string | null,
+  ): Promise<void> {
     return this.request<void>(`/datapoints/${id}/value`, {
       method: 'POST',
+      headers: this.pageHeaders(pageId, sessionToken),
       body: JSON.stringify({ value }),
     });
   }
@@ -174,16 +249,15 @@ export class ObsClient {
 
   /**
    * Open the value-event WebSocket. `onValue` receives each `{id,v,…}` event;
-   * the socket auto-reconnects with backoff and re-subscribes the current id set
-   * (mirrors useWebSocket.ts). Returns a handle to (re)subscribe and to close.
+   * the socket auto-reconnects with backoff and re-subscribes the current id set.
+   * `getContext` (optional) supplies the page-scoped auth for the query string on
+   * every (re)connect. A `4001` close (auth rejected) stops reconnecting.
    */
-  openWebSocket(onValue: (ev: ObsValueEvent) => void): WsHandle {
-    return new WsHandle(
-      () => this.ensureToken(),
-      this.wsUrl,
-      this.makeWs,
-      onValue,
-    );
+  openWebSocket(
+    onValue: (ev: ObsValueEvent) => void,
+    getContext?: () => WsAuthContext,
+  ): WsHandle {
+    return new WsHandle(this.wsUrl, this.makeWs, onValue, getContext);
   }
 }
 
@@ -191,49 +265,58 @@ export class ObsClient {
 
 /**
  * A self-reconnecting WebSocket subscription. Buffers the subscribed id set so a
- * (re)connect re-sends it, exactly as the reference `useWebSocket.ts` does.
+ * (re)connect re-sends it, exactly as the reference `useWebSocket.ts` does. Auth
+ * is page-scoped via the query string; a `4001` close disables reconnection.
  */
 export class WsHandle {
   private socket: WsLike | null = null;
   private readonly ids = new Set<string>();
   private closed = false;
+  /** Set once the server rejects auth (close 4001) — reconnect stays disabled. */
+  private authRejected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
   private static readonly MAX_DELAY = 30_000;
 
   constructor(
-    private readonly getToken: () => Promise<string>,
     private readonly wsUrl: string,
     private readonly makeWs: (url: string, protocols?: string | string[]) => WsLike,
     private readonly onValue: (ev: ObsValueEvent) => void,
+    private readonly getContext?: () => WsAuthContext,
   ) {
-    void this.connect();
+    this.connect();
   }
 
-  private async connect(): Promise<void> {
-    if (this.closed || this.socket) return;
-    let token: string;
-    try {
-      token = await this.getToken();
-    } catch {
-      this.scheduleReconnect();
-      return;
-    }
-    if (this.closed) return;
+  private connect(): void {
+    if (this.closed || this.socket || this.authRejected) return;
 
-    const ws = this.makeWs(this.wsUrl, [`obs.jwt.${token}`]);
+    const ctx = this.getContext?.() ?? {};
+    let url = this.wsUrl;
+    const params = new URLSearchParams();
+    if (ctx.pageId) {
+      params.set('page_id', ctx.pageId);
+      if (ctx.sessionToken) params.set('session_token', ctx.sessionToken);
+    }
+    const qs = params.toString();
+    if (qs) url = `${url}${url.includes('?') ? '&' : '?'}${qs}`;
+
+    const ws = this.makeWs(url);
     this.socket = ws;
 
     ws.onopen = () => {
       this.reconnectDelay = 1000;
+      // Subscribe the full id set; the server delivers only the allowed scope
+      // (subscribe-intersection) — events for revoked DPs simply stop arriving.
       if (this.ids.size > 0) this.sendSubscribe([...this.ids]);
     };
     ws.onclose = (ev) => {
       this.socket = null;
       if (this.closed) return;
-      // 4001 = auth rejected by the server; a plain reconnect would loop, so
-      // drop the token first and reconnect (forces a fresh login).
-      if (ev?.code === 4001) this.reconnectDelay = 1000;
+      // 4001 = auth rejected by the server; reconnecting would loop, so stop.
+      if (ev?.code === 4001) {
+        this.authRejected = true;
+        return;
+      }
       this.scheduleReconnect();
     };
     ws.onerror = () => {
@@ -253,11 +336,11 @@ export class WsHandle {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer || this.closed) return;
+    if (this.reconnectTimer || this.closed || this.authRejected) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, WsHandle.MAX_DELAY);
-      void this.connect();
+      this.connect();
     }, this.reconnectDelay);
   }
 

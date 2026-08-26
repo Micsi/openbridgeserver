@@ -48,6 +48,13 @@ export interface ObsPageConfig {
   readonly widgets?: readonly ObsWidget[];
 }
 
+/**
+ * The page-scoped access mode of a visu node (obs/models/visu.py → AccessLevel).
+ * `public`/`readonly` need no auth, `protected` is PIN-gated, `user` needs a
+ * per-user login (NOT supported in the v1 mobile app).
+ */
+export type PageAccess = 'readonly' | 'public' | 'protected' | 'user';
+
 /** A visu tree node (obs/models/visu.py → VisuNode), flat list from /visu/tree. */
 export interface ObsVisuNode {
   readonly id: string;
@@ -55,6 +62,12 @@ export interface ObsVisuNode {
   readonly name: string;
   readonly type: 'LOCATION' | 'PAGE';
   readonly page_config: ObsPageConfig | null;
+  /**
+   * The node's *own* access mode as returned per node by `/visu/tree`, or
+   * null/undefined when unset (inherit from the parent). The effective access is
+   * resolved by walking up `parent_id` — see {@link resolveEffectiveAccess}.
+   */
+  readonly access?: PageAccess | null;
 }
 
 /** A single datapoint value (websocket value-event / GET …/value, normalised). */
@@ -143,6 +156,12 @@ export interface MappedWidget {
   readonly binding: DeviceBinding;
   /** Write-target datapoint ids per canonical action (dispatch uses these). */
   readonly writes: WriteTargets;
+  /**
+   * The id of the PAGE node this widget lives on. Set by {@link mapTree}; it is
+   * the `X-Page-Id` for this device's datapoint reads/writes and the key under
+   * which its page-scoped `access`/`writable`/session-token are looked up.
+   */
+  readonly pageId?: string;
 }
 
 /** Write-target datapoints + scaling info per device (dispatch reads these). */
@@ -369,10 +388,51 @@ export function mapTree(
     if (node.type !== 'PAGE' || !node.page_config?.widgets) continue;
     for (const w of node.page_config.widgets) {
       const mapped = mapWidget(w, node.name, values);
-      if (mapped) out.push(mapped);
+      // Stamp the owning PAGE id so the transport can address this device's
+      // datapoint ops with the right X-Page-Id / session token / access.
+      if (mapped) out.push({ ...mapped, pageId: node.id });
     }
   }
   return out;
+}
+
+/**
+ * Resolve every node's *effective* {@link PageAccess} by walking up `parent_id`
+ * until the first node with an explicitly set `access`; nodes with none inherit
+ * downward, and a tree with nothing set is `public` (the server default). A
+ * parent that is not present in the list (filtered out) or a `parent_id` cycle
+ * stops the walk at `public`.
+ */
+export function resolveEffectiveAccess(
+  nodes: readonly ObsVisuNode[],
+): Map<string, PageAccess> {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const resolve = (start: string | null): PageAccess => {
+    const seen = new Set<string>();
+    let cur = start;
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      const node = byId.get(cur);
+      if (!node) break;
+      if (node.access) return node.access;
+      cur = node.parent_id;
+    }
+    return 'public';
+  };
+  const out = new Map<string, PageAccess>();
+  for (const n of nodes) out.set(n.id, resolve(n.id));
+  return out;
+}
+
+/**
+ * The distinct write-target datapoint ids of a mapped device — the datapoints
+ * whose per-DP writability decides whether the device is operable. Used to fold
+ * the server's per-datapoint `writable` verdict into the single
+ * `Device.writable` flag (v1.5).
+ */
+export function deviceWriteDps(writes: WriteTargets): string[] {
+  const dps = [writes.onOff, writes.dim, writes.position, writes.slat, writes.lock];
+  return [...new Set(dps.filter((d): d is string => typeof d === 'string' && d.length > 0))];
 }
 
 /**
