@@ -228,6 +228,8 @@ ROUTE_CLASSIFICATIONS: Final[dict[RouteSignature, RouteCategory]] = {
     ("POST", "/api/v1/visu/nodes/import"): "config_mutation",
     ("POST", "/api/v1/visu/nodes/{node_id}/auth"): "config_mutation",
     ("POST", "/api/v1/visu/nodes/{node_id}/copy"): "config_mutation",
+    # Read-only, page-scoped writability preview (no mutation); mirrors POST /authz/preview.
+    ("POST", "/api/v1/visu/nodes/{node_id}/writable"): "read_live",
     ("PUT", "/api/v1/auth/apikeys/{key_id}/capabilities"): "config_mutation",
     ("PUT", "/api/v1/config/autobackup/config"): "config_mutation",
     ("PUT", "/api/v1/authz/principals/{principal_type}/{principal_id:path}/grants"): "config_mutation",

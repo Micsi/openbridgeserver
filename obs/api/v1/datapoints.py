@@ -768,29 +768,31 @@ async def _page_has_datapoint(db: Database, page_id: str, dp_id: uuid.UUID) -> b
     return False
 
 
-@router.post("/{dp_id}/value", status_code=status.HTTP_204_NO_CONTENT)
-async def write_value(
+async def _authorize_datapoint_write(
+    db: Database,
+    dp: Any,
     dp_id: uuid.UUID,
-    body: WriteValueIn,
-    request: Request,
-    user: Principal | str | None = Depends(_optional_current_principal),
-    db: Database = Depends(get_db),
+    user: Principal | str | None,
+    *,
+    page_id: str | None,
+    session_token: str | None,
 ) -> None:
-    """Write a value to a DataPoint via the internal EventBus.
+    """Authorize a value write to *dp*, raising ``HTTPException`` when denied.
+
+    Extracted from the real write path so the page-scoped visu writable batch
+    check can reuse the *exact* same decision: a pre-flight ``writable`` verdict
+    can therefore never diverge from what an actual ``POST .../value`` enforces.
+    Returns ``None`` when the write is allowed.
 
     Zugriffslogik:
     - Authentifizierter Principal → WRITE-Grant erforderlich (Admin-Bridge bleibt erhalten)
-    - X-Page-Id Header + Seite ist 'public' → erlaubt
-    - X-Page-Id Header + Seite ist 'protected' + gültiger X-Session-Token → erlaubt
-    - Seite ist 'readonly' → 403 (auch mit Page-Header)
-    - Seite ist 'private' ohne JWT → 401
-    - Kein Auth-Kontext → 401
+    - Seiten-Kontext (page_id) + Seite ist 'public' → erlaubt
+    - Seiten-Kontext + Seite ist 'protected' + gültiger session_token → erlaubt
+    - Seite ist 'readonly' → 403 (auch mit Seiten-Kontext)
+    - Seite ist 'user' ohne Zuweisung → 403
+    - Kein Seiten-Kontext ohne Grant → 401 (unauth) bzw. 403 (auth)
+    - central_plant ohne passenden Grant → 403 (nie über Seiten-Kontext schreibbar)
     """
-    reg = get_registry()
-    dp = reg.get(dp_id)
-    if dp is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
-
     principal: Principal | None = None
     authenticated_write_allowed = False
     if user is not None:
@@ -818,7 +820,6 @@ async def write_value(
             if not authenticated_write_allowed and getattr(dp, "control_class", "room_local") == "central_plant":
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
     if not authenticated_write_allowed:
-        page_id = request.headers.get("X-Page-Id")
         if not page_id:
             if user is not None:
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
@@ -832,7 +833,6 @@ async def write_value(
         if access == "readonly":
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Page is read-only")
         if access == "protected":
-            session_token = request.headers.get("X-Session-Token")
             validate_id = defining_node_id or page_id
             if not session_token or not validate_session(session_token, validate_id):
                 raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Valid session token required")
@@ -845,6 +845,39 @@ async def write_value(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
         if dp.control_class == "central_plant":
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
+
+
+@router.post("/{dp_id}/value", status_code=status.HTTP_204_NO_CONTENT)
+async def write_value(
+    dp_id: uuid.UUID,
+    body: WriteValueIn,
+    request: Request,
+    user: Principal | str | None = Depends(_optional_current_principal),
+    db: Database = Depends(get_db),
+) -> None:
+    """Write a value to a DataPoint via the internal EventBus.
+
+    Zugriffslogik:
+    - Authentifizierter Principal → WRITE-Grant erforderlich (Admin-Bridge bleibt erhalten)
+    - X-Page-Id Header + Seite ist 'public' → erlaubt
+    - X-Page-Id Header + Seite ist 'protected' + gültiger X-Session-Token → erlaubt
+    - Seite ist 'readonly' → 403 (auch mit Page-Header)
+    - Seite ist 'private' ohne JWT → 401
+    - Kein Auth-Kontext → 401
+    """
+    reg = get_registry()
+    dp = reg.get(dp_id)
+    if dp is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DataPoint {dp_id} not found")
+
+    await _authorize_datapoint_write(
+        db,
+        dp,
+        dp_id,
+        user,
+        page_id=request.headers.get("X-Page-Id"),
+        session_token=request.headers.get("X-Session-Token"),
+    )
 
     try:
         value = _coerce_value_for_type(body.value, dp.data_type)

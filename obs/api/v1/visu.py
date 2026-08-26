@@ -29,6 +29,7 @@ import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
 
 from obs.api.auth import Principal, get_admin_user, get_current_principal, limiter
 from obs.api.authz import AuthzAction, authorize
@@ -1157,6 +1158,66 @@ async def get_page(
         session_token=request.headers.get("X-Session-Token"),
     )
     return config
+
+
+class WritableBatchOut(BaseModel):
+    """Per-datapoint writability verdict for the datapoints placed on a page."""
+
+    writable: dict[str, bool]
+
+
+@router.post("/nodes/{node_id}/writable", response_model=WritableBatchOut)
+async def get_writable_datapoints(
+    node_id: str,
+    request: Request,
+    db: Database = Depends(get_db),
+    user: Principal | str | None = Depends(_optional_visu_principal),
+) -> WritableBatchOut:
+    """Report, per datapoint placed on a visu page, whether the current caller
+    may write it.
+
+    The verdict is computed with the *exact same* authorization the real write
+    path (`POST /api/v1/datapoints/{id}/value`) enforces — the shared
+    `_authorize_datapoint_write` helper — so a widget can decide up front which
+    controls to render interactive without ever diverging from what an actual
+    write attempt would allow. Access is page-scoped like the value route: no
+    user JWT is required; readonly pages yield all-false, `central_plant`
+    datapoints stay false without a matching grant, and reading the map itself
+    requires the same page read access as loading the page.
+    """
+    principal = _principal_from_dependency(user)
+    node = await _get_node_or_404(db, node_id)
+    if node.type != "PAGE":
+        raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
+
+    config = node.page_config or PageConfig()
+    session_token = request.headers.get("X-Session-Token")
+    await _check_page_read_access(db, node_id, principal, config, session_token=session_token)
+
+    from obs.api.v1.datapoints import _authorize_datapoint_write
+    from obs.core.registry import get_registry
+
+    reg = get_registry()
+    writable: dict[str, bool] = {}
+    for dp_id_str in _collect_page_datapoint_ids(config):
+        dp = reg.get(uuid.UUID(dp_id_str))
+        if dp is None:
+            writable[dp_id_str] = False
+            continue
+        try:
+            await _authorize_datapoint_write(
+                db,
+                dp,
+                uuid.UUID(dp_id_str),
+                user,
+                page_id=node_id,
+                session_token=session_token,
+            )
+        except HTTPException:
+            writable[dp_id_str] = False
+        else:
+            writable[dp_id_str] = True
+    return WritableBatchOut(writable=writable)
 
 
 @router.get("/widget-ref/{page_id}", response_model=list[WidgetRefInstance])
