@@ -30,8 +30,8 @@ const s = schema as Record<string, any>;
 const f = fixtures as Record<string, any>;
 
 describe('contract.schema.json — Globals (§2)', () => {
-  it('declares version 1.4', () => {
-    expect(s.version).toBe('1.4');
+  it('declares version 1.5', () => {
+    expect(s.version).toBe('1.5');
   });
 
   it('declares roles exactly [compact,default,wide,tall,feature,banner]', () => {
@@ -154,6 +154,14 @@ describe('contract.schema.json — widget types (§3)', () => {
     }
   });
 
+  it('every core dataSchema permits the optional base field writable (v1.5)', () => {
+    for (const t of CORE_TYPES) {
+      expect(s.widgets[t].dataSchema.properties.writable, `${t}.writable`).toEqual({ type: 'boolean' });
+      // additiv/optional: writable ist nirgends required (rückwärtskompatibel).
+      expect(s.widgets[t].dataSchema.required, `${t}.required`).not.toContain('writable');
+    }
+  });
+
   it('scene: icon/sub, activateScene per §3', () => {
     const w = s.widgets.scene;
     expect(Object.keys(w.data).sort()).toEqual(['accent', 'icon', 'label', 'room', 'sub'].sort());
@@ -164,8 +172,12 @@ describe('contract.schema.json — widget types (§3)', () => {
 });
 
 describe('fixtures.json — completeness (§4)', () => {
-  it('declares contractVersion 1.4', () => {
-    expect(f.contractVersion).toBe('1.4');
+  it('declares contractVersion 1.5', () => {
+    expect(f.contractVersion).toBe('1.5');
+  });
+
+  it('carries a writable fixture example that validates as an optional boolean (v1.5)', () => {
+    expect(f.switch.off.writable).toBe(false);
   });
 
   it('provides every core type with its expected states', () => {

@@ -23,6 +23,24 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.5.0] — 2026-08-26
+
+v1.5: `DeviceBase.writable` – geräte-genaue Bedienbarkeit als Datengrundlage für die
+authz-/readonly-Durchsetzung in der Visu (gesperrte Controls bei fehlendem Write-Recht
+oder readonly-Seite).
+
+### Added
+
+- **DeviceBase (§3):** additives optionales Feld `writable` (`boolean`) für **alle**
+  Device-Typen. `undefined`/`true` = bedienbar (Default, rückwärtskompatibel), `false` =
+  vom Host als nicht-schreibbar markiert (readonly-Seite **oder** fehlendes Write-Recht) —
+  die Skin rendert die Controls dann gesperrt. Die Auswertung liefert der Host; die
+  Renderer-Nutzung folgt in einer eigenen Welle. Additive Minor-Änderung (§9): bestehende
+  Skins und die App bleiben unverändert gültig.
+- **Schema/Fixtures:** `contract.schema.json` deklariert `version: "1.5"` und ergänzt
+  `writable` in den `dataSchema`s aller Kern-Typen (analog `floor`). `fixtures` ziehen auf
+  `contractVersion: "1.5"` nach (ein `writable: false`-Beispiel bei `switch.off`).
+
 ## [1.4.0] — 2026-08-22
 
 v1.4: `climate` wird Kern-Typ; Sensor bekommt Zeitreihe/Icon; `Ctx.stateParts` und `DeviceBase.floor`
@@ -131,6 +149,7 @@ Erste stabile Vertragsversion (`version: "1.0"`).
 - **Exports:** `index.ts` exportiert `schema`, `fixtures`, `version` (= `"1.0"`) und die
   Typen.
 
+[1.5.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.4.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.3.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract
 [1.2.0]: https://github.com/Micsi/openbridgeserver/tree/feat/visu-mobile-skins/packages/contract

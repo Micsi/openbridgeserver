@@ -38,6 +38,13 @@ interface DeviceBase {
   readonly accent: AccentToken;
   /** Optionales Etagen-/Geschoss-Label für den Crumb-Pfad im Detail (v1.4). */
   readonly floor?: string;
+  /**
+   * Geräte-genaue Bedienbarkeit (v1.5): `undefined`/`true` = bedienbar (Default,
+   * rückwärtskompatibel), `false` = vom Host als nicht-schreibbar markiert
+   * (readonly-Seite ODER fehlendes Write-Recht) — die Skin rendert die Controls
+   * dann gesperrt. Gilt für **alle** Device-Typen; die Auswertung liefert der Host.
+   */
+  readonly writable?: boolean;
 }
 
 /** `light` — on/off plus optional brightness (`dim`, null = nicht dimmbar). */

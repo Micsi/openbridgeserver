@@ -51,6 +51,13 @@ describe('Device unions (§5) — readonly', () => {
     expectTypeOf<ClimateDevice['floor']>().toEqualTypeOf<string | undefined>();
   });
 
+  it('every device carries the optional base field writable (v1.5)', () => {
+    expectTypeOf<LightDevice['writable']>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<SwitchDevice['writable']>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<SensorDevice['writable']>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<ClimateDevice['writable']>().toEqualTypeOf<boolean | undefined>();
+  });
+
   it('media/camera (v1.2) carry their discriminants and fields', () => {
     expectTypeOf<MediaDevice['type']>().toEqualTypeOf<'media'>();
     expectTypeOf<MediaDevice['playState']>().toEqualTypeOf<'playing' | 'paused' | 'stopped'>();
