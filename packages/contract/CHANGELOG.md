@@ -23,6 +23,22 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.7.0] — 2026-08-27
+
+v1.7: `SkinManifest.gestures` – ein Skin bringt sein eigenes Gesten-/Interaktionsmodell
+mit (welche Geste welches Ziel auslöst). Rein deklarative Daten; der Renderer bleibt
+zustandslos, die Gesten-Erkennung und -Anwendung besitzt weiterhin der Host.
+
+### Added
+
+- **`GestureTarget` (§7):** `'action' | 'openDetail' | 'presets'` – das Ziel-Verhalten,
+  das der Host für eine Geste anwendet (`action` = die markierte `data-action` ausführen).
+- **`SkinGestures` (§7):** `{ tap?; longPress?; doubleTap? }` je `GestureTarget`.
+- **`SkinManifest.gestures` (§7):** additives optionales Feld. Fehlt es, nutzt der Host
+  einen rückwärtskompatiblen Default. Additive Minor-Änderung (§9): bestehende Skins und
+  die App bleiben gültig. Keine Änderung an der Device-Datenform; `contract.schema.json`
+  und `fixtures` ziehen nur die Versionsnummer auf `1.7` nach.
+
 ## [1.6.0] — 2026-08-27
 
 v1.6: `PositionPreset` + `presets` für positionsbasierte Geräte (Rolladen/Jalousie) plus

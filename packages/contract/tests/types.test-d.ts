@@ -15,6 +15,8 @@ import type {
   Ctx,
   Renderer,
   SkinManifest,
+  SkinGestures,
+  GestureTarget,
   SupportReport,
   WidgetAction,
 } from '../src/types.js';
@@ -151,6 +153,16 @@ describe('SkinManifest (§7)', () => {
     expectTypeOf<SkinManifest['unsupported']>().toEqualTypeOf<readonly string[]>();
     expectTypeOf<SkinManifest>().toHaveProperty('widgets');
     expectTypeOf<SkinManifest>().toHaveProperty('layout');
+  });
+
+  it('carries an optional skin gesture model (v1.7)', () => {
+    expectTypeOf<SkinManifest['gestures']>().toEqualTypeOf<SkinGestures | undefined>();
+    expectTypeOf<SkinGestures['tap']>().toEqualTypeOf<GestureTarget | undefined>();
+    expectTypeOf<SkinGestures['longPress']>().toEqualTypeOf<GestureTarget | undefined>();
+    expectTypeOf<SkinGestures['doubleTap']>().toEqualTypeOf<GestureTarget | undefined>();
+    expectTypeOf<'presets'>().toMatchTypeOf<GestureTarget>();
+    expectTypeOf<'openDetail'>().toMatchTypeOf<GestureTarget>();
+    expectTypeOf<'action'>().toMatchTypeOf<GestureTarget>();
   });
 });
 

@@ -274,6 +274,28 @@ export interface SkinTweak {
   readonly default: string | number;
 }
 
+/**
+ * Ziel-Verhalten, das der Host für eine Geste anwendet (v1.7):
+ *  - `action`     – die vom getippten Element markierte `data-action` ausführen
+ *    (ein Bedienelement bedienen; ein `openDetail`-Träger öffnet so das Detail).
+ *  - `openDetail` – die Detailfläche öffnen (Kachel-Ebene, elementunabhängig).
+ *  - `presets`    – das Positions-Preset-Popover öffnen (Fallback `openDetail`,
+ *    wenn das Gerät keine Presets trägt; die Fallback-Politik liegt im Host).
+ */
+export type GestureTarget = 'action' | 'openDetail' | 'presets';
+
+/**
+ * Das Interaktionsmodell eines Skins (v1.7): welche Geste welches Ziel auslöst.
+ * Rein deklarative Daten (Daten=JSON, Verhalten=Code) – der Renderer bleibt
+ * zustandslos, die Gesten-Erkennung und -Anwendung besitzt der Host. Fehlt die
+ * Deklaration, nutzt der Host einen rückwärtskompatiblen Default.
+ */
+export interface SkinGestures {
+  readonly tap?: GestureTarget;
+  readonly longPress?: GestureTarget;
+  readonly doubleTap?: GestureTarget;
+}
+
 /** skins/<name>/manifest.json — CONTRACT-v1.md §7. */
 export interface SkinManifest {
   readonly name: string;
@@ -287,6 +309,8 @@ export interface SkinManifest {
   readonly layout: SkinLayout;
   readonly tweaks?: Readonly<Record<string, SkinTweak>>;
   readonly themes?: readonly string[];
+  /** Skin-eigenes Gesten-/Interaktionsmodell (v1.7); optional, Host-Default sonst. */
+  readonly gestures?: SkinGestures;
 }
 
 /* ---------------------------------------------- Support report (§8) ------- */
