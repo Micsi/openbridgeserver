@@ -4,12 +4,15 @@
  * It must be a *child* of DetailModalHost so it can reach the host API via
  * `inject(HOST_KEY)` (DetailModalHost `provide`s it to its slot subtree). The
  * grid is the single seam that turns a gesture on a skin tile into a canonical
- * action. The gesture Zielmodell (vom User festgelegt): a single tap dispatches
- * the tile's `data-action` onto the core store (Direktbedienung); a long-press
- * opens the position-preset quick menu (`openPresets`) for a device that has
- * presets, else the detail surface; a double-tap opens the detail (`openDetail`).
- * The skin tiles only *mark* `data-action`; the host owns the mapping and the
- * state (Goldene Regel 4 – the skin owns no state).
+ * action. The gesture Zielmodell is now *skin-manifest-getrieben* (Contract
+ * v1.7): the skin declares which gesture maps to which {@link GestureTarget},
+ * and the host applies it. A skin that declares nothing keeps the backward-
+ * compatible {@link DEFAULT_GESTURES} (tap → action, long-press → openDetail).
+ * The three targets are: `action` (dispatch the tile's marked `data-action`),
+ * `openDetail` (open the detail surface), `presets` (open the position-preset
+ * quick menu, falling back to the detail when the device has no presets). The
+ * skin tiles only *mark* `data-action`; the host owns the mapping and the state
+ * (Goldene Regel 4 – the skin owns no state; Daten=JSON, Verhalten=Code).
  *
  * Implemented as a render component (not an SFC) because SkinHost is itself a
  * render component returning VNodes, and the grid is pure event-capture + render
@@ -23,8 +26,18 @@ import { parseIntent, dispatchIntent, type ActionStore } from '../skin-host/acti
 import { useLongPress } from '../core/useLongPress';
 import { useDoubleTap } from '../core/useDoubleTap';
 import { HOST_KEY } from '../app/DetailModalHost.vue';
+import { resolveSkin } from '../skin-host/skins';
 import type { RoomGroup } from '../core/model';
 import type { Theme } from '../core/tokens';
+import type { SkinGestures, GestureTarget } from '@obs/visu-contract';
+
+/**
+ * Backward-compatible default interaction model: a skin that declares no
+ * `gestures` in its manifest keeps the pre-v1.7 behaviour – a single tap
+ * dispatches the marked action, a long-press opens the detail. No `doubleTap`
+ * and no `presets` unless a skin opts in by declaring them.
+ */
+const DEFAULT_GESTURES = { tap: 'action', longPress: 'openDetail' } as const;
 
 /** Resolve the device id a DOM target belongs to (its enclosing tile cell). */
 function tileIdFor(target: EventTarget | null): string | null {
@@ -50,27 +63,63 @@ export default defineComponent({
     const actionStore = store as unknown as ActionStore;
     const host = inject(HOST_KEY, null);
 
+    // The interaction model is the skin's declaration merged onto the default
+    // (author-time decision – no runtime skin switch). A skin that declares no
+    // `gestures` keeps the backward-compatible DEFAULT_GESTURES.
+    const skin = resolveSkin(props.skin);
+    const gestures: SkinGestures = { ...DEFAULT_GESTURES, ...(skin.manifest.gestures ?? {}) };
+
     /** Tile under the current long-press (resolved on pointerdown). */
     let pressedId: string | null = null;
 
-    const longPress = useLongPress((ev) => {
-      if (pressedId !== null) {
-        const dev = store.byId(pressedId);
-        // Long-press opens the position-preset quick menu when the device has
-        // presets (blind/jalousie, v1.6); otherwise it falls back to the detail.
-        if (dev && 'presets' in dev && dev.presets?.length && host?.openPresets) {
-          host.openPresets(pressedId, ev);
-        } else if (host) {
-          host.openDetail(pressedId);
+    /**
+     * Apply the {@link GestureTarget} a gesture is mapped to for a device. The
+     * host owns the mapping and the state (golden rule 4 – the skin owns none).
+     * `undefined` (a gesture the skin does not declare) is a no-op.
+     */
+    function applyGesture(target: GestureTarget | undefined, id: string, ev: Event): void {
+      // A gesture the skin does not declare (undefined) is a no-op.
+      if (!target) return;
+      switch (target) {
+        case 'action': {
+          // Dispatch the tile's marked data-action. openDetail is a shell
+          // concern (the host owns the modal), not a store write; every other
+          // action is a canonical core write forwarded to the store.
+          const intent = parseIntent(ev.target);
+          if (!intent) return;
+          if (intent.action === 'openDetail') host?.openDetail(id);
+          else dispatchIntent(actionStore, id, intent);
+          return;
         }
+        case 'openDetail':
+          host?.openDetail(id);
+          return;
+        case 'presets':
+          // The preset quick menu applies only to a device that carries presets
+          // (blind/jalousie) with a host that can open them; otherwise it falls
+          // back to the detail surface (the fallback policy lives in the host).
+          {
+            const dev = store.byId(id);
+            if (dev && 'presets' in dev && dev.presets?.length && host?.openPresets) {
+              host.openPresets(id, ev);
+            } else {
+              host?.openDetail(id);
+            }
+          }
+          return;
       }
+    }
+
+    const longPress = useLongPress((ev) => {
+      if (pressedId !== null) applyGesture(gestures.longPress, pressedId, ev);
       ev.preventDefault?.();
     });
 
     const doubleTap = useDoubleTap((ev) => {
-      // Double-tap opens the detail surface (the mouse single-tap no longer does).
+      // Double-tap applies the skin's doubleTap target. The default model
+      // declares none, so applyGesture(undefined) makes it a no-op there.
       const id = tileIdFor(ev.target);
-      if (id !== null && host) host.openDetail(id);
+      if (id !== null) applyGesture(gestures.doubleTap, id, ev);
     });
 
     function onClick(ev: MouseEvent): void {
@@ -79,19 +128,12 @@ export default defineComponent({
       if (longPress.fired || doubleTap.fired) return;
       const id = tileIdFor(ev.target);
       if (id === null) return;
-      const intent = parseIntent(ev.target);
-      if (!intent) return;
-      // openDetail is a shell concern (the host owns the modal), not a store write.
-      if (intent.action === 'openDetail') {
-        // a11y nuance: keyboard activation of a role=button (Enter/Space) reports
-        // `MouseEvent.detail === 0`, a real pointer click reports `detail >= 1`.
-        // Only the keyboard path opens the detail from a single click here – a
-        // mouse/touch single-tap opens no detail (the double-tap owns that now),
-        // so keyboard users keep a one-press route to the detail surface.
-        if ((ev as MouseEvent).detail === 0 && host) host.openDetail(id);
-        return;
-      }
-      dispatchIntent(actionStore, id, intent);
+      // Single-tap applies the skin's `tap` target. With tap:'action' a tap on
+      // an openDetail-marked element (e.g. the display-only Rolladen tile) now
+      // opens the detail directly for mouse, touch AND keyboard – the old
+      // detail===0 keyboard-only special case is gone, because keyboard
+      // Enter/Space takes the same `action` path and so keeps working.
+      applyGesture(gestures.tap, id, ev);
     }
 
     function onPointerdown(ev: PointerEvent): void {
