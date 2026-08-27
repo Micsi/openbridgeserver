@@ -122,13 +122,21 @@ function computeChanges(device: Device, action: WidgetAction, payload?: unknown)
 
 /**
  * Clone a device so a returned snapshot shares no mutable state with the source.
- * A shallow copy still shares nested objects — notably a jalousie's `statuses`
- * array and its status objects — so a consumer mutating `list()[…].statuses[0]`
- * would reach back into the source. Deep-clone the one nested field that exists.
+ * A shallow copy still shares nested objects – a jalousie's `statuses` array and
+ * its status objects, and the v1.6 `presets` array (blind/jalousie) with its
+ * preset objects – so a consumer mutating `list()[…].statuses[0]` or a preset
+ * would reach back into the source. Deep-clone the nested fields that exist.
  */
 function clone(device: Device): Device {
   if (device.type === 'jalousie') {
-    return { ...device, statuses: device.statuses.map((s) => ({ ...s })) };
+    return {
+      ...device,
+      statuses: device.statuses.map((s) => ({ ...s })),
+      ...(device.presets ? { presets: device.presets.map((p) => ({ ...p })) } : {}),
+    };
+  }
+  if (device.type === 'blind' && device.presets) {
+    return { ...device, presets: device.presets.map((p) => ({ ...p })) };
   }
   return { ...device } as Device;
 }

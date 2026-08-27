@@ -22,17 +22,8 @@
  * dialog mutated the device directly; here every control is a host intent so the
  * skin stays stateless and the store remains the single owner of state.
  */
-import {
-  defineComponent,
-  h,
-  computed,
-  ref,
-  provide,
-  type InjectionKey,
-  type PropType,
-  type VNode,
-} from 'vue';
-import { IonModal } from '@ionic/vue';
+import { defineComponent, h, computed, ref, provide, type InjectionKey, type PropType, type VNode } from 'vue';
+import { IonModal, IonPopover } from '@ionic/vue';
 
 import type { Device } from '@obs/visu-contract';
 import type { RootTweakStyle } from '@obs-visu-skins/ionic';
@@ -40,21 +31,21 @@ import { useDeviceStore } from '../core/store';
 import { ctx as defaultCtx } from '../core/ctx';
 import { makeTokens, type Theme } from '../core/tokens';
 import { resolveSkin } from '../skin-host/skins';
-import {
-  parseIntent,
-  dispatchIntent,
-  type HostAction,
-  type ActionStore,
-} from '../skin-host/actions';
+import { parseIntent, dispatchIntent, type HostAction, type ActionStore } from '../skin-host/actions';
 
 /** The host surface provided to descendants (tiles drive it via these handles). */
 export interface SkinHostApi {
   /** Map a skin gesture to a canonical core-store action (golden rule 4). */
   dispatch(id: string, action: HostAction, payload?: number): void;
-  /** Open the detail surface for a device id (long-press / `openDetail` intent). */
+  /** Open the detail surface for a device id (double-tap / `openDetail` intent). */
   openDetail(id: string): void;
   /** Dismiss the detail surface. */
   closeDetail(): void;
+  /**
+   * Open the position-preset quick menu (popover) for a device id (long-press).
+   * `ev` is the triggering event used as the popover anchor (ion-popover `:event`).
+   */
+  openPresets(id: string, ev?: Event): void;
 }
 
 /** Inject key for the host API. */
@@ -90,8 +81,15 @@ export default defineComponent({
     /** The device whose detail is open, or null when the modal is closed. */
     const openId = ref<string | null>(null);
     const isOpen = computed(() => openId.value !== null);
-    const device = computed<Device | undefined>(() =>
-      openId.value !== null ? store.byId(openId.value) : undefined,
+    const device = computed<Device | undefined>(() => (openId.value !== null ? store.byId(openId.value) : undefined));
+
+    /** The device whose preset popover is open, or null when it is closed. */
+    const presetsId = ref<string | null>(null);
+    /** The event that anchors the popover (ion-popover `:event`). */
+    const presetsEvent = ref<Event | undefined>();
+    const presetsOpen = computed(() => presetsId.value !== null);
+    const presetsDevice = computed<Device | undefined>(() =>
+      presetsId.value !== null ? store.byId(presetsId.value) : undefined,
     );
 
     // The store, narrowed to the action surface actions.ts calls (incl. byId for
@@ -114,7 +112,16 @@ export default defineComponent({
       openId.value = null;
     }
 
-    provide<SkinHostApi>(HOST_KEY, { dispatch, openDetail, closeDetail });
+    function openPresets(id: string, ev?: Event): void {
+      presetsId.value = id;
+      presetsEvent.value = ev;
+    }
+    function closePresets(): void {
+      presetsId.value = null;
+      presetsEvent.value = undefined;
+    }
+
+    provide<SkinHostApi>(HOST_KEY, { dispatch, openDetail, closeDetail, openPresets });
 
     /**
      * Capture a tap/input inside the modal: parse the skin's data-action marker
@@ -131,6 +138,27 @@ export default defineComponent({
         return;
       }
       dispatchIntent(actionStore, id, intent, eventSliderValue(ev));
+    }
+
+    /**
+     * Capture a tap inside the preset popover: parse the skin's data-action
+     * marker and dispatch it (an `applyPreset` carries `data-arg` = the index).
+     * A `close` intent or any real preset action dismisses the popover – a
+     * preset tap is a one-shot choice, so the quick menu closes after it. The
+     * preset buttons are plain buttons (no ion-range), so a single `onClick`
+     * capture seam suffices; no exact-cased Ionic event binding is needed.
+     */
+    function onPresetEvent(ev: Event): void {
+      const id = presetsId.value;
+      if (id === null) return;
+      const intent = parseIntent(ev.target);
+      if (!intent) return;
+      if (intent.action === 'close') {
+        closePresets();
+        return;
+      }
+      dispatchIntent(actionStore, id, intent, eventSliderValue(ev));
+      closePresets();
     }
 
     /** Ionic range custom events the modal body listens for (exact camelCase). */
@@ -159,8 +187,7 @@ export default defineComponent({
       // The generic surface uses the centralised `ctx.t` (with the same German
       // fallback the skin detail renderers use) so it tracks the active locale
       // when the host injected a translator, and reads sensibly without one.
-      const tr = (key: string, fallback: string): string =>
-        defaultCtx.t ? defaultCtx.t(key) : fallback;
+      const tr = (key: string, fallback: string): string => (defaultCtx.t ? defaultCtx.t(key) : fallback);
 
       const actions: VNode[] = [];
       if (d.type === 'scene') {
@@ -195,12 +222,36 @@ export default defineComponent({
     const detailBody = computed<VNode | null>(() => {
       const d = device.value;
       if (!d) return null;
-      const renderer = (skin.value.details as Record<string, ((d: Device, t: ReturnType<typeof makeTokens>, c: typeof defaultCtx) => unknown) | undefined>)[d.type];
+      const renderer = (
+        skin.value.details as Record<
+          string,
+          ((d: Device, t: ReturnType<typeof makeTokens>, c: typeof defaultCtx) => unknown) | undefined
+        >
+      )[d.type];
       if (renderer) {
         const tokens = makeTokens(props.theme, d.accent);
         return renderer(d, tokens, defaultCtx) as VNode;
       }
       return defaultDetail(d);
+    });
+
+    /**
+     * The preset popover body: the skin's `presets[type]` renderer for the
+     * device, or null when the skin ships none (the popover then renders empty).
+     * Uses `skin.value.presets` exactly like `detailBody` uses `skin.value.details`.
+     */
+    const presetBody = computed<VNode | null>(() => {
+      const d = presetsDevice.value;
+      if (!d) return null;
+      const renderer = (
+        skin.value.presets as Record<
+          string,
+          ((d: Device, t: ReturnType<typeof makeTokens>, c: typeof defaultCtx) => unknown) | undefined
+        >
+      )[d.type];
+      if (!renderer) return null;
+      const tokens = makeTokens(props.theme, d.accent);
+      return renderer(d, tokens, defaultCtx) as VNode;
     });
 
     return () =>
@@ -241,6 +292,35 @@ export default defineComponent({
                       onVnodeBeforeUnmount: unbindIonEvents,
                     },
                     [detailBody.value],
+                  )
+                : null,
+          },
+        ),
+        h(
+          IonPopover,
+          {
+            class: 'skin-host-presets',
+            'is-open': presetsOpen.value,
+            // The triggering long-press event anchors the popover to the tile.
+            event: presetsEvent.value,
+            onDidDismiss: closePresets,
+          },
+          {
+            default: () =>
+              presetBody.value
+                ? h(
+                    'div',
+                    {
+                      // Same themed surface recreation as the modal body: the
+                      // popover is teleported to <body>, outside the page root.
+                      class: ['visu-root', 'skin-host-presets-body'],
+                      ...(props.rootBind?.attrs ?? {}),
+                      style: props.rootBind?.style,
+                      // Preset buttons are plain buttons – one onClick capture
+                      // seam is enough (no ion-range, so no exact-cased binding).
+                      onClick: onPresetEvent,
+                    },
+                    [presetBody.value],
                   )
                 : null,
           },

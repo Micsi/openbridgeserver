@@ -37,9 +37,20 @@ const IonModalStub = defineComponent({
   },
 });
 
+// Same passthrough treatment for IonPopover: reflect `is-open` and always render
+// its default slot so the host's preset-popover wiring is assertable under jsdom.
+const IonPopoverStub = defineComponent({
+  name: 'IonPopover',
+  props: { isOpen: { type: Boolean, default: false } },
+  setup(p, { slots }) {
+    return () =>
+      h('ion-popover', { 'is-open': String(!!p.isOpen) }, slots.default ? slots.default() : []);
+  },
+});
+
 const global = {
   config: { compilerOptions: { isCustomElement: (tag: string) => tag.startsWith('ion-') } },
-  stubs: { IonModal: IonModalStub },
+  stubs: { IonModal: IonModalStub, IonPopover: IonPopoverStub },
 };
 
 async function seed(devices?: readonly Device[]): Promise<void> {
@@ -72,6 +83,85 @@ describe('DetailModalHost — provides the host API', () => {
     expect(typeof api?.dispatch).toBe('function');
     expect(typeof api?.openDetail).toBe('function');
     expect(typeof api?.closeDetail).toBe('function');
+    expect(typeof api?.openPresets).toBe('function');
+  });
+});
+
+describe('DetailModalHost — openPresets renders the skin preset popover (v1.6)', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('opens the popover and renders the skin presets[type] for a device with presets', async () => {
+    await seed(); // the default model gives kueche-roll (blind) its position presets
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global,
+      props: { skin: 'ionic' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    api!.openPresets('kueche-roll');
+    await flushPromises();
+    expect(wrapper.find('ion-popover').attributes('is-open')).toBe('true');
+    // the ionic positionPresets renderer marks each button with applyPreset + index
+    expect(wrapper.find('[data-action="applyPreset"][data-arg="1"]').exists()).toBe(true);
+  });
+
+  it('renders no popover body for a device the skin ships no preset renderer for', async () => {
+    // A light has no presets[type] renderer → presetBody is null (empty popover).
+    await seed();
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global,
+      props: { skin: 'ionic' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    api!.openPresets('kueche-wand'); // a light
+    await flushPromises();
+    expect(wrapper.find('ion-popover').attributes('is-open')).toBe('true');
+    expect(wrapper.find('.skin-host-presets-body').exists()).toBe(false);
+  });
+});
+
+describe('DetailModalHost — captured taps inside the preset popover', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('an applyPreset tap dispatches to the store and closes the popover', async () => {
+    await seed();
+    const store = useDeviceStore();
+    const spy = vi.spyOn(store, 'setPosition');
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global,
+      props: { skin: 'ionic' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    api!.openPresets('kueche-roll');
+    await flushPromises();
+    // preset index 1 = "Spalt offen" (position 85) in the model.
+    await wrapper.find('[data-action="applyPreset"][data-arg="1"]').trigger('click');
+    expect(spy).toHaveBeenCalledWith('kueche-roll', 85);
+    await flushPromises();
+    // a preset choice is a one-shot: the popover closes after it.
+    expect(wrapper.find('ion-popover').attributes('is-open')).toBe('false');
+  });
+
+  it('a close intent inside the popover dismisses it', async () => {
+    await seed();
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global,
+      props: { skin: 'ionic' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    api!.openPresets('kueche-roll');
+    await flushPromises();
+    // The preset renderer ships no close control; inject one to drive the branch.
+    const body = wrapper.find('.skin-host-presets-body').element;
+    const closeBtn = document.createElement('button');
+    closeBtn.setAttribute('data-action', 'close');
+    body.appendChild(closeBtn);
+    closeBtn.dispatchEvent(new Event('click', { bubbles: true }));
+    await flushPromises();
+    expect(wrapper.find('ion-popover').attributes('is-open')).toBe('false');
   });
 });
 

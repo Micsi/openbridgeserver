@@ -79,6 +79,14 @@ describe('parseIntent — reads the skin marker off a DOM element', () => {
     ).toEqual({ action: 'setPosition', arg: 10, relative: true });
   });
 
+  it('reads applyPreset with its preset index as data-arg (v1.6)', () => {
+    expect(parseIntent(el({ 'data-action': 'applyPreset', 'data-arg': '2' }))).toEqual({
+      action: 'applyPreset',
+      arg: 2,
+      relative: false,
+    });
+  });
+
   it('finds the nearest [data-action] ancestor when the click lands on a child', () => {
     const wrap = el({ 'data-action': 'toggle' });
     const child = document.createElement('span');
@@ -171,6 +179,82 @@ describe('dispatchIntent — maps a canonical action to the right store call', (
   });
 });
 
+describe('dispatchIntent — applyPreset drives the device to a fixed target (v1.6)', () => {
+  const blindWithPresets = {
+    type: 'blind', id: 'b', room: 'r', label: 'L', accent: 'orange', position: 0, locked: false,
+    presets: [
+      { label: 'Guten Morgen', position: 0 },
+      { label: 'Spalt offen', position: 85 },
+    ],
+  } as Device;
+
+  const jalousieWithPresets = {
+    type: 'jalousie', mode: 'jalousie', id: 'j', room: 'r', label: 'L', accent: 'green',
+    position: 0, slat: 0, locked: false, statuses: [],
+    presets: [
+      { label: 'Beschattung', position: 75, slat: 60 },
+      { label: 'Lüften', position: 90 }, // no slat
+    ],
+  } as JalousieDevice;
+
+  it('blind preset → only setPosition (no slat on a Rollladen)', () => {
+    const store = makeStore([blindWithPresets]);
+    dispatchIntent(store, 'b', { action: 'applyPreset', arg: 1, relative: false });
+    expect(store.setPosition).toHaveBeenCalledWith('b', 85);
+    expect(store.setSlat).not.toHaveBeenCalled();
+  });
+
+  it('jalousie preset with slat → setPosition + setSlat', () => {
+    const store = makeStore([jalousieWithPresets]);
+    dispatchIntent(store, 'j', { action: 'applyPreset', arg: 0, relative: false });
+    expect(store.setPosition).toHaveBeenCalledWith('j', 75);
+    expect(store.setSlat).toHaveBeenCalledWith('j', 60);
+  });
+
+  it('jalousie preset without a slat → only setPosition', () => {
+    const store = makeStore([jalousieWithPresets]);
+    dispatchIntent(store, 'j', { action: 'applyPreset', arg: 1, relative: false });
+    expect(store.setPosition).toHaveBeenCalledWith('j', 90);
+    expect(store.setSlat).not.toHaveBeenCalled();
+  });
+
+  it('an out-of-range index is a no-op (nothing to set)', () => {
+    const store = makeStore([blindWithPresets]);
+    dispatchIntent(store, 'b', { action: 'applyPreset', arg: 9, relative: false });
+    expect(store.setPosition).not.toHaveBeenCalled();
+    expect(store.setSlat).not.toHaveBeenCalled();
+  });
+
+  it('a missing index (arg undefined) is a no-op', () => {
+    const store = makeStore([blindWithPresets]);
+    dispatchIntent(store, 'b', { action: 'applyPreset', relative: false });
+    expect(store.setPosition).not.toHaveBeenCalled();
+  });
+
+  it('applyPreset on an unknown device is a no-op', () => {
+    const store = makeStore([blindWithPresets]);
+    dispatchIntent(store, 'missing', { action: 'applyPreset', arg: 0, relative: false });
+    expect(store.setPosition).not.toHaveBeenCalled();
+  });
+
+  it('applyPreset on a non-position device (light) is a no-op', () => {
+    const light = { type: 'light', id: 'l', room: 'r', label: 'L', accent: 'orange', on: false, dim: null } as Device;
+    const store = makeStore([light]);
+    dispatchIntent(store, 'l', { action: 'applyPreset', arg: 0, relative: false });
+    expect(store.setPosition).not.toHaveBeenCalled();
+    expect(store.setSlat).not.toHaveBeenCalled();
+  });
+
+  it('applyPreset on a positionsbasiertes device without any presets is a no-op', () => {
+    const blindNoPresets = {
+      type: 'blind', id: 'b0', room: 'r', label: 'L', accent: 'orange', position: 0, locked: false,
+    } as Device;
+    const store = makeStore([blindNoPresets]);
+    dispatchIntent(store, 'b0', { action: 'applyPreset', arg: 0, relative: false });
+    expect(store.setPosition).not.toHaveBeenCalled();
+  });
+});
+
 describe('isUiOnly / isDetailTrigger — host classifies the gesture', () => {
   it('marks stop/close as UI-only (no canonical store action)', async () => {
     const { isUiOnly } = await import('./actions');
@@ -189,9 +273,9 @@ describe('isUiOnly / isDetailTrigger — host classifies the gesture', () => {
 describe('type surface', () => {
   it('HostAction includes the canonical + ui-only + host actions', () => {
     const a: HostAction[] = [
-      'toggle', 'setDim', 'setPosition', 'setSlat', 'lock', 'unlock',
+      'toggle', 'setDim', 'setPosition', 'setSlat', 'applyPreset', 'lock', 'unlock',
       'activateScene', 'arm', 'disarm', 'stop', 'close', 'openDetail',
     ];
-    expect(a).toHaveLength(12);
+    expect(a).toHaveLength(13);
   });
 });

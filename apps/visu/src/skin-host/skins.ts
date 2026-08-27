@@ -20,7 +20,7 @@
 
 import type { SkinManifest, Renderer, CoreWidgetType } from '@obs/visu-contract';
 
-import { tiles as ionicTiles, details as ionicDetails } from '@obs-visu-skins/ionic';
+import { tiles as ionicTiles, details as ionicDetails, presets as ionicPresets } from '@obs-visu-skins/ionic';
 import ionicManifest from '@obs-visu-skins/ionic/manifest.json';
 
 import { tiles as terminalTiles, details as terminalDetails } from '@obs-visu-skins/terminal';
@@ -35,6 +35,12 @@ export interface Skin {
   readonly tiles: RendererMap;
   /** Optional detail-surface renderers per core type. */
   readonly details: RendererMap;
+  /**
+   * Optional position-preset renderers per positionsbasiertem Kern-Typ (v1.6).
+   * Addressed by `presets[device.type]` for the long-press quick menu; a skin
+   * that ships none leaves this empty (the host simply shows no popover).
+   */
+  readonly presets: RendererMap;
   /** The skin manifest (layout · widgets · unsupported · tweaks · themes). */
   readonly manifest: SkinManifest;
 }
@@ -48,11 +54,14 @@ export const skins = {
   ionic: {
     tiles: ionicTiles,
     details: ionicDetails,
+    presets: ionicPresets,
     manifest: ionicManifest as SkinManifest,
   },
   terminal: {
     tiles: terminalTiles,
     details: terminalDetails,
+    // The terminal skin ships no position-preset renderers (no long-press menu).
+    presets: {},
     manifest: terminalManifest as SkinManifest,
   },
 } as const satisfies Record<string, Skin>;

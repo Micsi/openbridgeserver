@@ -85,8 +85,19 @@ export interface ActionStore {
 
 /** The known action names — used to validate a `data-action` string. */
 const KNOWN_ACTIONS: ReadonlySet<string> = new Set<HostAction>([
-  'toggle', 'setDim', 'setPosition', 'setSlat', 'lock', 'unlock',
-  'activateScene', 'arm', 'disarm', 'stop', 'close', 'openDetail',
+  'toggle',
+  'setDim',
+  'setPosition',
+  'setSlat',
+  'lock',
+  'unlock',
+  'activateScene',
+  'arm',
+  'disarm',
+  'applyPreset',
+  'stop',
+  'close',
+  'openDetail',
 ]);
 
 /** Parse `data-arg`/`data-value` to a finite number, else undefined. */
@@ -135,12 +146,7 @@ function liveValue(store: ActionStore, id: string, action: HostAction): number |
  *  - else the slider `eventValue` (ion-range / input[type=range]),
  *  - else undefined (nothing to set).
  */
-function resolveValue(
-  store: ActionStore,
-  id: string,
-  intent: Intent,
-  eventValue?: number,
-): number | undefined {
+function resolveValue(store: ActionStore, id: string, intent: Intent, eventValue?: number): number | undefined {
   if (intent.relative && intent.arg != null) {
     const base = liveValue(store, id, intent.action);
     return base != null ? base + intent.arg : intent.arg;
@@ -158,12 +164,7 @@ function resolveValue(
  * @param eventValue  slider value for `ion-range`/`input[type=range]` inputs that
  *                    carry their value on the event rather than a data attribute.
  */
-export function dispatchIntent(
-  store: ActionStore,
-  id: string,
-  intent: Intent,
-  eventValue?: number,
-): void {
+export function dispatchIntent(store: ActionStore, id: string, intent: Intent, eventValue?: number): void {
   switch (intent.action) {
     case 'toggle':
       store.toggle(id);
@@ -191,6 +192,20 @@ export function dispatchIntent(
       if (intent.action === 'setDim') store.setDim(id, value);
       else if (intent.action === 'setPosition') store.setPosition(id, value);
       else store.setSlat(id, value);
+      return;
+    }
+    // applyPreset carries a canonical core write (not a UI-only action): it
+    // resolves `dev.presets[arg]` and drives the device to that fixed target in
+    // one step – position always, slat only when the preset defines one and the
+    // device is a jalousie. An out-of-range index or a non-position device is a
+    // no-op (nothing to set), matching the "never a silent lamp" discipline.
+    case 'applyPreset': {
+      const dev = store.byId?.(id);
+      if (!dev || (dev.type !== 'blind' && dev.type !== 'jalousie')) return;
+      const preset = dev.presets?.[intent.arg ?? -1];
+      if (!preset) return;
+      store.setPosition(id, preset.position);
+      if (dev.type === 'jalousie' && preset.slat != null) store.setSlat(id, preset.slat);
       return;
     }
     // UI-only / host-only — no canonical core write (golden rule 4: state stays

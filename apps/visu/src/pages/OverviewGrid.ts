@@ -4,9 +4,12 @@
  * It must be a *child* of DetailModalHost so it can reach the host API via
  * `inject(HOST_KEY)` (DetailModalHost `provide`s it to its slot subtree). The
  * grid is the single seam that turns a gesture on a skin tile into a canonical
- * action: a tap dispatches the tile's `data-action` onto the core store, a
- * long-press calls `openDetail`. The skin tiles only *mark* `data-action`; the
- * host owns the mapping and the state (Goldene Regel 4 — the skin owns no state).
+ * action. The gesture Zielmodell (vom User festgelegt): a single tap dispatches
+ * the tile's `data-action` onto the core store (Direktbedienung); a long-press
+ * opens the position-preset quick menu (`openPresets`) for a device that has
+ * presets, else the detail surface; a double-tap opens the detail (`openDetail`).
+ * The skin tiles only *mark* `data-action`; the host owns the mapping and the
+ * state (Goldene Regel 4 – the skin owns no state).
  *
  * Implemented as a render component (not an SFC) because SkinHost is itself a
  * render component returning VNodes, and the grid is pure event-capture + render
@@ -18,6 +21,7 @@ import SkinHost from '../skin-host/SkinHost';
 import { useDeviceStore } from '../core/store';
 import { parseIntent, dispatchIntent, type ActionStore } from '../skin-host/actions';
 import { useLongPress } from '../core/useLongPress';
+import { useDoubleTap } from '../core/useDoubleTap';
 import { HOST_KEY } from '../app/DetailModalHost.vue';
 import type { RoomGroup } from '../core/model';
 import type { Theme } from '../core/tokens';
@@ -50,19 +54,41 @@ export default defineComponent({
     let pressedId: string | null = null;
 
     const longPress = useLongPress((ev) => {
-      if (pressedId !== null && host) host.openDetail(pressedId);
+      if (pressedId !== null) {
+        const dev = store.byId(pressedId);
+        // Long-press opens the position-preset quick menu when the device has
+        // presets (blind/jalousie, v1.6); otherwise it falls back to the detail.
+        if (dev && 'presets' in dev && dev.presets?.length && host?.openPresets) {
+          host.openPresets(pressedId, ev);
+        } else if (host) {
+          host.openDetail(pressedId);
+        }
+      }
       ev.preventDefault?.();
     });
 
+    const doubleTap = useDoubleTap((ev) => {
+      // Double-tap opens the detail surface (the mouse single-tap no longer does).
+      const id = tileIdFor(ev.target);
+      if (id !== null && host) host.openDetail(id);
+    });
+
     function onClick(ev: MouseEvent): void {
-      if (longPress.fired) return; // the long-press already handled this gesture
+      // A completed long-press or double-tap already handled this gesture; do not
+      // also dispatch the coinciding single tap.
+      if (longPress.fired || doubleTap.fired) return;
       const id = tileIdFor(ev.target);
       if (id === null) return;
       const intent = parseIntent(ev.target);
       if (!intent) return;
       // openDetail is a shell concern (the host owns the modal), not a store write.
       if (intent.action === 'openDetail') {
-        if (host) host.openDetail(id);
+        // a11y nuance: keyboard activation of a role=button (Enter/Space) reports
+        // `MouseEvent.detail === 0`, a real pointer click reports `detail >= 1`.
+        // Only the keyboard path opens the detail from a single click here – a
+        // mouse/touch single-tap opens no detail (the double-tap owns that now),
+        // so keyboard users keep a one-press route to the detail surface.
+        if ((ev as MouseEvent).detail === 0 && host) host.openDetail(id);
         return;
       }
       dispatchIntent(actionStore, id, intent);
@@ -71,6 +97,7 @@ export default defineComponent({
     function onPointerdown(ev: PointerEvent): void {
       pressedId = tileIdFor(ev.target);
       longPress.onPointerdown(ev);
+      doubleTap.onPointerdown(ev);
     }
 
     return () =>

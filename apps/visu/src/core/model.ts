@@ -76,7 +76,7 @@ function blind(
   room: string,
   label: BlindDevice['label'],
   accent: BlindDevice['accent'],
-  extra: Partial<Pick<BlindDevice, 'position' | 'locked' | 'floor'>> = {},
+  extra: Partial<Pick<BlindDevice, 'position' | 'locked' | 'presets' | 'floor'>> = {},
 ): BlindDevice {
   return { id, type: 'blind', room, label, accent, position: 0, locked: false, ...extra };
 }
@@ -87,7 +87,10 @@ function jalousie(
   label: JalousieDevice['label'],
   accent: JalousieDevice['accent'],
   extra: Partial<
-    Pick<JalousieDevice, 'position' | 'slat' | 'locked' | 'invert' | 'moving' | 'statuses' | 'floor'>
+    Pick<
+      JalousieDevice,
+      'position' | 'slat' | 'locked' | 'invert' | 'moving' | 'statuses' | 'presets' | 'floor'
+    >
   > = {},
 ): JalousieDevice {
   return {
@@ -196,7 +199,15 @@ const list: readonly Device[] = [
   light('kueche-wand', 'Küche', 'Wandleuchten', 'orange', { floor: 'Erdgeschoss' }),
   light('kueche-pendel', 'Küche', 'Pendelleuchten', 'orange', { dim: 0, floor: 'Erdgeschoss' }),
   light('kueche-arbeit', 'Küche', 'Arbeitslicht', 'orange', { dim: 0, floor: 'Erdgeschoss' }),
-  blind('kueche-roll', 'Küche', 'Rollladen', 'orange', { floor: 'Erdgeschoss' }),
+  blind('kueche-roll', 'Küche', 'Rollladen', 'orange', {
+    floor: 'Erdgeschoss',
+    // v1.6 Vorgabepositionen für den Long-Press-Schnellzugriff (Rolladen: nur position).
+    presets: [
+      { label: 'Guten Morgen', position: 0 },
+      { label: 'Spalt offen', position: 85 },
+      { label: 'Schlitze', position: 70 },
+    ],
+  }),
 
   // ── WC & Bad (Erdgeschoss) ──
   light('wc-spiegel', 'WC', 'Spiegellicht', 'teal', { on: true, floor: 'Erdgeschoss' }),
@@ -215,6 +226,12 @@ const list: readonly Device[] = [
       { label: 'Sturm', val: false },
       { label: 'Sonne', val: true },
       { label: 'Sperre', val: null },
+    ],
+    // v1.6 Vorgabepositionen (Position + optional Lamelle) für den Schnellzugriff.
+    presets: [
+      { label: 'Beschattung', position: 75, slat: 60 },
+      { label: 'Lüften', position: 90 },
+      { label: 'Offen', position: 0, slat: 0 },
     ],
   }),
   jalousie('wiga-jalousie-2', 'Wintergarten', 'Jalousie Ost', 'green', {

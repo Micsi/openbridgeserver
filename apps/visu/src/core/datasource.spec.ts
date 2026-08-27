@@ -86,6 +86,33 @@ describe('core/datasource — list()', () => {
     const same = b.find((d) => d.id === jal.id) as JalousieDevice;
     expect(same.statuses[0].val).not.toBe(jal.statuses[0].val);
   });
+
+  it('deep-clones a blind’s v1.6 presets — mutating a snapshot does not leak back', async () => {
+    const ds = new MockDataSource();
+    const a = await ds.list();
+    const roll = a.find((d) => d.type === 'blind' && !!(d as BlindDevice).presets?.length) as
+      | BlindDevice
+      | undefined;
+    if (!roll) throw new Error('no blind with presets in the model');
+    // Mutate a nested preset object on the returned snapshot.
+    (roll.presets![0] as { position: number }).position = 999;
+    const b = await ds.list();
+    const same = b.find((d) => d.id === roll.id) as BlindDevice;
+    expect(same.presets![0].position).not.toBe(999);
+  });
+
+  it('deep-clones a jalousie’s v1.6 presets independently of the source', async () => {
+    const ds = new MockDataSource();
+    const a = await ds.list();
+    const jal = a.find((d) => d.type === 'jalousie' && !!(d as JalousieDevice).presets?.length) as
+      | JalousieDevice
+      | undefined;
+    if (!jal) throw new Error('no jalousie with presets in the model');
+    (jal.presets![0] as { position: number }).position = 999;
+    const b = await ds.list();
+    const same = b.find((d) => d.id === jal.id) as JalousieDevice;
+    expect(same.presets![0].position).not.toBe(999);
+  });
 });
 
 describe('core/datasource — subscribe()', () => {

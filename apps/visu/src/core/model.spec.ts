@@ -264,6 +264,42 @@ describe('core/model — shapes match the contract fixtures', () => {
   });
 });
 
+describe('core/model — v1.6 position presets (Vorgabepositionen)', () => {
+  it('gives a blind (kueche-roll) position-only presets in the expected shape', () => {
+    const roll = byId['kueche-roll'];
+    expect(roll?.type).toBe('blind');
+    if (roll?.type !== 'blind') return;
+    expect(roll.presets).toEqual([
+      { label: 'Guten Morgen', position: 0 },
+      { label: 'Spalt offen', position: 85 },
+      { label: 'Schlitze', position: 70 },
+    ]);
+    // A Rollladen carries no slat on its presets.
+    for (const p of roll.presets ?? []) expect(p.slat).toBeUndefined();
+  });
+
+  it('gives a jalousie (wiga-jalousie) presets with an optional slat', () => {
+    const jal = byId['wiga-jalousie'];
+    expect(jal?.type).toBe('jalousie');
+    if (jal?.type !== 'jalousie') return;
+    expect(jal.presets).toEqual([
+      { label: 'Beschattung', position: 75, slat: 60 },
+      { label: 'Lüften', position: 90 },
+      { label: 'Offen', position: 0, slat: 0 },
+    ]);
+    // Beschattung defines a slat; Lüften does not.
+    expect(jal.presets?.[0].slat).toBe(60);
+    expect(jal.presets?.[1].slat).toBeUndefined();
+  });
+
+  it('deep-freezes the presets array and its entries (Goldene Regel 1)', () => {
+    const roll = byId['kueche-roll'];
+    if (roll?.type !== 'blind') throw new Error('kueche-roll is not a blind');
+    expect(Object.isFrozen(roll.presets)).toBe(true);
+    expect(Object.isFrozen(roll.presets?.[0])).toBe(true);
+  });
+});
+
 describe('core/model — read-only to the outside (Goldene Regel 1)', () => {
   it('freezes the device list and byId index', () => {
     expect(Object.isFrozen(devices)).toBe(true);

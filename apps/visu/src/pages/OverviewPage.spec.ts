@@ -40,6 +40,7 @@ vi.mock('@ionic/vue', () => {
     IonToolbar: passthrough('ion-toolbar'),
     IonTitle: passthrough('ion-title'),
     IonModal: passthrough('ion-modal'),
+    IonPopover: passthrough('ion-popover'),
     IonButtons: passthrough('ion-buttons'),
     IonMenuButton: passthrough('ion-menu-button'),
     menuController: { close: vi.fn().mockResolvedValue(undefined) },
