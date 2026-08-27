@@ -10,6 +10,7 @@ import type {
   MediaDevice,
   CameraDevice,
   ClimateDevice,
+  PositionPreset,
   Tokens,
   Ctx,
   Renderer,
@@ -56,6 +57,17 @@ describe('Device unions (§5) — readonly', () => {
     expectTypeOf<SwitchDevice['writable']>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<SensorDevice['writable']>().toEqualTypeOf<boolean | undefined>();
     expectTypeOf<ClimateDevice['writable']>().toEqualTypeOf<boolean | undefined>();
+  });
+
+  it('positionsbasierte Geräte tragen das optionale Feld presets (v1.6)', () => {
+    expectTypeOf<BlindDevice['presets']>().toEqualTypeOf<readonly PositionPreset[] | undefined>();
+    expectTypeOf<JalousieDevice['presets']>().toEqualTypeOf<readonly PositionPreset[] | undefined>();
+  });
+
+  it('PositionPreset trägt label/position und optionales slat (v1.6)', () => {
+    expectTypeOf<PositionPreset['label']>().toEqualTypeOf<string>();
+    expectTypeOf<PositionPreset['position']>().toEqualTypeOf<number>();
+    expectTypeOf<PositionPreset['slat']>().toEqualTypeOf<number | undefined>();
   });
 
   it('media/camera (v1.2) carry their discriminants and fields', () => {
@@ -125,6 +137,10 @@ describe('Renderer (§5)', () => {
 describe('WidgetAction (§6)', () => {
   it('includes the v1.4 climate action setSetpoint', () => {
     expectTypeOf<'setSetpoint'>().toMatchTypeOf<WidgetAction>();
+  });
+
+  it('includes the v1.6 preset action applyPreset', () => {
+    expectTypeOf<'applyPreset'>().toMatchTypeOf<WidgetAction>();
   });
 });
 

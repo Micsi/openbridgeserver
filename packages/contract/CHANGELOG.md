@@ -23,6 +23,27 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.6.0] — 2026-08-27
+
+v1.6: `PositionPreset` + `presets` für positionsbasierte Geräte (Rolladen/Jalousie) plus
+die Aktion `applyPreset` – Datengrundlage für konfigurierte feste Positionen, die in der
+Visu per Long-Press als Schnellmenü angefahren werden (ohne Umweg über das Detail).
+
+### Added
+
+- **`PositionPreset` (§3):** neuer Typ `{ label: string; position: number; slat?: number }`.
+  `slat` nur für Lamellen-Jalousien; `label` kommt aus der Gerätekonfiguration (roh gerendert).
+- **`BlindDevice`/`JalousieDevice` (§3):** additives optionales Feld `presets`
+  (`readonly PositionPreset[]`). Typ-spezifisch auf den positionsbasierten Geräten (nicht
+  `DeviceBase`), zukunftsoffen für weitere positionsbasierte Typen. Additive Minor-Änderung
+  (§9): bestehende Skins und die App bleiben unverändert gültig.
+- **Aktionen (§6):** `WidgetAction` um `applyPreset` erweitert – fährt `presets[index]`
+  atomar an (Position + optional Lamelle in einem Intent). Deklariert bei `blind`/`jalousie`.
+- **Schema/Fixtures:** `contract.schema.json` deklariert `version: "1.6"`, ergänzt das
+  `presets`-Array in den `dataSchema`s von `blind`/`jalousie` (nicht `required`) und
+  `applyPreset` in deren `actions`. `fixtures` ziehen auf `contractVersion: "1.6"` nach
+  (Preset-Beispiele bei `blind.half` und `jalousie.tilted`).
+
 ## [1.5.0] — 2026-08-26
 
 v1.5: `DeviceBase.writable` – geräte-genaue Bedienbarkeit als Datengrundlage für die

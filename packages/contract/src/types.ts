@@ -60,11 +60,25 @@ export interface SwitchDevice extends DeviceBase {
   readonly on: boolean;
 }
 
+/**
+ * Eine konfigurierte feste Position („Preset") für positionsbasierte Geräte (v1.6):
+ * ein benanntes Ziel, das per `applyPreset` in einem Schritt angefahren wird. `slat`
+ * ist optional und wird nur von Lamellen-Jalousien genutzt (Rolladen lassen es weg).
+ * `label` kommt aus der Gerätekonfiguration und wird roh gerendert (kein i18n-Key).
+ */
+export interface PositionPreset {
+  readonly label: string;
+  readonly position: number;
+  readonly slat?: number;
+}
+
 /** `blind` (Rollladen) — position 0 = auf, 100 = zu. */
 export interface BlindDevice extends DeviceBase {
   readonly type: 'blind';
   readonly position: number;
   readonly locked: boolean;
+  /** Konfigurierte Vorgabepositionen für den Schnellzugriff (Long-Press) (v1.6). */
+  readonly presets?: readonly PositionPreset[];
 }
 
 /** One entry of a jalousie status traffic light: true | false | null. */
@@ -83,6 +97,8 @@ export interface JalousieDevice extends DeviceBase {
   readonly invert?: boolean;
   readonly moving?: 'up' | 'down' | null;
   readonly statuses: readonly JalousieStatus[];
+  /** Konfigurierte Vorgabepositionen (Position + optional Lamelle) für den Schnellzugriff (v1.6). */
+  readonly presets?: readonly PositionPreset[];
 }
 
 /** `sensor` — read-only reading (Aussage, kein Vergessen). */
@@ -205,6 +221,7 @@ export type WidgetAction =
   | 'setDim'
   | 'setPosition'
   | 'setSlat'
+  | 'applyPreset'
   | 'setSetpoint'
   | 'lock'
   | 'unlock'

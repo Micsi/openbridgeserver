@@ -30,8 +30,8 @@ const s = schema as Record<string, any>;
 const f = fixtures as Record<string, any>;
 
 describe('contract.schema.json — Globals (§2)', () => {
-  it('declares version 1.5', () => {
-    expect(s.version).toBe('1.5');
+  it('declares version 1.6', () => {
+    expect(s.version).toBe('1.6');
   });
 
   it('declares roles exactly [compact,default,wide,tall,feature,banner]', () => {
@@ -103,7 +103,7 @@ describe('contract.schema.json — widget types (§3)', () => {
   it('blind: position 0=auf/100=zu, locked, actions per §3', () => {
     const w = s.widgets.blind;
     expect(Object.keys(w.data).sort()).toEqual(['accent', 'label', 'locked', 'position', 'room'].sort());
-    expect(Object.keys(w.actions).sort()).toEqual(['lock', 'setPosition', 'unlock'].sort());
+    expect(Object.keys(w.actions).sort()).toEqual(['applyPreset', 'lock', 'setPosition', 'unlock'].sort());
     expect(w.icon).toBe('blind');
     expect(w.roles).toEqual({ allow: ['compact', 'default', 'wide', 'tall'], default: 'default' });
   });
@@ -113,7 +113,7 @@ describe('contract.schema.json — widget types (§3)', () => {
     expect(Object.keys(w.data).sort()).toEqual(
       ['accent', 'invert', 'label', 'locked', 'mode', 'moving', 'position', 'room', 'slat', 'statuses'].sort(),
     );
-    expect(Object.keys(w.actions).sort()).toEqual(['lock', 'setPosition', 'setSlat', 'unlock'].sort());
+    expect(Object.keys(w.actions).sort()).toEqual(['applyPreset', 'lock', 'setPosition', 'setSlat', 'unlock'].sort());
     expect(w.icon).toBe('blind');
     expect(w.roles).toEqual({ allow: ['default', 'wide', 'tall', 'feature'], default: 'wide' });
   });
@@ -162,6 +162,28 @@ describe('contract.schema.json — widget types (§3)', () => {
     }
   });
 
+  it('positionsbasierte Typen erlauben das optionale presets-Array, nicht required (v1.6)', () => {
+    const presetItem = {
+      type: 'object',
+      required: ['label', 'position'],
+      additionalProperties: false,
+      properties: {
+        label: { type: 'string' },
+        position: { type: 'number', minimum: 0, maximum: 100 },
+        slat: { type: 'number', minimum: 0, maximum: 100 },
+      },
+    };
+    for (const t of ['blind', 'jalousie'] as const) {
+      expect(s.widgets[t].dataSchema.properties.presets, `${t}.presets`).toEqual({
+        type: 'array',
+        items: presetItem,
+      });
+      expect(s.widgets[t].dataSchema.required, `${t}.required`).not.toContain('presets');
+      // applyPreset ist in den actions des positionsbasierten Typs deklariert.
+      expect(Object.keys(s.widgets[t].actions), `${t}.actions`).toContain('applyPreset');
+    }
+  });
+
   it('scene: icon/sub, activateScene per §3', () => {
     const w = s.widgets.scene;
     expect(Object.keys(w.data).sort()).toEqual(['accent', 'icon', 'label', 'room', 'sub'].sort());
@@ -172,12 +194,21 @@ describe('contract.schema.json — widget types (§3)', () => {
 });
 
 describe('fixtures.json — completeness (§4)', () => {
-  it('declares contractVersion 1.5', () => {
-    expect(f.contractVersion).toBe('1.5');
+  it('declares contractVersion 1.6', () => {
+    expect(f.contractVersion).toBe('1.6');
   });
 
   it('carries a writable fixture example that validates as an optional boolean (v1.5)', () => {
     expect(f.switch.off.writable).toBe(false);
+  });
+
+  it('carries preset fixture examples for blind and jalousie (v1.6)', () => {
+    expect(Array.isArray(f.blind.half.presets)).toBe(true);
+    expect(f.blind.half.presets.length).toBeGreaterThan(0);
+    expect(f.blind.half.presets[0]).toHaveProperty('label');
+    expect(f.blind.half.presets[0]).toHaveProperty('position');
+    // Jalousie-Preset trägt zusätzlich den optionalen Lamellenwinkel.
+    expect(f.jalousie.tilted.presets.some((p: { slat?: number }) => typeof p.slat === 'number')).toBe(true);
   });
 
   it('provides every core type with its expected states', () => {

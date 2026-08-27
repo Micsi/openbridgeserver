@@ -1,6 +1,6 @@
 {
   "$schema": "https://obs.visu/contract/v1",
-  "version": "1.5",
+  "version": "1.6",
 
   "roles": ["compact", "default", "wide", "tall", "feature", "banner"],
 
@@ -80,7 +80,7 @@
         "label": "string",
         "accent": "token"
       },
-      "actions": { "setPosition": { "pct": "0–100" }, "lock": {}, "unlock": {} },
+      "actions": { "setPosition": { "pct": "0–100" }, "applyPreset": { "index": "presets[i]" }, "lock": {}, "unlock": {} },
       "icon": "blind",
       "roles": { "allow": ["compact", "default", "wide", "tall"], "default": "default" },
       "dataSchema": {
@@ -96,7 +96,20 @@
           "label": { "type": "string" },
           "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
           "floor": { "type": "string" },
-          "writable": { "type": "boolean" }
+          "writable": { "type": "boolean" },
+          "presets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["label", "position"],
+              "additionalProperties": false,
+              "properties": {
+                "label": { "type": "string" },
+                "position": { "type": "number", "minimum": 0, "maximum": 100 },
+                "slat": { "type": "number", "minimum": 0, "maximum": 100 }
+              }
+            }
+          }
         }
       }
     },
@@ -117,6 +130,7 @@
       "actions": {
         "setPosition": { "pct": "0–100" },
         "setSlat": { "pct": "0–100" },
+        "applyPreset": { "index": "presets[i]" },
         "lock": {},
         "unlock": {}
       },
@@ -151,7 +165,20 @@
           "accent": { "$ref": "https://obs.visu/contract/v1/accent" },
           "mode": { "const": "jalousie" },
           "floor": { "type": "string" },
-          "writable": { "type": "boolean" }
+          "writable": { "type": "boolean" },
+          "presets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["label", "position"],
+              "additionalProperties": false,
+              "properties": {
+                "label": { "type": "string" },
+                "position": { "type": "number", "minimum": 0, "maximum": 100 },
+                "slat": { "type": "number", "minimum": 0, "maximum": 100 }
+              }
+            }
+          }
         }
       }
     },

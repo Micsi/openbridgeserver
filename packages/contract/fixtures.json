@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.5",
+  "contractVersion": "1.6",
 
   "light": {
     "off":    { "on": false, "dim": null, "room": "EG Küche",  "label": "Wandleuchten",  "accent": "orange" },
@@ -12,7 +12,8 @@
   },
   "blind": {
     "open":   { "position": 0,   "locked": false, "room": "EG Wohnz.",     "label": "Rollladen West", "accent": "orange" },
-    "half":   { "position": 62,  "locked": false, "room": "EG Schlafz.",   "label": "Rollladen Süd",  "accent": "orange" },
+    "half":   { "position": 62,  "locked": false, "room": "EG Schlafz.",   "label": "Rollladen Süd",  "accent": "orange",
+                "presets": [ {"label":"Guten Morgen","position":0}, {"label":"Spalt offen","position":85}, {"label":"Schlitze","position":70} ] },
     "locked": { "position": 100, "locked": true,  "room": "Wintergarten",  "label": "Rollladen",      "accent": "green"  }
   },
   "jalousie": {
@@ -20,7 +21,8 @@
                 "room": "Wintergarten", "label": "Jalousie Süd", "accent": "green", "statuses": [] },
     "tilted": { "position": 62, "slat": 35, "locked": false, "mode": "jalousie",
                 "room": "Wintergarten", "label": "Jalousie Süd", "accent": "green",
-                "statuses": [ {"label":"Sturm","val":false}, {"label":"Sonne","val":true}, {"label":"Sperre","val":null} ] },
+                "statuses": [ {"label":"Sturm","val":false}, {"label":"Sonne","val":true}, {"label":"Sperre","val":null} ],
+                "presets": [ {"label":"Beschattung","position":75,"slat":60}, {"label":"Lüften","position":90}, {"label":"Offen","position":0,"slat":0} ] },
     "locked": { "position": 100, "slat": 90, "locked": true, "mode": "jalousie",
                 "room": "Wintergarten", "label": "Jalousie Ost", "accent": "green", "statuses": [] }
   },
