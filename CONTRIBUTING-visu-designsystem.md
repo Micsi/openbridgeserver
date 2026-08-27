@@ -19,6 +19,17 @@
 
 **Renderer-Typen auf Vorlage-Niveau:** Licht, Schalter, Rolladen, Jalousie(-Detail), Sensor 1×1, Sensor-Chart, Sensor-Icon, Klima (Tile+Detail). Fundament (Tokens/Akzent/Grid/Themes) + Contract-Datenschicht stehen.
 
+**Positions-Presets + skin-eigenes Gesten-Modell (Contract 1.6/1.7) – umgesetzt & integriert:**
+Beschattungs-Presets (`PositionPreset`/`presets`, Aktion `applyPreset`) und ein deklaratives,
+skin-eigenes Interaktionsmodell (`SkinManifest.gestures`) sind in `integ/authz-upstream`
+committet (4 Wellen, Gates grün, je 2 Kritiker-Runden). Der ionic-Skin fährt
+`{ tap:'action', longPress:'presets', doubleTap:'openDetail' }`; das früher hartcodierte
+Blind-Preset-Muster ist datengetrieben. Feature-/Architektur-Details, `applyPreset`-Semantik,
+Skin↔Host-Grenze und Interaktions-Matrix: siehe **`CONTRIBUTING-visu-gestures-presets.md`**
+(Contract-Diff im CHANGELOG **[1.6.0]/[1.7.0]**). Betrifft die Beschattungs-Tiles
+funktional/interaktiv; die reine **Container-**Vereinheitlichung der Jalousie-Kachel bleibt die
+separate Produktentscheidung B6 (siehe unten) – Presets/Gesten präjudizieren sie nicht.
+
 ## 2. Backlog (präzise, nicht erledigt)
 
 | # | Punkt | Ort | Aufwand |
