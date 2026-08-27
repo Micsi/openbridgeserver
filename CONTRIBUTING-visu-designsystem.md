@@ -39,7 +39,44 @@ separate Produktentscheidung B6 (siehe unten) – Presets/Gesten präjudizieren 
 | B3 | **climate in die Overview-Wall**: `DEFAULT_ROLE['climate']` → 2×2/feature + Wall referenziert die ClimateDevice (liegt aktuell im separaten `climateRooms`-Showcase) | apps/visu `model.ts` | klein |
 | B4 | **Gruppe 3 Feinschliff**: Szene/Media/Kamera gegen Vorlage nachziehen (sind in der Wall, aber nicht explizit Loop-verifiziert) | ionic | mittel |
 | B5 | **Conformance-Tool**: `packages/tooling/conformance` `CORE_WIDGET_TYPES` fest auf 8 Typen → climate ergänzen (sonst ignoriert der Generator climate; `support.json` derzeit von Hand) | packages/tooling | klein |
-| B6 | **Jalousie-Tile** — **Produktentscheidung**: Vorlage hat kein Jalousie-Widget; das reiche `jal-*`-Tile bewusst nicht auf den `vz-tile`-Container umgebaut. Entscheiden, ob „ein Container für alle" auch Jalousie erfasst. | — | Entscheidung |
+| B6 | **Jalousie-Tile** – **ENTSCHIEDEN** (siehe §2.1): bleibt bewusste Ausnahme (reiche In-Kachel-Bedienung), Hülle beim Akzent auf `vz-tile`-Parität gezogen, Lock bleibt typeigen. | ionic tiles + `ionic.css` | erledigt |
+
+### 2.1 B6 – Entscheidung: Jalousie bleibt bewusste Ausnahme (Hülle angeglichen)
+
+**Entscheidung:** Die Jalousie wird **nicht** auf das rein anzeigende `vz-tile`-Muster
+umgebaut. Sie behält ihre reiche In-Kachel-Bedienung (vertikale Positions-Rail,
+Lamellen-Slider + Schritt-Buttons, Fahr-Buttons auf/stop/ab). Angeglichen wird nur die
+**typ-unabhängige Hülle beim Akzent**; der Lock-Mechanismus bleibt bewusst typeigen.
+
+**Begründung:**
+- **Der Unterschied ist das Interaktionsmodell, nicht der Container.** `vz-tile`-Kacheln
+  (Rolladen/Licht/…) sind „anzeigen + Detail öffnen"; die Jalousie ist „direkt bedienen".
+  Ein „Umbau auf `vz-tile`" hieße, die Direktbedienung von der Kachel zu **entfernen** und
+  ins Detail zu verlagern – wo `JalousieDetail` sie ohnehin schon vollständig anbietet. Das
+  wäre ein **Funktionsabbau auf der Kachel**, kein Refactoring (vgl. Memory-Regel „kein
+  Funktionsabbau für real genutzte Features").
+- **Kein Loop-Mandat:** Die Vorlage `Visu Design System (standalone).html` zeigt kein
+  Jalousie-Widget. Es gibt also keine Messlatte, gegen die ein Umbau validiert werden könnte;
+  der Loop ist als „Renderer *gegen die Vorlage*" definiert.
+- **„Ein Container für alle" = eine Hülle, typ-adressierte Renderer** (Sprint-Kerngebot), nicht
+  „alle Kacheln anzeigend". Eine reich bedienende Kachel ist ein anderer Renderer-Inhalt, keine
+  Prinzipverletzung.
+
+**Umgesetzter Hüllen-Angleich (`obs-visu-skins` @ `feat/visu-designsystem-live`):**
+- `JalousieTile.ts`: Wrapper setzt zusätzlich `--acc-bar: var(--vz-acc-<key>)` (wie `BlindTile`);
+  vivider Akzent läuft nur in die 4px-Deko-Topbar, Text/Icons behalten das AA-sichere `--acc`.
+- `ionic.css`: additives `.jal-tile::before` (1:1-Port von `.vz-tile::before`, kontrast-exempt
+  nach WCAG 1.4.11). Kein bestehender `.jal-*`-Selektor, keine Bedienlogik und kein Test berührt.
+- Gates grün: `tsc --build` · vitest (jalousie-Spec + 199/200; der eine Rest-Fail war der
+  damals vorbestehende `smoke.spec.ts`-Contract-Skew 1.4→1.5, inzwischen behoben) · eslint · prettier.
+
+**Bewusst NICHT angeglichen – Lock:** `vz-lockveil` ist ein ganzflächiger Schleier
+(`inset:0`, `pointer-events:none`) für rein anzeigende Kacheln. Die Jalousie sperrt gestuft
+(dunkelt gezielt die Bedienzone ab, Fenster bleibt für `openDetail` tippbar). Das vz-Lock-Modell
+auf eine bedienbare Kachel zu ziehen wäre semantisch schlechter, nicht kohärenter.
+
+**Echter Trigger für einen späteren Vollumbau:** erst wenn die Vorlage ein Jalousie-Widget
+erhält *oder* das Produkt entscheidet, dass die Jalousie auch „anzeigen + Detail" sein soll.
 
 ## 3. Integrationsplan (cross-repo-Landeanflug)
 
