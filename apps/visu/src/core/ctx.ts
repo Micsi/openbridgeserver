@@ -135,10 +135,15 @@ function makeStateText(t?: Translate) {
         return d.status ?? '';
       case 'scene':
         return d.sub ?? '';
-      case 'climate':
-        // "Heizen — 20,8°": the operating-mode word plus the current temperature.
-        // The mode word is bold-able via {@link Ctx.stateParts}; the "— …°" is the rest.
-        return `${climateMode(d.mode, t)} — ${nf(d.current)}°`;
+      case 'climate': {
+        // "Ist 20,8 °C · Heizen": the current temperature (label + value + unit)
+        // carries the state; the mode word trails after the "·" separator. Fully
+        // muted in the foot (no bold word — see {@link Ctx.stateParts}); the big
+        // SOLL number on the tile carries the visual weight. The unit is device
+        // data (`d.unit`), the "Ist" label an i18n key (Goldene Regel 7).
+        const label = t ? t('widgets.climate.currentLabel') : 'Ist';
+        return `${label} ${nf(d.current)}${NBSP}${d.unit} · ${climateMode(d.mode, t)}`;
+      }
       default:
         return '';
     }
@@ -157,7 +162,7 @@ function makeStateText(t?: Translate) {
  *
  *  - dimmed light   → word = the "on" word ("Ein"), rest = " — 45 %"
  *  - blind/jalousie → word = the position ("62 %"), rest = " · Teil"
- *  - climate        → word = the mode ("Heizen"), rest = " — 20,8°"
+ *  - climate        → word = "" (fully muted foot), rest = the whole text
  *  - everything else (plain light/switch, sensor, scene) → the whole text is the
  *    word, rest = "" (there is no separable qualifier to mute).
  */
@@ -183,7 +188,10 @@ function makeStateParts(t?: Translate) {
       return bySeparator(full);
     }
     if (d.type === 'climate') {
-      return byWord(full, climateMode(d.mode, t));
+      // Climate foot is fully muted (Vorlage): no bold word — an empty `word`
+      // makes stateFoot render only the muted `rest`. The invariant
+      // `word + rest === stateText` holds trivially with word = "".
+      return { word: '', rest: full };
     }
     return { word: full, rest: '' };
   };

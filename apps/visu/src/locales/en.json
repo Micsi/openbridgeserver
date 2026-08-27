@@ -11,6 +11,7 @@
       "position": "{position} % · {word}"
     },
     "climate": {
+      "currentLabel": "Now",
       "mode": {
         "heat": "Heat",
         "cool": "Cool",

@@ -137,10 +137,15 @@ describe('ctx.stateText — centralised footer text (§5)', () => {
     );
   });
 
-  it('climate → "<Modus> — <Ist>°" (v1.4)', () => {
-    // fixture heat: current 20.4 → de-DE "20,4"; mode heat → "Heizen".
-    expect(ctx.stateText(withType<ClimateDevice>(f.climate.heat, 'climate'))).toBe('Heizen — 20,4°');
-    expect(ctx.stateText(withType<ClimateDevice>(f.climate.off, 'climate'))).toBe('Aus — 19,2°');
+  it('climate → "Ist <value> <unit> · <Modus>" (B1: muted foot)', () => {
+    // fixture heat: current 20.4 → de-DE "20,4"; unit "°C"; mode heat → "Heizen".
+    // Value is glued to the unit by a NBSP; the mode trails after the " · ".
+    expect(ctx.stateText(withType<ClimateDevice>(f.climate.heat, 'climate'))).toBe(
+      `Ist 20,4${NBSP}°C · Heizen`,
+    );
+    expect(ctx.stateText(withType<ClimateDevice>(f.climate.off, 'climate'))).toBe(
+      `Ist 19,2${NBSP}°C · Aus`,
+    );
   });
 
   it('a type without a footer phrasing (media/camera) → empty string', () => {
@@ -191,9 +196,9 @@ describe('ctx.stateParts — leading state word vs. rest (v1.4)', () => {
     expect(jal).toEqual({ word: `62${NBSP}%`, rest: ' · Teil' });
   });
 
-  it('climate: word = mode label, rest = " — <Ist>°"', () => {
+  it('climate: fully muted foot — word = "", rest = whole text (B1)', () => {
     const parts = ctx.stateParts(withType<ClimateDevice>(f.climate.heat, 'climate'));
-    expect(parts).toEqual({ word: 'Heizen', rest: ' — 20,4°' });
+    expect(parts).toEqual({ word: '', rest: `Ist 20,4${NBSP}°C · Heizen` });
     expect(parts.word + parts.rest).toBe(
       ctx.stateText(withType<ClimateDevice>(f.climate.heat, 'climate')),
     );
@@ -216,10 +221,11 @@ describe('ctx.stateParts — with an injected translator (CONTRACT v1.1/v1.4)', 
     params ? `[${key} ${JSON.stringify(params)}]` : `[${key}]`;
   const tctx = makeCtx(t);
 
-  it('climate resolves the mode i18n key and keeps word+rest === stateText', () => {
+  it('climate is fully muted (word = "") and keeps word+rest === stateText', () => {
     const dev = withType<ClimateDevice>(f.climate.heat, 'climate');
     const parts = tctx.stateParts(dev);
-    expect(parts.word).toBe('[widgets.climate.mode.heat]');
+    expect(parts.word).toBe('');
+    expect(parts.rest).toBe(tctx.stateText(dev));
     expect(parts.word + parts.rest).toBe(tctx.stateText(dev));
   });
 
@@ -282,6 +288,13 @@ describe('ctx i18n — makeCtx with an injected translator (CONTRACT v1.1)', () 
     );
     expect(tctx.stateText(withType<BlindDevice>(f.blind.locked, 'blind'))).toBe(
       '[widgets.state.position {"position":100,"word":"[widgets.state.closed]"}]',
+    );
+  });
+
+  it('climate resolves widgets.climate.currentLabel + mode key, unit from device data', () => {
+    // "Ist" comes from the i18n key; "°C" is device data (`d.unit`).
+    expect(tctx.stateText(withType<ClimateDevice>(f.climate.heat, 'climate'))).toBe(
+      `[widgets.climate.currentLabel] 20,4${NBSP}°C · [widgets.climate.mode.heat]`,
     );
   });
 });
