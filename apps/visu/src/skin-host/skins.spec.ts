@@ -64,6 +64,7 @@ const fakeCtx = {
   stateText: () => '',
   stateParts: () => ({ word: '', rest: '' }),
   hyphenate: (t: string) => t,
+  floorShort: () => '',
   icon: () => '',
   nf: (v: number | string) => String(v),
   warn: () => false,

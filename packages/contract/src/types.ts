@@ -193,6 +193,15 @@ export interface Ctx {
   stateParts(d: Device): { readonly word: string; readonly rest: string };
   /** softHyphenate(): insert weiche Trennstellen into long labels. */
   hyphenate(text: string): string;
+  /**
+   * Etagenkürzel für {@link DeviceBase.floor} (v1.8): der volle Geschossname
+   * ("Erdgeschoss") wird auf sein Kürzel ("EG") verdichtet, damit ein Skin den
+   * Eyebrow als „<Kürzel> <Raum>" zeigen kann. Reine Host-/Core-Datenableitung
+   * (Verhalten=Code, Goldene Regel 7): der Skin besitzt kein Mapping. Ein bereits
+   * kurzer oder unbekannter Geschossname wird unverändert zurückgegeben; fehlt
+   * `floor`, ist das Ergebnis leer (der Skin zeigt dann nur den Raum).
+   */
+  floorShort(d: Device): string;
   /** Resolve an icon for a device: skin set → default fallback. */
   icon(d: Device, slot: string): string;
   /** de-DE number formatting (decimal comma, thousands point). */

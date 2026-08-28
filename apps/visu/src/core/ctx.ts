@@ -65,6 +65,34 @@ function hyphenate(text: string): string {
     .join('');
 }
 
+/* ----------------------------------------------------------- floorShort --- */
+
+/**
+ * German full-floor-name → abbreviation. Keyed lower-case so the lookup is
+ * case-insensitive. Core data-derivation (Verhalten=Code, golden rule 7) —
+ * the same category as {@link CLIMATE_MODE_DE}, not localisable UI chrome:
+ * the input `floor` is raw building-automation data, so there is no i18n key
+ * to resolve it against. Extend here (never in a skin) for further floors.
+ */
+const FLOOR_SHORT_DE: Readonly<Record<string, string>> = {
+  erdgeschoss: 'EG',
+  obergeschoss: 'OG',
+  untergeschoss: 'UG',
+};
+
+/**
+ * Floor abbreviation for a device (CONTRACT v1.8, `Ctx.floorShort`): a known
+ * full German floor name ("Erdgeschoss") collapses to its Kürzel ("EG"). An
+ * already-short or unknown floor is returned unchanged (so OBS data that is
+ * already "EG" passes through); a missing floor yields "" so a skin can render
+ * just the room without a leading space. Pure read-only derivation over `d`.
+ */
+function floorShort(d: Device): string {
+  const floor = d.floor?.trim();
+  if (!floor) return '';
+  return FLOOR_SHORT_DE[floor.toLowerCase()] ?? floor;
+}
+
 /* ------------------------------------------------------------ stateText --- */
 
 /** Optional host-injected translator (CONTRACT v1.1, `Ctx.t`). */
@@ -263,6 +291,7 @@ export function makeCtx(t?: Translate): Ctx {
     stateText: makeStateText(t),
     stateParts: makeStateParts(t),
     hyphenate,
+    floorShort,
     icon,
     nf,
     warn,

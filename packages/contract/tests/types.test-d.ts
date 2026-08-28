@@ -116,6 +116,7 @@ describe('Ctx (§5) — sandbox helpers', () => {
       (d: Device) => { readonly word: string; readonly rest: string }
     >();
     expectTypeOf<Ctx['hyphenate']>().toEqualTypeOf<(text: string) => string>();
+    expectTypeOf<Ctx['floorShort']>().toEqualTypeOf<(d: Device) => string>();
     expectTypeOf<Ctx['icon']>().toEqualTypeOf<(d: Device, slot: string) => string>();
     expectTypeOf<Ctx['warn']>().toEqualTypeOf<(d: Device) => boolean>();
     expectTypeOf<Ctx['nf']>().parameter(0).toEqualTypeOf<number | string>();

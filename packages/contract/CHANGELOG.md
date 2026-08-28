@@ -23,6 +23,15 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.8.0] — 2026-08-28
+
+v1.8: neuer Ctx-Helfer `floorShort(d)` – der Host verdichtet den vollen Geschossnamen
+(`DeviceBase.floor`, z. B. „Erdgeschoss") auf sein Kürzel („EG"), damit ein Skin den
+Eyebrow als „<Kürzel> <Raum>" zeigen kann. Reine Host-/Core-Datenableitung
+(Verhalten=Code, Goldene Regel 7); der Skin besitzt kein Mapping. Minor-Bump: die
+Helfer-Oberfläche wächst, die Device-Datenform bleibt unverändert. Bestehende Skins
+bleiben gültig; ein Skin, der `floorShort` nutzt, zieht sein `targetsContract` auf 1.8.
+
 ## [1.7.0] — 2026-08-27
 
 v1.7: `SkinManifest.gestures` – ein Skin bringt sein eigenes Gesten-/Interaktionsmodell

@@ -86,6 +86,30 @@ describe('ctx.hyphenate — German soft hyphenation', () => {
   });
 });
 
+describe('ctx.floorShort — Etagenkürzel (CONTRACT v1.8)', () => {
+  const withFloor = (floor?: string): Device => ({ ...f.light.off, floor });
+
+  it('collapses a known full German floor name to its abbreviation', () => {
+    expect(ctx.floorShort(withFloor('Erdgeschoss'))).toBe('EG');
+    expect(ctx.floorShort(withFloor('Obergeschoss'))).toBe('OG');
+    expect(ctx.floorShort(withFloor('Untergeschoss'))).toBe('UG');
+  });
+
+  it('matches the full floor name case-insensitively and trims surrounding space', () => {
+    expect(ctx.floorShort(withFloor('  erdgeschoss  '))).toBe('EG');
+  });
+
+  it('passes an already-short or unknown floor through unchanged', () => {
+    expect(ctx.floorShort(withFloor('EG'))).toBe('EG');
+    expect(ctx.floorShort(withFloor('Spitzboden'))).toBe('Spitzboden');
+  });
+
+  it('yields an empty string when the device carries no floor', () => {
+    expect(ctx.floorShort(withFloor(undefined))).toBe('');
+    expect(ctx.floorShort(withFloor('   '))).toBe('');
+  });
+});
+
 describe('ctx.stateText — centralised footer text (§5)', () => {
   it('light off → "Aus"', () => {
     expect(ctx.stateText(withType<LightDevice>(f.light.off, 'light'))).toBe('Aus');
