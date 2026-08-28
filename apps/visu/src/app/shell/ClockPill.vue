@@ -97,7 +97,8 @@ function onClick(): void {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  opacity: 0.75;
+  /* Vorlage: Datum in Akzent-Orange (die Uhrzeit trägt Weiß). */
+  color: var(--obs-accent, #ec8b3a);
 }
 
 .clock-txt .t {
@@ -105,7 +106,8 @@ function onClick(): void {
   font-weight: 700;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  color: var(--obs-accent, currentColor);
+  /* Vorlage: Uhrzeit weiß (currentColor), nicht der Akzent. */
+  color: currentColor;
 }
 
 .clock-dot {
