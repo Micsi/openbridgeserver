@@ -30,7 +30,11 @@ Skin↔Host-Grenze und Interaktions-Matrix: siehe **`CONTRIBUTING-visu-gestures-
 funktional/interaktiv; die reine **Container-**Vereinheitlichung der Jalousie-Kachel bleibt die
 separate Produktentscheidung B6 (siehe unten) – Presets/Gesten präjudizieren sie nicht.
 
-## 2. Backlog (präzise, nicht erledigt)
+## 2. Backlog — Stand 2026-08-28 (Quality-Loop verifiziert)
+
+**Alle B-Punkte abgeschlossen:** B1 fetter Fuß ✔ (Klima-Fuß per Loop an Vorlage angeglichen, Commit `f820d20`; light/switch/blind/sensor waren bereits an der Vorlage — Kritiker-verifiziert). B2 Crumb-Pfad ✔ (bereits umgesetzt). B3 climate in Wall ✔ (bereits umgesetzt). B4 Gruppe-3 (Szene/Media/Kamera): **entfällt** — diese Typen kommen in der Vorlage gar nicht vor (keine Messlatte). B5 Conformance climate ✔ (`CORE_WIDGET_TYPES` enthält climate). B6 Jalousie ✔ (Entscheidung §2.1).
+
+
 
 | # | Punkt | Ort | Aufwand |
 |---|---|---|---|
