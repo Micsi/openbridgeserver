@@ -59,8 +59,17 @@ export interface ObsValueEvent {
   readonly q?: string;
 }
 
-/** Page-scoped auth context for the value WebSocket (query-string auth). */
+/**
+ * Auth context for the value WebSocket. Two mutually exclusive shapes:
+ *  - **Logged in:** a `jwt` → principal-scoped socket via the `obs.jwt.<token>`
+ *    subprotocol (a browser cannot set an Authorization header on a WS). The JWT
+ *    is NEVER placed in the query string.
+ *  - **Guest / PIN:** a `pageId` (+ optional `sessionToken`) → page-scoped via the
+ *    query string, exactly like `useWebSocket.ts`.
+ * When a `jwt` is present it wins; the page-scoped fields are ignored.
+ */
 export interface WsAuthContext {
+  readonly jwt?: string | null;
   readonly pageId?: string | null;
   readonly sessionToken?: string | null;
 }
@@ -325,8 +334,10 @@ export class ObsClient {
   /**
    * Open the value-event WebSocket. `onValue` receives each `{id,v,…}` event;
    * the socket auto-reconnects with backoff and re-subscribes the current id set.
-   * `getContext` (optional) supplies the page-scoped auth for the query string on
-   * every (re)connect. A `4001` close (auth rejected) stops reconnecting.
+   * `getContext` (optional) supplies the auth for every (re)connect: a `jwt` opens
+   * a principal-scoped socket via the `obs.jwt.<token>` subprotocol, otherwise a
+   * `pageId`/`sessionToken` is page-scoped via the query string. A `4001` close
+   * (auth rejected) stops reconnecting.
    */
   openWebSocket(
     onValue: (ev: ObsValueEvent) => void,
@@ -367,15 +378,22 @@ export class WsHandle {
 
     const ctx = this.getContext?.() ?? {};
     let url = this.wsUrl;
-    const params = new URLSearchParams();
-    if (ctx.pageId) {
-      params.set('page_id', ctx.pageId);
-      if (ctx.sessionToken) params.set('session_token', ctx.sessionToken);
+    let protocols: string[] | undefined;
+    if (ctx.jwt) {
+      // Logged in: principal-scoped via the `obs.jwt.<token>` subprotocol. The
+      // JWT rides in Sec-WebSocket-Protocol, never in the (loggable) query.
+      protocols = [`obs.jwt.${ctx.jwt}`];
+    } else {
+      const params = new URLSearchParams();
+      if (ctx.pageId) {
+        params.set('page_id', ctx.pageId);
+        if (ctx.sessionToken) params.set('session_token', ctx.sessionToken);
+      }
+      const qs = params.toString();
+      if (qs) url = `${url}${url.includes('?') ? '&' : '?'}${qs}`;
     }
-    const qs = params.toString();
-    if (qs) url = `${url}${url.includes('?') ? '&' : '?'}${qs}`;
 
-    const ws = this.makeWs(url);
+    const ws = this.makeWs(url, protocols);
     this.socket = ws;
 
     ws.onopen = () => {

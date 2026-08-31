@@ -65,6 +65,14 @@ export class ObsDataSource implements AuthCapableDataSource {
   private readonly dpToDevices = new Map<string, Set<string>>();
   private readonly listeners = new Set<PatchListener>();
   private ws: WsHandle | null = null;
+  /** Guest live-value poll timer (page-scoped getValue), or null when idle. */
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Guard so a slow poll round never overlaps the next tick. */
+  private polling = false;
+  /** Last raw value seen per datapoint, so a poll round only emits real changes. */
+  private readonly lastPolled = new Map<string, unknown>();
+  /** Guest poll cadence (ms). Live WS is used instead once logged in. */
+  private static readonly POLL_INTERVAL_MS = 4000;
 
   constructor(config: ObsClientConfig | ObsClient = {}) {
     this.client = config instanceof ObsClient ? config : new ObsClient(config);
@@ -135,6 +143,10 @@ export class ObsDataSource implements AuthCapableDataSource {
     this.dpToDevices.clear();
     this.devicePage.clear();
     this.dpPage.clear();
+    // Seed the poll baseline with the values list() just read, so a guest poll's
+    // first round stays quiet and only later real changes emit patches.
+    this.lastPolled.clear();
+    for (const [dp, v] of values) this.lastPolled.set(dp, v);
     const out: Device[] = [];
     for (const m of withValues) {
       const pageId = m.pageId ?? '';
@@ -217,24 +229,89 @@ export class ObsDataSource implements AuthCapableDataSource {
   /* ----------------------------------------------------------- subscribe */
 
   subscribe(cb: PatchListener): () => void {
+    const first = this.listeners.size === 0;
     this.listeners.add(cb);
-    // Open the WS lazily on the first subscriber and feed it the current id set.
-    // The socket is opened without a single page scope: the mobile view
-    // aggregates many pages, so it relies on the server delivering only the
-    // allowed (filtered) value-events for the subscribed ids.
-    if (!this.ws) {
-      this.ws = this.client.openWebSocket((ev) => this.onValueEvent(ev));
+    // The live-value mode is chosen by auth status on the first subscriber:
+    //  - Logged in (JWT): ONE principal-scoped WS via the `obs.jwt.<token>`
+    //    subprotocol. The server filters to the caller's allowed datapoints, so a
+    //    single socket covers the aggregate overview. No context-less socket is
+    //    ever opened (that is the audited bug: the server would close it 4001).
+    //  - Guest / PIN (no JWT): page-scoped POLLING – periodic `getValue` per DP
+    //    carrying its page's `X-Page-Id` (+ `X-Session-Token`). A multi-page
+    //    aggregate has no single identity to scope a socket to, so it polls.
+    // The host store re-runs unsubscribe()+subscribe() on login/logout, so the
+    // mode is re-selected there without any special-casing here.
+    if (first) {
+      if (this.isAuthenticated()) {
+        this.ws = this.client.openWebSocket(
+          (ev) => this.onValueEvent(ev),
+          () => {
+            const jwt = getAccessToken();
+            return jwt ? { jwt } : {};
+          },
+        );
+      } else {
+        this.startPolling();
+      }
     }
-    const ids = [...this.dpToDevices.keys()];
-    if (ids.length > 0) this.ws.subscribe(ids);
+    if (this.ws) {
+      const ids = [...this.dpToDevices.keys()];
+      if (ids.length > 0) this.ws.subscribe(ids);
+    }
 
     return () => {
       this.listeners.delete(cb);
-      if (this.listeners.size === 0 && this.ws) {
-        this.ws.close();
-        this.ws = null;
+      if (this.listeners.size === 0) {
+        if (this.ws) {
+          this.ws.close();
+          this.ws = null;
+        }
+        this.stopPolling();
       }
     };
+  }
+
+  /* --------------------------------------------------------------- poll */
+
+  /** Start the guest poll loop: an immediate read, then every POLL_INTERVAL_MS. */
+  private startPolling(): void {
+    if (this.pollTimer) return;
+    void this.pollOnce();
+    this.pollTimer = setInterval(() => void this.pollOnce(), ObsDataSource.POLL_INTERVAL_MS);
+  }
+
+  /** Stop and clear the guest poll loop. */
+  private stopPolling(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.polling = false;
+  }
+
+  /**
+   * One poll round: read every subscribed datapoint's current value (page-scoped,
+   * best-effort) and feed each into the same value-event path the WS would. A
+   * concealed/forbidden read (404/403) is skipped by {@link fetchValues} – no
+   * value, no crash. Overlapping rounds are guarded so a slow batch can't stack.
+   */
+  private async pollOnce(): Promise<void> {
+    if (this.polling) return;
+    const ids = [...this.dpToDevices.keys()];
+    if (ids.length === 0) return;
+    this.polling = true;
+    try {
+      const values = await this.fetchValues(ids, this.dpPage);
+      for (const [id, v] of values) {
+        // Only surface a datapoint whose raw value actually moved since last read;
+        // an unchanged poll (the common case) emits nothing and causes no re-render.
+        if (this.lastPolled.has(id) && Object.is(this.lastPolled.get(id), v)) continue;
+        this.lastPolled.set(id, v);
+        this.onValueEvent({ id, v });
+      }
+    } finally {
+      this.polling = false;
+    }
   }
 
   /** Apply one incoming value-event to every device that reads its datapoint. */

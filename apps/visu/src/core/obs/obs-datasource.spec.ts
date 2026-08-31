@@ -330,8 +330,128 @@ describe('ObsDataSource — concealment tolerance', () => {
   });
 });
 
-describe('ObsDataSource — subscribe() WS scope + live revocation', () => {
-  it('opens a context-less WS, subscribes read DPs, applies allowed value-events', async () => {
+/** Stub a working localStorage carrying an optional pre-seeded visu_jwt. */
+function stubStorage(jwt?: string): Map<string, string> {
+  const store = new Map<string, string>();
+  if (jwt) store.set('visu_jwt', jwt);
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => (store.has(k) ? (store.get(k) as string) : null),
+    setItem: (k: string, v: string) => void store.set(k, String(v)),
+    removeItem: (k: string) => void store.delete(k),
+    clear: () => store.clear(),
+  });
+  return store;
+}
+
+describe('ObsDataSource – subscribe() guest mode: page-scoped polling (no context-less WS)', () => {
+  /** A fetch whose datapoint values are mutable, so a poll round can observe change. */
+  function makePollFetch() {
+    const state: Record<string, unknown> = { ...VALUES };
+    const valueReads: { id: string; pageId?: string; token?: string }[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url);
+      const headers = init?.headers as Record<string, string> | undefined;
+      if (u.endsWith('/visu/tree')) return new Response(JSON.stringify(TREE), { status: 200 });
+      if (u.match(/\/writable$/)) return new Response(JSON.stringify({ writable: {} }), { status: 200 });
+      const vm = u.match(/\/datapoints\/([^/]+)\/value$/);
+      if (vm) {
+        valueReads.push({ id: vm[1], pageId: headers?.['X-Page-Id'], token: headers?.['X-Session-Token'] });
+        return new Response(JSON.stringify({ value: state[vm[1]] ?? null, unit: null }), { status: 200 });
+      }
+      return new Response('nf', { status: 404 });
+    });
+    return { fetchImpl, state, valueReads };
+  }
+
+  it('opens NO WebSocket and polls getValue per DP (X-Page-Id), applying changed values', async () => {
+    vi.useFakeTimers();
+    const { fetchImpl, state, valueReads } = makePollFetch();
+    const { ds } = makeSource(fetchImpl as unknown as typeof fetch);
+    await ds.list(); // seeds blind-1 position 30 (pos-st)
+    valueReads.length = 0;
+
+    const patches: DevicePatch[] = [];
+    const unsub = ds.subscribe((p) => patches.push(p));
+
+    // Guest → no socket is ever created.
+    expect(FakeWs.last).toBeNull();
+
+    // Immediate poll round runs; reads carry the owning page's X-Page-Id.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(valueReads.find((r) => r.id === 'sw-st')?.pageId).toBe('p1');
+    expect(valueReads.find((r) => r.id === 'jpos-st')?.pageId).toBe('p2');
+    // Unchanged values produce no patch (still equal to the list() seed).
+    expect(patches).toEqual([]);
+
+    // A value that changes between rounds surfaces as a patch on the next tick.
+    state['pos-st'] = 80;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(patches).toContainEqual({ id: 'blind-1', changes: { position: 80 } });
+
+    unsub();
+    vi.useRealTimers();
+  });
+
+  it('emits when a datapoint concealed at list becomes readable during a later poll', async () => {
+    vi.useFakeTimers();
+    let concealPos = true;
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.endsWith('/visu/tree')) return new Response(JSON.stringify(TREE), { status: 200 });
+      if (u.match(/\/writable$/)) return new Response(JSON.stringify({ writable: {} }), { status: 200 });
+      const vm = u.match(/\/datapoints\/([^/]+)\/value$/);
+      if (vm) {
+        const id = vm[1];
+        if (id === 'pos-st' && concealPos) return new Response('{}', { status: 404 });
+        return new Response(JSON.stringify({ value: VALUES[id] ?? null, unit: null }), { status: 200 });
+      }
+      return new Response('nf', { status: 404 });
+    });
+    const { ds } = makeSource(fetchImpl as unknown as typeof fetch);
+    await ds.list(); // pos-st concealed → never seeded into the poll baseline
+
+    const patches: DevicePatch[] = [];
+    const unsub = ds.subscribe((p) => patches.push(p)); // immediate poll: pos-st still 404
+    concealPos = false; // right restored: pos-st now readable (=30) on the next tick
+    await vi.advanceTimersByTimeAsync(4000);
+    // First time pos-st has a value → emitted even though the baseline lacked it.
+    expect(patches).toContainEqual({ id: 'blind-1', changes: { position: 30 } });
+    unsub();
+    vi.useRealTimers();
+  });
+
+  it('tolerates a 404/403 poll read (no value, no crash) and stops the timer on unsubscribe', async () => {
+    vi.useFakeTimers();
+    const { fetchImpl, valueReads } = makeFetch({ concealRead: ['pos-st'] });
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+    valueReads.length = 0;
+
+    const patches: DevicePatch[] = [];
+    const unsub = ds.subscribe((p) => patches.push(p));
+    // Immediate poll: pos-st answers 404 → skipped, blind stays put, no throw.
+    await vi.advanceTimersByTimeAsync(0);
+    // At least one non-concealed read still happened (e.g. sw-st) → loop is alive.
+    expect(valueReads.some((r) => r.id === 'sw-st')).toBe(true);
+    expect(patches).toEqual([]);
+
+    // Unsubscribe stops the poll loop: no further value reads occur.
+    unsub();
+    valueReads.length = 0;
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(valueReads).toEqual([]);
+    vi.useRealTimers();
+  });
+});
+
+describe('ObsDataSource – subscribe() logged-in mode: principal-scoped WS via obs.jwt subprotocol', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('opens ONE WS with the obs.jwt.<token> subprotocol, no JWT in the URL; 4001 → no reconnect; live revocation reduces scope', async () => {
+    vi.useFakeTimers();
+    stubStorage('jwt-abc');
     const { fetchImpl } = makeFetch();
     const { ds } = makeSource(fetchImpl);
     await ds.list();
@@ -340,24 +460,33 @@ describe('ObsDataSource — subscribe() WS scope + live revocation', () => {
     ds.subscribe((p) => patches.push(p));
 
     const ws = FakeWs.last!;
-    expect(ws.url).toBe('ws://test/api/v1/ws'); // no admin JWT subprotocol, no page scope
-    expect(ws.protocols).toBeUndefined();
+    expect(FakeWs.instances.length).toBe(1);
+    // JWT rides in the subprotocol; the URL carries neither the JWT nor a query.
+    expect(ws.protocols).toEqual(['obs.jwt.jwt-abc']);
+    expect(ws.url).toBe('ws://test/api/v1/ws');
     ws.open();
 
     const sub = ws.sent.map((s) => JSON.parse(s)).find((m) => m.action === 'subscribe');
     expect(sub.ids).toEqual(expect.arrayContaining(['sw-st', 'pos-st', 'jpos-st', 'jslat-st']));
 
-    // An allowed value-event becomes a DevicePatch.
+    // The server-filtered principal feed becomes DevicePatches.
     ws.emit({ id: 'pos-st', v: 80, u: null, t: null, q: 'good' });
     expect(patches).toContainEqual({ id: 'blind-1', changes: { position: 80 } });
 
-    // Live revocation: an event for a DP no longer in scope is ignored (no crash).
+    // Live right-revocation: an event for a DP no longer in scope is ignored.
     patches.length = 0;
     ws.emit({ id: 'ghost-dp', v: 1 });
     expect(patches).toEqual([]);
+
+    // 4001 (auth rejected) → no reconnect loop.
+    ws.closeWith(4001);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeWs.instances.length).toBe(1);
+    vi.useRealTimers();
   });
 
-  it('closes the socket when the last subscriber unsubscribes', async () => {
+  it('closes the principal socket when the last subscriber unsubscribes', async () => {
+    stubStorage('jwt-abc');
     const { fetchImpl } = makeFetch();
     const { ds } = makeSource(fetchImpl);
     await ds.list();
@@ -366,6 +495,42 @@ describe('ObsDataSource — subscribe() WS scope + live revocation', () => {
     const closeSpy = vi.spyOn(ws, 'close');
     unsub();
     expect(closeSpy).toHaveBeenCalled();
+  });
+
+  it('a second subscriber reuses the open principal socket (no new WS)', async () => {
+    stubStorage('jwt-abc');
+    const { fetchImpl } = makeFetch();
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+    const u1 = ds.subscribe(() => {});
+    const u2 = ds.subscribe(() => {}); // first === false → re-subscribes ids on the same WS
+    expect(FakeWs.instances.length).toBe(1);
+    u1();
+    u2();
+  });
+
+  it('switches poll↔WS when auth flips across re-subscribe (login / logout)', async () => {
+    vi.useFakeTimers();
+    const store = stubStorage(); // guest first (no JWT)
+    const { fetchImpl } = makeFetch();
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    const unsubGuest = ds.subscribe(() => {});
+    expect(FakeWs.last).toBeNull(); // guest → poll, no socket
+    unsubGuest(); // stops the poll loop
+
+    store.set('visu_jwt', 'jwt-xyz'); // now logged in
+    const unsubUser = ds.subscribe(() => {});
+    expect(FakeWs.last?.protocols).toEqual(['obs.jwt.jwt-xyz']); // logged in → WS
+    unsubUser();
+
+    store.delete('visu_jwt'); // logout → back to guest
+    FakeWs.last = null;
+    const unsubGuest2 = ds.subscribe(() => {});
+    expect(FakeWs.last).toBeNull(); // guest again → poll, no new socket
+    unsubGuest2();
+    vi.useRealTimers();
   });
 });
 
@@ -431,6 +596,18 @@ describe('ObsClient — page-scoped WebSocket auth', () => {
     );
     const ws = FakeWs.last!;
     expect(ws.url).toBe('ws://test/api/v1/ws?page_id=p2&session_token=sess-xyz');
+    handle.close();
+  });
+
+  it('opens a principal-scoped socket via the obs.jwt subprotocol, keeping the JWT out of the URL', () => {
+    const client = makeClient(vi.fn() as unknown as typeof fetch);
+    const handle = client.openWebSocket(
+      () => {},
+      () => ({ jwt: 'tok-123' }),
+    );
+    const ws = FakeWs.last!;
+    expect(ws.url).toBe('ws://test/api/v1/ws'); // no query at all
+    expect(ws.protocols).toEqual(['obs.jwt.tok-123']);
     handle.close();
   });
 
