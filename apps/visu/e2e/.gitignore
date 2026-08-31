@@ -1,0 +1,5 @@
+# E2E runtime artifacts — never committed
+.seeded.json
+/test-results/
+/playwright-report/
+/.auth/

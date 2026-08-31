@@ -10,7 +10,9 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "m1:smoke": "vitest run --config vitest.m1.config.ts"
+    "m1:smoke": "vitest run --config vitest.m1.config.ts",
+    "e2e": "playwright test",
+    "e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@ionic/vue": "^8.4.0",
@@ -25,6 +27,7 @@
     "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
     "@types/chroma-js": "^2.4.4",
     "@types/node": "^22.10.1",
     "@vitejs/plugin-vue": "^5.2.1",
