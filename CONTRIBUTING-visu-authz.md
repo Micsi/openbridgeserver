@@ -150,3 +150,27 @@ ableiten (Raeume aus den PAGE/Location-Knoten, Geraete aus den gemappten Widgets
 statischen `model.ts`. Erst danach wird der Browser-E2E (`apps/visu/e2e/authz-roles.spec.ts`) gruen;
 die authz-Assertions darin sind bereits korrekt formuliert. Der Harness bleibt turnkey (siehe
 `apps/visu/e2e/README.md`).
+
+### 8.1 Follow-up ERLEDIGT (2026-08-31): OBS-Modus rendert echtes Backend, Browser-E2E grün
+
+Der in §8 als Follow-up ausgelagerte Track ist abgeschlossen — der Browser-E2E
+(`apps/visu/e2e/authz-roles.spec.ts`) läuft **4/4 grün** (zweimal, non-flaky) gegen
+einen frisch geseedeten authz-Server (guest/PIN/resident/operator). Drei Schichten
+lagen zwischen "mountet nicht" und "E2E grün", alle geschlossen:
+
+1. **Dynamisches Overview-Layout** (`505ea507`): Overview-Floor aus den Live-Geräten
+   nach Raum ableiten (`pages/groupDevicesByRoom`, `store.externalFloor`) statt aus
+   dem statischen Demo-Modell → App mountet gegen echtes Backend.
+2. **Per-Page-Config-Fetch** (`c0da093a`): `/visu/tree` liefert `VisuNodeSummary`
+   ohne `page_config`; `ObsClient.getPage(id)` + `ObsDataSource.loadPageConfigs`
+   holen die Widgets pro Page (page-scoped, PIN-Session/JWT; 404/403 = still
+   überspringen). Ohne das: 0 Geräte gegen den echten Server.
+3. **AccessGate bedienbar + Seed-Widget-Typ** (`c0da093a`): das Gate lag unter dem
+   `absolute`-`ion-router-outlet` (Klicks abgefangen) → eigene Ebene über dem
+   Outlet; und der Seed nutzte `type:"ValueDisplay"` (vom Mapper bewusst
+   übersprungen) → jetzt `Toggle`.
+
+Damit ist die Welle-4-Verifikation vollständig: **API-Smoke 16/16** (Sicherheits-
+Kern) **plus** der **Browser-E2E 4/4** (die vom Dok geforderte E2E gegen einen
+echten authz-Server mit guest/resident/operator). Turnkey-Ablauf unverändert in
+`apps/visu/e2e/README.md`.

@@ -136,12 +136,12 @@ rm -f "$TMPDIR"/e2e_obs.db* "$TMPDIR/e2e_mosq.conf" "$TMPDIR/e2e_obs_passwd" app
   whatever affordance the shell exposes and keep the `.login-*` interactions.
 - Keep this run out of the visu-ci pipeline; it is a manual/dedicated E2E lane.
 
-## Bekannter Blocker (2026-08-31): OBS-Modus-Overview crasht gegen echtes Backend
+## Status (2026-08-31): Browser-E2E gruen
 
-Der API-Smoke (16/16) und der Stack-Aufbau/Seed sind verifiziert. Der Browser-Lauf blockiert
-aktuell aber, weil die Visu im OBS-Modus nicht mountet: das Overview-Layout ist statisch im
-Demo-Modell (`apps/visu/src/core/model.ts`) hartcodiert (`kueche-wand` etc.) und passt nicht zu
-echten Backend-Geraete-Ids -> `resolveLayout: ... references no device`. Voraussetzung fuer einen
-gruenen UI-E2E ist der Follow-up "dynamisches Overview-Layout aus dem Backend-Tree" (siehe
-CONTRIBUTING-visu-authz.md §8). Die Playwright-Config nutzt bewusst einen Mobile-Viewport, damit
-das `ion-menu`-Drawer (LoginPanel/AccessGate) rendert.
+Der Browser-E2E laeuft **4/4 gruen** (zweimal, non-flaky) gegen einen frisch geseedeten
+authz-Server (guest/PIN/resident/operator), zusaetzlich zum API-Smoke (16/16). Drei
+Integrations-Schichten wurden dafuer geschlossen (Details in CONTRIBUTING-visu-authz.md §8.1):
+dynamisches Overview-Layout aus dem Backend-Tree, Per-Page-Config-Fetch
+(`GET /visu/pages/{id}`, da `/visu/tree` nur eine Summary ohne `page_config` liefert), und die
+AccessGate-Bedienbarkeit ueber dem `ion-router-outlet`. Die Playwright-Config nutzt bewusst einen
+Mobile-Viewport, damit das `ion-menu`-Drawer (LoginPanel/AccessGate) rendert.
