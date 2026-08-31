@@ -7,6 +7,7 @@ import {
   applyDp,
   planWrite,
   resolveEffectiveAccess,
+  resolveAccessNodes,
   deviceWriteDps,
   toBool,
   toNum,
@@ -265,6 +266,43 @@ describe('resolveEffectiveAccess — parent-traversal to the first set access', 
     const access = resolveEffectiveAccess(cyclic);
     expect(access.get('a')).toBe('public');
     expect(access.get('b')).toBe('public');
+  });
+});
+
+/* --------------------------------------------------- resolveAccessNodes */
+
+describe('resolveAccessNodes — effective access + its defining node id', () => {
+  const tree: ObsVisuNode[] = [
+    { id: 'root', parent_id: null, name: 'Haus', type: 'LOCATION', page_config: null, access: null },
+    { id: 'pub', parent_id: 'root', name: 'Flur', type: 'PAGE', page_config: null, access: null },
+    { id: 'prot', parent_id: 'root', name: 'Büro', type: 'PAGE', page_config: null, access: 'protected' },
+    { id: 'sec', parent_id: null, name: 'Technik', type: 'LOCATION', page_config: null, access: 'protected' },
+    { id: 'childA', parent_id: 'sec', name: 'A', type: 'PAGE', page_config: null, access: null },
+    { id: 'childB', parent_id: 'sec', name: 'B', type: 'PAGE', page_config: null, access: null },
+    { id: 'orphan', parent_id: 'gone', name: 'Solo', type: 'PAGE', page_config: null, access: null },
+  ];
+
+  it('reports the defining node: self, ancestor, or null for the public fallback', () => {
+    const info = resolveAccessNodes(tree);
+    // Nothing set on the path → public, no defining node.
+    expect(info.get('pub')).toEqual({ access: 'public', accessNodeId: null });
+    // Own access wins → the node defines itself.
+    expect(info.get('prot')).toEqual({ access: 'protected', accessNodeId: 'prot' });
+    // Two siblings inherit from the SAME ancestor → identical defining node.
+    expect(info.get('childA')).toEqual({ access: 'protected', accessNodeId: 'sec' });
+    expect(info.get('childB')).toEqual({ access: 'protected', accessNodeId: 'sec' });
+    // Absent parent → public fallback, no defining node.
+    expect(info.get('orphan')).toEqual({ access: 'public', accessNodeId: null });
+  });
+
+  it('stops at public/null on a parent_id cycle', () => {
+    const cyclic: ObsVisuNode[] = [
+      { id: 'a', parent_id: 'b', name: 'A', type: 'PAGE', page_config: null, access: null },
+      { id: 'b', parent_id: 'a', name: 'B', type: 'PAGE', page_config: null, access: null },
+    ];
+    const info = resolveAccessNodes(cyclic);
+    expect(info.get('a')).toEqual({ access: 'public', accessNodeId: null });
+    expect(info.get('b')).toEqual({ access: 'public', accessNodeId: null });
   });
 });
 

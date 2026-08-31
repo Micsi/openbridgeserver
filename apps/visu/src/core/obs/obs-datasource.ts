@@ -47,7 +47,7 @@ import {
   mapTree,
   applyDp,
   planWrite,
-  resolveEffectiveAccess,
+  resolveAccessNodes,
   deviceWriteDps,
   type ObsVisuNode,
   type MappedWidget,
@@ -65,6 +65,13 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
   private readonly mapped = new Map<string, MappedWidget>();
   /** device id → owning PAGE id (the X-Page-Id for its datapoint ops). */
   private readonly devicePage = new Map<string, string>();
+  /**
+   * PAGE id → its defining-node id (accessNodeId) — the node the backend scopes
+   * a `protected` session to. A PIN session is cached/looked up under THIS id, so
+   * one PIN covers every sibling page under the same defining node. Rebuilt on
+   * every {@link list}; a page with no defining node above it is simply absent.
+   */
+  private readonly accessNode = new Map<string, string>();
   /** datapoint id → the PAGE id its reads should be scoped to (first seen). */
   private readonly dpPage = new Map<string, string>();
   /** datapoint id → device ids that read it (a DP may feed several widgets). */
@@ -96,7 +103,22 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
    * devices. Surfaces the client's errors (wrong PIN → {@link ObsAuthError}).
    */
   authenticatePage(nodeId: string, pin: string): Promise<{ sessionToken: string; expiresIn: number }> {
-    return this.client.authenticatePin(nodeId, pin);
+    // Authenticate against the page's *defining node* (accessNodeId), not the
+    // page itself: the backend scopes the session to that node, so a single PIN
+    // unlocks every sibling page that inherits `protected` from it. A page with
+    // no known defining node (e.g. called before any list()) falls back to itself.
+    return this.client.authenticatePin(this.accessNode.get(nodeId) ?? nodeId, pin);
+  }
+
+  /**
+   * The `X-Session-Token` to send for a page's datapoint op, or undefined. The
+   * session is keyed on the page's *defining node* (accessNodeId), so every
+   * sibling page under the same `protected` ancestor shares the one PIN session;
+   * a public/readonly page has no session and yields undefined. Shared by every
+   * page-scoped read and write.
+   */
+  private sessionTokenFor(pageId: string): string | undefined {
+    return this.client.sessionToken(this.accessNode.get(pageId) ?? pageId) ?? undefined;
   }
 
   /**
@@ -122,8 +144,12 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
       if (node.type !== 'PAGE') continue;
       const access = accessByNode.get(node.id) ?? 'public';
       if (access === 'protected') {
-        // Needs a PIN until a valid session token is held for the page.
-        if (this.client.sessionToken(node.id) === null) {
+        // Needs a PIN until a valid session token is held for the page's DEFINING
+        // node — accessNode is always populated for a protected page (list() sets
+        // it before computeGates). A sibling unlocked earlier already dropped the
+        // gate for this page, because they share that one defining-node session.
+        const definingNode = this.accessNode.get(node.id)!;
+        if (this.client.sessionToken(definingNode) === null) {
           gates.push({ pageId: node.id, name: node.name, access });
         }
       } else if (access === 'user') {
@@ -162,7 +188,15 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
   async list(): Promise<Device[]> {
     const nodes = await this.client.getVisuTree<ObsVisuNode[]>();
     const list = Array.isArray(nodes) ? nodes : [];
-    const accessByNode = resolveEffectiveAccess(list);
+    const accessInfo = resolveAccessNodes(list);
+    // Rebuild the page → defining-node map so session lookups (gate + reads +
+    // writes) key on the node the backend scopes the PIN session to.
+    this.accessNode.clear();
+    const accessByNode = new Map<string, PageAccess>();
+    for (const [id, info] of accessInfo) {
+      accessByNode.set(id, info.access);
+      if (info.accessNodeId) this.accessNode.set(id, info.accessNodeId);
+    }
     this.pageGateList = this.computeGates(list, accessByNode);
     const mappedWidgets = mapTree(list);
 
@@ -244,7 +278,7 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
         const access = accessByNode.get(pageId) ?? 'public';
         // readonly/user pages are all-locked; don't bother the server for them.
         if (access === 'readonly' || access === 'user') return;
-        const token = this.client.sessionToken(pageId) ?? undefined;
+        const token = this.sessionTokenFor(pageId);
         try {
           out.set(pageId, await this.client.getWritable(pageId, token));
         } catch {
@@ -260,8 +294,8 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
     const out = new Map<string, unknown>();
     await Promise.all(
       ids.map(async (id) => {
-        const pageId = dpPage.get(id);
-        const token = pageId ? (this.client.sessionToken(pageId) ?? undefined) : undefined;
+        const pageId = dpPage.get(id) as string; // every collected id has a page
+        const token = this.sessionTokenFor(pageId);
         try {
           const r = await this.client.getValue(id, pageId, token);
           out.set(id, r.value);
@@ -389,8 +423,8 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
     if (m.device.writable === false) return;
 
     const write = planWrite(m.device, m.writes, action, payload);
-    const pageId = this.devicePage.get(id);
-    const token = pageId ? (this.client.sessionToken(pageId) ?? undefined) : undefined;
+    const pageId = this.devicePage.get(id) as string; // a mapped device always has a page
+    const token = this.sessionTokenFor(pageId);
     try {
       await this.client.writeValue(write.dp, write.value, pageId, token);
     } catch (err) {

@@ -397,30 +397,52 @@ export function mapTree(
 }
 
 /**
- * Resolve every node's *effective* {@link PageAccess} by walking up `parent_id`
- * until the first node with an explicitly set `access`; nodes with none inherit
- * downward, and a tree with nothing set is `public` (the server default). A
- * parent that is not present in the list (filtered out) or a `parent_id` cycle
- * stops the walk at `public`.
+ * A node's effective access plus the id of the node that *defines* it — the
+ * first ancestor (or the node itself) with an explicitly set `access`. This is
+ * the server's `defining_node_id`: the node that holds the PIN and under which
+ * the backend scopes a `protected` session (obs/api/v1/visu.py → create_session).
+ * `accessNodeId` is null when nothing on the path sets `access` (effective
+ * `public` by default), where no session is ever needed.
  */
-export function resolveEffectiveAccess(
-  nodes: readonly ObsVisuNode[],
-): Map<string, PageAccess> {
+export interface EffectiveAccess {
+  readonly access: PageAccess;
+  readonly accessNodeId: string | null;
+}
+
+/**
+ * Resolve every node's {@link EffectiveAccess} by walking up `parent_id` until
+ * the first node with an explicitly set `access`; that node is the defining
+ * node. Nodes with none inherit downward, and a tree with nothing set is
+ * `public` with no defining node. A parent that is not present in the list
+ * (filtered out) or a `parent_id` cycle stops the walk at `public`/null.
+ */
+export function resolveAccessNodes(nodes: readonly ObsVisuNode[]): Map<string, EffectiveAccess> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const resolve = (start: string | null): PageAccess => {
+  const resolve = (start: string | null): EffectiveAccess => {
     const seen = new Set<string>();
     let cur = start;
     while (cur && !seen.has(cur)) {
       seen.add(cur);
       const node = byId.get(cur);
       if (!node) break;
-      if (node.access) return node.access;
+      if (node.access) return { access: node.access, accessNodeId: node.id };
       cur = node.parent_id;
     }
-    return 'public';
+    return { access: 'public', accessNodeId: null };
   };
-  const out = new Map<string, PageAccess>();
+  const out = new Map<string, EffectiveAccess>();
   for (const n of nodes) out.set(n.id, resolve(n.id));
+  return out;
+}
+
+/**
+ * Resolve every node's *effective* {@link PageAccess} — the {@link access} half
+ * of {@link resolveAccessNodes}, kept as a convenience for callers that only
+ * need the level and not the defining node.
+ */
+export function resolveEffectiveAccess(nodes: readonly ObsVisuNode[]): Map<string, PageAccess> {
+  const out = new Map<string, PageAccess>();
+  for (const [id, info] of resolveAccessNodes(nodes)) out.set(id, info.access);
   return out;
 }
 

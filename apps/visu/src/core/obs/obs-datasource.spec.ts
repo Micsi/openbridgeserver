@@ -148,10 +148,11 @@ interface FetchOpts {
  * /visu/nodes/{id}/writable and /datapoints/*\/value. Records write payloads and
  * the page/session headers each request carried.
  */
-function makeFetch(opts: FetchOpts = {}) {
+function makeFetch(opts: FetchOpts = {}, tree: ObsVisuNode[] = TREE, values: Record<string, unknown> = VALUES) {
   const writes: { id: string; value: unknown; pageId?: string; token?: string }[] = [];
   const valueReads: { id: string; pageId?: string; token?: string }[] = [];
   const writableCalls: { pageId: string; token?: string }[] = [];
+  const authCalls: { nodeId: string }[] = [];
   const conceal = new Set(opts.concealRead ?? []);
   const forbid = new Set(opts.forbidWrite ?? []);
 
@@ -165,13 +166,14 @@ function makeFetch(opts: FetchOpts = {}) {
 
     const authMatch = u.match(/\/visu\/nodes\/([^/]+)\/auth$/);
     if (authMatch) {
+      authCalls.push({ nodeId: authMatch[1] });
       const pin = JSON.parse(String(init?.body)).pin;
       if (pin !== '1234') return new Response(JSON.stringify({ detail: 'Falscher PIN' }), { status: 401 });
       return new Response(JSON.stringify({ session_token: 'sess-xyz', expires_in: 3600 }), { status: 200 });
     }
 
     if (u.endsWith('/visu/tree')) {
-      return new Response(JSON.stringify(TREE), { status: 200 });
+      return new Response(JSON.stringify(tree), { status: 200 });
     }
 
     const writableMatch = u.match(/\/visu\/nodes\/([^/]+)\/writable$/);
@@ -194,12 +196,12 @@ function makeFetch(opts: FetchOpts = {}) {
       }
       valueReads.push({ id, pageId, token });
       if (conceal.has(id)) return new Response(JSON.stringify({ detail: 'concealed' }), { status: 404 });
-      return new Response(JSON.stringify({ value: VALUES[id] ?? null, unit: null }), { status: 200 });
+      return new Response(JSON.stringify({ value: values[id] ?? null, unit: null }), { status: 200 });
     }
     return new Response('not found', { status: 404 });
   });
 
-  return { fetchImpl, writes, valueReads, writableCalls };
+  return { fetchImpl, writes, valueReads, writableCalls, authCalls };
 }
 
 function makeClient(fetchImpl: typeof fetch) {
@@ -867,5 +869,106 @@ describe('ObsDataSource – pageGates() for PIN/login gating', () => {
     const { ds } = makeSource(userFetch());
     await ds.list();
     expect(ds.pageGates()).toEqual([]);
+  });
+
+  /**
+   * Two sibling PAGES (A, B) inherit `protected` from a common ancestor P — P is
+   * the defining node that holds the PIN. The backend scopes ONE session to P and
+   * validates every sibling's reads against P, so a PIN on A must unlock B too.
+   */
+  const SIBLING_TREE: ObsVisuNode[] = [
+    { id: 'P', parent_id: null, name: 'Keller', type: 'LOCATION', page_config: null, access: 'protected' },
+    {
+      id: 'A',
+      parent_id: 'P',
+      name: 'Werkstatt',
+      type: 'PAGE',
+      access: null, // inherits protected from P
+      page_config: {
+        widgets: [
+          {
+            id: 'sw-A',
+            name: 'Licht A',
+            type: 'Toggle',
+            datapoint_id: 'dpA',
+            status_datapoint_id: 'dpA-st',
+            config: { label: 'A' },
+          },
+        ],
+      },
+    },
+    {
+      id: 'B',
+      parent_id: 'P',
+      name: 'Lager',
+      type: 'PAGE',
+      access: null, // inherits protected from P
+      page_config: {
+        widgets: [
+          {
+            id: 'sw-B',
+            name: 'Licht B',
+            type: 'Toggle',
+            datapoint_id: 'dpB',
+            status_datapoint_id: 'dpB-st',
+            config: { label: 'B' },
+          },
+        ],
+      },
+    },
+  ];
+  const SIBLING_VALUES: Record<string, unknown> = { 'dpA-st': false, 'dpB-st': true };
+
+  it('a PIN on one sibling unlocks every page under the same defining node', async () => {
+    installStorage(); // guest
+    const { fetchImpl, valueReads, authCalls } = makeFetch({}, SIBLING_TREE, SIBLING_VALUES);
+    const { ds, client } = makeSource(fetchImpl);
+    await ds.list();
+
+    // Before the PIN both siblings are gated (no session for defining node P).
+    expect(
+      ds
+        .pageGates()
+        .map((g) => g.pageId)
+        .sort(),
+    ).toEqual(['A', 'B']);
+
+    // A PIN entered on page A authenticates against the DEFINING node P and the
+    // session is cached under P — not under the page id.
+    await ds.authenticatePage('A', '1234');
+    expect(authCalls.at(-1)?.nodeId).toBe('P');
+    expect(client.sessionToken('P')).toBe('sess-xyz');
+
+    await ds.list(); // recompute gates + re-read values with the held session
+
+    // Both A AND B fall out of the gate list off a single PIN …
+    expect(ds.pageGates()).toEqual([]);
+    // … and both pages' reads now carry the session token (backend accepts them).
+    const tokenedPages = valueReads.filter((r) => r.token === 'sess-xyz').map((r) => r.pageId);
+    expect(new Set(tokenedPages)).toEqual(new Set(['A', 'B']));
+  });
+
+  it('a page that is its own defining node is unchanged (auth targets the page itself)', async () => {
+    installStorage(); // guest; TREE: p2 sets access on itself → accessNodeId === pageId
+    const { fetchImpl, authCalls } = makeFetch();
+    const { ds, client } = makeSource(fetchImpl);
+    await ds.list();
+
+    await ds.authenticatePage('p2', '1234');
+    expect(authCalls.at(-1)?.nodeId).toBe('p2'); // no ancestor sets access → page itself
+    expect(client.sessionToken('p2')).toBe('sess-xyz');
+
+    await ds.list();
+    expect(ds.pageGates()).toEqual([]);
+  });
+
+  it('authenticatePage before any list falls back to the given node id', async () => {
+    installStorage();
+    const { fetchImpl, authCalls } = makeFetch();
+    const { ds } = makeSource(fetchImpl);
+    // No list() yet → the page → defining-node map is empty, so auth targets the
+    // node id as given (the backend still resolves the defining node itself).
+    await ds.authenticatePage('some-node', '1234');
+    expect(authCalls.at(-1)?.nodeId).toBe('some-node');
   });
 });
