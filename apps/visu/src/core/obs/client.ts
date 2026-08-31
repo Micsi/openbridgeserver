@@ -25,6 +25,8 @@
  * `fetch` and `WsLike` factory keep it unit-testable against mocks.
  */
 
+import { getAccessToken, getRefreshToken, setTokens, clear } from './auth';
+
 /* ------------------------------------------------------------------ config */
 
 export interface ObsClientConfig {
@@ -179,18 +181,39 @@ export class ObsClient {
   }
 
   /**
-   * A JSON request with the page-scoped error taxonomy. No admin login, no
-   * retry: 401/403/404 become their typed errors so callers separate a global
-   * auth problem from a locally-silent lock or a concealed datapoint.
+   * A JSON request with the page-scoped error taxonomy.
+   *
+   * Auth is **additive**: when a JWT is stored, every request carries
+   * `Authorization: Bearer <access>` (coexisting with `X-Page-Id` /
+   * `X-Session-Token`); without a token the request goes out exactly as a guest,
+   * unchanged from before.
+   *
+   * A logged-in access-401 triggers a single silent recovery: try
+   * {@link ObsClient.refresh}; on success replay the request once with the fresh
+   * token; on failure drop to guest ({@link ObsClient.logout}) and replay once
+   * without a token — so a public read keeps working and there is no crash / no
+   * forced global logout. Only if the guest replay itself 401s does the typed
+   * {@link ObsAuthError} surface, identical to today's guest behavior. 403/404
+   * stay local + silent as before.
    */
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}, allowRefresh = true): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(init.headers as Record<string, string> | undefined),
     };
+    const access = getAccessToken();
+    if (access) headers['Authorization'] = `Bearer ${access}`;
     const res = await this.doFetch(`${this.apiBase}${path}`, { ...init, headers });
 
-    if (res.status === 401) throw new ObsAuthError(`obs: ${init.method ?? 'GET'} ${path} unauthorized`);
+    if (res.status === 401) {
+      // Recover a logged-in 401 once: refresh → replay, else guest → replay.
+      if (allowRefresh && access) {
+        if (await this.refresh()) return this.request<T>(path, init, false);
+        this.logout();
+        return this.request<T>(path, init, false);
+      }
+      throw new ObsAuthError(`obs: ${init.method ?? 'GET'} ${path} unauthorized`);
+    }
     if (res.status === 403) throw new ObsForbiddenError(`obs: ${init.method ?? 'GET'} ${path} forbidden`);
     if (res.status === 404) throw new ObsConcealedError(`obs: ${path} concealed`);
     if (!res.ok) {
@@ -198,6 +221,58 @@ export class ObsClient {
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
+  }
+
+  /* -------------------------------------------------------------- JWT login */
+
+  /**
+   * `POST /auth/login` ({@link LoginRequest} `{username, password}`) → store the
+   * `{access_token, refresh_token}` pair. Unlocks per-user RBAC for later
+   * requests. A wrong credential is a 401 → {@link ObsAuthError} so the login
+   * form can show it; guests never need this.
+   */
+  async login(username: string, password: string): Promise<void> {
+    const res = await this.doFetch(`${this.apiBase}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (res.status === 401) throw new ObsAuthError('obs: invalid credentials');
+    if (!res.ok) throw new Error(`obs: login failed (HTTP ${res.status})`);
+    const body = (await res.json()) as { access_token?: string; refresh_token?: string };
+    if (!body.access_token) throw new Error('obs: login response had no access_token');
+    setTokens(body.access_token, body.refresh_token ?? null);
+  }
+
+  /**
+   * `POST /auth/refresh` (`{refresh_token}`) → store the new tokens. Runs silently
+   * in the background on an access-401; never throws and never routes through
+   * {@link ObsClient.request} (which would recurse on 401). Returns whether a
+   * fresh access token was obtained; a missing/invalid refresh token yields false
+   * so the caller falls back to guest.
+   */
+  async refresh(): Promise<boolean> {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return false;
+    try {
+      const res = await this.doFetch(`${this.apiBase}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) return false;
+      const body = (await res.json()) as { access_token?: string; refresh_token?: string };
+      if (!body.access_token) return false;
+      setTokens(body.access_token, body.refresh_token ?? null);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Drop the stored JWT → back to guest. Page-scoped / PIN paths are untouched. */
+  logout(): void {
+    clear();
   }
 
   /** GET /visu/tree — the (server-filtered) visu node tree (flat list). Public read. */
