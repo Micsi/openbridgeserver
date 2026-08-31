@@ -92,6 +92,17 @@ describe('core/store — init() + state ownership', () => {
     expect(store.byId(id)?.id).toBe(id);
     expect(store.byId('nope')).toBeUndefined();
   });
+
+  it('flags externalFloor only for a non-mock source (the mock IS the static demo floor)', async () => {
+    // The mock's floor is the static demo model → the overview keeps the static
+    // rooms; any other source brings its own device tree → derive from devices.
+    const mock = await makeStore(new MockDataSource());
+    expect(mock.externalFloor).toBe(false);
+
+    setActivePinia(createPinia());
+    const external = await makeStore(new SpyDataSource());
+    expect(external.externalFloor).toBe(true);
+  });
 });
 
 describe('core/store — subscribe() writes feedback into state', () => {

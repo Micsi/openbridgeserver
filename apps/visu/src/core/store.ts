@@ -58,6 +58,16 @@ export const useDeviceStore = defineStore('devices', () => {
   const devices = ref<Device[]>([]);
 
   /**
+   * Whether the active source brings its OWN device floor (a real backend tree),
+   * as opposed to the {@link MockDataSource} whose floor is the static demo model
+   * (`pages/pages` → `rooms`, with its mock ids + span/row hints). True for any
+   * non-mock source (the {@link ObsDataSource}): the overview then derives its
+   * room blocks from the live devices instead of the static model, so a real
+   * backend (different ids) mounts instead of tripping the layout resolver.
+   */
+  const externalFloor = ref(false);
+
+  /**
    * Auth state (Welle L, guest-by-default). `authenticated` is false until a JWT
    * login succeeds; `username` is the name the login was submitted with (null
    * for a guest or a session restored from storage without a remembered name).
@@ -99,6 +109,9 @@ export const useDeviceStore = defineStore('devices', () => {
   async function init(ds: DataSource = new MockDataSource()): Promise<void> {
     if (unsubscribe) unsubscribe();
     source = ds;
+    // The mock's floor is the static demo model; any other source brings its own
+    // device set (a real tree) → derive the overview floor from those devices.
+    externalFloor.value = !(ds instanceof MockDataSource);
     const seed = await source.list();
     const map = new Map<string, Device>();
     for (const d of seed) {
@@ -269,6 +282,7 @@ export const useDeviceStore = defineStore('devices', () => {
 
   return {
     devices,
+    externalFloor,
     authenticated,
     username,
     pageGates,

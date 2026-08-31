@@ -20,8 +20,9 @@
  *    hard, visible failure — never a silent default.
  */
 
-import { rooms as modelRooms, demoRooms, type RoomGroup } from '../core/model';
+import { rooms as modelRooms, demoRooms, type RoomGroup, type LayoutEntry } from '../core/model';
 import type { SkinKey } from '../skin-host/skins';
+import type { Device } from '@obs/visu-contract';
 
 /**
  * Which model room set a page draws from. `overview` = the ported store.js mobile
@@ -123,4 +124,31 @@ export function resolvePage(id: string): ResolvedPage {
   // Filter in CORE source order (the floor), not in the allowlist's order.
   const groups = source.filter((g) => allow.has(g.room));
   return { def, groups };
+}
+
+/**
+ * Derive the room blocks for a page from a LIVE device set (Verhalten=Code).
+ *
+ * The static {@link resolvePage} floor is the demo model's `rooms` — its ids are
+ * the mock devices. Against a real backend the device set (and its ids/rooms)
+ * comes from the server's filtered `GET /visu/tree`, so the floor must be derived
+ * from those devices instead: group by the device's `room` in FIRST-APPEARANCE
+ * order (the tree's order is the floor), entries in device order. No data fork —
+ * the entries reference the same live devices by id; grouping/order stay the
+ * floor. Every entry id is one of the given devices, so the layout resolver never
+ * throws "references no device" the way the static mock floor does off-model.
+ */
+export function groupDevicesByRoom(devices: readonly Device[]): RoomGroup[] {
+  const byRoom = new Map<string, LayoutEntry[]>();
+  for (const d of devices) {
+    if (!d.id) continue;
+    const room = d.room ?? '';
+    let entries = byRoom.get(room);
+    if (!entries) {
+      entries = [];
+      byRoom.set(room, entries);
+    }
+    entries.push({ id: d.id });
+  }
+  return [...byRoom.entries()].map(([room, entries]) => ({ room, entries }));
 }

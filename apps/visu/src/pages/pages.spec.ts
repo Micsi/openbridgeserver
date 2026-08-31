@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 
-import { PAGES, pageById, resolvePage } from './pages';
+import { PAGES, pageById, resolvePage, groupDevicesByRoom } from './pages';
 import { resolveSkin } from '../skin-host/skins';
 import { rooms as modelRooms, demoRooms, byId } from '../core/model';
+import type { Device } from '@obs/visu-contract';
 
 /**
  * pages/pages — page definitions resolve to the right devices + skin (A5, #101).
@@ -94,5 +95,42 @@ describe('resolvePage — v1.2 media/camera demo page (Issue #122)', () => {
     const overview = resolvePage('overview');
     expect(overview.groups).toBe(modelRooms);
     expect(overview.groups.map((g) => g.room)).not.toContain('Medien');
+  });
+});
+
+describe('groupDevicesByRoom — the live (external) floor for a real backend', () => {
+  // Real model devices stand in for a backend tree's mapped devices; the point
+  // is the grouping, not where the ids come from.
+  const kuecheWand = byId['kueche-wand'] as Device;
+  const kuechePendel = byId['kueche-pendel'] as Device;
+  const wcSpiegel = byId['wc-spiegel'] as Device;
+
+  it('groups devices by room in first-appearance order, entries in device order', () => {
+    // Interleave rooms so first-appearance order (not per-room clustering of the
+    // input) is what decides the block order.
+    // Grouping is by the DEVICE's own `room` (the backend PAGE node name in OBS
+    // mode) — for a real backend that is the label the user sees, distinct from
+    // the demo model's display RoomGroup labels.
+    const groups = groupDevicesByRoom([kuecheWand, wcSpiegel, kuechePendel]);
+    expect(groups.map((g) => g.room)).toEqual([kuecheWand.room, wcSpiegel.room]);
+    expect(groups[0].entries.map((e) => e.id)).toEqual(['kueche-wand', 'kueche-pendel']);
+    expect(groups[1].entries.map((e) => e.id)).toEqual(['wc-spiegel']);
+  });
+
+  it('emits ONLY ids drawn from the given devices (never an off-model entry)', () => {
+    // The invariant that keeps the layout resolver from throwing against a real
+    // backend: every derived entry id is one of the live devices, so byId(id)
+    // resolves for each — unlike the static mock floor with its demo ids.
+    const devs = [kuecheWand, kuechePendel, wcSpiegel];
+    const ids = new Set(devs.map((d) => d.id));
+    const groups = groupDevicesByRoom(devs);
+    for (const g of groups) for (const e of g.entries) expect(ids.has(e.id)).toBe(true);
+  });
+
+  it('skips id-less devices and returns no blocks for an empty set', () => {
+    expect(groupDevicesByRoom([])).toEqual([]);
+    const groups = groupDevicesByRoom([{ ...kuecheWand, id: '' } as Device, kuechePendel]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].entries.map((e) => e.id)).toEqual(['kueche-pendel']);
   });
 });

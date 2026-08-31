@@ -8,7 +8,16 @@ export default tseslint.config(
     // The lint script targets `apps packages` explicitly; these ignores guard
     // against build artifacts being picked up. The rest of the openbridgeserver
     // repo has its own tooling and is never linted by this config.
-    ignores: ['**/dist/**', '**/node_modules/**', '**/.tmp/**', '**/coverage/**'],
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/.tmp/**',
+      '**/coverage/**',
+      // Playwright's generated report + trace bundles (Welle-4 E2E, local only —
+      // CI never runs the browser E2E). Their minified vendor JS is not our code.
+      '**/playwright-report/**',
+      '**/test-results/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

@@ -30,11 +30,14 @@ import { useI18n } from 'vue-i18n';
 import { applyTweaks, type IonicTweaks } from '@obs-visu-skins/ionic';
 import '@obs-visu-skins/ionic/ionic.css';
 
+import { storeToRefs } from 'pinia';
+
 import DetailModalHost from '../app/DetailModalHost.vue';
 import TweaksPanel, { type TweakValues } from '../app/TweaksPanel.vue';
 import OverviewGrid from './OverviewGrid';
-import { resolvePage } from './pages';
+import { resolvePage, groupDevicesByRoom } from './pages';
 import { resolveSkin } from '../skin-host/skins';
+import { useDeviceStore } from '../core/store';
 import { NAV_KEYS, type NavKey } from '../app/shell/useShellState';
 import { useShellContext } from '../app/shell/shellContext';
 
@@ -54,8 +57,20 @@ const pageTitle = computed(() => t(page.value.def.titleKey));
 const shellState = computed(() =>
   NAV_KEYS.includes(page.value.def.id as NavKey) ? { active: page.value.def.id as NavKey } : {},
 );
-/** The ordered, room-grouped blocks this page renders (core rooms, filtered). */
-const groups = computed(() => page.value.groups);
+/** Live host state — the store owns the device floor when the source is external. */
+const store = useDeviceStore();
+const { devices, externalFloor } = storeToRefs(store);
+/**
+ * The ordered, room-grouped blocks this page renders. With the mock source the
+ * floor is the static model (core `rooms`, filtered by the page def). With an
+ * external source (a real backend tree via ObsDataSource) the mock ids do not
+ * exist, so derive the floor from the live devices grouped by room — the same
+ * "order + grouping are the floor" rule, sourced from the tree instead of the
+ * demo model. Empty until the async seed lands (renders nothing, then fills).
+ */
+const groups = computed(() =>
+  externalFloor.value ? groupDevicesByRoom(devices.value) : page.value.groups,
+);
 
 /** Whether the active skin declares tweaks (only those skins show the editor). */
 const hasTweaks = computed(() => Object.keys(resolveSkin(skin.value).manifest.tweaks ?? {}).length > 0);
