@@ -135,3 +135,13 @@ rm -f "$TMPDIR"/e2e_obs.db* "$TMPDIR/e2e_mosq.conf" "$TMPDIR/e2e_obs_passwd" app
 - If the shell renders no `ion-menu` on desktop widths, open the LoginPanel by
   whatever affordance the shell exposes and keep the `.login-*` interactions.
 - Keep this run out of the visu-ci pipeline; it is a manual/dedicated E2E lane.
+
+## Bekannter Blocker (2026-08-31): OBS-Modus-Overview crasht gegen echtes Backend
+
+Der API-Smoke (16/16) und der Stack-Aufbau/Seed sind verifiziert. Der Browser-Lauf blockiert
+aktuell aber, weil die Visu im OBS-Modus nicht mountet: das Overview-Layout ist statisch im
+Demo-Modell (`apps/visu/src/core/model.ts`) hartcodiert (`kueche-wand` etc.) und passt nicht zu
+echten Backend-Geraete-Ids -> `resolveLayout: ... references no device`. Voraussetzung fuer einen
+gruenen UI-E2E ist der Follow-up "dynamisches Overview-Layout aus dem Backend-Tree" (siehe
+CONTRIBUTING-visu-authz.md §8). Die Playwright-Config nutzt bewusst einen Mobile-Viewport, damit
+das `ion-menu`-Drawer (LoginPanel/AccessGate) rendert.

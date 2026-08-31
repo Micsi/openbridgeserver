@@ -37,7 +37,11 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      // Narrow (mobile) viewport so Ionic renders the openable ion-menu drawer
+      // (the LoginPanel/AccessGate live in it); at desktop widths the shell uses a
+      // split-pane and the drawer never opens. Keep desktop click semantics (no
+      // touch emulation) so the .login-*/.access-gate* clicks stay deterministic.
+      use: { ...devices['Desktop Chrome'], viewport: { width: 393, height: 851 } },
     },
   ],
 

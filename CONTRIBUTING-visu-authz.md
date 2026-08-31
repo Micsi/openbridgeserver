@@ -126,3 +126,27 @@ stateless).
    403 erfahrbar. Vorschlag: optimistisch (403-still), kein Sonderweg in Welle 1–3.
 4. **Integrationsbranch-Strategie:** `integ/authz-upstream` als neue Sprint-Basis
    etablieren (alle künftigen Visu-Wellen darauf) — dann bleibt der Sprint upstream-nah.
+
+## 8. Welle 4 - Ergebnis und Follow-up (2026-08-31)
+
+**Sicherheitsverifikation erbracht (API-Level, echter authz-Server):** Der authz-Smoke
+(`apps/visu/e2e/seed.py` + live-Stack) bestaetigt 16/16: gefilterter Tree, 404/403-Concealment,
+PIN-Entsperrung (`POST /visu/nodes/{def}/auth`), rollen-scoped Writes inkl. `central_plant`-403,
+WS principal (`obs.jwt.<jwt>`) vs. credential-los 4001. Das ist die im Dok geforderte eigentliche
+Sicherheitsverifikation. Client-Wellen L1/L2/2b/3b sind je Kritiker-verifiziert, gepusht, visu-ci gruen.
+
+**Browser-E2E aufgedeckte, SEPARATE Luecke (kein authz-Defekt): dynamisches Overview-Layout fehlt.**
+Der Playwright-Harness (`apps/visu/playwright.config.ts`, `apps/visu/e2e/*`) ist gebaut und der
+Stack-Aufbau/Seed funktioniert; der UI-Lauf blockiert aber, weil die OBS-Modus-Visu gegen ein echtes
+Backend gar nicht mountet: `resolveLayout: layout entry "kueche-wand" references no device`.
+Ursache: das Overview-Layout ist statisch im Demo-Modell hartcodiert (`apps/visu/src/core/model.ts`
+gruppiert Raeume mit Mock-Geraete-Ids), statt dynamisch aus dem gefilterten `GET /visu/tree`
+(Raeume/Seiten/Geraete) gebaut zu werden. Gegen echte Backend-Geraete (andere Ids) wirft
+`skin-host/layout.ts` und die App crasht vor dem Mount.
+
+**Follow-up-Track (eigenstaendig, ausserhalb authz-Scope): Overview-Layout aus dem Backend-Tree.**
+Die Visu muss ihr Overview (Gruppierung/Reihenfolge/Geraete) im OBS-Modus aus dem gefilterten Tree
+ableiten (Raeume aus den PAGE/Location-Knoten, Geraete aus den gemappten Widgets), statt aus dem
+statischen `model.ts`. Erst danach wird der Browser-E2E (`apps/visu/e2e/authz-roles.spec.ts`) gruen;
+die authz-Assertions darin sind bereits korrekt formuliert. Der Harness bleibt turnkey (siehe
+`apps/visu/e2e/README.md`).
