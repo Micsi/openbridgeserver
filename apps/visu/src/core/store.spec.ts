@@ -10,7 +10,7 @@ import type {
   WidgetAction,
 } from '@obs/visu-contract';
 
-import { MockDataSource, type DataSource, type PatchListener, type DevicePatch } from './datasource';
+import { MockDataSource, type DataSource, type PatchListener, type DevicePatch, type PageGate } from './datasource';
 import { useDeviceStore } from './store';
 
 /**
@@ -414,6 +414,80 @@ describe('core/store — auth (guest by default, opt-in login)', () => {
     await store.refresh();
     expect(src.listCalls).toBe(listBefore + 1);
     expect(src.subscribeCalls).toBe(subBefore + 1);
+  });
+});
+
+/** A page-auth-capable spy source (Welle 3b): records PIN attempts, drops a gate
+ *  on the correct PIN and re-reports it via `pageGates()` after the store re-lists. */
+class PageAuthSpySource implements DataSource {
+  readonly pinCalls: Array<{ pageId: string; pin: string }> = [];
+  listCalls = 0;
+  subscribeCalls = 0;
+  /** Pages still gated; the store reads this after each list()/refresh(). */
+  private gated: PageGate[];
+
+  constructor(gated: PageGate[] = [{ pageId: 'p2', name: 'Wintergarten', access: 'protected' }]) {
+    this.gated = [...gated];
+  }
+  list(): Promise<Device[]> {
+    this.listCalls++;
+    return Promise.resolve([]);
+  }
+  subscribe(): () => void {
+    this.subscribeCalls++;
+    return () => {};
+  }
+  dispatch(): Promise<void> {
+    return Promise.resolve();
+  }
+  authenticatePage(pageId: string, pin: string): Promise<unknown> {
+    this.pinCalls.push({ pageId, pin });
+    if (pin !== '1234') return Promise.reject(new Error('obs: wrong PIN'));
+    // Correct PIN → this page is no longer gated (mirrors the token being cached).
+    this.gated = this.gated.filter((g) => g.pageId !== pageId);
+    return Promise.resolve({ sessionToken: 'sess', expiresIn: 3600 });
+  }
+  pageGates(): readonly PageGate[] {
+    return this.gated;
+  }
+}
+
+describe('core/store – authenticatePage (Welle 3b, PIN gating)', () => {
+  it('reflects the source gates on init; none for a mock/guest source', async () => {
+    const store = await makeStore(new PageAuthSpySource());
+    expect(store.pageGates).toEqual([{ pageId: 'p2', name: 'Wintergarten', access: 'protected' }]);
+
+    const plain = await makeStore(new SpyDataSource());
+    expect(plain.pageGates).toEqual([]);
+  });
+
+  it('rejects on a source without page auth, leaving gates empty', async () => {
+    const store = await makeStore(new SpyDataSource());
+    await expect(store.authenticatePage('p2', '1234')).rejects.toThrow(/does not support PIN auth/);
+    expect(store.pageGates).toEqual([]);
+  });
+
+  it('a correct PIN forwards to the source, re-fetches, and drops the gate', async () => {
+    const src = new PageAuthSpySource();
+    const store = await makeStore(src);
+    const listAfterInit = src.listCalls;
+
+    await store.authenticatePage('p2', '1234');
+
+    expect(src.pinCalls).toEqual([{ pageId: 'p2', pin: '1234' }]);
+    // A re-fetch ran (init → list() + re-subscribe) and the gate is gone.
+    expect(src.listCalls).toBe(listAfterInit + 1);
+    expect(store.pageGates).toEqual([]);
+  });
+
+  it('a wrong PIN rejects, keeps the gate and does not re-fetch (no crash)', async () => {
+    const src = new PageAuthSpySource();
+    const store = await makeStore(src);
+    const listAfterInit = src.listCalls;
+
+    await expect(store.authenticatePage('p2', '0000')).rejects.toThrow(/PIN/);
+    expect(store.pageGates.map((g) => g.pageId)).toEqual(['p2']);
+    expect(src.listCalls).toBe(listAfterInit);
   });
 });
 

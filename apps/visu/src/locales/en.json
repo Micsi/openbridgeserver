@@ -55,6 +55,13 @@
     "signedInAs": "Signed in as {user}",
     "failed": "Sign-in failed"
   },
+  "access": {
+    "pinRequiredFor": "PIN required for {page}",
+    "enterPin": "Enter PIN",
+    "pinWrong": "Wrong PIN",
+    "unlock": "Unlock",
+    "loginRequiredFor": "Sign-in required for {page}"
+  },
   "overview": {
     "tweaks": {
       "toggle": "Customise"

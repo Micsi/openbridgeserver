@@ -55,6 +55,13 @@
     "signedInAs": "Angemeldet als {user}",
     "failed": "Anmeldung fehlgeschlagen"
   },
+  "access": {
+    "pinRequiredFor": "PIN erforderlich für {page}",
+    "enterPin": "PIN eingeben",
+    "pinWrong": "PIN falsch",
+    "unlock": "Freischalten",
+    "loginRequiredFor": "Anmeldung erforderlich für {page}"
+  },
   "overview": {
     "tweaks": {
       "toggle": "Anpassen"

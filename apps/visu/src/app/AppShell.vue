@@ -57,6 +57,7 @@ import RoomDivider from './shell/RoomDivider.vue';
 import ShellEmpty from './shell/ShellEmpty.vue';
 import ShellError from './shell/ShellError.vue';
 import LoginPanel from './LoginPanel.vue';
+import AccessGate from './AccessGate.vue';
 import { useShellContext } from './shell/shellContext';
 import { ROOM_DIVIDER_KEY, type RoomDividerRenderer } from './shell/roomDivider';
 import type { RootTweakStyle } from '@obs-visu-skins/ionic';
@@ -226,6 +227,11 @@ defineExpose({ shell });
         </slot>
 
         <div class="app-shell-body">
+          <!-- Access gates (Welle 3b): a dezenter PIN/login hint for gated pages.
+               Additive and non-blocking: renders nothing for a guest on public
+               pages, so it never becomes a wall. -->
+          <AccessGate />
+
           <!-- Hard failure: surfaced loudly, never a silent gap. -->
           <slot
             v-if="ctxError"

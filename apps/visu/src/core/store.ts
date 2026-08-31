@@ -30,8 +30,8 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { Device, LightDevice, WidgetAction } from '@obs/visu-contract';
-import type { DataSource, DevicePatch } from './datasource';
-import { MockDataSource, supportsAuth } from './datasource';
+import type { DataSource, DevicePatch, PageGate } from './datasource';
+import { MockDataSource, supportsAuth, supportsPageAuth } from './datasource';
 
 /** Brightness a light jumps to when switched on from a dimmed-to-zero state. */
 const DEFAULT_ON_DIM = 60;
@@ -65,6 +65,14 @@ export const useDeviceStore = defineStore('devices', () => {
    */
   const authenticated = ref(false);
   const username = ref<string | null>(null);
+
+  /**
+   * Page gates (Welle 3b, guest-by-default). The PIN-`protected` / `user`-level
+   * pages that currently need a gate decision, as the active source reports them.
+   * Empty for a guest-only source (the mock) and for a source without page auth.
+   * The gate UI reads this and calls {@link authenticatePage}; the host owns it.
+   */
+  const pageGates = ref<PageGate[]>([]);
 
   function syncList(): void {
     devices.value = [...state.value.values()];
@@ -107,6 +115,9 @@ export const useDeviceStore = defineStore('devices', () => {
     // while still authenticated.
     authenticated.value = supportsAuth(source) ? source.isAuthenticated() : false;
     if (!authenticated.value) username.value = null;
+    // Reflect the source's page gates (protected-without-PIN / user-while-guest);
+    // a guest/mock source reports none, so the gate UI shows nothing.
+    pageGates.value = supportsPageAuth(source) ? [...source.pageGates()] : [];
   }
 
   /**
@@ -143,6 +154,23 @@ export const useDeviceStore = defineStore('devices', () => {
     if (supportsAuth(source)) await source.logout();
     username.value = null;
     authenticated.value = false;
+    await refresh();
+  }
+
+  /**
+   * PIN-unlock a protected page (Welle 3b, opt-in). Forwards the PIN to the
+   * source's page-auth surface; on success re-fetches (the same `init` seam as
+   * login) so the now-readable/operable devices, the re-scoped live feed and the
+   * recomputed {@link pageGates} take effect, dropping the unlocked page off the
+   * gate list. A wrong PIN rejects (the source surfaces it) so the caller can show
+   * an INLINE "PIN falsch" without a crash; nothing is re-fetched and the gate
+   * stays. A source without page auth is a programming error (guarded).
+   */
+  async function authenticatePage(pageId: string, pin: string): Promise<void> {
+    if (!supportsPageAuth(source)) {
+      throw new Error('store.authenticatePage: the active data source does not support PIN auth');
+    }
+    await source.authenticatePage(pageId, pin);
     await refresh();
   }
 
@@ -243,11 +271,13 @@ export const useDeviceStore = defineStore('devices', () => {
     devices,
     authenticated,
     username,
+    pageGates,
     byId,
     init,
     refresh,
     login,
     logout,
+    authenticatePage,
     toggle,
     setDim,
     setPosition,

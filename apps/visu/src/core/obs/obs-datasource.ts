@@ -28,7 +28,13 @@
  */
 
 import type { Device, WidgetAction } from '@obs/visu-contract';
-import type { AuthCapableDataSource, DevicePatch, PatchListener } from '../datasource';
+import type {
+  AuthCapableDataSource,
+  DevicePatch,
+  PageAuthCapableDataSource,
+  PageGate,
+  PatchListener,
+} from '../datasource';
 import { getAccessToken } from './auth';
 import {
   ObsClient,
@@ -53,7 +59,7 @@ import {
  * {@link ObsClientConfig} (or a ready {@link ObsClient} for tests), then use it
  * exactly like the mock: `store.init(new ObsDataSource())`.
  */
-export class ObsDataSource implements AuthCapableDataSource {
+export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableDataSource {
   private readonly client: ObsClient;
   /** Mapped widgets keyed by device id — the single owner of mapped state. */
   private readonly mapped = new Map<string, MappedWidget>();
@@ -73,6 +79,11 @@ export class ObsDataSource implements AuthCapableDataSource {
   private readonly lastPolled = new Map<string, unknown>();
   /** Guest poll cadence (ms). Live WS is used instead once logged in. */
   private static readonly POLL_INTERVAL_MS = 4000;
+  /**
+   * The pages that currently need a gate decision (PIN missing / login required),
+   * recomputed on every {@link list}. Surfaced to the app via {@link pageGates}.
+   */
+  private pageGateList: PageGate[] = [];
 
   constructor(config: ObsClientConfig | ObsClient = {}) {
     this.client = config instanceof ObsClient ? config : new ObsClient(config);
@@ -86,6 +97,41 @@ export class ObsDataSource implements AuthCapableDataSource {
    */
   authenticatePage(nodeId: string, pin: string): Promise<{ sessionToken: string; expiresIn: number }> {
     return this.client.authenticatePin(nodeId, pin);
+  }
+
+  /**
+   * The pages that currently need a gate decision (Welle 3b): a `protected` page
+   * with no valid PIN session, or a `user`-level page while the caller is a guest.
+   * `public`/`readonly` pages are never gated. Recomputed on every {@link list}
+   * (and on login/logout, since the host re-lists) so a page drops off the moment
+   * its PIN is entered or the user logs in. Concealment stays honoured: a page the
+   * server filtered out of the tree simply never appears here.
+   */
+  pageGates(): readonly PageGate[] {
+    return this.pageGateList;
+  }
+
+  /** Build the gate list from the (filtered) tree + effective access per page. */
+  private computeGates(
+    nodes: readonly ObsVisuNode[],
+    accessByNode: ReadonlyMap<string, PageAccess>,
+  ): PageGate[] {
+    const gates: PageGate[] = [];
+    const loggedIn = this.isAuthenticated();
+    for (const node of nodes) {
+      if (node.type !== 'PAGE') continue;
+      const access = accessByNode.get(node.id) ?? 'public';
+      if (access === 'protected') {
+        // Needs a PIN until a valid session token is held for the page.
+        if (this.client.sessionToken(node.id) === null) {
+          gates.push({ pageId: node.id, name: node.name, access });
+        }
+      } else if (access === 'user') {
+        // Needs a JWT login; a guest sees a "sign-in required" hint, never an error.
+        if (!loggedIn) gates.push({ pageId: node.id, name: node.name, access });
+      }
+    }
+    return gates;
   }
 
   /* ------------------------------------------------------------ JWT login */
@@ -117,6 +163,7 @@ export class ObsDataSource implements AuthCapableDataSource {
     const nodes = await this.client.getVisuTree<ObsVisuNode[]>();
     const list = Array.isArray(nodes) ? nodes : [];
     const accessByNode = resolveEffectiveAccess(list);
+    this.pageGateList = this.computeGates(list, accessByNode);
     const mappedWidgets = mapTree(list);
 
     // Collect the read datapoints and remember each one's page so the initial

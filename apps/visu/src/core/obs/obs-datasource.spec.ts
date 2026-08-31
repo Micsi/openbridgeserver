@@ -773,3 +773,99 @@ describe('ObsDataSource — JWT login surface', () => {
     expect(ds.isAuthenticated()).toBe(false);
   });
 });
+
+/* ---------------------------------------------- page gates (Welle 3b, opt-in) */
+
+describe('ObsDataSource – pageGates() for PIN/login gating', () => {
+  /** A working in-memory localStorage (guest by default; a jwt marks logged in). */
+  function installStorage(jwt?: string): void {
+    const store = new Map<string, string>();
+    if (jwt) store.set('visu_jwt', jwt);
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (store.has(k) ? (store.get(k) as string) : null),
+      setItem: (k: string, v: string) => void store.set(k, String(v)),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('lists a protected page as gated; public/readonly pages are never gated', async () => {
+    installStorage();
+    const { fetchImpl } = makeFetch();
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    const gates = ds.pageGates();
+    // Only the protected page p2 (Wintergarten) needs a gate; p1 public + p3
+    // readonly do not – reading is never forced.
+    expect(gates).toEqual([{ pageId: 'p2', name: 'Wintergarten', access: 'protected' }]);
+  });
+
+  it('drops the protected page from the gate list once its PIN is entered', async () => {
+    installStorage();
+    const { fetchImpl } = makeFetch();
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+    expect(ds.pageGates().map((g) => g.pageId)).toContain('p2');
+
+    await ds.authenticatePage('p2', '1234'); // session token now held for p2
+    await ds.list(); // recompute gates
+
+    expect(ds.pageGates()).toEqual([]);
+  });
+
+  it('a wrong PIN leaves the protected page gated (rejects, no unlock)', async () => {
+    installStorage();
+    const { fetchImpl } = makeFetch();
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    await expect(ds.authenticatePage('p2', '0000')).rejects.toThrow(/PIN/);
+    await ds.list();
+    expect(ds.pageGates().map((g) => g.pageId)).toContain('p2');
+  });
+
+  /** A tree with a single `user`-level page (a Toggle), inheriting nothing. */
+  const USER_TREE: ObsVisuNode[] = [
+    {
+      id: 'pu',
+      parent_id: null,
+      name: 'Zentrale',
+      type: 'PAGE',
+      access: 'user',
+      page_config: {
+        widgets: [
+          { id: 'u-tg', name: 'Zentral', type: 'Toggle', datapoint_id: 'utg', status_datapoint_id: 'utg-st', config: {} },
+        ],
+      },
+    },
+  ];
+
+  function userFetch() {
+    return vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.endsWith('/visu/tree')) return new Response(JSON.stringify(USER_TREE), { status: 200 });
+      if (u.match(/\/writable$/)) return new Response(JSON.stringify({ writable: {} }), { status: 200 });
+      if (u.match(/\/value$/)) return new Response(JSON.stringify({ value: null, unit: null }), { status: 200 });
+      return new Response('nf', { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  it('gates a user-level page while the caller is a guest', async () => {
+    installStorage(); // no jwt → guest
+    const { ds } = makeSource(userFetch());
+    await ds.list();
+    expect(ds.pageGates()).toEqual([{ pageId: 'pu', name: 'Zentrale', access: 'user' }]);
+  });
+
+  it('does not gate a user-level page once logged in (JWT present)', async () => {
+    installStorage('acc-jwt'); // pre-seeded visu_jwt → logged in
+    const { ds } = makeSource(userFetch());
+    await ds.list();
+    expect(ds.pageGates()).toEqual([]);
+  });
+});

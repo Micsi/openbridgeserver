@@ -65,6 +65,51 @@ export function supportsAuth(ds: DataSource): ds is AuthCapableDataSource {
 }
 
 /**
+ * The page-scoped access mode surfaced to the app for gating (Welle 3b). Mirrors
+ * the server `AccessLevel` / `mapping.PageAccess`: `public`/`readonly` need no
+ * auth, `protected` is PIN-gated, `user` needs a per-user JWT login.
+ */
+export type PageAccessMode = 'readonly' | 'public' | 'protected' | 'user';
+
+/**
+ * One page the app must gate before the user can reach it: a PIN-`protected`
+ * page without a valid session, or a `user`-level page while the user is a guest.
+ * `public`/`readonly` pages are NEVER gated and never appear here (no PIN/login
+ * for the mere reading of them, per Golden Rule). Data, not behaviour: the app
+ * reads this to render a *dezenter* hint ("PIN erforderlich" / "Anmeldung
+ * erforderlich"), never a red error wall.
+ */
+export interface PageGate {
+  /** The PAGE node id: the `authenticatePage` target and the `X-Page-Id`. */
+  readonly pageId: string;
+  /** The page's name (its room label), for the hint text. */
+  readonly name: string;
+  /** Why the page is gated: `protected` (PIN) or `user` (login). */
+  readonly access: Extract<PageAccessMode, 'protected' | 'user'>;
+}
+
+/**
+ * An optional page-auth surface a data source may add (Welle 3b). A `protected`
+ * page is unlocked with a PIN into a session token; the source caches it and
+ * later page-scoped reads/writes carry it. {@link pageGates} enumerates the pages
+ * that currently need a gate decision so the app can offer a PIN prompt / login
+ * hint. A source that omits this (the mock) simply has no gated pages, so the
+ * guest default is untouched.
+ */
+export interface PageAuthCapableDataSource extends DataSource {
+  /** Unlock a PIN-protected page; rejects on a wrong PIN (never silently). */
+  authenticatePage(pageId: string, pin: string): Promise<unknown>;
+  /** The pages that currently need a gate (PIN missing / login required). */
+  pageGates(): readonly PageGate[];
+}
+
+/** Narrow a {@link DataSource} to one that supports PIN/page auth (guest-safe). */
+export function supportsPageAuth(ds: DataSource): ds is PageAuthCapableDataSource {
+  const cand = ds as Partial<PageAuthCapableDataSource>;
+  return typeof cand.authenticatePage === 'function' && typeof cand.pageGates === 'function';
+}
+
+/**
  * The austauschbare data source. Mock today, KNX/MQTT/obs-REST later — same
  * shape, UI unchanged (MIGRATION §4).
  */
