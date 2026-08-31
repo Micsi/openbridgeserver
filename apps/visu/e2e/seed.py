@@ -19,6 +19,7 @@ Env:
 Run:
   OBS_ADMIN_PASSWORD=... .venv/bin/python apps/visu/e2e/seed.py
 """
+
 from __future__ import annotations
 
 import json
@@ -64,16 +65,20 @@ def main() -> int:
         admin = {"Authorization": f"Bearer {r.json()['access_token']}"}
 
         def mk_user(u: dict) -> None:
-            resp = c.post("/api/v1/auth/users", headers=admin,
-                          json={"username": u["username"], "password": u["password"],
-                                "is_admin": False, "mqtt_enabled": False})
+            resp = c.post(
+                "/api/v1/auth/users",
+                headers=admin,
+                json={"username": u["username"], "password": u["password"], "is_admin": False, "mqtt_enabled": False},
+            )
             if resp.status_code not in (201, 409):
                 die(f"create user {u['username']}: {resp.status_code} {resp.text}")
 
         def mk_dp(name: str, control_class: str = "room_local") -> str:
-            resp = c.post("/api/v1/datapoints/", headers=admin,
-                          json={"name": name, "data_type": "FLOAT", "unit": "C",
-                                "tags": [], "control_class": control_class})
+            resp = c.post(
+                "/api/v1/datapoints/",
+                headers=admin,
+                json={"name": name, "data_type": "FLOAT", "unit": "C", "tags": [], "control_class": control_class},
+            )
             if resp.status_code != 201:
                 die(f"create dp {name}: {resp.status_code} {resp.text}")
             return resp.json()["id"]
@@ -88,13 +93,26 @@ def main() -> int:
             return resp.json()["id"]
 
         def put_widgets(page_id: str, dps: list[tuple[str, str]]) -> None:
-            widgets = [{"id": str(uuid.uuid4()), "name": wname, "type": "ValueDisplay",
-                        "datapoint_id": dp, "status_datapoint_id": None,
-                        "x": 0, "y": i * 2, "w": 3, "h": 2, "config": {}}
-                       for i, (wname, dp) in enumerate(dps)]
-            resp = c.put(f"/api/v1/visu/pages/{page_id}", headers=admin,
-                         json={"grid_cols": 12, "grid_row_height": 80, "grid_cell_width": 80,
-                               "background": None, "widgets": widgets})
+            widgets = [
+                {
+                    "id": str(uuid.uuid4()),
+                    "name": wname,
+                    "type": "ValueDisplay",
+                    "datapoint_id": dp,
+                    "status_datapoint_id": None,
+                    "x": 0,
+                    "y": i * 2,
+                    "w": 3,
+                    "h": 2,
+                    "config": {},
+                }
+                for i, (wname, dp) in enumerate(dps)
+            ]
+            resp = c.put(
+                f"/api/v1/visu/pages/{page_id}",
+                headers=admin,
+                json={"grid_cols": 12, "grid_row_height": 80, "grid_cell_width": 80, "background": None, "widgets": widgets},
+            )
             if resp.status_code not in (200, 204):
                 die(f"save page {page_id}: {resp.status_code} {resp.text}")
 
@@ -117,8 +135,7 @@ def main() -> int:
                 die(f"put grants {username}: {p.status_code} {p.text}")
 
         def assign_audience(page_id: str, usernames: list[str]) -> None:
-            resp = c.put(f"/api/v1/visu/nodes/{page_id}/users", headers=admin,
-                         json={"usernames": usernames})
+            resp = c.put(f"/api/v1/visu/nodes/{page_id}/users", headers=admin, json={"usernames": usernames})
             if resp.status_code != 204:
                 die(f"assign audience {page_id}: {resp.status_code} {resp.text}")
 
@@ -154,25 +171,34 @@ def main() -> int:
             seed_value(dp[key], 21.5)
 
         # 4) grants (read on the private DP is a precondition for audience assignment)
-        replace_grants(RESIDENT["username"], [
-            {"node_type": "datapoint", "node_id": dp["private"], "role": "resident"},
-            {"node_type": "datapoint", "node_id": dp["room"], "role": "resident"},
-        ])
-        replace_grants(OPERATOR["username"], [
-            {"node_type": "datapoint", "node_id": dp["private"], "role": "operator"},
-            {"node_type": "datapoint", "node_id": dp["room"], "role": "operator"},
-            {"node_type": "datapoint", "node_id": dp["central"], "role": "operator", "central_control": True},
-        ])
+        replace_grants(
+            RESIDENT["username"],
+            [
+                {"node_type": "datapoint", "node_id": dp["private"], "role": "resident"},
+                {"node_type": "datapoint", "node_id": dp["room"], "role": "resident"},
+            ],
+        )
+        replace_grants(
+            OPERATOR["username"],
+            [
+                {"node_type": "datapoint", "node_id": dp["private"], "role": "operator"},
+                {"node_type": "datapoint", "node_id": dp["room"], "role": "operator"},
+                {"node_type": "datapoint", "node_id": dp["central"], "role": "operator", "central_control": True},
+            ],
+        )
 
         # 5) private page audience → both non-admin roles (guest stays excluded)
         assign_audience(page["private"], [RESIDENT["username"], OPERATOR["username"]])
 
     fixture = {
-        "base": BASE, "pin": PIN,
-        "resident": RESIDENT, "operator": OPERATOR,
+        "base": BASE,
+        "pin": PIN,
+        "resident": RESIDENT,
+        "operator": OPERATOR,
         "pages": {k: v["name"] for k, v in PAGES.items()},
         "widgets": {k: v["widget"] for k, v in PAGES.items()} | {"central": CENTRAL_WIDGET},
-        "node_ids": page, "datapoint_ids": dp,
+        "node_ids": page,
+        "datapoint_ids": dp,
     }
     out = Path(__file__).with_name(".seeded.json")
     out.write_text(json.dumps(fixture, indent=2))
