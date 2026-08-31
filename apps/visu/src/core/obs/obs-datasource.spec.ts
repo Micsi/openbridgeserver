@@ -972,3 +972,55 @@ describe('ObsDataSource – pageGates() for PIN/login gating', () => {
     expect(authCalls.at(-1)?.nodeId).toBe('some-node');
   });
 });
+
+describe('ObsDataSource — summary tree: per-page page_config fetch (GET /visu/pages/{id})', () => {
+  // The authz /visu/tree returns a NAVIGATION SUMMARY without page_config, so the
+  // widgets must be loaded per page. A summary tree + a fetch that serves the
+  // per-page config for the accessible page and 404s the concealed one.
+  const SUMMARY_TREE: ObsVisuNode[] = [
+    { id: 'p-pub', parent_id: null, name: 'Public', type: 'PAGE', page_config: null, access: 'public' },
+    { id: 'p-prot', parent_id: null, name: 'Protected', type: 'PAGE', page_config: null, access: 'protected' },
+  ];
+
+  function summaryFetch() {
+    const pageCalls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.endsWith('/visu/tree')) return new Response(JSON.stringify(SUMMARY_TREE), { status: 200 });
+      const pageMatch = u.match(/\/visu\/pages\/([^/?]+)$/);
+      if (pageMatch) {
+        const id = pageMatch[1];
+        pageCalls.push(id);
+        if (id === 'p-pub') {
+          return new Response(
+            JSON.stringify({
+              widgets: [
+                { id: 'w-pub', name: 'Public Lamp', type: 'Toggle', datapoint_id: 'dp-pub', status_datapoint_id: null, config: {} },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        // protected page without a PIN session → concealed
+        return new Response(JSON.stringify({ detail: 'concealed' }), { status: 404 });
+      }
+      if (u.match(/\/visu\/nodes\/[^/]+\/writable$/)) return new Response(JSON.stringify({ writable: { 'dp-pub': true } }), { status: 200 });
+      if (u.match(/\/datapoints\/[^/]+\/value$/)) return new Response(JSON.stringify({ value: true, unit: null }), { status: 200 });
+      return new Response('not found', { status: 404 });
+    });
+    return { fetchImpl, pageCalls };
+  }
+
+  it('maps devices from the per-page config and skips a concealed page', async () => {
+    const { fetchImpl, pageCalls } = summaryFetch();
+    const { ds } = makeSource(fetchImpl as unknown as typeof fetch);
+    const devices = await ds.list();
+
+    // The accessible page's widget mapped to a device; the concealed page (404)
+    // contributed nothing — no throw, just no widgets from it.
+    expect(devices.map((d) => d.label)).toEqual(['Public Lamp']);
+    expect(devices[0].type).toBe('switch');
+    // Both PAGE nodes were probed; the protected one simply 404'd.
+    expect(pageCalls.sort()).toEqual(['p-prot', 'p-pub']);
+  });
+});

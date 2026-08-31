@@ -26,6 +26,7 @@
  */
 
 import { getAccessToken, getRefreshToken, setTokens, clear } from './auth';
+import type { ObsPageConfig } from './mapping';
 
 /* ------------------------------------------------------------------ config */
 
@@ -287,6 +288,21 @@ export class ObsClient {
   /** GET /visu/tree — the (server-filtered) visu node tree (flat list). Public read. */
   getVisuTree<T>(): Promise<T> {
     return this.request<T>('/visu/tree');
+  }
+
+  /**
+   * GET /visu/pages/{id} — one page's render config (its widgets). The authz
+   * `/visu/tree` is a summary WITHOUT `page_config`, so a page's widgets are
+   * loaded per page here. Page-scoped like the value/writable routes
+   * (`X-Page-Id` + optional `X-Session-Token` for a `protected` page; the JWT
+   * rides along when logged in). A concealed/locked page answers 404/403 → the
+   * caller skips it, so it simply contributes no widgets until it is unlocked or
+   * the user logs in.
+   */
+  getPage(pageId: string, sessionToken?: string | null): Promise<ObsPageConfig> {
+    return this.request<ObsPageConfig>(`/visu/pages/${encodeURIComponent(pageId)}`, {
+      headers: this.pageHeaders(pageId, sessionToken),
+    });
   }
 
   /**

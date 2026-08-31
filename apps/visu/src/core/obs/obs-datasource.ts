@@ -198,7 +198,11 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
       if (info.accessNodeId) this.accessNode.set(id, info.accessNodeId);
     }
     this.pageGateList = this.computeGates(list, accessByNode);
-    const mappedWidgets = mapTree(list);
+    // The authz `/visu/tree` is a summary (no `page_config`); load each
+    // accessible PAGE's widgets so the mapper can see them. Concealed/locked
+    // pages (404/403) contribute nothing until unlocked / logged in.
+    const enriched = await this.loadPageConfigs(list);
+    const mappedWidgets = mapTree(enriched);
 
     // Collect the read datapoints and remember each one's page so the initial
     // GET …/value carries the right X-Page-Id / session token.
@@ -218,7 +222,7 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
     const writableByPage = await this.fetchWritable(mappedWidgets, accessByNode);
 
     // Re-map with the fetched values, then fold in access + writability.
-    const withValues = mapTree(list, values);
+    const withValues = mapTree(enriched, values);
 
     this.mapped.clear();
     this.dpToDevices.clear();
@@ -250,6 +254,30 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
       out.push(device);
     }
     return out;
+  }
+
+  /**
+   * Load each PAGE node's `page_config` (its widgets) from `GET /visu/pages/{id}`.
+   *
+   * The authz `/visu/tree` is a navigation summary without `page_config`, so the
+   * widgets are fetched per page here — page-scoped with the page's PIN session
+   * token when one is held (and the JWT when logged in). A node that already
+   * carries an inline `page_config` (the mock/tests, or a server that inlines it)
+   * is left untouched. A concealed/locked page (404/403) is skipped silently: it
+   * keeps no widgets and simply shows its gate until unlocked or the user logs in.
+   */
+  private async loadPageConfigs(nodes: readonly ObsVisuNode[]): Promise<ObsVisuNode[]> {
+    return Promise.all(
+      nodes.map(async (node) => {
+        if (node.type !== 'PAGE' || node.page_config) return node;
+        try {
+          const page_config = await this.client.getPage(node.id, this.sessionTokenFor(node.id));
+          return { ...node, page_config };
+        } catch {
+          return node;
+        }
+      }),
+    );
   }
 
   /** Fold a page's access + the server's per-DP verdict into `Device.writable`. */

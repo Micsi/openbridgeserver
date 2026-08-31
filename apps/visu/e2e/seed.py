@@ -93,11 +93,17 @@ def main() -> int:
             return resp.json()["id"]
 
         def put_widgets(page_id: str, dps: list[tuple[str, str]]) -> None:
+            # "Toggle" so the Visu's obs mapper (obsKind) actually renders the
+            # widget as a switch tile — ValueDisplay/Chart/... are deliberately
+            # skipped by the mapper (issue #124). This E2E exercises authz
+            # (visibility, PIN, role-scoped writability), not widget-type variety,
+            # so a switch on `datapoint_id` is the right minimal renderable widget:
+            # its read+write datapoint is `datapoint_id`, which the mapper reads.
             widgets = [
                 {
                     "id": str(uuid.uuid4()),
                     "name": wname,
-                    "type": "ValueDisplay",
+                    "type": "Toggle",
                     "datapoint_id": dp,
                     "status_datapoint_id": None,
                     "x": 0,

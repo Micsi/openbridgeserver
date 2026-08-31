@@ -126,7 +126,15 @@ async function submitPin(pageId: string): Promise<void> {
 <style scoped>
 /* A quiet hint strip, never a red error wall. */
 .access-gate {
+  /* The shell's page body is an `ion-router-outlet`, which Ionic positions
+     `absolute; inset: 0` over `app-shell-body`. As an in-flow sibling the gate
+     would be painted UNDER that outlet, so its PIN/login controls would not
+     receive clicks (the tile grid intercepts them). Lift the gate onto its own
+     layer above the outlet, on a solid ground, so it is actually operable. */
+  position: relative;
+  z-index: 2;
   padding: 8px 12px;
+  background: var(--ion-background-color, #fff);
 }
 
 .access-gate-pin {
