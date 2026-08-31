@@ -40,6 +40,31 @@ export interface DevicePatch {
 export type PatchListener = (patch: DevicePatch) => void;
 
 /**
+ * An optional auth surface a data source may add on top of {@link DataSource}
+ * (Welle L). Login is **additive**: a source that omits it is a guest-only
+ * source (the mock), and the host stays in guest mode. A source that implements
+ * it (the obs-server source) can obtain a per-user JWT that unlocks RBAC — but
+ * reading never requires it. The network flow lives in the source; the host
+ * store only calls these and re-lists/re-subscribes afterwards.
+ */
+export interface AuthCapableDataSource extends DataSource {
+  /** Log in with credentials; rejects on a bad credential (never silently). */
+  login(username: string, password: string): Promise<void>;
+  /** Drop the session → back to guest. */
+  logout(): void | Promise<void>;
+  /** Whether a session is currently active (logged in vs. guest). */
+  isAuthenticated(): boolean;
+}
+
+/** Narrow a {@link DataSource} to one that supports login (guest-safe fallback). */
+export function supportsAuth(ds: DataSource): ds is AuthCapableDataSource {
+  const cand = ds as Partial<AuthCapableDataSource>;
+  return (
+    typeof cand.login === 'function' && typeof cand.logout === 'function' && typeof cand.isAuthenticated === 'function'
+  );
+}
+
+/**
  * The austauschbare data source. Mock today, KNX/MQTT/obs-REST later — same
  * shape, UI unchanged (MIGRATION §4).
  */

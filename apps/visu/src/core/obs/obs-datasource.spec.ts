@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { BlindDevice, Device, JalousieDevice, LightDevice, SwitchDevice } from '@obs/visu-contract';
 import { ObsClient, WsHandle, type WsLike } from './client';
 import { ObsDataSource, obsDataSourceFromEnv } from './obs-datasource';
@@ -537,5 +537,62 @@ describe('obsDataSourceFromEnv — opt-in', () => {
 describe('WsHandle export', () => {
   it('is exported for typing', () => {
     expect(WsHandle).toBeTypeOf('function');
+  });
+});
+
+/* ------------------------------------------------- JWT login (Welle L, opt-in) */
+
+describe('ObsDataSource — JWT login surface', () => {
+  /** A working in-memory localStorage (jsdom's default here lacks the methods). */
+  function installStorage(): void {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (store.has(k) ? (store.get(k) as string) : null),
+      setItem: (k: string, v: string) => void store.set(k, String(v)),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    });
+  }
+
+  /** A client whose fetch answers `/auth/login` with a token pair. */
+  function authClient(opts: { badCreds?: boolean } = {}) {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/auth/login')) {
+        if (opts.badCreds) return new Response('unauthorized', { status: 401 });
+        return new Response(JSON.stringify({ access_token: 'acc-123', refresh_token: 'ref-456' }), {
+          status: 200,
+        });
+      }
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+    return new ObsClient({ apiBase: '/api/v1', fetchImpl });
+  }
+
+  beforeEach(() => {
+    installStorage();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('is a guest until login, then reports authenticated', async () => {
+    const ds = new ObsDataSource(authClient());
+    expect(ds.isAuthenticated()).toBe(false);
+    await ds.login('alice', 's3cret');
+    expect(ds.isAuthenticated()).toBe(true);
+  });
+
+  it('logout drops the session → back to guest', async () => {
+    const ds = new ObsDataSource(authClient());
+    await ds.login('alice', 's3cret');
+    ds.logout();
+    expect(ds.isAuthenticated()).toBe(false);
+  });
+
+  it('a bad credential rejects and leaves the source a guest', async () => {
+    const ds = new ObsDataSource(authClient({ badCreds: true }));
+    await expect(ds.login('mallory', 'nope')).rejects.toThrow();
+    expect(ds.isAuthenticated()).toBe(false);
   });
 });

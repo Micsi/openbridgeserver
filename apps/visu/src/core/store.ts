@@ -1,5 +1,5 @@
 /**
- * core/store — the Pinia host store for the obs Visu mobile app (CO3, Issue #93).
+ * core/store - the Pinia host store for the obs Visu mobile app (CO3, Issue #93).
  *
  * CONTRACT-v1 §6: **the host owns the device state.** This store is that single
  * owner. It seeds itself from a {@link DataSource}, subscribes to live feedback,
@@ -18,7 +18,7 @@
  *  - **No mutation outside the actions.** Every write to the map happens inside
  *    a store action (or the subscribe handler the store installs); callers send
  *    intents, they never mutate a `Device`.
- *  - **Renderer rein:** this module imports no skin/renderer — only the model,
+ *  - **Renderer rein:** this module imports no skin/renderer - only the model,
  *    the data/type contract, and the data source.
  *
  * Data and behaviour are kept apart: the seed data comes from the data source
@@ -31,14 +31,14 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { Device, LightDevice, WidgetAction } from '@obs/visu-contract';
 import type { DataSource, DevicePatch } from './datasource';
-import { MockDataSource } from './datasource';
+import { MockDataSource, supportsAuth } from './datasource';
 
 /** Brightness a light jumps to when switched on from a dimmed-to-zero state. */
 const DEFAULT_ON_DIM = 60;
 
 const clamp = (n: number, lo = 0, hi = 100): number => Math.max(lo, Math.min(hi, n));
 
-/** Narrowing helpers — read-only, no mutation. */
+/** Narrowing helpers - read-only, no mutation. */
 function isLockable(d: Device | undefined): d is Device & { locked: boolean } {
   return !!d && (d.type === 'blind' || d.type === 'jalousie');
 }
@@ -56,6 +56,15 @@ export const useDeviceStore = defineStore('devices', () => {
 
   /** Devices in source order (read-only view). */
   const devices = ref<Device[]>([]);
+
+  /**
+   * Auth state (Welle L, guest-by-default). `authenticated` is false until a JWT
+   * login succeeds; `username` is the name the login was submitted with (null
+   * for a guest or a session restored from storage without a remembered name).
+   * The host owns this state; the login UI only reads it and calls the actions.
+   */
+  const authenticated = ref(false);
+  const username = ref<string | null>(null);
 
   function syncList(): void {
     devices.value = [...state.value.values()];
@@ -93,6 +102,48 @@ export const useDeviceStore = defineStore('devices', () => {
     unsubscribe = source.subscribe((patch: DevicePatch) => {
       merge(patch.id, patch.changes as Partial<Device>);
     });
+    // Reflect the source's auth state (a restored session shows as logged in;
+    // a guest/mock source is never authenticated). Never clears a name we hold
+    // while still authenticated.
+    authenticated.value = supportsAuth(source) ? source.isAuthenticated() : false;
+    if (!authenticated.value) username.value = null;
+  }
+
+  /**
+   * Re-seed from the current source (re-run `list()` + re-`subscribe()`). Called
+   * after login/logout so the now-writable devices and the re-scoped live feed
+   * take effect - the same seam `main.ts` uses to seed the store initially.
+   */
+  async function refresh(): Promise<void> {
+    await init(source);
+  }
+
+  /**
+   * JWT login (Welle L, opt-in). Forwards the credentials to the source's auth
+   * surface; on success remembers the name, marks the session authenticated and
+   * re-fetches so writable devices/scope take effect. A bad credential (or a
+   * source without auth) rejects - the caller shows it inline; the guest state
+   * is untouched (no refresh, still not authenticated).
+   */
+  async function login(user: string, pass: string): Promise<void> {
+    if (!supportsAuth(source)) {
+      throw new Error('store.login: the active data source does not support login');
+    }
+    await source.login(user, pass);
+    username.value = user;
+    authenticated.value = true;
+    await refresh();
+  }
+
+  /**
+   * Log out → back to guest. Drops the session on the source (if any), clears the
+   * name and re-fetches so the guest-scoped devices/feed take over.
+   */
+  async function logout(): Promise<void> {
+    if (supportsAuth(source)) await source.logout();
+    username.value = null;
+    authenticated.value = false;
+    await refresh();
   }
 
   /**
@@ -168,7 +219,7 @@ export const useDeviceStore = defineStore('devices', () => {
     await dispatch(id, 'unlock', { locked: false } as Partial<Device>);
   }
 
-  /** Activate a scene (stateless intent — no local field changes). */
+  /** Activate a scene (stateless intent - no local field changes). */
   async function activateScene(id: string): Promise<void> {
     const d = byId(id);
     if (!d || d.type !== 'scene') return;
@@ -178,7 +229,7 @@ export const useDeviceStore = defineStore('devices', () => {
   /* --------------------------------------------- alarm arm/disarm (v1.1 stub) */
   // CONTRACT-v1 §6 reserves `alarm` for v1.1. No alarm device exists in the v1
   // core model, so these forward the canonical intent to the source without a
-  // local optimistic field — a deliberate seam for when the type stabilises.
+  // local optimistic field - a deliberate seam for when the type stabilises.
 
   async function arm(id: string): Promise<void> {
     await source.dispatch(id, 'arm');
@@ -190,8 +241,13 @@ export const useDeviceStore = defineStore('devices', () => {
 
   return {
     devices,
+    authenticated,
+    username,
     byId,
     init,
+    refresh,
+    login,
+    logout,
     toggle,
     setDim,
     setPosition,

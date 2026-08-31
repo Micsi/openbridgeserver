@@ -28,7 +28,8 @@
  */
 
 import type { Device, WidgetAction } from '@obs/visu-contract';
-import type { DataSource, DevicePatch, PatchListener } from '../datasource';
+import type { AuthCapableDataSource, DevicePatch, PatchListener } from '../datasource';
+import { getAccessToken } from './auth';
 import {
   ObsClient,
   ObsForbiddenError,
@@ -52,7 +53,7 @@ import {
  * {@link ObsClientConfig} (or a ready {@link ObsClient} for tests), then use it
  * exactly like the mock: `store.init(new ObsDataSource())`.
  */
-export class ObsDataSource implements DataSource {
+export class ObsDataSource implements AuthCapableDataSource {
   private readonly client: ObsClient;
   /** Mapped widgets keyed by device id — the single owner of mapped state. */
   private readonly mapped = new Map<string, MappedWidget>();
@@ -77,6 +78,29 @@ export class ObsDataSource implements DataSource {
    */
   authenticatePage(nodeId: string, pin: string): Promise<{ sessionToken: string; expiresIn: number }> {
     return this.client.authenticatePin(nodeId, pin);
+  }
+
+  /* ------------------------------------------------------------ JWT login */
+
+  /**
+   * JWT login (Welle L, opt-in). Delegates to the client's `/auth/login`; a
+   * wrong credential rejects (ObsAuthError) so the caller can surface it inline.
+   * Login is additive — reading never needs it — but after a success the caller
+   * should re-run {@link list} / re-{@link subscribe} to pick up the now-writable
+   * devices and the principal-scoped live feed (the host store does this).
+   */
+  login(username: string, password: string): Promise<void> {
+    return this.client.login(username, password);
+  }
+
+  /** Drop the stored JWT → back to guest. Page-scoped / PIN paths are untouched. */
+  logout(): void {
+    this.client.logout();
+  }
+
+  /** Whether a JWT is currently stored (logged in vs. guest). */
+  isAuthenticated(): boolean {
+    return getAccessToken() !== null;
   }
 
   /* ---------------------------------------------------------------- list */

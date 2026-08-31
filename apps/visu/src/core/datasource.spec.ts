@@ -8,7 +8,7 @@ import type {
   CameraDevice,
 } from '@obs/visu-contract';
 
-import { MockDataSource, type DataSource, type DevicePatch } from './datasource';
+import { MockDataSource, supportsAuth, type DataSource, type DevicePatch } from './datasource';
 import { byId } from './model';
 
 /**
@@ -310,3 +310,24 @@ async function getById(ds: DataSource, id: string): Promise<Device> {
   if (!d) throw new Error(`no device ${id}`);
   return d;
 }
+
+describe('supportsAuth — narrows a DataSource to its optional login surface', () => {
+  const base = new MockDataSource() as unknown as Record<string, unknown>;
+  const stub = () => {};
+
+  it('is false for a plain source without a login surface (the mock)', () => {
+    expect(supportsAuth(new MockDataSource())).toBe(false);
+  });
+
+  it('is true only when login, logout AND isAuthenticated are all present', () => {
+    const full = { ...base, login: stub, logout: stub, isAuthenticated: stub } as unknown as DataSource;
+    expect(supportsAuth(full)).toBe(true);
+  });
+
+  it('is false when a required auth method is missing (each side of the guard)', () => {
+    const noLogout = { ...base, login: stub, isAuthenticated: stub } as unknown as DataSource;
+    const noIsAuth = { ...base, login: stub, logout: stub } as unknown as DataSource;
+    expect(supportsAuth(noLogout)).toBe(false);
+    expect(supportsAuth(noIsAuth)).toBe(false);
+  });
+});

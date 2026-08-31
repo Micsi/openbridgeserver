@@ -45,6 +45,16 @@
       "title": "Etwas ist schiefgelaufen."
     }
   },
+  "auth": {
+    "login": "Anmelden",
+    "logout": "Abmelden",
+    "username": "Benutzername",
+    "password": "Passwort",
+    "submit": "Absenden",
+    "signedIn": "Angemeldet",
+    "signedInAs": "Angemeldet als {user}",
+    "failed": "Anmeldung fehlgeschlagen"
+  },
   "overview": {
     "tweaks": {
       "toggle": "Anpassen"

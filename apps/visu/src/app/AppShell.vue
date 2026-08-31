@@ -56,6 +56,7 @@ import ShellBackground from './shell/ShellBackground.vue';
 import RoomDivider from './shell/RoomDivider.vue';
 import ShellEmpty from './shell/ShellEmpty.vue';
 import ShellError from './shell/ShellError.vue';
+import LoginPanel from './LoginPanel.vue';
 import { useShellContext } from './shell/shellContext';
 import { ROOM_DIVIDER_KEY, type RoomDividerRenderer } from './shell/roomDivider';
 import type { RootTweakStyle } from '@obs-visu-skins/ionic';
@@ -157,6 +158,10 @@ defineExpose({ shell });
             <IonLabel>{{ t(`shell.nav.${key}`) }}</IonLabel>
           </IonItem>
         </IonList>
+
+        <!-- Opt-in login (Welle L). Guest stays the default: this is an entry,
+             never a wall — the nav above works without it. -->
+        <LoginPanel />
       </IonContent>
     </IonMenu>
 

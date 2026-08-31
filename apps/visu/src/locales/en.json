@@ -45,6 +45,16 @@
       "title": "Something went wrong."
     }
   },
+  "auth": {
+    "login": "Sign in",
+    "logout": "Sign out",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Submit",
+    "signedIn": "Signed in",
+    "signedInAs": "Signed in as {user}",
+    "failed": "Sign-in failed"
+  },
   "overview": {
     "tweaks": {
       "toggle": "Customise"

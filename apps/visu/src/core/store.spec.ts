@@ -300,6 +300,123 @@ describe('core/store — alarm arm/disarm (v1.1 stub)', () => {
   });
 });
 
+/** An auth-capable spy source (Welle L) that records login/logout/list/subscribe. */
+class AuthSpySource implements DataSource {
+  readonly loginCalls: Array<{ user: string; pass: string }> = [];
+  listCalls = 0;
+  subscribeCalls = 0;
+  logoutCalls = 0;
+  private authed: boolean;
+
+  constructor(private readonly opts: { failLogin?: boolean; startAuthed?: boolean } = {}) {
+    this.authed = !!opts.startAuthed;
+  }
+  list(): Promise<Device[]> {
+    this.listCalls++;
+    return Promise.resolve([]);
+  }
+  subscribe(): () => void {
+    this.subscribeCalls++;
+    return () => {};
+  }
+  dispatch(): Promise<void> {
+    return Promise.resolve();
+  }
+  login(user: string, pass: string): Promise<void> {
+    this.loginCalls.push({ user, pass });
+    if (this.opts.failLogin) return Promise.reject(new Error('bad credentials'));
+    this.authed = true;
+    return Promise.resolve();
+  }
+  logout(): void {
+    this.logoutCalls++;
+    this.authed = false;
+  }
+  isAuthenticated(): boolean {
+    return this.authed;
+  }
+}
+
+describe('core/store — auth (guest by default, opt-in login)', () => {
+  it('is a guest by default (no auth source → not authenticated, no name)', async () => {
+    const store = await makeStore(new SpyDataSource());
+    expect(store.authenticated).toBe(false);
+    expect(store.username).toBeNull();
+  });
+
+  it('rejects login on a source without an auth surface, staying guest', async () => {
+    const store = await makeStore(new SpyDataSource());
+    await expect(store.login('alice', 'pw')).rejects.toThrow(/does not support login/);
+    expect(store.authenticated).toBe(false);
+    expect(store.username).toBeNull();
+  });
+
+  it('logs in via the source, remembers the name and re-fetches (list + subscribe)', async () => {
+    const src = new AuthSpySource();
+    const store = await makeStore(src);
+    const listAfterInit = src.listCalls;
+    const subAfterInit = src.subscribeCalls;
+
+    await store.login('alice', 's3cret');
+
+    expect(src.loginCalls).toEqual([{ user: 'alice', pass: 's3cret' }]);
+    expect(store.authenticated).toBe(true);
+    expect(store.username).toBe('alice');
+    expect(src.listCalls).toBe(listAfterInit + 1);
+    expect(src.subscribeCalls).toBe(subAfterInit + 1);
+  });
+
+  it('surfaces a failed login and leaves the guest state untouched (no refetch)', async () => {
+    const src = new AuthSpySource({ failLogin: true });
+    const store = await makeStore(src);
+    const listAfterInit = src.listCalls;
+
+    await expect(store.login('mallory', 'nope')).rejects.toThrow(/bad credentials/);
+    expect(store.authenticated).toBe(false);
+    expect(store.username).toBeNull();
+    expect(src.listCalls).toBe(listAfterInit);
+  });
+
+  it('logs out via the source and re-fetches back to guest', async () => {
+    const src = new AuthSpySource();
+    const store = await makeStore(src);
+    await store.login('alice', 's3cret');
+    const listBeforeLogout = src.listCalls;
+
+    await store.logout();
+
+    expect(src.logoutCalls).toBe(1);
+    expect(store.authenticated).toBe(false);
+    expect(store.username).toBeNull();
+    expect(src.listCalls).toBe(listBeforeLogout + 1);
+  });
+
+  it('logout on a source without auth is a no-op that still re-fetches', async () => {
+    const src = new SpyDataSource();
+    const store = await makeStore(src);
+    // seed a nonzero list count via refresh to observe the re-fetch
+    await store.logout();
+    expect(store.authenticated).toBe(false);
+    expect(store.username).toBeNull();
+  });
+
+  it('reflects a restored session on init (source already authenticated, no name)', async () => {
+    const store = await makeStore(new AuthSpySource({ startAuthed: true }));
+    expect(store.authenticated).toBe(true);
+    expect(store.username).toBeNull();
+  });
+
+  it('refresh() re-runs list() and re-subscribes on the current source', async () => {
+    const src = new AuthSpySource();
+    const store = await makeStore(src);
+    const listBefore = src.listCalls;
+    const subBefore = src.subscribeCalls;
+    await store.refresh();
+    expect(src.listCalls).toBe(listBefore + 1);
+    expect(src.subscribeCalls).toBe(subBefore + 1);
+  });
+});
+
 describe('core/store — optimistic update + backend correction', () => {
   it('applies optimistically, then a subscribe patch corrects the state', async () => {
     const ds = new SpyDataSource();

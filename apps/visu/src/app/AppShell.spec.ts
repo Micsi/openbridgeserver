@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { defineComponent, h } from 'vue';
+import { createPinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
 import de from '../locales/de.json';
 import en from '../locales/en.json';
@@ -50,7 +51,13 @@ function makeI18n(locale = 'de') {
 }
 
 function mountShell(props: Record<string, unknown> = {}, slots: Record<string, string> = {}) {
-  return mount(AppShell, { props, slots, global: { plugins: [makeI18n()] } });
+  // The menu embeds LoginPanel, which reads the host store — provide a pinia so
+  // the shell mounts in isolation (guest by default: no login state seeded).
+  return mount(AppShell, {
+    props,
+    slots,
+    global: { plugins: [makeI18n(), createPinia()] },
+  });
 }
 
 describe('AppShell — shell + navigation', () => {
@@ -61,7 +68,8 @@ describe('AppShell — shell + navigation', () => {
 
   it('renders one nav item per section, in source order (the floor)', () => {
     const w = mountShell();
-    const labels = w.findAll('ion-menu ion-item ion-label').map((n) => n.text());
+    // Scope to the nav list — the menu also holds the LoginPanel's own items.
+    const labels = w.findAll('ion-menu ion-list ion-item ion-label').map((n) => n.text());
     expect(labels).toHaveLength(NAV_KEYS.length);
     // first/last preserve source order; labels are localised
     expect(labels[0]).toBe(de.shell.nav.overview);
