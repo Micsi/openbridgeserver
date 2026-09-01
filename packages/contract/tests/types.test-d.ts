@@ -19,6 +19,12 @@ import type {
   GestureTarget,
   SupportReport,
   WidgetAction,
+  WidgetPosition,
+  PageKind,
+  LayerItem,
+  PageLayer,
+  PopupDescriptor,
+  Role,
 } from '../src/types.js';
 
 describe('Device unions (§5) — readonly', () => {
@@ -173,5 +179,39 @@ describe('SupportReport (§8)', () => {
     expectTypeOf<SupportReport['targetsContract']>().toEqualTypeOf<string>();
     expectTypeOf<SupportReport>().toHaveProperty('summary');
     expectTypeOf<SupportReport>().toHaveProperty('widgets');
+  });
+});
+
+describe('Layering & Komposition (v1.9) — additive, skin-honored', () => {
+  it('WidgetPosition is a pixel/raster box', () => {
+    expectTypeOf<WidgetPosition['x']>().toEqualTypeOf<number>();
+    expectTypeOf<WidgetPosition['y']>().toEqualTypeOf<number>();
+    expectTypeOf<WidgetPosition['w']>().toEqualTypeOf<number>();
+    expectTypeOf<WidgetPosition['h']>().toEqualTypeOf<number>();
+  });
+
+  it('PageKind covers normal/popup/globalInclude', () => {
+    expectTypeOf<'normal'>().toMatchTypeOf<PageKind>();
+    expectTypeOf<'popup'>().toMatchTypeOf<PageKind>();
+    expectTypeOf<'globalInclude'>().toMatchTypeOf<PageKind>();
+  });
+
+  it('a LayerItem references a device by id with an optional role + position', () => {
+    expectTypeOf<LayerItem['id']>().toEqualTypeOf<string>();
+    expectTypeOf<LayerItem['role']>().toEqualTypeOf<Role | undefined>();
+    expectTypeOf<LayerItem['position']>().toEqualTypeOf<WidgetPosition | undefined>();
+  });
+
+  it('a PageLayer is an ordered stack of items with an origin', () => {
+    expectTypeOf<PageLayer['origin']>().toEqualTypeOf<'global' | 'include' | 'own'>();
+    expectTypeOf<PageLayer['order']>().toEqualTypeOf<number>();
+    expectTypeOf<PageLayer['items']>().toEqualTypeOf<readonly LayerItem[]>();
+  });
+
+  it('a PopupDescriptor carries optional position + modal/animation/auto-close hints', () => {
+    expectTypeOf<PopupDescriptor['id']>().toEqualTypeOf<string>();
+    expectTypeOf<PopupDescriptor['position']>().toEqualTypeOf<WidgetPosition | undefined>();
+    expectTypeOf<PopupDescriptor['autoCloseMs']>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<PopupDescriptor['modal']>().toEqualTypeOf<boolean | undefined>();
   });
 });

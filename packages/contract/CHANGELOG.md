@@ -23,6 +23,19 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.9.0] – 2026-09-01
+
+v1.9: Seiten-Layering & Komposition als **Skin-Fähigkeit** (CONTRIBUTING-visu-layering.md,
+Upstream #1195). Neue **optionale, additive** Typen, die der Host liefert und ein Skin nur
+honoriert, wenn er sie deklariert: `WidgetPosition` (`x/y/w/h`, Pixel-Layout à la Edomi),
+`PageKind` (`normal`/`popup`/`globalInclude`), `LayerItem` + `PageLayer` (geordneter
+Layer-Stack aus globalen/individuellen Includes + eigenem Inhalt) und `PopupDescriptor`
+(modale Overlay-Seite mit Position/Auto-Close/Modal/Animation/Schatten/Abdunkeln).
+`SkinLayout.honors` erkennt zusätzlich `'position'`, `'layers'`, `'popup'`. Minor-Bump: reine
+Typen-Zugabe, keine Device-Datenform-Änderung. Bestehende Skins bleiben gültig und
+unverändert (der responsive ionic-Skin honoriert nichts davon); ein Pixel-/Overlay-Skin
+zieht sein `targetsContract` auf 1.9 und deklariert die passenden `honors`.
+
 ## [1.8.0] — 2026-08-28
 
 v1.8: neuer Ctx-Helfer `floorShort(d)` – der Host verdichtet den vollen Geschossnamen

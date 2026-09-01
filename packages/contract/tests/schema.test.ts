@@ -30,8 +30,8 @@ const s = schema as Record<string, any>;
 const f = fixtures as Record<string, any>;
 
 describe('contract.schema.json — Globals (§2)', () => {
-  it('declares version 1.8', () => {
-    expect(s.version).toBe('1.8');
+  it('declares version 1.9', () => {
+    expect(s.version).toBe('1.9');
   });
 
   it('declares roles exactly [compact,default,wide,tall,feature,banner]', () => {
@@ -194,8 +194,8 @@ describe('contract.schema.json — widget types (§3)', () => {
 });
 
 describe('fixtures.json — completeness (§4)', () => {
-  it('declares contractVersion 1.8', () => {
-    expect(f.contractVersion).toBe('1.8');
+  it('declares contractVersion 1.9', () => {
+    expect(f.contractVersion).toBe('1.9');
   });
 
   it('carries a writable fixture example that validates as an optional boolean (v1.5)', () => {

@@ -270,8 +270,73 @@ export interface SkinWidgetEntry {
 export interface SkinLayout {
   readonly model: string;
   readonly grid?: Record<string, unknown>;
+  /**
+   * Additive Fähigkeiten, die dieser Skin honoriert. Anerkannte Strings umfassen
+   * `'role'` (Rollen-Footprint) sowie ab v1.9 die Layering-/Komposition-Hints
+   * `'position'` (Pixel-`WidgetPosition`), `'layers'` (Layer-Stack) und `'popup'`
+   * (Popup-Deskriptoren). Fehlt ein String, ignoriert der Skin den Hint - der
+   * Boden (Reihenfolge+Gruppierung) trägt weiter (Golden Rule 5).
+   */
   readonly honors?: readonly string[];
   readonly roleMap?: Record<string, unknown>;
+}
+
+/* ---------------------------------------- Layering & Komposition (v1.9) ----
+ * Seiten-Layering ist eine SKIN-Fähigkeit (CONTRIBUTING-visu-layering.md): der
+ * Host liefert Komposition + Spatial-Daten, der Skin entscheidet das „wie".
+ * Alles additiv/optional - ein Skin ohne passende `honors` verhält sich wie bisher.
+ */
+
+/**
+ * Pixel-/Rasterposition eines Widgets auf seiner Seite (Autoren-Layout à la Edomi).
+ * Additiv und ignorierbar: responsive Skins nutzen Role/span, Pixel-Skins honorieren
+ * dies (`honors: ['position']`). Zahlen sind opak (der Pixel-Skin interpretiert die
+ * Einheit; Edomi = px).
+ */
+export interface WidgetPosition {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** Seitentyp (Edomi-Modell): gewöhnliche Seite, modales Popup, oder globale Inkludeseite. */
+export type PageKind = 'normal' | 'popup' | 'globalInclude';
+
+/** Ein Element innerhalb eines Layers - referenziert ein Gerät per id (kein Datenfork). */
+export interface LayerItem {
+  readonly id: string;
+  readonly role?: Role;
+  /** Autoren-Position; nur von Skins mit `honors: ['position']` genutzt. */
+  readonly position?: WidgetPosition;
+}
+
+/**
+ * Ein Layer der komponierten Seite. Der Host stapelt globale Inkludeseiten, individuelle
+ * Includes und den eigenen Inhalt zu einem geordneten Stack; der Skin rendert ihn frei
+ * (übereinander/absolut oder flach/semantisch). `order` ist deterministisch (aufsteigend).
+ */
+export interface PageLayer {
+  readonly id: string;
+  readonly origin: 'global' | 'include' | 'own';
+  readonly order: number;
+  readonly items: readonly LayerItem[];
+}
+
+/**
+ * Popup-Overlay-Deskriptor (Edomi-Popup). Der HOST besitzt den Offen-Zustand und den
+ * Auto-Close-Timer (Skin bleibt zustandslos); der Skin rendert das Popup modal/pixelgenau
+ * nur, wenn er `honors: ['popup']` deklariert. Leere `position` => zentriert (Edomi-Semantik).
+ * Auto-Close verlängert sich beim erneuten Öffnen nicht.
+ */
+export interface PopupDescriptor {
+  readonly id: string;
+  readonly position?: WidgetPosition;
+  readonly autoCloseMs?: number;
+  readonly modal?: boolean;
+  readonly animate?: boolean;
+  readonly shadow?: boolean;
+  readonly dimBackdrop?: boolean;
 }
 
 export interface SkinTweak {
