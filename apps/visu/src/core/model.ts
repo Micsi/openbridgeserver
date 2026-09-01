@@ -45,6 +45,7 @@ import type {
   CameraDevice,
   ClimateDevice,
   Role,
+  WidgetPosition,
 } from '@obs/visu-contract';
 
 /* ------------------------------------------------------------------ helpers */
@@ -373,6 +374,9 @@ export interface LayoutEntry {
   readonly span?: number;
   /** Row-span hint for tall tiles (e.g. the jalousie). */
   readonly row?: number;
+  /** Author pixel/grid box (x/y/w/h, CONTRACT-v1.9 → layering W3). Additive: only
+   *  a skin honouring `position` uses it; the responsive floor ignores it. */
+  readonly position?: WidgetPosition;
 }
 
 /** One room block: an ordered list of layout entries. */

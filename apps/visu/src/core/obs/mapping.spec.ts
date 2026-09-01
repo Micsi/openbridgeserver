@@ -378,3 +378,31 @@ describe('planWrite — canonical action → DP write', () => {
     expect(() => planWrite(m.device, m.writes, 'setSlat', { pct: 1 })).toThrow();
   });
 });
+
+describe('author position (x/y/w/h) — additive layout hint (CONTRACT-v1.9, layering W3)', () => {
+  it('carries a complete box onto the mapped widget', () => {
+    const m = mapWidget(lichtSwitch({ x: 4, y: 8, w: 3, h: 2 }), 'EG Küche')!;
+    expect(m.position).toEqual({ x: 4, y: 8, w: 3, h: 2 });
+  });
+
+  it('omits the position when any coordinate is missing (an incomplete box is no box)', () => {
+    expect(mapWidget(lichtSwitch({ x: 1, y: 2, w: 3 }), 'R')!.position).toBeUndefined();
+    expect(mapWidget(lichtSwitch(), 'R')!.position).toBeUndefined();
+  });
+
+  it('mapTree preserves the widget position through the tree flatten', () => {
+    const tree: ObsVisuNode[] = [
+      {
+        id: 'p1',
+        parent_id: null,
+        name: 'Küche',
+        type: 'PAGE',
+        access: 'public',
+        page_config: { widgets: [lichtSwitch({ id: 'w1', x: 0, y: 0, w: 2, h: 2 })] },
+      },
+    ];
+    const mapped = mapTree(tree);
+    expect(mapped[0].position).toEqual({ x: 0, y: 0, w: 2, h: 2 });
+    expect(mapped[0].pageId).toBe('p1');
+  });
+});

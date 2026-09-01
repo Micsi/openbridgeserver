@@ -21,7 +21,7 @@
  * spatial footprint of a role it advertises.
  */
 
-import type { Device, Role, SkinLayout } from '@obs/visu-contract';
+import type { Device, Role, SkinLayout, WidgetPosition } from '@obs/visu-contract';
 import { layoutRole, byId as modelById, type RoomGroup, type LayoutEntry } from '../core/model';
 
 /** A grid footprint: column span `c` and row span `r` (both ≥ 1). */
@@ -57,6 +57,10 @@ export interface PlacedItem {
   readonly firstInGroup: boolean;
   /** Grid footprint for this item. In `list` model (or unmapped) this is 1×1. */
   readonly span: GridSpan;
+  /** Author pixel/grid box (x/y/w/h, CONTRACT-v1.9 → layering W3), when the page
+   *  carries one. Additive: a skin honouring `position` places by this box; the
+   *  responsive floor ignores it (order+grouping+span stay authoritative). */
+  readonly position?: WidgetPosition;
 }
 
 /** The resolved layout the host hands to the renderer loop. */
@@ -170,6 +174,9 @@ export function resolveLayout(
         group: group.room,
         firstInGroup: first,
         span: honorsRole ? footprintFor(layout, role, entry) : UNIT_SPAN,
+        // Forward the additive author position (layering W3); a pixel skin honours
+        // it, the responsive floor ignores it. Absent when the page has none.
+        ...(entry.position ? { position: entry.position } : {}),
       });
       first = false;
     }

@@ -20,7 +20,7 @@
  * only code here is the transport plumbing + the canonical mutators.
  */
 
-import type { Device, WidgetAction } from '@obs/visu-contract';
+import type { Device, WidgetAction, WidgetPosition } from '@obs/visu-contract';
 import { devices as seedDevices } from './model';
 
 /* ------------------------------------------------------------------ types */
@@ -107,6 +107,23 @@ export interface PageAuthCapableDataSource extends DataSource {
 export function supportsPageAuth(ds: DataSource): ds is PageAuthCapableDataSource {
   const cand = ds as Partial<PageAuthCapableDataSource>;
   return typeof cand.authenticatePage === 'function' && typeof cand.pageGates === 'function';
+}
+
+/**
+ * A source that carries per-device author positions (x/y/w/h, CONTRACT-v1.9 →
+ * layering W3). Additive: a source without it (the mock) simply has no positions,
+ * so a pixel-honouring skin falls back to the responsive floor. {@link positions}
+ * maps a device id to its {@link WidgetPosition} when the backend widget declares
+ * a complete box.
+ */
+export interface PositionCapableDataSource extends DataSource {
+  /** Device id → author position, for devices whose widget declares x/y/w/h. */
+  positions(): ReadonlyMap<string, WidgetPosition>;
+}
+
+/** Does the source expose per-device author positions (layering W3)? */
+export function supportsPositions(ds: DataSource): ds is PositionCapableDataSource {
+  return typeof (ds as Partial<PositionCapableDataSource>).positions === 'function';
 }
 
 /**

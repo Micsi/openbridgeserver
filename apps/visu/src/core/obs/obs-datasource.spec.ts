@@ -995,7 +995,7 @@ describe('ObsDataSource — summary tree: per-page page_config fetch (GET /visu/
           return new Response(
             JSON.stringify({
               widgets: [
-                { id: 'w-pub', name: 'Public Lamp', type: 'Toggle', datapoint_id: 'dp-pub', status_datapoint_id: null, config: {} },
+                { id: 'w-pub', name: 'Public Lamp', type: 'Toggle', datapoint_id: 'dp-pub', status_datapoint_id: null, config: {}, x: 2, y: 4, w: 3, h: 2 },
               ],
             }),
             { status: 200 },
@@ -1022,5 +1022,16 @@ describe('ObsDataSource — summary tree: per-page page_config fetch (GET /visu/
     expect(devices[0].type).toBe('switch');
     // Both PAGE nodes were probed; the protected one simply 404'd.
     expect(pageCalls.sort()).toEqual(['p-prot', 'p-pub']);
+  });
+
+  it('exposes the author position of a mapped widget via positions() (layering W3)', async () => {
+    const { fetchImpl } = summaryFetch();
+    const { ds } = makeSource(fetchImpl as unknown as typeof fetch);
+    const devices = await ds.list();
+    const pos = ds.positions();
+    const id = devices[0].id as string;
+    expect(pos.get(id)).toEqual({ x: 2, y: 4, w: 3, h: 2 });
+    // A widget without a box contributes no entry (map stays lean).
+    expect(pos.size).toBe(1);
   });
 });

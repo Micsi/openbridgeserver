@@ -26,6 +26,7 @@ import type {
   JalousieDevice,
   JalousieStatus,
   AccentToken,
+  WidgetPosition,
 } from '@obs/visu-contract';
 
 /* ----------------------------------------------------------- server schema */
@@ -41,6 +42,12 @@ export interface ObsWidget {
   readonly datapoint_id: string | null;
   readonly status_datapoint_id: string | null;
   readonly config: Readonly<Record<string, unknown>>;
+  /** Author x/y/w/h (grid/pixel). Additive layout hint (CONTRACT-v1.9); only a
+   *  skin honouring `position` uses it, the responsive skin ignores it. */
+  readonly x?: number;
+  readonly y?: number;
+  readonly w?: number;
+  readonly h?: number;
 }
 
 /** A page's render config (obs/models/visu.py → PageConfig). */
@@ -162,6 +169,10 @@ export interface MappedWidget {
    * which its page-scoped `access`/`writable`/session-token are looked up.
    */
   readonly pageId?: string;
+  /** Author position (x/y/w/h) of this widget on its page (CONTRACT-v1.9),
+   *  when the backend widget carries a complete box. Additive layout hint the
+   *  host forwards to skins that honour `position`; undefined otherwise. */
+  readonly position?: WidgetPosition;
 }
 
 /** Write-target datapoints + scaling info per device (dispatch reads these). */
@@ -353,24 +364,47 @@ function deviceLabel(w: ObsWidget): string {
  * any already-known datapoint values. Returns null for widgets without a core
  * mapping (issue #124: ValueDisplay/Chart/Wetter/Kamera/IFrame/… are skipped).
  */
+/** The widget's author box (x/y/w/h) as a {@link WidgetPosition}, or undefined
+ *  when the backend omits any coordinate (an incomplete box is no box). Pure. */
+function readPosition(w: ObsWidget): WidgetPosition | undefined {
+  const { x, y, w: width, h } = w;
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof h !== 'number'
+  ) {
+    return undefined;
+  }
+  return { x, y, w: width, h };
+}
+
 export function mapWidget(
   w: ObsWidget,
   room: string,
   values: ReadonlyMap<string, unknown> = new Map(),
 ): MappedWidget | null {
   const kind = obsKind(w);
+  let mapped: MappedWidget | null;
   switch (kind) {
     case 'light':
-      return mapLight(w, room, values);
+      mapped = mapLight(w, room, values);
+      break;
     case 'switch':
-      return mapSwitch(w, room, values);
+      mapped = mapSwitch(w, room, values);
+      break;
     case 'blind':
-      return mapBlind(w, room, values);
+      mapped = mapBlind(w, room, values);
+      break;
     case 'jalousie':
-      return mapJalousie(w, room, values);
+      mapped = mapJalousie(w, room, values);
+      break;
     default:
       return null;
   }
+  // Fold in the additive author position (CONTRACT-v1.9); undefined stays absent.
+  const position = readPosition(w);
+  return position ? { ...mapped, position } : mapped;
 }
 
 /**

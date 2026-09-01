@@ -59,7 +59,7 @@ const shellState = computed(() =>
 );
 /** Live host state — the store owns the device floor when the source is external. */
 const store = useDeviceStore();
-const { devices, externalFloor } = storeToRefs(store);
+const { devices, externalFloor, positions } = storeToRefs(store);
 /**
  * The ordered, room-grouped blocks this page renders. With the mock source the
  * floor is the static model (core `rooms`, filtered by the page def). With an
@@ -69,7 +69,7 @@ const { devices, externalFloor } = storeToRefs(store);
  * demo model. Empty until the async seed lands (renders nothing, then fills).
  */
 const groups = computed(() =>
-  externalFloor.value ? groupDevicesByRoom(devices.value) : page.value.groups,
+  externalFloor.value ? groupDevicesByRoom(devices.value, positions.value) : page.value.groups,
 );
 
 /** Whether the active skin declares tweaks (only those skins show the editor). */

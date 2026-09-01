@@ -133,4 +133,18 @@ describe('groupDevicesByRoom — the live (external) floor for a real backend', 
     expect(groups).toHaveLength(1);
     expect(groups[0].entries.map((e) => e.id)).toEqual(['kueche-pendel']);
   });
+
+  it('carries the additive author position onto the entry when the map has one (layering W3)', () => {
+    const positions = new Map([['kueche-wand', { x: 10, y: 20, w: 3, h: 2 }]]);
+    const groups = groupDevicesByRoom([kuecheWand, kuechePendel], positions);
+    const [wand, pendel] = groups[0].entries;
+    expect(wand.position).toEqual({ x: 10, y: 20, w: 3, h: 2 });
+    // A device without a position stays a plain entry (no empty position key).
+    expect(pendel.position).toBeUndefined();
+  });
+
+  it('leaves every entry position-less when no map is given (responsive floor)', () => {
+    const groups = groupDevicesByRoom([kuecheWand, kuechePendel]);
+    expect(groups[0].entries.every((e) => e.position === undefined)).toBe(true);
+  });
 });

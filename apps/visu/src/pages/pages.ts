@@ -22,7 +22,7 @@
 
 import { rooms as modelRooms, demoRooms, type RoomGroup, type LayoutEntry } from '../core/model';
 import type { SkinKey } from '../skin-host/skins';
-import type { Device } from '@obs/visu-contract';
+import type { Device, WidgetPosition } from '@obs/visu-contract';
 
 /**
  * Which model room set a page draws from. `overview` = the ported store.js mobile
@@ -138,7 +138,10 @@ export function resolvePage(id: string): ResolvedPage {
  * floor. Every entry id is one of the given devices, so the layout resolver never
  * throws "references no device" the way the static mock floor does off-model.
  */
-export function groupDevicesByRoom(devices: readonly Device[]): RoomGroup[] {
+export function groupDevicesByRoom(
+  devices: readonly Device[],
+  positions?: ReadonlyMap<string, WidgetPosition>,
+): RoomGroup[] {
   const byRoom = new Map<string, LayoutEntry[]>();
   for (const d of devices) {
     if (!d.id) continue;
@@ -148,7 +151,10 @@ export function groupDevicesByRoom(devices: readonly Device[]): RoomGroup[] {
       entries = [];
       byRoom.set(room, entries);
     }
-    entries.push({ id: d.id });
+    // Carry the additive author position (layering W3) when the source has one;
+    // a responsive skin ignores it, a pixel skin honours it.
+    const position = positions?.get(d.id);
+    entries.push(position ? { id: d.id, position } : { id: d.id });
   }
   return [...byRoom.entries()].map(([room, entries]) => ({ room, entries }));
 }

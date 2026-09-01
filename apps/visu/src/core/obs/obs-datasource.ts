@@ -27,13 +27,14 @@
  * {@link mapTree} — they keep running on the mock demo page.
  */
 
-import type { Device, WidgetAction } from '@obs/visu-contract';
+import type { Device, WidgetAction, WidgetPosition } from '@obs/visu-contract';
 import type {
   AuthCapableDataSource,
   DevicePatch,
   PageAuthCapableDataSource,
   PageGate,
   PatchListener,
+  PositionCapableDataSource,
 } from '../datasource';
 import { getAccessToken } from './auth';
 import {
@@ -59,7 +60,9 @@ import {
  * {@link ObsClientConfig} (or a ready {@link ObsClient} for tests), then use it
  * exactly like the mock: `store.init(new ObsDataSource())`.
  */
-export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableDataSource {
+export class ObsDataSource
+  implements AuthCapableDataSource, PageAuthCapableDataSource, PositionCapableDataSource
+{
   private readonly client: ObsClient;
   /** Mapped widgets keyed by device id — the single owner of mapped state. */
   private readonly mapped = new Map<string, MappedWidget>();
@@ -181,6 +184,20 @@ export class ObsDataSource implements AuthCapableDataSource, PageAuthCapableData
   /** Whether a JWT is currently stored (logged in vs. guest). */
   isAuthenticated(): boolean {
     return getAccessToken() !== null;
+  }
+
+  /**
+   * Per-device author positions (x/y/w/h, CONTRACT-v1.9 → layering W3). Built
+   * from the mapped widgets of the last {@link list}; only devices whose backend
+   * widget declared a complete box appear. A skin honouring `position` uses this;
+   * the responsive skin ignores it and lays out by room/role.
+   */
+  positions(): ReadonlyMap<string, WidgetPosition> {
+    const out = new Map<string, WidgetPosition>();
+    for (const [id, m] of this.mapped) {
+      if (m.position) out.set(id, m.position);
+    }
+    return out;
   }
 
   /* ---------------------------------------------------------------- list */

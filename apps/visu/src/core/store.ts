@@ -29,9 +29,9 @@
 
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { Device, LightDevice, WidgetAction } from '@obs/visu-contract';
+import type { Device, LightDevice, WidgetAction, WidgetPosition } from '@obs/visu-contract';
 import type { DataSource, DevicePatch, PageGate } from './datasource';
-import { MockDataSource, supportsAuth, supportsPageAuth } from './datasource';
+import { MockDataSource, supportsAuth, supportsPageAuth, supportsPositions } from './datasource';
 
 /** Brightness a light jumps to when switched on from a dimmed-to-zero state. */
 const DEFAULT_ON_DIM = 60;
@@ -66,6 +66,14 @@ export const useDeviceStore = defineStore('devices', () => {
    * backend (different ids) mounts instead of tripping the layout resolver.
    */
   const externalFloor = ref(false);
+
+  /**
+   * Per-device author positions (x/y/w/h, CONTRACT-v1.9 → layering W3). Empty for
+   * a source without positions (the mock); populated from an external source that
+   * carries them. A pixel-honouring skin reads these; the responsive skin ignores
+   * them and lays out by room/role. The host owns this like the rest of the state.
+   */
+  const positions = ref<ReadonlyMap<string, WidgetPosition>>(new Map());
 
   /**
    * Auth state (Welle L, guest-by-default). `authenticated` is false until a JWT
@@ -131,6 +139,8 @@ export const useDeviceStore = defineStore('devices', () => {
     // Reflect the source's page gates (protected-without-PIN / user-while-guest);
     // a guest/mock source reports none, so the gate UI shows nothing.
     pageGates.value = supportsPageAuth(source) ? [...source.pageGates()] : [];
+    // Author positions (layering W3): populated after list() built the map.
+    positions.value = supportsPositions(source) ? source.positions() : new Map();
   }
 
   /**
@@ -283,6 +293,7 @@ export const useDeviceStore = defineStore('devices', () => {
   return {
     devices,
     externalFloor,
+    positions,
     authenticated,
     username,
     pageGates,
