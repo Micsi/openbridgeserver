@@ -1034,4 +1034,22 @@ describe('ObsDataSource — summary tree: per-page page_config fetch (GET /visu/
     // A widget without a box contributes no entry (map stays lean).
     expect(pos.size).toBe(1);
   });
+
+  it('exposes the nav tree + per-page layer stack via navTree()/layersFor() (layering W3c)', async () => {
+    const { fetchImpl } = summaryFetch();
+    const { ds } = makeSource(fetchImpl as unknown as typeof fetch);
+    await ds.list();
+
+    // Both summary pages are visible roots (no children).
+    expect(ds.navTree().map((n) => n.id).sort()).toEqual(['p-prot', 'p-pub']);
+
+    // The accessible page composes to an own layer with its mapped widget + box.
+    const layers = ds.layersFor('p-pub');
+    expect(layers.map((l) => l.origin)).toEqual(['own']);
+    expect(layers[0].items[0].id).toBe('w-pub');
+    expect(layers[0].items[0].position).toEqual({ x: 2, y: 4, w: 3, h: 2 });
+
+    // The concealed page (404, no page_config) contributes no layer.
+    expect(ds.layersFor('p-prot')).toEqual([]);
+  });
 });

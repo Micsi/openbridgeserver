@@ -29,9 +29,16 @@
 
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import type { Device, LightDevice, WidgetAction, WidgetPosition } from '@obs/visu-contract';
+import type {
+  Device,
+  LightDevice,
+  WidgetAction,
+  WidgetPosition,
+  PageLayer,
+} from '@obs/visu-contract';
 import type { DataSource, DevicePatch, PageGate } from './datasource';
 import { MockDataSource, supportsAuth, supportsPageAuth, supportsPositions } from './datasource';
+import { supportsLayering, type NavNode } from './obs/compose';
 
 /** Brightness a light jumps to when switched on from a dimmed-to-zero state. */
 const DEFAULT_ON_DIM = 60;
@@ -74,6 +81,13 @@ export const useDeviceStore = defineStore('devices', () => {
    * them and lays out by room/role. The host owns this like the rest of the state.
    */
   const positions = ref<ReadonlyMap<string, WidgetPosition>>(new Map());
+
+  /**
+   * Navigation tree (layering W3c): the visible PAGE/LOCATION hierarchy the active
+   * source exposes. Empty for a source without layering (the mock). A skin renders
+   * its own nav from this; the responsive skin ignores it.
+   */
+  const navTree = ref<NavNode[]>([]);
 
   /**
    * Auth state (Welle L, guest-by-default). `authenticated` is false until a JWT
@@ -141,6 +155,17 @@ export const useDeviceStore = defineStore('devices', () => {
     pageGates.value = supportsPageAuth(source) ? [...source.pageGates()] : [];
     // Author positions (layering W3): populated after list() built the map.
     positions.value = supportsPositions(source) ? source.positions() : new Map();
+    // Navigation tree (layering W3c): the visible page hierarchy for skin-owned nav.
+    navTree.value = supportsLayering(source) ? source.navTree() : [];
+  }
+
+  /**
+   * The ordered layer stack for a page (layering W3c): ancestors + own, root-first.
+   * A skin overlays it; the mock/responsive path returns none. Read-through to the
+   * active source — not reactive state, so a nav-driven skin queries on demand.
+   */
+  function layersFor(pageId: string): PageLayer[] {
+    return supportsLayering(source) ? source.layersFor(pageId) : [];
   }
 
   /**
@@ -294,6 +319,8 @@ export const useDeviceStore = defineStore('devices', () => {
     devices,
     externalFloor,
     positions,
+    navTree,
+    layersFor,
     authenticated,
     username,
     pageGates,

@@ -22,7 +22,27 @@
  */
 
 import type { LayerItem, PageLayer } from '@obs/visu-contract';
+import type { DataSource } from '../datasource';
 import { mapWidget, type ObsPageConfig, type ObsVisuNode, type PageAccess } from './mapping';
+
+/**
+ * A source that exposes the composed layering DATA (layering W3c): the navigation
+ * tree and the per-page layer stack. Only a tree-backed source (the ObsDataSource)
+ * has these; the mock has none, so a skin that renders nav/layers simply gets an
+ * empty tree there and falls back to its responsive floor.
+ */
+export interface LayeringCapableDataSource extends DataSource {
+  /** The visible PAGE/LOCATION navigation hierarchy. */
+  navTree(): NavNode[];
+  /** The ordered layer stack for a page (ancestors + own), root-first. */
+  layersFor(pageId: string): PageLayer[];
+}
+
+/** Does the source expose the layering DATA (nav tree + per-page layer stack)? */
+export function supportsLayering(ds: DataSource): ds is LayeringCapableDataSource {
+  const cand = ds as Partial<LayeringCapableDataSource>;
+  return typeof cand.navTree === 'function' && typeof cand.layersFor === 'function';
+}
 
 /** One node of the navigation tree the host hands a skin (W3c seed). */
 export interface NavNode {

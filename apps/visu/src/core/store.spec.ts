@@ -103,6 +103,29 @@ describe('core/store — init() + state ownership', () => {
     const external = await makeStore(new SpyDataSource());
     expect(external.externalFloor).toBe(true);
   });
+
+  it('exposes an empty nav tree + no layers for a source without layering (the mock)', async () => {
+    const store = await makeStore(new MockDataSource());
+    expect(store.navTree).toEqual([]);
+    expect(store.layersFor('anything')).toEqual([]);
+  });
+
+  it('reflects a layering source: navTree from init, layersFor read-through (W3c)', async () => {
+    class LayeringSpy extends SpyDataSource {
+      navTree() {
+        return [{ id: 'p', name: 'Raum', type: 'PAGE' as const, access: null, children: [] }];
+      }
+      layersFor(pageId: string) {
+        return pageId === 'p'
+          ? [{ id: 'p', origin: 'own' as const, order: 0, items: [{ id: 'w' }] }]
+          : [];
+      }
+    }
+    const store = await makeStore(new LayeringSpy());
+    expect(store.navTree.map((n) => n.id)).toEqual(['p']);
+    expect(store.layersFor('p')[0].items[0].id).toBe('w');
+    expect(store.layersFor('nope')).toEqual([]);
+  });
 });
 
 describe('core/store — subscribe() writes feedback into state', () => {

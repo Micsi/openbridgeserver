@@ -54,6 +54,13 @@ import {
   type MappedWidget,
   type PageAccess,
 } from './mapping';
+import {
+  composeLayers,
+  buildNavTree,
+  type LayeringCapableDataSource,
+  type NavNode,
+} from './compose';
+import type { PageLayer } from '@obs/visu-contract';
 
 /**
  * A {@link DataSource} backed by the obs server. Construct directly with an
@@ -61,7 +68,11 @@ import {
  * exactly like the mock: `store.init(new ObsDataSource())`.
  */
 export class ObsDataSource
-  implements AuthCapableDataSource, PageAuthCapableDataSource, PositionCapableDataSource
+  implements
+    AuthCapableDataSource,
+    PageAuthCapableDataSource,
+    PositionCapableDataSource,
+    LayeringCapableDataSource
 {
   private readonly client: ObsClient;
   /** Mapped widgets keyed by device id — the single owner of mapped state. */
@@ -87,6 +98,11 @@ export class ObsDataSource
   private polling = false;
   /** Last raw value seen per datapoint, so a poll round only emits real changes. */
   private readonly lastPolled = new Map<string, unknown>();
+  /** The enriched (page-config loaded) tree of the last list(), for layering W3c:
+   *  navTree()/layersFor() compose over it. Empty before the first list(). */
+  private tree: readonly ObsVisuNode[] = [];
+  /** The datapoint values of the last list(), so composed layers carry live state. */
+  private treeValues: ReadonlyMap<string, unknown> = new Map();
   /** Guest poll cadence (ms). Live WS is used instead once logged in. */
   private static readonly POLL_INTERVAL_MS = 4000;
   /**
@@ -200,6 +216,24 @@ export class ObsDataSource
     return out;
   }
 
+  /**
+   * The navigation tree (layering W3c): the visible PAGE/LOCATION hierarchy of the
+   * last {@link list}. A skin renders its own navigation from this; the responsive
+   * skin ignores it. Empty before the first list().
+   */
+  navTree(): NavNode[] {
+    return buildNavTree(this.tree);
+  }
+
+  /**
+   * The ordered layer stack for a page (layering W3c): ancestors + own, root-first,
+   * composed from the last {@link list}'s tree + live values. A skin overlays this;
+   * the responsive skin ignores it. Empty for an unknown page.
+   */
+  layersFor(pageId: string): PageLayer[] {
+    return composeLayers(this.tree, pageId, this.treeValues);
+  }
+
   /* ---------------------------------------------------------------- list */
 
   async list(): Promise<Device[]> {
@@ -238,6 +272,9 @@ export class ObsDataSource
     // per page — skipping readonly/user pages (all controls locked there).
     const writableByPage = await this.fetchWritable(mappedWidgets, accessByNode);
 
+    // Keep the enriched tree + values so navTree()/layersFor() can compose (W3c).
+    this.tree = enriched;
+    this.treeValues = values;
     // Re-map with the fetched values, then fold in access + writability.
     const withValues = mapTree(enriched, values);
 
