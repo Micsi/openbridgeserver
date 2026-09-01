@@ -162,3 +162,31 @@ describe('resolveLayout — entry referencing no device is a gap', () => {
     expect(() => resolveLayout(GRID_LAYOUT, badGroups)).toThrow(/does-not-exist/);
   });
 });
+
+describe('resolveLayout — author position is additive (honors: position, layering W4)', () => {
+  const POSITION_LAYOUT: SkinLayout = {
+    model: 'grid',
+    honors: ['order', 'grouping', 'position'],
+  };
+
+  it('flags honorsPosition only when the manifest lists it', () => {
+    expect(resolveLayout(POSITION_LAYOUT, modelRooms).honorsPosition).toBe(true);
+    expect(resolveLayout(GRID_LAYOUT, modelRooms).honorsPosition).toBe(false);
+    expect(resolveLayout(LIST_LAYOUT, modelRooms).honorsPosition).toBe(false);
+  });
+
+  it('forwards a group entry position onto the placed item; a boxless entry stays position-less', () => {
+    const groups = [
+      {
+        room: 'Küche',
+        entries: [
+          { id: 'kueche-wand', position: { x: 3, y: 5, w: 2, h: 2 } },
+          { id: 'kueche-pendel' },
+        ],
+      },
+    ];
+    const out = resolveLayout(POSITION_LAYOUT, groups);
+    expect(out.items[0].position).toEqual({ x: 3, y: 5, w: 2, h: 2 });
+    expect(out.items[1].position).toBeUndefined();
+  });
+});

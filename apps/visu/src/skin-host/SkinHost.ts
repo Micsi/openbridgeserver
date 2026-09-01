@@ -109,14 +109,46 @@ export default defineComponent({
             'data-id': item.id,
             'data-group': item.group,
             'data-role': item.role,
-            // Grid footprint: only meaningful in a role-honouring grid model.
-            style: lay.honorsRole
-              ? { gridColumn: `span ${item.span.c}`, gridRow: `span ${item.span.r}` }
-              : undefined,
+            // Placement: a position-honouring skin (layering W4) gets an absolute
+            // box from the author's x/y/w/h, scaled by `--vz-pos-unit` (the skin
+            // sets the unit: 1px for pixel-exact Edomi, a cell size for a grid).
+            // Else a role-honouring grid gets its span footprint; a plain list none.
+            style:
+              lay.honorsPosition && item.position
+                ? {
+                    position: 'absolute',
+                    left: `calc(var(--vz-pos-unit, 8px) * ${item.position.x})`,
+                    top: `calc(var(--vz-pos-unit, 8px) * ${item.position.y})`,
+                    width: `calc(var(--vz-pos-unit, 8px) * ${item.position.w})`,
+                    height: `calc(var(--vz-pos-unit, 8px) * ${item.position.h})`,
+                  }
+                : lay.honorsRole
+                  ? { gridColumn: `span ${item.span.c}`, gridRow: `span ${item.span.r}` }
+                  : undefined,
           },
           [body],
         );
       };
+
+      // Positioned model (layering W4): one absolute canvas, each item placed by
+      // its author box. Room grouping is not a spatial concern here — the author's
+      // coordinates are the floor. The canvas height sizes to the lowest box so
+      // the page scrolls. A skin without positions on its items degrades to the
+      // top-left (no box → no absolute style), never broken.
+      if (lay.honorsPosition) {
+        const maxBottom = lay.items.reduce(
+          (m, it) => (it.position ? Math.max(m, it.position.y + it.position.h) : m),
+          0,
+        );
+        return h(
+          'div',
+          {
+            class: ['skin-host', 'skin-host-model-positioned'],
+            style: { position: 'relative', height: `calc(var(--vz-pos-unit, 8px) * ${maxBottom})` },
+          },
+          lay.items.map(renderCell),
+        );
+      }
 
       // List model (e.g. terminal): one flat column.
       if (lay.model !== 'grid') {

@@ -69,6 +69,12 @@ export interface ResolvedLayout {
   readonly model: string;
   /** Whether the resolved model honours role footprints (else everything is 1×1). */
   readonly honorsRole: boolean;
+  /**
+   * Whether the skin honours author positions (`honors: ['position']`, layering
+   * W4). When true the host places items absolutely by their {@link PlacedItem.position}
+   * box; when false positions are ignored and the room/role floor lays out.
+   */
+  readonly honorsPosition: boolean;
   /** The column profile (grid model only; sane defaults otherwise). */
   readonly columns: ColumnProfile;
   /** Items in strict source order, with grouping + (additive) span. */
@@ -185,6 +191,7 @@ export function resolveLayout(
   return {
     model: layout.model,
     honorsRole,
+    honorsPosition: honors(layout, 'position'),
     columns: readColumns(layout),
     items,
   };
