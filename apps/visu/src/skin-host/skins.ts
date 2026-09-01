@@ -18,13 +18,16 @@
  * (the same "never a silent lamp" discipline the renderer dispatch follows).
  */
 
-import type { SkinManifest, Renderer, CoreWidgetType } from '@obs/visu-contract';
+import type { SkinManifest, Renderer, CoreWidgetType, PageRenderer } from '@obs/visu-contract';
 
 import { tiles as ionicTiles, details as ionicDetails, presets as ionicPresets } from '@obs-visu-skins/ionic';
 import ionicManifest from '@obs-visu-skins/ionic/manifest.json';
 
 import { tiles as terminalTiles, details as terminalDetails } from '@obs-visu-skins/terminal';
 import terminalManifest from '@obs-visu-skins/terminal/manifest.json';
+
+import { tiles as edomiTiles, details as edomiDetails, page as edomiPage } from '@obs-visu-skins/edomi';
+import edomiManifest from '@obs-visu-skins/edomi/manifest.json';
 
 /** A partial renderer map over the core widget types (mirror of the skin export). */
 export type RendererMap = Partial<Record<CoreWidgetType, Renderer>>;
@@ -43,6 +46,13 @@ export interface Skin {
   readonly presets: RendererMap;
   /** The skin manifest (layout · widgets · unsupported · tweaks · themes). */
   readonly manifest: SkinManifest;
+  /**
+   * Optional whole-page renderer (v1.10, layering W4). A skin that owns its own
+   * navigation + composed layers + popups exports one; the host delegates the page
+   * body to it (external floor only) and passes the {@link PageHost}. A skin without
+   * one (ionic/terminal) is unaffected — the host lays out its room/role floor.
+   */
+  readonly page?: PageRenderer;
 }
 
 /**
@@ -63,6 +73,15 @@ export const skins = {
     // The terminal skin ships no position-preset renderers (no long-press menu).
     presets: {},
     manifest: terminalManifest as SkinManifest,
+  },
+  edomi: {
+    // Edomi POC (v1.10, layering W4): owns the whole page via `page` (nav + pixel
+    // layer canvas + popups); re-uses the ionic content tiles. No presets popover.
+    tiles: edomiTiles,
+    details: edomiDetails,
+    presets: {},
+    manifest: edomiManifest as SkinManifest,
+    page: edomiPage,
   },
 } as const satisfies Record<string, Skin>;
 

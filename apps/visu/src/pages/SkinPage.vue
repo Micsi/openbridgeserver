@@ -29,6 +29,8 @@ import { ref, computed, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { applyTweaks, type IonicTweaks } from '@obs-visu-skins/ionic';
 import '@obs-visu-skins/ionic/ionic.css';
+// Edomi POC chrome (nav + pixel canvas + popups); harmless when another skin renders.
+import '@obs-visu-skins/edomi/edomi.css';
 
 import { storeToRefs } from 'pinia';
 

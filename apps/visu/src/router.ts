@@ -26,6 +26,13 @@ const routes: RouteRecordRaw[] = [
     component: SkinPage,
     props: { pageId: 'demo-media' },
   },
+  {
+    // Edomi POC (layering W4): the page-owning pixel skin.
+    path: '/edomi',
+    name: 'edomi',
+    component: SkinPage,
+    props: { pageId: 'edomi' },
+  },
 ];
 
 export const router = createRouter({

@@ -339,6 +339,58 @@ export interface PopupDescriptor {
   readonly dimBackdrop?: boolean;
 }
 
+/* ---------------------------------- Page renderer & host seam (v1.10) -------
+ * A skin may OWN a whole page (nav + composed layers + popups), not just tiles,
+ * by exporting a {@link PageRenderer}. The host still owns STATE (current page,
+ * which popups are open, auto-close timers) and RENDERS the content tiles; the
+ * skin owns the APPEARANCE. This keeps the skin stateless while letting it define
+ * the "how" of navigation/layering/popups (CONTRIBUTING-visu-layering.md, W3c/W4).
+ * A skin without a page renderer is unaffected — the host lays out its floor.
+ */
+
+/** One node of the navigation hierarchy handed to a skin's page renderer. */
+export interface NavNode {
+  readonly id: string;
+  readonly name: string;
+  readonly type: 'LOCATION' | 'PAGE';
+  /** The node's own access mode (`public`/`readonly`/`protected`/`user`/null). */
+  readonly access: string | null;
+  readonly children: readonly NavNode[];
+}
+
+/**
+ * The host services a skin's {@link PageRenderer} receives. The host owns all
+ * state and the content-tile rendering; the skin reads + calls these to draw its
+ * own navigation, layer overlays and popups. Returns are `string | unknown`
+ * (framework node, e.g. a Vue VNode) exactly like {@link Renderer} — the contract
+ * types the seam, it executes nothing (golden rule 7).
+ */
+export interface PageHost {
+  /** The visible navigation hierarchy (host-composed). */
+  readonly navTree: readonly NavNode[];
+  /** The page the skin is currently showing (its nav choice), or null at start. */
+  readonly currentPageId: string | null;
+  /** Switch the shown page (host updates state; the renderer re-runs). */
+  navigate(pageId: string): void;
+  /** The ordered layer stack for a page (ancestors + own), host-composed. */
+  layersFor(pageId: string): readonly PageLayer[];
+  /** Render the host's content tile for a device id (the skin never re-implements tiles). */
+  renderTile(deviceId: string): string | unknown;
+  /** The popups currently open (host-owned state + auto-close). */
+  readonly openPopups: readonly PopupDescriptor[];
+  /** Open / close a popup by id (host owns the open-state + auto-close timer). */
+  openPopup(descriptor: PopupDescriptor): void;
+  closePopup(id: string): void;
+}
+
+/**
+ * A skin's optional whole-page renderer (v1.10). When a skin exports one and the
+ * host runs an external (backend) floor, the host delegates the page body to it,
+ * passing the {@link PageHost}. Declared via the manifest capability `honors`
+ * entries `'nav'` / `'layers'` / `'popup'` (what the skin's page renderer uses).
+ */
+export type PageRenderer = (host: PageHost) => string | unknown;
+
 export interface SkinTweak {
   readonly type: 'select' | 'slider';
   readonly options?: readonly string[];

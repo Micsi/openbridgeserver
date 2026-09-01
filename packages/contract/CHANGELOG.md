@@ -23,6 +23,20 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.10.0] – 2026-09-01
+
+v1.10: der **Page-Renderer-Seam** (CONTRIBUTING-visu-layering.md, W3c/W4). Ein Skin
+kann optional eine ganze Seite besitzen (Navigation + komponierte Layer + Popups),
+nicht nur Kacheln. Neue **optionale, additive** Typen: `NavNode` (Navigations-
+Hierarchie), `PageHost` (die Host-Dienste, die ein Page-Renderer bekommt – `navTree`,
+`currentPageId`, `navigate`, `layersFor`, `renderTile`, `openPopups`, `openPopup`,
+`closePopup`) und `PageRenderer = (host: PageHost) => string | unknown` (wie
+`Renderer` framework-agnostisch; der Contract typisiert die Seam, führt nichts aus).
+Der Host besitzt weiter STATE (aktuelle Seite, offene Popups, Auto-Close-Timer) und
+rendert die Content-Kacheln; der Skin besitzt die ERSCHEINUNG. Minor-Bump: reine
+Typen-Zugabe, keine Device-Datenform-Änderung. Ein Skin ohne Page-Renderer ist
+unverändert; ein Skin mit einem zieht sein `targetsContract` auf 1.10.
+
 ## [1.9.0] – 2026-09-01
 
 v1.9: Seiten-Layering & Komposition als **Skin-Fähigkeit** (CONTRIBUTING-visu-layering.md,

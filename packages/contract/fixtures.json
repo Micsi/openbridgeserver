@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.9",
+  "contractVersion": "1.10",
 
   "light": {
     "off":    { "on": false, "dim": null, "room": "EG Küche",  "label": "Wandleuchten",  "accent": "orange" },

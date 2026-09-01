@@ -25,6 +25,9 @@ import type {
   PageLayer,
   PopupDescriptor,
   Role,
+  NavNode,
+  PageHost,
+  PageRenderer,
 } from '../src/types.js';
 
 describe('Device unions (§5) — readonly', () => {
@@ -213,5 +216,26 @@ describe('Layering & Komposition (v1.9) — additive, skin-honored', () => {
     expectTypeOf<PopupDescriptor['position']>().toEqualTypeOf<WidgetPosition | undefined>();
     expectTypeOf<PopupDescriptor['autoCloseMs']>().toEqualTypeOf<number | undefined>();
     expectTypeOf<PopupDescriptor['modal']>().toEqualTypeOf<boolean | undefined>();
+  });
+});
+
+describe('Page renderer & host seam (v1.10) — additive, skin owns appearance', () => {
+  it('NavNode is a recursive nav hierarchy node', () => {
+    expectTypeOf<NavNode['id']>().toEqualTypeOf<string>();
+    expectTypeOf<NavNode['type']>().toEqualTypeOf<'LOCATION' | 'PAGE'>();
+    expectTypeOf<NavNode['children']>().toEqualTypeOf<readonly NavNode[]>();
+  });
+
+  it('PageHost exposes nav state + services + host tile rendering', () => {
+    expectTypeOf<PageHost['navTree']>().toEqualTypeOf<readonly NavNode[]>();
+    expectTypeOf<PageHost['currentPageId']>().toEqualTypeOf<string | null>();
+    expectTypeOf<PageHost['navigate']>().toEqualTypeOf<(pageId: string) => void>();
+    expectTypeOf<PageHost['openPopups']>().toEqualTypeOf<readonly PopupDescriptor[]>();
+    expectTypeOf<PageHost>().toHaveProperty('layersFor');
+    expectTypeOf<PageHost>().toHaveProperty('renderTile');
+  });
+
+  it('PageRenderer takes a PageHost and returns a framework node (like Renderer)', () => {
+    expectTypeOf<PageRenderer>().toEqualTypeOf<(host: PageHost) => string | unknown>();
   });
 });

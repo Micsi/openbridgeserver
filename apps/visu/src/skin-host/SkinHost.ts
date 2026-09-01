@@ -24,9 +24,20 @@
  * directly and stays trivially unit-testable.
  */
 
-import { defineComponent, h, computed, inject, Fragment, type PropType, type VNode } from 'vue';
+import {
+  defineComponent,
+  h,
+  computed,
+  inject,
+  ref,
+  onBeforeUnmount,
+  Fragment,
+  type PropType,
+  type VNode,
+} from 'vue';
+import { storeToRefs } from 'pinia';
 
-import type { Device } from '@obs/visu-contract';
+import type { Device, NavNode, PageHost, PopupDescriptor } from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
 import { ctx as defaultCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
@@ -75,9 +86,87 @@ export default defineComponent({
       clampColumns(layout.value.columns, props.columns ?? layout.value.columns.default),
     );
 
+    /* ------------------------------------------- page-renderer host seam (W4) */
+    // A skin that owns the page (nav + layers + popups) exports a `page` renderer;
+    // the host owns the STATE (current page, open popups + auto-close timers) and
+    // renders the content tiles, the skin owns the appearance (skin stays stateless).
+    const { navTree } = storeToRefs(store);
+    const currentPage = ref<string | null>(null);
+    const openPopups = ref<PopupDescriptor[]>([]);
+    const popupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    function firstPageId(nodes: readonly NavNode[]): string | null {
+      for (const n of nodes) {
+        if (n.type === 'PAGE') return n.id;
+        const inner = firstPageId(n.children);
+        if (inner) return inner;
+      }
+      return null;
+    }
+    function navigate(pageId: string): void {
+      currentPage.value = pageId;
+    }
+    function closePopup(id: string): void {
+      openPopups.value = openPopups.value.filter((p) => p.id !== id);
+      const t = popupTimers.get(id);
+      if (t) {
+        clearTimeout(t);
+        popupTimers.delete(id);
+      }
+    }
+    function openPopup(descriptor: PopupDescriptor): void {
+      // Re-opening an already-open popup does NOT extend its timer (Edomi rule).
+      if (openPopups.value.some((p) => p.id === descriptor.id)) return;
+      openPopups.value = [...openPopups.value, descriptor];
+      if (descriptor.autoCloseMs && descriptor.autoCloseMs > 0) {
+        popupTimers.set(
+          descriptor.id,
+          setTimeout(() => closePopup(descriptor.id), descriptor.autoCloseMs),
+        );
+      }
+    }
+    onBeforeUnmount(() => {
+      for (const t of popupTimers.values()) clearTimeout(t);
+      popupTimers.clear();
+    });
+
+    /** Render the host's content tile for a device id — the skin's own type
+     *  renderer, wrapped in a cell carrying `data-id` so gestures still resolve.
+     *  A missing/undeclared device degrades quietly (never throws for the seam). */
+    function renderTile(deviceId: string): VNode {
+      const device = store.byId(deviceId);
+      if (!device) return h('div', { class: 'skin-host-missing', 'data-id': deviceId });
+      const sk = skin.value;
+      const selection = selectTile(sk.tiles, sk.manifest, device.type);
+      const tokens = makeTokens(props.theme, device.accent);
+      const body =
+        selection.renderer === null
+          ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
+          : (selection.renderer(device, tokens, defaultCtx) as VNode);
+      return h('div', { class: 'skin-host-cell', 'data-id': deviceId }, [body]);
+    }
+
     return () => {
       const sk = skin.value;
       const lay = layout.value;
+
+      // A skin that owns the whole page (nav + composed layers + popups) renders
+      // it entirely; the host supplies state + services + content tiles. Live data
+      // drives it — with no nav (the mock) the skin's page renderer gets an empty
+      // tree and degrades. A skin without a page renderer falls through to the floor.
+      if (sk.page) {
+        const host: PageHost = {
+          navTree: navTree.value,
+          currentPageId: currentPage.value ?? firstPageId(navTree.value),
+          navigate,
+          layersFor: (id) => store.layersFor(id),
+          renderTile,
+          openPopups: openPopups.value,
+          openPopup,
+          closePopup,
+        };
+        return sk.page(host) as VNode;
+      }
 
       // Render one cell: type-addressed dispatch + AA tokens + the role/group
       // data the skin's CSS honours. Order is the array order (the floor).

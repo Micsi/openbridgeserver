@@ -21,9 +21,13 @@
  * the origin/order derivation here changes — the skin-facing shape is stable.
  */
 
-import type { LayerItem, PageLayer } from '@obs/visu-contract';
+import type { LayerItem, NavNode, PageLayer } from '@obs/visu-contract';
 import type { DataSource } from '../datasource';
-import { mapWidget, type ObsPageConfig, type ObsVisuNode, type PageAccess } from './mapping';
+import { mapWidget, type ObsPageConfig, type ObsVisuNode } from './mapping';
+
+// Re-export the contract nav node so existing importers (datasource/store) keep
+// their `./compose` import site while the type is the shared, skin-facing one.
+export type { NavNode } from '@obs/visu-contract';
 
 /**
  * A source that exposes the composed layering DATA (layering W3c): the navigation
@@ -42,16 +46,6 @@ export interface LayeringCapableDataSource extends DataSource {
 export function supportsLayering(ds: DataSource): ds is LayeringCapableDataSource {
   const cand = ds as Partial<LayeringCapableDataSource>;
   return typeof cand.navTree === 'function' && typeof cand.layersFor === 'function';
-}
-
-/** One node of the navigation tree the host hands a skin (W3c seed). */
-export interface NavNode {
-  readonly id: string;
-  readonly name: string;
-  readonly type: 'LOCATION' | 'PAGE';
-  /** The node's own access mode (null = inherit); the skin may badge gated pages. */
-  readonly access: PageAccess | null;
-  readonly children: readonly NavNode[];
 }
 
 /** Map a page's widgets to layer items (id + optional author position). Pure. */

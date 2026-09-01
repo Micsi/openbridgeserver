@@ -79,6 +79,10 @@ export const PAGES: readonly PageDef[] = Object.freeze([
   // ionic skin. Until the ionic skin ships media/camera renderers (parallel skins
   // work), the host shows a declared gap at runtime — resolution + data are tested.
   { id: 'demo-media', titleKey: 'pages.demoMedia.title', skin: 'ionic', source: 'demo' },
+  // Edomi POC (layering W4): a page-owning skin. It draws its own nav + pixel layer
+  // canvas + popups from the live backend tree (OBS mode); the room-grouped floor is
+  // unused here (the page renderer ignores `groups`).
+  { id: 'edomi', titleKey: 'pages.edomi.title', skin: 'edomi' },
 ] satisfies PageDef[]);
 
 /** Lookup a page definition by id (the route param / nav key). */
