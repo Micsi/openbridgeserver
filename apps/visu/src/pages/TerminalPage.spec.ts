@@ -62,13 +62,25 @@ function terminalItemCount(): number {
 }
 
 /** Split the terminal floor into skin-rendered vs. declared-unsupported item counts.
- *  The terminal skin declares `media`/`camera` as unsupported → the host draws a
- *  quiet placeholder for those (a declared gap), a `.t-row` for the rest. */
+ *  Whatever the skin declares `unsupported` renders as the host's quiet
+ *  placeholder (a declared gap); everything else renders as a `.t-row`. Derived
+ *  from the manifest, so this tracks the skin instead of freezing one release. */
 function terminalRenderSplit(): { rows: number; unsupported: number } {
   const ids = resolvePage('terminal').groups.flatMap((g) => g.entries.map((e) => e.id));
-  const skipped = new Set(resolveSkin('terminal').manifest.unsupported);
+  const skipped = terminalUnsupported();
   const unsupported = ids.filter((id) => skipped.has(byId[id]!.type)).length;
   return { rows: ids.length - unsupported, unsupported };
+}
+
+/** The core types the terminal skin declares as unsupported (may be empty). */
+function terminalUnsupported(): Set<string> {
+  return new Set<string>(resolveSkin('terminal').manifest.unsupported);
+}
+
+/** The distinct device types the terminal page actually puts on screen. */
+function terminalTypesOnPage(): string[] {
+  const ids = resolvePage('terminal').groups.flatMap((g) => g.entries.map((e) => e.id));
+  return [...new Set(ids.map((id) => byId[id]!.type))].sort();
 }
 
 async function seedStore(): Promise<void> {
@@ -111,17 +123,21 @@ describe('SkinPage(terminal) — renders the devices through the terminal skin',
     const rows = wrapper.findAll('.t-row');
     expect(rows.length).toBe(split.rows);
     expect(wrapper.findAll('.skin-host-unsupported').length).toBe(split.unsupported);
-    expect(wrapper.find('.skin-host-unsupported[data-type="media"]').exists()).toBe(true);
-    expect(wrapper.find('.skin-host-unsupported[data-type="camera"]').exists()).toBe(true);
     expect(wrapper.find('.vz-tile').exists()).toBe(false);
 
-    // the core mobile types are present, addressed by type through the terminal skin
-    expect(wrapper.find('.t-row[data-type="light"]').exists()).toBe(true);
-    expect(wrapper.find('.t-row[data-type="switch"]').exists()).toBe(true);
-    expect(wrapper.find('.t-row[data-type="blind"]').exists()).toBe(true);
-    expect(wrapper.find('.t-row[data-type="jalousie"]').exists()).toBe(true);
-    expect(wrapper.find('.t-row[data-type="sensor"]').exists()).toBe(true);
-    expect(wrapper.find('.t-row[data-type="scene"]').exists()).toBe(true);
+    // Every type on the page is addressed BY TYPE through the terminal skin, and
+    // lands on exactly one of the two outcomes: a rendered row, or the host's
+    // declared-gap placeholder. Which one is derived from the skin's manifest —
+    // naming the types here would freeze one release of the skin into the app's
+    // tests (that is how this file went stale when terminal took up media/camera).
+    const skipped = terminalUnsupported();
+    const typesOnPage = terminalTypesOnPage();
+    expect(typesOnPage.length).toBeGreaterThan(0);
+    for (const type of typesOnPage) {
+      const declaredGap = skipped.has(type);
+      expect(wrapper.find(`.skin-host-unsupported[data-type="${type}"]`).exists()).toBe(declaredGap);
+      expect(wrapper.find(`.t-row[data-type="${type}"]`).exists()).toBe(!declaredGap);
+    }
   });
 
   it('tapping a terminal light row dispatches its canonical action to the store', async () => {
@@ -136,8 +152,13 @@ describe('SkinPage(terminal) — renders the devices through the terminal skin',
     const cell = wrapper.findAll('.skin-host-cell').find((c) => c.attributes('data-id') === id);
     expect(cell).toBeDefined();
 
-    // the terminal light row carries data-action="toggle"; the host maps the tap.
-    await cell!.find('[data-type="light"]').trigger('click');
+    // The row MARKS the canonical intent and the host maps the tap. Where the
+    // marker sits is the skin's business — it used to be on the row itself, the
+    // current skin puts it on an explicit `[an]`/`[aus]` command — so address the
+    // marker, not its position.
+    const toggle = cell!.find('[data-action="toggle"]');
+    expect(toggle.exists()).toBe(true);
+    await toggle.trigger('click');
     expect(lightOn()).toBe(true);
   });
 
