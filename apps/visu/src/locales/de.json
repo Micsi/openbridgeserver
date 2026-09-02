@@ -79,7 +79,8 @@
     },
     "edomi": {
       "title": "Edomi"
-    }, "cameraFull": { "title": "Kamera (Vollbild)" }
+    },
+    "cameraFull": { "title": "Kamera (Vollbild)" }
   },
   "tweaks": {
     "title": "Anpassen",

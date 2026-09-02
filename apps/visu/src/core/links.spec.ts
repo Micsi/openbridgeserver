@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { NavNode } from '@obs/visu-contract';
 
-import { resolveLink, isLinkActive, resolveAccessNode } from './links';
+import {
+  resolveLink,
+  isLinkActive,
+  resolveAccessNode,
+  linksDeliverable,
+  LINK_TAP_TARGET,
+} from './links';
 
 /**
  * core/links — page links as a HOST action (Contract v1.11, Upstream #1194).
@@ -122,12 +128,33 @@ describe('resolveLink — the V1 navigate() semantics as a host action', () => {
     });
   });
 
-  it('gates a protected LOCATION too — before descending into it', () => {
+  it('gates a protected LOCATION and names a PAGE the gate list can show', () => {
+    // The host's gate list only ever holds PAGE nodes, so reporting the LOCATION
+    // itself would leave the click with no visible gate at all. The outcome names
+    // the first page this one PIN unlocks.
     expect(resolveLink({ targetNodeId: 'keller' }, guest())).toEqual({
       kind: 'gate',
-      pageId: 'keller',
+      pageId: 'technik',
       accessNodeId: 'keller',
     });
+  });
+
+  it('falls back to the LOCATION when no page under it shares that PIN', () => {
+    const tree: NavNode[] = [
+      { id: 'safe', name: 'Safe', type: 'LOCATION', access: 'protected', children: [] },
+    ];
+    expect(resolveLink({ targetNodeId: 'safe' }, guest({ navTree: tree }))).toEqual({
+      kind: 'gate',
+      pageId: 'safe',
+      accessNodeId: 'safe',
+    });
+  });
+
+  it('a gated PAGE names itself', () => {
+    expect(resolveLink({ targetNodeId: 'technik' }, guest()).kind).toBe('gate');
+    expect((resolveLink({ targetNodeId: 'technik' }, guest()) as { pageId: string }).pageId).toBe(
+      'technik',
+    );
   });
 
   it('passes the gate once a session token is held for the DEFINING node', () => {
@@ -214,5 +241,25 @@ describe('isLinkActive — active along the ancestor chain (V1 isActive)', () =>
   it('with no tree the chain is just the page itself (static floor)', () => {
     expect(isLinkActive({ targetNodeId: 'camera-full' }, 'camera-full', [])).toBe(true);
     expect(isLinkActive({ targetNodeId: 'camera-full' }, 'demo-media', [])).toBe(false);
+  });
+});
+
+describe('linksDeliverable — the tap binding is a DECLARED restriction (#1194)', () => {
+  it("binds page links to the `action` tap target", () => {
+    expect(LINK_TAP_TARGET).toBe('action');
+  });
+
+  it('is true for an explicit action tap and for a skin that declares no gestures', () => {
+    expect(linksDeliverable(undefined)).toBe(true);
+    expect(linksDeliverable({})).toBe(true);
+    expect(linksDeliverable({ tap: 'action', longPress: 'presets' })).toBe(true);
+  });
+
+  it('is false when the skin gives every tile a click function of its own', () => {
+    // `openDetail`/`presets` on tap means the tile is never "without a click
+    // function" — the case #1194 is about. The host then declares the gap
+    // instead of overriding the skin's interaction model (golden rule 4).
+    expect(linksDeliverable({ tap: 'openDetail' })).toBe(false);
+    expect(linksDeliverable({ tap: 'presets' })).toBe(false);
   });
 });

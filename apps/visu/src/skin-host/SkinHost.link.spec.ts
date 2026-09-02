@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { mount } from '@vue/test-utils';
 import { h, nextTick } from 'vue';
-import type { Device, NavNode } from '@obs/visu-contract';
+import type { Device, NavNode, SkinGestures } from '@obs/visu-contract';
 
 /**
  * skin-host/SkinHost — page links on placed elements (Contract v1.11, #1194).
@@ -15,6 +15,7 @@ import type { Device, NavNode } from '@obs/visu-contract';
  * The skin is untouched by all of this: it still only renders the tile body.
  * A placed element WITHOUT a link must render exactly as before (additive).
  */
+let mockGestures: SkinGestures | undefined;
 vi.mock('./skins', () => ({
   resolveSkin: () => ({
     tiles: {
@@ -23,7 +24,12 @@ vi.mock('./skins', () => ({
     },
     details: {},
     presets: {},
-    manifest: { name: 'stub', unsupported: [], layout: { model: 'grid', honors: ['role'] } },
+    manifest: {
+      name: 'stub',
+      unsupported: [],
+      gestures: mockGestures,
+      layout: { model: 'grid', honors: ['role'] },
+    },
   }),
 }));
 
@@ -61,7 +67,8 @@ const NAV: NavNode[] = [
   },
 ];
 
-async function mountWith(groups: RoomGroup[]) {
+async function mountWith(groups: RoomGroup[], gestures?: SkinGestures) {
+  mockGestures = gestures;
   const store = useDeviceStore();
   await store.init(new MockDataSource([CAM, SW]));
   const wrapper = mount(SkinHost, { props: { skin: 'stub', groups, theme: 'light' } });
@@ -69,7 +76,10 @@ async function mountWith(groups: RoomGroup[]) {
 }
 
 describe('SkinHost — a linked placed element becomes a host navigation affordance', () => {
-  beforeEach(() => setActivePinia(createPinia()));
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    mockGestures = undefined;
+  });
 
   it('stamps the link target + role/tabindex on the host cell', async () => {
     const { wrapper } = await mountWith([
@@ -78,10 +88,11 @@ describe('SkinHost — a linked placed element becomes a host navigation afforda
 
     const cell = wrapper.find('.skin-host-cell[data-id="cam1"]');
     expect(cell.attributes('data-link')).toBe('voll');
-    expect(cell.attributes('role')).toBe('link');
     expect(cell.attributes('tabindex')).toBe('0');
-    expect(cell.classes()).toContain('skin-host-cell-link');
     expect(cell.attributes('style') ?? '').toContain('cursor: pointer');
+    // No `role="link"`: a tile may hold its own control (the camera's refresh
+    // button) and nesting one inside a link role is invalid ARIA.
+    expect(cell.attributes('role')).toBeUndefined();
     // The skin still only draws the tile body — no skin change is required.
     expect(cell.find('.stub-cam').exists()).toBe(true);
   });
@@ -91,9 +102,7 @@ describe('SkinHost — a linked placed element becomes a host navigation afforda
 
     const cell = wrapper.find('.skin-host-cell[data-id="sw1"]');
     expect(cell.attributes('data-link')).toBeUndefined();
-    expect(cell.attributes('role')).toBeUndefined();
     expect(cell.attributes('tabindex')).toBeUndefined();
-    expect(cell.classes()).not.toContain('skin-host-cell-link');
     expect(cell.find('[data-testid="link-active-dot"]').exists()).toBe(false);
   });
 
@@ -141,7 +150,9 @@ describe('SkinHost — a linked placed element becomes a host navigation afforda
     await nextTick();
 
     const style = wrapper.find('.skin-host-cell[data-id="cam1"]').attributes('style') ?? '';
-    expect(style).toContain('outline');
+    // box-shadow, never `outline` — outline belongs to the browser focus ring.
+    expect(style).toContain('box-shadow');
+    expect(style).not.toContain('outline');
     expect(wrapper.find('[data-testid="link-active-dot"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="link-active-bar"]').exists()).toBe(false);
   });
@@ -155,5 +166,40 @@ describe('SkinHost — a linked placed element becomes a host navigation afforda
     // from the link is merged in rather than replacing the layout style.
     expect(style).toContain('grid-column');
     expect(style).toContain('cursor: pointer');
+  });
+});
+
+describe('SkinHost — a link the skin cannot deliver is a DECLARED gap (#1194)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    mockGestures = undefined;
+  });
+
+  it("withholds the affordance and marks it when `tap` is not 'action'", async () => {
+    const { wrapper } = await mountWith(
+      [{ room: 'Hof', entries: [{ id: 'cam1', link: { targetNodeId: 'voll' } }] }],
+      { tap: 'openDetail', longPress: 'presets' },
+    );
+
+    const cell = wrapper.find('.skin-host-cell[data-id="cam1"]');
+    // Declared, inspectable — not a silently swallowed feature (golden rule 3).
+    expect(cell.attributes('data-link-unsupported')).toBe('true');
+    expect(cell.attributes('data-link')).toBe('voll');
+    // …and nothing pretends to be operable.
+    expect(cell.attributes('tabindex')).toBeUndefined();
+    expect(cell.attributes('style') ?? '').not.toContain('cursor: pointer');
+  });
+
+  it("delivers the link for an explicit tap:'action' and for no declaration at all", async () => {
+    for (const gestures of [undefined, { tap: 'action' } as SkinGestures]) {
+      setActivePinia(createPinia());
+      const { wrapper } = await mountWith(
+        [{ room: 'Hof', entries: [{ id: 'cam1', link: { targetNodeId: 'voll' } }] }],
+        gestures,
+      );
+      const cell = wrapper.find('.skin-host-cell[data-id="cam1"]');
+      expect(cell.attributes('data-link-unsupported')).toBeUndefined();
+      expect(cell.attributes('tabindex')).toBe('0');
+    }
   });
 });

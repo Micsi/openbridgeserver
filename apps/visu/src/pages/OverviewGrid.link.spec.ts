@@ -59,12 +59,13 @@ async function mountGrid(host: SkinHostApi | null = makeHost()) {
 function addCell(
   root: Element,
   id: string,
-  opts: { link?: string; action?: string } = {},
+  opts: { link?: string; action?: string; linkUnsupported?: boolean } = {},
 ): { cell: HTMLElement; body: HTMLElement; control: HTMLElement } {
   const cell = document.createElement('div');
   cell.className = 'skin-host-cell';
   cell.dataset.id = id;
   if (opts.link) cell.dataset.link = opts.link;
+  if (opts.linkUnsupported) cell.dataset.linkUnsupported = 'true';
   // The non-interactive tile body (the camera feed) …
   const body = document.createElement('div');
   cell.appendChild(body);
@@ -153,6 +154,23 @@ describe('OverviewGrid — a tap on a non-interactive linked tile navigates (#11
 
     const { body } = addCell(wrapper.element, 'hof-cam', { link: 'gibtsnicht' });
     body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await wrapper.vm.$nextTick();
+
+    expect(store.currentPageId).toBeNull();
+    expect(store.pendingGate).toBeNull();
+  });
+
+  it('never fires a link the host declared undeliverable (golden rule 3)', async () => {
+    const { wrapper, store } = await mountGrid();
+    // The host stamps this when the skin binds `tap` to something other than
+    // `action`; both halves must agree, so the seam refuses it too.
+    const { body } = addCell(wrapper.element, 'hof-cam', {
+      link: 'camera-full',
+      linkUnsupported: true,
+    });
+
+    body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await wrapper.vm.$nextTick();
 
     expect(store.currentPageId).toBeNull();

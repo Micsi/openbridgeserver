@@ -55,7 +55,11 @@ function tileIdFor(target: EventTarget | null): string | null {
 function linkTargetFor(target: EventTarget | null): string | null {
   if (!(target instanceof Element)) return null;
   const cell = target.closest<HTMLElement>('.skin-host-cell');
-  return cell?.dataset.link ?? null;
+  // A cell the host marked as an undeliverable link (the skin binds `tap` to
+  // something other than `action`) never fires — the gap is declared on the
+  // cell, and honouring it here keeps the two halves from disagreeing.
+  if (!cell || cell.dataset.linkUnsupported === 'true') return null;
+  return cell.dataset.link ?? null;
 }
 
 /**
@@ -145,8 +149,8 @@ export default defineComponent({
             // mark an action keeps winning even when the host dispatches nothing
             // for it, and without a link this stays the previous no-op.
             if (marksOwnAction(ev.target)) return;
-            const target = linkTargetFor(ev.target);
-            if (target) followLink(target);
+            const linkTarget = linkTargetFor(ev.target);
+            if (linkTarget) followLink(linkTarget);
             return;
           }
           if (intent.action === 'openDetail') host?.openDetail(id);
@@ -208,10 +212,10 @@ export default defineComponent({
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
       // A control inside the tile (a marked action) owns its own key handling.
       if (marksOwnAction(ev.target)) return;
-      const target = linkTargetFor(ev.target);
-      if (!target) return;
+      const linkTarget = linkTargetFor(ev.target);
+      if (!linkTarget) return;
       ev.preventDefault();
-      followLink(target);
+      followLink(linkTarget);
     }
 
     function onPointerdown(ev: PointerEvent): void {

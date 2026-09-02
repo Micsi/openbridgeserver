@@ -41,7 +41,7 @@ import type { Device, NavNode, PageHost, PageLink, PopupDescriptor } from '@obs/
 import { makeTokens, type Theme } from '../core/tokens';
 import { ctx as defaultCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
-import { isLinkActive } from '../core/links';
+import { isLinkActive, linksDeliverable } from '../core/links';
 import { rooms as modelRooms, type RoomGroup } from '../core/model';
 import { ROOM_DIVIDER_KEY } from '../app/shell/roomDivider';
 
@@ -64,22 +64,51 @@ interface LinkDecoration {
 }
 
 /**
- * Decorate a host cell for a page link (#1194). The cell becomes operable
- * (`role="link"`, focusable, pointer cursor) and carries `data-link` so the
- * gesture seam (OverviewGrid) can resolve the target; when the link is active
- * — the target IS the current page or an ancestor of it — the host draws the
- * author's chosen indicator (V1 `active_indicator`: dot · bar · border).
+ * Decorate a host cell for a page link (#1194). The cell carries `data-link` so
+ * the gesture seam (OverviewGrid) can resolve the target, becomes focusable so
+ * the jump is keyboard-operable, and shows a pointer cursor; when the link is
+ * active — the target IS the current page or an ancestor of it — the host draws
+ * the author's chosen indicator (V1 `active_indicator`: dot · bar · border).
  *
  * Host chrome, not skin markup: the skin owns the tile, the host owns the
  * navigation affordance and its state (golden rule 4).
+ *
+ * `deliverable === false` (the skin binds `tap` to something other than
+ * `action`, see core/links → linksDeliverable) WITHHOLDS the affordance: no
+ * cursor, not focusable, and the cell is stamped `data-link-unsupported`. A link
+ * that cannot fire must not look like one — the gap is declared and inspectable
+ * rather than a dead-looking tile (golden rule 3).
+ *
+ * a11y notes:
+ *  - No `role="link"`. A tile may legitimately contain its own control (the
+ *    camera's refresh button), and nesting a focusable control inside a `link`
+ *    role is invalid ARIA — assistive tech may then stop exposing that button.
+ *    Keeping the cell a plain focusable container preserves BOTH the nested
+ *    control and keyboard access to the jump. (A properly announced link would
+ *    need a labelled control with a translated accessible name; that belongs to
+ *    the skin, which owns the tile content and its i18n — see the report.)
+ *  - The active `border` is drawn with an inset `box-shadow`, never `outline`,
+ *    so the browser's focus ring stays visible on the focused cell.
  */
-function decorateLink(link: PageLink | undefined, active: boolean): LinkDecoration {
+function decorateLink(
+  link: PageLink | undefined,
+  active: boolean,
+  deliverable: boolean,
+): LinkDecoration {
   if (!link) return { attrs: {}, style: {}, extra: [] };
   const indicator = link.activeIndicator ?? 'none';
+  if (!deliverable) {
+    // Declared gap: the target is still readable in the DOM for tooling/tests,
+    // but nothing pretends to be operable.
+    return {
+      attrs: { 'data-link': link.targetNodeId, 'data-link-unsupported': 'true' },
+      style: {},
+      extra: [],
+    };
+  }
   const attrs: Record<string, unknown> = {
     'data-link': link.targetNodeId,
     'data-link-indicator': indicator,
-    role: 'link',
     tabindex: 0,
   };
   const style: Record<string, string> = { cursor: 'pointer' };
@@ -88,8 +117,8 @@ function decorateLink(link: PageLink | undefined, active: boolean): LinkDecorati
     attrs['data-link-active'] = 'true';
     attrs['aria-current'] = 'page';
     if (indicator === 'border') {
-      style.outline = `2px solid ${LINK_ACTIVE_COLOR}`;
-      style.outlineOffset = '-2px';
+      // box-shadow, not outline: outline belongs to the focus ring.
+      style.boxShadow = `inset 0 0 0 2px ${LINK_ACTIVE_COLOR}`;
       style.borderRadius = 'inherit';
     } else if (indicator === 'dot' || indicator === 'bar') {
       // dot/bar are absolutely placed inside the cell, so it must be a containing
@@ -172,6 +201,13 @@ export default defineComponent({
     }
 
     const skin = computed(() => resolveSkin(props.skin));
+    /**
+     * Can a page link fire under this skin's declared gesture model (#1194)?
+     * False when the skin binds `tap` to `openDetail`/`presets` — then every tile
+     * already has a click function of its own and the link is a DECLARED gap
+     * (core/links → LINK_TAP_TARGET), not a silently swallowed feature.
+     */
+    const linkable = computed(() => linksDeliverable(skin.value.manifest.gestures));
     const layout = computed(() =>
       resolveLayout(skin.value.manifest.layout, props.groups, liveDevice),
     );
@@ -238,11 +274,13 @@ export default defineComponent({
           : (selection.renderer(device, tokens, defaultCtx) as VNode);
       // #1194: a link on this device makes the host cell a navigation affordance.
       const link = deviceLinks.value.get(deviceId);
-      const deco = decorateLink(link, linkActive(link));
+      const deco = decorateLink(link, linkActive(link), linkable.value);
       return h(
         'div',
         {
-          class: ['skin-host-cell', link ? 'skin-host-cell-link' : null].filter(Boolean),
+          // Styling hook for a skin is the `[data-link]` attribute the decoration
+          // stamps — no extra class (a class nothing styles is dead markup).
+          class: 'skin-host-cell',
           'data-id': deviceId,
           ...deco.attrs,
           style: Object.keys(deco.style).length > 0 ? deco.style : undefined,
@@ -256,6 +294,7 @@ export default defineComponent({
       const page = props.currentPage ?? currentPageId.value;
       return link ? isLinkActive(link, page, navTree.value) : false;
     }
+
 
     return () => {
       const sk = skin.value;
@@ -302,13 +341,13 @@ export default defineComponent({
         // the host stamps the target + the (author-chosen) active indicator; the
         // gesture seam turns a tap on an otherwise non-interactive tile into
         // `navigate`. Without a link this is inert and the cell is unchanged.
-        const deco = decorateLink(item.link, linkActive(item.link));
+        const deco = decorateLink(item.link, linkActive(item.link), linkable.value);
 
         return h(
           'div',
           {
             key: item.id,
-            class: ['skin-host-cell', item.link ? 'skin-host-cell-link' : null].filter(Boolean),
+            class: 'skin-host-cell',
             // The host resolves the device id of a tapped tile from the cell
             // (OverviewGrid → tileIdFor → cell.dataset.id), so the gesture maps to
             // a canonical action. Without it, every tap resolves no id → no-op.

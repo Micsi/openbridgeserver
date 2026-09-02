@@ -34,7 +34,7 @@
  * {@link LinkUnknown} — a no-op, never a jump to the wrong page.
  */
 
-import type { NavNode, PageLink } from '@obs/visu-contract';
+import type { NavNode, PageLink, SkinGestures } from '@obs/visu-contract';
 
 /** The host state a link resolution reads (wired in by the host, never by a skin). */
 export interface LinkContext {
@@ -114,6 +114,68 @@ export function resolveAccessNode(
 }
 
 /**
+ * The first PAGE at or under `node` whose access is defined by `definingId` —
+ * i.e. the first page this one PIN session unlocks. Depth-first in source order,
+ * so it is the page a reader would reach first. Cycle-safe; null when the branch
+ * holds no such page (an area with nothing under it that this PIN covers).
+ */
+function firstPageUnder(
+  node: NavNode,
+  byId: ReadonlyMap<string, NavNode>,
+  parentOf: ReadonlyMap<string, string>,
+  definingId: string,
+): string | null {
+  const seen = new Set<string>();
+  const walk = (n: NavNode): string | null => {
+    if (seen.has(n.id)) return null;
+    seen.add(n.id);
+    if (n.type === 'PAGE' && resolveAccessNode(n.id, byId, parentOf).definingId === definingId) {
+      return n.id;
+    }
+    for (const child of n.children) {
+      const hit = walk(child);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  for (const child of node.children) {
+    const hit = walk(child);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * The tap target a page link is bound to (#1194) — a DECLARED restriction, not a
+ * forgotten case (golden rule 3).
+ *
+ * A link fires on the `action` tap target only, and there only when the tapped
+ * element marked no action of its own. The reason is golden rule 4: the skin
+ * declares the interaction model, the host applies it. A skin that maps `tap` to
+ * `openDetail` or `presets` has given EVERY tile a click function of its own —
+ * which is exactly the case #1194 excludes ("Elemente ohne eigene
+ * Klick-Funktion"). Firing the link there would override the skin's declaration
+ * and make the same authored page behave differently per skin, in a way the skin
+ * never asked for.
+ *
+ * So the host does not silently swallow the link: {@link linksDeliverable} lets
+ * the host WITHHOLD the navigation affordance (no pointer cursor, not focusable)
+ * and mark the cell `data-link-unsupported`, so the gap is inspectable in the DOM
+ * and testable — a declared fact, never a dead-looking affordance.
+ */
+export const LINK_TAP_TARGET = 'action';
+
+/**
+ * Can a link on a placed element actually fire under this skin's gesture model?
+ * False when the skin binds `tap` to something other than {@link LINK_TAP_TARGET}.
+ */
+export function linksDeliverable(gestures: SkinGestures | undefined): boolean {
+  // An undeclared `tap` keeps the host default (`action`) — links work.
+  const tap = gestures?.tap;
+  return tap === undefined || tap === LINK_TAP_TARGET;
+}
+
+/**
  * Resolve a link into the host action to take (V1 `Link/Widget.vue → navigate`).
  *
  * Order matters and follows V1: the ACCESS of the target is decided before the
@@ -135,7 +197,12 @@ export function resolveLink(link: PageLink, ctx: LinkContext): LinkOutcome {
   // PIN gate FIRST (V1: protected + no session token ⇒ viewer/PIN path).
   const access = resolveAccessNode(target, byId, parentOf);
   if (access.access === 'protected' && !ctx.hasSessionToken(access.definingId)) {
-    return { kind: 'gate', pageId: target, accessNodeId: access.definingId };
+    // The gate must name a PAGE: the host's gate list (`pageGates`) only ever
+    // holds PAGE nodes, so reporting a LOCATION here would leave the click with
+    // NO visible gate at all. Descend to the first page under this LOCATION that
+    // shares the same defining node — the page the one PIN unlocks.
+    const gatedPage = node.type === 'PAGE' ? target : firstPageUnder(node, byId, parentOf, access.definingId);
+    return { kind: 'gate', pageId: gatedPage ?? target, accessNodeId: access.definingId };
   }
 
   // A LOCATION is not a page: descend to its first direct child PAGE that would

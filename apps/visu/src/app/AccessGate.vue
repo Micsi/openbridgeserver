@@ -24,7 +24,7 @@
  * `store.pageGates` and calls `authenticatePage()`. All text is translated (i18n
  * hard gate).
  */
-import { reactive } from 'vue';
+import { nextTick, reactive, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { IonItem, IonLabel, IonInput, IonButton, IonNote } from '@ionic/vue';
 import { useDeviceStore } from '../core/store';
@@ -38,6 +38,34 @@ const pins = reactive<Record<string, string>>({});
 const failed = reactive<Record<string, boolean>>({});
 /** Per-page in-flight guard so a double submit cannot fire two PIN attempts. */
 const submitting = reactive<Record<string, boolean>>({});
+
+/**
+ * #1194: a page link that hit the PIN gate points here instead of jumping onto
+ * the target page. V1 navigated to the viewer/PIN route, so the gate was
+ * unmissable; this panel already sits above the page body, but it can be
+ * scrolled out of view — a click would then look like a silent no-op. So when
+ * the host reports a pending gate, bring its PIN form into view and put the
+ * cursor in the field. That is the PIN path, made visible.
+ */
+watch(
+  () => store.pendingGate,
+  async (pageId) => {
+    if (!pageId) return;
+    await nextTick();
+    // Match by dataset rather than by an interpolated attribute selector: a page
+    // id is backend data, so it must never be spliced into a selector string
+    // (and `CSS.escape` is not everywhere — it is absent under jsdom).
+    const form = Array.from(document.querySelectorAll<HTMLElement>('.access-gate-pin')).find(
+      (el) => el.dataset.page === pageId,
+    );
+    if (!form) return;
+    // Optional-call: not every environment implements scrollIntoView (jsdom does
+    // not); the marker + focus below still make the gate findable without it.
+    form.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    // Focus the PIN field itself (IonInput renders a native input inside).
+    form.querySelector<HTMLInputElement>('input')?.focus();
+  },
+);
 
 async function submitPin(pageId: string): Promise<void> {
   if (submitting[pageId]) return;
@@ -144,11 +172,13 @@ async function submitPin(pageId: string): Promise<void> {
 }
 
 /* #1194: a page link that hit the PIN gate points here instead of jumping onto
-   the target page. The marker only makes the already-visible gate findable — a
-   quiet accent bar, never a red error wall. */
+   the target page. The marker makes the gate findable once it is scrolled into
+   view — a quiet accent, never a red error wall. */
 .access-gate-pin.is-pending {
   border-inline-start: 3px solid var(--ion-color-warning, #d6a800);
   padding-inline-start: 9px;
+  background: color-mix(in srgb, var(--ion-color-warning, #d6a800) 8%, transparent);
+  border-radius: 6px;
 }
 
 .access-gate-error {
