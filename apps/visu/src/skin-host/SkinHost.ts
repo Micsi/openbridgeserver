@@ -36,12 +36,15 @@ import {
   type VNode,
 } from 'vue';
 import { storeToRefs } from 'pinia';
+import { useI18n } from 'vue-i18n';
 
 import type { Device, NavNode, PageHost, PageLink, PopupDescriptor } from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
 import { ctx as defaultCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
 import { isLinkActive, linksDeliverable } from '../core/links';
+import deMessages from '../locales/de.json';
+import './link-affordance.css';
 import { rooms as modelRooms, type RoomGroup } from '../core/model';
 import { ROOM_DIVIDER_KEY } from '../app/shell/roomDivider';
 
@@ -55,6 +58,16 @@ import { selectTile } from './dispatch';
  * Used only as a marker (dot/bar/outline), never as text on a background.
  */
 const LINK_ACTIVE_COLOR = '#D6A800';
+
+/** The plain name of a nav-tree node, or null when the tree does not hold it. */
+function navNodeName(nodes: readonly NavNode[], id: string): string | null {
+  for (const n of nodes) {
+    if (n.id === id) return n.name;
+    const inner = navNodeName(n.children, id);
+    if (inner) return inner;
+  }
+  return null;
+}
 
 /** The DOM decoration a page link (#1194) adds to a host cell. */
 interface LinkDecoration {
@@ -79,21 +92,26 @@ interface LinkDecoration {
  * that cannot fire must not look like one — the gap is declared and inspectable
  * rather than a dead-looking tile (golden rule 3).
  *
- * a11y notes:
- *  - No `role="link"`. A tile may legitimately contain its own control (the
- *    camera's refresh button), and nesting a focusable control inside a `link`
- *    role is invalid ARIA — assistive tech may then stop exposing that button.
- *    Keeping the cell a plain focusable container preserves BOTH the nested
- *    control and keyboard access to the jump. (A properly announced link would
- *    need a labelled control with a translated accessible name; that belongs to
- *    the skin, which owns the tile content and its i18n — see the report.)
+ * a11y — the "stretched link" pattern (review round 3):
+ *  - The CELL is never the link. It carries no role and is not a tab stop; it is
+ *    only the pointer hit-area the host's click delegation already owns. A bare
+ *    focusable div would be a focus stop with neither name nor role (WCAG 4.1.2),
+ *    and `role="link"` on the cell would drag the tile's own control text into
+ *    the link's name-from-content and leave two overlapping activation targets.
+ *  - Instead the host places ONE real, NAMED link inside the cell, stretched over
+ *    the tile (see link-affordance.css). Assistive tech then announces a link
+ *    *and* the tile's own button, with no nesting and one clean tab stop.
+ *  - The name is the host's to own: golden rule 4 makes the navigation affordance
+ *    a host concern, so its label is too. It comes from the host's own locale
+ *    files plus the target's plain name out of the nav tree.
  *  - The active `border` is drawn with an inset `box-shadow`, never `outline`,
- *    so the browser's focus ring stays visible on the focused cell.
+ *    so `outline` stays free for the link's focus ring.
  */
 function decorateLink(
   link: PageLink | undefined,
   active: boolean,
   deliverable: boolean,
+  label: string,
 ): LinkDecoration {
   if (!link) return { attrs: {}, style: {}, extra: [] };
   const indicator = link.activeIndicator ?? 'none';
@@ -109,13 +127,25 @@ function decorateLink(
   const attrs: Record<string, unknown> = {
     'data-link': link.targetNodeId,
     'data-link-indicator': indicator,
-    tabindex: 0,
   };
   const style: Record<string, string> = { cursor: 'pointer' };
-  const extra: VNode[] = [];
+  // The stretched link: the one named, focusable, announced navigation element.
+  const extra: VNode[] = [
+    h('a', {
+      class: 'skin-host-link',
+      role: 'link',
+      tabindex: 0,
+      // The name is carried by `aria-label`, not by clipped text: a visually
+      // hidden <span> did NOT produce an accessible name here (measured in
+      // Chrome — the link came out nameless), and an unnamed focusable link is
+      // exactly the WCAG 4.1.2 failure this pattern exists to remove.
+      'aria-label': label,
+      'data-testid': 'link-anchor',
+      ...(active ? { 'aria-current': 'page' } : {}),
+    }),
+  ];
   if (active) {
     attrs['data-link-active'] = 'true';
-    attrs['aria-current'] = 'page';
     if (indicator === 'border') {
       // box-shadow, not outline: outline belongs to the focus ring.
       style.boxShadow = `inset 0 0 0 2px ${LINK_ACTIVE_COLOR}`;
@@ -188,6 +218,29 @@ export default defineComponent({
   },
   setup(props) {
     const store = useDeviceStore();
+
+    /**
+     * Translator for the host's own chrome (the page-link label, #1194).
+     *
+     * vue-i18n is only installed when the app mounts this; a standalone unit
+     * mount has no plugin, so fall back to the SOURCE-language messages that
+     * ship in `locales/de.json`. The string still lives in a locale file either
+     * way — never a literal in code (the i18n gate), and never an empty name on
+     * a focusable link (WCAG 4.1.2).
+     */
+    const i18n = (() => {
+      try {
+        return useI18n({ useScope: 'global' });
+      } catch {
+        return null;
+      }
+    })();
+    function translate(key: string, params: Record<string, unknown> = {}): string {
+      if (i18n) return i18n.t(key, params);
+      const fallback = (deMessages.links as Record<string, string>)[key.replace('links.', '')];
+      if (!fallback) return '';
+      return fallback.replace(/\{(\w+)\}/g, (_m, k: string) => String(params[k] ?? ''));
+    }
 
     // The shell provides the per-group divider renderer (the `#roomDivider` slot
     // override, or the default RoomDivider as fallback). When no shell is mounted
@@ -274,7 +327,7 @@ export default defineComponent({
           : (selection.renderer(device, tokens, defaultCtx) as VNode);
       // #1194: a link on this device makes the host cell a navigation affordance.
       const link = deviceLinks.value.get(deviceId);
-      const deco = decorateLink(link, linkActive(link), linkable.value);
+      const deco = decorateLink(link, linkActive(link), linkable.value, linkLabel(link));
       return h(
         'div',
         {
@@ -293,6 +346,19 @@ export default defineComponent({
     function linkActive(link: PageLink | undefined): boolean {
       const page = props.currentPage ?? currentPageId.value;
       return link ? isLinkActive(link, page, navTree.value) : false;
+    }
+
+    /**
+     * The accessible name of a page link's stretched anchor (#1194). The host
+     * owns the navigation affordance (golden rule 4), so it owns the label too:
+     * the text comes from the host's locale files, the target's plain name from
+     * the nav tree. Without a tree (the static floor) there is no name to show,
+     * so the generic wording is used — never a raw node id.
+     */
+    function linkLabel(link: PageLink | undefined): string {
+      if (!link) return '';
+      const name = navNodeName(navTree.value, link.targetNodeId);
+      return name ? translate('links.goToPage', { page: name }) : translate('links.goToLinkedPage');
     }
 
 
@@ -341,7 +407,7 @@ export default defineComponent({
         // the host stamps the target + the (author-chosen) active indicator; the
         // gesture seam turns a tap on an otherwise non-interactive tile into
         // `navigate`. Without a link this is inert and the cell is unchanged.
-        const deco = decorateLink(item.link, linkActive(item.link), linkable.value);
+        const deco = decorateLink(item.link, linkActive(item.link), linkable.value, linkLabel(item.link));
 
         return h(
           'div',

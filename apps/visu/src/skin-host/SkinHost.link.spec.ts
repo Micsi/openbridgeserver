@@ -88,13 +88,36 @@ describe('SkinHost — a linked placed element becomes a host navigation afforda
 
     const cell = wrapper.find('.skin-host-cell[data-id="cam1"]');
     expect(cell.attributes('data-link')).toBe('voll');
-    expect(cell.attributes('tabindex')).toBe('0');
     expect(cell.attributes('style') ?? '').toContain('cursor: pointer');
-    // No `role="link"`: a tile may hold its own control (the camera's refresh
-    // button) and nesting one inside a link role is invalid ARIA.
+    // The CELL is not the link and not a tab stop — a focusable element with
+    // neither name nor role would be a WCAG 4.1.2 failure, and `role="link"` on
+    // the cell would swallow the tile's own control into its name.
     expect(cell.attributes('role')).toBeUndefined();
+    expect(cell.attributes('tabindex')).toBeUndefined();
+    // The stretched link is the one named, focusable, announced element.
+    const anchor = cell.find('[data-testid="link-anchor"]');
+    expect(anchor.exists()).toBe(true);
+    expect(anchor.attributes('role')).toBe('link');
+    expect(anchor.attributes('tabindex')).toBe('0');
+    // Without a nav tree (the static floor) there is no target name to show —
+    // the generic wording, never a raw node id.
+    expect(anchor.attributes('aria-label')).toBe('Zur verknüpften Seite springen');
     // The skin still only draws the tile body — no skin change is required.
     expect(cell.find('.stub-cam').exists()).toBe(true);
+  });
+
+  it('names the link after the target page once the nav tree knows it', async () => {
+    const { wrapper, store } = await mountWith([
+      { room: 'Hof', entries: [{ id: 'cam1', link: { targetNodeId: 'voll' } }] },
+    ]);
+    store.navTree = NAV;
+    await nextTick();
+
+    // The HOST owns the affordance (golden rule 4), so it owns its label: its own
+    // locale files plus the target's plain name out of the nav tree.
+    expect(wrapper.find('[data-testid="link-anchor"]').attributes('aria-label')).toBe(
+      'Zur Seite Vollbild springen',
+    );
   });
 
   it('leaves an element WITHOUT a link exactly as before (additive)', async () => {
@@ -102,7 +125,7 @@ describe('SkinHost — a linked placed element becomes a host navigation afforda
 
     const cell = wrapper.find('.skin-host-cell[data-id="sw1"]');
     expect(cell.attributes('data-link')).toBeUndefined();
-    expect(cell.attributes('tabindex')).toBeUndefined();
+    expect(cell.find('[data-testid="link-anchor"]').exists()).toBe(false);
     expect(cell.find('[data-testid="link-active-dot"]').exists()).toBe(false);
   });
 
@@ -112,7 +135,7 @@ describe('SkinHost — a linked placed element becomes a host navigation afforda
     ]);
     const cell = wrapper.find('.skin-host-cell[data-id="cam1"]');
     expect(cell.attributes('data-link-active')).toBeUndefined();
-    expect(cell.attributes('aria-current')).toBeUndefined();
+    expect(cell.find('[data-testid="link-anchor"]').attributes('aria-current')).toBeUndefined();
     expect(wrapper.find('[data-testid="link-active-dot"]').exists()).toBe(false);
   });
 
@@ -125,7 +148,8 @@ describe('SkinHost — a linked placed element becomes a host navigation afforda
 
     const cell = wrapper.find('.skin-host-cell[data-id="cam1"]');
     expect(cell.attributes('data-link-active')).toBe('true');
-    expect(cell.attributes('aria-current')).toBe('page');
+    // aria-current belongs to the link, not to the container.
+    expect(cell.find('[data-testid="link-anchor"]').attributes('aria-current')).toBe('page');
     expect(wrapper.find('[data-testid="link-active-dot"]').exists()).toBe(true);
   });
 
@@ -185,8 +209,8 @@ describe('SkinHost — a link the skin cannot deliver is a DECLARED gap (#1194)'
     // Declared, inspectable — not a silently swallowed feature (golden rule 3).
     expect(cell.attributes('data-link-unsupported')).toBe('true');
     expect(cell.attributes('data-link')).toBe('voll');
-    // …and nothing pretends to be operable.
-    expect(cell.attributes('tabindex')).toBeUndefined();
+    // …and nothing pretends to be operable: no link, no tab stop, no cursor.
+    expect(cell.find('[data-testid="link-anchor"]').exists()).toBe(false);
     expect(cell.attributes('style') ?? '').not.toContain('cursor: pointer');
   });
 
@@ -199,7 +223,7 @@ describe('SkinHost — a link the skin cannot deliver is a DECLARED gap (#1194)'
       );
       const cell = wrapper.find('.skin-host-cell[data-id="cam1"]');
       expect(cell.attributes('data-link-unsupported')).toBeUndefined();
-      expect(cell.attributes('tabindex')).toBe('0');
+      expect(cell.find('[data-testid="link-anchor"]').attributes('tabindex')).toBe('0');
     }
   });
 });

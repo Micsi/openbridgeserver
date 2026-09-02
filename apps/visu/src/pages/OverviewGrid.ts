@@ -37,8 +37,13 @@ import type { SkinGestures, GestureTarget } from '@obs/visu-contract';
  * `gestures` in its manifest keeps the pre-v1.7 behaviour – a single tap
  * dispatches the marked action, a long-press opens the detail. No `doubleTap`
  * and no `presets` unless a skin opts in by declaring them.
+ *
+ * Exported because the page-link policy depends on it: `linksDeliverable`
+ * (core/links) treats an undeclared `tap` as deliverable, which is only true
+ * while this default IS {@link LINK_TAP_TARGET}. The two literals live in two
+ * files, so a test pins them together rather than trusting they stay in step.
  */
-const DEFAULT_GESTURES = { tap: 'action', longPress: 'openDetail' } as const;
+export const DEFAULT_GESTURES = { tap: 'action', longPress: 'openDetail' } as const;
 
 /** Resolve the device id a DOM target belongs to (its enclosing tile cell). */
 function tileIdFor(target: EventTarget | null): string | null {

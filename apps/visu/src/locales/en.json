@@ -80,7 +80,9 @@
     "edomi": {
       "title": "Edomi"
     },
-    "cameraFull": { "title": "Camera (full screen)" }
+    "cameraFull": {
+      "title": "Camera (full screen)"
+    }
   },
   "tweaks": {
     "title": "Customise",
@@ -113,5 +115,9 @@
     "glow": {
       "label": "Glow strength"
     }
+  },
+  "links": {
+    "goToPage": "Go to page {page}",
+    "goToLinkedPage": "Go to the linked page"
   }
 }

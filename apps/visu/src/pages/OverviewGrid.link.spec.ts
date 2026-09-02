@@ -21,7 +21,8 @@ vi.mock('../skin-host/skins', () => ({
   resolveSkin: () => ({ tiles: {}, details: {}, presets: {}, manifest: { gestures: mockGestures } }),
 }));
 
-import OverviewGrid from './OverviewGrid';
+import OverviewGrid, { DEFAULT_GESTURES } from './OverviewGrid';
+import { LINK_TAP_TARGET } from '../core/links';
 import { HOST_KEY, type SkinHostApi } from '../app/DetailModalHost.vue';
 import { useDeviceStore } from '../core/store';
 import { MockDataSource } from '../core/datasource';
@@ -175,5 +176,14 @@ describe('OverviewGrid — a tap on a non-interactive linked tile navigates (#11
 
     expect(store.currentPageId).toBeNull();
     expect(store.pendingGate).toBeNull();
+  });
+});
+
+describe('the host default and the link policy are pinned together (#1194)', () => {
+  it("the default tap target IS the target page links are bound to", () => {
+    // Two literals in two files: `linksDeliverable(undefined) === true` only holds
+    // while the host default tap is `LINK_TAP_TARGET`. Change one without the
+    // other and SkinHost would keep stamping a link affordance that never fires.
+    expect(DEFAULT_GESTURES.tap).toBe(LINK_TAP_TARGET);
   });
 });
