@@ -40,7 +40,7 @@ import { useI18n } from 'vue-i18n';
 
 import type { Device, NavNode, PageHost, PageLink, PopupDescriptor } from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
-import { ctx as defaultCtx } from '../core/ctx';
+import { activeCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
 import { isLinkActive, linksDeliverable } from '../core/links';
 import deMessages from '../locales/de.json';
@@ -337,7 +337,7 @@ export default defineComponent({
       const body =
         selection.renderer === null
           ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
-          : (selection.renderer(device, tokens, defaultCtx) as VNode);
+          : (selection.renderer(device, tokens, activeCtx()) as VNode);
       // #1194: a link on this device makes the host cell a navigation affordance.
       const link = deviceLinks.value.get(deviceId);
       const deco = decorateLink(link, linkActive(link), linkable.value, linkLabel(link));
@@ -420,7 +420,7 @@ export default defineComponent({
         const body =
           selection.renderer === null
             ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
-            : (selection.renderer(device, tokens, defaultCtx) as VNode);
+            : (selection.renderer(device, tokens, activeCtx()) as VNode);
 
         // #1194: an item carrying a page link becomes a navigation affordance —
         // the host stamps the target + the (author-chosen) active indicator; the

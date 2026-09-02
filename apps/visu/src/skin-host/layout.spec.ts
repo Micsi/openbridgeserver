@@ -35,6 +35,40 @@ const LIST_LAYOUT: SkinLayout = {
 /** The flat source order of all entry ids across all room groups. */
 const sourceOrder = modelRooms.flatMap((g) => g.entries.map((e) => e.id));
 
+describe('span → role translation is behaviour-preserving (A5, Issue #101)', () => {
+  // AC4: the ported store.js `span` hints were translated into contract roles at
+  // the port. The translation only counts if the page still LOOKS the same: an
+  // entry that says `role: 'wide'` must land on exactly the footprint the old
+  // `span: 2` produced — same role, same grid cell — under the same manifest.
+  const cases: readonly { id: string; span: number; role: 'wide'; row?: number }[] = [
+    { id: 'wiga-pendel', span: 2, role: 'wide' }, // light
+    { id: 'rtr-wohnen', span: 2, role: 'wide' }, // climate
+    { id: 'szene-abend', span: 2, role: 'wide' }, // scene
+    { id: 'tech-sonos', span: 2, role: 'wide' }, // media
+    { id: 'tech-cam', span: 2, role: 'wide' }, // camera
+    { id: 'wiga-jalousie', span: 2, role: 'wide', row: 3 }, // jalousie (tall footprint)
+  ];
+
+  for (const c of cases) {
+    it(`"${c.id}": role "${c.role}" places exactly like the legacy span ${c.span}`, () => {
+      const asSpan = resolveLayout(GRID_LAYOUT, [
+        { room: 'X', entries: [{ id: c.id, span: c.span, row: c.row }] },
+      ]);
+      const asRole = resolveLayout(GRID_LAYOUT, [
+        { room: 'X', entries: [{ id: c.id, role: c.role, row: c.row }] },
+      ]);
+      expect(asRole.items[0].role).toBe(asSpan.items[0].role);
+      expect(asRole.items[0].span).toEqual(asSpan.items[0].span);
+    });
+  }
+
+  it('an unhinted entry is unaffected by the translation (default role, 1×1)', () => {
+    const out = resolveLayout(GRID_LAYOUT, [{ room: 'X', entries: [{ id: 'kueche-wand' }] }]);
+    expect(out.items[0].role).toBe('default');
+    expect(out.items[0].span).toEqual({ c: 1, r: 1 });
+  });
+});
+
 describe('resolveLayout — order is the floor', () => {
   it('grid model preserves exact source order across all groups', () => {
     const out = resolveLayout(GRID_LAYOUT, modelRooms);

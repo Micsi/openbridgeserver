@@ -25,10 +25,10 @@
 import { defineComponent, h, computed, ref, provide, type InjectionKey, type PropType, type VNode } from 'vue';
 import { IonModal, IonPopover } from '@ionic/vue';
 
-import type { Device } from '@obs/visu-contract';
+import type { Ctx, Device } from '@obs/visu-contract';
 import type { RootTweakStyle } from '@obs-visu-skins/ionic';
 import { useDeviceStore } from '../core/store';
-import { ctx as defaultCtx } from '../core/ctx';
+import { activeCtx } from '../core/ctx';
 import { makeTokens, type Theme } from '../core/tokens';
 import { resolveSkin } from '../skin-host/skins';
 import { parseIntent, dispatchIntent, type HostAction, type ActionStore } from '../skin-host/actions';
@@ -187,7 +187,10 @@ export default defineComponent({
       // The generic surface uses the centralised `ctx.t` (with the same German
       // fallback the skin detail renderers use) so it tracks the active locale
       // when the host injected a translator, and reads sensibly without one.
-      const tr = (key: string, fallback: string): string => (defaultCtx.t ? defaultCtx.t(key) : fallback);
+      const tr = (key: string, fallback: string): string => {
+        const t = activeCtx().t;
+        return t ? t(key) : fallback;
+      };
 
       const actions: VNode[] = [];
       if (d.type === 'scene') {
@@ -213,7 +216,7 @@ export default defineComponent({
       return h('div', { class: 'skin-host-default-detail', 'data-type': d.type }, [
         h('div', { class: 'skin-host-default-crumb' }, d.room),
         h('h2', { class: 'skin-host-default-title' }, d.label),
-        h('div', { class: 'skin-host-default-state' }, defaultCtx.stateText(d)),
+        h('div', { class: 'skin-host-default-state' }, activeCtx().stateText(d)),
         actions.length ? h('div', { class: 'skin-host-default-actions' }, actions) : null,
       ]);
     }
@@ -225,12 +228,12 @@ export default defineComponent({
       const renderer = (
         skin.value.details as Record<
           string,
-          ((d: Device, t: ReturnType<typeof makeTokens>, c: typeof defaultCtx) => unknown) | undefined
+          ((d: Device, t: ReturnType<typeof makeTokens>, c: Ctx) => unknown) | undefined
         >
       )[d.type];
       if (renderer) {
         const tokens = makeTokens(props.theme, d.accent);
-        return renderer(d, tokens, defaultCtx) as VNode;
+        return renderer(d, tokens, activeCtx()) as VNode;
       }
       return defaultDetail(d);
     });
@@ -246,12 +249,12 @@ export default defineComponent({
       const renderer = (
         skin.value.presets as Record<
           string,
-          ((d: Device, t: ReturnType<typeof makeTokens>, c: typeof defaultCtx) => unknown) | undefined
+          ((d: Device, t: ReturnType<typeof makeTokens>, c: Ctx) => unknown) | undefined
         >
       )[d.type];
       if (!renderer) return null;
       const tokens = makeTokens(props.theme, d.accent);
-      return renderer(d, tokens, defaultCtx) as VNode;
+      return renderer(d, tokens, activeCtx()) as VNode;
     });
 
     return () =>
