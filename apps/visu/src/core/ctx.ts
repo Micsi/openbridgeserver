@@ -302,6 +302,30 @@ export function makeCtx(t?: Translate): Ctx {
 /**
  * The default helper bundle handed to renderers — no translator injected, so it
  * phrases the core state text in German (the M1 behaviour). The host swaps in a
- * translated `Ctx` via {@link makeCtx} once vue-i18n is available.
+ * translated `Ctx` via {@link installCtxTranslator} once vue-i18n is available.
  */
 export const ctx: Ctx = makeCtx();
+
+/** The bundle renderers actually receive; the default until a translator lands. */
+let active: Ctx = ctx;
+
+/**
+ * Install the app's translator into the `Ctx` renderers receive.
+ *
+ * The app builds a translated `Ctx` at startup (`main.ts`), but the renderer call
+ * sites imported the untranslated {@link ctx} directly — so every skin string in
+ * every tile fell back to the German literal its renderer passes as a default,
+ * in EVERY locale. This is the seam that connects the two: `main.ts` installs,
+ * the host reads through {@link activeCtx}.
+ *
+ * Idempotent and app-level: a unit mount that installs nothing keeps the default
+ * bundle, so tests see unchanged behaviour.
+ */
+export function installCtxTranslator(t: Translate): void {
+  active = makeCtx(t);
+}
+
+/** The `Ctx` the host hands to renderers right now (translated once installed). */
+export function activeCtx(): Ctx {
+  return active;
+}

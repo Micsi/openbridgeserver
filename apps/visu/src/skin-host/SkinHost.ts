@@ -39,7 +39,7 @@ import { storeToRefs } from 'pinia';
 
 import type { Device, NavNode, PageHost, PopupDescriptor } from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
-import { ctx as defaultCtx } from '../core/ctx';
+import { activeCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
 import { rooms as modelRooms, type RoomGroup } from '../core/model';
 import { ROOM_DIVIDER_KEY } from '../app/shell/roomDivider';
@@ -142,7 +142,7 @@ export default defineComponent({
       const body =
         selection.renderer === null
           ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
-          : (selection.renderer(device, tokens, defaultCtx) as VNode);
+          : (selection.renderer(device, tokens, activeCtx()) as VNode);
       return h('div', { class: 'skin-host-cell', 'data-id': deviceId }, [body]);
     }
 
@@ -185,7 +185,7 @@ export default defineComponent({
         const body =
           selection.renderer === null
             ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
-            : (selection.renderer(device, tokens, defaultCtx) as VNode);
+            : (selection.renderer(device, tokens, activeCtx()) as VNode);
 
         return h(
           'div',
