@@ -39,8 +39,20 @@ der Abstieg von einer LOCATION auf ihre erste sichtbare Seite und der
 Aktiv-Zustand entlang der Vorfahrenkette sind **Host**-Verhalten – der Skin
 besitzt weder Zustand noch Navigationslogik (Goldene Regel 4). Minor-Bump: reine
 Typen-Zugabe, keine Device-Datenform-Änderung. Ohne `link` verhält sich jedes
-platzierte Element exakt wie bisher; ein Skin, der das Feld ignoriert, bleibt
-unverändert gültig.
+platzierte Element exakt wie bisher.
+
+> **⚠ Erfordert einen Skin-Nachzug, bevor dieser Stand gemerged wird.**
+> „Additiv" heisst hier nur *verhaltensmässig* additiv – es befreit **nicht** von
+> der Versionskopplung. Der repo-eigene Wächter
+> `apps/visu/tests/ionic-skin-link.test.ts` prüft `targetsContract === version`
+> und ist gebaut, um bei **jedem** Bump rot zu werden, bis der Skin nachzieht.
+> Seit diesem Bump ist er rot (`expected '1.10' to be '1.11'`).
+>
+> Nachzuziehen im Repo `Micsi/obs-visu-skins`: **`ionic` und `edomi` auf
+> `targetsContract: "1.11"`**. Beide Skins müssen dafür nichts implementieren –
+> `LayerItem.link` ist optional und der Host führt die Navigation aus –, es ist
+> reine Versionspflege. (`terminal` hat `'1.1'` hartkodiert und wird von seinem
+> Wächter nicht geprüft; nur relevant, falls dieser scharf gestellt wird.)
 
 ## [1.10.0] – 2026-09-01
 

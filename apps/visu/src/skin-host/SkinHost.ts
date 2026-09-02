@@ -215,6 +215,19 @@ export default defineComponent({
      * state the link action and a page-owning skin's nav write — decides.
      */
     currentPage: { type: String, default: undefined },
+    /**
+     * Display names for link targets the nav tree does not carry (#1194). The
+     * static/routed floor has no nav tree at all, so without this every link on
+     * a shipped page would announce the same generic fallback — two neighbouring
+     * links to different pages would be indistinguishable (WCAG 2.4.4). The page
+     * layer owns the page definitions and their translated titles, so it passes
+     * them down here, exactly like {@link currentPage}. The nav tree still wins
+     * when it has the node.
+     */
+    pageNames: {
+      type: Object as PropType<Readonly<Record<string, string>>>,
+      default: undefined,
+    },
   },
   setup(props) {
     const store = useDeviceStore();
@@ -357,7 +370,13 @@ export default defineComponent({
      */
     function linkLabel(link: PageLink | undefined): string {
       if (!link) return '';
-      const name = navNodeName(navTree.value, link.targetNodeId);
+      // Live nav tree first (a real backend knows the node's own name), then the
+      // page layer's translated titles, and only then the generic wording — so a
+      // shipped static page still announces WHICH page a link goes to.
+      const name =
+        navNodeName(navTree.value, link.targetNodeId) ??
+        props.pageNames?.[link.targetNodeId] ??
+        null;
       return name ? translate('links.goToPage', { page: name }) : translate('links.goToLinkedPage');
     }
 

@@ -37,7 +37,7 @@ import { storeToRefs } from 'pinia';
 import DetailModalHost from '../app/DetailModalHost.vue';
 import TweaksPanel, { type TweakValues } from '../app/TweaksPanel.vue';
 import OverviewGrid from './OverviewGrid';
-import { resolvePage, groupDevicesByRoom } from './pages';
+import { PAGES, resolvePage, groupDevicesByRoom } from './pages';
 import { resolveSkin } from '../skin-host/skins';
 import { useDeviceStore } from '../core/store';
 import { NAV_KEYS, type NavKey } from '../app/shell/useShellState';
@@ -118,6 +118,18 @@ watchEffect(() => {
 // ids rule, so nothing is passed and the host's own `currentPageId` (written by
 // the link action and by a page-owning skin's nav) decides.
 const currentPage = computed(() => (externalFloor.value ? undefined : page.value.def.id));
+
+/**
+ * Display names for link targets on the STATIC floor (#1194). There is no nav
+ * tree there, so without these every link would announce the same generic
+ * fallback and two links to different pages would be indistinguishable to a
+ * screen reader (WCAG 2.4.4). The page layer owns the definitions and their
+ * translated titles, so it is the right place to resolve them; the host prefers
+ * a live nav-tree name when one exists.
+ */
+const pageNames = computed<Record<string, string> | undefined>(() =>
+  externalFloor.value ? undefined : Object.fromEntries(PAGES.map((p) => [p.id, t(p.titleKey)])),
+);
 </script>
 
 <template>
@@ -143,6 +155,7 @@ const currentPage = computed(() => (externalFloor.value ? undefined : page.value
           :groups="groups"
           :theme="theme"
           :current-page="currentPage"
+          :page-names="pageNames"
         />
       </div>
 

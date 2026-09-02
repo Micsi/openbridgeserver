@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { mount } from '@vue/test-utils';
-import type { NavNode, SkinGestures } from '@obs/visu-contract';
+import { h } from 'vue';
+import type { Device, NavNode, SkinGestures } from '@obs/visu-contract';
 
 /**
  * pages/OverviewGrid — page links as a HOST action (Contract v1.11, #1194).
@@ -18,7 +19,19 @@ import type { NavNode, SkinGestures } from '@obs/visu-contract';
  */
 let mockGestures: SkinGestures | undefined;
 vi.mock('../skin-host/skins', () => ({
-  resolveSkin: () => ({ tiles: {}, details: {}, presets: {}, manifest: { gestures: mockGestures } }),
+  resolveSkin: () => ({
+    // A real tile renderer + a complete manifest, so the SAME mock also serves the
+    // end-to-end test below, which mounts the REAL SkinHost instead of stubbing it.
+    tiles: { camera: () => h('div', { class: 'stub-cam' }) },
+    details: {},
+    presets: {},
+    manifest: {
+      name: 'stub',
+      unsupported: [],
+      gestures: mockGestures,
+      layout: { model: 'grid', honors: ['role'] },
+    },
+  }),
 }));
 
 import OverviewGrid, { DEFAULT_GESTURES } from './OverviewGrid';
@@ -185,5 +198,72 @@ describe('the host default and the link policy are pinned together (#1194)', () 
     // while the host default tap is `LINK_TAP_TARGET`. Change one without the
     // other and SkinHost would keep stamping a link affordance that never fires.
     expect(DEFAULT_GESTURES.tap).toBe(LINK_TAP_TARGET);
+  });
+});
+
+/**
+ * The stretched link and the host's click delegation are ONE mechanism, and the
+ * tests above exercise them separately: SkinHost renders the anchor, OverviewGrid
+ * delegates the click. If anything ever stopped the event before `.overview-grid`
+ * — or the anchor stopped being inside the cell the delegation resolves — the
+ * anchor would become a NAMED BUT DEAD focus stop: a silent WCAG regression that
+ * neither half's tests would catch. This mounts the real SkinHost under the real
+ * grid and drives the whole path through the anchor itself.
+ */
+describe('OverviewGrid × SkinHost — the anchor really navigates (#1194)', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  const CAM = {
+    id: 'cam1',
+    type: 'camera',
+    room: 'Hof',
+    label: 'Hofeinfahrt',
+    accent: 'slate',
+    online: false,
+    snapshotUrl: null,
+  } as Device;
+
+  async function mountReal() {
+    mockGestures = IONIC;
+    const store = useDeviceStore();
+    await store.init(new MockDataSource([CAM]));
+    const wrapper = mount(OverviewGrid, {
+      props: {
+        skin: 'ionic',
+        groups: [{ room: 'Hof', entries: [{ id: 'cam1', link: { targetNodeId: 'camera-full' } }] }],
+        pageNames: { 'camera-full': 'Kamera (Vollbild)' },
+      },
+      global: { provide: { [HOST_KEY as symbol]: makeHost() } },
+    });
+    return { wrapper, store };
+  }
+
+  it('a click ON THE ANCHOR reaches the host delegation and navigates', async () => {
+    const { wrapper, store } = await mountReal();
+
+    const anchor = wrapper.find('[data-testid="link-anchor"]');
+    expect(anchor.exists()).toBe(true);
+    await anchor.trigger('click');
+
+    // Named AND live — not a dead focus stop.
+    expect(store.currentPageId).toBe('camera-full');
+  });
+
+  it('Enter on the anchor navigates too (keyboard path through the same seam)', async () => {
+    const { wrapper, store } = await mountReal();
+
+    await wrapper.find('[data-testid="link-anchor"]').trigger('keydown', { key: 'Enter' });
+
+    expect(store.currentPageId).toBe('camera-full');
+  });
+
+  it('names the link after the target page on the STATIC floor (no nav tree)', async () => {
+    const { wrapper, store } = await mountReal();
+    // The shipped static floor has no nav tree at all …
+    expect(store.navTree).toEqual([]);
+    // … yet the link still announces WHICH page it goes to (WCAG 2.4.4).
+    expect(wrapper.find('[data-testid="link-anchor"]').attributes('aria-label')).toBe(
+      'Zur Seite Kamera (Vollbild) springen',
+    );
   });
 });

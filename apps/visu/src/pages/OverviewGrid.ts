@@ -94,6 +94,11 @@ export default defineComponent({
      *  the static/routed floor passes one; with an external floor the host's own
      *  `store.currentPageId` decides. */
     currentPage: { type: String, default: undefined },
+    /** Display names for link targets, for the link's accessible name (#1194). */
+    pageNames: {
+      type: Object as PropType<Readonly<Record<string, string>>>,
+      default: undefined,
+    },
   },
   setup(props) {
     const store = useDeviceStore();
@@ -250,6 +255,7 @@ export default defineComponent({
             theme: props.theme,
             columns: props.columns,
             currentPage: props.currentPage,
+            pageNames: props.pageNames,
           }) as VNode,
         ],
       );

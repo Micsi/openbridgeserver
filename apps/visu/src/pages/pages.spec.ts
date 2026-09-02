@@ -169,9 +169,7 @@ describe('pages — the #1194 full-screen camera page + link plumbing', () => {
   });
 
   it('the media block links its camera tiles to the full-screen page', () => {
-    const cams = demoRooms
-      .flatMap((g) => g.entries)
-      .filter((e) => byId[e.id]?.type === 'camera');
+    const cams = demoRooms.flatMap((g) => g.entries).filter((e) => byId[e.id]?.type === 'camera');
     expect(cams.length).toBeGreaterThan(0);
     for (const cam of cams) expect(cam.link?.targetNodeId).toBe('camera-full');
   });

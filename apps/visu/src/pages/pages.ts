@@ -20,13 +20,7 @@
  *    hard, visible failure — never a silent default.
  */
 
-import {
-  rooms as modelRooms,
-  demoRooms,
-  cameraFullRooms,
-  type RoomGroup,
-  type LayoutEntry,
-} from '../core/model';
+import { rooms as modelRooms, demoRooms, cameraFullRooms, type RoomGroup, type LayoutEntry } from '../core/model';
 import type { SkinKey } from '../skin-host/skins';
 import type { Device, PageLink, WidgetPosition } from '@obs/visu-contract';
 
