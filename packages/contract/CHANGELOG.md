@@ -23,6 +23,25 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.11.0] – 2026-09-02
+
+v1.11: **Seiten-Verlinkung auf platzierten Elementen** (Upstream #1194). Ein
+Element ohne eigene Klick-Funktion – der Autor nennt kleine Kamera-Kacheln –
+soll auf eine andere Visuseite springen können, „wie im Link-Widget". Neue
+**optionale, additive** Typen: `PageLink` (`targetNodeId` – die Entsprechung von
+`target_node_id` im V1-Link-Widget – plus `activeIndicator`) und `LinkIndicator`
+(`none`/`dot`/`bar`/`border`, gespiegelt vom V1-`active_indicator`). `LayerItem`
+trägt dazu das neue optionale Feld `link?: PageLink`.
+
+Reine Daten (Goldene Regel 7): der Vertrag sagt nur, WOHIN gesprungen wird. Das
+Auflösen der Access-Kette (`parent_id`), das PIN-Gate eines `protected` Knotens,
+der Abstieg von einer LOCATION auf ihre erste sichtbare Seite und der
+Aktiv-Zustand entlang der Vorfahrenkette sind **Host**-Verhalten – der Skin
+besitzt weder Zustand noch Navigationslogik (Goldene Regel 4). Minor-Bump: reine
+Typen-Zugabe, keine Device-Datenform-Änderung. Ohne `link` verhält sich jedes
+platzierte Element exakt wie bisher; ein Skin, der das Feld ignoriert, bleibt
+unverändert gültig.
+
 ## [1.10.0] – 2026-09-01
 
 v1.10: der **Page-Renderer-Seam** (CONTRIBUTING-visu-layering.md, W3c/W4). Ein Skin
