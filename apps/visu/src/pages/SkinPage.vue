@@ -31,6 +31,9 @@ import { applyTweaks, type IonicTweaks } from '@obs-visu-skins/ionic';
 import '@obs-visu-skins/ionic/ionic.css';
 // Edomi POC chrome (nav + pixel canvas + popups); harmless when another skin renders.
 import '@obs-visu-skins/edomi/edomi.css';
+// The terminal skin's stylesheet is loaded by the app entry (`main.ts`), not here
+// — see the note there. Without it the terminal page renders as raw unstyled
+// markup while its jsdom tests stay green: mounts prove structure, not pixels.
 
 import { storeToRefs } from 'pinia';
 
@@ -76,6 +79,10 @@ const groups = computed(() =>
 
 /** Whether the active skin declares tweaks (only those skins show the editor). */
 const hasTweaks = computed(() => Object.keys(resolveSkin(skin.value).manifest.tweaks ?? {}).length > 0);
+/** The CSS namespace the ACTIVE skin's stylesheet is scoped to. Hardcoding one
+ *  skin's root here is what left the terminal page rendering as raw markup while
+ *  its mount tests were green — the class has to follow the page's skin. */
+const skinRootClass = computed(() => resolveSkin(skin.value).rootClass);
 
 /* ----------------------------------------------------------- tweak state (A6) */
 // The page owns the per-page tweak values (the skin owns no state, golden rule 4).
@@ -122,7 +129,8 @@ watchEffect(() => {
       :root-bind="rootTweaks"
     >
       <div
-        class="visu-root overview-root"
+        class="overview-root"
+        :class="skinRootClass"
         v-bind="rootTweaks.attrs"
         :style="rootTweaks.style"
       >

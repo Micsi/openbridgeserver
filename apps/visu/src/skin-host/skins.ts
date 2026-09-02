@@ -39,6 +39,15 @@ export type RendererMap = Partial<Record<CoreWidgetType, Renderer>>;
 
 /** The uniform shape the host renders against — renderer maps + the manifest. */
 export interface Skin {
+  /**
+   * The class the skin's stylesheet is scoped to — its CSS namespace. Every skin
+   * scopes its sheet to one root (`.visu-root` for ionic, `.t-root` for the
+   * terminal list skin), so the host must put that class on the element it
+   * renders the skin into; without it the page renders as unstyled markup while
+   * its jsdom tests stay green (structure is not pixels). The same seam the
+   * skins repo's fixture wall uses (`root: (theme) => ({ class, attrs })`).
+   */
+  readonly rootClass: string;
   /** Tile renderers per core type — addressed by `tiles[device.type]` (golden rule 2). */
   readonly tiles: RendererMap;
   /** Optional detail-surface renderers per core type. */
@@ -71,6 +80,8 @@ export const skins = {
     details: ionicDetails,
     presets: ionicPresets,
     manifest: ionicManifest as SkinManifest,
+    // ionic.css scopes the whole Glass look to `.visu-root`.
+    rootClass: 'visu-root',
   },
   terminal: {
     tiles: terminalTiles,
@@ -78,6 +89,8 @@ export const skins = {
     // The terminal skin ships no position-preset renderers (no long-press menu).
     presets: {},
     manifest: terminalManifest as SkinManifest,
+    // terminal.css scopes the console/list look to `.t-root[data-theme]`.
+    rootClass: 't-root',
   },
   edomi: {
     // Edomi POC (v1.10, layering W4): owns the whole page via `page` (nav + pixel
@@ -89,6 +102,8 @@ export const skins = {
     presets: edomiPresets,
     manifest: edomiManifest as SkinManifest,
     page: edomiPage,
+    // edomi re-uses the ionic content tiles, so it keeps their CSS namespace.
+    rootClass: 'visu-root',
   },
 } as const satisfies Record<string, Skin>;
 

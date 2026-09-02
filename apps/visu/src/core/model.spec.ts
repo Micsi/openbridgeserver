@@ -202,6 +202,37 @@ describe('core/model — v1.4 climate + enriched sensor showcase', () => {
   });
 });
 
+describe('core/model — the page speaks role (A5, Issue #101)', () => {
+  it('returns an author-declared role that the contract allows for the type', () => {
+    // light: roles.allow = [compact, default, wide]
+    expect(layoutRole({ id: 'kueche-wand', role: 'wide' }, byId['kueche-wand']!)).toBe('wide');
+    expect(layoutRole({ id: 'kueche-wand', role: 'compact' }, byId['kueche-wand']!)).toBe('compact');
+  });
+
+  it('throws on a role the contract does not allow for the type (no silent downgrade)', () => {
+    // switch: roles.allow = [compact, default] — "wide" is not in it.
+    const sw = devices.find((d) => d.type === 'switch')!;
+    expect(() => layoutRole({ id: sw.id!, role: 'wide' }, sw)).toThrow(/does not allow/i);
+  });
+
+  it('prefers the declared role over the legacy span hint', () => {
+    // An entry carrying both is an author who translated only half — the role wins.
+    expect(layoutRole({ id: 'kueche-wand', role: 'compact', span: 2 }, byId['kueche-wand']!)).toBe(
+      'compact',
+    );
+  });
+
+  it('the shipped overview floor carries roles and no spans left to translate', () => {
+    for (const group of [...rooms, ...demoRooms]) {
+      for (const entry of group.entries) {
+        expect(entry.span).toBeUndefined();
+        // whatever role it declares must resolve without throwing
+        expect(() => layoutRole(entry, byId[entry.id]!)).not.toThrow();
+      }
+    }
+  });
+});
+
 describe('core/model — span/row → role', () => {
   it('maps a plain entry to the device type default role', () => {
     const plain: LayoutEntry = { id: 'kueche-wand' };
