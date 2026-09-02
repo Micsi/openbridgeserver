@@ -70,7 +70,9 @@ async function submitPin(pageId: string): Promise<void> {
       <form
         v-if="gate.access === 'protected'"
         class="access-gate-pin"
+        :class="{ 'is-pending': gate.pageId === store.pendingGate }"
         :data-page="gate.pageId"
+        :data-pending="gate.pageId === store.pendingGate ? 'true' : undefined"
         @submit.prevent="submitPin(gate.pageId)"
       >
         <IonItem
@@ -139,6 +141,14 @@ async function submitPin(pageId: string): Promise<void> {
 
 .access-gate-pin {
   padding: 4px 0 8px;
+}
+
+/* #1194: a page link that hit the PIN gate points here instead of jumping onto
+   the target page. The marker only makes the already-visible gate findable — a
+   quiet accent bar, never a red error wall. */
+.access-gate-pin.is-pending {
+  border-inline-start: 3px solid var(--ion-color-warning, #d6a800);
+  padding-inline-start: 9px;
 }
 
 .access-gate-error {

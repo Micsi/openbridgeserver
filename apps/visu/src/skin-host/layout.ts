@@ -21,7 +21,7 @@
  * spatial footprint of a role it advertises.
  */
 
-import type { Device, Role, SkinLayout, WidgetPosition } from '@obs/visu-contract';
+import type { Device, PageLink, Role, SkinLayout, WidgetPosition } from '@obs/visu-contract';
 import { layoutRole, byId as modelById, type RoomGroup, type LayoutEntry } from '../core/model';
 
 /** A grid footprint: column span `c` and row span `r` (both ≥ 1). */
@@ -61,6 +61,10 @@ export interface PlacedItem {
    *  carries one. Additive: a skin honouring `position` places by this box; the
    *  responsive floor ignores it (order+grouping+span stay authoritative). */
   readonly position?: WidgetPosition;
+  /** Jump target of this placed element (CONTRACT-v1.11 → #1194), when the page
+   *  carries one. Additive and ignorable: without it the item behaves exactly as
+   *  before. The HOST resolves + executes it (skin-host/links) — never the skin. */
+  readonly link?: PageLink;
 }
 
 /** The resolved layout the host hands to the renderer loop. */
@@ -183,6 +187,9 @@ export function resolveLayout(
         // Forward the additive author position (layering W3); a pixel skin honours
         // it, the responsive floor ignores it. Absent when the page has none.
         ...(entry.position ? { position: entry.position } : {}),
+        // Forward the additive page link (#1194); the host turns a tap on an
+        // otherwise non-interactive tile into `navigate`. Absent when unset.
+        ...(entry.link ? { link: entry.link } : {}),
       });
       first = false;
     }

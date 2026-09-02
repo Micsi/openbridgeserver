@@ -60,7 +60,13 @@ function itemsOf(
     if (!mapped) continue; // an undeclared type contributes nothing to the layer
     const id = mapped.device.id;
     if (!id) continue;
-    items.push(mapped.position ? { id, position: mapped.position } : { id });
+    items.push({
+      id,
+      ...(mapped.position ? { position: mapped.position } : {}),
+      // The page link (#1194) rides along on the placed element; additive, so a
+      // skin that ignores it renders exactly as before.
+      ...(mapped.link ? { link: mapped.link } : {}),
+    });
   }
   return items;
 }

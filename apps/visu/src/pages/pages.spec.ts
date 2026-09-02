@@ -148,3 +148,40 @@ describe('groupDevicesByRoom — the live (external) floor for a real backend', 
     expect(groups[0].entries.every((e) => e.position === undefined)).toBe(true);
   });
 });
+
+describe('pages — the #1194 full-screen camera page + link plumbing', () => {
+  it('ships a camera-full page rendered by the ionic skin', () => {
+    const def = pageById['camera-full'];
+    expect(def).toBeDefined();
+    expect(def.skin).toBe('ionic');
+    expect(() => resolveSkin(def.skin)).not.toThrow();
+  });
+
+  it('resolves camera-full to the full-width camera that links back, plus a self-link', () => {
+    const { groups } = resolvePage('camera-full');
+    const entries = groups.flatMap((g) => g.entries);
+    expect(entries.map((e) => e.id)).toEqual(['hof-cam', 'garage-cam']);
+    expect(byId['hof-cam']?.type).toBe('camera');
+    // The big tile jumps back to the media block …
+    expect(entries[0].link?.targetNodeId).toBe('demo-media');
+    // … the small one points at THIS page, so the host marks it active.
+    expect(entries[1].link).toEqual({ targetNodeId: 'camera-full', activeIndicator: 'dot' });
+  });
+
+  it('the media block links its camera tiles to the full-screen page', () => {
+    const cams = demoRooms
+      .flatMap((g) => g.entries)
+      .filter((e) => byId[e.id]?.type === 'camera');
+    expect(cams.length).toBeGreaterThan(0);
+    for (const cam of cams) expect(cam.link?.targetNodeId).toBe('camera-full');
+  });
+
+  it('groupDevicesByRoom carries per-device links from an external floor', () => {
+    const devices = [byId['hof-cam'], byId['wohn-sonos']] as Device[];
+    const links = new Map([['hof-cam', { targetNodeId: 'node-7' }]]);
+    const groups = groupDevicesByRoom(devices, undefined, links);
+    const entries = groups.flatMap((g) => g.entries);
+    expect(entries.find((e) => e.id === 'hof-cam')?.link).toEqual({ targetNodeId: 'node-7' });
+    expect(entries.find((e) => e.id === 'wohn-sonos')?.link).toBeUndefined();
+  });
+});

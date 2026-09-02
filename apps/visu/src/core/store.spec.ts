@@ -537,3 +537,93 @@ describe('core/store — optimistic update + backend correction', () => {
     expect((store.byId(id) as LightDevice).on).toBe(!optimistic);
   });
 });
+
+/* ------------------------------------------------ page links (v1.11, #1194) */
+
+/** A page-auth source that also reports PIN sessions per DEFINING node. */
+class LinkGateSource extends PageAuthSpySource {
+  /** Defining nodes with a live PIN session. */
+  readonly sessions = new Set<string>();
+  hasPageSession(nodeId: string): boolean {
+    return this.sessions.has(nodeId);
+  }
+}
+
+const KELLER_TREE = [
+  {
+    id: 'keller',
+    name: 'Keller',
+    type: 'LOCATION' as const,
+    access: 'protected',
+    children: [{ id: 'p2', name: 'Technik', type: 'PAGE' as const, access: null, children: [] }],
+  },
+];
+
+describe('core/store — followLink: the host owns the jump (#1194)', () => {
+  it('navigates on a reachable target and owns the current page', async () => {
+    const store = await makeStore(new SpyDataSource());
+    expect(store.currentPageId).toBeNull();
+
+    const outcome = store.followLink({ targetNodeId: 'camera-full' });
+
+    expect(outcome).toEqual({ kind: 'navigate', pageId: 'camera-full' });
+    expect(store.currentPageId).toBe('camera-full');
+    expect(store.pendingGate).toBeNull();
+  });
+
+  it('gates a protected target instead of navigating (the PIN path)', async () => {
+    const src = new LinkGateSource();
+    const store = await makeStore(src);
+    store.navTree = KELLER_TREE;
+
+    const outcome = store.followLink({ targetNodeId: 'p2' });
+
+    expect(outcome).toEqual({ kind: 'gate', pageId: 'p2', accessNodeId: 'keller' });
+    // The decisive guarantee: the host did NOT move onto the target page.
+    expect(store.currentPageId).toBeNull();
+    expect(store.pendingGate).toBe('p2');
+  });
+
+  it('passes once a session is held for the DEFINING node', async () => {
+    const src = new LinkGateSource();
+    const store = await makeStore(src);
+    store.navTree = KELLER_TREE;
+    src.sessions.add('keller');
+
+    expect(store.hasPageSession('keller')).toBe(true);
+    expect(store.followLink({ targetNodeId: 'p2' })).toEqual({ kind: 'navigate', pageId: 'p2' });
+    expect(store.currentPageId).toBe('p2');
+  });
+
+  it('a source without page auth reports no session — that gates, it never leaks', async () => {
+    const store = await makeStore(new SpyDataSource());
+    expect(store.hasPageSession('keller')).toBe(false);
+  });
+
+  it('unlocking the pending gate with the PIN completes the jump', async () => {
+    const src = new LinkGateSource();
+    const store = await makeStore(src);
+    store.navTree = KELLER_TREE;
+
+    store.followLink({ targetNodeId: 'p2' });
+    expect(store.pendingGate).toBe('p2');
+
+    await store.authenticatePage('p2', '1234');
+
+    expect(store.pageGates).toEqual([]);
+    expect(store.currentPageId).toBe('p2');
+    expect(store.pendingGate).toBeNull();
+  });
+
+  it('an unknown target in a real tree changes no state', async () => {
+    const store = await makeStore(new SpyDataSource());
+    store.navTree = KELLER_TREE;
+
+    expect(store.followLink({ targetNodeId: 'weg' })).toEqual({
+      kind: 'unknown',
+      targetNodeId: 'weg',
+    });
+    expect(store.currentPageId).toBeNull();
+    expect(store.pendingGate).toBeNull();
+  });
+});

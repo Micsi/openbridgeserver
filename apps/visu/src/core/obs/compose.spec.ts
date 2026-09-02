@@ -110,3 +110,28 @@ describe('buildNavTree — the visible PAGE/LOCATION hierarchy', () => {
     expect(nav[0].children.map((n) => n.id)).toEqual(['bad']);
   });
 });
+
+describe('composeLayers — page links ride along on the placed element (#1194)', () => {
+  it('carries a widget link onto its LayerItem, and omits it when absent', () => {
+    const nodes: ObsVisuNode[] = [
+      {
+        id: 'p1',
+        parent_id: null,
+        name: 'Seite',
+        type: 'PAGE',
+        page_config: {
+          widgets: [
+            { ...toggle('w-plain', 'dp-a') } as never,
+            {
+              ...toggle('w-linked', 'dp-b'),
+              config: { target_node_id: 'p2', active_indicator: 'dot' },
+            } as never,
+          ],
+        },
+      },
+    ];
+    const [layer] = composeLayers(nodes, 'p1');
+    expect(layer.items[0].link).toBeUndefined();
+    expect(layer.items[1].link).toEqual({ targetNodeId: 'p2', activeIndicator: 'dot' });
+  });
+});

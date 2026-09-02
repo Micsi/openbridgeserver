@@ -19,6 +19,7 @@
  * dispatch — trivially unit-testable without a template.
  */
 import { defineComponent, h, inject, type PropType, type VNode } from 'vue';
+import { useRouter } from 'vue-router';
 
 import SkinHost from '../skin-host/SkinHost';
 import { useDeviceStore } from '../core/store';
@@ -46,6 +47,29 @@ function tileIdFor(target: EventTarget | null): string | null {
   return cell?.dataset.id ?? null;
 }
 
+/**
+ * The page-link target the enclosing tile cell carries (#1194), or null. The host
+ * stamped `data-link` on the cell (SkinHost → decorateLink); the skin only drew
+ * the tile inside it, so a link is never skin state.
+ */
+function linkTargetFor(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const cell = target.closest<HTMLElement>('.skin-host-cell');
+  return cell?.dataset.link ?? null;
+}
+
+/**
+ * Does the tapped element sit inside a control the SKIN marked with an action
+ * (#1194)? This is the "has a click function of its own" test, and it is
+ * deliberately NOT `parseIntent() !== null`: a marker the host does not (yet)
+ * dispatch — the camera's `refresh`, a media transport — is still the tile's own
+ * control, and a page link must never steal its tap. A marked-but-undispatched
+ * action stays the host's existing no-op.
+ */
+function marksOwnAction(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-action]') !== null;
+}
+
 export default defineComponent({
   name: 'OverviewGrid',
   props: {
@@ -57,11 +81,19 @@ export default defineComponent({
     theme: { type: String as PropType<Theme>, default: 'light' },
     /** Requested column count (clamped into the skin's window by the host). */
     columns: { type: Number, default: undefined },
+    /** The page this grid renders, for the link active-indicator (#1194). Only
+     *  the static/routed floor passes one; with an external floor the host's own
+     *  `store.currentPageId` decides. */
+    currentPage: { type: String, default: undefined },
   },
   setup(props) {
     const store = useDeviceStore();
     const actionStore = store as unknown as ActionStore;
     const host = inject(HOST_KEY, null);
+    // The router is the second half of the host's navigation: `store.navigate`
+    // owns the state, and a statically routed page also has to move the URL. A
+    // standalone mount (unit test) has no router — links then move state only.
+    const router = useRouter();
 
     // The interaction model is the skin's declaration merged onto the default
     // (author-time decision – no runtime skin switch). A skin that declares no
@@ -71,6 +103,27 @@ export default defineComponent({
 
     /** Tile under the current long-press (resolved on pointerdown). */
     let pressedId: string | null = null;
+
+    /**
+     * Follow the page link a cell carries (#1194) — the host action behind a tap
+     * on a tile that has NO click function of its own (the author's example: a
+     * small camera tile). The store resolves it exactly like the V1 link widget
+     * (access along the `parent_id` chain, PIN gate on a `protected` target,
+     * LOCATION → first visible page) and owns the resulting state; here we only
+     * add the routed half for the statically routed pages.
+     *
+     * Returns true when the link was handled, so the caller can stop.
+     */
+    function followLink(targetNodeId: string): boolean {
+      const outcome = store.followLink({ targetNodeId });
+      // A gated target stays gated (the PIN path), an unknown one is a no-op —
+      // in neither case do we move the URL onto the target page.
+      if (outcome.kind !== 'navigate') return true;
+      if (router?.hasRoute(outcome.pageId)) {
+        void router.push({ name: outcome.pageId });
+      }
+      return true;
+    }
 
     /**
      * Apply the {@link GestureTarget} a gesture is mapped to for a device. The
@@ -86,7 +139,16 @@ export default defineComponent({
           // concern (the host owns the modal), not a store write; every other
           // action is a canonical core write forwarded to the store.
           const intent = parseIntent(ev.target);
-          if (!intent) return;
+          if (!intent) {
+            // #1194: nothing marked here, so this element has no click function of
+            // its own — if it carries a page link, jump. A tile control that DOES
+            // mark an action keeps winning even when the host dispatches nothing
+            // for it, and without a link this stays the previous no-op.
+            if (marksOwnAction(ev.target)) return;
+            const target = linkTargetFor(ev.target);
+            if (target) followLink(target);
+            return;
+          }
           if (intent.action === 'openDetail') host?.openDetail(id);
           else dispatchIntent(actionStore, id, intent);
           return;
@@ -136,6 +198,22 @@ export default defineComponent({
       applyGesture(gestures.tap, id, ev);
     }
 
+    /**
+     * Keyboard equivalent of a tap on a linked tile (#1194). The host made the
+     * cell focusable with `role="link"`, and a `div` does not fire a click on
+     * Enter/Space by itself — so the host maps the key here. Only cells that
+     * actually carry a link react; everything else keeps its previous behaviour.
+     */
+    function onKeydown(ev: KeyboardEvent): void {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      // A control inside the tile (a marked action) owns its own key handling.
+      if (marksOwnAction(ev.target)) return;
+      const target = linkTargetFor(ev.target);
+      if (!target) return;
+      ev.preventDefault();
+      followLink(target);
+    }
+
     function onPointerdown(ev: PointerEvent): void {
       pressedId = tileIdFor(ev.target);
       longPress.onPointerdown(ev);
@@ -148,6 +226,7 @@ export default defineComponent({
         {
           class: 'overview-grid',
           onClick,
+          onKeydown,
           onPointerdown,
           onPointermove: longPress.onPointermove,
           onPointerup: longPress.onPointerup,
@@ -161,6 +240,7 @@ export default defineComponent({
             groups: props.groups,
             theme: props.theme,
             columns: props.columns,
+            currentPage: props.currentPage,
           }) as VNode,
         ],
       );

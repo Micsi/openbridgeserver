@@ -46,6 +46,7 @@ import type {
   ClimateDevice,
   Role,
   WidgetPosition,
+  PageLink,
 } from '@obs/visu-contract';
 
 /* ------------------------------------------------------------------ helpers */
@@ -377,6 +378,10 @@ export interface LayoutEntry {
   /** Author pixel/grid box (x/y/w/h, CONTRACT-v1.9 → layering W3). Additive: only
    *  a skin honouring `position` uses it; the responsive floor ignores it. */
   readonly position?: WidgetPosition;
+  /** Jump target of this placed element (CONTRACT-v1.11 → #1194). Additive: an
+   *  entry without it behaves exactly as before; with it a tile that has no click
+   *  function of its own navigates. The HOST resolves and executes it. */
+  readonly link?: PageLink;
 }
 
 /** One room block: an ordered list of layout entries. */
@@ -387,6 +392,12 @@ export interface RoomGroup {
 
 const e = (id: string, span?: number, row?: number): LayoutEntry =>
   span === undefined && row === undefined ? { id } : { id, span, row };
+
+/** Attach a page link to an entry (CONTRACT-v1.11 → #1194). Data only. */
+const link = (entry: LayoutEntry, targetNodeId: string, activeIndicator?: PageLink['activeIndicator']): LayoutEntry => ({
+  ...entry,
+  link: activeIndicator ? { targetNodeId, activeIndicator } : { targetNodeId },
+});
 
 /** Ordered room blocks for the mobile overview (store.js → mobileGroups). */
 export const rooms: readonly RoomGroup[] = Object.freeze([
@@ -431,7 +442,33 @@ export const rooms: readonly RoomGroup[] = Object.freeze([
 export const demoRooms: readonly RoomGroup[] = Object.freeze([
   {
     room: 'Medien',
-    entries: [e('wohn-sonos', 2), e('kueche-radio', 2), e('hof-cam', 2), e('garage-cam', 2)],
+    entries: [
+      e('wohn-sonos', 2),
+      e('kueche-radio', 2),
+      // #1194: the camera tiles have no click function of their own (only the
+      // small refresh button is interactive), so the tap jumps to the camera's
+      // full-screen page — the author's example from the upstream issue.
+      link(e('hof-cam', 2), 'camera-full', 'border'),
+      link(e('garage-cam', 2), 'camera-full', 'border'),
+    ],
+  },
+] satisfies RoomGroup[]);
+
+/**
+ * The #1194 target page: the camera claiming the full 3-column grid — the
+ * „Vollbild-Seite" a small camera tile links to. The big tile links BACK to the
+ * media block (the return jump uses the same host action); the small one below
+ * points at this very page, so it shows the active indicator — the host marks a
+ * link whose target is the current page (or an ancestor of it), like V1.
+ */
+export const cameraFullRooms: readonly RoomGroup[] = Object.freeze([
+  {
+    room: 'Kamera Hofeinfahrt',
+    entries: [link(e('hof-cam', 3, 3), 'demo-media', 'border')],
+  },
+  {
+    room: 'Weitere Kameras',
+    entries: [link(e('garage-cam', 2), 'camera-full', 'dot')],
   },
 ] satisfies RoomGroup[]);
 

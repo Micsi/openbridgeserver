@@ -20,9 +20,15 @@
  *    hard, visible failure — never a silent default.
  */
 
-import { rooms as modelRooms, demoRooms, type RoomGroup, type LayoutEntry } from '../core/model';
+import {
+  rooms as modelRooms,
+  demoRooms,
+  cameraFullRooms,
+  type RoomGroup,
+  type LayoutEntry,
+} from '../core/model';
 import type { SkinKey } from '../skin-host/skins';
-import type { Device, WidgetPosition } from '@obs/visu-contract';
+import type { Device, PageLink, WidgetPosition } from '@obs/visu-contract';
 
 /**
  * Which model room set a page draws from. `overview` = the ported store.js mobile
@@ -31,11 +37,13 @@ import type { Device, WidgetPosition } from '@obs/visu-contract';
  * by room name. Both sets are the core model (no data fork); the split only keeps
  * the media/camera demo out of the overview floor.
  */
-export type RoomSource = 'overview' | 'demo';
+export type RoomSource = 'overview' | 'demo' | 'cameraFull';
 
 /** The base room blocks for a page's declared {@link RoomSource}. */
 function baseRooms(source: RoomSource | undefined): readonly RoomGroup[] {
-  return source === 'demo' ? demoRooms : modelRooms;
+  if (source === 'demo') return demoRooms;
+  if (source === 'cameraFull') return cameraFullRooms;
+  return modelRooms;
 }
 
 /**
@@ -83,6 +91,9 @@ export const PAGES: readonly PageDef[] = Object.freeze([
   // canvas + popups from the live backend tree (OBS mode); the room-grouped floor is
   // unused here (the page renderer ignores `groups`).
   { id: 'edomi', titleKey: 'pages.edomi.title', skin: 'edomi' },
+  // #1194: the full-screen camera page a small camera tile links to. Same core
+  // device (no data fork) — only the placement differs.
+  { id: 'camera-full', titleKey: 'pages.cameraFull.title', skin: 'ionic', source: 'cameraFull' },
 ] satisfies PageDef[]);
 
 /** Lookup a page definition by id (the route param / nav key). */
@@ -145,6 +156,7 @@ export function resolvePage(id: string): ResolvedPage {
 export function groupDevicesByRoom(
   devices: readonly Device[],
   positions?: ReadonlyMap<string, WidgetPosition>,
+  links?: ReadonlyMap<string, PageLink>,
 ): RoomGroup[] {
   const byRoom = new Map<string, LayoutEntry[]>();
   for (const d of devices) {
@@ -158,7 +170,9 @@ export function groupDevicesByRoom(
     // Carry the additive author position (layering W3) when the source has one;
     // a responsive skin ignores it, a pixel skin honours it.
     const position = positions?.get(d.id);
-    entries.push(position ? { id: d.id, position } : { id: d.id });
+    // Carry the additive page link (#1194) the same way; the host resolves it.
+    const link = links?.get(d.id);
+    entries.push({ id: d.id, ...(position ? { position } : {}), ...(link ? { link } : {}) });
   }
   return [...byRoom.entries()].map(([room, entries]) => ({ room, entries }));
 }

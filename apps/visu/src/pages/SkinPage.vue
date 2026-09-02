@@ -61,7 +61,7 @@ const shellState = computed(() =>
 );
 /** Live host state — the store owns the device floor when the source is external. */
 const store = useDeviceStore();
-const { devices, externalFloor, positions } = storeToRefs(store);
+const { devices, externalFloor, positions, links } = storeToRefs(store);
 /**
  * The ordered, room-grouped blocks this page renders. With the mock source the
  * floor is the static model (core `rooms`, filtered by the page def). With an
@@ -71,7 +71,9 @@ const { devices, externalFloor, positions } = storeToRefs(store);
  * demo model. Empty until the async seed lands (renders nothing, then fills).
  */
 const groups = computed(() =>
-  externalFloor.value ? groupDevicesByRoom(devices.value, positions.value) : page.value.groups,
+  externalFloor.value
+    ? groupDevicesByRoom(devices.value, positions.value, links.value)
+    : page.value.groups,
 );
 
 /** Whether the active skin declares tweaks (only those skins show the editor). */
@@ -106,6 +108,16 @@ watchEffect(() => {
   shellContext.state = shellState.value;
   shellContext.rootBind = rootTweaks.value;
 });
+
+/* --------------------------------------------------- current page (#1194) */
+// "Which page am I on" decides whether a link's active indicator lights. On the
+// STATIC floor that is the ROUTED page, and it is passed down explicitly rather
+// than written into the store: the Ionic router outlet keeps the leaving page
+// mounted for its transition, so two SkinPages can live at once — a shared piece
+// of state would then race between them. With an external floor the backend page
+// ids rule, so nothing is passed and the host's own `currentPageId` (written by
+// the link action and by a page-owning skin's nav) decides.
+const currentPage = computed(() => (externalFloor.value ? undefined : page.value.def.id));
 </script>
 
 <template>
@@ -130,6 +142,7 @@ watchEffect(() => {
           :skin="skin"
           :groups="groups"
           :theme="theme"
+          :current-page="currentPage"
         />
       </div>
 

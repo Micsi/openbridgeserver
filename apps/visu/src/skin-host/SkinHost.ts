@@ -37,16 +37,102 @@ import {
 } from 'vue';
 import { storeToRefs } from 'pinia';
 
-import type { Device, NavNode, PageHost, PopupDescriptor } from '@obs/visu-contract';
+import type { Device, NavNode, PageHost, PageLink, PopupDescriptor } from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
 import { ctx as defaultCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
+import { isLinkActive } from '../core/links';
 import { rooms as modelRooms, type RoomGroup } from '../core/model';
 import { ROOM_DIVIDER_KEY } from '../app/shell/roomDivider';
 
 import { resolveSkin } from './skins';
 import { resolveLayout, clampColumns } from './layout';
 import { selectTile } from './dispatch';
+
+/**
+ * The V1 link widget's active colour (`frontend/src/widgets/Link/Widget.vue`).
+ * Kept identical so a linked tile reads the same as the V1 link it replaces.
+ * Used only as a marker (dot/bar/outline), never as text on a background.
+ */
+const LINK_ACTIVE_COLOR = '#D6A800';
+
+/** The DOM decoration a page link (#1194) adds to a host cell. */
+interface LinkDecoration {
+  readonly attrs: Record<string, unknown>;
+  readonly style: Record<string, string>;
+  readonly extra: VNode[];
+}
+
+/**
+ * Decorate a host cell for a page link (#1194). The cell becomes operable
+ * (`role="link"`, focusable, pointer cursor) and carries `data-link` so the
+ * gesture seam (OverviewGrid) can resolve the target; when the link is active
+ * — the target IS the current page or an ancestor of it — the host draws the
+ * author's chosen indicator (V1 `active_indicator`: dot · bar · border).
+ *
+ * Host chrome, not skin markup: the skin owns the tile, the host owns the
+ * navigation affordance and its state (golden rule 4).
+ */
+function decorateLink(link: PageLink | undefined, active: boolean): LinkDecoration {
+  if (!link) return { attrs: {}, style: {}, extra: [] };
+  const indicator = link.activeIndicator ?? 'none';
+  const attrs: Record<string, unknown> = {
+    'data-link': link.targetNodeId,
+    'data-link-indicator': indicator,
+    role: 'link',
+    tabindex: 0,
+  };
+  const style: Record<string, string> = { cursor: 'pointer' };
+  const extra: VNode[] = [];
+  if (active) {
+    attrs['data-link-active'] = 'true';
+    attrs['aria-current'] = 'page';
+    if (indicator === 'border') {
+      style.outline = `2px solid ${LINK_ACTIVE_COLOR}`;
+      style.outlineOffset = '-2px';
+      style.borderRadius = 'inherit';
+    } else if (indicator === 'dot' || indicator === 'bar') {
+      // dot/bar are absolutely placed inside the cell, so it must be a containing
+      // block. `relative` is inert for a grid item and is already implied by the
+      // absolute placement of a position-honouring skin.
+      if (!style.position) style.position = 'relative';
+      extra.push(
+        indicator === 'dot'
+          ? h('span', {
+              class: 'skin-host-link-dot',
+              'data-testid': 'link-active-dot',
+              'aria-hidden': 'true',
+              style: {
+                position: 'absolute',
+                top: '6px',
+                right: '6px',
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: LINK_ACTIVE_COLOR,
+                pointerEvents: 'none',
+              },
+            })
+          : h('span', {
+              class: 'skin-host-link-bar',
+              'data-testid': 'link-active-bar',
+              'aria-hidden': 'true',
+              style: {
+                position: 'absolute',
+                left: '8px',
+                right: '8px',
+                bottom: '2px',
+                height: '2px',
+                borderRadius: '999px',
+                background: LINK_ACTIVE_COLOR,
+                pointerEvents: 'none',
+              },
+            }),
+      );
+    }
+  }
+  return { attrs, style, extra };
+}
 
 export default defineComponent({
   name: 'SkinHost',
@@ -62,6 +148,14 @@ export default defineComponent({
     theme: { type: String as PropType<Theme>, default: 'light' },
     /** Requested column count (clamped into the skin's declared window). */
     columns: { type: Number, default: undefined },
+    /**
+     * The page this host renders, for the link active-indicator (#1194). The
+     * static/routed floor passes its routed page id (deterministic per mounted
+     * page — the Ionic outlet can keep two alive during a transition); with an
+     * external floor nothing is passed and the host's own `currentPageId` — the
+     * state the link action and a page-owning skin's nav write — decides.
+     */
+    currentPage: { type: String, default: undefined },
   },
   setup(props) {
     const store = useDeviceStore();
@@ -90,8 +184,10 @@ export default defineComponent({
     // A skin that owns the page (nav + layers + popups) exports a `page` renderer;
     // the host owns the STATE (current page, open popups + auto-close timers) and
     // renders the content tiles, the skin owns the appearance (skin stays stateless).
-    const { navTree } = storeToRefs(store);
-    const currentPage = ref<string | null>(null);
+    // The current page + the link state live in the STORE (the host's single state
+    // owner, #1194): the link action writes them and a page-owning skin reads them
+    // through the PageHost, so both navigation paths move the same state.
+    const { navTree, currentPageId, links: deviceLinks } = storeToRefs(store);
     const openPopups = ref<PopupDescriptor[]>([]);
     const popupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -102,9 +198,6 @@ export default defineComponent({
         if (inner) return inner;
       }
       return null;
-    }
-    function navigate(pageId: string): void {
-      currentPage.value = pageId;
     }
     function closePopup(id: string): void {
       openPopups.value = openPopups.value.filter((p) => p.id !== id);
@@ -143,7 +236,25 @@ export default defineComponent({
         selection.renderer === null
           ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
           : (selection.renderer(device, tokens, defaultCtx) as VNode);
-      return h('div', { class: 'skin-host-cell', 'data-id': deviceId }, [body]);
+      // #1194: a link on this device makes the host cell a navigation affordance.
+      const link = deviceLinks.value.get(deviceId);
+      const deco = decorateLink(link, linkActive(link));
+      return h(
+        'div',
+        {
+          class: ['skin-host-cell', link ? 'skin-host-cell-link' : null].filter(Boolean),
+          'data-id': deviceId,
+          ...deco.attrs,
+          style: Object.keys(deco.style).length > 0 ? deco.style : undefined,
+        },
+        [body, ...deco.extra],
+      );
+    }
+
+    /** Is a link's target the current page or an ancestor of it? (host state) */
+    function linkActive(link: PageLink | undefined): boolean {
+      const page = props.currentPage ?? currentPageId.value;
+      return link ? isLinkActive(link, page, navTree.value) : false;
     }
 
     return () => {
@@ -157,8 +268,8 @@ export default defineComponent({
       if (sk.page) {
         const host: PageHost = {
           navTree: navTree.value,
-          currentPageId: currentPage.value ?? firstPageId(navTree.value),
-          navigate,
+          currentPageId: currentPageId.value ?? firstPageId(navTree.value),
+          navigate: store.navigate,
           layersFor: (id) => store.layersFor(id),
           renderTile,
           openPopups: openPopups.value,
@@ -187,23 +298,30 @@ export default defineComponent({
             ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
             : (selection.renderer(device, tokens, defaultCtx) as VNode);
 
+        // #1194: an item carrying a page link becomes a navigation affordance —
+        // the host stamps the target + the (author-chosen) active indicator; the
+        // gesture seam turns a tap on an otherwise non-interactive tile into
+        // `navigate`. Without a link this is inert and the cell is unchanged.
+        const deco = decorateLink(item.link, linkActive(item.link));
+
         return h(
           'div',
           {
             key: item.id,
-            class: 'skin-host-cell',
+            class: ['skin-host-cell', item.link ? 'skin-host-cell-link' : null].filter(Boolean),
             // The host resolves the device id of a tapped tile from the cell
             // (OverviewGrid → tileIdFor → cell.dataset.id), so the gesture maps to
             // a canonical action. Without it, every tap resolves no id → no-op.
             'data-id': item.id,
             'data-group': item.group,
             'data-role': item.role,
+            ...deco.attrs,
             // Placement: a position-honouring skin (layering W4) gets an absolute
             // box from the author's x/y/w/h, scaled by `--vz-pos-unit` (the skin
             // sets the unit: 1px for pixel-exact Edomi, a cell size for a grid).
             // Else a role-honouring grid gets its span footprint; a plain list none.
-            style:
-              lay.honorsPosition && item.position
+            style: {
+              ...(lay.honorsPosition && item.position
                 ? {
                     position: 'absolute',
                     left: `calc(var(--vz-pos-unit, 8px) * ${item.position.x})`,
@@ -213,9 +331,11 @@ export default defineComponent({
                   }
                 : lay.honorsRole
                   ? { gridColumn: `span ${item.span.c}`, gridRow: `span ${item.span.r}` }
-                  : undefined,
+                  : {}),
+              ...deco.style,
+            },
           },
-          [body],
+          [body, ...deco.extra],
         );
       };
 
