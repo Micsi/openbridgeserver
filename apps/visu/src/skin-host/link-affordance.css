@@ -1,0 +1,52 @@
+/**
+ * skin-host/link-affordance — the "stretched link" a page link adds to a host
+ * cell (#1194, review round 3).
+ *
+ * The problem this solves: the cell itself must NOT be the link. A tile may hold
+ * its own control (the camera's refresh button), so making the cell `role="link"`
+ * pulls that button's text into the link's name-from-content and leaves two
+ * overlapping activation targets; making the cell a bare focusable div is worse
+ * still — a focus stop with no name and no role (WCAG 4.1.2).
+ *
+ * So the host puts ONE real, named link inside the cell and stretches it over the
+ * whole tile. Result: an announced link AND an announced button, no nesting, one
+ * clean tab stop, and a focus ring that outlines the whole tile.
+ *
+ * Why the stretched link is `pointer-events: none` rather than a click-catching
+ * overlay: the host already delegates every click on the cell (OverviewGrid ->
+ * linkTargetFor), so pointer coverage is solved without an overlay. An overlay
+ * would have to out-stack the tile's own controls, and the usual recipe for that
+ * (`[data-action] { position: relative; z-index: 2 }`) would BREAK a control the
+ * skin already positions — the ionic camera refresh is `position: absolute;
+ * z-index: 2`, and forcing it to `relative` drops it back into the flow. The
+ * geometry is kept only so the focus ring outlines the tile; the pointer never
+ * touches it, so no skin control can ever be swallowed.
+ */
+
+/* Containing block for the stretched link. Inert for a grid item; a
+   position-honouring skin already sets `position: absolute` inline, which wins
+   and is itself a containing block. */
+.skin-host-cell[data-link] {
+  position: relative;
+}
+
+.skin-host-link {
+  position: absolute;
+  inset: 0;
+  display: block;
+  /* The host's click delegation owns the pointer — see the note above. */
+  pointer-events: none;
+  border-radius: inherit;
+  text-decoration: none;
+  color: inherit;
+}
+
+/* The link is a real tab stop, so it must show a real focus ring. `outline` is
+   deliberately free for this: the active indicator uses `box-shadow`. */
+.skin-host-link:focus-visible {
+  outline: 2px solid Highlight;
+  outline: 2px solid -webkit-focus-ring-color;
+  outline-offset: -2px;
+}
+
+/* The name rides on `aria-label` (see SkinHost) — no clipped text node. */

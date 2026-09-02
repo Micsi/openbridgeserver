@@ -27,11 +27,12 @@
  * {@link mapTree} — they keep running on the mock demo page.
  */
 
-import type { Device, WidgetAction, WidgetPosition } from '@obs/visu-contract';
+import type { Device, PageLink, WidgetAction, WidgetPosition } from '@obs/visu-contract';
 import type {
   AuthCapableDataSource,
   DevicePatch,
   PageAuthCapableDataSource,
+  LinkCapableDataSource,
   PageGate,
   PatchListener,
   PositionCapableDataSource,
@@ -72,6 +73,7 @@ export class ObsDataSource
     AuthCapableDataSource,
     PageAuthCapableDataSource,
     PositionCapableDataSource,
+    LinkCapableDataSource,
     LayeringCapableDataSource
 {
   private readonly client: ObsClient;
@@ -214,6 +216,30 @@ export class ObsDataSource
       if (m.position) out.set(id, m.position);
     }
     return out;
+  }
+
+  /**
+   * Per-device page links (CONTRACT-v1.11 → #1194). Built from the mapped widgets
+   * of the last {@link list}; only devices whose backend widget declared a
+   * `target_node_id` appear (the same config key the V1 link widget uses). The
+   * host resolves + executes them; a device without one behaves as before.
+   */
+  links(): ReadonlyMap<string, PageLink> {
+    const out = new Map<string, PageLink>();
+    for (const [id, m] of this.mapped) {
+      if (m.link) out.set(id, m.link);
+    }
+    return out;
+  }
+
+  /**
+   * Whether a valid PIN session is held for `nodeId` (#1194). The session hangs on
+   * the node that DEFINES the access, so this asks the client for exactly that
+   * node — the same key {@link sessionTokenFor} uses for page-scoped reads/writes.
+   * The host's link resolution calls this before jumping onto a `protected` target.
+   */
+  hasPageSession(nodeId: string): boolean {
+    return this.client.sessionToken(this.accessNode.get(nodeId) ?? nodeId) !== null;
   }
 
   /**

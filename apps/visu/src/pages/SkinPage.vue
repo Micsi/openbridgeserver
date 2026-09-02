@@ -40,7 +40,7 @@ import { storeToRefs } from 'pinia';
 import DetailModalHost from '../app/DetailModalHost.vue';
 import TweaksPanel, { type TweakValues } from '../app/TweaksPanel.vue';
 import OverviewGrid from './OverviewGrid';
-import { resolvePage, groupDevicesByRoom } from './pages';
+import { PAGES, resolvePage, groupDevicesByRoom } from './pages';
 import { resolveSkin } from '../skin-host/skins';
 import { useDeviceStore } from '../core/store';
 import { NAV_KEYS, type NavKey } from '../app/shell/useShellState';
@@ -64,7 +64,7 @@ const shellState = computed(() =>
 );
 /** Live host state — the store owns the device floor when the source is external. */
 const store = useDeviceStore();
-const { devices, externalFloor, positions } = storeToRefs(store);
+const { devices, externalFloor, positions, links } = storeToRefs(store);
 /**
  * The ordered, room-grouped blocks this page renders. With the mock source the
  * floor is the static model (core `rooms`, filtered by the page def). With an
@@ -74,7 +74,9 @@ const { devices, externalFloor, positions } = storeToRefs(store);
  * demo model. Empty until the async seed lands (renders nothing, then fills).
  */
 const groups = computed(() =>
-  externalFloor.value ? groupDevicesByRoom(devices.value, positions.value) : page.value.groups,
+  externalFloor.value
+    ? groupDevicesByRoom(devices.value, positions.value, links.value)
+    : page.value.groups,
 );
 
 /** Whether the active skin declares tweaks (only those skins show the editor). */
@@ -113,6 +115,28 @@ watchEffect(() => {
   shellContext.state = shellState.value;
   shellContext.rootBind = rootTweaks.value;
 });
+
+/* --------------------------------------------------- current page (#1194) */
+// "Which page am I on" decides whether a link's active indicator lights. On the
+// STATIC floor that is the ROUTED page, and it is passed down explicitly rather
+// than written into the store: the Ionic router outlet keeps the leaving page
+// mounted for its transition, so two SkinPages can live at once — a shared piece
+// of state would then race between them. With an external floor the backend page
+// ids rule, so nothing is passed and the host's own `currentPageId` (written by
+// the link action and by a page-owning skin's nav) decides.
+const currentPage = computed(() => (externalFloor.value ? undefined : page.value.def.id));
+
+/**
+ * Display names for link targets on the STATIC floor (#1194). There is no nav
+ * tree there, so without these every link would announce the same generic
+ * fallback and two links to different pages would be indistinguishable to a
+ * screen reader (WCAG 2.4.4). The page layer owns the definitions and their
+ * translated titles, so it is the right place to resolve them; the host prefers
+ * a live nav-tree name when one exists.
+ */
+const pageNames = computed<Record<string, string> | undefined>(() =>
+  externalFloor.value ? undefined : Object.fromEntries(PAGES.map((p) => [p.id, t(p.titleKey)])),
+);
 </script>
 
 <template>
@@ -138,6 +162,8 @@ watchEffect(() => {
           :skin="skin"
           :groups="groups"
           :theme="theme"
+          :current-page="currentPage"
+          :page-names="pageNames"
         />
       </div>
 

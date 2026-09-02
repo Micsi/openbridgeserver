@@ -32,13 +32,21 @@ import { ref } from 'vue';
 import type {
   Device,
   LightDevice,
+  PageLink,
   WidgetAction,
   WidgetPosition,
   PageLayer,
 } from '@obs/visu-contract';
 import type { DataSource, DevicePatch, PageGate } from './datasource';
-import { MockDataSource, supportsAuth, supportsPageAuth, supportsPositions } from './datasource';
+import {
+  MockDataSource,
+  supportsAuth,
+  supportsLinks,
+  supportsPageAuth,
+  supportsPositions,
+} from './datasource';
 import { supportsLayering, type NavNode } from './obs/compose';
+import { resolveLink, type LinkOutcome } from './links';
 
 /** Brightness a light jumps to when switched on from a dimmed-to-zero state. */
 const DEFAULT_ON_DIM = 60;
@@ -83,11 +91,35 @@ export const useDeviceStore = defineStore('devices', () => {
   const positions = ref<ReadonlyMap<string, WidgetPosition>>(new Map());
 
   /**
+   * Per-device page links (CONTRACT-v1.11 → #1194). Empty for a source without
+   * links (the mock, whose links live on the static layout entries). A tile whose
+   * device appears here jumps to another visu page when it is tapped and has no
+   * click function of its own. The host owns this like the rest of the state.
+   */
+  const links = ref<ReadonlyMap<string, PageLink>>(new Map());
+
+  /**
    * Navigation tree (layering W3c): the visible PAGE/LOCATION hierarchy the active
    * source exposes. Empty for a source without layering (the mock). A skin renders
    * its own nav from this; the responsive skin ignores it.
    */
   const navTree = ref<NavNode[]>([]);
+
+  /**
+   * The page the host currently shows (#1194 / layering W4). The HOST owns this,
+   * never a skin (golden rule 4): a page-owning skin reads it through `PageHost`,
+   * and the link action ({@link followLink}) is the only other writer besides the
+   * routed page announcing itself. Null until something navigates.
+   */
+  const currentPageId = ref<string | null>(null);
+
+  /**
+   * The page a link tried to reach but which needs a PIN first (#1194). Set by
+   * {@link followLink} INSTEAD of navigating, so a `protected` target lands on the
+   * PIN path (the AccessGate entry for that page) and never blindly on the page.
+   * Cleared on a successful navigation or once the PIN unlocked it.
+   */
+  const pendingGate = ref<string | null>(null);
 
   /**
    * Auth state (Welle L, guest-by-default). `authenticated` is false until a JWT
@@ -157,6 +189,8 @@ export const useDeviceStore = defineStore('devices', () => {
     positions.value = supportsPositions(source) ? source.positions() : new Map();
     // Navigation tree (layering W3c): the visible page hierarchy for skin-owned nav.
     navTree.value = supportsLayering(source) ? source.navTree() : [];
+    // Page links (#1194): the jump targets the backend widgets declare.
+    links.value = supportsLinks(source) ? source.links() : new Map();
   }
 
   /**
@@ -166,6 +200,48 @@ export const useDeviceStore = defineStore('devices', () => {
    */
   function layersFor(pageId: string): PageLayer[] {
     return supportsLayering(source) ? source.layersFor(pageId) : [];
+  }
+
+  /* --------------------------------------------------- page links (#1194) */
+
+  /**
+   * Whether a valid PIN session is held for `nodeId` — the node that DEFINES the
+   * access (the backend scopes the session there, mapping → `accessNodeId`). A
+   * source without page auth reports "no session", which GATES rather than leaks.
+   */
+  function hasPageSession(nodeId: string): boolean {
+    return supportsPageAuth(source) && source.hasPageSession ? source.hasPageSession(nodeId) : false;
+  }
+
+  /**
+   * Switch the page the host shows (the canonical navigation action). The HOST
+   * owns this state; a skin only marks intent, it never navigates itself.
+   */
+  function navigate(pageId: string): void {
+    currentPageId.value = pageId;
+    pendingGate.value = null;
+  }
+
+  /**
+   * Follow a page link (#1194) — the host action behind a tap on a tile that has
+   * no click function of its own. The resolution mirrors the V1 link widget
+   * (`frontend/src/widgets/Link/Widget.vue`): the access is resolved along the
+   * `parent_id` chain, a `protected` target without a session token goes to the
+   * PIN path instead of the page, and a LOCATION descends to its first visible
+   * page. An unknown target is a no-op — never a jump to the wrong page.
+   *
+   * Returns the outcome so the caller (the routed host layer) can also move the
+   * router for a statically routed page; the state changes happen here.
+   */
+  function followLink(link: PageLink): LinkOutcome {
+    const outcome = resolveLink(link, {
+      navTree: navTree.value,
+      isLoggedIn: authenticated.value,
+      hasSessionToken: hasPageSession,
+    });
+    if (outcome.kind === 'navigate') navigate(outcome.pageId);
+    else if (outcome.kind === 'gate') pendingGate.value = outcome.pageId;
+    return outcome;
   }
 
   /**
@@ -220,6 +296,11 @@ export const useDeviceStore = defineStore('devices', () => {
     }
     await source.authenticatePage(pageId, pin);
     await refresh();
+    // #1194: a link that was stopped by this gate now completes — the PIN path
+    // ends on the page the link asked for, not on a dead end.
+    if (pendingGate.value === pageId && !pageGates.value.some((g) => g.pageId === pageId)) {
+      navigate(pageId);
+    }
   }
 
   /**
@@ -319,7 +400,13 @@ export const useDeviceStore = defineStore('devices', () => {
     devices,
     externalFloor,
     positions,
+    links,
     navTree,
+    currentPageId,
+    pendingGate,
+    navigate,
+    followLink,
+    hasPageSession,
     layersFor,
     authenticated,
     username,

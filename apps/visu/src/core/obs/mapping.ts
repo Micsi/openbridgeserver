@@ -26,6 +26,8 @@ import type {
   JalousieDevice,
   JalousieStatus,
   AccentToken,
+  LinkIndicator,
+  PageLink,
   WidgetPosition,
 } from '@obs/visu-contract';
 
@@ -173,6 +175,10 @@ export interface MappedWidget {
    *  when the backend widget carries a complete box. Additive layout hint the
    *  host forwards to skins that honour `position`; undefined otherwise. */
   readonly position?: WidgetPosition;
+  /** Page link (CONTRACT-v1.11 → #1194) when the backend widget config declares a
+   *  `target_node_id` — the same config key the V1 link widget uses. Additive:
+   *  undefined for a widget without one, and the tile then behaves as before. */
+  readonly link?: PageLink;
 }
 
 /** Write-target datapoints + scaling info per device (dispatch reads these). */
@@ -379,6 +385,23 @@ function readPosition(w: ObsWidget): WidgetPosition | undefined {
   return { x, y, w: width, h };
 }
 
+/**
+ * The widget's page link (#1194) from its config, or undefined when it declares
+ * no target. Reads the SAME config keys as the V1 link widget so an author's
+ * existing `target_node_id` / `active_indicator` keep their meaning:
+ * `target_node_id` (the jump target) and `active_indicator`
+ * (`none`/`dot`/`bar`/`border`). An unknown indicator string is dropped rather
+ * than guessed — the link itself still stands. Pure.
+ */
+function readLink(w: ObsWidget): PageLink | undefined {
+  const target = cfgStr(w.config, 'target_node_id');
+  if (!target) return undefined;
+  const raw = cfgStr(w.config, 'active_indicator');
+  const known: readonly LinkIndicator[] = ['none', 'dot', 'bar', 'border'];
+  const indicator = known.find((k) => k === raw);
+  return indicator ? { targetNodeId: target, activeIndicator: indicator } : { targetNodeId: target };
+}
+
 export function mapWidget(
   w: ObsWidget,
   room: string,
@@ -402,9 +425,15 @@ export function mapWidget(
     default:
       return null;
   }
-  // Fold in the additive author position (CONTRACT-v1.9); undefined stays absent.
+  // Fold in the additive author position (CONTRACT-v1.9) and page link (v1.11);
+  // both stay absent when the widget declares none.
   const position = readPosition(w);
-  return position ? { ...mapped, position } : mapped;
+  const link = readLink(w);
+  return {
+    ...mapped,
+    ...(position ? { position } : {}),
+    ...(link ? { link } : {}),
+  };
 }
 
 /**

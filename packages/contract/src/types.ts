@@ -309,6 +309,42 @@ export interface LayerItem {
   readonly role?: Role;
   /** Autoren-Position; nur von Skins mit `honors: ['position']` genutzt. */
   readonly position?: WidgetPosition;
+  /**
+   * Sprungziel dieses platzierten Elements (v1.11, Upstream #1194). Additiv und
+   * ignorierbar: ohne `link` verhält sich das Element exakt wie bisher. Der HOST
+   * löst den Link auf (Access-Kette, PIN-Gate, aktuelle Seite) und führt die
+   * kanonische Aktion `navigate` aus - der Skin besitzt weder Zustand noch
+   * Navigationslogik (Goldene Regel 4).
+   */
+  readonly link?: PageLink;
+}
+
+/**
+ * Wie der Host markiert, dass das Linkziel die aktuelle Seite (oder ein Vorfahr
+ * davon) ist. Autorenwahl als reine Daten; `'none'` (Default) heisst: keine
+ * Markierung. Spiegelt `active_indicator` des V1-Link-Widgets.
+ */
+export type LinkIndicator = 'none' | 'dot' | 'bar' | 'border';
+
+/**
+ * Das Sprungziel eines platzierten Elements (v1.11, Upstream #1194): ein Element
+ * OHNE eigene Klick-Funktion (z. B. eine Kamera-Kachel) springt beim Tap auf eine
+ * andere Visuseite - „wie im Link-Widget".
+ *
+ * Reine Daten (Goldene Regel 7): der Vertrag beschreibt nur WOHIN gesprungen wird,
+ * nie WIE. Das Auflösen (LOCATION -> erste sichtbare Seite), das PIN-Gate eines
+ * `protected` Knotens und der Aktiv-Zustand entlang der Vorfahrenkette sind
+ * Host-Verhalten. Ein Skin, der `link` ignoriert, verhält sich unverändert.
+ */
+export interface PageLink {
+  /**
+   * Ziel-Knoten im Navigationsbaum (PAGE oder LOCATION) - die Entsprechung von
+   * `target_node_id` im V1-Link-Widget. Ein unbekanntes Ziel ist ein No-op, nie
+   * ein blinder Sprung.
+   */
+  readonly targetNodeId: string;
+  /** Markierung, wenn das Ziel aktiv ist (Default `'none'`). */
+  readonly activeIndicator?: LinkIndicator;
 }
 
 /**

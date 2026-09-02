@@ -20,9 +20,9 @@
  *    hard, visible failure — never a silent default.
  */
 
-import { rooms as mobileGroups, demoRooms, type RoomGroup, type LayoutEntry } from '../core/model';
+import { rooms as mobileGroups, demoRooms, cameraFullRooms, type RoomGroup, type LayoutEntry } from '../core/model';
 import type { SkinKey } from '../skin-host/skins';
-import type { Device, WidgetPosition } from '@obs/visu-contract';
+import type { Device, PageLink, WidgetPosition } from '@obs/visu-contract';
 
 /**
  * One page definition — pure data (the JSON half of "Daten=JSON, Verhalten=Code").
@@ -76,6 +76,9 @@ export const PAGES: readonly PageDef[] = Object.freeze([
   // canvas + popups from the live backend tree (OBS mode); the room-grouped floor is
   // unused here (the page renderer ignores `groups`).
   { id: 'edomi', titleKey: 'pages.edomi.title', skin: 'edomi', groups: mobileGroups },
+  // #1194: the full-screen camera page a small camera tile links to. Same core
+  // devices as the media block (no data fork) — only the placement differs.
+  { id: 'camera-full', titleKey: 'pages.cameraFull.title', skin: 'ionic', groups: cameraFullRooms },
 ] satisfies PageDef[]);
 
 /** Lookup a page definition by id (the route param / nav key). */
@@ -140,6 +143,7 @@ export function resolvePage(id: string): ResolvedPage {
 export function groupDevicesByRoom(
   devices: readonly Device[],
   positions?: ReadonlyMap<string, WidgetPosition>,
+  links?: ReadonlyMap<string, PageLink>,
 ): RoomGroup[] {
   const byRoom = new Map<string, LayoutEntry[]>();
   for (const d of devices) {
@@ -153,7 +157,9 @@ export function groupDevicesByRoom(
     // Carry the additive author position (layering W3) when the source has one;
     // a responsive skin ignores it, a pixel skin honours it.
     const position = positions?.get(d.id);
-    entries.push(position ? { id: d.id, position } : { id: d.id });
+    // Carry the additive page link (#1194) the same way; the host resolves it.
+    const link = links?.get(d.id);
+    entries.push({ id: d.id, ...(position ? { position } : {}), ...(link ? { link } : {}) });
   }
   return [...byRoom.entries()].map(([room, entries]) => ({ room, entries }));
 }

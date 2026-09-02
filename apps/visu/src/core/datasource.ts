@@ -20,7 +20,7 @@
  * only code here is the transport plumbing + the canonical mutators.
  */
 
-import type { Device, WidgetAction, WidgetPosition } from '@obs/visu-contract';
+import type { Device, PageLink, WidgetAction, WidgetPosition } from '@obs/visu-contract';
 import { devices as seedDevices } from './model';
 
 /* ------------------------------------------------------------------ types */
@@ -101,6 +101,15 @@ export interface PageAuthCapableDataSource extends DataSource {
   authenticatePage(pageId: string, pin: string): Promise<unknown>;
   /** The pages that currently need a gate (PIN missing / login required). */
   pageGates(): readonly PageGate[];
+  /**
+   * Whether a valid PIN session is held for `nodeId` — the node that DEFINES the
+   * access, which is where the backend scopes the session (mapping →
+   * `accessNodeId`). Optional and additive (#1194): the host's link resolution
+   * asks this before jumping onto a `protected` target, so a link lands on the
+   * PIN path instead of blindly on the page. A source that omits it simply
+   * reports "no session", which gates rather than leaks.
+   */
+  hasPageSession?(nodeId: string): boolean;
 }
 
 /** Narrow a {@link DataSource} to one that supports PIN/page auth (guest-safe). */
@@ -124,6 +133,22 @@ export interface PositionCapableDataSource extends DataSource {
 /** Does the source expose per-device author positions (layering W3)? */
 export function supportsPositions(ds: DataSource): ds is PositionCapableDataSource {
   return typeof (ds as Partial<PositionCapableDataSource>).positions === 'function';
+}
+
+/**
+ * A source that carries per-device page links (CONTRACT-v1.11 → #1194). Additive:
+ * a source without it (the mock) simply has no links, so every tile behaves as
+ * before. {@link links} maps a device id to its {@link PageLink} when the backend
+ * widget declares a target node (the V1 `target_node_id` config key).
+ */
+export interface LinkCapableDataSource extends DataSource {
+  /** Device id → page link, for devices whose widget declares a target node. */
+  links(): ReadonlyMap<string, PageLink>;
+}
+
+/** Does the source expose per-device page links (#1194)? */
+export function supportsLinks(ds: DataSource): ds is LinkCapableDataSource {
+  return typeof (ds as Partial<LinkCapableDataSource>).links === 'function';
 }
 
 /**

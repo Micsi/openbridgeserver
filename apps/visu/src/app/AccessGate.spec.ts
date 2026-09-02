@@ -207,3 +207,55 @@ describe('AccessGate – user page → login-required hint', () => {
     expect(w.find('.access-gate-input').exists()).toBe(false);
   });
 });
+
+describe('AccessGate – a link stopped by the PIN gate becomes visible (#1194)', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('scrolls the pending gate into view and focuses its PIN field', async () => {
+    const store = useDeviceStore();
+    await store.init(
+      new FakePageSource([
+        { pageId: 'p1', name: 'Flur', access: 'protected' },
+        { pageId: 'p2', name: 'Technik', access: 'protected' },
+      ]),
+    );
+    // attachTo so focus() actually lands (jsdom only focuses connected nodes).
+    const wrapper = mount(AccessGate, {
+      global: { plugins: [i18n()] },
+      attachTo: document.body,
+    });
+
+    await flushPromises();
+
+    // jsdom implements no scrollIntoView — install a recorder in its place.
+    const scrolled: string[] = [];
+    for (const form of Array.from(document.querySelectorAll<HTMLElement>('.access-gate-pin'))) {
+      form.scrollIntoView = () => scrolled.push(form.dataset.page ?? '');
+    }
+
+    // The host reports the gate the link ran into.
+    store.pendingGate = 'p2';
+    await flushPromises();
+
+    // It is brought into view …
+    expect(scrolled).toEqual(['p2']);
+    // … marked …
+    const form = wrapper.find('.access-gate-pin[data-page="p2"]');
+    expect(form.attributes('data-pending')).toBe('true');
+    expect(form.classes()).toContain('is-pending');
+    // … and the cursor sits in its PIN field, so the click is never a silent no-op.
+    expect(document.activeElement).toBe(form.find('input').element);
+    // The other gate is untouched.
+    expect(wrapper.find('.access-gate-pin[data-page="p1"]').attributes('data-pending')).toBeUndefined();
+
+    wrapper.unmount();
+  });
+
+  it('does nothing when no gate is pending', async () => {
+    const store = useDeviceStore();
+    await store.init(new FakePageSource([{ pageId: 'p1', name: 'Flur', access: 'protected' }]));
+    const wrapper = mountGate();
+    await flushPromises();
+    expect(wrapper.find('.access-gate-pin[data-page="p1"]').attributes('data-pending')).toBeUndefined();
+  });
+});

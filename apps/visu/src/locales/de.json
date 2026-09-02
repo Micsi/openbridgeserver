@@ -79,6 +79,9 @@
     },
     "edomi": {
       "title": "Edomi"
+    },
+    "cameraFull": {
+      "title": "Kamera (Vollbild)"
     }
   },
   "tweaks": {
@@ -112,5 +115,9 @@
     "glow": {
       "label": "Leuchtkraft"
     }
+  },
+  "links": {
+    "goToPage": "Zur Seite {page} springen",
+    "goToLinkedPage": "Zur verknüpften Seite springen"
   }
 }

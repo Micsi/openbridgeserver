@@ -406,3 +406,45 @@ describe('author position (x/y/w/h) — additive layout hint (CONTRACT-v1.9, lay
     expect(mapped[0].pageId).toBe('p1');
   });
 });
+
+/* ------------------------------------------------- page links (v1.11, #1194) */
+
+describe('mapWidget — page links from the backend widget config (#1194)', () => {
+  const linked = (config: Record<string, unknown>): ObsWidget => ({
+    id: 'w-link',
+    name: 'Toggle',
+    type: 'Toggle',
+    datapoint_id: 'dp-t',
+    status_datapoint_id: null,
+    config,
+  });
+
+  it('reads the V1 config key `target_node_id` as the link target', () => {
+    const m = mapWidget(linked({ target_node_id: 'node-9' }), 'Raum');
+    expect(m?.link).toEqual({ targetNodeId: 'node-9' });
+  });
+
+  it('carries the V1 `active_indicator` when it names a known style', () => {
+    expect(mapWidget(linked({ target_node_id: 'n', active_indicator: 'bar' }), 'Raum')?.link).toEqual({
+      targetNodeId: 'n',
+      activeIndicator: 'bar',
+    });
+  });
+
+  it('drops an unknown indicator rather than guessing — the link still stands', () => {
+    expect(mapWidget(linked({ target_node_id: 'n', active_indicator: 'blink' }), 'Raum')?.link).toEqual({
+      targetNodeId: 'n',
+    });
+  });
+
+  it('a widget without a target carries NO link (additive — unchanged behaviour)', () => {
+    expect(mapWidget(linked({}), 'Raum')?.link).toBeUndefined();
+    expect(mapWidget(linked({ target_node_id: '' }), 'Raum')?.link).toBeUndefined();
+  });
+
+  it('keeps the author position alongside the link (both are additive)', () => {
+    const m = mapWidget({ ...linked({ target_node_id: 'n' }), x: 1, y: 2, w: 3, h: 4 }, 'Raum');
+    expect(m?.position).toEqual({ x: 1, y: 2, w: 3, h: 4 });
+    expect(m?.link).toEqual({ targetNodeId: 'n' });
+  });
+});

@@ -28,6 +28,8 @@ import type {
   NavNode,
   PageHost,
   PageRenderer,
+  PageLink,
+  LinkIndicator,
 } from '../src/types.js';
 
 describe('Device unions (§5) — readonly', () => {
@@ -237,5 +239,33 @@ describe('Page renderer & host seam (v1.10) — additive, skin owns appearance',
 
   it('PageRenderer takes a PageHost and returns a framework node (like Renderer)', () => {
     expectTypeOf<PageRenderer>().toEqualTypeOf<(host: PageHost) => string | unknown>();
+  });
+});
+
+describe('Page links (v1.11) — additive, ignorable, data only (#1194)', () => {
+  it('PageLink carries the target node id + an optional active indicator', () => {
+    expectTypeOf<PageLink['targetNodeId']>().toEqualTypeOf<string>();
+    expectTypeOf<PageLink['activeIndicator']>().toEqualTypeOf<LinkIndicator | undefined>();
+  });
+
+  it('LinkIndicator mirrors the V1 link widget active_indicator options', () => {
+    expectTypeOf<'none'>().toMatchTypeOf<LinkIndicator>();
+    expectTypeOf<'dot'>().toMatchTypeOf<LinkIndicator>();
+    expectTypeOf<'bar'>().toMatchTypeOf<LinkIndicator>();
+    expectTypeOf<'border'>().toMatchTypeOf<LinkIndicator>();
+  });
+
+  it('a LayerItem carries an OPTIONAL link — without it the item is unchanged', () => {
+    expectTypeOf<LayerItem['link']>().toEqualTypeOf<PageLink | undefined>();
+    // Additive: the pre-1.11 shape still satisfies LayerItem.
+    expectTypeOf<{ id: string }>().toMatchTypeOf<LayerItem>();
+  });
+
+  it('the contract only DESCRIBES the jump — it executes nothing (golden rule 7)', () => {
+    // PageLink is plain data: every member is a string/union, never a function.
+    expectTypeOf<PageLink>().toEqualTypeOf<{
+      readonly targetNodeId: string;
+      readonly activeIndicator?: LinkIndicator;
+    }>();
   });
 });

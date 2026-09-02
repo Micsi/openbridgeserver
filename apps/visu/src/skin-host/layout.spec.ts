@@ -224,3 +224,24 @@ describe('resolveLayout — author position is additive (honors: position, layer
     expect(out.items[1].position).toBeUndefined();
   });
 });
+
+describe('resolveLayout — the page link is forwarded, additive to the floor (#1194)', () => {
+  it('carries a link onto the placed item and leaves unlinked items untouched', () => {
+    const groups = [
+      {
+        room: 'Küche',
+        entries: [
+          { id: 'kueche-wand' },
+          { id: 'kueche-pendel', link: { targetNodeId: 'camera-full', activeIndicator: 'dot' as const } },
+        ],
+      },
+    ];
+    const { items } = resolveLayout(GRID_LAYOUT, groups);
+    expect(items[0].link).toBeUndefined();
+    expect(items[1].link).toEqual({ targetNodeId: 'camera-full', activeIndicator: 'dot' });
+    // Order + grouping + span are unchanged by the link (it is pure addition).
+    expect(items.map((i) => i.id)).toEqual(['kueche-wand', 'kueche-pendel']);
+    expect(items[1].group).toBe('Küche');
+    expect(items[1].span).toEqual(items[0].span);
+  });
+});

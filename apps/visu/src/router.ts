@@ -33,6 +33,13 @@ const routes: RouteRecordRaw[] = [
     component: SkinPage,
     props: { pageId: 'edomi' },
   },
+  {
+    // #1194: the full-screen camera page a small camera tile links to.
+    path: '/camera-full',
+    name: 'camera-full',
+    component: SkinPage,
+    props: { pageId: 'camera-full' },
+  },
 ];
 
 export const router = createRouter({
