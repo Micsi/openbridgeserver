@@ -11,39 +11,25 @@
  *    skin key, an optional room filter). The only *behaviour* is the pure
  *    {@link resolvePage} resolver — it owns no state and reads only the core
  *    model (`core/model` → ordered, grouped rooms) + the registry skin keys.
- *  - No data fork: a page never copies or rewrites devices. It selects from the
- *    core `rooms` (order + grouping stay the floor) — by reference, filtered only
- *    by room name when `rooms` is given. The same device object renders through
- *    whichever skin the page names.
+ *  - No data fork: a page never copies or rewrites devices. It NAMES a core model
+ *    block (`groups`) by reference (order + grouping stay the floor), filtered
+ *    only by room name when `rooms` is given. The ionic and the terminal page
+ *    name the SAME object, so the same device renders through both skins.
  *  - Skin addressed by name: a page carries a `skin` *key*; the host resolves it
  *    via the registry (`skin-host/skins` → resolveSkin), and an unknown key is a
  *    hard, visible failure — never a silent default.
  */
 
-import { rooms as modelRooms, demoRooms, type RoomGroup, type LayoutEntry } from '../core/model';
+import { rooms as mobileGroups, demoRooms, type RoomGroup, type LayoutEntry } from '../core/model';
 import type { SkinKey } from '../skin-host/skins';
 import type { Device, WidgetPosition } from '@obs/visu-contract';
 
 /**
- * Which model room set a page draws from. `overview` = the ported store.js mobile
- * floor ({@link modelRooms}); `demo` = the v1.2 Medien block ({@link demoRooms},
- * media/camera — Issue #122). A page picks one source, then optionally filters it
- * by room name. Both sets are the core model (no data fork); the split only keeps
- * the media/camera demo out of the overview floor.
- */
-export type RoomSource = 'overview' | 'demo';
-
-/** The base room blocks for a page's declared {@link RoomSource}. */
-function baseRooms(source: RoomSource | undefined): readonly RoomGroup[] {
-  return source === 'demo' ? demoRooms : modelRooms;
-}
-
-/**
  * One page definition — pure data (the JSON half of "Daten=JSON, Verhalten=Code").
  *
- * The room set is described *declaratively*: omit `rooms` for "every room in the
- * core model, in source order" (the overview); give a `rooms` allowlist to scope
- * a page to specific rooms (still in core source order — the floor is preserved).
+ * The room set is described *declaratively*: name a core model block in `groups`
+ * and, optionally, scope it with a `rooms` allowlist (still in source order — the
+ * floor is preserved).
  */
 export interface PageDef {
   /** Stable id — the route param and the nav key (`shell.nav.*` is separate). */
@@ -53,15 +39,20 @@ export interface PageDef {
   /** The skin that renders this page (author's choice; resolved by the host). */
   readonly skin: SkinKey;
   /**
-   * Which model room set the page draws from (default `overview`). `demo` selects
-   * the v1.2 Medien block (media/camera). The source is filtered further by
-   * `rooms` when present.
+   * The ordered, room-grouped floor this page renders — a core model block
+   * **by reference** ({@link mobileGroups} = the ported store.js `mobileGroups`,
+   * or {@link demoRooms}). Its items carry `role`, not `span` (Issue #101 AC1).
+   *
+   * Two pages that name the SAME object therefore render the same devices from
+   * the same floor: `PAGES.overview.groups === PAGES.terminal.groups` is the
+   * no-data-fork guarantee in one `===` (Goldene Regel 1). A page never copies,
+   * rewrites or re-orders the block it names.
    */
-  readonly source?: RoomSource;
+  readonly groups: readonly RoomGroup[];
   /**
    * Optional room allowlist (by `RoomGroup.room`). When omitted, the page shows
-   * every room of its source in source order. When given, only those rooms render
-   * — still in core source order, so order + grouping stay the floor.
+   * every room of its `groups` in source order. When given, only those rooms
+   * render — still in source order, so order + grouping stay the floor.
    */
   readonly rooms?: readonly string[];
 }
@@ -73,16 +64,18 @@ export interface PageDef {
  * over one shared core model.
  */
 export const PAGES: readonly PageDef[] = Object.freeze([
-  { id: 'overview', titleKey: 'pages.overview.title', skin: 'ionic' },
-  { id: 'terminal', titleKey: 'pages.terminal.title', skin: 'terminal' },
+  // The A5 pair: ONE floor object (`mobileGroups`), two skins. Same rooms, same
+  // order, same devices — only `skin` differs.
+  { id: 'overview', titleKey: 'pages.overview.title', skin: 'ionic', groups: mobileGroups },
+  { id: 'terminal', titleKey: 'pages.terminal.title', skin: 'terminal', groups: mobileGroups },
   // The v1.2 media/camera demo (Issue #122): the Medien block, rendered by the
   // ionic skin. Until the ionic skin ships media/camera renderers (parallel skins
   // work), the host shows a declared gap at runtime — resolution + data are tested.
-  { id: 'demo-media', titleKey: 'pages.demoMedia.title', skin: 'ionic', source: 'demo' },
+  { id: 'demo-media', titleKey: 'pages.demoMedia.title', skin: 'ionic', groups: demoRooms },
   // Edomi POC (layering W4): a page-owning skin. It draws its own nav + pixel layer
   // canvas + popups from the live backend tree (OBS mode); the room-grouped floor is
   // unused here (the page renderer ignores `groups`).
-  { id: 'edomi', titleKey: 'pages.edomi.title', skin: 'edomi' },
+  { id: 'edomi', titleKey: 'pages.edomi.title', skin: 'edomi', groups: mobileGroups },
 ] satisfies PageDef[]);
 
 /** Lookup a page definition by id (the route param / nav key). */
@@ -93,15 +86,17 @@ export const pageById: Readonly<Record<string, PageDef>> = Object.freeze(
 /** A resolved page: the def plus the concrete, ordered room blocks it renders. */
 export interface ResolvedPage {
   readonly def: PageDef;
-  /** The ordered, grouped room blocks (core `rooms`, filtered by `def.rooms`). */
+  /** The ordered, grouped room blocks (`def.groups`, filtered by `def.rooms`). */
   readonly groups: readonly RoomGroup[];
 }
 
 /**
  * Resolve a page definition into the room blocks it renders (Verhalten=Code).
  *
- * Pure: reads only the core model. Selects core `rooms` BY REFERENCE in source
- * order (no data fork), filtered to `def.rooms` when present. An unknown page id,
+ * Pure: reads only the definition. Returns the def's own `groups` BY REFERENCE
+ * in source order (no data fork), filtered to `def.rooms` when present — only a
+ * filtered page allocates a new array, and even then the *entries* stay shared.
+ * An unknown page id,
  * or a `rooms` entry naming a room the core model does not have, is an authoring
  * gap surfaced loudly — the same "never a silent default" discipline the skin
  * registry and the layout resolver follow.
@@ -113,7 +108,7 @@ export function resolvePage(id: string): ResolvedPage {
     throw new Error(`pages: unknown page "${id}" — no such page definition (known: ${known}).`);
   }
 
-  const source = baseRooms(def.source);
+  const source = def.groups;
   if (!def.rooms) {
     return { def, groups: source };
   }

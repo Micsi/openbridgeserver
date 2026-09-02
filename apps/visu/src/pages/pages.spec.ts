@@ -3,7 +3,11 @@ import { describe, it, expect } from 'vitest';
 import { PAGES, pageById, resolvePage, groupDevicesByRoom } from './pages';
 import { resolveSkin } from '../skin-host/skins';
 import { rooms as modelRooms, demoRooms, byId } from '../core/model';
+import { schema } from '@obs/visu-contract';
 import type { Device } from '@obs/visu-contract';
+
+/** The role vocabulary, read from the contract schema (never a typed copy). */
+const CONTRACT_ROLES = (schema as unknown as { roles: readonly string[] }).roles;
 
 /**
  * pages/pages — page definitions resolve to the right devices + skin (A5, #101).
@@ -55,6 +59,31 @@ describe('resolvePage — devices per page (no data fork)', () => {
     expect(terminal.groups).toBe(modelRooms);
   });
 
+  it('the two page DEFINITIONS name one and the same floor object (no per-skin copy)', () => {
+    // The definition-level no-fork guarantee: not "equal groups", the SAME object.
+    // A per-skin copy would still be `toEqual` here — only `toBe` rules it out.
+    expect(pageById['overview'].groups).toBe(pageById['terminal'].groups);
+    expect(pageById['overview'].groups).toBe(modelRooms);
+    // …and the shared floor is frozen, so neither page can write into it.
+    expect(Object.isFrozen(pageById['overview'].groups)).toBe(true);
+  });
+
+  it('page items carry a contract ROLE, not a span (AC1: role statt span)', () => {
+    // The ported store.js `span: 2` hints were translated once, at the port; the
+    // page definitions speak roles. No entry of a shipped page carries a span.
+    for (const page of PAGES) {
+      for (const group of page.groups) {
+        for (const entry of group.entries) {
+          expect(entry.span).toBeUndefined();
+          if (entry.role !== undefined) expect(CONTRACT_ROLES).toContain(entry.role);
+        }
+      }
+    }
+    // …and the translation actually produced roles (not just "no spans left").
+    const roles = PAGES.flatMap((p) => p.groups.flatMap((g) => g.entries.map((e) => e.role)));
+    expect(roles.filter((r) => r === 'wide').length).toBeGreaterThan(0);
+  });
+
   it('a full-overview page (no filter) covers every core room in source order', () => {
     const { groups } = resolvePage('overview');
     expect(groups.map((g) => g.room)).toEqual(modelRooms.map((g) => g.room));
@@ -71,7 +100,8 @@ describe('resolvePage — v1.2 media/camera demo page (Issue #122)', () => {
     const def = pageById['demo-media'];
     expect(def).toBeDefined();
     expect(def.skin).toBe('ionic');
-    expect(def.source).toBe('demo');
+    // the def NAMES the Medien block by reference (no copy of the demo devices)
+    expect(def.groups).toBe(demoRooms);
     // its named skin still resolves through the host registry
     expect(resolveSkin(def.skin).manifest.name).toBe('ionic');
   });

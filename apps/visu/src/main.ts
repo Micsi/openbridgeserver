@@ -11,6 +11,15 @@ import { MockDataSource } from './core/datasource';
 import { obsDataSourceFromEnv } from './core/obs/obs-datasource';
 
 import '@ionic/vue/css/core.css';
+// Terminal (list) skin stylesheet — it scopes the console look to `.t-root`, the
+// class the registry hands the page (`skins.terminal.rootClass`). It lives on the
+// APP ENTRY rather than on the page component on purpose: this sub-export exists
+// only from the terminal skin's contract-1.10 stand, and the page component is
+// mounted by the unit tests, which must keep running against whatever skin stand
+// the dev link happens to point at (the deliberate cross-repo divergence this
+// branch tracks). The app entry is never imported by a test, so the browser gets
+// the stylesheet without the page tests taking the cross-repo dependency.
+import '@obs-visu-skins/terminal/terminal.css';
 
 // Host → contract seam: inject the i18n translator into the renderer sandbox Ctx
 // (CONTRACT v1.1 `Ctx.t`). Renderers receive translated core state text; without

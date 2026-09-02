@@ -47,6 +47,7 @@ import type {
   Role,
   WidgetPosition,
 } from '@obs/visu-contract';
+import { schema } from '@obs/visu-contract';
 
 /* ------------------------------------------------------------------ helpers */
 // Small constructors mirroring store.js (L/SW/B/J) so the dataset below reads
@@ -364,15 +365,31 @@ export const byId: Readonly<Record<string, Device | undefined>> = Object.freeze(
 // baseline a skin may refine but not discard).
 
 /**
- * One layout entry: the device id plus optional prominence hints carried over
- * from store.js. `span`/`row` are *hints*, not pixels — the page speaks roles
- * (CONTRACT-v1 §2), and {@link layoutRole} derives the contract role from them.
+ * One layout entry: the device id plus its optional, additive layout hints.
+ *
+ * The page speaks **roles**, not spans (CONTRACT-v1 §2, Issue #101 AC1): the
+ * store.js `span` hints were translated once, at the port, into contract roles
+ * — `role` is what the page definitions below carry. `span` survives only as the
+ * *legacy input* of that translation ({@link layoutRole}) for entries that still
+ * arrive span-shaped (an untranslated author source); nothing in this file uses
+ * it any more. `row` is not a prominence but a footprint hint (the tall
+ * jalousie), so it stays.
+ *
+ * Both are additive and ignorable (Goldene Regel 5): drop every hint and the
+ * floor is still the ordered, grouped list.
  */
 export interface LayoutEntry {
   readonly id: string;
-  /** Column span hint (mobile grid is 3-wide); 2 ⇒ a wider tile. */
+  /**
+   * Author-declared contract prominence role. Validated against the device
+   * type's `roles.allow` in the contract schema — a role the type does not
+   * allow is a loud authoring gap, never a silent downgrade.
+   */
+  readonly role?: Role;
+  /** Legacy store.js column-span hint (mobile grid is 3-wide); 2 ⇒ "wide".
+   *  Only read when the entry declares no `role` (the span→role translation). */
   readonly span?: number;
-  /** Row-span hint for tall tiles (e.g. the jalousie). */
+  /** Row-span hint for tall tiles (e.g. the jalousie) — a footprint, not a role. */
   readonly row?: number;
   /** Author pixel/grid box (x/y/w/h, CONTRACT-v1.9 → layering W3). Additive: only
    *  a skin honouring `position` uses it; the responsive floor ignores it. */
@@ -385,28 +402,42 @@ export interface RoomGroup {
   readonly entries: readonly LayoutEntry[];
 }
 
-const e = (id: string, span?: number, row?: number): LayoutEntry =>
-  span === undefined && row === undefined ? { id } : { id, span, row };
+/** Entry constructor: id + the (additive) author role and row footprint. */
+const e = (id: string, role?: Role, row?: number): LayoutEntry =>
+  role === undefined && row === undefined ? { id } : { id, role, row };
 
-/** Ordered room blocks for the mobile overview (store.js → mobileGroups). */
+/**
+ * Ordered room blocks for the mobile overview — the ported store.js
+ * `mobileGroups` (Issue #101 AC2). Each block is one room, in store.js order.
+ *
+ * The entries speak **roles, not spans**: every store.js `span: 2` was
+ * translated once, here, into its contract role (`span ≥ 2` on a type whose
+ * `roles.allow` contains it ⇒ `wide`; see {@link layoutRole}). Entries with no
+ * hint keep the type's default role. `row` stays where the footprint (not the
+ * prominence) is the point — the tall jalousie.
+ *
+ * Pages reference this object BY REFERENCE (`pages/pages` → `PageDef.groups`),
+ * so the ionic and terminal page share one floor object; there is no per-skin
+ * copy (Goldene Regel 1).
+ */
 export const rooms: readonly RoomGroup[] = Object.freeze([
   { room: 'Küche', entries: ['kueche-wand', 'kueche-pendel', 'kueche-arbeit', 'kueche-roll'].map((id) => e(id)) },
   { room: 'WC & Bad', entries: ['wc-spiegel', 'wc-luefter', 'bad-spiegel'].map((id) => e(id)) },
   {
     room: 'Wintergarten',
     entries: [
-      e('wiga-pendel', 2),
+      e('wiga-pendel', 'wide'),
       e('wiga-wand'),
       e('wiga-roll'),
-      e('wiga-jalousie', 2, 3),
-      e('wiga-jalousie-2', 2, 2),
+      e('wiga-jalousie', 'wide', 3),
+      e('wiga-jalousie-2', 'wide', 2),
     ],
   },
   { room: 'Schlafzimmer', entries: ['schlaf-ost', 'schlaf-sued'].map((id) => e(id)) },
   {
     room: 'Wohnzimmer',
     // The climate tile takes a wide (2×1) cell, its contract role in the wall.
-    entries: [e('wohn-west'), e('wohn-balkon'), e('wohn-sued'), e('rtr-wohnen', 2)],
+    entries: [e('wohn-west'), e('wohn-balkon'), e('wohn-sued'), e('rtr-wohnen', 'wide')],
   },
   { room: 'Gäste & Treppe', entries: ['gaeste-roll', 'treppe-eingang', 'treppe-haus'].map((id) => e(id)) },
   {
@@ -414,9 +445,9 @@ export const rooms: readonly RoomGroup[] = Object.freeze([
     entries: [
       e('voc-wc'),
       e('wetter-aussen'),
-      e('szene-abend', 2),
-      e('tech-sonos', 2),
-      e('tech-cam', 2),
+      e('szene-abend', 'wide'),
+      e('tech-sonos', 'wide'),
+      e('tech-cam', 'wide'),
     ],
   },
 ] satisfies RoomGroup[]);
@@ -431,23 +462,25 @@ export const rooms: readonly RoomGroup[] = Object.freeze([
 export const demoRooms: readonly RoomGroup[] = Object.freeze([
   {
     room: 'Medien',
-    entries: [e('wohn-sonos', 2), e('kueche-radio', 2), e('hof-cam', 2), e('garage-cam', 2)],
+    entries: [e('wohn-sonos', 'wide'), e('kueche-radio', 'wide'), e('hof-cam', 'wide'), e('garage-cam', 'wide')],
   },
 ] satisfies RoomGroup[]);
 
-/* ----------------------------------------------------------- span/row → role */
-// CONTRACT-v1 §2: the page speaks ROLES (prominence), not pixels. The store.js
-// layout hints map onto contract roles as follows:
+/* ---------------------------------------------------------- role resolution */
+// CONTRACT-v1 §2: the page speaks ROLES (prominence), not pixels.
 //
-//   • no hint        → the device type's contract default role
-//                      (light/switch/blind: "default"; jalousie: "wide")
-//   • span ≥ 2       → "wide"  (a tile that claims a wider cell)
+//   • an entry with `role`     → that role, validated against the type's
+//                                contract `roles.allow` (a disallowed role is a
+//                                loud authoring gap, not a silent downgrade)
+//   • no role, no hint         → the device type's contract default role
+//   • no role, span ≥ 2        → "wide"  (the legacy store.js span→role
+//                                translation, kept for span-shaped sources)
 //
-// The jalousie keeps its contract default role ("wide") regardless of the
-// extra row hint — its tallness is a render concern of the jalousie component,
-// not a different prominence. A skin may refine these within the type's
-// allowed roles; this mapping is only the baseline ("Reihenfolge + Gruppierung
-// als Boden").
+// The jalousie keeps its default role ("wide") regardless of the extra row
+// hint — its tallness is a render concern of the jalousie component, not a
+// different prominence. A skin may refine these within the type's allowed
+// roles; this mapping is only the baseline ("Reihenfolge + Gruppierung als
+// Boden").
 
 /** The contract default role per core widget type (CONTRACT-v1 §3 `roles.default`). */
 const DEFAULT_ROLE: Record<Device['type'], Role> = {
@@ -465,25 +498,51 @@ const DEFAULT_ROLE: Record<Device['type'], Role> = {
   climate: 'wide',
 };
 
+/** One widget entry of the contract schema, as far as roles are concerned. */
+interface SchemaRoles {
+  readonly roles?: { readonly allow?: readonly string[] };
+}
+
 /**
- * Types whose contract `roles.allow` includes `wide` (CONTRACT-v1 §3). A span ≥ 2
- * may only promote these to `wide`; switch/sensor (allow compact|default only)
- * keep their default role so the host never hands a skin an invalid role.
+ * The roles each core type allows, derived from the CONTRACT SCHEMA at runtime
+ * (`schema.widgets.<type>.roles.allow`, CONTRACT-v1 §3) instead of a hand-typed
+ * list. A typed copy would only repeat what someone wrote down and would go
+ * stale the moment the contract widens or narrows a type — the same lesson the
+ * cross-repo skin guard learned. A type the schema does not describe yields an
+ * empty set, so its default role is the only role it can carry.
  */
-const WIDE_ALLOWED: ReadonlySet<Device['type']> = new Set<Device['type']>([
-  'light',
-  'blind',
-  'jalousie',
-  'scene',
-  'climate',
-]);
+const ALLOWED_ROLES: Readonly<Record<string, ReadonlySet<Role>>> = Object.freeze(
+  Object.fromEntries(
+    Object.entries((schema as unknown as { widgets: Record<string, SchemaRoles> }).widgets).map(
+      ([type, spec]) => [type, new Set((spec.roles?.allow ?? []) as Role[])],
+    ),
+  ),
+);
+
+/** Does the contract allow `role` on a device of `type`? */
+function roleAllowed(type: Device['type'], role: Role): boolean {
+  return ALLOWED_ROLES[type]?.has(role) ?? false;
+}
 
 /**
  * Derive the contract prominence role for a layout entry + its device.
  * Pure function — no state, no side effects.
+ *
+ * An explicit `role` wins (that is what the page definitions carry); a
+ * span-shaped entry still goes through the legacy span→role translation.
  */
 export function layoutRole(entry: LayoutEntry, device: Device): Role {
+  if (entry.role !== undefined) {
+    if (!roleAllowed(device.type, entry.role)) {
+      const allowed = [...(ALLOWED_ROLES[device.type] ?? [])].join(', ') || 'none';
+      throw new Error(
+        `core/model: entry "${entry.id}" declares role "${entry.role}", which the contract ` +
+          `does not allow for a "${device.type}" (allowed: ${allowed}).`,
+      );
+    }
+    return entry.role;
+  }
   if (device.type === 'jalousie') return DEFAULT_ROLE.jalousie;
-  if (entry.span !== undefined && entry.span >= 2 && WIDE_ALLOWED.has(device.type)) return 'wide';
+  if (entry.span !== undefined && entry.span >= 2 && roleAllowed(device.type, 'wide')) return 'wide';
   return DEFAULT_ROLE[device.type];
 }
