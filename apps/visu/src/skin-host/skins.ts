@@ -26,7 +26,12 @@ import ionicManifest from '@obs-visu-skins/ionic/manifest.json';
 import { tiles as terminalTiles, details as terminalDetails } from '@obs-visu-skins/terminal';
 import terminalManifest from '@obs-visu-skins/terminal/manifest.json';
 
-import { tiles as edomiTiles, details as edomiDetails, page as edomiPage } from '@obs-visu-skins/edomi';
+import {
+  tiles as edomiTiles,
+  details as edomiDetails,
+  presets as edomiPresets,
+  page as edomiPage,
+} from '@obs-visu-skins/edomi';
 import edomiManifest from '@obs-visu-skins/edomi/manifest.json';
 
 /** A partial renderer map over the core widget types (mirror of the skin export). */
@@ -79,7 +84,9 @@ export const skins = {
     // layer canvas + popups); re-uses the ionic content tiles. No presets popover.
     tiles: edomiTiles,
     details: edomiDetails,
-    presets: {},
+    // Preserve the ionic preset surface for blind/jalousie long-press (the edomi
+    // manifest declares the matching gestures).
+    presets: edomiPresets,
     manifest: edomiManifest as SkinManifest,
     page: edomiPage,
   },
