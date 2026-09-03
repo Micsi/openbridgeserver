@@ -33,7 +33,7 @@
  *                   so a skin override of `#roomDivider` actually takes effect.
  *                   With no override the default RoomDivider is the fallback.
  */
-import { computed, h, provide, useSlots, watch } from 'vue';
+import { computed, h, provide, ref, useSlots, watch, watchEffect, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   IonApp,
@@ -117,6 +117,33 @@ const ctxRootBind = computed<RootTweakStyle | undefined>(() => props.rootBind ??
  *  one skin's look. */
 const ctxRootClass = computed<string | undefined>(() => props.rootClass ?? ctx.rootClass);
 
+/**
+ * Apply that namespace ADDITIVELY, not through `:class`.
+ *
+ * `#app-shell-content` is the menu's content target, and Ionic writes classes on
+ * it imperatively (`menu-content`, `menu-content-overlay`, `menu-content-open`).
+ * A Vue class BINDING owns the whole attribute: `patchClass` rewrites
+ * `el.className` on every change, so the first skin-to-skin route change silently
+ * dropped Ionic's classes (measured: `visu-root menu-content menu-content-overlay`
+ * → `t-root`). Harmless for `type="overlay"`, immediately visible for
+ * `type="push"`/`"reveal"`. So the class attribute stays static and only THIS one
+ * token is added/removed on the element — Vue and Ionic stop writing the same
+ * attribute. `flush: 'post'` so the element exists on the first run.
+ */
+const shellPage = ref<ComponentPublicInstance | null>(null);
+let appliedRootClass: string | undefined;
+watchEffect(
+  () => {
+    const next = ctxRootClass.value;
+    const el = shellPage.value?.$el as HTMLElement | undefined;
+    if (!el || appliedRootClass === next) return;
+    if (appliedRootClass) el.classList.remove(appliedRootClass);
+    if (next) el.classList.add(next);
+    appliedRootClass = next;
+  },
+  { flush: 'post' },
+);
+
 const shell = useShellState(ctxState.value);
 
 // Track the active page's nav so the menu highlights the routed page (the shell
@@ -186,8 +213,8 @@ defineExpose({ shell });
 
     <IonPage
       id="app-shell-content"
+      ref="shellPage"
       class="app-shell-page"
-      :class="ctxRootClass"
       v-bind="ctxRootBind?.attrs"
       :style="ctxRootBind?.style"
     >
@@ -276,11 +303,6 @@ defineExpose({ shell });
               :room-divider="RoomDivider"
               :shell="shell"
             />
-            <!-- `animated="false"`: the routed pages are in-flow inside the shell's
-                 scrolling content (they cannot be the absolutely positioned boxes a
-                 slide transition animates without losing the scroll), so an animated
-                 push would show BOTH pages stacked for the duration. An instant swap
-                 keeps "exactly one page visible" true at every moment. -->
             <!-- `animated="false"`: the routed pages are in-flow inside the shell's
                  scrolling content (they cannot be the absolutely positioned boxes a
                  slide transition animates without losing the scroll), so an animated
