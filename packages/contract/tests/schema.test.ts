@@ -21,6 +21,9 @@ const EXPECTED_STATES: Record<(typeof CORE_TYPES)[number], string[]> = {
 };
 
 const ROLES = ['compact', 'default', 'wide', 'tall', 'feature', 'banner'];
+// Das anerkannte `manifest.layout.honors`-Vokabular (v1.12) — die geprüfte Liste
+// zum Doc-Block an `SkinLayout.honors`.
+const LAYOUT_HONORS = ['order', 'grouping', 'role', 'position', 'nav', 'layers', 'popup', 'link'];
 const ICON_SLOTS = [
   'bulb', 'blind', 'thermo', 'wind', 'sun', 'cloud', 'cam', 'shield',
   'bolt', 'scene', 'sparkle', 'lock', 'play', 'pause', 'skip',
@@ -30,8 +33,8 @@ const s = schema as Record<string, any>;
 const f = fixtures as Record<string, any>;
 
 describe('contract.schema.json — Globals (§2)', () => {
-  it('declares version 1.11', () => {
-    expect(s.version).toBe('1.11');
+  it('declares version 1.12', () => {
+    expect(s.version).toBe('1.12');
   });
 
   it('declares roles exactly [compact,default,wide,tall,feature,banner]', () => {
@@ -44,6 +47,22 @@ describe('contract.schema.json — Globals (§2)', () => {
 
   it('carries a widgets block', () => {
     expect(s.widgets).toBeTypeOf('object');
+  });
+
+  // v1.12: `manifest.layout.honors` wird verbatim nach support.json durchgereicht,
+  // also braucht Goldene Regel 3 dafür ein GEPRÜFTES Vokabular — sonst sind ein
+  // Skin, der eine Fähigkeit rendert, und einer, der sie still verschluckt, im
+  // Artefakt nicht unterscheidbar. Die Liste ist der Slot, nicht ein Filter: die
+  // Konformität reicht `honors` weiterhin unverändert durch.
+  it('declares the layout `honors` vocabulary as a checked list (§ SkinLayout.honors)', () => {
+    expect(s.layoutHonors).toEqual(LAYOUT_HONORS);
+  });
+
+  it('carries a `link` honors token, distinct from `layers` (v1.12)', () => {
+    // Ein Skin kann Layer honorieren und `LayerItem.link` trotzdem fallenlassen —
+    // `layers` deckt `link` deshalb NICHT implizit ab.
+    expect(s.layoutHonors).toContain('link');
+    expect(s.layoutHonors).toContain('layers');
   });
 });
 
@@ -194,8 +213,8 @@ describe('contract.schema.json — widget types (§3)', () => {
 });
 
 describe('fixtures.json — completeness (§4)', () => {
-  it('declares contractVersion 1.11', () => {
-    expect(f.contractVersion).toBe('1.11');
+  it('declares contractVersion 1.12', () => {
+    expect(f.contractVersion).toBe('1.12');
   });
 
   it('carries a writable fixture example that validates as an optional boolean (v1.5)', () => {

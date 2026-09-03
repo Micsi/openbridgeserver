@@ -34,7 +34,23 @@
  * {@link LinkUnknown} — a no-op, never a jump to the wrong page.
  */
 
-import type { NavNode, PageLink, SkinGestures } from '@obs/visu-contract';
+import type {
+  LinkGate,
+  LinkNavigate,
+  LinkOutcome,
+  LinkUnknown,
+  NavNode,
+  PageLink,
+  SkinGestures,
+} from '@obs/visu-contract';
+
+/**
+ * The three-way outcome is CONTRACT surface since v1.12 (#146): a page-owning
+ * skin reads it off `PageHost.resolveLink`/`followLink`, so its shape may not be
+ * an app-private type. It is re-exported here so every existing import site
+ * (`./links`) keeps working and there stays exactly ONE declaration of the shape.
+ */
+export type { LinkNavigate, LinkGate, LinkUnknown, LinkOutcome };
 
 /** The host state a link resolution reads (wired in by the host, never by a skin). */
 export interface LinkContext {
@@ -45,30 +61,6 @@ export interface LinkContext {
   /** Whether a valid PIN session is held for the node that DEFINES the access. */
   hasSessionToken(nodeId: string): boolean;
 }
-
-/** Navigate: the target resolved to a reachable page. */
-export interface LinkNavigate {
-  readonly kind: 'navigate';
-  readonly pageId: string;
-}
-
-/** Gated: the target needs a PIN first — the host surfaces the gate, not the page. */
-export interface LinkGate {
-  readonly kind: 'gate';
-  /** The gated page (the `authenticatePage` target / the AccessGate entry). */
-  readonly pageId: string;
-  /** The node the PIN session is scoped to (the access-defining ancestor). */
-  readonly accessNodeId: string;
-}
-
-/** No such node in a non-empty tree — an authoring gap, resolved to a no-op. */
-export interface LinkUnknown {
-  readonly kind: 'unknown';
-  readonly targetNodeId: string;
-}
-
-/** What the host should do with a followed link. */
-export type LinkOutcome = LinkNavigate | LinkGate | LinkUnknown;
 
 /** Flatten a nav tree into `id → node` plus `id → parent id`. */
 function index(nodes: readonly NavNode[]): {

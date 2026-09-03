@@ -271,11 +271,28 @@ export interface SkinLayout {
   readonly model: string;
   readonly grid?: Record<string, unknown>;
   /**
-   * Additive Fähigkeiten, die dieser Skin honoriert. Anerkannte Strings umfassen
-   * `'role'` (Rollen-Footprint) sowie ab v1.9 die Layering-/Komposition-Hints
-   * `'position'` (Pixel-`WidgetPosition`), `'layers'` (Layer-Stack) und `'popup'`
-   * (Popup-Deskriptoren). Fehlt ein String, ignoriert der Skin den Hint - der
-   * Boden (Reihenfolge+Gruppierung) trägt weiter (Golden Rule 5).
+   * Additive Fähigkeiten, die dieser Skin honoriert. Das anerkannte Vokabular
+   * steht in `contract.schema.json → layoutHonors`. Diese Liste ist die
+   * DURCHGESETZTE Quelle, nicht nur Doku: der Konformitätslauf der Skins
+   * (`@obs-visu-skins/conformance`) validiert jedes `honors` dagegen und lehnt
+   * einen unbekannten String ab. Der Doc-Block hier ist die Erläuterung dazu:
+   *
+   * - `'order'`    - Reihenfolge als Boden (Golden Rule 5)
+   * - `'grouping'` - Gruppierung als Boden (Golden Rule 5)
+   * - `'role'`    - Rollen-Footprint
+   * - `'position'` (v1.9) - Pixel-{@link WidgetPosition}
+   * - `'nav'`     (v1.10) - eigene Navigation aus {@link PageHost.navTree}
+   * - `'layers'`  (v1.9)  - Layer-Stack ({@link PageLayer})
+   * - `'popup'`   (v1.9)  - Popup-Deskriptoren ({@link PopupDescriptor})
+   * - `'link'`    (v1.12) - Sprungziele auf platzierten Elementen
+   *   ({@link LayerItem.link}), gerendert über {@link PageHost.resolveLink} /
+   *   {@link PageHost.followLink} / {@link PageHost.isLinkActive}
+   *
+   * `'link'` ist bewusst NICHT in `'layers'` enthalten: ein Skin kann den
+   * Layer-Stack rendern und `link` trotzdem fallenlassen. Ohne den String ist
+   * das genau das - ein erklärter Verzicht statt eines stillen Schluckens
+   * (Golden Rule 3). Fehlt ein String, ignoriert der Skin den Hint - der Boden
+   * (Reihenfolge+Gruppierung) trägt weiter (Golden Rule 5).
    */
   readonly honors?: readonly string[];
   readonly roleMap?: Record<string, unknown>;
@@ -347,6 +364,45 @@ export interface PageLink {
   readonly activeIndicator?: LinkIndicator;
 }
 
+/* ------------------------------------------- Link-Auflösung als Host-Dienst (v1.12) --
+ * v1.11 beschrieb das Sprungziel, bot dem Skin aber nur `navigate(pageId)` an.
+ * Ein `targetNodeId`, das eine LOCATION nennt, ein `protected` Knoten und die
+ * Aktiv-Markierung entlang der Vorfahrenkette waren damit für einen
+ * seitenbesitzenden Skin nur über einen eigenen Abstieg durch den `navTree`
+ * erreichbar - genau das, was Goldene Regel 4 verbietet. v1.12 typisiert
+ * deshalb das Ergebnis der Auflösung und hängt sie an {@link PageHost}.
+ *
+ * Der Vertrag typisiert die Naht, er füllt sie nicht (Goldene Regel 7): die
+ * Auflösung selbst ist Host-Code.
+ */
+
+/** Das Ziel ist erreichbar - der Host wechselt auf diese Seite. */
+export interface LinkNavigate {
+  readonly kind: 'navigate';
+  readonly pageId: string;
+}
+
+/**
+ * Das Ziel ist `protected` und es liegt keine gültige PIN-Sitzung vor: der Host
+ * führt auf den PIN-Pfad statt auf die Seite. Nie ein blinder Sprung.
+ */
+export interface LinkGate {
+  readonly kind: 'gate';
+  /** Die gesperrte SEITE (der Eintrag, den das PIN-Gate anbietet). */
+  readonly pageId: string;
+  /** Der Knoten, auf den die PIN-Sitzung zählt (der access-definierende Vorfahr). */
+  readonly accessNodeId: string;
+}
+
+/** Ein Ziel, das der (nicht leere) Navigationsbaum nicht kennt: erklärter No-op. */
+export interface LinkUnknown {
+  readonly kind: 'unknown';
+  readonly targetNodeId: string;
+}
+
+/** Was der Host mit einem Link tut - das Ergebnis von {@link PageHost.resolveLink}. */
+export type LinkOutcome = LinkNavigate | LinkGate | LinkUnknown;
+
 /**
  * Ein Layer der komponierten Seite. Der Host stapelt globale Inkludeseiten, individuelle
  * Includes und den eigenen Inhalt zu einem geordneten Stack; der Skin rendert ihn frei
@@ -417,13 +473,62 @@ export interface PageHost {
   /** Open / close a popup by id (host owns the open-state + auto-close timer). */
   openPopup(descriptor: PopupDescriptor): void;
   closePopup(id: string): void;
+
+  /* ------------------------------------------------ page links (v1.12, #1194) */
+  /*
+   * Vier Lesarten EINER Auflösung, die der Skin ohne Host-Zustand nicht
+   * beantworten kann. Sie existieren, damit ein seitenbesitzender Skin
+   * {@link LayerItem.link} rendern kann, OHNE selbst zu navigieren: der Skin
+   * fragt, der Host weiss (Goldene Regel 4).
+   */
+
+  /**
+   * Auflösen OHNE zu handeln: was ein Klick auf diesen Link täte. Der Skin
+   * entscheidet daraus die Affordanz - erreichbar (`navigate`), PIN-gesperrt
+   * (`gate`) oder unbekannt (`unknown`, dann keine tote Klickfläche anbieten).
+   * Rein lesend; ändert keinen Zustand.
+   */
+  resolveLink(link: PageLink): LinkOutcome;
+
+  /**
+   * Dem Link FOLGEN: der Host löst auf und führt die kanonische Aktion aus
+   * (`navigate` wechselt die Seite, `gate` führt auf den PIN-Pfad, `unknown`
+   * ist ein No-op). Gibt dasselbe Ergebnis zurück wie {@link resolveLink}, damit
+   * der Skin die Rückmeldung zeichnen kann, ohne den Zustand zu kennen.
+   */
+  followLink(link: PageLink): LinkOutcome;
+
+  /**
+   * Ist das Ziel die aktuelle Seite oder ein Vorfahr davon? Der Aktiv-Indikator
+   * des Autors ({@link PageLink.activeIndicator}) hängt daran; die Vorfahrenkette
+   * gehört dem Host, nicht dem Skin.
+   */
+  isLinkActive(link: PageLink): boolean;
+
+  /**
+   * Der zugängliche Name der Sprung-Affordanz (WCAG 4.1.2). Die Navigation ist
+   * Host-Sache (Goldene Regel 4), also auch ihre Beschriftung: sie kommt aus den
+   * Sprachdateien des Hosts plus dem Klarnamen des Zielknotens. Ohne diesen
+   * Dienst müsste der Skin entweder den Baum nach dem Namen absuchen oder einen
+   * unbenannten Link ausliefern.
+   *
+   * `outcome` optional durchreichen (in aller Regel das Ergebnis, das der Skin
+   * ohnehin schon von {@link resolveLink} hält): der Name nennt dann auch den
+   * ZUSTAND. Ein `protected` Ziel ohne PIN-Sitzung führt auf den PIN-Pfad statt
+   * auf die Seite - ohne das im Namen ist dieser Unterschied nur über Cursor
+   * oder Farbe sichtbar und für Touch und Screenreader gar nicht. Der Zustand
+   * gehört dem Host, also gehört auch seine Ansage hierher und nicht in den
+   * Skin. Ohne `outcome` bleibt der Name der bisherige.
+   */
+  linkLabel(link: PageLink, outcome?: LinkOutcome): string;
 }
 
 /**
  * A skin's optional whole-page renderer (v1.10). When a skin exports one and the
  * host runs an external (backend) floor, the host delegates the page body to it,
  * passing the {@link PageHost}. Declared via the manifest capability `honors`
- * entries `'nav'` / `'layers'` / `'popup'` (what the skin's page renderer uses).
+ * entries `'nav'` / `'layers'` / `'popup'` / `'link'` (what the skin's page
+ * renderer uses; see {@link SkinLayout.honors} for the checked vocabulary).
  */
 export type PageRenderer = (host: PageHost) => string | unknown;
 

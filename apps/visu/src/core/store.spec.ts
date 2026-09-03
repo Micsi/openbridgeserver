@@ -615,6 +615,29 @@ describe('core/store — followLink: the host owns the jump (#1194)', () => {
     expect(store.pendingGate).toBeNull();
   });
 
+  it('linkOutcome resolves the SAME way but acts on nothing (the read-only half, #146)', async () => {
+    const src = new LinkGateSource();
+    const store = await makeStore(src);
+    store.navTree = KELLER_TREE;
+
+    // Same three-way answer as followLink …
+    expect(store.linkOutcome({ targetNodeId: 'p2' })).toEqual({
+      kind: 'gate',
+      pageId: 'p2',
+      accessNodeId: 'keller',
+    });
+    expect(store.linkOutcome({ targetNodeId: 'weg' })).toEqual({
+      kind: 'unknown',
+      targetNodeId: 'weg',
+    });
+    // … and no state moved, for any of them. This is what lets a page-owning
+    // skin decide its affordance BEFORE a click without owning the decision.
+    src.sessions.add('keller');
+    expect(store.linkOutcome({ targetNodeId: 'p2' })).toEqual({ kind: 'navigate', pageId: 'p2' });
+    expect(store.currentPageId).toBeNull();
+    expect(store.pendingGate).toBeNull();
+  });
+
   it('an unknown target in a real tree changes no state', async () => {
     const store = await makeStore(new SpyDataSource());
     store.navTree = KELLER_TREE;

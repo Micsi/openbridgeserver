@@ -118,6 +118,7 @@
   },
   "links": {
     "goToPage": "Zur Seite {page} springen",
+    "goToPageGated": "Zur Seite {page} springen (PIN nötig)",
     "goToLinkedPage": "Zur verknüpften Seite springen"
   }
 }

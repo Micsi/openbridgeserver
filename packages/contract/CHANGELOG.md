@@ -23,6 +23,55 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.12.0] – 2026-09-03
+
+v1.12: **Link-Auflösung als Host-Dienst an der Vertragsnaht** + ein
+`honors`-Token für `link` (Micsi/openbridgeserver#146).
+
+1.11 brachte `PageLink`/`LayerItem.link`, liess `PageHost` aber byteidentisch zu
+1.10 – ein seitenbesitzender Skin hatte nur `navigate(pageId)`. Da
+`PageLink.targetNodeId` ausdrücklich auch eine **LOCATION** nennen darf und der
+Doc-Block zugleich sagt, LOCATION-Abstieg, PIN-Gate und Aktiv-Zustand seien
+**Host**-Verhalten, blieb dem Skin nur, den `navTree` selbst abzusteigen – genau
+das, was Goldene Regel 4 verbietet. Dieser Selbstwiderspruch ist behoben.
+
+**Neu (additiv, optional-frei nur an `PageHost`):**
+
+- Typen `LinkNavigate` · `LinkGate` · `LinkUnknown` · `LinkOutcome` – das
+  dreiwege-Ergebnis einer Auflösung als Datentyp.
+- `PageHost.resolveLink(link)` – auflösen ohne zu handeln (Affordanz).
+- `PageHost.followLink(link)` – auflösen UND die kanonische Aktion ausführen.
+- `PageHost.isLinkActive(link)` – Ziel = aktuelle Seite oder Vorfahr davon.
+- `PageHost.linkLabel(link, outcome?)` – der zugängliche Name der
+  Sprung-Affordanz (WCAG 4.1.2); die Navigation gehört dem Host, also auch ihre
+  Beschriftung. Wird das `outcome` mitgegeben, nennt der Name auch den
+  **Zustand**: ein PIN-gesperrtes Ziel sagt das im Namen. Ohne diesen Kanal wäre
+  der Unterschied nur Cursor oder Farbe – für Touch und Screenreader also gar
+  nicht vorhanden.
+- `honors`-Vokabular: neuer Token `'link'`, und die Liste steht ab jetzt in
+  `contract.schema.json → layoutHonors`
+  (`order`·`grouping`·`role`·`position`·`nav`·`layers`·`popup`·`link`). `'link'` ist NICHT
+  in `'layers'` enthalten: ein Skin kann Layer honorieren und `link` trotzdem
+  fallenlassen – ohne eigenen Slot wäre „rendert Links" von „verschluckt Links
+  still" im `support.json` nicht unterscheidbar (Goldene Regel 3).
+  Die Liste ist **durchgesetzt**, nicht nur dokumentiert: der Konformitätslauf
+  der Skins lehnt einen unbekannten String ab und verlangt bei `'link'`, dass
+  der Page-Renderer eine aktivierbare Sprung-Affordanz auch wirklich zeichnet –
+  sonst stünde nach dem Rückzug des Hosts gar keine mehr da.
+
+Der Vertrag typisiert die Naht, er füllt sie nicht (Goldene Regel 7): die
+Auflösung selbst liegt unverändert im Host (`apps/visu/src/core/links.ts`).
+Minor-Bump: reine Typen-Zugabe, keine Device-Datenform-Änderung. Ein Skin ohne
+Page-Renderer ist unberührt; ein Skin mit Page-Renderer erhält vier zusätzliche
+Mitglieder, die er ignorieren darf.
+
+> **⚠ Erwartet rot bis beide Seiten landen.** Wie bei 1.11 prüft
+> `apps/visu/tests/ionic-skin-link.test.ts` `targetsContract === version`; der
+> Wächter ist bis zum Skin-Nachzug rot (`expected '1.11' to be '1.12'`).
+> Nachzuziehen in `Micsi/obs-visu-skins`: `ionic` und `edomi` auf
+> `targetsContract: "1.12"`. `edomi` nimmt zusätzlich `honors: [… "link"]` auf
+> und rendert die Sprung-Affordanz über die neuen `PageHost`-Mitglieder.
+
 ## [1.11.0] – 2026-09-02
 
 v1.11: **Seiten-Verlinkung auf platzierten Elementen** (Upstream #1194). Ein

@@ -30,6 +30,10 @@ import type {
   PageRenderer,
   PageLink,
   LinkIndicator,
+  LinkOutcome,
+  LinkNavigate,
+  LinkGate,
+  LinkUnknown,
 } from '../src/types.js';
 
 describe('Device unions (§5) — readonly', () => {
@@ -237,6 +241,13 @@ describe('Page renderer & host seam (v1.10) — additive, skin owns appearance',
     expectTypeOf<PageHost>().toHaveProperty('renderTile');
   });
 
+  it('PageHost resolves page links FOR the skin (v1.12) — the skin never navigates', () => {
+    expectTypeOf<PageHost['resolveLink']>().toEqualTypeOf<(link: PageLink) => LinkOutcome>();
+    expectTypeOf<PageHost['followLink']>().toEqualTypeOf<(link: PageLink) => LinkOutcome>();
+    expectTypeOf<PageHost['isLinkActive']>().toEqualTypeOf<(link: PageLink) => boolean>();
+    expectTypeOf<PageHost['linkLabel']>().toEqualTypeOf<(link: PageLink) => string>();
+  });
+
   it('PageRenderer takes a PageHost and returns a framework node (like Renderer)', () => {
     expectTypeOf<PageRenderer>().toEqualTypeOf<(host: PageHost) => string | unknown>();
   });
@@ -266,6 +277,31 @@ describe('Page links (v1.11) — additive, ignorable, data only (#1194)', () => 
     expectTypeOf<PageLink>().toEqualTypeOf<{
       readonly targetNodeId: string;
       readonly activeIndicator?: LinkIndicator;
+    }>();
+  });
+});
+
+describe('Link resolution as a host service (v1.12) — the seam, not the logic', () => {
+  it('LinkOutcome is the three-way result of a resolution', () => {
+    expectTypeOf<LinkOutcome>().toEqualTypeOf<LinkNavigate | LinkGate | LinkUnknown>();
+    expectTypeOf<LinkNavigate['kind']>().toEqualTypeOf<'navigate'>();
+    expectTypeOf<LinkGate['kind']>().toEqualTypeOf<'gate'>();
+    expectTypeOf<LinkUnknown['kind']>().toEqualTypeOf<'unknown'>();
+  });
+
+  it('a gate names the gated PAGE and the node the PIN session is scoped to', () => {
+    expectTypeOf<LinkGate['pageId']>().toEqualTypeOf<string>();
+    expectTypeOf<LinkGate['accessNodeId']>().toEqualTypeOf<string>();
+  });
+
+  it('the outcome is DATA — no member executes anything (golden rule 7)', () => {
+    expectTypeOf<LinkNavigate>().toEqualTypeOf<{
+      readonly kind: 'navigate';
+      readonly pageId: string;
+    }>();
+    expectTypeOf<LinkUnknown>().toEqualTypeOf<{
+      readonly kind: 'unknown';
+      readonly targetNodeId: string;
     }>();
   });
 });

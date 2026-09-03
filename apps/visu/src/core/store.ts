@@ -223,6 +223,21 @@ export const useDeviceStore = defineStore('devices', () => {
   }
 
   /**
+   * Resolve a page link WITHOUT acting on it (#146): what a jump WOULD do, given
+   * the host's live state. The read-only half of {@link followLink} — a
+   * page-owning skin asks this to decide the affordance (reachable · PIN-gated ·
+   * unknown) before anything is clicked, so it never has to descend the navTree
+   * itself (golden rule 4). Changes no state.
+   */
+  function linkOutcome(link: PageLink): LinkOutcome {
+    return resolveLink(link, {
+      navTree: navTree.value,
+      isLoggedIn: authenticated.value,
+      hasSessionToken: hasPageSession,
+    });
+  }
+
+  /**
    * Follow a page link (#1194) — the host action behind a tap on a tile that has
    * no click function of its own. The resolution mirrors the V1 link widget
    * (`frontend/src/widgets/Link/Widget.vue`): the access is resolved along the
@@ -234,11 +249,7 @@ export const useDeviceStore = defineStore('devices', () => {
    * router for a statically routed page; the state changes happen here.
    */
   function followLink(link: PageLink): LinkOutcome {
-    const outcome = resolveLink(link, {
-      navTree: navTree.value,
-      isLoggedIn: authenticated.value,
-      hasSessionToken: hasPageSession,
-    });
+    const outcome = linkOutcome(link);
     if (outcome.kind === 'navigate') navigate(outcome.pageId);
     else if (outcome.kind === 'gate') pendingGate.value = outcome.pageId;
     return outcome;
@@ -405,6 +416,7 @@ export const useDeviceStore = defineStore('devices', () => {
     currentPageId,
     pendingGate,
     navigate,
+    linkOutcome,
     followLink,
     hasPageSession,
     layersFor,

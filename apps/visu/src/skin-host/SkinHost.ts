@@ -38,7 +38,14 @@ import {
 import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
 
-import type { Device, NavNode, PageHost, PageLink, PopupDescriptor } from '@obs/visu-contract';
+import type {
+  Device,
+  LinkOutcome,
+  NavNode,
+  PageHost,
+  PageLink,
+  PopupDescriptor,
+} from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
 import { activeCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
@@ -274,6 +281,18 @@ export default defineComponent({
      * (core/links → LINK_TAP_TARGET), not a silently swallowed feature.
      */
     const linkable = computed(() => linksDeliverable(skin.value.manifest.gestures));
+    /**
+     * Does the SKIN own the page-link affordance (#146)? True for a page-owning
+     * skin that DECLARES `honors: ['link']`: it then draws the jump itself
+     * through the host's resolver members (`resolveLink`/`followLink`/
+     * `isLinkActive`/`linkLabel`), so the host must not ALSO stretch its own
+     * link over the cell — two overlapping affordances and two tab stops for one
+     * jump. Without that declaration the host keeps its floor affordance, so a
+     * skin that says nothing behaves exactly as before.
+     */
+    const skinOwnsLinks = computed(
+      () => Boolean(skin.value.page) && (skin.value.manifest.layout.honors ?? []).includes('link'),
+    );
     const layout = computed(() =>
       resolveLayout(skin.value.manifest.layout, props.groups, liveDevice),
     );
@@ -338,9 +357,10 @@ export default defineComponent({
         selection.renderer === null
           ? h('div', { class: 'skin-host-unsupported', 'data-type': device.type }, '')
           : (selection.renderer(device, tokens, activeCtx()) as VNode);
-      // #1194: a link on this device makes the host cell a navigation affordance.
-      const link = deviceLinks.value.get(deviceId);
-      const deco = decorateLink(link, linkActive(link), linkable.value, linkLabel(link));
+      // #1194: a link on this device makes the host cell a navigation affordance —
+      // unless the skin declared that it draws the jump itself (#146).
+      const link = skinOwnsLinks.value ? undefined : deviceLinks.value.get(deviceId);
+      const deco = decorateLink(link, linkActive(link), linkable.value, cellLinkLabel(link));
       return h(
         'div',
         {
@@ -355,31 +375,58 @@ export default defineComponent({
       );
     }
 
+    /**
+     * The page the host currently SHOWS. Before anything has navigated, a
+     * tree-backed source shows the first page of the tree — the same fallback
+     * the {@link PageHost} reports as `currentPageId`. Both must read the same
+     * value, or a link onto the page you are already on would announce itself as
+     * inactive until the first navigation (#146).
+     */
+    function shownPageId(): string | null {
+      if (props.currentPage) return props.currentPage;
+      if (currentPageId.value) return currentPageId.value;
+      // The floor has no "page shown" at all, so nothing is active there — only a
+      // page-owning skin gets the tree's first page handed to it.
+      return skin.value.page ? firstPageId(navTree.value) : null;
+    }
+
     /** Is a link's target the current page or an ancestor of it? (host state) */
     function linkActive(link: PageLink | undefined): boolean {
-      const page = props.currentPage ?? currentPageId.value;
-      return link ? isLinkActive(link, page, navTree.value) : false;
+      return link ? isLinkActive(link, shownPageId(), navTree.value) : false;
     }
 
     /**
-     * The accessible name of a page link's stretched anchor (#1194). The host
-     * owns the navigation affordance (golden rule 4), so it owns the label too:
-     * the text comes from the host's locale files, the target's plain name from
-     * the nav tree. Without a tree (the static floor) there is no name to show,
-     * so the generic wording is used — never a raw node id.
+     * The accessible name of a page link's affordance (#1194). The host owns the
+     * navigation affordance (golden rule 4), so it owns the label too: the text
+     * comes from the host's locale files, the target's plain name from the nav
+     * tree. Without a tree (the static floor) there is no name to show, so the
+     * generic wording is used — never a raw node id.
+     *
+     * With an `outcome` the name also carries the STATE (#146 review): a
+     * `protected` target without a PIN session leads to the PIN path, not to the
+     * page. A cursor or a colour cannot say that on touch or to a screen reader,
+     * and the state is the host's — so its wording belongs here, not in a skin.
      */
-    function linkLabel(link: PageLink | undefined): string {
+    function linkLabel(link: PageLink | undefined, outcome?: LinkOutcome): string {
       if (!link) return '';
       // Live nav tree first (a real backend knows the node's own name), then the
       // page layer's translated titles, and only then the generic wording — so a
       // shipped static page still announces WHICH page a link goes to.
-      const name =
-        navNodeName(navTree.value, link.targetNodeId) ??
-        props.pageNames?.[link.targetNodeId] ??
-        null;
-      return name ? translate('links.goToPage', { page: name }) : translate('links.goToLinkedPage');
+      // A gate resolves onto the gated PAGE, so name THAT page, not the LOCATION
+      // the author linked — it is the page the PIN actually opens.
+      const named = outcome?.kind === 'gate' ? outcome.pageId : link.targetNodeId;
+      const name = navNodeName(navTree.value, named) ?? props.pageNames?.[named] ?? null;
+      if (!name) return translate('links.goToLinkedPage');
+      return outcome?.kind === 'gate'
+        ? translate('links.goToPageGated', { page: name })
+        : translate('links.goToPage', { page: name });
     }
 
+
+    /** The floor's own anchor name — resolved so it announces a PIN gate as well. */
+    function cellLinkLabel(link: PageLink | undefined): string {
+      return link ? linkLabel(link, store.linkOutcome(link)) : '';
+    }
 
     return () => {
       const sk = skin.value;
@@ -392,13 +439,26 @@ export default defineComponent({
       if (sk.page) {
         const host: PageHost = {
           navTree: navTree.value,
-          currentPageId: currentPageId.value ?? firstPageId(navTree.value),
+          currentPageId: shownPageId(),
           navigate: store.navigate,
           layersFor: (id) => store.layersFor(id),
           renderTile,
           openPopups: openPopups.value,
           openPopup,
           closePopup,
+          // Page links as a HOST service (contract v1.12, #146). Without these a
+          // page-owning skin that wanted to honour `LayerItem.link` would have to
+          // descend the navTree, read `access` and walk the ancestor chain itself
+          // — exactly what golden rule 4 forbids. The skin asks; the host knows.
+          resolveLink: (link) => store.linkOutcome(link),
+          followLink: (link) => store.followLink(link),
+          isLinkActive: (link) => linkActive(link),
+          // The outcome is an OPTIMISATION, never a condition: a skin that omits
+          // it must not silently fall back to the stateless name — that would put
+          // the gate back out of reach of touch and assistive tech without any
+          // gate noticing (nothing checks labels). The host resolves it itself,
+          // exactly like its own floor path does.
+          linkLabel: (link, outcome) => linkLabel(link, outcome ?? store.linkOutcome(link)),
         };
         return sk.page(host) as VNode;
       }
@@ -426,7 +486,12 @@ export default defineComponent({
         // the host stamps the target + the (author-chosen) active indicator; the
         // gesture seam turns a tap on an otherwise non-interactive tile into
         // `navigate`. Without a link this is inert and the cell is unchanged.
-        const deco = decorateLink(item.link, linkActive(item.link), linkable.value, linkLabel(item.link));
+        const deco = decorateLink(
+          item.link,
+          linkActive(item.link),
+          linkable.value,
+          cellLinkLabel(item.link),
+        );
 
         return h(
           'div',
