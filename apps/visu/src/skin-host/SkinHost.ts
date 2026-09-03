@@ -38,7 +38,14 @@ import {
 import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
 
-import type { Device, NavNode, PageHost, PageLink, PopupDescriptor } from '@obs/visu-contract';
+import type {
+  Device,
+  LinkOutcome,
+  NavNode,
+  PageHost,
+  PageLink,
+  PopupDescriptor,
+} from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
 import { activeCtx } from '../core/ctx';
 import { useDeviceStore } from '../core/store';
@@ -353,7 +360,7 @@ export default defineComponent({
       // #1194: a link on this device makes the host cell a navigation affordance —
       // unless the skin declared that it draws the jump itself (#146).
       const link = skinOwnsLinks.value ? undefined : deviceLinks.value.get(deviceId);
-      const deco = decorateLink(link, linkActive(link), linkable.value, linkLabel(link));
+      const deco = decorateLink(link, linkActive(link), linkable.value, cellLinkLabel(link));
       return h(
         'div',
         {
@@ -389,24 +396,37 @@ export default defineComponent({
     }
 
     /**
-     * The accessible name of a page link's stretched anchor (#1194). The host
-     * owns the navigation affordance (golden rule 4), so it owns the label too:
-     * the text comes from the host's locale files, the target's plain name from
-     * the nav tree. Without a tree (the static floor) there is no name to show,
-     * so the generic wording is used — never a raw node id.
+     * The accessible name of a page link's affordance (#1194). The host owns the
+     * navigation affordance (golden rule 4), so it owns the label too: the text
+     * comes from the host's locale files, the target's plain name from the nav
+     * tree. Without a tree (the static floor) there is no name to show, so the
+     * generic wording is used — never a raw node id.
+     *
+     * With an `outcome` the name also carries the STATE (#146 review): a
+     * `protected` target without a PIN session leads to the PIN path, not to the
+     * page. A cursor or a colour cannot say that on touch or to a screen reader,
+     * and the state is the host's — so its wording belongs here, not in a skin.
      */
-    function linkLabel(link: PageLink | undefined): string {
+    function linkLabel(link: PageLink | undefined, outcome?: LinkOutcome): string {
       if (!link) return '';
       // Live nav tree first (a real backend knows the node's own name), then the
       // page layer's translated titles, and only then the generic wording — so a
       // shipped static page still announces WHICH page a link goes to.
-      const name =
-        navNodeName(navTree.value, link.targetNodeId) ??
-        props.pageNames?.[link.targetNodeId] ??
-        null;
-      return name ? translate('links.goToPage', { page: name }) : translate('links.goToLinkedPage');
+      // A gate resolves onto the gated PAGE, so name THAT page, not the LOCATION
+      // the author linked — it is the page the PIN actually opens.
+      const named = outcome?.kind === 'gate' ? outcome.pageId : link.targetNodeId;
+      const name = navNodeName(navTree.value, named) ?? props.pageNames?.[named] ?? null;
+      if (!name) return translate('links.goToLinkedPage');
+      return outcome?.kind === 'gate'
+        ? translate('links.goToPageGated', { page: name })
+        : translate('links.goToPage', { page: name });
     }
 
+
+    /** The floor's own anchor name — resolved so it announces a PIN gate as well. */
+    function cellLinkLabel(link: PageLink | undefined): string {
+      return link ? linkLabel(link, store.linkOutcome(link)) : '';
+    }
 
     return () => {
       const sk = skin.value;
@@ -433,7 +453,7 @@ export default defineComponent({
           resolveLink: (link) => store.linkOutcome(link),
           followLink: (link) => store.followLink(link),
           isLinkActive: (link) => linkActive(link),
-          linkLabel: (link) => linkLabel(link),
+          linkLabel: (link, outcome) => linkLabel(link, outcome),
         };
         return sk.page(host) as VNode;
       }
@@ -461,7 +481,12 @@ export default defineComponent({
         // the host stamps the target + the (author-chosen) active indicator; the
         // gesture seam turns a tap on an otherwise non-interactive tile into
         // `navigate`. Without a link this is inert and the cell is unchanged.
-        const deco = decorateLink(item.link, linkActive(item.link), linkable.value, linkLabel(item.link));
+        const deco = decorateLink(
+          item.link,
+          linkActive(item.link),
+          linkable.value,
+          cellLinkLabel(item.link),
+        );
 
         return h(
           'div',

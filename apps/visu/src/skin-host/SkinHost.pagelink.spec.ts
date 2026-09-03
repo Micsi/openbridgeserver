@@ -172,6 +172,24 @@ describe('SkinHost — PageHost resolves page links FOR the skin (v1.12, #146)',
     expect(label).not.toBe('wohnen');
   });
 
+  it('linkLabel carries the GATE state when the outcome is handed back (#146 review)', async () => {
+    await mountWithTree();
+    const link = { targetNodeId: 'keller' };
+    const gate = captured!.resolveLink(link);
+
+    const plain = captured!.linkLabel(link);
+    const gated = captured!.linkLabel(link, gate);
+
+    // Without the outcome the wording is unchanged (backwards compatible) …
+    expect(plain).toContain('Keller');
+    // … with it, the name says the jump asks for a PIN first — the only channel
+    // touch and assistive tech have. A cursor cannot say this.
+    expect(gated).not.toBe(plain);
+    expect(gated).toMatch(/PIN/i);
+    // A gate resolves onto the gated PAGE, so the name mentions THAT page.
+    expect(gated).toContain('Technik');
+  });
+
   it('a skin that honours `link` takes the affordance over: the host stops stamping it', async () => {
     const store = useDeviceStore();
     await store.init(new MockDataSource([SW]));

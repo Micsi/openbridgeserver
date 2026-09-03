@@ -272,8 +272,10 @@ export interface SkinLayout {
   readonly grid?: Record<string, unknown>;
   /**
    * Additive Fähigkeiten, die dieser Skin honoriert. Das anerkannte Vokabular
-   * steht als geprüfte Liste in `contract.schema.json → layoutHonors` (ein Test
-   * hält Liste und Doku zusammen):
+   * steht in `contract.schema.json → layoutHonors`. Diese Liste ist die
+   * DURCHGESETZTE Quelle, nicht nur Doku: der Konformitätslauf der Skins
+   * (`@obs-visu-skins/conformance`) validiert jedes `honors` dagegen und lehnt
+   * einen unbekannten String ab. Der Doc-Block hier ist die Erläuterung dazu:
    *
    * - `'order'`    - Reihenfolge als Boden (Golden Rule 5)
    * - `'grouping'` - Gruppierung als Boden (Golden Rule 5)
@@ -509,8 +511,16 @@ export interface PageHost {
    * Sprachdateien des Hosts plus dem Klarnamen des Zielknotens. Ohne diesen
    * Dienst müsste der Skin entweder den Baum nach dem Namen absuchen oder einen
    * unbenannten Link ausliefern.
+   *
+   * `outcome` optional durchreichen (in aller Regel das Ergebnis, das der Skin
+   * ohnehin schon von {@link resolveLink} hält): der Name nennt dann auch den
+   * ZUSTAND. Ein `protected` Ziel ohne PIN-Sitzung führt auf den PIN-Pfad statt
+   * auf die Seite - ohne das im Namen ist dieser Unterschied nur über Cursor
+   * oder Farbe sichtbar und für Touch und Screenreader gar nicht. Der Zustand
+   * gehört dem Host, also gehört auch seine Ansage hierher und nicht in den
+   * Skin. Ohne `outcome` bleibt der Name der bisherige.
    */
-  linkLabel(link: PageLink): string;
+  linkLabel(link: PageLink, outcome?: LinkOutcome): string;
 }
 
 /**

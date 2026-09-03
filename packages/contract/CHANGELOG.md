@@ -42,14 +42,22 @@ das, was Goldene Regel 4 verbietet. Dieser Selbstwiderspruch ist behoben.
 - `PageHost.resolveLink(link)` – auflösen ohne zu handeln (Affordanz).
 - `PageHost.followLink(link)` – auflösen UND die kanonische Aktion ausführen.
 - `PageHost.isLinkActive(link)` – Ziel = aktuelle Seite oder Vorfahr davon.
-- `PageHost.linkLabel(link)` – der zugängliche Name der Sprung-Affordanz
-  (WCAG 4.1.2); die Navigation gehört dem Host, also auch ihre Beschriftung.
-- `honors`-Vokabular: neuer Token `'link'`, und die Liste steht ab jetzt als
-  **geprüfte** Liste in `contract.schema.json → layoutHonors`
+- `PageHost.linkLabel(link, outcome?)` – der zugängliche Name der
+  Sprung-Affordanz (WCAG 4.1.2); die Navigation gehört dem Host, also auch ihre
+  Beschriftung. Wird das `outcome` mitgegeben, nennt der Name auch den
+  **Zustand**: ein PIN-gesperrtes Ziel sagt das im Namen. Ohne diesen Kanal wäre
+  der Unterschied nur Cursor oder Farbe – für Touch und Screenreader also gar
+  nicht vorhanden.
+- `honors`-Vokabular: neuer Token `'link'`, und die Liste steht ab jetzt in
+  `contract.schema.json → layoutHonors`
   (`order`·`grouping`·`role`·`position`·`nav`·`layers`·`popup`·`link`). `'link'` ist NICHT
   in `'layers'` enthalten: ein Skin kann Layer honorieren und `link` trotzdem
   fallenlassen – ohne eigenen Slot wäre „rendert Links" von „verschluckt Links
   still" im `support.json` nicht unterscheidbar (Goldene Regel 3).
+  Die Liste ist **durchgesetzt**, nicht nur dokumentiert: der Konformitätslauf
+  der Skins lehnt einen unbekannten String ab und verlangt bei `'link'`, dass
+  der Page-Renderer eine aktivierbare Sprung-Affordanz auch wirklich zeichnet –
+  sonst stünde nach dem Rückzug des Hosts gar keine mehr da.
 
 Der Vertrag typisiert die Naht, er füllt sie nicht (Goldene Regel 7): die
 Auflösung selbst liegt unverändert im Host (`apps/visu/src/core/links.ts`).
