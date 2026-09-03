@@ -50,6 +50,26 @@ von einem, der es nicht tut, im Report nicht zu unterscheiden (Goldene Regel 3).
 - `SupportReport.a11y` ist von `Record<string, unknown>` auf den echten Typ
   `SupportA11y` geschärft, plus `A11yMeasurement` und `A11yFinding`.
   Drei Zustände statt zwei: `pass` · `fail` · `undeclared`.
+- `SkinA11y.neutralTweaks` / `SkinA11y.unmeasuredTweaks` — JEDER Tweak aus
+  `SkinManifest.tweaks` muss eingeordnet sein: als messbare Achse, als
+  farbneutral, oder als farbwirksam-aber-nicht-erfassbar (je mit Begründung).
+  Ohne diesen Abgleich behauptete ein Report `checkedTweakExtremes: true`,
+  während ein unbenannter Tweak die Farbe verschiebt — eine ungedeckte positive
+  Aussage im Artefakt.
+- `SupportA11y.unmeasuredGrounds` — ein Token, das man `ground` nennt und dann
+  aus `grounds` weglässt, verschwand spurlos aus der Messung. Es braucht jetzt
+  eine Begründung und steht im Report.
+- `SupportA11y.findingCount` neben der gedeckelten `findings`-Liste, analog zu
+  `violationCount`.
+- `SupportA11y.violationBreakdown` — dieselben Verstösse disjunkt in
+  `atDefault` · `atTweakExtreme` · `whenDimmed`. Eine Gesamtzahl mischt den harten
+  Kern mit zwei Teilmengen, über die man streiten kann: WCAG 1.4.3 nimmt inaktive
+  Bedienelemente ausdrücklich aus, und ein Bruch nur am Regler-Anschlag ist eine
+  andere Aussage als einer in der Werkseinstellung. Die Fläche misst weiter
+  konservativ (sie NIMMT die Ausnahme nicht) — sie benennt die Teilmenge nur.
+- Befundtypen `ground-without-reason` und `undeclared-tweak`; `unaccounted-alpha`
+  wieder entfernt — es wurde nie erzeugt, und totes Vokabular im Vertrag liest
+  sich wie eine Zusage.
 - Schema-Block `a11y` mit den WCAG-Schwellen (`text` 4.5 · `graphic` 3) und dem
   Rollen-Vokabular. Das Tooling liest sie von dort, statt sie als Literal zu
   kopieren — dieselbe Blindheit, die `targetsContract` als Literal neun

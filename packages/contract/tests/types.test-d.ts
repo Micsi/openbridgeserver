@@ -344,4 +344,30 @@ describe('A11y palette declaration (v1.13) — data only, golden rule 7', () => 
     expectTypeOf<SupportA11y['checkedTweakExtremes']>().toEqualTypeOf<boolean>();
     expectTypeOf<A11yMeasurement['ratio']>().toEqualTypeOf<number>();
   });
+
+  it('every escape from the measurement is a slot that CARRIES a reason', () => {
+    // Vier Auswege, vier Deklarations-Slots — keiner davon ist ein Weglassen:
+    // Token (`exempt`), Grund (`unmeasuredGrounds`), Theme (`exemptThemes`),
+    // Tweak (`neutralTweaks` / `unmeasuredTweaks`). Alle sind Name→Begründung.
+    expectTypeOf<SkinA11y['neutralTweaks']>().toEqualTypeOf<
+      Readonly<Record<string, string>> | undefined
+    >();
+    expectTypeOf<SkinA11y['unmeasuredTweaks']>().toEqualTypeOf<
+      Readonly<Record<string, string>> | undefined
+    >();
+    expectTypeOf<SupportA11y['unmeasuredGrounds']>().toEqualTypeOf<
+      Readonly<Record<string, string>> | undefined
+    >();
+    expectTypeOf<SupportA11y['exemptThemes']>().toEqualTypeOf<
+      Readonly<Record<string, string>> | undefined
+    >();
+  });
+
+  it('the violation count is split so a single number cannot mislead', () => {
+    expectTypeOf<SupportA11y['violationBreakdown']>().toEqualTypeOf<{
+      readonly atDefault: number;
+      readonly atTweakExtreme: number;
+      readonly whenDimmed: number;
+    }>();
+  });
 });
