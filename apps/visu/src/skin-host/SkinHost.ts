@@ -453,7 +453,12 @@ export default defineComponent({
           resolveLink: (link) => store.linkOutcome(link),
           followLink: (link) => store.followLink(link),
           isLinkActive: (link) => linkActive(link),
-          linkLabel: (link, outcome) => linkLabel(link, outcome),
+          // The outcome is an OPTIMISATION, never a condition: a skin that omits
+          // it must not silently fall back to the stateless name — that would put
+          // the gate back out of reach of touch and assistive tech without any
+          // gate noticing (nothing checks labels). The host resolves it itself,
+          // exactly like its own floor path does.
+          linkLabel: (link, outcome) => linkLabel(link, outcome ?? store.linkOutcome(link)),
         };
         return sk.page(host) as VNode;
       }

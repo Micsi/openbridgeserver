@@ -172,22 +172,32 @@ describe('SkinHost — PageHost resolves page links FOR the skin (v1.12, #146)',
     expect(label).not.toBe('wohnen');
   });
 
-  it('linkLabel carries the GATE state when the outcome is handed back (#146 review)', async () => {
+  it('linkLabel carries the GATE state — the only channel touch and AT have', async () => {
+    await mountWithTree();
+    const gated = { targetNodeId: 'keller' }; // protected → PIN path
+    const open = { targetNodeId: 'wohnen' }; // reachable
+
+    const gatedName = captured!.linkLabel(gated, captured!.resolveLink(gated));
+    const openName = captured!.linkLabel(open, captured!.resolveLink(open));
+
+    // A reachable target reads as before …
+    expect(openName).toContain('Wohnen');
+    expect(openName).not.toMatch(/PIN/i);
+    // … a PIN-gated one says so. A cursor or a colour cannot.
+    expect(gatedName).toMatch(/PIN/i);
+    // And it names the gated PAGE — the page the one PIN opens — not the
+    // LOCATION the author linked.
+    expect(gatedName).toContain('Technik');
+  });
+
+  it('names the gate even when the skin omits the outcome (unconditional, #146 review)', async () => {
     await mountWithTree();
     const link = { targetNodeId: 'keller' };
-    const gate = captured!.resolveLink(link);
 
-    const plain = captured!.linkLabel(link);
-    const gated = captured!.linkLabel(link, gate);
-
-    // Without the outcome the wording is unchanged (backwards compatible) …
-    expect(plain).toContain('Keller');
-    // … with it, the name says the jump asks for a PIN first — the only channel
-    // touch and assistive tech have. A cursor cannot say this.
-    expect(gated).not.toBe(plain);
-    expect(gated).toMatch(/PIN/i);
-    // A gate resolves onto the gated PAGE, so the name mentions THAT page.
-    expect(gated).toContain('Technik');
+    // The skin may pass the outcome it already holds — but if it does not, the
+    // host resolves it rather than quietly dropping back to the stateless name.
+    expect(captured!.linkLabel(link)).toBe(captured!.linkLabel(link, captured!.resolveLink(link)));
+    expect(captured!.linkLabel(link)).toMatch(/PIN/i);
   });
 
   it('a skin that honours `link` takes the affordance over: the host stops stamping it', async () => {
