@@ -15,6 +15,13 @@ import type {
   Ctx,
   Renderer,
   SkinManifest,
+  SkinA11y,
+  A11yTokenDecl,
+  A11yGround,
+  A11yTweakAxis,
+  A11yRoleName,
+  SupportA11y,
+  A11yMeasurement,
   SkinGestures,
   GestureTarget,
   SupportReport,
@@ -303,5 +310,38 @@ describe('Link resolution as a host service (v1.12) — the seam, not the logic'
       readonly kind: 'unknown';
       readonly targetNodeId: string;
     }>();
+  });
+});
+
+describe('A11y palette declaration (v1.13) — data only, golden rule 7', () => {
+  it('the manifest slot is optional, so a 1.12 manifest stays type-valid', () => {
+    expectTypeOf<SkinManifest['a11y']>().toEqualTypeOf<SkinA11y | undefined>();
+  });
+
+  it('a token declaration names a role from the contract vocabulary', () => {
+    expectTypeOf<A11yRoleName>().toEqualTypeOf<'text' | 'graphic' | 'ground' | 'exempt'>();
+    expectTypeOf<A11yTokenDecl['role']>().toEqualTypeOf<A11yRoleName>();
+    // `on` schränkt die Gründe ein; fehlt es, gilt die STRENGERE Lesart (alle Gründe).
+    expectTypeOf<A11yTokenDecl['on']>().toEqualTypeOf<readonly string[] | undefined>();
+  });
+
+  it('a ground may sit over another ground, so translucency composites', () => {
+    expectTypeOf<A11yGround>().toEqualTypeOf<{
+      readonly token: string;
+      readonly over?: string;
+    }>();
+  });
+
+  it('a tweak axis binds a manifest tweak to the CSS variable it feeds', () => {
+    expectTypeOf<A11yTweakAxis>().toEqualTypeOf<{
+      readonly tweak: string;
+      readonly cssVar: string;
+    }>();
+  });
+
+  it('the report has THREE states — undeclared is not the same as pass', () => {
+    expectTypeOf<SupportA11y['status']>().toEqualTypeOf<'pass' | 'fail' | 'undeclared'>();
+    expectTypeOf<SupportA11y['checkedTweakExtremes']>().toEqualTypeOf<boolean>();
+    expectTypeOf<A11yMeasurement['ratio']>().toEqualTypeOf<number>();
   });
 });
