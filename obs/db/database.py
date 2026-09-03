@@ -693,6 +693,25 @@ async def _migration_v52_external_write(conn: aiosqlite.Connection) -> None:
         await conn.execute("ALTER TABLE datapoints ADD COLUMN external_write_enabled INTEGER NOT NULL DEFAULT 0")
 
 
+async def _migration_v53_visu_page_kind(conn: aiosqlite.Connection) -> None:
+    """Add the Visu page type (M5) without touching a single existing row's meaning.
+
+    Every pre-M5 page is a normal page, so the column default carries the whole
+    stock over unchanged (R17).  This deliberately does NOT follow the V18/V19
+    copy-table pattern: since V42 ``authz_visu_page_policies`` and the audit
+    grants reference ``visu_nodes(id) ON DELETE CASCADE``, and SQLite fires
+    cascade actions on DROP TABLE, a copy migration would silently delete every
+    page access policy and PIN.  ADD COLUMN with a CHECK constraint gives the
+    same enum guarantee and keeps the referencing rows intact.
+    """
+    async with conn.execute("PRAGMA table_info(visu_nodes)") as cur:
+        columns = {row["name"] for row in await cur.fetchall()}
+    if columns and "kind" not in columns:
+        await conn.execute(
+            "ALTER TABLE visu_nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal' CHECK (kind IN ('normal', 'popup', 'globalInclude'))"
+        )
+
+
 _MIGRATION_V38 = """
 CREATE TABLE IF NOT EXISTS hierarchy_device_links (
     id         TEXT PRIMARY KEY,
@@ -1213,6 +1232,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (50, _migration_v50),
     (51, _MIGRATION_V51_REGIONAL_SETTINGS),
     (52, _migration_v52_external_write),
+    (53, _migration_v53_visu_page_kind),
 ]
 
 

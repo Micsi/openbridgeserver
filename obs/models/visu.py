@@ -16,6 +16,10 @@ from pydantic import BaseModel, Field
 
 NodeType = Literal["LOCATION", "PAGE"]
 AccessLevel = Literal["readonly", "public", "protected", "user"]
+# Seitentyp (M5): normale Seite, Popup oder globale Inkludeseite.
+# Individuelle Inkludeseiten sind gewöhnliche Seiten, die woanders in
+# ``PageConfig.includes`` referenziert werden, sie brauchen keinen eigenen Typ.
+PageKind = Literal["normal", "popup", "globalInclude"]
 
 
 # ── WidgetInstance ────────────────────────────────────────────────────────────
@@ -38,6 +42,27 @@ class WidgetRefInstance(WidgetInstance):
     source_page_readonly: bool = False
 
 
+# ── PopupConfig ───────────────────────────────────────────────────────────────
+
+
+class PopupConfig(BaseModel):
+    """Darstellungs-Deskriptor einer Popup-Seite (nur für ``kind == "popup"``).
+
+    Reine Daten: der Host reicht sie an den Skin durch, das Backend wertet sie
+    nicht aus. Fehlt eine der beiden Koordinaten, zentriert der Host (R2).
+    """
+
+    x: int | None = None
+    y: int | None = None
+    w: int | None = None
+    h: int | None = None
+    auto_close_ms: int | None = None  # R4
+    modal: bool = False  # „exklusiv öffnen" (R5)
+    animate: bool = False  # R6
+    shadow: bool = False  # R6
+    dim_backdrop: bool = False  # R6
+
+
 # ── PageConfig ────────────────────────────────────────────────────────────────
 
 
@@ -47,6 +72,9 @@ class PageConfig(BaseModel):
     grid_cell_width: int = 80  # feste Zellbreite in Pixeln (WYSIWYG)
     background: str | None = None
     widgets: list[WidgetInstance] = Field(default_factory=list)
+    includes: list[str] = Field(default_factory=list)  # individuelle Inkludeseiten, geordnet (R14)
+    ignore_global_includes: bool = False  # R13
+    popup: PopupConfig | None = None
 
 
 # ── VisuNode ──────────────────────────────────────────────────────────────────
@@ -57,6 +85,7 @@ class VisuNode(BaseModel):
     parent_id: str | None = None
     name: str
     type: NodeType = "PAGE"
+    kind: PageKind = "normal"
     order: int = 0
     icon: str | None = None
     access: AccessLevel | None = None  # None = von Elternknoten erben
@@ -73,6 +102,7 @@ class VisuNodeSummary(BaseModel):
     parent_id: str | None = None
     name: str
     type: NodeType
+    kind: PageKind = "normal"
     order: int = 0
     icon: str | None = None
     access: AccessLevel | None = None
@@ -87,6 +117,7 @@ class VisuNodeCreate(BaseModel):
     parent_id: str | None = None
     name: str
     type: NodeType = "PAGE"
+    kind: PageKind = "normal"
     order: int = 0
     icon: str | None = None
     access: AccessLevel | None = None
@@ -95,6 +126,7 @@ class VisuNodeCreate(BaseModel):
 
 class VisuNodeUpdate(BaseModel):
     name: str | None = None
+    kind: PageKind | None = None
     order: int | None = None
     icon: str | None = None
     access: AccessLevel | None = None
@@ -135,6 +167,7 @@ class VisuExportNode(BaseModel):
     parent_id: str | None = None
     name: str
     type: NodeType
+    kind: PageKind = "normal"  # Default hält ältere Exporte importierbar (R17)
     node_order: int = 0
     icon: str | None = None
     access: AccessLevel | None = None

@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -48,6 +48,7 @@ from obs.models.visu import (
     CopyNodeRequest,
     MoveNodeRequest,
     PageConfig,
+    PageKind,
     PinAuthRequest,
     PinAuthResponse,
     VisuImportRequest,
@@ -71,6 +72,11 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _row_kind(row) -> str:
+    """Seitentyp einer Row, defensiv: Legacy-Rows und schmale SELECTs kennen die Spalte nicht."""
+    return row["kind"] if "kind" in row.keys() else "normal"  # noqa: SIM118 -- sqlite Row membership checks values
+
+
 def _row_to_node(row, *, access: str | None = None) -> VisuNode:
     """SQLite-Row → VisuNode Pydantic-Modell"""
     pc_raw = row["page_config"]
@@ -80,6 +86,7 @@ def _row_to_node(row, *, access: str | None = None) -> VisuNode:
         parent_id=row["parent_id"],
         name=row["name"],
         type=row["type"],
+        kind=_row_kind(row),
         order=row["node_order"],
         icon=row["icon"],
         access=access,
@@ -102,6 +109,7 @@ def _row_to_summary(
         parent_id=row["parent_id"] if parent_id is _UNSET else parent_id,
         name=row["name"],
         type=row["type"],
+        kind=_row_kind(row),
         order=row["node_order"],
         icon=row["icon"],
         access=access,
@@ -306,6 +314,90 @@ async def _require_visu_creation_parent(db: Database, principal: Principal, pare
     await _require_visu_generate(db, principal, [parent_id])
 
 
+def _source_page_readonly(access: str) -> bool:
+    """Widgets einer readonly-Quellseite bleiben gesperrt, wo immer sie erscheinen.
+
+    Einzige Ableitungsregel für ``GET /widget-ref/{page_id}`` (einzelnes eingebettetes
+    Widget) und für das Laden einer Include-Quelle über ``GET /pages/{id}`` (R15).
+    """
+    return access == "readonly"
+
+
+def _validate_node_kind(node_type: str, kind: str) -> None:
+    """Nur Seiten tragen einen Seitentyp; ein Ordner bleibt 'normal'."""
+    if node_type != "PAGE" and kind != "normal":
+        raise HTTPException(status_code=400, detail="Seitentyp ist nur für Seiten (PAGE) zulässig")
+
+
+async def _assert_no_include_cycle(db: Database, node_id: str, includes: list[str]) -> None:
+    """Folgt der Include-Kette und lehnt jeden Weg zurück auf node_id ab (auch mehrstufig)."""
+    pending = list(includes)
+    seen: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current == node_id:
+            raise HTTPException(status_code=400, detail="Include-Zyklus: die Seite inkludiert sich mittelbar selbst")
+        if current in seen:
+            continue
+        seen.add(current)
+        row = await db.fetchone("SELECT page_config FROM visu_nodes WHERE id = ?", (current,))
+        if row is None or not row["page_config"]:
+            continue
+        pending.extend(str(target) for target in json.loads(row["page_config"]).get("includes") or [])
+
+
+async def _assert_not_included_elsewhere(db: Database, node_id: str) -> None:
+    """Ein Popup darf nie Include-Ziel sein, also auch nicht nachträglich eines werden."""
+    row = await db.fetchone(
+        """SELECT vn.id
+           FROM visu_nodes AS vn
+           WHERE json_valid(vn.page_config)
+             AND EXISTS (
+               SELECT 1 FROM json_each(vn.page_config, '$.includes') WHERE json_each.value = ?
+           )
+           LIMIT 1""",
+        (node_id,),
+    )
+    if row is not None:
+        raise HTTPException(status_code=400, detail="Eine inkludierte Seite kann kein Popup werden")
+
+
+async def _apply_kind_change(db: Database, node: VisuNode, kind: PageKind) -> None:
+    """Prüft einen Seitentyp-Wechsel gegen die bereits gespeicherte Konfiguration."""
+    _validate_node_kind(node.type, kind)
+    if kind == "popup":
+        await _assert_not_included_elsewhere(db, node.id)
+    await _validate_page_kind_config(db, node.id, kind, node.page_config or PageConfig())
+
+
+async def _validate_page_kind_config(db: Database, node_id: str, kind: str, config: PageConfig) -> None:
+    """Setzt das Seitentyp-Modell durch, bevor eine Konfiguration gespeichert wird.
+
+    R12: eine globale Inkludeseite inkludiert selbst nichts (eine Ebene).
+    R9:  ein Popup bekommt keine Includes (auch keine globalen, das entscheidet die Komposition).
+    Ziele existieren, sind Seiten und sind nie selbst ein Popup; keine Selbst-Includes/Zyklen.
+    """
+    if config.popup is not None and kind != "popup":
+        raise HTTPException(status_code=400, detail="Popup-Konfiguration ist nur für Seitentyp 'popup' zulässig")
+    if not config.includes:
+        return
+    if kind == "globalInclude":
+        raise HTTPException(status_code=400, detail="Eine globale Inkludeseite kann selbst keine Seiten inkludieren")
+    if kind == "popup":
+        raise HTTPException(status_code=400, detail="Eine Popup-Seite kann keine Seiten inkludieren")
+    for target_id in config.includes:
+        if target_id == node_id:
+            raise HTTPException(status_code=400, detail="Eine Seite kann sich nicht selbst inkludieren")
+        row = await db.fetchone("SELECT type, kind FROM visu_nodes WHERE id = ?", (target_id,))
+        if row is None:
+            raise HTTPException(status_code=400, detail="Include-Ziel existiert nicht")
+        if row["type"] != "PAGE":
+            raise HTTPException(status_code=400, detail="Include-Ziel ist keine Seite")
+        if row["kind"] == "popup":
+            raise HTTPException(status_code=400, detail="Eine Popup-Seite kann nicht inkludiert werden")
+    await _assert_no_include_cycle(db, node_id, config.includes)
+
+
 def _collect_page_datapoint_ids(config: PageConfig) -> list[str]:
     datapoint_ids: set[str] = set()
     for widget in config.widgets:
@@ -344,8 +436,12 @@ async def _check_page_read_access(
     config: PageConfig,
     *,
     session_token: str | None = None,
-) -> None:
-    """Apply the page-config read policy shared by page reads and exports."""
+) -> str:
+    """Apply the page-config read policy shared by page reads and exports.
+
+    Gibt das aufgelöste Zugriffs-Level zurück, damit Aufrufer es nicht ein
+    zweites Mal über die Elternkette auflösen müssen.
+    """
     access, defining_node_id = await _resolve_access_with_node(db, node_id)
     if principal is None:
         if access == "user":
@@ -365,6 +461,7 @@ async def _check_page_read_access(
 
     if access == "user":
         await _check_page_datapoint_policy(db, principal, _collect_page_datapoint_ids(config), AuthzAction.READ)
+    return access
 
 
 async def _target_usernames_for_node(
@@ -612,6 +709,10 @@ async def import_nodes(
         if pc and "widgets" in pc:
             for widget in pc["widgets"]:
                 widget["id"] = str(uuid.uuid4())
+        if pc and pc.get("includes"):
+            # Include-Ziele innerhalb des Exports folgen den neuen IDs; Ziele
+            # außerhalb bleiben stehen und treffen im Ziel-Server dieselbe Seite.
+            pc["includes"] = [id_map.get(str(target), str(target)) for target in pc["includes"]]
         page_config = PageConfig.model_validate(pc or {})
         prepared_nodes.append((node, new_id, new_parent_id, page_config.model_dump_json(), page_config))
 
@@ -619,6 +720,7 @@ async def import_nodes(
     async with db.transaction():
         await _require_visu_creation_parent(db, principal, body.target_parent_id)
         for node, _new_id, _new_parent_id, _pc_json, page_config in prepared_nodes:
+            _validate_node_kind(node.type, node.kind)
             if node.type == "PAGE":
                 await _check_page_datapoint_policy(
                     db,
@@ -639,14 +741,15 @@ async def import_nodes(
         for node, new_id, new_parent_id, pc_json, _page_config in prepared_nodes:
             await db.conn.execute(
                 """INSERT INTO visu_nodes
-                       (id, parent_id, name, type, node_order, icon,
+                       (id, parent_id, name, type, kind, node_order, icon,
                         page_config, created_at, updated_at, created_by)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     new_id,
                     new_parent_id,
                     node.name,
                     node.type,
+                    node.kind,
                     node.node_order,
                     node.icon,
                     pc_json,
@@ -660,6 +763,10 @@ async def import_nodes(
                     "INSERT INTO authz_visu_page_policies (node_id, access_mode) VALUES (?, ?)",
                     (new_id, node.access),
                 )
+        for node, new_id, _new_parent_id, _pc_json, page_config in prepared_nodes:
+            if node.type == "PAGE":
+                # Erst nach allen INSERTs: Include-Ziele im Import sind jetzt auflösbar.
+                await _validate_page_kind_config(db, new_id, node.kind, page_config)
         await write_application_success(
             db,
             None,
@@ -689,6 +796,7 @@ async def get_node(
         parent_id=parent_id,
         name=node.name,
         type=node.type,
+        kind=node.kind,
         order=node.order,
         icon=node.icon,
         access=node.access,
@@ -711,6 +819,7 @@ async def create_node(
     default_page_config = PageConfig()
     async with db.transaction():
         await _require_visu_creation_parent(db, principal, body.parent_id)
+        _validate_node_kind(body.type, body.kind)
         pin_hash: str | None = None
         if body.access == "protected" and body.access_pin:
             pin_hash = bcrypt.hashpw(body.access_pin.encode(), bcrypt.gensalt()).decode()
@@ -724,15 +833,16 @@ async def create_node(
         await db.conn.execute(
             """
             INSERT INTO visu_nodes
-                (id, parent_id, name, type, node_order, icon, page_config,
+                (id, parent_id, name, type, kind, node_order, icon, page_config,
                  created_at, updated_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 node_id,
                 body.parent_id,
                 body.name,
                 body.type,
+                body.kind,
                 body.order,
                 body.icon,
                 default_page_config.model_dump_json(),
@@ -796,6 +906,10 @@ async def update_node(
         if body.name is not None:
             updates.append("name = ?")
             values.append(body.name)
+        if body.kind is not None:
+            await _apply_kind_change(db, node, body.kind)
+            updates.append("kind = ?")
+            values.append(body.kind)
         if body.order is not None:
             updates.append("node_order = ?")
             values.append(body.order)
@@ -972,15 +1086,16 @@ async def copy_node(
         await db.conn.execute(
             """
             INSERT INTO visu_nodes
-                (id, parent_id, name, type, node_order, icon,
+                (id, parent_id, name, type, kind, node_order, icon,
                  page_config, created_at, updated_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 new_id,
                 body.target_parent_id,
                 body.new_name,
                 source.type,
+                source.kind,
                 source.order,
                 source.icon,
                 new_pc.model_dump_json(),
@@ -1036,6 +1151,7 @@ async def export_node(
                 "parent_id": row["parent_id"],
                 "name": row["name"],
                 "type": row["type"],
+                "kind": _row_kind(row),
                 "node_order": row["node_order"],
                 "icon": row["icon"],
                 "access": policy["access_mode"] if policy else None,
@@ -1141,6 +1257,10 @@ async def pin_auth(
 async def get_page(
     node_id: str,
     request: Request,
+    # FastAPI injiziert die Response immer; der None-Default hält die Funktion
+    # für direkte Aufrufe ohne HTTP-Schicht benutzbar (``Response | None`` lehnt
+    # FastAPI als Feldtyp ab).
+    response: Response = None,
     db: Database = Depends(get_db),
     user: Principal | str | None = Depends(_optional_visu_principal),
 ):
@@ -1150,13 +1270,17 @@ async def get_page(
         raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
 
     config = node.page_config or PageConfig()
-    await _check_page_read_access(
+    access = await _check_page_read_access(
         db,
         node_id,
         principal,
         config,
         session_token=request.headers.get("X-Session-Token"),
     )
+    if response is not None:
+        # Include-Quellen kommen über genau diesen Weg; der Host sperrt ihre
+        # Widgets nach derselben Regel wie bei /widget-ref (R15).
+        response.headers["X-Source-Page-Readonly"] = "true" if _source_page_readonly(access) else "false"
     return config
 
 
@@ -1262,7 +1386,7 @@ async def get_widget_ref(
         WidgetRefInstance.model_validate(
             {
                 **widget.model_dump(),
-                "source_page_readonly": access == "readonly",
+                "source_page_readonly": _source_page_readonly(access),
             }
         )
         for widget in pc.widgets
@@ -1318,6 +1442,8 @@ async def save_page(
                 request=request,
             )
         raise
+
+    await _validate_page_kind_config(db, node_id, node.kind, config)
 
     access, defining_node_id = await _resolve_access_with_node(db, node_id)
     if access == "user" and defining_node_id is not None:
