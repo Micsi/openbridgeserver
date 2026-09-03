@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
-import { defineComponent, h } from 'vue';
+import { defineComponent, h, reactive } from 'vue';
 import { createI18n } from 'vue-i18n';
 import { setActivePinia, createPinia } from 'pinia';
 
@@ -51,6 +51,7 @@ vi.mock('@ionic/vue', () => {
 });
 
 import SkinPage from './SkinPage.vue';
+import { SHELL_CONTEXT_KEY, type ShellContext } from '../app/shell/shellContext';
 
 function makeI18n(locale = 'de') {
   return createI18n({ legacy: false, locale, fallbackLocale: 'de', messages: { de, en } });
@@ -182,5 +183,54 @@ describe('SkinPage(overview) — ionic page stays green (A5 regression)', () => 
     expect(wrapper.find('.t-row').exists()).toBe(false);
     // ionic declares tweaks → the editor toggle is offered
     expect(wrapper.find('.overview-tweaks-toggle').exists()).toBe(true);
+  });
+});
+
+/**
+ * The routed body must be an `ion-page` and it must tell the app-level shell WHICH
+ * skin surface it sits on.
+ *
+ * Both were single points of failure:
+ *  - A bare `<div>` body is invisible to `ion-router-outlet`: the outlet locates a
+ *    leaving view through the `registerIonPage` callback only an `IonPage` fires,
+ *    so without it the previous page was never marked `ion-page-hidden` and stayed
+ *    stacked UNDER the new one after every in-app route change.
+ *  - The shell hardcoded `visu-root` on the page that wraps EVERY route, so the
+ *    chrome was ionic-toned (photo background, `--ion-*` tokens) even on the
+ *    terminal page. The page names its own skin's namespace instead.
+ */
+describe('SkinPage — routed body + the skin surface it hands the shell', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  /** Mount a page with a shell context we can read back (the app-level seam). */
+  async function mountWithShellContext(pageId: string) {
+    const ctx: ShellContext = reactive({});
+    const wrapper = mount(SkinPage, {
+      props: { pageId },
+      global: { plugins: [makeI18n()], provide: { [SHELL_CONTEXT_KEY as symbol]: ctx } },
+    });
+    await wrapper.vm.$nextTick();
+    return { wrapper, ctx };
+  }
+
+  it('renders the body as an ion-page so the outlet can retire it on leave', async () => {
+    await seedStore();
+    const wrapper = await mountPage('terminal');
+    // The stub renders IonPage as <ion-page>; the `.skin-page` class falls through.
+    expect(wrapper.find('ion-page.skin-page').exists()).toBe(true);
+  });
+
+  it('hands the shell the TERMINAL namespace on the terminal page', async () => {
+    await seedStore();
+    const { ctx } = await mountWithShellContext('terminal');
+    expect(ctx.rootClass).toBe(resolveSkin('terminal').rootClass);
+    expect(ctx.rootClass).not.toBe('visu-root');
+  });
+
+  it('hands the shell the IONIC namespace on the overview page', async () => {
+    await seedStore();
+    const { ctx } = await mountWithShellContext('overview');
+    expect(ctx.rootClass).toBe(resolveSkin('ionic').rootClass);
+    expect(ctx.rootClass).toBe('visu-root');
   });
 });

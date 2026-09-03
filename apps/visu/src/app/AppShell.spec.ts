@@ -165,3 +165,25 @@ describe('AppShell — must-keep behaviours', () => {
     expect(w.text()).toContain('Terminal');
   });
 });
+
+describe('AppShell — the chrome sits on the ACTIVE page skin surface', () => {
+  it('carries no skin namespace when no page named one (standalone mount)', () => {
+    const page = mountShell().find('.app-shell-page');
+    expect(page.exists()).toBe(true);
+    // Hardcoding one skin's root here made EVERY page's chrome ionic-toned.
+    expect(page.classes()).not.toContain('visu-root');
+    expect(page.classes()).not.toContain('t-root');
+  });
+
+  it('carries the root class the active page names (ionic → visu-root)', () => {
+    const page = mountShell({ rootClass: 'visu-root' }).find('.app-shell-page');
+    expect(page.classes()).toContain('visu-root');
+    expect(page.classes()).toContain('app-shell-page');
+  });
+
+  it('carries the TERMINAL namespace on a terminal page — never the ionic one', () => {
+    const page = mountShell({ rootClass: 't-root' }).find('.app-shell-page');
+    expect(page.classes()).toContain('t-root');
+    expect(page.classes()).not.toContain('visu-root');
+  });
+});

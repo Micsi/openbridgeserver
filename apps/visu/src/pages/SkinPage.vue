@@ -25,8 +25,10 @@
  * skin is addressed by name (resolved by the host registry); order + grouping are
  * the floor; AA tokens come from core.
  */
-import { ref, computed, watchEffect } from 'vue';
+import { ref, computed, inject, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { routeLocationKey } from 'vue-router';
+import { IonPage } from '@ionic/vue';
 import { applyTweaks, type IonicTweaks } from '@obs-visu-skins/ionic';
 import '@obs-visu-skins/ionic/ionic.css';
 // Edomi POC chrome (nav + pixel canvas + popups); harmless when another skin renders.
@@ -110,10 +112,23 @@ const theme = computed<'light' | 'dark' | 'image'>(() => {
 // app provider (a page mounted standalone in a test) this writes to a local
 // context, leaving the page fully self-contained.
 const shellContext = useShellContext();
+// The outlet keeps a LEAVING page mounted (hidden) in its view stack, so several
+// SkinPages can be alive at once — and they all watch the same shared seam. Only
+// the page the router currently points at may write it; otherwise the last effect
+// to re-run wins and the chrome keeps the old page's title and skin surface. Route
+// names ARE the page ids (router.ts). With no router at all (a page mounted
+// standalone in a test) there is nothing to compete with, so the page writes.
+// `inject(routeLocationKey, null)` rather than `useRoute()`: the same seam, but it
+// tolerates no router at all instead of warning about a missing injection.
+const route = inject(routeLocationKey, null);
+const isRoutedPage = computed(() => route?.name == null || route.name === page.value.def.id);
 watchEffect(() => {
+  if (!isRoutedPage.value) return;
   shellContext.title = pageTitle.value;
   shellContext.state = shellState.value;
   shellContext.rootBind = rootTweaks.value;
+  // The chrome sits on the surface of THIS page's skin, not on a hardcoded one.
+  shellContext.rootClass = skinRootClass.value;
 });
 
 /* --------------------------------------------------- current page (#1194) */
@@ -142,8 +157,18 @@ const pageNames = computed<Record<string, string> | undefined>(() =>
 <template>
   <!-- The page renders ONLY its body — the Ionic shell (ion-app + chrome) is
        mounted once at app level (App.vue) and reads this page's chrome from the
-       shared shell context. No nested ion-app per page (#118). -->
-  <div
+       shared shell context. No nested ion-app per page (#118).
+
+       The body is an `IonPage` (a plain `<div class="ion-page">`) because the
+       routed view is what `ion-router-outlet` manages: the outlet locates the
+       leaving view through the `registerIonPage` callback `IonPage` fires on
+       mount, and only a REGISTERED view gets `ion-page-hidden` when it leaves.
+       With a bare div the outlet found no leaving element, so every in-app route
+       change left the previous page mounted and visible UNDER the new one — two
+       stacked `.skin-page`s after `/` → `/terminal`. This is not the nested
+       `ion-app`/duplicated chrome #118 ruled out: the chrome still lives once, at
+       app level; this only makes the routed body identifiable to the outlet. -->
+  <IonPage
     class="skin-page"
     :data-page="page.def.id"
   >
@@ -185,10 +210,23 @@ const pageNames = computed<Record<string, string> | undefined>(() =>
         />
       </template>
     </DetailModalHost>
-  </div>
+  </IonPage>
 </template>
 
 <style scoped>
+/* `.ion-page` is `position: absolute; inset: 0; contain: layout size style` — the
+   box Ionic gives a view that OWNS the viewport. Here the routed view lives inside
+   the shell's scrolling `ion-content` (#118), so that box would pin the page to a
+   zero-height slot and nothing below the fold could be scrolled to. Put it back in
+   flow so the shell's content scrolls the page: exactly what Ionic itself does for
+   a page it hosts in a non-outlet box (`ion-modal > .ion-page`). Only the box is
+   neutralised — the `ion-page` CLASS stays, which is what the outlet registers and
+   what `ion-page-hidden` (display:none !important) then hides on leave. */
+.skin-page {
+  position: relative;
+  contain: layout style;
+}
+
 .overview-root {
   /* Room blocks read as separate rooms by the gap between groups (Must-Keep);
      the ionic skin draws the gap via --vz-room-gap on the .visu-root. */

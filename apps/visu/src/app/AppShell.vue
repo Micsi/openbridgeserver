@@ -82,8 +82,22 @@ const props = withDefaults(
      *  toolbars go transparent + themed (ionic.css .visu-root) and the photo/
      *  gradient background spans behind the chrome. */
     rootBind?: RootTweakStyle;
+    /** The CSS namespace of the ACTIVE page's skin (`Skin.rootClass`). The shell
+     *  page carries it so the chrome sits on the surface of the skin the page
+     *  actually uses — `.visu-root` on an ionic page, `.t-root` on the terminal
+     *  page. Hardcoding `visu-root` here made the chrome ionic-toned (photo
+     *  background, `--ion-*` tokens) on EVERY page, whatever its skin. */
+    rootClass?: string;
   }>(),
-  { state: undefined, title: undefined, error: null, empty: false, withRouterOutlet: false, rootBind: undefined },
+  {
+    state: undefined,
+    title: undefined,
+    error: null,
+    empty: false,
+    withRouterOutlet: false,
+    rootBind: undefined,
+    rootClass: undefined,
+  },
 );
 
 const { t } = useI18n();
@@ -98,6 +112,10 @@ const ctxTitle = computed<string | undefined>(() => props.title ?? ctx.title);
 const ctxError = computed<string | null>(() => (props.error ?? ctx.error) ?? null);
 const ctxEmpty = computed<boolean>(() => props.empty || ctx.empty === true);
 const ctxRootBind = computed<RootTweakStyle | undefined>(() => props.rootBind ?? ctx.rootBind);
+/** The active page's skin namespace. No page (shell mounted standalone) means no
+ *  skin surface — the shell then draws plain Ionic chrome rather than borrowing
+ *  one skin's look. */
+const ctxRootClass = computed<string | undefined>(() => props.rootClass ?? ctx.rootClass);
 
 const shell = useShellState(ctxState.value);
 
@@ -168,7 +186,8 @@ defineExpose({ shell });
 
     <IonPage
       id="app-shell-content"
-      class="visu-root app-shell-page"
+      class="app-shell-page"
+      :class="ctxRootClass"
       v-bind="ctxRootBind?.attrs"
       :style="ctxRootBind?.style"
     >
@@ -257,7 +276,20 @@ defineExpose({ shell });
               :room-divider="RoomDivider"
               :shell="shell"
             />
-            <IonRouterOutlet v-if="withRouterOutlet" />
+            <!-- `animated="false"`: the routed pages are in-flow inside the shell's
+                 scrolling content (they cannot be the absolutely positioned boxes a
+                 slide transition animates without losing the scroll), so an animated
+                 push would show BOTH pages stacked for the duration. An instant swap
+                 keeps "exactly one page visible" true at every moment. -->
+            <!-- `animated="false"`: the routed pages are in-flow inside the shell's
+                 scrolling content (they cannot be the absolutely positioned boxes a
+                 slide transition animates without losing the scroll), so an animated
+                 push would show BOTH pages stacked for the duration. An instant swap
+                 keeps "exactly one page visible" true at every moment. -->
+            <IonRouterOutlet
+              v-if="withRouterOutlet"
+              :animated="false"
+            />
           </template>
         </div>
       </IonContent>
@@ -289,13 +321,28 @@ defineExpose({ shell });
   z-index: 1; /* above the decorative background layer */
 }
 
-/* When the page is the skin's themed surface, the chrome is glass over the
-   background: content transparent so the page photo/gradient shows through, and
-   the toolbars get a frosted backdrop (their transparent fill + colour come from
-   ionic.css .visu-root → --ion-toolbar-background / --ion-toolbar-color). */
-.app-shell-page.visu-root .app-shell-content {
+/* The routed view lives in this body. `ion-router-outlet` is `position: absolute;
+   inset: 0; contain: layout size style` — it claims the viewport and contributes
+   NO height, so inside the shell's scrolling content it collapsed the body to 0px
+   and the pages spilled out of a box `ion-content` could not scroll. Put the
+   outlet in flow and let it be sized by the page inside it; size containment is
+   the only part dropped, layout/style containment stays. */
+.app-shell-body :deep(ion-router-outlet) {
+  position: relative;
+  contain: layout style;
+}
+
+/* The page IS the skin's themed surface (it carries the skin's root class), so the
+   shell content never paints its own ground over it — that is skin-agnostic. */
+.app-shell-page .app-shell-content {
   --background: transparent;
 }
+
+/* The frosted toolbar backdrop is the ionic skin's glass idiom, so it stays keyed
+   on ITS namespace: on an ionic page the toolbars blur over the photo/gradient
+   (their transparent fill + colour come from ionic.css .visu-root →
+   --ion-toolbar-background / --ion-toolbar-color); on a terminal page there is no
+   glass to imitate and the rule simply does not apply. */
 .app-shell-page.visu-root .app-shell-header ion-toolbar,
 .app-shell-page.visu-root .app-shell-titlebar ion-toolbar {
   backdrop-filter: blur(16px) saturate(1.3);
