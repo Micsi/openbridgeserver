@@ -1512,7 +1512,9 @@ async def test_visu_create_node_success():
 @pytest.mark.asyncio
 async def test_visu_delete_node_success():
     """delete_node deletes the node from DB."""
-    node_row = _make_node_row(id="del-1", type="PAGE", name="To Delete")
+    # page_config is NOT NULL DEFAULT '{}' in the real table; the include-reference
+    # cleanup reads that column, so the mocked row carries it as well.
+    node_row = _make_node_row(id="del-1", type="PAGE", name="To Delete", page_config="{}")
     db = _make_visu_db(row=node_row)
     await delete_node(node_id="del-1", db=db, _user="admin")
     assert db.conn.execute.call_count >= 2

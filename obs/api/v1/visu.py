@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -367,15 +368,32 @@ async def _apply_kind_change(db: Database, node: VisuNode, kind: PageKind) -> No
     _validate_node_kind(node.type, kind)
     if kind == "popup":
         await _assert_not_included_elsewhere(db, node.id)
-    await _validate_page_kind_config(db, node.id, kind, node.page_config or PageConfig())
+    stored = node.page_config or PageConfig()
+    # Nur der Seitentyp ändert sich; die gespeicherten Include-Einträge sind alt
+    # und dürfen den Wechsel nicht an einem verwaisten Ziel scheitern lassen.
+    await _validate_page_kind_config(db, node.id, kind, stored, previous_includes=stored.includes)
 
 
-async def _validate_page_kind_config(db: Database, node_id: str, kind: str, config: PageConfig) -> None:
+async def _validate_page_kind_config(
+    db: Database,
+    node_id: str,
+    kind: str,
+    config: PageConfig,
+    *,
+    previous_includes: Iterable[str] = (),
+) -> None:
     """Setzt das Seitentyp-Modell durch, bevor eine Konfiguration gespeichert wird.
 
     R12: eine globale Inkludeseite inkludiert selbst nichts (eine Ebene).
     R9:  ein Popup bekommt keine Includes (auch keine globalen, das entscheidet die Komposition).
     Ziele existieren, sind Seiten und sind nie selbst ein Popup; keine Selbst-Includes/Zyklen.
+
+    ``previous_includes`` sind die bereits gespeicherten Einträge desselben Knotens.
+    Für sie entfällt die Ziel-Prüfung gegen die Datenbank: ein Ziel kann inzwischen
+    gelöscht oder für den speichernden Principal verdeckt sein, und ein unveränderter
+    Alt-Eintrag darf das Speichern der Seite dann nicht dauerhaft blockieren (R17 –
+    V1 schickt die geladene Konfiguration unverändert zurück und hat keine Include-UI).
+    Neue und geänderte Einträge bleiben streng geprüft.
     """
     if config.popup is not None and kind != "popup":
         raise HTTPException(status_code=400, detail="Popup-Konfiguration ist nur für Seitentyp 'popup' zulässig")
@@ -385,9 +403,12 @@ async def _validate_page_kind_config(db: Database, node_id: str, kind: str, conf
         raise HTTPException(status_code=400, detail="Eine globale Inkludeseite kann selbst keine Seiten inkludieren")
     if kind == "popup":
         raise HTTPException(status_code=400, detail="Eine Popup-Seite kann keine Seiten inkludieren")
+    unchanged = set(previous_includes)
     for target_id in config.includes:
         if target_id == node_id:
             raise HTTPException(status_code=400, detail="Eine Seite kann sich nicht selbst inkludieren")
+        if target_id in unchanged:
+            continue
         row = await db.fetchone("SELECT type, kind FROM visu_nodes WHERE id = ?", (target_id,))
         if row is None:
             raise HTTPException(status_code=400, detail="Include-Ziel existiert nicht")
@@ -396,6 +417,46 @@ async def _validate_page_kind_config(db: Database, node_id: str, kind: str, conf
         if row["kind"] == "popup":
             raise HTTPException(status_code=400, detail="Eine Popup-Seite kann nicht inkludiert werden")
     await _assert_no_include_cycle(db, node_id, config.includes)
+
+
+async def _drop_include_references(db: Database, removed_ids: Iterable[str]) -> None:
+    """Entfernt Verweise auf gelöschte Seiten aus den ``includes`` anderer Seiten.
+
+    Bewusste Wahl: beim Löschen wird **aufgeräumt** statt die toten Verweise stehen
+    zu lassen. Sonst trüge der Baum Karteileichen, die im Editor als leere Include-
+    Zeile erscheinen und beim Import wieder mitwandern. Die Duldung verwaister
+    Alt-Einträge in ``_validate_page_kind_config`` bleibt trotzdem nötig: Verweise
+    können auch anders entstehen (Import eines Teilbaums ohne das Ziel, Kopie, oder
+    eine Seite, die für den speichernden Principal nur verdeckt ist).
+    Die rohe JSON-Struktur wird bearbeitet, damit unbekannte Felder einer V1- oder
+    Fremd-Konfiguration erhalten bleiben (R17). Aufgeräumt wird über den ganzen
+    Baum, auch auf Seiten ohne Schreibrecht des Löschenden: es ist dieselbe
+    Integritäts-Nachsorge wie das kaskadierende Löschen der Nachkommen, kein
+    inhaltlicher Eingriff (der Verweis zeigte danach ohnehin ins Leere).
+    """
+    # `removed_ids` ist der Teilbaum der gelöschten Seite und enthält sie immer selbst;
+    # eine leere Liste ist ausgeschlossen (wie schon beim DELETE der Rollen darüber).
+    removed = [str(node_id) for node_id in removed_ids]
+    placeholders = ",".join("?" for _ in removed)
+    rows = await db.fetchall(
+        f"""SELECT vn.id, vn.page_config
+            FROM visu_nodes AS vn
+            WHERE json_valid(vn.page_config)
+              AND EXISTS (
+                SELECT 1 FROM json_each(vn.page_config, '$.includes')
+                WHERE json_each.value IN ({placeholders})
+              )""",
+        removed,
+    )
+    dropped = set(removed)
+    for row in rows:
+        stored = json.loads(row["page_config"])
+        includes = [str(target) for target in stored.get("includes") or []]
+        stored["includes"] = [target for target in includes if target not in dropped]
+        await db.conn.execute(
+            "UPDATE visu_nodes SET page_config = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(stored), _now_iso(), row["id"]),
+        )
 
 
 def _collect_page_datapoint_ids(config: PageConfig) -> list[str]:
@@ -975,6 +1036,7 @@ async def delete_node(
         )
         # ON DELETE CASCADE removes descendants, policies and credentials.
         await db.conn.execute("DELETE FROM visu_nodes WHERE id = ?", (node_id,))
+        await _drop_include_references(db, subtree_ids)
         await write_application_success(db, None, principal, "DELETE", "/api/v1/visu/nodes/{node_id}", resource_id=node_id, commit=False)
 
 
@@ -1279,7 +1341,10 @@ async def get_page(
     )
     if response is not None:
         # Include-Quellen kommen über genau diesen Weg; der Host sperrt ihre
-        # Widgets nach derselben Regel wie bei /widget-ref (R15).
+        # Widgets nach derselben Regel wie bei /widget-ref (R15). Der Body
+        # (PageConfig) trägt kein Zugriffs-Level und der Baum liefert `access`
+        # nur roh mit gekappter Elternkette, deshalb diese Naht als Header.
+        # Dokumentiert in CONTRIBUTING-visu-m5.md §2.1.
         response.headers["X-Source-Page-Readonly"] = "true" if _source_page_readonly(access) else "false"
     return config
 
@@ -1443,7 +1508,13 @@ async def save_page(
             )
         raise
 
-    await _validate_page_kind_config(db, node_id, node.kind, config)
+    await _validate_page_kind_config(
+        db,
+        node_id,
+        node.kind,
+        config,
+        previous_includes=(node.page_config.includes if node.page_config else []),
+    )
 
     access, defining_node_id = await _resolve_access_with_node(db, node_id)
     if access == "user" and defining_node_id is not None:

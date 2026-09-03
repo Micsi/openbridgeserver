@@ -135,10 +135,32 @@ class VisuNode(BaseModel):
   `includes` dürfen nur auf `kind == normal`-Seiten zeigen? - **Nein**: Ziel darf normal oder
   globalInclude sein (Edomi erlaubt das Einbetten einer Inkludeseite); nur Popups nicht.
 - **Kein neuer Auflösungs-Endpoint.** Der Host lädt jede PAGE-Config schon heute einzeln und
-  page-scoped (`loadPageConfigs` → `GET /pages/{id}` mit Concealment). Include-Quellen sind
-  gewöhnliche Seiten und kommen über denselben Weg: nicht lesbar → 404 → verdeckt (R15).
-  `source_page_readonly` wird beim Komponieren aus dem Zugriffs-Level der Quellseite abgeleitet
-  (dieselbe Regel wie `GET /widget-ref/{page_id}`).
+  page-scoped (`loadPageConfigs` → `GET /pages/{id}`). Include-Quellen sind gewöhnliche Seiten
+  und kommen über denselben Weg.
+- **Verdeckungs-Vertrag (R15), korrigiert gegen das reale Backend-Verhalten.** Die ursprüngliche
+  Zusage „nicht lesbar → 404" stimmt nur für die Navigations-Endpunkte. Das Zwei-Ebenen-Modell der
+  authz-Welle (Upstream #583, durch Bestandstests in `tests/unit/test_visu_authz.py` festgeschrieben,
+  z. B. `test_export_hides_user_page_from_api_key_with_visu_grant`) ist bewusst so gebaut und wird
+  von M5 **nicht** geändert:
+
+  | Ebene | Endpunkt | nicht lesbar |
+  |---|---|---|
+  | Navigation/Existenz | `GET /visu/tree`, `/nodes/{id}`, `/nodes/{id}/children`, `/nodes/{id}/breadcrumb` | Knoten fehlt im Baum bzw. **404** – die Existenz wird verdeckt |
+  | Seiteninhalt | `GET /visu/pages/{id}`, `GET /visu/widget-ref/{id}` | **401** (`Anmeldung erforderlich` / `PIN-Authentifizierung erforderlich`) bzw. **403** (`Zugriff verweigert`) |
+
+  Für den Host heißt das: Verdeckung entsteht **auf der Navigationsebene**. Eine Include-Quelle, die
+  der Principal nicht sehen darf, taucht schon im Baum nicht auf. Wird sie trotzdem geladen (weil sie
+  in einer `includes`-Liste steht), ist die vollständige Signalliste **401/403/404** als „verdeckt"
+  zu behandeln – der Include wird still weggelassen, kein Fehlerpfad, keine Meldung. Teil B baut
+  gegen diese Liste, nicht gegen 404 allein.
+- **`source_page_readonly`** wird aus dem aufgelösten Zugriffs-Level der Quellseite abgeleitet
+  (dieselbe Regel wie `GET /widget-ref/{page_id}`: `access == "readonly"`).
+  **Naht:** `GET /visu/pages/{id}` liefert das Ergebnis als Antwort-Header
+  `X-Source-Page-Readonly: true|false`. Der Body (`PageConfig`) trägt kein Zugriffs-Level, und der
+  Baum reicht nicht: `access` steht dort roh (`null` = vom Elternknoten erben) und `parent_id` wird
+  auf `null` gekappt, sobald der Elternknoten verdeckt ist – die Vererbungskette ist clientseitig
+  also nicht zuverlässig auflösbar. Der Header ist damit die einzige verlässliche Quelle; B/E lesen
+  ihn beim Laden einer Include-Quelle und setzen daraus `writable=false`.
 
 ### 2.2 Bewusste Abweichung von Edomi
 

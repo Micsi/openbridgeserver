@@ -698,11 +698,14 @@ async def _migration_v53_visu_page_kind(conn: aiosqlite.Connection) -> None:
 
     Every pre-M5 page is a normal page, so the column default carries the whole
     stock over unchanged (R17).  This deliberately does NOT follow the V18/V19
-    copy-table pattern: since V42 ``authz_visu_page_policies`` and the audit
-    grants reference ``visu_nodes(id) ON DELETE CASCADE``, and SQLite fires
-    cascade actions on DROP TABLE, a copy migration would silently delete every
-    page access policy and PIN.  ADD COLUMN with a CHECK constraint gives the
-    same enum guarantee and keeps the referencing rows intact.
+    copy-table pattern: since V42 ``authz_visu_page_policies`` references
+    ``visu_nodes(id) ON DELETE CASCADE`` and ``authz_visu_page_credentials``
+    (the PIN hashes) hangs off that policy, and SQLite fires cascade actions on
+    DROP TABLE, a copy migration would silently delete every page access policy
+    and PIN.  ADD COLUMN with a CHECK constraint gives the same enum guarantee
+    and keeps the referencing rows intact.  Regression test:
+    ``tests/unit/test_visu_page_kinds.py::
+    test_a_copy_rename_migration_on_visu_nodes_would_delete_policies_and_pins``.
     """
     async with conn.execute("PRAGMA table_info(visu_nodes)") as cur:
         columns = {row["name"] for row in await cur.fetchall()}
