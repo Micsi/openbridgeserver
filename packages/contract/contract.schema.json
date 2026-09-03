@@ -1,8 +1,10 @@
 {
   "$schema": "https://obs.visu/contract/v1",
-  "version": "1.11",
+  "version": "1.12",
 
   "roles": ["compact", "default", "wide", "tall", "feature", "banner"],
+
+  "layoutHonors": ["order", "grouping", "role", "position", "nav", "layers", "popup", "link"],
 
   "hostActions": {
     "openDetail": { "kind": "navigation", "note": "open the detail surface (host shell)" },
