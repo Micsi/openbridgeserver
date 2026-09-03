@@ -254,7 +254,7 @@ Tracking: GitHub-Issues im Fork, Milestone M5 (Authoring + V2-Editor, Nr. 6), Su
 |---|---|---|---|
 | A0 Vorab-Entscheide | - | Owner-Entscheide 1-5 getroffen (§7, 2026-09-03) | durch |
 | M Messlatten-Recherche (Micsi/openbridgeserver#165) | 3 | R3 Kritiker: g14c + E15 an der Quelle bestätigt, Zahlen exakt (31/25/42/7), jede Zeile mit Champion → **Messlatte tauglich** | durch |
-| A Backend-Modell (Micsi/openbridgeserver#166) | 0 | - | offen |
+| A Backend-Modell (Micsi/openbridgeserver#166) | 1 | R1: NICHT erreicht - (1) R15 liefert 403/401 statt der in §2.1 zugesagten 404-Verdeckung, unter dem Testnamen „concealed" zementiert; (2) gelöschtes Include-Ziel sperrt die Quellseite dauerhaft (400 bei jedem Speichern, trifft auch V1 → R17); (3) V1-Vitest nicht ausgeführt (kein node_modules), Integrationslauf hängen geblieben; (4) undokumentierter Header `X-Source-Page-Readonly` als neue Protokollfläche. Positiv belegt: Migrations-Abweichung (ALTER TABLE statt Copy) durch eigene SQLite-Probe des Kritikers gerechtfertigt (Copy-Muster löscht Policies/PINs/Grants); 13 Mutationsproben alle rot; 7034 Tests grün, keine neue Zeile unter Missing/partial | offen |
 | B Host-Komposition (Micsi/openbridgeserver#167) | 0 | - | offen |
 | C1 Editor Baum+Eigenschaften (Micsi/openbridgeserver#168) | 0 | - | offen |
 | C2 Editor WYSIWYG-Canvas (Micsi/openbridgeserver#169) | 0 | - | offen |
