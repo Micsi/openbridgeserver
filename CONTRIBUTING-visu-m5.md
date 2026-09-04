@@ -157,7 +157,7 @@ class VisuNode(BaseModel):
 
   | Signal (Status + `detail`) | Lage | Teil B |
   |---|---|---|
-  | **404** `Knoten nicht gefunden` | die Seite existiert nicht (mehr) | still weglassen |
+  | **404** | die Seite existiert nicht (mehr) oder ist auf Navigationsebene verdeckt | still weglassen |
   | **403** `Zugriff verweigert` | verdeckt: die Seite (oder ein Elternknoten) ist `user`-geschützt und der Principal gehört nicht zur Zielgruppe bzw. hat kein Leserecht auf ihre Datenpunkte | still weglassen, kein Fehlerpfad, keine Meldung |
   | **401** `Anmeldung erforderlich` | verdeckt, solange kein Login vorliegt | still weglassen; nach einem Login neu laden |
   | **401** `PIN-Authentifizierung erforderlich` | **keine Verdeckung**, sondern eine auflösbare Aufforderung: `POST /visu/nodes/{id}/auth` liefert ein Session-Token, das als `X-Session-Token` dieselbe Seite lesbar macht | nicht kommentarlos verwerfen: entweder die PIN an der Include-Stelle abfragen oder die Include-Stelle sichtbar als „gesperrt" markieren. Ein stilles Weglassen wäre hier ein Bedienfehler, keine Verdeckung |
@@ -189,6 +189,10 @@ class VisuNode(BaseModel):
   auf `null` gekappt, sobald der Elternknoten verdeckt ist – die Vererbungskette ist clientseitig
   also nicht zuverlässig auflösbar. Der Header ist damit die einzige verlässliche Quelle; B/E lesen
   ihn beim Laden einer Include-Quelle und setzen daraus `writable=false`.
+
+- **Nur der Statuscode ist Vertrag, nie der Meldungstext.** `spa_404_handler` in `obs/main.py`
+  ersetzt das `detail` **jedes** 404 unterhalb von `/api/` durch `"Not found"`. Wer auf einen
+  bestimmten Fehlertext prüft, baut auf Sand: Client-Logik und Tests hängen am Status.
 
 - **Grenzen der obigen Zusagen (vom Kritiker belegt, Teil B muss damit rechnen):**
   - Die Ausnahme fuer gespeicherte `includes` gilt fuer die Ziel-Pruefungen, **nicht** fuer Zyklus und
