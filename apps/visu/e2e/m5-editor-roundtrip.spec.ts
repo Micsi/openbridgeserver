@@ -6,10 +6,13 @@ import { ADMIN, EDITOR_BASE, adminHeaders, api, seeded } from './fixtures';
  * Editor-Round-Trip. Genau EIN Szenario, der Testname ist das Kriterium.
  *
  * R16 ist die harte Abnahme der Welle: „ohne grünen Round-Trip (R16) gegen
- * echten Server gilt M5 nicht als fertig" (§1). Er braucht beides — den
- * V2-Editor in `gui/` (Teil C1, #168) und die Host-Komposition (Teil B, #167).
- * Beides fehlt heute, deshalb `fixme`: der Ablauf steht vollständig, damit die
- * Lücke sichtbar bleibt und niemand sie für erledigt hält.
+ * echten Server gilt M5 nicht als fertig" (§1). Er braucht zwei Hälften: die
+ * Host-Komposition (Teil B, #167) und den V2-Editor in `gui/` (Teil C1, #168).
+ * Teil B ist in diesem Branch geliefert, R1-R15 laufen gegen den Host. Offen ist
+ * allein die Editor-Hälfte, und ohne sie gibt es die Seite gar nicht, deren
+ * Round-Trip diese Zeile behauptet; deshalb weiterhin `fixme`. Der Ablauf steht
+ * vollständig da, damit die Lücke sichtbar bleibt und niemand sie für erledigt
+ * hält.
  *
  * Der Editor lebt bewusst NICHT in `apps/visu`, sondern in der Admin-GUI
  * (§2.4). Er hat deshalb einen eigenen Ursprung; `GUI_BASE_URL` zeigt darauf
@@ -20,7 +23,7 @@ const BLOCKED_BY_EDITOR = {
   annotation: {
     type: 'blocked-by',
     description:
-      'Teil C1 Editor Baum+Seiteneigenschaften — Micsi/openbridgeserver#168, und Teil B Host-Komposition — Micsi/openbridgeserver#167',
+      'Teil C1 Editor Baum+Seiteneigenschaften — Micsi/openbridgeserver#168 (Teil B Host-Komposition #167 ist geliefert)',
   },
 } as const;
 
@@ -29,7 +32,7 @@ const BLOCKED_BY_EDITOR = {
 // nicht anfasst.
 const RT_POPUP = 'RT Popup Round-Trip';
 
-test.describe('M5 Regeltabelle R16 · Editor-Round-Trip (wartet auf Teil C1 #168 + Teil B #167)', () => {
+test.describe('M5 Regeltabelle R16 · Editor-Round-Trip (wartet auf Teil C1 #168)', () => {
   test.fixme(
     'R16 Editor-Round-Trip: im Editor angelegt → gespeichert → Edomi rendert per R1-R15',
     BLOCKED_BY_EDITOR,

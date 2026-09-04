@@ -34,6 +34,23 @@ async function clickLinkTile(page: Page, widgetName: string) {
   await page.locator('.edomi-item', { hasText: widgetName }).first().click();
 }
 
+/**
+ * R7 misst die Auto-Close-Frist zeitscharf, deshalb stehen beide Zahlen hier:
+ *
+ * `AUTO_CLOSE_MS` ist die Frist, die der Seed dem Popup `popup_timed` gibt
+ * (`seed.py`: `auto_close_ms: 1500`).
+ *
+ * `TOLERANCE_MS` ist die zulässige Streuung darum herum. GEMESSEN auf dieser
+ * Maschine über zehn Läufe: 1548-1587 ms, Streuung also 39 ms, Median
+ * 1560 ms. Das ist reiner Verzug durch Klick-Zustellung, Timer-Auflösung und
+ * DOM-Abbau. Die Toleranz muss zwei Bedingungen erfüllen: groß genug für
+ * diese Streuung, und klein genug, dass die Frist eines beim Wiederöffnen NEU
+ * gestarteten Timers (900 + 1500 = 2400 ms) außerhalb liegt. 400 ms erfüllen
+ * beides mit Abstand nach beiden Seiten.
+ */
+const AUTO_CLOSE_MS = 1500;
+const TOLERANCE_MS = 400;
+
 /** Die Knoten, die R1 anlegt, damit das Backend sie ablehnt (siehe dort). */
 const BOGUS_NODES = ['M5 Bogus Kind', 'M5 Bogus Folder'];
 
@@ -198,7 +215,10 @@ test.describe('M5 Regeltabelle R7-R8 · Popup-Verhalten im Host (läuft gegen de
 
     const popup = page.locator(`.edomi-popup[data-popup="${fx.m5.node_ids.popup_timed}"]`);
 
-    // Öffnen startet den Timer (auto_close_ms = 1500).
+    // Öffnen startet den Timer (auto_close_ms = 1500). Die Uhr läuft ab HIER,
+    // also vor dem Klick: die gemessene Frist fällt dadurch eher zu groß aus
+    // als zu klein, nie umgekehrt.
+    const openedAt = Date.now();
     await clickLinkTile(page, 'M5 Open Timed');
     await expect(popup).toBeVisible();
 
@@ -208,10 +228,21 @@ test.describe('M5 Regeltabelle R7-R8 · Popup-Verhalten im Host (läuft gegen de
     await clickLinkTile(page, 'M5 Open Timed');
     await expect(popup).toBeVisible();
 
-    // 900 + 700 = 1600 ms nach dem ersten Öffnen — bei verlängertem Timer wäre
-    // das Popup hier noch offen (es hätte bis 900 + 1500 = 2400 ms).
-    await page.waitForTimeout(700);
-    await expect(popup).toHaveCount(0);
+    // Und jetzt ZEITSCHARF: nicht „irgendwann weg“, sondern „zur ursprünglichen
+    // Frist weg“. Der Deckel wird ab dem ERSTEN Öffnen gerechnet, nicht ab hier;
+    // ein beim Wiederöffnen neu gestarteter Timer (Frist 900 + 1500 = 2400 ms)
+    // läuft in diesen Deckel und macht das Szenario rot. Bewusst `waitFor` statt
+    // einer retrienden `expect`-Erwartung: die trüge das 7-Sekunden-Fenster aus
+    // playwright.config.ts und verschluckte jede Verlängerung bis rund 8,6 s.
+    const budgetMs = AUTO_CLOSE_MS + TOLERANCE_MS - (Date.now() - openedAt);
+    expect(budgetMs, 'das Hinführen zum Wiederöffnen war langsamer als die Frist').toBeGreaterThan(0);
+    await popup.waitFor({ state: 'detached', timeout: budgetMs });
+    const closedAfterMs = Date.now() - openedAt;
+
+    // Die Gegenrichtung: die Frist wird auch nicht VERKÜRZT (ein Wiederöffnen,
+    // das den Timer sofort auslöst, wäre genauso falsch).
+    expect(closedAfterMs).toBeGreaterThanOrEqual(AUTO_CLOSE_MS - TOLERANCE_MS);
+    expect(closedAfterMs).toBeLessThanOrEqual(AUTO_CLOSE_MS + TOLERANCE_MS);
   });
 
   test('R8 Beliebig viele verschiedene Popups gleichzeitig', async ({ page }) => {

@@ -379,7 +379,7 @@ Policy denselben 403 nachgeliefert und die Mutation überlebt.
 | R4 Popup automatisch schließen nach Zeitspanne | `m5-pagetypes.spec.ts` | **läuft** | `auto_close_ms` gesetzt und (Gegenprobe) `null` statt 0 |
 | R5 Popup exklusiv öffnen = modal, Rest inert | `m5-pagetypes.spec.ts` | **läuft** | `modal` beide Seiten; das `inert` im Skin belegt R16 |
 | R6 Animation, Schlagschatten, Hintergrund abdunkeln | `m5-pagetypes.spec.ts` | **läuft** | die drei Flags einzeln und unabhängig |
-| R7 Auto-Close verlängert sich beim erneuten Öffnen nicht | `m5-pagetypes.spec.ts` | **läuft** | echte Zeitachse: öffnen, nach 900 ms erneut öffnen, bei 1600 ms muss es zu sein |
+| R7 Auto-Close verlängert sich beim erneuten Öffnen nicht | `m5-pagetypes.spec.ts` | **läuft** | echte Zeitachse, zeitscharf: öffnen, nach 900 ms erneut öffnen, und der ZEITPUNKT des Verschwindens muss auf 1500 ± 400 ms nach dem ERSTEN Öffnen fallen. Ein beim Wiederöffnen neu gestarteter Timer (2400 ms) liegt außerhalb und macht die Zeile rot |
 | R8 Beliebig viele verschiedene Popups gleichzeitig | `m5-pagetypes.spec.ts` | **läuft** | zwei verschiedene Popups nebeneinander; dasselbe zweimal geöffnet gibt keine Dublette |
 | R9 globale Inkludeseite in jede normale Seite, nicht in Popups | `m5-composition.spec.ts` | **läuft** | beide Seiten der Regel: zwei normale Seiten mit beiden globalen Layern, ein Popup ohne |
 | R10 mehrere globale Includes aufsteigend nach `order` | `m5-composition.spec.ts` | **läuft** | `data-layer` in Renderreihenfolge = Stapelreihenfolge, kleinste `order` zuunterst |
@@ -388,7 +388,7 @@ Policy denselben 403 nachgeliefert und die Mutation überlebt.
 | R13 normale Seite kann globale Includes ignorieren | `m5-composition.spec.ts` | **läuft** | beide Hälften wie bei R2-R6: `ignore_global_includes` am Backend (true **und** false) und kein globaler Layer im Bild |
 | R14 individuelle Inkludeseite wird eingebettet | `m5-composition.spec.ts` | **läuft** | `include`-Ebene unter der eigenen; die eingebetteten Elemente tragen dieselben `data-id` wie beim Direktaufruf (kein Datenfork) |
 | R15 Include quer über eine Zugriffsgrenze | `m5-authz-include.spec.ts` | **läuft** | die ganze Signalliste aus §2.1 + `X-Source-Page-Readonly` + Verdeckung im Baum |
-| R16 Editor-Round-Trip | `m5-editor-roundtrip.spec.ts` | `fixme` | Teil C1 #168 **und** Teil B #167 |
+| R16 Editor-Round-Trip | `m5-editor-roundtrip.spec.ts` | `fixme` | Teil C1 #168 (Teil B #167 ist geliefert, siehe „Was bewusst offen bleibt") |
 
 R17 („V1 bleibt unberührt und grün") ist kein E2E-Szenario: das belegt der
 V1-Vitest-Lauf des Backend-Teils.
@@ -541,9 +541,19 @@ sie im Speicher, `.seeded.json` enthält keine Admin-Zugangsdaten.
   Es wurde weder eine Erwartung abgeschwächt noch ein Selektor nachgezogen. Dass
   sie tragen und nicht bloss leer durchlaufen, ist an einer Mutationsprobe belegt:
   mit `kind` im `VisuNodeSummary` fest auf `normal` (an der API belegt, der Baum
-  meldet nur noch `['normal']`) werden R9, R10, R13, R7 und R8 rot. R11 und R14
-  bleiben zu Recht grün, denn sie hängen nicht an der Einstufung als globale
+  meldet nur noch `['normal']`) werden R1, R7, R8, R9, R10 und R13 rot. R11 und
+  R14 bleiben zu Recht grün, denn sie hängen nicht an der Einstufung als globale
   Inkludeseite.
+- **„Irgendwann zu" ist nicht „zur Frist zu".** R7 hat seine eigene Mutation
+  („Wiederöffnen startet den Auto-Close-Timer neu") zunächst überlebt: die
+  abschließende `expect(popup).toHaveCount(0)` ist eine retriende Erwartung und
+  hat mit dem 7-Sekunden-Fenster aus `playwright.config.ts` jede Verlängerung bis
+  rund 8,6 s verschluckt. R7 misst die Frist deshalb jetzt punktgenau
+  (`waitFor` mit einem ab dem ERSTEN Öffnen gerechneten Deckel, danach beide
+  Schranken um 1500 ms). Gemessen über zehn Läufe: 1548-1587 ms, Streuung 39 ms;
+  unter der Mutation wandert die Frist auf 2400 ms und R7 wird rot
+  (dreimal gefahren, dreimal rot, `waitFor … to be detached` läuft in den
+  Deckel), während R8 grün bleibt.
 - **Die authz-Welle-4-Spec musste enger werden, nicht lockerer.** Seit die
   Beispielwelt eine zweite PIN-geschützte Seite kennt (`M5 Guard Pin`), rendert
   der `AccessGate`-Streifen mehrere PIN-Formulare. `authz-roles.spec.ts` fasst
