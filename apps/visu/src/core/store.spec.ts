@@ -108,6 +108,15 @@ describe('core/store — init() + state ownership', () => {
     const store = await makeStore(new MockDataSource());
     expect(store.navTree).toEqual([]);
     expect(store.layersFor('anything')).toEqual([]);
+    // M5: dieselbe Degradation für die Seitentyp-Flächen. Ohne Baum gibt es
+    // keine Popup-Seite, keine Startseite und keine Include-Quelle — und
+    // trotzdem keinen Absturz: der Mock-Pfad bleibt exakt wie vorher.
+    expect(store.popupFor('anything')).toBeNull();
+    expect(store.firstPageId()).toBeNull();
+    expect(store.gatedIncludesFor('anything')).toEqual([]);
+    store.navigate('anything');
+    expect(store.currentPageId).toBe('anything');
+    expect(store.openPopups).toEqual([]);
   });
 
   it('reflects a layering source: navTree from init, layersFor read-through (W3c)', async () => {

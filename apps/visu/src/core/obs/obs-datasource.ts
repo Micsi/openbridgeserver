@@ -59,6 +59,7 @@ import {
   composeLayers,
   composePopup,
   buildNavTree,
+  includeSourceIds,
   type HostNavNode,
   type LayeringCapableDataSource,
 } from './compose';
@@ -112,8 +113,12 @@ export class ObsDataSource
    * what the tree's raw `access` or the per-datapoint verdict say; the header is
    * the only reliable readonly source (CONTRIBUTING-visu-m5.md §2.1). Rebuilt on
    * every {@link list}; a page whose config came inline never appears here.
+   *
+   * Replaced wholesale (not cleared in place) at the END of a load round: the
+   * per-page verdicts arrive asynchronously, so two overlapping {@link list}
+   * rounds would otherwise erase each other's results.
    */
-  private readonly readonlyPages = new Set<string>();
+  private readonlyPages: ReadonlySet<string> = new Set<string>();
   /** Guest poll cadence (ms). Live WS is used instead once logged in. */
   private static readonly POLL_INTERVAL_MS = 4000;
   /**
@@ -270,6 +275,16 @@ export class ObsDataSource
   }
 
   /**
+   * The pages composed INTO `pageId` (M5 R15/§2.1) — every include source of the
+   * last {@link list}'s tree, including one that yielded no layer because it is
+   * PIN-gated. The host uses this to offer that source's gate AT the include
+   * site instead of as a nameless entry in the global gate list.
+   */
+  includeSourcesFor(pageId: string): readonly string[] {
+    return includeSourceIds(this.tree, pageId);
+  }
+
+  /**
    * The ordered layer stack for a page (M5 R9-R15): global include pages, the
    * page's own includes and its own content, composed from the last {@link list}'s
    * tree + live values. A skin overlays this; the responsive skin ignores it.
@@ -366,21 +381,26 @@ export class ObsDataSource
    * keeps no widgets and simply shows its gate until unlocked or the user logs in.
    */
   private async loadPageConfigs(nodes: readonly ObsVisuNode[]): Promise<ObsVisuNode[]> {
-    this.readonlyPages.clear();
-    return Promise.all(
+    const readonlyPages = new Set<string>();
+    const enriched = await Promise.all(
       nodes.map(async (node) => {
         if (node.type !== 'PAGE' || node.page_config) return node;
         try {
           const page = await this.client.getPage(node.id, this.sessionTokenFor(node.id));
           // M5 R15: remember the server's readonly verdict for this page as an
           // include source; it is what locks its widgets (§2.1).
-          if (page.sourceReadonly) this.readonlyPages.add(node.id);
+          if (page.sourceReadonly) readonlyPages.add(node.id);
           return { ...node, page_config: page.config };
         } catch {
           return node;
         }
       }),
     );
+    // Swap in one go — this round's verdicts REPLACE the previous ones, so a page
+    // the server no longer calls readonly (after a PIN / a login) is operable
+    // again instead of staying locked forever.
+    this.readonlyPages = readonlyPages;
+    return enriched;
   }
 
   /** Fold a page's access + the server's per-DP verdict into `Device.writable`. */

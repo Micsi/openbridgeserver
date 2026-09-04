@@ -259,3 +259,55 @@ describe('AccessGate – a link stopped by the PIN gate becomes visible (#1194)'
     expect(wrapper.find('.access-gate-pin[data-page="p1"]').attributes('data-pending')).toBeUndefined();
   });
 });
+
+/**
+ * M5 R15 / §2.1: eine PIN-geschützte Include-QUELLE hinterlässt auf der Seite,
+ * die sie inkludiert, keine Ebene und damit keine Spur. Der Vertrag kann eine
+ * gesperrte Ebene heute nicht ausdrücken (`PageLayer` hat kein `locked`), aber
+ * die PIN-Abfrage darf trotzdem sagen, WOZU sie gehört: zu der Seite, die man
+ * gerade ansieht, nicht zu einem fremden Seitennamen.
+ */
+class FakeIncludeSource extends FakePageSource {
+  navTree(): [] {
+    return [];
+  }
+  layersFor(): [] {
+    return [];
+  }
+  /** `ziel` inkludiert `src`; jede andere Seite inkludiert nichts. */
+  includeSourcesFor(pageId: string): readonly string[] {
+    return pageId === 'ziel' ? ['src'] : [];
+  }
+}
+
+describe('AccessGate – die PIN einer Include-Quelle steht an der Include-Stelle', () => {
+  const gated = [{ pageId: 'src', name: 'Heizung', access: 'protected' as const }];
+
+  it('nennt die gesperrte Quelle als Ebene DIESER Seite, nicht als fremde Seite', async () => {
+    const store = useDeviceStore();
+    await store.init(new FakeIncludeSource(gated));
+    store.navigate('ziel');
+
+    const w = mountGate();
+    expect(w.find('.access-gate-hint').text()).toBe(
+      'PIN erforderlich für die gesperrte Ebene Heizung auf dieser Seite',
+    );
+    // Die Zuordnung steht auch am Markup, damit ein Skin/Test sie greifen kann.
+    expect(w.find('.access-gate-pin').attributes('data-include-of')).toBe('ziel');
+    // Und die PIN löst weiterhin genau diese Quelle frei.
+    await w.find('.access-gate-input').setValue('1234');
+    await w.find('.access-gate-pin').trigger('submit');
+    await flushPromises();
+    expect(store.pageGates).toEqual([]);
+  });
+
+  it('Gegenrichtung: auf einer Seite ohne diese Include-Quelle bleibt der schlichte Hinweis', async () => {
+    const store = useDeviceStore();
+    await store.init(new FakeIncludeSource(gated));
+    store.navigate('woanders');
+
+    const w = mountGate();
+    expect(w.find('.access-gate-hint').text()).toBe('PIN erforderlich für Heizung');
+    expect(w.find('.access-gate-pin').attributes('data-include-of')).toBeUndefined();
+  });
+});

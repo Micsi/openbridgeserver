@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { composeLayers, composePopup, buildNavTree } from './compose';
+import { composeLayers, composePopup, buildNavTree, includeSourceIds } from './compose';
 import { ObsClient } from './client';
 import { ObsDataSource } from './obs-datasource';
 import type { ObsVisuNode } from './mapping';
@@ -251,6 +251,12 @@ describe('R14: individuelle Includes werden als eigene Ebenen einkomponiert', ()
     expect(inc.items.map((i) => i.id)).toEqual(['w-box', 'w-link']);
     expect(inc.items[0].position).toEqual({ x: 1, y: 2, w: 3, h: 4 });
     expect(inc.items[1].link).toEqual({ targetNodeId: 'ziel', activeIndicator: 'dot' });
+    // Gegenrichtung (Bestandstest aus der parent_id-Fassung, wiederhergestellt):
+    // ein Widget OHNE Linkziel trägt kein `link`-Feld. `toBeUndefined()` allein
+    // reicht dafür nicht — ein stets gesetztes `link: undefined` bestünde die
+    // Probe —, also wird zusätzlich die Schlüsselmenge festgehalten.
+    expect(inc.items[0].link).toBeUndefined();
+    expect(Object.keys(inc.items[0])).toEqual(['id', 'position']);
   });
 });
 
@@ -276,6 +282,8 @@ describe('R15: Include über eine Zugriffsgrenze: verdeckt bleibt verdeckt', () 
   });
 
   it('eine Quelle, die keine Seite ist (400 „Knoten ist keine Seite"), wird still weggelassen', () => {
+    // Der LOCATION trägt hier ausdrücklich Widgets: sonst scheiterte die Ebene
+    // ohnehin an `items.length === 0` und die Typwache wäre unbelegt.
     const tree: ObsVisuNode[] = [
       {
         id: 'ordner',
@@ -283,7 +291,7 @@ describe('R15: Include über eine Zugriffsgrenze: verdeckt bleibt verdeckt', () 
         name: 'Ordner',
         type: 'LOCATION',
         access: null,
-        page_config: null,
+        page_config: { widgets: [toggle('w-ordner', 'dp-ordner')] },
       },
       page('ziel', { page_config: { widgets: [toggle('w-z', 'dp-z')], includes: ['ordner'] } }),
     ];
@@ -331,6 +339,61 @@ describe('R15: Include über eine Zugriffsgrenze: verdeckt bleibt verdeckt', () 
     expect(devices.find((d) => d.id === 'w-src')?.writable).toBe(false);
     // Gegenprobe: die eigene, nicht-readonly Seite bleibt bedienbar.
     expect(devices.find((d) => d.id === 'w-ziel')?.writable).toBe(true);
+  });
+
+  /**
+   * Ein Server, der `src` als Include-Quelle von `ziel` ausliefert und den
+   * Readonly-Header je Anfrage frei setzen kann. `null` heisst: Header fehlt ganz.
+   * Der writable-Endpunkt sagt für beide Datenpunkte `true` — allein der Header
+   * darf sperren (§2.1).
+   */
+  function readonlySeam(header: () => string | null): ObsDataSource {
+    const tree: ObsVisuNode[] = [
+      page('src', { page_config: null }),
+      page('ziel', {
+        page_config: { widgets: [toggle('w-ziel', 'dp-ziel')], includes: ['src'] },
+      }),
+    ];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.endsWith('/visu/tree')) return new Response(JSON.stringify(tree), { status: 200 });
+      if (u.includes('/visu/pages/src')) {
+        const value = header();
+        return new Response(JSON.stringify({ widgets: [toggle('w-src', 'dp-src')] }), {
+          status: 200,
+          ...(value === null ? {} : { headers: { 'X-Source-Page-Readonly': value } }),
+        });
+      }
+      if (u.endsWith('/writable')) {
+        return new Response(JSON.stringify({ writable: { 'dp-src': true, 'dp-ziel': true } }), {
+          status: 200,
+        });
+      }
+      if (u.endsWith('/value')) return new Response(JSON.stringify({ value: null }), { status: 200 });
+      return new Response('not found', { status: 404 });
+    });
+    return new ObsDataSource(
+      new ObsClient({ apiBase: '/api/v1', fetchImpl: fetchImpl as unknown as typeof fetch }),
+    );
+  }
+
+  it('Gegenrichtung: ein Header, der nicht „true" sagt, sperrt NICHT', async () => {
+    // Die Wache ist `=== 'true'`, nicht „Header vorhanden": ein Server, der den
+    // Header IMMER setzt (auch mit `false`), darf keine Seite stilllegen.
+    for (const header of ['false', '0', '', null]) {
+      const devices = await readonlySeam(() => header).list();
+      expect(devices.find((d) => d.id === 'w-src')?.writable).toBe(true);
+    }
+  });
+
+  it('invalidiert den Readonly-Cache bei jedem `list()` (readonly → wieder bedienbar)', async () => {
+    // Der Cache lebt über den Lauf hinaus; ohne Invalidierung bliebe eine Seite,
+    // die nach PIN/Login nicht mehr readonly ist, für immer gesperrt.
+    let readonly = true;
+    const ds = readonlySeam(() => (readonly ? 'true' : 'false'));
+    expect((await ds.list()).find((d) => d.id === 'w-src')?.writable).toBe(false);
+    readonly = false;
+    expect((await ds.list()).find((d) => d.id === 'w-src')?.writable).toBe(true);
   });
 
   it('verwirft eine PIN-geschützte Quelle nicht still, sondern bietet sie als Gate an', async () => {
@@ -395,6 +458,35 @@ describe('R15: Include über eine Zugriffsgrenze: verdeckt bleibt verdeckt', () 
   });
 });
 
+describe('includeSourceIds: die Include-Stelle bleibt benennbar, auch wenn ihre Ebene fehlt', () => {
+  // §2.1 verlangt für eine PIN-geschützte Quelle die PIN-Abfrage AN der
+  // Include-Stelle. `composeLayers` lässt die Quelle (zu Recht) weg — es gibt
+  // nichts zu zeichnen —, sie muss aber weiter benennbar bleiben, sonst kann der
+  // Host das Gate nicht dieser Seite zuordnen.
+  const TREE: ObsVisuNode[] = [
+    page('g', { kind: 'globalInclude', order: 1 }),
+    page('gesperrt', { access: 'protected', page_config: null }),
+    page('tief'),
+    page('mitte', { page_config: { widgets: [toggle('w-m', 'dp-m')], includes: ['tief'] } }),
+    page('ziel', {
+      page_config: { widgets: [toggle('w-z', 'dp-z')], includes: ['gesperrt', 'mitte'] },
+    }),
+  ];
+
+  it('nennt globale und individuelle Quellen in Stapelreihenfolge, die eigene Seite nie', () => {
+    expect(includeSourceIds(TREE, 'ziel')).toEqual(['g', 'gesperrt', 'tief', 'mitte']);
+    // Gegenprobe: als Ebene taucht die gesperrte Quelle NICHT auf (R15).
+    expect(ids(composeLayers(TREE, 'ziel'))).toEqual(['g', 'tief', 'mitte', 'ziel']);
+  });
+
+  it('liefert für eine Seite ohne Includes, ein Popup und eine unbekannte Id nichts', () => {
+    const tree: ObsVisuNode[] = [page('allein'), page('pop', { kind: 'popup' })];
+    expect(includeSourceIds(tree, 'allein')).toEqual([]);
+    expect(includeSourceIds(tree, 'pop')).toEqual([]);
+    expect(includeSourceIds(tree, 'nix')).toEqual([]);
+  });
+});
+
 /* ------------------------------------------ Popup-Deskriptor (R2, R3, R6, R8) */
 
 describe('composePopup: Popup-Seiten liefern einen PopupDescriptor statt einer Ebene', () => {
@@ -451,6 +543,18 @@ describe('composePopup: Popup-Seiten liefern einen PopupDescriptor statt einer E
     expect(composePopup(tree, 'nix')).toBeNull();
   });
 
+  it('R4-Wache: `auto_close_ms` 0 oder negativ ist KEIN Auto-Close', () => {
+    // 0 hiesse in Edomi „kein Auto-Close"; ein durchgereichtes `autoCloseMs: 0`
+    // liefe im Host auf `setTimeout(..., 0)` hinaus, das Popup schlösse sich also
+    // sofort wieder. Ein negativer Wert ist gar keine Dauer.
+    const tree: ObsVisuNode[] = [
+      page('p0', { kind: 'popup', page_config: { widgets: [], popup: { auto_close_ms: 0 } } }),
+      page('pneg', { kind: 'popup', page_config: { widgets: [], popup: { auto_close_ms: -5 } } }),
+    ];
+    expect(composePopup(tree, 'p0')).toEqual({ id: 'p0' });
+    expect(composePopup(tree, 'pneg')).toEqual({ id: 'pneg' });
+  });
+
   it('R8: verschiedene Popups liefern verschiedene, unabhängige Deskriptoren', () => {
     const tree: ObsVisuNode[] = [
       page('p1', { kind: 'popup', page_config: { widgets: [], popup: { modal: true } } }),
@@ -483,11 +587,26 @@ describe('composeLayers: Grundverhalten', () => {
     expect(composeLayers([page('a')], 'nope')).toEqual([]);
   });
 
-  it('liefert einen leeren Stapel für einen LOCATION-Knoten', () => {
-    const tree: ObsVisuNode[] = [
+  it('liefert einen leeren Stapel für einen LOCATION-Knoten, auch mit Widgets daran', () => {
+    // Die Wache prüft den KNOTENTYP, nicht die Widget-Zahl. Ein LOCATION ohne
+    // `page_config` würde auch ohne sie an `items.length === 0` scheitern — der
+    // Fall belegte sie also nicht. Mit Widgets (Restore/DB-Zugriff am API vorbei)
+    // ist die Wache das Einzige, was die Ebene verhindert.
+    const withWidgets: ObsVisuNode[] = [
+      {
+        id: 'loc',
+        parent_id: null,
+        name: 'EG',
+        type: 'LOCATION',
+        access: null,
+        page_config: { widgets: [toggle('w-loc', 'dp-loc')] },
+      },
+    ];
+    expect(composeLayers(withWidgets, 'loc')).toEqual([]);
+    const bare: ObsVisuNode[] = [
       { id: 'loc', parent_id: null, name: 'EG', type: 'LOCATION', access: null, page_config: null },
     ];
-    expect(composeLayers(tree, 'loc')).toEqual([]);
+    expect(composeLayers(bare, 'loc')).toEqual([]);
   });
 });
 

@@ -45,13 +45,18 @@
  *           Ausdrücklich NICHT unter R15 fällt das 401 „PIN-Authentifizierung
  *           erforderlich" (§2.1): das ist keine Verdeckung, sondern eine
  *           auflösbare Aufforderung, und ein stilles Weglassen wäre ein
- *           Bedienfehler. Die Quelle verschwindet hier zwar (ohne `page_config`
- *           gibt es nichts zu zeichnen), sie bleibt aber im Gate-Angebot des
- *           Hosts (`ObsDataSource.pageGates()`) sichtbar und lösbar; nach der PIN
- *           komponiert das nächste `list()` ihre Ebene. Eine Markierung direkt
- *           AN der Include-Stelle bräuchte eine Vertragsergänzung (eine gesperrte
- *           Ebene ist im `PageLayer` heute nicht ausdrückbar) und wartet daher
- *           auf dieselbe Runde wie `NavNode.kind`.
+ *           Bedienfehler. Die Quelle verschwindet als Ebene (ohne `page_config`
+ *           gibt es nichts zu zeichnen), aber §2.1 verlangt mehr als „irgendwo
+ *           lösbar": entweder die PIN AN der Include-Stelle oder eine als
+ *           gesperrt markierte Stelle. Machbar ist im heutigen Vertrag die erste
+ *           Hälfte, und die liefert {@link includeSourceIds}: der Host kann die
+ *           Gates seiner Include-Quellen von den übrigen unterscheiden
+ *           (`store.gatedIncludesFor` über der schon lange vorhandenen Fläche
+ *           `ObsDataSource.pageGates()`, Welle 3b — nicht neu in M5), und die
+ *           PIN-Abfrage nennt dann die Seite, die man gerade ansieht, statt eine
+ *           fremde Quelle. Was fehlt, ist die zweite Hälfte: eine Ebene AN ihrem
+ *           Platz im Stapel als „gesperrt" zu zeichnen. Dafür bräuchte
+ *           {@link PageLayer} ein Feld (`locked`) — siehe die Sammelstelle unten.
  *
  *           Wichtig zur Signalliste: der Host unterscheidet diese Fälle
  *           ausschliesslich am **Statuscode**, nie am `detail`-Text. Teil E hat
@@ -62,9 +67,13 @@
  *           Komposition sieht ohnehin nur das Ergebnis: Knoten da oder nicht,
  *           `page_config` da oder nicht.
  * - **R2-R6/R8** Popups werden NICHT in den Seitenfluss komponiert; sie liefern
- *           über {@link composePopup} einen `PopupDescriptor`. Offen-Zustand und
- *           Auto-Close-Timer (R7) gehören weiterhin dem Host (SkinHost), nicht
- *           dem Skin und nicht diesem Modul.
+ *           über {@link composePopup} einen `PopupDescriptor`. Verdrahtet ist die
+ *           Naht im Store: `navigate()` auf eine Popup-Seite öffnet sie als
+ *           Overlay über der aktuellen Seite (beide Wege — Navigation und
+ *           Seitenlink — laufen dort zusammen), und der Skin liest sie über
+ *           `PageHost.openPopups`. Offen-Zustand und Auto-Close-Timer (R7)
+ *           gehören dem Host (dem Store als einzigem Zustandsbesitzer), nicht dem
+ *           Skin und nicht diesem Modul: dieses hier bleibt rein.
  *
  * Stapelreihenfolge (Host-Entscheid, deterministisch, unten → oben):
  * globale Includes → individuelle Includes → eigene Ebene.
@@ -77,8 +86,16 @@
  * skins-first-Kaskade (`targetsContract` in ionic/terminal/edomi) losbrechen.
  * Bis dahin trägt der Host das Feld selbst: {@link HostNavNode}. Sobald 1.14
  * steht, kann {@link HostNavNode} ersatzlos gegen `NavNode` getauscht werden,
- * denn die Form ist identisch. `PageKind`, `PageLayer.origin` und `PopupDescriptor`
- * stehen bereits seit 1.9/1.10/1.12 im Vertrag, hier fehlt nur die Nav-Naht.
+ * denn die Form ist identisch (dort ist `kind` optional, also ist ein reiner
+ * `NavNode` schon heute ein gültiger `HostNavNode`). `PageKind`,
+ * `PageLayer.origin` und `PopupDescriptor` stehen bereits seit 1.9/1.10/1.12 im
+ * Vertrag, hier fehlt nur die Nav-Naht.
+ *
+ * Zweite fällige Position derselben Runde: **`PageLayer.locked?: boolean`**. Eine
+ * PIN-gesperrte Include-Quelle ist heute im Stapel nicht ausdrückbar (§2.1
+ * „Include-Stelle sichtbar als gesperrt markieren"); der Host kann die Sperre
+ * darum nur neben dem Stapel anbieten (siehe R15 oben), nicht an ihrem Platz
+ * darin. Beides zusammen ist ein additiver 1.14-Bump, kein Bruch.
  *
  * Golden rules honoured: no data fork (layers reference the same devices by id);
  * order is deterministic; additive (a skin that ignores layers/nav/popups is
@@ -96,22 +113,58 @@ import type {
 import type { DataSource } from '../datasource';
 import { mapWidget, type ObsPageConfig, type ObsVisuNode } from './mapping';
 
-// Re-export the contract nav node so existing importers (datasource/store) keep
-// their `./compose` import site while the type is the shared, skin-facing one.
+// Re-export the contract nav node so an importer can take the skin-facing type
+// from the same module as {@link HostNavNode} (the host node it will become in
+// contract 1.14) instead of splitting the import across two files.
 export type { NavNode } from '@obs/visu-contract';
 
 /**
  * The host's navigation node: the contract {@link NavNode} plus the page `kind`.
  *
  * A `HostNavNode` IS a `NavNode` (structurally), so everything typed against the
- * contract keeps working and a skin that ignores `kind` is unaffected. The extra
- * field exists so a skin can hide global include pages and popups from its
- * navigation (the badge/filter Teil C needs), without the host handing out a
- * second tree. See the module note above for the pending contract 1.14 addition.
+ * contract keeps working and a skin that ignores `kind` is unaffected.
+ *
+ * The field is host-internal until contract 1.14, and it is READ here and now,
+ * not stored for later: the type travels intact from {@link buildNavTree} through
+ * {@link LayeringCapableDataSource.navTree} into `store.navTree`, where
+ * {@link firstNormalPageId} decides which page a page-owning skin starts on and
+ * `store.navigate` opens a popup page as a popup. Once 1.14 carries `kind` in the
+ * contract, a skin can additionally hide global includes and popups from its own
+ * navigation — the same field, then handed on instead of consumed here.
  */
 export interface HostNavNode extends NavNode {
-  readonly kind: PageKind;
+  /**
+   * Optional wie in der geplanten 1.14-Fassung des Vertrags: ein Baum aus einer
+   * Quelle ohne Seitentypen (der Mock, ein Vor-M5-Backend) bleibt damit ein
+   * gültiger `HostNavNode`-Baum, und Leser behandeln „fehlt" wie den
+   * Backend-Default `normal`.
+   */
+  readonly kind?: PageKind;
   readonly children: readonly HostNavNode[];
+}
+
+/** Der Seitentyp eines Nav-Knotens; „fehlt" ist der Backend-Default `normal`. */
+function navKindOf(node: HostNavNode): PageKind {
+  return node.kind ?? 'normal';
+}
+
+/**
+ * Die erste NORMALE Seite eines Nav-Baums (Tiefensuche, Baumreihenfolge) — die
+ * Seite, die ein seitenbesitzender Skin zeigt, solange nichts navigiert hat.
+ *
+ * Der einzige Grund, warum der Host den Seitentyp überhaupt bis hierher trägt:
+ * eine globale Includeseite ist ein Fragment (sie gehört UNTER eine Seite, nicht
+ * als Seite auf den Schirm) und ein Popup ist ein Overlay. Beide sind zwar
+ * adressierbar (R11), aber keine Startseite. Null, wenn der Baum keine normale
+ * Seite enthält.
+ */
+export function firstNormalPageId(nodes: readonly HostNavNode[]): string | null {
+  for (const n of nodes) {
+    if (n.type === 'PAGE' && navKindOf(n) === 'normal') return n.id;
+    const inner = firstNormalPageId(n.children);
+    if (inner) return inner;
+  }
+  return null;
 }
 
 /**
@@ -122,8 +175,13 @@ export interface HostNavNode extends NavNode {
  * responsive floor.
  */
 export interface LayeringCapableDataSource extends DataSource {
-  /** The visible PAGE/LOCATION navigation hierarchy. */
-  navTree(): NavNode[];
+  /**
+   * The visible PAGE/LOCATION navigation hierarchy, each node carrying its page
+   * `kind` ({@link HostNavNode}). Typed as the HOST node, not the contract one:
+   * a `navTree(): NavNode[]` here would delete `kind` again one line after
+   * {@link buildNavTree} produced it, and no consumer could ever read it.
+   */
+  navTree(): HostNavNode[];
   /** The ordered layer stack for a page (global + individual includes + own). */
   layersFor(pageId: string): PageLayer[];
   /**
@@ -131,6 +189,12 @@ export interface LayeringCapableDataSource extends DataSource {
    * Optional so an older layering source stays assignable; callers check first.
    */
   popupFor?(pageId: string): PopupDescriptor | null;
+  /**
+   * The pages composed INTO a page (M5 R15/§2.1): every include source, whether
+   * or not it yielded a layer. Optional like {@link popupFor}; the host uses it
+   * to tell the gate of an include source from any other gated page.
+   */
+  includeSourcesFor?(pageId: string): readonly string[];
 }
 
 /** Does the source expose the layering DATA (nav tree + per-page layer stack)? */
@@ -202,6 +266,41 @@ export function composeLayers(
   pageId: string,
   values: ReadonlyMap<string, unknown> = new Map(),
 ): PageLayer[] {
+  const layers: PageLayer[] = [];
+  let order = 0;
+  for (const { node, origin } of planLayers(nodes, pageId)) {
+    const items = itemsOf(node.page_config, node.name, values);
+    // No widgets → no layer: an empty page and a concealed source (page_config
+    // stayed null after a 401/403) are indistinguishable to the skin (R15).
+    if (items.length === 0) continue;
+    layers.push({ id: node.id, origin, order: order++, items });
+  }
+  return layers;
+}
+
+/**
+ * The pages composed INTO `pageId` (R9-R14), bottom-first and WITHOUT the page
+ * itself — every include source the plan found, whether or not it ends up as a
+ * layer.
+ *
+ * That difference is the point (§2.1): a PIN-gated source is in the tree but has
+ * no `page_config`, so {@link composeLayers} drops it and the include site
+ * becomes invisible. This function still names it, which is what lets the host
+ * offer THAT source's PIN as belonging to the page you are looking at instead of
+ * as a context-free entry in the global gate list.
+ */
+export function includeSourceIds(nodes: readonly ObsVisuNode[], pageId: string): string[] {
+  return planLayers(nodes, pageId)
+    .filter((p) => p.origin !== 'own')
+    .map((p) => p.node.id);
+}
+
+/**
+ * Plan a page's stack: WHICH pages, in which order, and why each one is there.
+ * The rule engine of R9-R15 lives here; the two exports above only differ in what
+ * they do with the plan (map it to layers / name the sources).
+ */
+function planLayers(nodes: readonly ObsVisuNode[], pageId: string): PlannedLayer[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const target = byId.get(pageId);
   // A LOCATION (or an unknown id) owns no content: never a stack, never a throw.
@@ -246,17 +345,7 @@ export function composeLayers(
   collect(target);
 
   planned.push({ node: target, origin: 'own' });
-
-  const layers: PageLayer[] = [];
-  let order = 0;
-  for (const { node, origin } of planned) {
-    const items = itemsOf(node.page_config, node.name, values);
-    // No widgets → no layer: an empty page and a concealed source (page_config
-    // stayed null after a 401/403) are indistinguishable to the skin (R15).
-    if (items.length === 0) continue;
-    layers.push({ id: node.id, origin, order: order++, items });
-  }
-  return layers;
+  return planned;
 }
 
 /**
