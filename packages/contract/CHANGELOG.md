@@ -23,6 +23,62 @@ Aktions-Oberfläche**. Jeder Bump steht hier mit den neuen/geänderten Typen.
 > Die Fixture-Wand eines Skin-Autors wird an genau den geänderten Stellen rot — das ist
 > gewollt: ein Formbruch ist sichtbar, kein stiller Default (Goldene Regeln 2 + 3).
 
+## [1.13.0] – 2026-09-03
+
+v1.13: **Palette-Deklarationsfläche für die AA-Messung** (Micsi/obs-visu-skins#12).
+
+Der Konformitäts-Generator mass bis hierher zwei Achsen — Render und Aktion — und
+**keine Farbe**: er kennt das Stylesheet eines Skins nicht. AA wurde deshalb
+skin-seitig gemessen (terminal hatte einen eigenen Kontrast-Test), stand also
+nirgends im Artefakt. Goldene Regel 6 verlangt AA aber verbindlich, auch an den
+Tweak-Extremen — und ohne Vertrags-Fläche war ein Skin, der seine Palette prüft,
+von einem, der es nicht tut, im Report nicht zu unterscheiden (Goldene Regel 3).
+
+**Neu (additiv, alle Felder optional ⇒ Minor):**
+
+- `SkinManifest.a11y?: SkinA11y` — der Skin deklariert die **Semantik** seiner
+  Farben: Stylesheet(s), Theme-Selektoren, Gründe, Deckkräfte, Rolle je Token
+  (`text` · `graphic` · `ground` · `exempt`) und die farbwirksamen Tweak-Achsen.
+  Die **Werte** liest der Generator aus dem echten Stylesheet — deklariert wird,
+  was ein Token TUT, gemessen wird, welche Farbe er HAT.
+- `A11yTokenDecl` · `A11yGround` · `A11yTweakAxis` · `A11yRoleName` — die Teile
+  dieser Deklaration. `exempt` verlangt `reason`: eine Auslassung ist eine
+  Aussage, kein Vergessen. Deckkräfte stehen je Token (`A11yTokenDecl.alphas`)
+  und nicht nur global: ein Skin dimmt seine gesperrte Kachel und seine
+  Seitenüberschrift nicht — eine globale Liste erzeugte Paarungen, die es auf dem
+  Schirm nie gibt, und ein Wächter mit falschem Alarm wird ignoriert.
+- `SupportReport.a11y` ist von `Record<string, unknown>` auf den echten Typ
+  `SupportA11y` geschärft, plus `A11yMeasurement` und `A11yFinding`.
+  Drei Zustände statt zwei: `pass` · `fail` · `undeclared`.
+- `SkinA11y.neutralTweaks` / `SkinA11y.unmeasuredTweaks` — JEDER Tweak aus
+  `SkinManifest.tweaks` muss eingeordnet sein: als messbare Achse, als
+  farbneutral, oder als farbwirksam-aber-nicht-erfassbar (je mit Begründung).
+  Ohne diesen Abgleich behauptete ein Report `checkedTweakExtremes: true`,
+  während ein unbenannter Tweak die Farbe verschiebt — eine ungedeckte positive
+  Aussage im Artefakt.
+- `SupportA11y.unmeasuredGrounds` — ein Token, das man `ground` nennt und dann
+  aus `grounds` weglässt, verschwand spurlos aus der Messung. Es braucht jetzt
+  eine Begründung und steht im Report.
+- `SupportA11y.findingCount` neben der gedeckelten `findings`-Liste, analog zu
+  `violationCount`.
+- `SupportA11y.violationBreakdown` — dieselben Verstösse disjunkt in
+  `atDefault` · `atTweakExtreme` · `whenDimmed`. Eine Gesamtzahl mischt den harten
+  Kern mit zwei Teilmengen, über die man streiten kann: WCAG 1.4.3 nimmt inaktive
+  Bedienelemente ausdrücklich aus, und ein Bruch nur am Regler-Anschlag ist eine
+  andere Aussage als einer in der Werkseinstellung. Die Fläche misst weiter
+  konservativ (sie NIMMT die Ausnahme nicht) — sie benennt die Teilmenge nur.
+- Befundtypen `ground-without-reason` und `undeclared-tweak`; `unaccounted-alpha`
+  wieder entfernt — es wurde nie erzeugt, und totes Vokabular im Vertrag liest
+  sich wie eine Zusage.
+- Schema-Block `a11y` mit den WCAG-Schwellen (`text` 4.5 · `graphic` 3) und dem
+  Rollen-Vokabular. Das Tooling liest sie von dort, statt sie als Literal zu
+  kopieren — dieselbe Blindheit, die `targetsContract` als Literal neun
+  Minor-Versionen lang verdeckt hat.
+
+**Nicht geändert:** kein bestehendes Feld, kein Renderer-Signatur-Bruch. Ein
+1.12-Manifest bleibt typgültig; der Generator wertet ein fehlendes `a11y` aber als
+`undeclared` und damit als Fehler — AA ist Pflicht, nicht Kür.
+
 ## [1.12.0] – 2026-09-03
 
 v1.12: **Link-Auflösung als Host-Dienst an der Vertragsnaht** + ein
