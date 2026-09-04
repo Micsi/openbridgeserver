@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { VISU_BASE } from './e2e/fixtures';
 
 /**
  * Playwright config for the Visu × authz role E2E (CONTRIBUTING-visu-authz.md §5,
@@ -15,7 +16,7 @@ import { defineConfig, devices } from '@playwright/test';
  * config does not own their lifecycle (no `webServer`). Point it at the running
  * Visu with PLAYWRIGHT_BASE_URL (default matches `vite`'s dev port 5175).
  */
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5175';
+const baseURL = VISU_BASE;
 
 export default defineConfig({
   testDir: './e2e',
@@ -24,13 +25,16 @@ export default defineConfig({
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
-  // 60 s statt der fruehreren 30 s: seit dem M5-Seed traegt die Beispielwelt rund
-  // 20 Seiten (Seitentypen, Popups, Zugriffsgrenzen) statt fuenf, und die Visu
-  // laedt jede Seiten-Config einzeln und page-scoped (`GET /visu/pages/{id}`).
-  // Ein Browser-Szenario lief damit auf 30 s zu und waere aus Zeitgruenden rot
-  // geworden statt aus einer Aussage heraus. Die Einzel-Erwartung bleibt bei 7 s,
-  // damit eine echte Fehlaussage weiterhin schnell auffliegt.
-  timeout: 60_000,
+  // Einmal-Kosten raus statt Decke hoch: `e2e/global-setup.ts` faehrt vor dem
+  // Lauf einen Warmlauf gegen den Visu-Dev-Server. GEMESSEN ist der Kostentreiber
+  // der ersten Browser-Szenarien das On-Demand-Transpilieren von Vite beim
+  // allerersten Seitenaufruf (26-48 s), NICHT die auf rund 20 Seiten gewachsene
+  // M5-Beispielwelt: dieselben vier Szenarien brauchen gegen einen bereits
+  // warmgelaufenen Dev-Server 1,0-2,9 s, die 20 Seiten-Configs kosten ueber alle
+  // vier zusammen deutlich unter einer Sekunde. Deshalb bleiben die 30 s stehen:
+  // ein Szenario, das mit warmem Server 30 s braucht, hat ein echtes Problem und
+  // soll rot werden. Die Einzel-Erwartung bleibt bei 7 s.
+  timeout: 30_000,
   expect: { timeout: 7_000 },
   use: {
     baseURL,
@@ -40,6 +44,9 @@ export default defineConfig({
     // assert on (auth.* / access.*) are deterministic regardless of host locale.
     locale: 'en-US',
   },
+  // Der Warmlauf + das Vorabholen der Tokens (5 Anmeldungen/Minute!) liegen
+  // ausserhalb jedes Test-Timeouts, siehe Datei-Kopf dort.
+  globalSetup: './e2e/global-setup.ts',
   projects: [
     {
       name: 'chromium',
@@ -48,6 +55,22 @@ export default defineConfig({
       // split-pane and the drawer never opens. Keep desktop click semantics (no
       // touch emulation) so the .login-*/.access-gate* clicks stay deterministic.
       use: { ...devices['Desktop Chrome'], viewport: { width: 393, height: 851 } },
+      // E14 braucht das Gegenteil (echte Touch-Eingabe) und laeuft deshalb im
+      // eigenen Projekt unten, hier ausgenommen, damit die Datei nicht zweimal
+      // faehrt und die Zuordnung „eine Zeile, ein Szenario" heil bleibt.
+      testIgnore: '**/m5-editor-touch.spec.ts',
+    },
+    {
+      // E14 (Touch-Drag) verlangt `page.touchscreen`, und Playwright verweigert
+      // das ohne `hasTouch` im Kontext („hasTouch must be enabled on the browser
+      // context before using the touchscreen.", nachgemessen). Ein
+      // `fixme`, das auch nach Lieferung von Teil C5 nur an der Harness-Konfig
+      // scheitert, nimmt nichts ab, deshalb dieses zweite Projekt. Es faehrt
+      // NUR die Touch-Datei; alle uebrigen Szenarien behalten die Maus-Semantik
+      // des Projekts oben.
+      name: 'chromium-touch',
+      testMatch: '**/m5-editor-touch.spec.ts',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 393, height: 851 }, hasTouch: true },
     },
   ],
 

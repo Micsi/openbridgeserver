@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, request as apiRequest, type Page } from '@playwright/test';
 import { adminHeaders, api, seeded, type NodeSummary, type PageConfigResponse } from './fixtures';
 
 /**
@@ -40,7 +40,29 @@ async function clickLinkTile(page: Page, widgetName: string) {
   await page.locator('.edomi-item', { hasText: widgetName }).first().click();
 }
 
+/** Die Knoten, die R1 anlegt, damit das Backend sie ablehnt (siehe dort). */
+const BOGUS_NODES = ['M5 Bogus Kind', 'M5 Bogus Folder'];
+
 test.describe('M5 Regeltabelle R1-R6 · Seitentyp + Popup-Deskriptor (läuft gegen das echte Backend)', () => {
+  // R1 legt zwei Knoten an, die das Backend ABLEHNEN soll. Bleibt die Ablehnung
+  // aus (etwa unter einer Mutationsprobe), steht der Knoten anschließend in der
+  // Welt und verfälscht jede Zählung des nächsten Laufs. Ein Harness räumt
+  // hinter sich auf, auch und gerade dann, wenn er gerade etwas gefunden hat.
+  test.afterAll(async () => {
+    const request = await apiRequest.newContext();
+    try {
+      const headers = await adminHeaders(request);
+      const tree = (await (await request.get(api('/visu/tree'), { headers })).json()) as NodeSummary[];
+      for (const node of tree.filter((n) => BOGUS_NODES.includes(n.name))) {
+        await request.delete(api(`/visu/nodes/${node.id}`), { headers });
+      }
+    } catch {
+      // Aufräumen darf keinen Lauf umbringen; der nächste Seed-Lauf meldet den Rest.
+    } finally {
+      await request.dispose();
+    }
+  });
+
   test('R1 Seitentyp: normal / Inkludeseite / globale Inkludeseite / Popup', async ({ request }) => {
     const fx = seeded();
     const headers = await adminHeaders(request);
@@ -67,14 +89,14 @@ test.describe('M5 Regeltabelle R1-R6 · Seitentyp + Popup-Deskriptor (läuft geg
     // (b) Das Enum ist geschlossen: ein erfundener Seitentyp wird abgelehnt …
     const bogus = await request.post(api('/visu/nodes'), {
       headers,
-      data: { name: 'M5 Bogus Kind', type: 'PAGE', kind: 'inkludeseite', order: 900, access: 'public' },
+      data: { name: BOGUS_NODES[0], type: 'PAGE', kind: 'inkludeseite', order: 900, access: 'public' },
     });
     expect(bogus.status()).toBe(422);
 
     // … und ein Ordner trägt keinen Seitentyp (400, §2.1 `_validate_node_kind`).
     const folder = await request.post(api('/visu/nodes'), {
       headers,
-      data: { name: 'M5 Bogus Folder', type: 'LOCATION', kind: 'popup', order: 901, access: 'public' },
+      data: { name: BOGUS_NODES[1], type: 'LOCATION', kind: 'popup', order: 901, access: 'public' },
     });
     expect(folder.status()).toBe(400);
   });

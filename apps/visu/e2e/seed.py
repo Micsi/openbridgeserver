@@ -37,9 +37,11 @@ Run:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -151,15 +153,101 @@ def die(msg: str) -> None:
     sys.exit(1)
 
 
+# ---- gemeinsamer Token-Speicher mit den Specs --------------------------------
+# `POST /auth/login` erlaubt 5 Anmeldungen pro Minute (obs/api/auth.py:471). Der
+# Seed ist der ERSTE Verbraucher dieses Kontingents, und seit der Harness dank
+# Warmlauf in unter einer Minute durchläuft, fällt alles in dasselbe Fenster:
+# Seed, die vorgeholten Spec-Tokens und die zwei Anmeldungen, die
+# `authz-roles.spec.ts` durch die echte Maske führt. Deshalb schreibt der Seed
+# sein Admin-Token in dieselbe Datei, aus der `fixtures.ts` liest, und holt es
+# von dort, solange es gilt. Format und Ort sind dort dokumentiert.
+AUTH_STORE = Path(__file__).with_name(".auth") / "tokens.json"
+
+
+def _jwt_expiry(token: str) -> float | None:
+    """Der `exp`-Anspruch eines JWT, ohne Bibliothek und ohne Signaturprüfung."""
+    parts = token.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload))["exp"]
+        return float(exp)
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _read_store() -> dict[str, Any]:
+    try:
+        store = json.loads(AUTH_STORE.read_text())
+        if store.get("base") != BASE or not isinstance(store.get("tokens"), dict):
+            return {"base": BASE, "tokens": {}, "logins": []}
+        if not isinstance(store.get("logins"), list):
+            store["logins"] = []
+        return store
+    except (OSError, ValueError):
+        return {"base": BASE, "tokens": {}, "logins": []}
+
+
+def cached_admin_token() -> str | None:
+    entry = _read_store()["tokens"].get(ADMIN_USER)
+    if not isinstance(entry, dict):
+        return None
+    token = entry.get("token")
+    exp = _jwt_expiry(token) if isinstance(token, str) else None
+    if exp is None or exp <= time.time() + 60:
+        return None
+    return token
+
+
+def store_admin_token(token: str) -> None:
+    try:
+        AUTH_STORE.parent.mkdir(parents=True, exist_ok=True)
+        store = _read_store()
+        now = int(time.time() * 1000)
+        store["tokens"][ADMIN_USER] = {"token": token, "obtained": now}
+        # Jede Anmeldung wird gebucht, nicht nur das Token: das Kontingent zählt
+        # Anmeldungen. `global-setup.ts` liest dieselbe Liste.
+        store["logins"] = [at for at in store["logins"] if isinstance(at, int) and at > now - 60_000] + [now]
+        tmp = AUTH_STORE.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(store))
+        tmp.chmod(0o600)
+        tmp.replace(AUTH_STORE)
+    except OSError as exc:
+        # Ein Ablage-Fehler darf den Seed nicht umbringen: er kostet nur eine
+        # Anmeldung mehr beim nächsten Lauf.
+        print(f"seed: Token-Ablage übersprungen ({exc})")
+
+
 def main() -> int:
     if not ADMIN_PW:
         die("OBS_ADMIN_PASSWORD is required")
 
     with httpx.Client(base_url=BASE, timeout=15.0) as c:
-        r = c.post("/api/v1/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PW})
-        if r.status_code != 200:
-            die(f"admin login failed: {r.status_code} {r.text}")
-        admin = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        token = cached_admin_token()
+        if token is not None:
+            # Ein abgelegtes Token aus einer FRÜHEREN Datenbank derselben Adresse
+            # ist formal gültig und wird trotzdem abgelehnt; dann lieber eine
+            # Anmeldung ausgeben als am 401 raten.
+            probe = c.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+            if probe.status_code != 200:
+                token = None
+        if token is None:
+            r = c.post("/api/v1/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PW})
+            if r.status_code == 429:
+                # Warten statt sterben: der Seed ist Aufbau, kein Test. Die Bremse
+                # erlaubt 5 Anmeldungen pro Minute (obs/api/auth.py:471), und ein
+                # unmittelbar vorangegangener Harness-Lauf kann sie ausgeschöpft
+                # haben. Ein Abbruch hier zwänge zum Wiederholen von Hand.
+                print("seed: Rate-Limit-Sperre beim Anmelden: sitze das Minutenfenster einmal aus (61 s)")
+                time.sleep(61)
+                r = c.post("/api/v1/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PW})
+            if r.status_code != 200:
+                die(f"admin login failed: {r.status_code} {r.text}")
+            token = r.json()["access_token"]
+            store_admin_token(token)
+        admin = {"Authorization": f"Bearer {token}"}
 
         # ---- idempotente Nachschlage-Helfer ---------------------------------
 
@@ -201,6 +289,31 @@ def main() -> int:
             dps_by_name[name] = dp_id
             return dp_id
 
+        def neutralize_kind_conflict(page_id: str) -> bool:
+            """Nimmt einer vorhandenen Seite die Felder, die an ihren Seitentyp gebunden sind.
+
+            `_validate_page_kind_config` (obs/api/v1/visu.py) lehnt eine
+            globalInclude- oder Popup-Seite mit `includes` ab und eine
+            Popup-Konfiguration auf jedem anderen Seitentyp. Trägt die Datenbank
+            eine solche Lage schon (über Restore, Migration oder direkten
+            DB-Zugriff, die §2.1 ausdrücklich als real nennt), dann scheitert der
+            PATCH des Seitentyps daran, und der Seed STÜRBE an einem Zustand, den
+            er heilen soll.
+
+            Hier wird deshalb genau so viel zurückgenommen, wie die Prüfung
+            verlangt: `includes` leeren, `popup` fallen lassen. Widgets, Raster
+            und `ignore_global_includes` bleiben stehen; die Sollkonfiguration
+            schreibt `put_page` unmittelbar danach ohnehin vollständig.
+            """
+            cur = c.get(f"/api/v1/visu/pages/{page_id}", headers=admin)
+            if cur.status_code != 200:
+                return False
+            body = cur.json()
+            body["includes"] = []
+            body["popup"] = None
+            fix = c.put(f"/api/v1/visu/pages/{page_id}", headers=admin, json=body)
+            return fix.status_code in (200, 204)
+
         def mk_node(
             name: str,
             *,
@@ -213,13 +326,22 @@ def main() -> int:
             """Legt einen Knoten an oder zieht einen vorhandenen auf die Sollform (idempotent)."""
             found = nodes_by_name.get(name)
             if found is not None:
+                node_id = found["id"]
                 patch: dict[str, Any] = {"kind": kind, "order": order, "access": access}
                 if pin is not None:
                     patch["access_pin"] = pin
-                resp = c.patch(f"/api/v1/visu/nodes/{found['id']}", headers=admin, json=patch)
+                resp = c.patch(f"/api/v1/visu/nodes/{node_id}", headers=admin, json=patch)
+                # HEILEN statt sterben: ein 400 hier heißt regelmäßig, dass die
+                # gespeicherte Seitenkonfiguration mit dem SOLL-Seitentyp kollidiert.
+                # Der Seed verspricht im README, ein vorhandenes Objekt auf die
+                # Sollform zurückzuziehen, und das gilt auch für diesen Zustand.
+                if resp.status_code == 400 and node_type == "PAGE" and neutralize_kind_conflict(node_id):
+                    resp = c.patch(f"/api/v1/visu/nodes/{node_id}", headers=admin, json=patch)
+                    if resp.status_code == 200:
+                        print(f"seed: {name} geheilt (Seitenkonfiguration kollidierte mit kind={kind!r})")
                 if resp.status_code != 200:
                     die(f"patch node {name}: {resp.status_code} {resp.text}")
-                return found["id"]
+                return node_id
             payload: dict[str, Any] = {"name": name, "type": node_type, "kind": kind, "order": order, "access": access}
             if pin is not None:
                 payload["access_pin"] = pin
@@ -347,6 +469,14 @@ def main() -> int:
                 {"node_type": "datapoint", "node_id": dp["private"], "role": "operator"},
                 {"node_type": "datapoint", "node_id": dp["room"], "role": "operator"},
                 {"node_type": "datapoint", "node_id": dp["central"], "role": "operator", "central_control": True},
+                # Der operator darf den Datenpunkt der user-Seite LESEN, steht aber
+                # nicht in ihrer Zielgruppe. Damit trennt R15 die beiden Schranken
+                # von `_check_page_read_access`: die Zielgruppen-Prüfung und die
+                # Datenpunkt-Policy antworten beide mit 403, aber nur eine von
+                # beiden ist hier noch scharf. Ohne dieses Recht wäre der
+                # Zielgruppen-Check ungeprüft: ein Ausbau bliebe unbemerkt, weil
+                # die Policy denselben 403 nachliefert.
+                {"node_type": "datapoint", "node_id": m5_dp["guard_user"], "role": "operator"},
             ],
         )
 
@@ -385,7 +515,9 @@ def main() -> int:
         m5_location = mk_node(M5_LOCATION_NAME, node_type="LOCATION", access="public", order=80)
 
         # 7) Zielgruppe der user-Seite: NUR der resident. Der operator ist
-        #    angemeldet und trotzdem draußen — genau der 403-Fall aus §2.1.
+        #    angemeldet, darf den Datenpunkt der Seite sogar lesen (Abschnitt 3)
+        #    und ist trotzdem draußen, genau der 403-Fall aus §2.1, und zwar
+        #    isoliert an der Zielgruppen-Schranke.
         assign_audience(m5_node["guard_user"], [RESIDENT["username"]])
 
         # 8) M5-Seitenkonfigurationen (Widgets, includes, ignore, popup)

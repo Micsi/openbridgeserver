@@ -12,8 +12,13 @@ import { adminHeaders, api, seeded, userHeaders, type NodeSummary, type PageConf
  * API (200 lesbar, 200 readonly, 401 Anmeldung, 401 PIN, 403 Zugriff verweigert,
  * 404 nicht vorhanden, 400 kein-Seite), dazu die Verdeckung auf der
  * Navigationsebene und die dokumentierte GRENZE der Verdeckung (rohe `includes`
- * auf einer lesbaren Wirtsseite). Eine Abweichung des 404-Textes vom Plan ist im
- * Schritt selbst belegt und festgeschrieben.
+ * auf einer lesbaren Wirtsseite).
+ *
+ * Jede Lage hängt am STATUS. Ein `detail`-Text wird nur dort behauptet, wo er
+ * aus dem Fachcode stammt und die Lage unterscheidbar macht (401 Anmeldung vs.
+ * 401 PIN, 400 kein-Seite); beim 404 ausdrücklich nicht, denn dort schreibt der
+ * globale `spa_404_handler` jeden Text gleich, das ist kein Vertrag (siehe den
+ * Schritt selbst).
  *
  * Die Reaktion des Hosts auf diese Signale (stilles Weglassen bzw. sichtbar
  * „gesperrt") ist Teil B (#167) und wird über R16 nachgewiesen.
@@ -66,6 +71,19 @@ test.describe('M5 Regeltabelle R15 · Zugriffsgrenze (läuft gegen das echte Bac
 
     await test.step('403 „Zugriff verweigert": angemeldet, aber nicht in der Zielgruppe', async () => {
       const headers = await userHeaders(request, fx.operator);
+
+      // Zuerst die Vorbedingung, die diesen Schritt scharf macht: der operator
+      // DARF den Datenpunkt der Seite lesen. Die Seiten-Leseprüfung besteht aus
+      // ZWEI Schranken (`_check_page_read_access`: Zielgruppe, danach
+      // `_check_page_datapoint_policy`), und beide antworten mit demselben 403.
+      // Ohne das Leserecht könnte dieses Szenario nicht unterscheiden, welche
+      // der beiden den 403 erzeugt; der Seed gibt dem operator deshalb genau
+      // dieses eine Recht (seed.py, Abschnitt „grants"). Fällt die
+      // Zielgruppen-Schranke weg, wird der 403 unten zu einem 200, und die
+      // Zeile wird rot. Genau das ist ihre Aufgabe.
+      const dp = await request.get(api(`/datapoints/${fx.m5.datapoint_ids.guard_user}`), { headers });
+      expect(dp.status()).toBe(200);
+
       const res = await request.get(api(`/visu/pages/${ids.guard_user}`), { headers });
       expect(res.status()).toBe(403);
       expect((await res.json()).detail).toBe('Zugriff verweigert');
@@ -101,11 +119,16 @@ test.describe('M5 Regeltabelle R15 · Zugriffsgrenze (läuft gegen das echte Bac
       // BELEGTE ABWEICHUNG vom Plan: §2.1 notiert für diese Lage das `detail`
       // „Knoten nicht gefunden". Auf der Leitung steht es nie: der globale
       // 404-Handler in `obs/main.py` (`spa_404_handler`) ersetzt das `detail`
-      // JEDES 404 unter `/api/` durch „Not found" — `_get_node_or_404` schreibt
-      // die deutsche Meldung, der Handler überschreibt sie. Für Teil B heißt
-      // das: diese Lage am STATUS erkennen, nie am Text. Hier festgeschrieben,
-      // damit die Abweichung nicht wieder still verloren geht.
-      expect((await res.json()).detail).toBe('Not found');
+      // JEDES 404 unter `/api/`; `_get_node_or_404` schreibt die deutsche
+      // Meldung, der Handler überschreibt sie. Für Teil B heißt das: diese Lage
+      // am STATUS erkennen, nie am Text.
+      //
+      // Deshalb steht hier BEWUSST keine Behauptung über den Text. Der heutige
+      // Wortlaut ist kein Vertrag, sondern das Nebenprodukt eines Handlers, der
+      // jedes 404 unter `/api/` gleich macht: schreibt jemand ihn so um, dass
+      // die spezifische Meldung durchgereicht wird, ist das die RICHTIGE
+      // Änderung, und dieses Szenario dürfte davon nicht rot werden. Die
+      // Abweichung ist hier dokumentiert und dem Owner für §2.1 gemeldet.
     });
 
     await test.step('400 „Knoten ist keine Seite": das Ziel ist ein Ordner', async () => {

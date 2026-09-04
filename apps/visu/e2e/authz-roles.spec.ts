@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { noteBrowserLogin } from './fixtures';
 
 /**
  * Visu × authz role E2E — the real security verification (CONTRIBUTING-visu-authz.md
@@ -58,6 +59,11 @@ async function login(page: Page, user: { username: string; password: string }) {
   await page.getByLabel('Username').fill(user.username);
   await page.getByLabel('Password').fill(user.password);
   await page.locator('.login-submit').click();
+  // Diese Anmeldung läuft durch die echte Maske und hinterlässt deshalb kein
+  // Token im Zwischenspeicher. Gebucht wird sie trotzdem: `POST /auth/login`
+  // erlaubt 5 Anmeldungen pro Minute, und `global-setup.ts` rechnet vor dem
+  // nächsten Lauf aus, wie viel davon noch frei ist (e2e/README.md).
+  noteBrowserLogin();
   await expect(page.getByText(`Signed in as ${user.username}`)).toBeVisible();
 }
 

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
-import { ADMIN, EDITOR_BASE, adminHeaders, api, seeded } from './fixtures';
+import { EDITOR_BASE, VISU_BASE, adminHeaders, api, seeded } from './fixtures';
+import { C1, C2, C3, C4, C5, C6, box, el, openEditor } from './editor-helpers';
 
 /**
  * M5 Messlatte — Editor-Matrix E1-E19 (CONTRIBUTING-visu-m5.md §1.1).
@@ -18,50 +19,61 @@ import { ADMIN, EDITOR_BASE, adminHeaders, api, seeded } from './fixtures';
  * Die hier verwendeten Bedien-Affordanzen (Rollen, Beschriftungen, die
  * `[data-el]`-Marke am Canvas-Element) sind die ANFORDERUNG des Harness an den
  * Editor. Wo C1-C6 sich für eine andere, gleichwertige Affordanz entscheiden,
- * zieht der Harness nach — die Behauptung des Szenarios bleibt.
+ * zieht der Harness nach; die Behauptung des Szenarios bleibt. Sie stehen in
+ * `editor-helpers.ts`, weil E14 in einer eigenen Datei liegt (Touch-Projekt).
+ *
+ * E14 (Touch-Drag) steht deshalb in `m5-editor-touch.spec.ts`: es braucht ein
+ * Playwright-Projekt mit `hasTouch`, alle Szenarien hier brauchen ausdrücklich
+ * das Gegenteil.
  */
 
-const blockedBy = (part: string, issue: number) =>
-  ({
-    annotation: {
-      type: 'blocked-by',
-      description: `Teil ${part} — Micsi/openbridgeserver#${issue} (V2-Editor in gui/ noch nicht gebaut)`,
+/** Breite/Höhe eines PNG aus dem IHDR-Kopf, ohne Bibliothek und ohne Dekodierung. */
+function pngSize(png: Buffer): { w: number; h: number } {
+  return { w: png.readUInt32BE(16), h: png.readUInt32BE(20) };
+}
+
+/**
+ * Zählt die abweichenden Pixel zweier PNGs, und zwar im Browser, weil er den Dekoder
+ * schon mitbringt und der Harness sich dafür keine Abhängigkeit einhandeln soll.
+ * `data:`-Bilder färben die Canvas nicht ein, `getImageData` ist also erlaubt.
+ * Rückgabe `-1` heißt „verschiedene Abmessungen"; dann ist die Frage nach der
+ * Pixelgleichheit gar nicht erst gestellt worden.
+ */
+async function differingPixels(page: Page, a: Buffer, b: Buffer): Promise<number> {
+  return page.evaluate(
+    async ([left, right]) => {
+      const load = (base64: string) =>
+        new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error('PNG nicht dekodierbar'));
+          img.src = `data:image/png;base64,${base64}`;
+        });
+      const pixels = (img: HTMLImageElement) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        return ctx.getImageData(0, 0, img.width, img.height).data;
+      };
+      const [imgA, imgB] = await Promise.all([load(left!), load(right!)]);
+      if (imgA.width !== imgB.width || imgA.height !== imgB.height) return -1;
+      const dataA = pixels(imgA);
+      const dataB = pixels(imgB);
+      let differing = 0;
+      for (let i = 0; i < dataA.length; i += 4) {
+        if (dataA[i] !== dataB[i] || dataA[i + 1] !== dataB[i + 1] || dataA[i + 2] !== dataB[i + 2] || dataA[i + 3] !== dataB[i + 3]) {
+          differing += 1;
+        }
+      }
+      return differing;
     },
-  }) as const;
-
-const C1 = blockedBy('C1 Editor Baum + Seiteneigenschaften', 168);
-const C2 = blockedBy('C2 Editor WYSIWYG-Canvas', 169);
-const C3 = blockedBy('C3 Editor Widget-Palette + Bindung', 170);
-const C4 = blockedBy('C4 Editor Vorschau-Brücke + Admin-Einbettung', 171);
-const C5 = blockedBy('C5 Editor Ergonomie', 172);
-const C6 = blockedBy('C6 Editor Dualität + Verlauf', 173);
-
-/** Admin-Login + Visu-Editor auf einer geseedeten Seite öffnen. */
-async function openEditor(page: Page, pageId: string) {
-  await page.goto(`${EDITOR_BASE}/login`);
-  await page.getByLabel('Benutzername').fill(ADMIN.username);
-  await page.getByLabel('Passwort').fill(ADMIN.password);
-  await page.getByRole('button', { name: 'Anmelden' }).click();
-  await page.goto(`${EDITOR_BASE}/visu-editor/${pageId}`);
-  await expect(page.locator('.editor-canvas')).toBeVisible();
+    [a.toString('base64'), b.toString('base64')],
+  );
 }
 
-/** Ein platziertes Element auf dem Editor-Canvas (Marke: `[data-el]`). */
-function el(page: Page, name: string) {
-  return page.locator('.editor-canvas [data-el]', { hasText: name }).first();
-}
-
-/** Die Box eines Canvas-Elements in Autoren-Einheiten (x/y/w/h aus dem Modell). */
-async function box(page: Page, name: string) {
-  return el(page, name).evaluate((node) => ({
-    x: Number(node.getAttribute('data-x')),
-    y: Number(node.getAttribute('data-y')),
-    w: Number(node.getAttribute('data-w')),
-    h: Number(node.getAttribute('data-h')),
-  }));
-}
-
-test.describe('M5 Editor-Matrix E1-E19 (wartet auf die Editor-Teile C1-C6)', () => {
+test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-C6)', () => {
   test.fixme(
     'E1 Element per Drag auf Pixel-Koordinate x/y setzen, Snap rastet bei einstellbarer Rasterweite ein',
     C2,
@@ -123,15 +135,36 @@ test.describe('M5 Editor-Matrix E1-E19 (wartet auf die Editor-Teile C1-C6)', () 
       // Renderer — deshalb muss ihr Inhalt pixelgleich zur Live-Visu sein.
       const preview = page.frameLocator('iframe.editor-preview');
       await expect(preview.locator('.edomi-canvas')).toBeVisible();
-      const inEditor = await page.locator('iframe.editor-preview').screenshot();
 
-      const live = await (await browser.newContext()).newPage();
+      // „Ausserhalb des Editor-Chrome" IST hier der Ausschnitt: fotografiert
+      // wird auf BEIDEN Seiten ausschliesslich `.edomi-root`, also der Bereich,
+      // den der Live-Renderer zeichnet. Werkzeugleiste, Eigenschaften-Panel und
+      // der iframe-Rahmen liegen ausserhalb dieses Ausschnitts und werden
+      // deshalb gar nicht erst mitverglichen: nicht wegmaskiert, sondern nie
+      // aufgenommen.
+      const inEditor = await preview.locator('.edomi-root').screenshot();
+
+      // Die Live-Visu bekommt exakt das Fenster der Vorschau. Ohne das
+      // vergleicht man zwei Layouts verschiedener Breite und nicht zwei
+      // Renderer; ein Pixel-Diff koennte dann nie 0 werden.
+      const frameViewport = await page.locator('iframe.editor-preview').evaluate((node) => ({
+        width: Math.round((node as HTMLIFrameElement).clientWidth),
+        height: Math.round((node as HTMLIFrameElement).clientHeight),
+      }));
+      const live = await (
+        await browser.newContext({ baseURL: VISU_BASE, viewport: frameViewport, deviceScaleFactor: 1, locale: 'en-US' })
+      ).newPage();
       await live.goto('/edomi');
       await live.locator('.edomi-nav-link', { hasText: fx.m5.names.home }).first().click();
       await expect(live.locator('.edomi-canvas')).toBeVisible();
       const inLive = await live.locator('.edomi-root').screenshot();
 
-      expect(inEditor).toEqual(inLive);
+      // Gleiche Abmessung ist Vorbedingung, nicht Ergebnis: sie wird getrennt
+      // behauptet, damit ein Groessenunterschied als solcher gemeldet wird und
+      // nicht als „Millionen abweichender Pixel".
+      expect(pngSize(inLive)).toEqual(pngSize(inEditor));
+      // Und dann die Zeile selbst: NULL abweichende Pixel in diesem Ausschnitt.
+      expect(await differingPixels(page, inEditor, inLive)).toBe(0);
     },
   );
 
@@ -359,35 +392,6 @@ test.describe('M5 Editor-Matrix E1-E19 (wartet auf die Editor-Teile C1-C6)', () 
   });
 
   test.fixme(
-    'E14 Touch-Drag/-Resize eines Widgets im Editor bewegt es um dieselbe Distanz wie Maus-Drag (page.touchscreen)',
-    C5,
-    async ({ page }) => {
-      const fx = seeded();
-      await openEditor(page, fx.m5.node_ids.solo);
-      const start = await box(page, fx.m5.widgets.solo);
-      const handle = (await el(page, fx.m5.widgets.solo).boundingBox())!;
-      const from = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
-
-      // Maus-Drag um 60 px …
-      await page.mouse.move(from.x, from.y);
-      await page.mouse.down();
-      await page.mouse.move(from.x + 60, from.y, { steps: 10 });
-      await page.mouse.up();
-      const afterMouse = await box(page, fx.m5.widgets.solo);
-      expect(afterMouse.x).toBeGreaterThan(start.x);
-
-      // … und dasselbe per Touch: dieselbe Distanz, dasselbe Ergebnis.
-      await page.keyboard.press('Control+z');
-      expect(await box(page, fx.m5.widgets.solo)).toMatchObject({ x: start.x });
-      await page.touchscreen.tap(from.x, from.y);
-      await page.locator('.editor-canvas').dispatchEvent('touchstart', { touches: [{ clientX: from.x, clientY: from.y }] });
-      await page.locator('.editor-canvas').dispatchEvent('touchmove', { touches: [{ clientX: from.x + 60, clientY: from.y }] });
-      await page.locator('.editor-canvas').dispatchEvent('touchend', { touches: [] });
-      expect(await box(page, fx.m5.widgets.solo)).toMatchObject({ x: afterMouse.x });
-    },
-  );
-
-  test.fixme(
     'E15 Zugriff/Zielgruppe direkt in Seiteneigenschaften setzbar (mind. Admin-only/Nutzer-Sichtbarkeit)',
     C1,
     async ({ page }) => {
@@ -461,7 +465,10 @@ test.describe('M5 Editor-Matrix E1-E19 (wartet auf die Editor-Teile C1-C6)', () 
     const file = await download.path();
     expect(file).toBeTruthy();
 
-    // Reimport unter neuem Namen → dieselben Elemente, neue Seite.
+    // Reimport in dieselbe Instanz: der Baum traegt den Namen danach ZWEIMAL:
+    // die Datei ist also eine vollstaendige Seite und kein Verweis auf die
+    // bestehende. (Wie der Editor die Dublette benennt, gehoert Teil C6; die
+    // Behauptung hier ist die Verdopplung, nicht die Benennung.)
     await page.goto(`${EDITOR_BASE}/visu-editor`);
     await page.getByRole('button', { name: 'Importieren' }).click();
     await page.getByLabel('Datei').setInputFiles(file!);
@@ -486,3 +493,4 @@ test.describe('M5 Editor-Matrix E1-E19 (wartet auf die Editor-Teile C1-C6)', () 
     await expect(page.getByLabel('Skin')).toHaveValue('terminal');
   });
 });
+

@@ -15,7 +15,7 @@
  * eine URL, einen Query-Parameter oder eine Log-Zeile.
  */
 
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { APIRequestContext } from '@playwright/test';
@@ -24,6 +24,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** Das Backend, gegen das die Regeltabelle geprüft wird. */
 export const OBS_BASE = (process.env.OBS_BASE ?? 'http://127.0.0.1:8080').replace(/\/$/, '');
+
+/**
+ * Der Visu-Dev-Server. EINE Quelle für `playwright.config.ts` (baseURL) und für
+ * die Szenarien, die sich einen zweiten Browser-Kontext aufmachen (E3): ein
+ * eigener Kontext erbt `baseURL` NICHT aus `use`, und eine zweite Vorgabe in
+ * einer zweiten Datei liefe irgendwann auseinander.
+ */
+export const VISU_BASE = (process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5175').replace(/\/$/, '');
 
 /**
  * Die Admin-GUI, in der der V2-Editor lebt (§2.4: Authoring liegt in `gui/`,
@@ -128,27 +136,230 @@ export function api(path: string): string {
 }
 
 /**
- * Token-Zwischenspeicher je Worker. `POST /auth/login` ist auf 10 Anmeldungen
- * pro Minute begrenzt (`@limiter.limit` in `obs/api/auth.py`); ohne diesen
- * Zwischenspeicher liefe eine Regeltabelle mit einem Dutzend Szenarien in ein
- * 429 und wäre nicht wegen der Regel rot, sondern wegen der Bremse. Die Tokens
- * leben nur im Speicher des Testlaufs — nie in einer URL, Query oder Ausgabe.
+ * Token-Zwischenspeicher. `POST /auth/login` ist auf **5 Anmeldungen pro Minute**
+ * begrenzt (`@limiter.limit("5/minute")`, `obs/api/auth.py:471`), nicht auf 10,
+ * wie hier bis Runde 1 stand. Ohne Zwischenspeicher liefe eine Regeltabelle mit
+ * einem Dutzend Szenarien in ein 429 und wäre nicht wegen der Regel rot, sondern
+ * wegen der Bremse.
+ *
+ * Der Speicher liegt bewusst NICHT nur im Modul: Playwright startet nach einem
+ * fehlgeschlagenen Szenario einen neuen Worker, und ein modulglobaler Cache ist
+ * damit weg. Genau dann, wenn der Harness gebraucht wird, also beim ersten roten
+ * Szenario, liefen die Folgeszenarien sonst in die Rate-Limit-Sperre statt in
+ * ihre eigentliche Aussage. Deshalb legen sich die Tokens zusätzlich in
+ * `e2e/.auth/tokens.json` (gitignoriert, ephemer): ein Worker-Neustart findet
+ * sie wieder, `global-setup.ts` füllt sie einmal vor dem Lauf.
+ *
+ * Tokens wandern weiterhin nie in eine URL, eine Query oder eine Ausgabe.
  */
 const tokenCache = new Map<string, Record<string, string>>();
+
+const AUTH_DIR = join(HERE, '.auth');
+const TOKEN_STORE = join(AUTH_DIR, 'tokens.json');
+
+/**
+ * Die abgelegten Tokens. `obtained` ist der Zeitpunkt der Anmeldung; daran
+ * rechnet `global-setup.ts` aus, wie viel vom Kontingent (5 Anmeldungen pro
+ * Minute) noch frei ist. `seed.py` schreibt dieselbe Datei im selben Format:
+ * der Speicher ist die EINE Stelle, an der der Harness sein Login-Budget führt.
+ */
+interface TokenStore {
+  /** Gegen welches Backend die Tokens gelten; ein Wechsel entwertet sie. */
+  base: string;
+  tokens: Record<string, { token: string; obtained: number }>;
+  /**
+   * Zeitstempel JEDER Anmeldung, die der Harness ausgelöst hat, auch der, die
+   * kein Token hinterlässt (die UI-Anmeldungen von `authz-roles.spec.ts`) und
+   * der, die einen vorhandenen Eintrag überschreibt. Nur so stimmt die
+   * Buchführung: das Kontingent zählt Anmeldungen, nicht Nutzernamen.
+   */
+  logins: number[];
+}
+
+/** Das Kontingent aus `obs/api/auth.py:471`, dort `@limiter.limit("5/minute")`. */
+export const LOGIN_LIMIT = 5;
+export const LOGIN_WINDOW_MS = 60_000;
+
+/** Der `exp`-Anspruch eines JWT, ohne Bibliothek: das mittlere Segment ist base64url-JSON. */
+function jwtExpiry(token: string): number | null {
+  const segment = token.split('.')[1];
+  if (!segment) return null;
+  try {
+    const json = Buffer.from(segment.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const exp = (JSON.parse(json) as { exp?: number }).exp;
+    return typeof exp === 'number' ? exp : null;
+  } catch {
+    return null;
+  }
+}
+
+function readStore(): TokenStore {
+  try {
+    const parsed = JSON.parse(readFileSync(TOKEN_STORE, 'utf8')) as TokenStore;
+    if (parsed.base !== OBS_BASE || typeof parsed.tokens !== 'object') return { base: OBS_BASE, tokens: {}, logins: [] };
+    return { ...parsed, logins: Array.isArray(parsed.logins) ? parsed.logins : [] };
+  } catch {
+    return { base: OBS_BASE, tokens: {}, logins: [] };
+  }
+}
+
+function writeStore(store: TokenStore): void {
+  try {
+    mkdirSync(AUTH_DIR, { recursive: true });
+    // Zeitstempel außerhalb des Fensters sind wertlos und würden die Datei nur wachsen lassen.
+    store.logins = store.logins.filter((at) => at > Date.now() - LOGIN_WINDOW_MS).sort((a, b) => a - b);
+    // Erst schreiben, dann umbenennen: zwei Worker dürfen sich hier nicht
+    // gegenseitig eine halbe Datei hinterlassen.
+    const tmp = `${TOKEN_STORE}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(store), { mode: 0o600 });
+    renameSync(tmp, TOKEN_STORE);
+  } catch {
+    // Der Ablage-Fehler darf kein Szenario rot machen: der Speicher im Modul
+    // trägt den Lauf weiter, nur ein Worker-Neustart kostet dann einen Login.
+  }
+}
+
+/**
+ * Bucht eine Anmeldung, die durch die echte Anmeldemaske gelaufen ist und
+ * deshalb kein Token im Speicher hinterlässt (`authz-roles.spec.ts`). Ohne diese
+ * Buchung hielte der nächste Lauf das Kontingent für freier, als es ist, und
+ * liefe genau dann in ein 429, wenn zwei Läufe dicht aufeinander folgen.
+ */
+export function noteBrowserLogin(): void {
+  const store = readStore();
+  store.logins.push(Date.now());
+  writeStore(store);
+}
+
+/**
+ * Ein abgelegter Token wird nur benutzt, solange er noch mindestens eine Minute
+ * gilt; sonst tauschte man das 429 gegen ein 401 ein.
+ */
+function storedToken(username: string): string | null {
+  const entry = readStore().tokens[username];
+  if (!entry?.token) return null;
+  const exp = jwtExpiry(entry.token);
+  if (exp === null || exp * 1000 <= Date.now() + 60_000) return null;
+  return entry.token;
+}
+
+/**
+ * Wie viele Anmeldungen der Harness im laufenden Minutenfenster schon verbraucht
+ * hat: Seed und Specs zusammen, weil beide in denselben Speicher schreiben.
+ */
+export function loginsInWindow(now = Date.now()): number[] {
+  return readStore()
+    .logins.filter((at) => typeof at === 'number' && at > now - LOGIN_WINDOW_MS)
+    .sort((a, b) => a - b);
+}
+
+function storeToken(username: string, token: string): void {
+  const store = readStore();
+  const now = Date.now();
+  store.tokens[username] = { token, obtained: now };
+  store.logins.push(now);
+  writeStore(store);
+}
 
 async function login(
   request: APIRequestContext,
   user: { username: string; password: string },
   onError: (status: number) => string,
 ): Promise<Record<string, string>> {
-  const cached = tokenCache.get(user.username);
-  if (cached) return cached;
+  const memo = tokenCache.get(user.username);
+  if (memo) return memo;
+
+  const fromDisk = storedToken(user.username);
+  if (fromDisk) {
+    const headers = { Authorization: `Bearer ${fromDisk}` };
+    tokenCache.set(user.username, headers);
+    return headers;
+  }
+
   const res = await request.post(api('/auth/login'), { data: user });
-  if (!res.ok()) throw new Error(onError(res.status()));
+  if (!res.ok()) {
+    if (res.status() === 429) {
+      throw new Error(
+        `Login ${user.username} lief in die Rate-Limit-Sperre (429). ` +
+          '`POST /auth/login` erlaubt 5 Anmeldungen pro Minute (obs/api/auth.py). ' +
+          'Eine Minute warten und erneut fahren; `e2e/.auth/tokens.json` hält die Tokens danach über Worker-Neustarts hinweg.',
+      );
+    }
+    throw new Error(onError(res.status()));
+  }
   const body = (await res.json()) as { access_token: string };
   const headers = { Authorization: `Bearer ${body.access_token}` };
   tokenCache.set(user.username, headers);
+  storeToken(user.username, body.access_token);
   return headers;
+}
+
+/**
+ * Wirft abgelegte Tokens weg, die das Backend nicht (mehr) kennt.
+ *
+ * Der Speicher überlebt einen DB-Reset der Testinstanz; ein Token aus der alten
+ * Datenbank ist danach formal noch gültig, wird aber abgelehnt. Ohne diese
+ * Prüfung liefe das erste Szenario in ein 401 und man suchte den Fehler bei der
+ * Regel statt beim Zwischenspeicher. Kostet einen Aufruf, aber KEINE Anmeldung.
+ */
+async function dropTokensRejectedByBackend(request: APIRequestContext): Promise<void> {
+  const store = readStore();
+  let changed = false;
+  for (const [username, entry] of Object.entries(store.tokens)) {
+    const res = await request.get(api('/auth/me'), { headers: { Authorization: `Bearer ${entry.token}` } });
+    if (res.status() === 401 || res.status() === 403) {
+      delete store.tokens[username];
+      changed = true;
+      console.warn(`[global-setup] abgelegtes Token für ${username} verworfen (Backend lehnt es ab, ${res.status()})`);
+    }
+  }
+  if (changed) writeStore(store);
+}
+
+/**
+ * Holt die Tokens aller drei Principals EINMAL vor dem Lauf (`global-setup.ts`).
+ * Damit kostet der eigentliche Lauf keine Anmeldung mehr, auch nicht nach einem
+ * Worker-Neustart.
+ *
+ * Läuft es dabei in die Rate-Limit-Sperre, wird das Fenster EINMAL ausgesessen
+ * statt aufgegeben: hier ist Warten billig (kein Test-Timeout läuft), und ein
+ * Lauf, der stattdessen mit halbem Zwischenspeicher startet, verlagert das 429
+ * nur in ein Szenario. Ist die Instanz noch nicht geseedet, bleibt es beim
+ * Admin-Token; das meldet dann die erste Spec mit ihrer eigenen Meldung.
+ */
+export async function primeTokens(request: APIRequestContext): Promise<string[]> {
+  const users = [ADMIN];
+  try {
+    const fx = seeded();
+    users.push(fx.resident, fx.operator);
+  } catch {
+    // ohne `.seeded.json` bleibt es beim Admin-Token
+  }
+
+  await dropTokensRejectedByBackend(request);
+
+  const primed: string[] = [];
+  let waited = false;
+  for (const user of users) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await login(request, user, (status) => `Login ${user.username} fehlgeschlagen (${status})`);
+        primed.push(user.username);
+        break;
+      } catch (err) {
+        const message = (err as Error).message;
+        if (message.includes('429') && !waited) {
+          waited = true;
+          console.warn(`[global-setup] Rate-Limit-Sperre beim Vorabholen; sitze das Minutenfenster einmal aus.`);
+          await new Promise((resolve) => setTimeout(resolve, LOGIN_WINDOW_MS + 1_000));
+          continue;
+        }
+        console.warn(`[global-setup] Token für ${user.username} nicht vorab geholt: ${message}`);
+        break;
+      }
+    }
+  }
+  return primed;
 }
 
 /**

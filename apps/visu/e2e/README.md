@@ -208,8 +208,12 @@ export OBS_BASE=http://127.0.0.1:8080
 curl -sf "$OBS_BASE/api/v1/system/health" || { echo "Backend nicht erreichbar"; exit 1; }
 
 # 1) State-Leaks vermeiden (Reste eines früheren Laufs)
-rm -rf apps/visu/.auth apps/visu/test-results apps/visu/playwright-report
+rm -rf apps/visu/test-results apps/visu/playwright-report
 rm -f apps/visu/e2e/.seeded.json
+# `apps/visu/e2e/.auth` NICHT löschen, solange dieselbe Instanz läuft: dort steht
+# das verbrauchte Login-Kontingent. Bei einer FRISCHEN Instanz darf es weg (die
+# alten Tokens werden ohnehin erkannt und verworfen); es kostet dann nur bis zu
+# einer Minute Wartezeit, wenn kurz zuvor schon ein Lauf gefahren wurde.
 
 # 2) Seed (idempotent — zweimal laufen lassen ist erlaubt und aendert nichts)
 OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
@@ -229,10 +233,56 @@ OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
 | `PLAYWRIGHT_BASE_URL` | Visu-Dev-Server für die UI-Szenarien | `http://localhost:5175` |
 | `GUI_BASE_URL` | Admin-GUI, in der der V2-Editor liegt (§2.4); nur die E-Szenarien nutzen sie | `http://localhost:5173` |
 
-`POST /api/v1/auth/login` ist auf **10 Anmeldungen pro Minute** begrenzt
-(`@limiter.limit` in `obs/api/auth.py`). `e2e/fixtures.ts` hält deshalb einen
-Token-Zwischenspeicher je Worker; wer zwischen zwei Läufen von Hand einen Login
-pollt, verbrennt dasselbe Kontingent und macht den nächsten Lauf ohne Grund rot.
+`POST /api/v1/auth/login` ist auf **5 Anmeldungen pro Minute** begrenzt
+(`@limiter.limit("5/minute")`, `obs/api/auth.py:471`; bis Runde 1 stand hier
+irrtümlich 10, die Bremse ist doppelt so eng wie dokumentiert). Deshalb zwei
+Vorkehrungen:
+
+- **Ein Speicher für den ganzen Harness.** `e2e/.auth/tokens.json`
+  (gitignoriert, ephemer, Modus 0600, nur JWTs, keine Passwörter) wird von
+  `seed.py` **und** `fixtures.ts` gelesen und geschrieben. `seed.py` ist der
+  erste Verbraucher des Kontingents und legt sein Admin-Token dort ab;
+  `global-setup.ts` holt nur noch, was fehlt (resident, operator). Neben den
+  Tokens führt die Datei eine Liste der **Anmelde-Zeitstempel**, und zwar auch
+  für die zwei Anmeldungen, die durch die echte Maske laufen und gar kein Token
+  hinterlassen. Das Kontingent zählt Anmeldungen, nicht Nutzernamen: ohne diese
+  Buchung hielte ein unmittelbar folgender zweiter Lauf das Fenster für freier,
+  als es ist (an genau der Stelle ist Lauf 2 in der Erprobung rot geworden).
+- **Der Zwischenspeicher überlebt den Worker.** Playwright startet nach jedem
+  roten Szenario einen neuen Worker; ein rein modulglobaler Cache wäre genau
+  dann weg, wenn der Harness gebraucht wird, und die Folgeszenarien liefen in
+  `429 Too Many Requests` statt in ihre Aussage. `fixtures.ts` liest deshalb
+  zuerst den Speicher im Modul, dann die Datei (ein abgelegter Token wird nur
+  benutzt, solange er noch mindestens eine Minute gilt), und erst dann meldet es
+  sich an.
+- **Der Rest des Kontingents bleibt der UI.** `authz-roles.spec.ts` meldet
+  resident und operator durch die echte Anmeldemaske an, und das IST die Aussage
+  dieser beiden Szenarien, ein Token-Cache kann sie nicht abkürzen. Die Rechnung
+  geht damit exakt auf: Seed 1 + vorgeholt 2 + UI 2 = 5. `global-setup.ts` prüft
+  das vor der Übergabe an den Lauf und **wartet** das Fenster aus, wenn mehr
+  verbraucht wurde (etwa weil jemand von Hand einen Login gepollt hat), statt
+  den Lauf in ein 429 laufen zu lassen. Diese Prüfung ist erst durch den
+  Warmlauf nötig geworden: vorher verteilten sich dieselben Anmeldungen über
+  zwei bis drei Minuten, jetzt fallen sie in dieselbe Minute.
+
+Ein 429 meldet der Harness als solches, mit der Ursache im Text, nicht als
+vermeintlich gescheiterte Regel. Und beide Aufbau-Schritte **warten** es
+einmalig aus, statt daran zu sterben: `seed.py` sitzt das Minutenfenster aus und
+meldet das (Aufbau ist kein Test, hier ist Warten billig), `global-setup.ts`
+ebenso. Ein Token, das aus einer früheren Datenbank derselben Adresse stammt,
+wird vorher über `GET /auth/me` erkannt und verworfen; das kostet einen Aufruf,
+aber keine Anmeldung, und erspart die Suche nach einem 401, das gar keine
+Regelaussage ist.
+
+`global-setup.ts` fährt außerdem einen **Warmlauf** gegen den Visu-Dev-Server
+(`/` und `/edomi`), bevor das erste Szenario startet. Grund, gemessen statt
+geglaubt: Vite transpiliert on demand, der allererste Seitenaufruf einer Sitzung
+kostet 26-48 s, dieselben Szenarien gegen denselben warmgelaufenen Dev-Server
+1,0-2,9 s. Diese Einmal-Kosten gehören nicht in die Zeitmessung eines Szenarios,
+deshalb liegen sie außerhalb jedes Test-Timeouts und der Test-Timeout bleibt bei
+**30 s** (nicht 60 s: ein Szenario, das mit warmem Server 30 s braucht, hat ein
+echtes Problem und soll rot werden). Beide Schritte sind nachsichtig: schlägt
+einer fehl, meldet das Setup es sichtbar und der Lauf beginnt trotzdem.
 
 ## Zwei Pflichtläufe
 
@@ -262,21 +312,47 @@ rm -rf "$(dirname "$OBS_DATABASE__PATH")/archives" "${OBS_DATABASE__PATH%.db}_ri
 >    Mosquitto/Backend setzen, aber **nicht** in die Shell exportieren, in der
 >    `playwright test` läuft.
 
-### Ergebnis der Pflichtläufe (Runde 1, 2026-09-04)
+### Ergebnis der Pflichtläufe (Runde 2, 2026-09-04)
 
-`BASE_URL` = `http://127.0.0.1:8086` (Backend, venv/uvicorn), Visu-Dev-Server auf
-`http://localhost:5185`, Mosquitto anonym auf `127.0.0.1:1886` (Colima).
+`OBS_BASE` = `http://127.0.0.1:8087` (Backend, venv/uvicorn), Visu-Dev-Server auf
+`http://localhost:5187`, Mosquitto anonym auf `127.0.0.1:1887` (Colima).
 Health-Check vor beiden Läufen grün.
 
 | Lauf | Instanz | pass | fixme | flaky | fail | Dauer |
 |---|---|---|---|---|---|---|
-| 1 | frisch + leer, Seed **einmal** | 12 | 27 | 0 | 0 | 1,6 min |
-| 2 | befüllt, Seed **erneut** | 12 | 27 | 0 | 0 | 2,4 min |
+| 1 | frisch + leer, Dev-Server **kalt**, Seed **einmal** | 12 | 27 | 0 | 0 | 23,3 s |
+| 2 | dieselbe Instanz, Seed **erneut**, direkt im Anschluss | 12 | 27 | 0 | 0 | 1,1 min, davon 24 s gewolltes Warten |
+
+Lauf 2 folgte absichtlich unmittelbar auf Lauf 1. `global-setup.ts` fand
+5 von 5 Anmeldungen im laufenden Minutenfenster verbraucht, meldete das und
+wartete 24 s, bevor es an die Szenarien übergab. Genau dieser Fall (zwei Läufe
+dicht hintereinander) hat in der Erprobung zwei UI-Szenarien in ein 429 laufen
+lassen, solange die Buchführung nur Tokens statt Anmeldungen zählte.
 
 Nach dem zweiten Seed stehen weiterhin **20 Knoten** und **20 Datenpunkte** in
 der Instanz — die Idempotenz ist damit an der Instanz belegt, nicht nur behauptet.
 Die 12 grünen Szenarien sind R1-R6, R12, R15 sowie die vier Bestands-Szenarien
-der authz-Welle 4; die 27 `fixme` sind R7-R11, R13, R14, R16 und E1-E19.
+der authz-Welle 4; die 27 `fixme` sind R7-R11, R13, R14, R16, E1-E13 und E15-E19.
+
+Die vier Browser-Szenarien der authz-Welle, an denen die Timeout-Frage hing,
+brauchten mit Warmlauf **3,3 / 3,0 / 1,1 / 1,4 s** (Lauf 1, kalt gestarteter
+Dev-Server) statt der 26-48 s ohne Warmlauf. Das ist der Beleg dafür, dass der
+Kostentreiber die Vite-Transpilierung war und nicht die gewachsene Beispielwelt,
+und dass die 30-s-Decke reicht.
+
+**Belegte Heilung des Seeds.** Vorbedingung von Hand hergestellt (direkter
+SQLite-Schreibzugriff: `M5 Global A` bekommt bei `kind=globalInclude` einen
+`includes`-Eintrag, an der API sichtbar, und der reine PATCH quittiert mit
+`400 Eine globale Inkludeseite kann selbst keine Seiten inkludieren`). Der Seed
+dagegen: `rc=0`, Meldung `seed: M5 Global A geheilt (Seitenkonfiguration
+kollidierte mit kind='globalInclude')`, danach `kind=globalInclude`, `order=10`,
+`includes=[]`, Widget steht, Bestand unverändert 20/20.
+
+**Belegte Schärfe der Zielgruppen-Schranke.** Mit der Mutation „nur der
+Zielgruppen-Check in `_check_page_read_access` entfällt" (Datenpunkt-Policy
+bleibt) wird R15 rot: `Expected: 403 / Received: 200` im Schritt „403 Zugriff
+verweigert". Ohne das Leserecht des operators auf `dp-m5-guard-user` hätte die
+Policy denselben 403 nachgeliefert und die Mutation überlebt.
 
 ## Abdeckung — welche Zeile prüft welches Szenario
 
@@ -304,9 +380,12 @@ der authz-Welle 4; die 27 `fixme` sind R7-R11, R13, R14, R16 und E1-E19.
 R17 („V1 bleibt unberührt und grün") ist kein E2E-Szenario: das belegt der
 V1-Vitest-Lauf des Backend-Teils.
 
-**Editor-Matrix E1-E19** (`CONTRIBUTING-visu-m5.md` §1.1), alle in
-`m5-editor-matrix.spec.ts`, alle `fixme` — der V2-Editor liegt in `gui/` und ist
-noch nicht gebaut (§6: C1-C6 auf „offen"):
+**Editor-Matrix E1-E19** (`CONTRIBUTING-visu-m5.md` §1.1) in
+`m5-editor-matrix.spec.ts`, **E14 in `m5-editor-touch.spec.ts`** (eigenes
+Playwright-Projekt, s. u.); alle `fixme`, denn der V2-Editor liegt in `gui/` und ist
+noch nicht gebaut (§6: C1-C6 auf „offen"). Die geteilten Bedien-Affordanzen
+stehen in `editor-helpers.ts`, damit beide Dateien gegen dieselbe Anforderung
+bauen:
 
 | Zeile | zuständig | Zeile | zuständig |
 |---|---|---|---|
@@ -326,6 +405,36 @@ Die Bedien-Affordanzen der E-Szenarien (Rollen, Beschriftungen, die
 Editor. Wählt C1-C6 eine gleichwertige andere Affordanz, zieht der Harness nach —
 die Behauptung des Szenarios bleibt.
 
+### Zwei Zeilen, die ihre eigene Vorkehrung brauchen
+
+Ein `fixme` ist nur dann etwas wert, wenn es nach Lieferung seines Teils grün
+werden **kann**. Zwei Zeilen konnten das nicht und tragen jetzt die nötige
+Vorkehrung:
+
+- **E14 (Touch-Drag)** verlangt `page.touchscreen`, und Playwright verweigert das
+  ohne `hasTouch` im Kontext („hasTouch must be enabled on the browser context
+  before using the touchscreen.", Playwright 1.62.1). Nachgemessen mit einer
+  Wegwerf-Sonde in beiden Projekten: im Projekt `chromium` fliegt genau diese
+  Meldung, im Projekt `chromium-touch` läuft `page.touchscreen.tap` durch
+  (`navigator.maxTouchPoints` 0 gegen > 0). Alle übrigen
+  Szenarien brauchen ausdrücklich das Gegenteil (Maus-Semantik für die
+  `.login-*`/`.access-gate*`-Klicks). Deshalb fährt `playwright.config.ts` ein
+  zweites Projekt **`chromium-touch`**, das ausschließlich
+  `m5-editor-touch.spec.ts` mit `hasTouch: true` fährt; das Projekt `chromium`
+  nimmt diese Datei aus, damit sie nicht zweimal läuft. Das Szenario prüft als
+  erstes seine eigene Voraussetzung (`navigator.maxTouchPoints > 0`) und dann
+  die Zeile: derselbe Zug per Finger bewegt das Element um **dieselbe Distanz**
+  wie der Maus-Zug, gemessen vom selben Ausgangswert (dazwischen ein Undo).
+- **E3 (Vorschau = Live-Renderer)** verglich zwei verschieden große Ausschnitte
+  byteweise; das konnte nie 0 ergeben und war auch nicht das Kriterium. Jetzt
+  wird auf **beiden** Seiten derselbe Ausschnitt fotografiert (`.edomi-root`,
+  einmal im Vorschau-iframe, einmal in der Live-Visu); der Editor-Chrome liegt
+  außerhalb dieses Ausschnitts und wird gar nicht erst aufgenommen. Die
+  Live-Visu bekommt exakt das Fenster der Vorschau (Breite, Höhe,
+  `deviceScaleFactor`), die gleiche Abmessung wird getrennt behauptet, und dann
+  zählt das Szenario die **abweichenden Pixel** (Dekodierung im Browser über
+  `canvas`/`getImageData`, keine zusätzliche Abhängigkeit) und verlangt 0.
+
 ## Die Beispielwelt (`seed.py`, M5-Teil)
 
 Der Seed ist **idempotent**: jedes Objekt wird über seinen festen Namen gesucht
@@ -333,6 +442,19 @@ und nur dann angelegt; ein vorhandenes wird auf die Sollform zurückgezogen. Am
 Ende liest der Seed alles zurück und bricht ab, wenn das Modell abweicht — ein
 stiller Drift fliegt dort auf und nicht erst in einer roten Spec. Die erzeugten
 IDs landen in `e2e/.seeded.json` (gitignoriert); `e2e/fixtures.ts` liest sie.
+
+„Auf die Sollform zurückziehen" schließt **eine Welt ein, die dem Sollzustand
+widerspricht**. `_validate_page_kind_config` lehnt eine `globalInclude`- oder
+Popup-Seite mit `includes` ab und eine Popup-Konfiguration auf jedem anderen
+Seitentyp. Trägt die Datenbank eine solche Lage bereits (über Restore, Migration
+oder direkten DB-Zugriff, die §2.1 ausdrücklich als reale Wege nennt), dann
+scheiterte der PATCH des Seitentyps daran und der Seed **starb** an genau dem
+Zustand, den er heilen soll. `mk_node` nimmt einer solchen Seite jetzt zuerst die
+kollidierenden Felder (`includes` leeren, `popup` fallen lassen), patcht dann den
+Seitentyp und meldet die Heilung auf stdout (`seed: … geheilt`); die
+Sollkonfiguration schreibt `put_page` unmittelbar danach ohnehin vollständig.
+Belegt an der Instanz: eine `globalInclude`-Seite mit einem `includes`-Eintrag in
+die DB gebracht, danach Seed → `rc=0`, Heilmeldung, 20 Knoten / 20 Datenpunkte.
 
 | Knoten | `kind` | Zugriff | wofür |
 |---|---|---|---|
@@ -367,7 +489,22 @@ sie im Speicher, `.seeded.json` enthält keine Admin-Zugangsdaten.
   `{"detail": "Not found"}`: der globale `spa_404_handler` in `obs/main.py`
   ersetzt das `detail` **jedes** 404 unter `/api/`. `_get_node_or_404` schreibt
   die deutsche Meldung, der Handler überschreibt sie. **Teil B muss diese Lage am
-  Status erkennen, nie am Text.** Im Szenario R15 festgeschrieben.
+  Status erkennen, nie am Text.** R15 hängt die Lage deshalb am Status auf und
+  behauptet über den Text **nichts**: der heutige Wortlaut ist kein Vertrag,
+  sondern das Nebenprodukt eines Handlers, der jedes 404 unter `/api/` gleich
+  macht. Wer `spa_404_handler` später so repariert, dass die spezifische Meldung
+  durchgereicht wird, macht die richtige Änderung und darf davon nicht rot
+  werden. Die Abweichung ist dem Owner für §2.1 gemeldet.
+- **Zwei Schranken, ein Statuscode.** `_check_page_read_access` prüft erst die
+  Zielgruppe und danach die Datenpunkt-Policy; beide antworten mit 403 und
+  demselben `detail`. Am API-Rand sind sie damit verhaltensgleich, und ein Test
+  kann eine Änderung nicht sehen, die auf der Leitung nichts ändert. Der Seed
+  trennt sie jetzt: der `e2e_operator` **darf** `dp-m5-guard-user` lesen, steht
+  aber nicht in der Zielgruppe. Damit ist der Zielgruppen-Check die einzige noch
+  scharfe Schranke des R15-Schritts: fällt er weg, wird aus dem 403 ein 200 und
+  die Zeile rot. R15 behauptet die Vorbedingung ausdrücklich mit
+  (`GET /datapoints/{dp}` als operator → 200), damit die Trennung nicht still
+  wegkonfiguriert werden kann.
 - **Die authz-Welle-4-Spec musste enger werden, nicht lockerer.** Seit die
   Beispielwelt eine zweite PIN-geschützte Seite kennt (`M5 Guard Pin`), rendert
   der `AccessGate`-Streifen mehrere PIN-Formulare. `authz-roles.spec.ts` fasst
@@ -386,3 +523,14 @@ sie im Speicher, `.seeded.json` enthält keine Admin-Zugangsdaten.
 - Die `fixme`-Szenarien laufen erst, wenn ihr Teil geliefert hat. Sie sind
   deshalb im Bericht als eigene Zahl auszuweisen — ein Lauf ohne `fail` ist noch
   kein fertiges M5.
+- **E14 und E3 sind weiterhin `fixme`**: sie sind jetzt abnehmbar (Touch-Projekt
+  bzw. gleicher Ausschnitt mit Pixelzählung), aber ihre Behauptung über den
+  Editor ist bis zur Lieferung von C4/C5 nicht gefahren. Was heute belegt ist:
+  dass die Harness-Seite der beiden Zeilen trägt (Touch-Sonde in beiden
+  Projekten gemessen), nicht dass der Editor sie erfüllt.
+- **Das Login-Kontingent ist knapp bemessen.** 5 Anmeldungen pro Minute stehen 5
+  benötigten gegenüber (Seed 1, vorgeholt 2, UI 2). Der Harness führt darüber
+  Buch und wartet notfalls, aber wer parallel gegen dieselbe Instanz arbeitet,
+  nimmt ihm das Kontingent weg. Für eine ephemere Instanz ist das richtig; wer
+  dauerhaft mehr braucht, muss die Bremse im Backend anfassen, und das ist keine
+  Entscheidung von Teil E.
