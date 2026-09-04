@@ -33,7 +33,7 @@
  *                   so a skin override of `#roomDivider` actually takes effect.
  *                   With no override the default RoomDivider is the fallback.
  */
-import { computed, h, provide, useSlots, watch } from 'vue';
+import { computed, h, provide, ref, useSlots, watch, watchEffect, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   IonApp,
@@ -82,8 +82,22 @@ const props = withDefaults(
      *  toolbars go transparent + themed (ionic.css .visu-root) and the photo/
      *  gradient background spans behind the chrome. */
     rootBind?: RootTweakStyle;
+    /** The CSS namespace of the ACTIVE page's skin (`Skin.rootClass`). The shell
+     *  page carries it so the chrome sits on the surface of the skin the page
+     *  actually uses — `.visu-root` on an ionic page, `.t-root` on the terminal
+     *  page. Hardcoding `visu-root` here made the chrome ionic-toned (photo
+     *  background, `--ion-*` tokens) on EVERY page, whatever its skin. */
+    rootClass?: string;
   }>(),
-  { state: undefined, title: undefined, error: null, empty: false, withRouterOutlet: false, rootBind: undefined },
+  {
+    state: undefined,
+    title: undefined,
+    error: null,
+    empty: false,
+    withRouterOutlet: false,
+    rootBind: undefined,
+    rootClass: undefined,
+  },
 );
 
 const { t } = useI18n();
@@ -98,6 +112,37 @@ const ctxTitle = computed<string | undefined>(() => props.title ?? ctx.title);
 const ctxError = computed<string | null>(() => (props.error ?? ctx.error) ?? null);
 const ctxEmpty = computed<boolean>(() => props.empty || ctx.empty === true);
 const ctxRootBind = computed<RootTweakStyle | undefined>(() => props.rootBind ?? ctx.rootBind);
+/** The active page's skin namespace. No page (shell mounted standalone) means no
+ *  skin surface — the shell then draws plain Ionic chrome rather than borrowing
+ *  one skin's look. */
+const ctxRootClass = computed<string | undefined>(() => props.rootClass ?? ctx.rootClass);
+
+/**
+ * Apply that namespace ADDITIVELY, not through `:class`.
+ *
+ * `#app-shell-content` is the menu's content target, and Ionic writes classes on
+ * it imperatively (`menu-content`, `menu-content-overlay`, `menu-content-open`).
+ * A Vue class BINDING owns the whole attribute: `patchClass` rewrites
+ * `el.className` on every change, so the first skin-to-skin route change silently
+ * dropped Ionic's classes (measured: `visu-root menu-content menu-content-overlay`
+ * → `t-root`). Harmless for `type="overlay"`, immediately visible for
+ * `type="push"`/`"reveal"`. So the class attribute stays static and only THIS one
+ * token is added/removed on the element — Vue and Ionic stop writing the same
+ * attribute. `flush: 'post'` so the element exists on the first run.
+ */
+const shellPage = ref<ComponentPublicInstance | null>(null);
+let appliedRootClass: string | undefined;
+watchEffect(
+  () => {
+    const next = ctxRootClass.value;
+    const el = shellPage.value?.$el as HTMLElement | undefined;
+    if (!el || appliedRootClass === next) return;
+    if (appliedRootClass) el.classList.remove(appliedRootClass);
+    if (next) el.classList.add(next);
+    appliedRootClass = next;
+  },
+  { flush: 'post' },
+);
 
 const shell = useShellState(ctxState.value);
 
@@ -168,7 +213,8 @@ defineExpose({ shell });
 
     <IonPage
       id="app-shell-content"
-      class="visu-root app-shell-page"
+      ref="shellPage"
+      class="app-shell-page"
       v-bind="ctxRootBind?.attrs"
       :style="ctxRootBind?.style"
     >
@@ -257,7 +303,15 @@ defineExpose({ shell });
               :room-divider="RoomDivider"
               :shell="shell"
             />
-            <IonRouterOutlet v-if="withRouterOutlet" />
+            <!-- `animated="false"`: the routed pages are in-flow inside the shell's
+                 scrolling content (they cannot be the absolutely positioned boxes a
+                 slide transition animates without losing the scroll), so an animated
+                 push would show BOTH pages stacked for the duration. An instant swap
+                 keeps "exactly one page visible" true at every moment. -->
+            <IonRouterOutlet
+              v-if="withRouterOutlet"
+              :animated="false"
+            />
           </template>
         </div>
       </IonContent>
@@ -289,13 +343,28 @@ defineExpose({ shell });
   z-index: 1; /* above the decorative background layer */
 }
 
-/* When the page is the skin's themed surface, the chrome is glass over the
-   background: content transparent so the page photo/gradient shows through, and
-   the toolbars get a frosted backdrop (their transparent fill + colour come from
-   ionic.css .visu-root → --ion-toolbar-background / --ion-toolbar-color). */
-.app-shell-page.visu-root .app-shell-content {
+/* The routed view lives in this body. `ion-router-outlet` is `position: absolute;
+   inset: 0; contain: layout size style` — it claims the viewport and contributes
+   NO height, so inside the shell's scrolling content it collapsed the body to 0px
+   and the pages spilled out of a box `ion-content` could not scroll. Put the
+   outlet in flow and let it be sized by the page inside it; size containment is
+   the only part dropped, layout/style containment stays. */
+.app-shell-body :deep(ion-router-outlet) {
+  position: relative;
+  contain: layout style;
+}
+
+/* The page IS the skin's themed surface (it carries the skin's root class), so the
+   shell content never paints its own ground over it — that is skin-agnostic. */
+.app-shell-page .app-shell-content {
   --background: transparent;
 }
+
+/* The frosted toolbar backdrop is the ionic skin's glass idiom, so it stays keyed
+   on ITS namespace: on an ionic page the toolbars blur over the photo/gradient
+   (their transparent fill + colour come from ionic.css .visu-root →
+   --ion-toolbar-background / --ion-toolbar-color); on a terminal page there is no
+   glass to imitate and the rule simply does not apply. */
 .app-shell-page.visu-root .app-shell-header ion-toolbar,
 .app-shell-page.visu-root .app-shell-titlebar ion-toolbar {
   backdrop-filter: blur(16px) saturate(1.3);

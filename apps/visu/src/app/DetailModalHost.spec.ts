@@ -327,3 +327,55 @@ describe('DetailModalHost — captured clicks inside the modal map to the store'
     expect(spy).toHaveBeenCalledWith('kueche-pendel', 42);
   });
 });
+
+/**
+ * The teleported surfaces (modal body, preset popover body) are rendered at
+ * `<body>`, outside the page root, so the host has to recreate the themed surface
+ * on them. It named ONE skin's namespace (`visu-root`), which meant a detail
+ * opened from the terminal page came up ionic-styled. The namespace has to follow
+ * the ACTIVE skin — the registry already carries it (`Skin.rootClass`).
+ */
+describe('DetailModalHost — the teleported surfaces carry the ACTIVE skin namespace', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('scopes the modal body to the ionic namespace on an ionic page', async () => {
+    await seed();
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global,
+      props: { skin: 'ionic' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    api!.openDetail('kueche-wand');
+    await flushPromises();
+    expect(wrapper.find('.skin-host-modal-body').classes()).toContain('visu-root');
+  });
+
+  it('scopes the modal body to the TERMINAL namespace on a terminal page', async () => {
+    await seed();
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global,
+      props: { skin: 'terminal' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    api!.openDetail('kueche-wand');
+    await flushPromises();
+    const body = wrapper.find('.skin-host-modal-body');
+    expect(body.classes()).toContain('t-root');
+    expect(body.classes()).not.toContain('visu-root');
+  });
+
+  it('scopes the preset popover body to the active skin namespace too', async () => {
+    await seed();
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global,
+      props: { skin: 'ionic' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    api!.openPresets('kueche-roll');
+    await flushPromises();
+    expect(wrapper.find('.skin-host-presets-body').classes()).toContain('visu-root');
+  });
+});
