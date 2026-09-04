@@ -157,7 +157,7 @@ class VisuNode(BaseModel):
 
   | Signal (Status + `detail`) | Lage | Teil B |
   |---|---|---|
-  | **404** `Knoten nicht gefunden` | die Seite existiert nicht (mehr) | still weglassen |
+  | **404** | die Seite existiert nicht (mehr) oder ist auf Navigationsebene verdeckt | still weglassen |
   | **403** `Zugriff verweigert` | verdeckt: die Seite (oder ein Elternknoten) ist `user`-geschützt und der Principal gehört nicht zur Zielgruppe bzw. hat kein Leserecht auf ihre Datenpunkte | still weglassen, kein Fehlerpfad, keine Meldung |
   | **401** `Anmeldung erforderlich` | verdeckt, solange kein Login vorliegt | still weglassen; nach einem Login neu laden |
   | **401** `PIN-Authentifizierung erforderlich` | **keine Verdeckung**, sondern eine auflösbare Aufforderung: `POST /visu/nodes/{id}/auth` liefert ein Session-Token, das als `X-Session-Token` dieselbe Seite lesbar macht | nicht kommentarlos verwerfen: entweder die PIN an der Include-Stelle abfragen oder die Include-Stelle sichtbar als „gesperrt" markieren. Ein stilles Weglassen wäre hier ein Bedienfehler, keine Verdeckung |
@@ -189,6 +189,10 @@ class VisuNode(BaseModel):
   auf `null` gekappt, sobald der Elternknoten verdeckt ist – die Vererbungskette ist clientseitig
   also nicht zuverlässig auflösbar. Der Header ist damit die einzige verlässliche Quelle; B/E lesen
   ihn beim Laden einer Include-Quelle und setzen daraus `writable=false`.
+
+- **Nur der Statuscode ist Vertrag, nie der Meldungstext.** `spa_404_handler` in `obs/main.py`
+  ersetzt das `detail` **jedes** 404 unterhalb von `/api/` durch `"Not found"`. Wer auf einen
+  bestimmten Fehlertext prüft, baut auf Sand: Client-Logik und Tests hängen am Status.
 
 - **Grenzen der obigen Zusagen (vom Kritiker belegt, Teil B muss damit rechnen):**
   - Die Ausnahme fuer gespeicherte `includes` gilt fuer die Ziel-Pruefungen, **nicht** fuer Zyklus und
@@ -315,7 +319,7 @@ Tracking: GitHub-Issues im Fork, Milestone M5 (Authoring + V2-Editor, Nr. 6), Su
 | A0 Vorab-Entscheide | - | Owner-Entscheide 1-5 getroffen (§7, 2026-09-03) | durch |
 | M Messlatten-Recherche (Micsi/openbridgeserver#165) | 3 | R3 Kritiker: g14c + E15 an der Quelle bestätigt, Zahlen exakt (31/25/42/7), jede Zeile mit Champion → **Messlatte tauglich** | durch |
 | A Backend-Modell (Micsi/openbridgeserver#166) | 3 | R3 Kritiker: **Messlatte erreicht** (Härtung ohne Regression). Dedup-Validator sachlich korrekt (erstes Vorkommen gewinnt, keine Prüfung umgehbar); 8 geänderte Bestands-Mock-Zeilen sind reine `kind`-Additionen, keine Assertion entschärft; entfernter Fallback nachweislich unerreichbar (alle 7 Leser holen `SELECT *`); 4/4 Mutationen rot. Gates: lint grün, 7055 unit/adapters/contracts, 876 integration, V1 332/332 (Node 24), `models/visu.py` 100 %. Grenzen der Zusagen in §2.1 ergänzt; `copy_node` ohne Include-Validierung → #178 | **durch** |
-| B Host-Komposition (Micsi/openbridgeserver#167) | 0 | - | offen |
+| B Host-Komposition (Micsi/openbridgeserver#167) | 3 | R3 Kritiker: **Messlatte erreicht**, R2-R15 durchweg nachgewiesen. R1 zurückgewiesen (`composePopup` ohne Aufrufer: Popup-Regeln erreichten keinen Renderer, `kind` typseitig gelöscht), R2 zurückgewiesen (R15c griff auf der Startseite nicht, Timer beim Schliessen nicht abgeräumt → Wiederöffnen auf alter Frist). R3: `shownPageId` steht von Anfang an fest, Fristen für alle Fälle belegt; 11/16 Mutationen rot, die 5 Überlebenden sind äquivalente Bedingungs-Einfügungen ohne verdeckten Fehler; kein Bestandstest abgeschwächt. Gates: 39 Dateien / 635 Tests, lint 0, boundaries 0, Contract unberührt | **durch** |
 | C1 Editor Baum+Eigenschaften (Micsi/openbridgeserver#168) | 0 | - | offen |
 | C2 Editor WYSIWYG-Canvas (Micsi/openbridgeserver#169) | 0 | - | offen |
 | C3 Editor Palette+Bindung (Micsi/openbridgeserver#170) | 0 | - | offen |

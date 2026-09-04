@@ -108,6 +108,16 @@ describe('core/store — init() + state ownership', () => {
     const store = await makeStore(new MockDataSource());
     expect(store.navTree).toEqual([]);
     expect(store.layersFor('anything')).toEqual([]);
+    // M5: dieselbe Degradation für die Seitentyp-Flächen. Ohne Baum gibt es
+    // keine Popup-Seite, keine Startseite und keine Include-Quelle — und
+    // trotzdem keinen Absturz: der Mock-Pfad bleibt exakt wie vorher.
+    expect(store.popupFor('anything')).toBeNull();
+    expect(store.firstPageId()).toBeNull();
+    expect(store.shownPageId).toBeNull();
+    expect(store.gatedIncludesFor('anything')).toEqual([]);
+    store.navigate('anything');
+    expect(store.currentPageId).toBe('anything');
+    expect(store.openPopups).toEqual([]);
   });
 
   it('reflects a layering source: navTree from init, layersFor read-through (W3c)', async () => {
@@ -648,5 +658,54 @@ describe('core/store — followLink: the host owns the jump (#1194)', () => {
     });
     expect(store.currentPageId).toBeNull();
     expect(store.pendingGate).toBeNull();
+  });
+});
+
+/**
+ * `shownPageId` — die Seite, die der Host ZEIGT, im Unterschied zu der, die
+ * jemand ausdrücklich angesteuert hat. Der Unterschied ist der ganze Punkt:
+ * `currentPageId` ist bis zur ersten Navigation null, gezeigt wird trotzdem
+ * schon eine Seite. Wer die Include-Beziehung der gezeigten Seite braucht
+ * (die PIN an der Include-Stelle, M5 R15c), hängt daran.
+ */
+class PopupTreeSource extends SpyDataSource {
+  navTree() {
+    return [
+      { id: 'glob', name: 'Kopf', type: 'PAGE' as const, access: null, kind: 'globalInclude' as const, children: [] },
+      { id: 'home', name: 'Start', type: 'PAGE' as const, access: null, kind: 'normal' as const, children: [] },
+      { id: 'home2', name: 'Zwei', type: 'PAGE' as const, access: null, kind: 'normal' as const, children: [] },
+    ];
+  }
+  layersFor() {
+    return [];
+  }
+  popupFor(pageId: string) {
+    return pageId === 'pop' ? { id: 'pop' } : null;
+  }
+}
+
+describe('core/store — shownPageId: die gezeigte Seite steht von Anfang an fest', () => {
+  it('nennt vor jeder Navigation die erste NORMALE Seite des Baums', async () => {
+    const store = await makeStore(new PopupTreeSource());
+    // Niemand hat navigiert …
+    expect(store.currentPageId).toBeNull();
+    // … gezeigt wird trotzdem schon eine Seite, und zwar nicht die globale
+    // Includeseite, die im Baum davor steht.
+    expect(store.shownPageId).toBe('home');
+  });
+
+  it('folgt danach der Navigation', async () => {
+    const store = await makeStore(new PopupTreeSource());
+    store.navigate('home2');
+    expect(store.currentPageId).toBe('home2');
+    expect(store.shownPageId).toBe('home2');
+  });
+
+  it('ein Popup bewegt die gezeigte Seite NICHT (es liegt darüber)', async () => {
+    const store = await makeStore(new PopupTreeSource());
+    store.navigate('home2');
+    store.navigate('pop');
+    expect(store.openPopups.map((p) => p.id)).toEqual(['pop']);
+    expect(store.shownPageId).toBe('home2');
   });
 });

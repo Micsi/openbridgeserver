@@ -57,6 +57,7 @@
   },
   "access": {
     "pinRequiredFor": "PIN erforderlich für {page}",
+    "pinRequiredForLayer": "PIN erforderlich für die gesperrte Ebene {page} auf dieser Seite",
     "enterPin": "PIN eingeben",
     "pinWrong": "PIN falsch",
     "unlock": "Freischalten",

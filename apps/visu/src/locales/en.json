@@ -57,6 +57,7 @@
   },
   "access": {
     "pinRequiredFor": "PIN required for {page}",
+    "pinRequiredForLayer": "PIN required for the locked layer {page} on this page",
     "enterPin": "Enter PIN",
     "pinWrong": "Wrong PIN",
     "unlock": "Unlock",

@@ -28,11 +28,12 @@
  */
 
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type {
   Device,
   LightDevice,
   PageLink,
+  PopupDescriptor,
   WidgetAction,
   WidgetPosition,
   PageLayer,
@@ -45,7 +46,7 @@ import {
   supportsPageAuth,
   supportsPositions,
 } from './datasource';
-import { supportsLayering, type NavNode } from './obs/compose';
+import { firstNormalPageId, supportsLayering, type HostNavNode } from './obs/compose';
 import { resolveLink, type LinkOutcome } from './links';
 
 /** Brightness a light jumps to when switched on from a dimmed-to-zero state. */
@@ -102,16 +103,36 @@ export const useDeviceStore = defineStore('devices', () => {
    * Navigation tree (layering W3c): the visible PAGE/LOCATION hierarchy the active
    * source exposes. Empty for a source without layering (the mock). A skin renders
    * its own nav from this; the responsive skin ignores it.
+   *
+   * Typed as {@link HostNavNode}, so the page `kind` the source composed survives
+   * up to here and {@link navigate} / {@link firstPageId} can act on it. `kind` is
+   * optional, so a plain contract `NavNode` tree still fits (the mock, a test
+   * fixture, and — once contract 1.14 lands — the contract type itself).
    */
-  const navTree = ref<NavNode[]>([]);
+  const navTree = ref<HostNavNode[]>([]);
 
   /**
    * The page the host currently shows (#1194 / layering W4). The HOST owns this,
    * never a skin (golden rule 4): a page-owning skin reads it through `PageHost`,
    * and the link action ({@link followLink}) is the only other writer besides the
-   * routed page announcing itself. Null until something navigates.
+   * routed page announcing itself. Null until something navigates — wer die
+   * gezeigte Seite braucht (auch VOR der ersten Navigation), liest
+   * {@link shownPageId}.
    */
   const currentPageId = ref<string | null>(null);
+
+  /**
+   * The popups the host currently has open (M5 R2-R8) and their auto-close timers.
+   *
+   * The HOST owns this, not a skin (golden rule 4) and not the render component:
+   * a page-owning skin reads {@link openPopups} through its `PageHost` and calls
+   * {@link openPopup}/{@link closePopup}, while {@link navigate} opens a popup
+   * page here — both navigation paths (nav click and page link) therefore end in
+   * the same state. Re-opening an already-open popup does NOT restart its timer
+   * (R7); different popups are independent (R8).
+   */
+  const openPopups = ref<PopupDescriptor[]>([]);
+  const popupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /**
    * The page a link tried to reach but which needs a PIN first (#1194). Set by
@@ -202,6 +223,97 @@ export const useDeviceStore = defineStore('devices', () => {
     return supportsLayering(source) ? source.layersFor(pageId) : [];
   }
 
+  /**
+   * The popup descriptor of a popup page (M5 R2-R6), or null for anything else:
+   * a normal page, a global include page, a LOCATION, an unknown id, or a source
+   * that composes no popups at all. Read-through like {@link layersFor}.
+   */
+  function popupFor(pageId: string): PopupDescriptor | null {
+    if (!supportsLayering(source) || !source.popupFor) return null;
+    return source.popupFor(pageId);
+  }
+
+  /** The first NORMAL page of the nav tree — the page a page-owning skin starts on. */
+  function firstPageId(): string | null {
+    return firstNormalPageId(navTree.value);
+  }
+
+  /**
+   * Die Seite, die der Host ZEIGT — von Anfang an bestimmt, nicht erst nach der
+   * ersten Navigation.
+   *
+   * {@link currentPageId} haelt nur, was jemand ausdruecklich angesteuert hat,
+   * und ist bis dahin null; gezeigt wird trotzdem schon eine Seite, naemlich die
+   * erste normale des Baums ({@link firstPageId}), auf der ein seitenbesitzender
+   * Skin startet. Wer die gezeigte Seite braucht — der `SkinHost` fuer den
+   * `PageHost`, der Zugriffs-Hinweis fuer die Include-Stelle (M5 R15c, §2.1) —
+   * liest DIESEN Wert. Mit `currentPageId` wirkte die Include-Zuordnung genau
+   * auf der Startseite nicht, also im haeufigsten Zustand ueberhaupt: direkt
+   * nach jedem Laden der App.
+   *
+   * Ein Popup wechselt die Seite nicht ({@link navigate}), also bewegt es diesen
+   * Wert auch nicht — die Seite darunter bleibt die gezeigte.
+   *
+   * Grenze: ohne Baum (Mock, statischer Boden) ist der Wert null. Ein Skin OHNE
+   * Seitenbesitz (der Boden) ueber einem Baum bekommt trotzdem die erste normale
+   * Seite genannt; er zeichnet zwar keine Seite des Baums, aber es ist die Seite,
+   * auf der die App startet — ungenauer als beim seitenbesitzenden Skin, nie auf
+   * eine Seite verweisend, die es nicht gibt.
+   */
+  const shownPageId = computed(() => currentPageId.value ?? firstPageId());
+
+  /**
+   * The gates (PIN / login) that belong to the include SOURCES of `pageId`
+   * (M5 R15, §2.1). The same entries are already in {@link pageGates}; what this
+   * adds is the RELATION: „diese Seite enthält eine gesperrte Ebene" instead of a
+   * PIN field for a page name the user never asked for. The gate UI uses it to
+   * word the prompt at the include site.
+   *
+   * The second half of §2.1 — marking the locked layer at its place IN the stack
+   * — is not expressible today: `PageLayer` has no `locked` flag (see the pending
+   * 1.14 note in core/obs/compose).
+   */
+  function gatedIncludesFor(pageId: string): PageGate[] {
+    if (!supportsLayering(source) || !source.includeSourcesFor) return [];
+    const sources = new Set(source.includeSourcesFor(pageId));
+    return pageGates.value.filter((g) => sources.has(g.pageId));
+  }
+
+  /* -------------------------------------------------- popups (M5 R2-R8, W4) */
+
+  /** Close a popup and drop its auto-close timer. Idempotent. */
+  function closePopup(id: string): void {
+    openPopups.value = openPopups.value.filter((p) => p.id !== id);
+    const t = popupTimers.get(id);
+    if (t) {
+      clearTimeout(t);
+      popupTimers.delete(id);
+    }
+  }
+
+  /**
+   * Open a popup from its descriptor. A re-open of an already-open popup is a
+   * no-op, so its auto-close deadline is NOT extended (R7, Edomi rule); any
+   * number of DIFFERENT popups can be open at once (R8).
+   */
+  function openPopup(descriptor: PopupDescriptor): void {
+    if (openPopups.value.some((p) => p.id === descriptor.id)) return;
+    openPopups.value = [...openPopups.value, descriptor];
+    if (descriptor.autoCloseMs && descriptor.autoCloseMs > 0) {
+      popupTimers.set(
+        descriptor.id,
+        setTimeout(() => closePopup(descriptor.id), descriptor.autoCloseMs),
+      );
+    }
+  }
+
+  /** Close every open popup and clear the timers (the host render seam unmounts). */
+  function closeAllPopups(): void {
+    for (const t of popupTimers.values()) clearTimeout(t);
+    popupTimers.clear();
+    openPopups.value = [];
+  }
+
   /* --------------------------------------------------- page links (#1194) */
 
   /**
@@ -218,6 +330,17 @@ export const useDeviceStore = defineStore('devices', () => {
    * owns this state; a skin only marks intent, it never navigates itself.
    */
   function navigate(pageId: string): void {
+    // M5 R2-R6: a POPUP page is not a page you go to, it is an overlay you open
+    // over the page you are on. This is the single place both navigation paths
+    // pass (a nav click via `PageHost.navigate` and a page link via
+    // {@link followLink}), so the popup descriptor reaches the skin either way —
+    // and the page underneath stays where it is.
+    const popup = popupFor(pageId);
+    if (popup) {
+      openPopup(popup);
+      pendingGate.value = null;
+      return;
+    }
     currentPageId.value = pageId;
     pendingGate.value = null;
   }
@@ -414,12 +537,20 @@ export const useDeviceStore = defineStore('devices', () => {
     links,
     navTree,
     currentPageId,
+    shownPageId,
     pendingGate,
+    openPopups,
     navigate,
     linkOutcome,
     followLink,
     hasPageSession,
     layersFor,
+    popupFor,
+    firstPageId,
+    gatedIncludesFor,
+    openPopup,
+    closePopup,
+    closeAllPopups,
     authenticated,
     username,
     pageGates,

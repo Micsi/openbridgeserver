@@ -24,13 +24,47 @@
  * `store.pageGates` and calls `authenticatePage()`. All text is translated (i18n
  * hard gate).
  */
-import { nextTick, reactive, watch } from 'vue';
+import { computed, nextTick, reactive, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { IonItem, IonLabel, IonInput, IonButton, IonNote } from '@ionic/vue';
 import { useDeviceStore } from '../core/store';
+import type { PageGate } from '../core/datasource';
 
 const { t } = useI18n();
 const store = useDeviceStore();
+
+/**
+ * M5 R15 / §2.1: die Ids der gesperrten Seiten, die in die gerade gezeigte Seite
+ * INKLUDIERT werden. Für sie ist dieses Panel die Include-Stelle: die PIN gehört
+ * sichtbar zu der Seite, die man ansieht, nicht zu einem Seitennamen, den der
+ * Nutzer nie aufgerufen hat. Der Host weiss das (er komponiert den Stapel), der
+ * Skin könnte es nicht wissen.
+ *
+ * Gelesen wird `store.shownPageId`, NICHT `currentPageId`: letzteres hält nur,
+ * was jemand ausdrücklich angesteuert hat, und ist bis zur ersten Navigation
+ * null — die Zuordnung wirkte damit ausgerechnet auf der Startseite nicht, also
+ * direkt nach jedem Laden der App. Die gezeigte Seite steht dagegen von Anfang
+ * an fest (die erste normale Seite des Baums).
+ *
+ * Die zweite Hälfte von §2.1 — die Ebene AN ihrem Platz im Stapel als „gesperrt"
+ * zeichnen — geht erst mit einer Vertragsergänzung (`PageLayer.locked`, notiert
+ * in core/obs/compose): heute kann der Host dem Skin keine gesperrte Ebene
+ * übergeben, nur diesen Hinweis daneben stellen.
+ */
+const includedGates = computed(() => {
+  const page = store.shownPageId;
+  return new Set(page ? store.gatedIncludesFor(page).map((g) => g.pageId) : []);
+});
+
+/**
+ * Der Hinweistext über dem PIN-Feld: an der Include-Stelle benennt er die Ebene
+ * DIESER Seite, sonst schlicht die Seite, die die PIN verlangt.
+ */
+function hintFor(gate: PageGate): string {
+  return includedGates.value.has(gate.pageId)
+    ? t('access.pinRequiredForLayer', { page: gate.name })
+    : t('access.pinRequiredFor', { page: gate.name });
+}
 
 /** Per-page PIN entry buffer, keyed by page id (the panel owns only view input). */
 const pins = reactive<Record<string, string>>({});
@@ -101,13 +135,14 @@ async function submitPin(pageId: string): Promise<void> {
         :class="{ 'is-pending': gate.pageId === store.pendingGate }"
         :data-page="gate.pageId"
         :data-pending="gate.pageId === store.pendingGate ? 'true' : undefined"
+        :data-include-of="includedGates.has(gate.pageId) ? store.shownPageId : undefined"
         @submit.prevent="submitPin(gate.pageId)"
       >
         <IonItem
           lines="none"
           class="access-gate-hint"
         >
-          <IonLabel>{{ t('access.pinRequiredFor', { page: gate.name }) }}</IonLabel>
+          <IonLabel>{{ hintFor(gate) }}</IonLabel>
         </IonItem>
         <IonItem>
           <IonInput
