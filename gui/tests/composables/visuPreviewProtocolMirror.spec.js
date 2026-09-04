@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import {
   VISU_PREVIEW_CHANNEL,
@@ -18,8 +19,13 @@ import {
  * Konstante, die sie sichern soll, also blieb ein Auseinanderlaufen in beiden
  * Suiten gruen — ausgerechnet das Risiko, das der Kopfkommentar benennt.
  *
- * Diese Spec liest deshalb den Quelltext der Visu-Seite und vergleicht ihn mit
- * den hier exportierten Werten. Die Schwesterprobe liegt in
+ * Diese Spec laedt deshalb den Vertrag der Visu-Seite zur Laufzeit als ECHTES
+ * Modul und vergleicht ihn mit den hier exportierten Werten. Sie liest seinen
+ * Quelltext nicht mehr: eine Regex ueber fremden Code haengt an Formatierung,
+ * Anfuehrungszeichen und Verschachtelung und kann still danebenliegen — der
+ * Modul-Import kann das nicht. Verschiebt jemand eine Haelfte, faellt die
+ * Wurzelsuche mit Klartext; benennt jemand einen Export um, faellt die
+ * Existenzpruefung. Die Schwesterprobe liegt in
  * `apps/visu/src/preview/protocolMirror.spec.ts`.
  */
 
@@ -37,40 +43,47 @@ function repoRoot() {
   }
 }
 
-/** Quelltext ohne Kommentare, damit Beispiele darin nichts vortaeuschen. */
-const source = readFileSync(join(repoRoot(), VISU_REL), 'utf8')
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^\s*\/\/.*$/gm, '')
-
-function constant(name) {
-  const m = new RegExp(`export const ${name}\\s*=\\s*'([^']*)'`).exec(source)
-  if (!m) throw new Error(`Konstante ${name} nicht gefunden - Datei umbenannt oder umgebaut?`)
-  return m[1]
+/** Der Vertrag der Visu-Seite, geladen wie ein Modul - nicht gelesen wie ein Text. */
+async function loadVisuProtocol() {
+  const href = pathToFileURL(join(repoRoot(), VISU_REL)).href
+  return await import(/* @vite-ignore */ href)
 }
 
-function messageMap(name) {
-  const start = source.indexOf(`export const ${name}`)
-  if (start < 0) throw new Error(`Objekt ${name} nicht gefunden.`)
-  const open = source.indexOf('{', start)
-  const close = source.indexOf('}', open)
-  const out = {}
-  for (const m of source.slice(open + 1, close).matchAll(/(\w+)\s*:\s*'([^']*)'/g)) out[m[1]] = m[2]
-  return out
+/** Ein Export, der da sein MUSS - sonst ist der Vertrag umbenannt, nicht gleich. */
+function exported(module, name) {
+  if (!(name in module)) {
+    throw new Error(`Export ${name} fehlt im Vertrag der Visu-Seite - umbenannt oder umgebaut?`)
+  }
+  return module[name]
 }
 
 describe('Vorschau-Protokoll — die Kopie in der GUI folgt der Visu', () => {
-  it('nennt denselben Kanal', () => {
-    expect(VISU_PREVIEW_CHANNEL).toBe(constant('PREVIEW_CHANNEL'))
+  it('nennt denselben Kanal', async () => {
+    const visu = await loadVisuProtocol()
+    // Der Vergleich waere wertlos, wenn hier zwei leere Werte staenden.
+    expect(VISU_PREVIEW_CHANNEL).toMatch(/\S/)
+    expect(VISU_PREVIEW_CHANNEL).toBe(exported(visu, 'PREVIEW_CHANNEL'))
   })
 
-  it('nennt dieselbe Protokollversion', () => {
-    expect(VISU_PREVIEW_PROTOCOL).toBe(constant('PREVIEW_PROTOCOL_VERSION'))
+  it('nennt dieselbe Protokollversion', async () => {
+    const visu = await loadVisuProtocol()
+    expect(VISU_PREVIEW_PROTOCOL).toMatch(/^\d+\.\d+$/)
+    expect(VISU_PREVIEW_PROTOCOL).toBe(exported(visu, 'PREVIEW_PROTOCOL_VERSION'))
   })
 
-  it('kennt dieselben Nachrichtentypen', () => {
-    const visuMessages = messageMap('PREVIEW_MESSAGE')
-    // Der Vergleich waere wertlos, wenn hier nichts gefunden wuerde.
-    expect(Object.keys(visuMessages).length).toBeGreaterThanOrEqual(6)
-    expect({ ...VISU_PREVIEW_MESSAGE }).toEqual(visuMessages)
+  it('kennt dieselben Nachrichtentypen', async () => {
+    const visu = await loadVisuProtocol()
+    // Der Vergleich waere wertlos, wenn beide Seiten leer waeren - und eine
+    // Erweiterung des Protokolls soll hier auffallen, nicht durchrutschen.
+    expect(Object.keys(VISU_PREVIEW_MESSAGE).sort()).toEqual([
+      'accepted',
+      'draft',
+      'draftApplied',
+      'init',
+      'ready',
+      'rejected',
+    ])
+    for (const value of Object.values(VISU_PREVIEW_MESSAGE)) expect(value).toMatch(/\S/)
+    expect({ ...VISU_PREVIEW_MESSAGE }).toEqual({ ...exported(visu, 'PREVIEW_MESSAGE') })
   })
 })

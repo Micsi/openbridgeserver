@@ -21,9 +21,13 @@
  *    Abweichung schliesst die Bruecke dauerhaft.
  *  - **Die Session geht nur per postMessage.** Sie steht in keiner iframe-URL,
  *    keiner Query und keinem Log; ohne Session wird nichts gesendet.
- *  - **Eine Frist.** Meldet sich in `handshakeTimeoutMs` keine Vorschau, sagt die
- *    Bruecke das nach oben. Ohne sie bliebe ein iframe, der etwas ganz anderes
- *    geladen hat, still stehen - der Autor saehe ein fremdes Bild ohne Hinweis.
+ *  - **Eine Frist, und ihre Ruecknahme.** Meldet sich in `handshakeTimeoutMs`
+ *    keine Vorschau, sagt die Bruecke das nach oben. Ohne sie bliebe ein iframe,
+ *    der etwas ganz anderes geladen hat, still stehen - der Autor saehe ein
+ *    fremdes Bild ohne Hinweis. Kommt der Handshake danach doch noch zustande
+ *    (ein langsam ladendes Bundle), meldet die Bruecke auch DAS nach oben: ein
+ *    Hinweis, der eine laengst vorbeigegangene Lage behauptet, ist so irrefuehrend
+ *    wie gar keiner.
  *
  * ACHTUNG bei Aenderungen: Kanal, Version und Typen muessen mit
  * `apps/visu/src/preview/protocol.ts` uebereinstimmen. Die GUI liegt nicht im
@@ -61,6 +65,7 @@ export const VISU_PREVIEW_MESSAGE = {
  * @param {Function} options.getSession        Liefert `{ accessToken }` oder null.
  * @param {Function} options.getDraft          Liefert den aktuellen Entwurf oder null.
  * @param {Function} [options.onApplied]       Die Vorschau hat gerendert.
+ * @param {Function} [options.onAccepted]      Der Handshake steht (auch spaet).
  * @param {Function} [options.onRejected]      Die Vorschau hat abgelehnt (mit Grund).
  * @param {Function} [options.onTimeout]       Innerhalb der Frist kam kein Handshake.
  * @param {number}   [options.handshakeTimeoutMs] Die Frist in ms.
@@ -72,6 +77,7 @@ export function createVisuPreviewBridge({
   getSession,
   getDraft,
   onApplied,
+  onAccepted,
   onRejected,
   onTimeout,
   handshakeTimeoutMs = VISU_PREVIEW_HANDSHAKE_TIMEOUT_MS,
@@ -137,6 +143,9 @@ export function createVisuPreviewBridge({
     if (data.type === VISU_PREVIEW_MESSAGE.accepted) {
       ready = true
       clearHandshakeTimer()
+      // Auch wenn die Frist schon gelaufen ist: der Handshake steht jetzt, und
+      // wer die Frist gemeldet bekam, muss erfahren, dass sie ueberholt ist.
+      if (onAccepted) onAccepted()
       sendDraft()
       return
     }

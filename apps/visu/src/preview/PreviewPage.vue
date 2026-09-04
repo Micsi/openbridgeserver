@@ -37,7 +37,15 @@
  * Tweak-Werten rechnet (`applyTweaks`). Diese Seite rechnet sie deshalb genauso
  * wie `SkinPage` und setzt sie an dieselben drei Stellen: Wurzel-Attribute,
  * Wurzel-Style und `root-bind` des Hosts (fuer die ausgelagerte Detail-Flaeche).
- * `PreviewParity.spec.ts` haelt beide Wurzeln gegeneinander.
+ *
+ * Und die Wurzel ist nur die Haelfte: der Rahmen um sie kommt aus dem geteilten
+ * Shell-Kanal (`shellContext`). Diese Seite speist ihn mit DEMSELBEN Satz Felder
+ * wie `SkinPage` - Titel, Nav-Zustand, Wurzel-Bindung, Skin-Flaeche -, sonst
+ * stuende im Kopf des Vorschaurahmens dauerhaft der Nav-Ruecktitel „Übersicht"
+ * statt der Seite, die der Autor gerade bearbeitet. `PreviewParity.spec.ts`
+ * haelt beide Seiten Ebene fuer Ebene gegeneinander und benennt die eine
+ * Abweichung, die bewusst bleibt (der Tweak-Editor der Live-Seite ist
+ * Editor-Chrome - im Vorschau-Modus bedient der Autor ihn in der Admin-GUI).
  */
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watchEffect } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -52,6 +60,7 @@ import { resolveSkin } from '../skin-host/skins';
 import { useDeviceStore } from '../core/store';
 
 import { useShellContext } from '../app/shell/shellContext';
+import { NAV_KEYS, type NavKey, type ShellStateOptions } from '../app/shell/useShellState';
 
 import { PreviewDataSource } from './PreviewDataSource';
 import { createHttpValueBackend } from './values';
@@ -129,12 +138,61 @@ const theme = computed<PreviewTheme>(
   () => draft.value?.theme ?? themeOfTweaks(draft.value?.tweaks),
 );
 
+/** Der Knoten, den der Entwurf gerade zeigt - die Seite des Autors. */
+const draftPage = computed(() =>
+  draft.value ? (draft.value.nodes.find((n) => n.id === draft.value?.pageId) ?? null) : null,
+);
+
+/**
+ * Der Titel der bearbeiteten Seite. Auf der echten Seite ist das der lokalisierte
+ * Titel der Seitendefinition (`SkinPage.vue`); im Entwurf gibt es keine
+ * Definition, wohl aber den Namen, den der Autor der Seite gegeben hat - und
+ * genau der steht spaeter auch in der ausgelieferten Visu im Kopf des Rahmens.
+ * Ohne ihn faellt `AppShell` auf `t('shell.nav.<aktiver Key>')` zurueck und
+ * zeigte in der Vorschau dauerhaft „Übersicht", egal welche Seite offen ist.
+ */
+const pageTitle = computed<string | undefined>(() => {
+  const name = draftPage.value?.name;
+  return typeof name === 'string' && name.trim().length > 0 ? name : undefined;
+});
+
+/**
+ * Der Nav-Zustand des Rahmens - dieselbe Regel wie live (`SkinPage.vue`): nur
+ * eine Seite, die selbst ein Nav-Schluessel ist, markiert ihren Eintrag; sonst
+ * bleibt der Default, damit das Menue nicht faelschlich „Übersicht" hervorhebt.
+ */
+const shellState = computed<ShellStateOptions>(() =>
+  draft.value && (NAV_KEYS as readonly string[]).includes(draft.value.pageId)
+    ? { active: draft.value.pageId as NavKey }
+    : {},
+);
+
+/**
+ * Anzeigenamen der Linkziele (#1194) - aus dem Entwurfsbaum statt aus den
+ * statischen Seitendefinitionen. Der Host bevorzugt ohnehin den Namen aus dem
+ * Nav-Baum; das hier ist derselbe Boden wie live, damit ein Link auch dann
+ * seinen eigenen Namen traegt, wenn sein Ziel (noch) nicht im Nav-Baum haengt.
+ */
+const pageNames = computed<Record<string, string> | undefined>(() => {
+  if (!draft.value) return undefined;
+  const out: Record<string, string> = {};
+  for (const node of draft.value.nodes) {
+    if (node.type !== 'PAGE') continue;
+    if (typeof node.name === 'string' && node.name.length > 0) out[node.id] = node.name;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+});
+
 // Die App-Shell liegt auch im Vorschau-Modus um die Seite (App.vue). Sie zeichnet
 // ihr Chrome auf der Flaeche des aktiven Skins - genau wie bei der echten Seite,
 // die diese Naht fuellt. Ohne das saesse die Vorschau in einem Chrome, das eine
-// andere Oberflaeche traegt als die Seite darin.
+// andere Oberflaeche traegt als die Seite darin. Geschrieben wird deshalb
+// DERSELBE Satz Felder wie in `SkinPage.vue` - ein halb gefuellter Kanal ist ein
+// sichtbarer Unterschied im Kopf des Rahmens, kein Editor-Chrome.
 const shellContext = useShellContext();
 watchEffect(() => {
+  shellContext.title = pageTitle.value;
+  shellContext.state = shellState.value;
   shellContext.rootBind = rootTweaks.value;
   shellContext.rootClass = skinRootClass.value;
 });
@@ -172,6 +230,7 @@ onBeforeUnmount(() => receiver.stop());
           :groups="groups"
           :theme="theme"
           :current-page="draft.pageId"
+          :page-names="pageNames"
         />
       </div>
     </DetailModalHost>

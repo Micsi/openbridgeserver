@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 /**
  * preview/protocolMirror - die Naht zwischen den beiden Kopien (C4, Issue #171).
@@ -13,11 +14,22 @@ import { dirname, join, resolve } from 'node:path';
  * bisher keine Probe: eine driftende Konstante blieb in beiden Suiten gruen,
  * weil jede Spec ihre Nachrichten aus der Konstante baut, die sie sichern soll.
  *
- * Diese Spec liest deshalb den QUELLTEXT der jeweils anderen Seite und vergleicht
- * die Werte. Sie laeuft in beiden Suiten (die Schwester liegt in
- * `gui/tests/composables/visuPreviewProtocolMirror.spec.js`), damit egal ist, wer
- * die Konstante anfasst.
+ * Diese Spec vergleicht deshalb die beiden Haelften miteinander. Sie liest den
+ * QUELLTEXT der GUI-Seite NICHT mehr: eine Regex ueber fremden Code ist fragil in
+ * die falsche Richtung - der frueheren Fassung reichte ein verschachteltes
+ * Objektliteral, um die Typliste stillschweigend zu kuerzen, und doppelte
+ * Anfuehrungszeichen oder ein `as const`-Umbau haetten sie ratlos gemacht.
+ * Stattdessen wird das GUI-Modul zur Laufzeit als ECHTES Modul geladen und gegen
+ * die hier importierten Werte gehalten - unabhaengig von Formatierung,
+ * Anfuehrungszeichen und Reihenfolge. Verschiebt jemand eine Haelfte, faellt die
+ * Wurzelsuche mit Klartext; benennt jemand einen Export um, faellt
+ * {@link exported} - beides rot, nie still.
+ *
+ * Die Schwesterprobe liegt in `gui/tests/composables/visuPreviewProtocolMirror.spec.js`
+ * und laeuft in der GUI-Suite, damit egal ist, wer die Konstante anfasst.
  */
+
+import { PREVIEW_CHANNEL, PREVIEW_MESSAGE, PREVIEW_PROTOCOL_VERSION } from './protocol';
 
 /** Beide Dateien liegen im selben Repo - die Wurzel ist der Ordner, der beide
  *  traegt. Vom Arbeitsverzeichnis aus hochlaufen statt Pfade zu raten. */
@@ -34,51 +46,48 @@ function repoRoot(): string {
   }
 }
 
-const ROOT = repoRoot();
-const VISU_PROTOCOL = join(ROOT, VISU_REL);
-const GUI_BRIDGE = join(ROOT, GUI_REL);
-
-/** Kommentare heraus, damit Beispiele darin nichts vortaeuschen. */
-function code(path: string): string {
-  const raw = readFileSync(path, 'utf8');
-  return raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+/** Das GUI-Modul, geladen wie ein Modul - nicht gelesen wie ein Text. */
+async function loadGuiBridge(): Promise<Record<string, unknown>> {
+  const href = pathToFileURL(join(repoRoot(), GUI_REL)).href;
+  return (await import(/* @vite-ignore */ href)) as Record<string, unknown>;
 }
 
-/** Der Wert einer `export const NAME = '…'`-Zeile. */
-function constant(source: string, name: string): string {
-  const m = new RegExp(`export const ${name}\\s*=\\s*'([^']*)'`).exec(source);
-  if (!m) throw new Error(`Konstante ${name} nicht gefunden - Datei umbenannt oder umgebaut?`);
-  return m[1];
-}
-
-/** Die Eintraege eines `export const NAME = { … }`-Objektliterals. */
-function messageMap(source: string, name: string): Record<string, string> {
-  const start = source.indexOf(`export const ${name}`);
-  if (start < 0) throw new Error(`Objekt ${name} nicht gefunden.`);
-  const open = source.indexOf('{', start);
-  const close = source.indexOf('}', open);
-  const body = source.slice(open + 1, close);
-  const out: Record<string, string> = {};
-  for (const m of body.matchAll(/(\w+)\s*:\s*'([^']*)'/g)) out[m[1]] = m[2];
-  return out;
+/** Ein Export, der da sein MUSS - sonst ist die Kopie umbenannt, nicht gleich. */
+function exported(module: Record<string, unknown>, name: string): unknown {
+  if (!(name in module)) {
+    throw new Error(`Export ${name} fehlt in der GUI-Kopie - umbenannt oder umgebaut?`);
+  }
+  return module[name];
 }
 
 describe('Vorschau-Protokoll - die GUI-Kopie darf nicht driften', () => {
-  const visu = code(VISU_PROTOCOL);
-  const gui = code(GUI_BRIDGE);
-
-  it('nennt denselben Kanal', () => {
-    expect(constant(gui, 'VISU_PREVIEW_CHANNEL')).toBe(constant(visu, 'PREVIEW_CHANNEL'));
+  it('nennt denselben Kanal', async () => {
+    const gui = await loadGuiBridge();
+    // Der Vergleich waere wertlos, wenn hier zwei leere Werte staenden.
+    expect(PREVIEW_CHANNEL).toMatch(/\S/);
+    expect(exported(gui, 'VISU_PREVIEW_CHANNEL')).toBe(PREVIEW_CHANNEL);
   });
 
-  it('nennt dieselbe Protokollversion', () => {
-    expect(constant(gui, 'VISU_PREVIEW_PROTOCOL')).toBe(constant(visu, 'PREVIEW_PROTOCOL_VERSION'));
+  it('nennt dieselbe Protokollversion', async () => {
+    const gui = await loadGuiBridge();
+    expect(PREVIEW_PROTOCOL_VERSION).toMatch(/^\d+\.\d+$/);
+    expect(exported(gui, 'VISU_PREVIEW_PROTOCOL')).toBe(PREVIEW_PROTOCOL_VERSION);
   });
 
-  it('kennt dieselben Nachrichtentypen', () => {
-    const visuMessages = messageMap(visu, 'PREVIEW_MESSAGE');
-    // Der Vergleich waere wertlos, wenn hier nichts gefunden wuerde.
-    expect(Object.keys(visuMessages).length).toBeGreaterThanOrEqual(6);
-    expect(messageMap(gui, 'VISU_PREVIEW_MESSAGE')).toEqual(visuMessages);
+  it('kennt dieselben Nachrichtentypen', async () => {
+    const gui = await loadGuiBridge();
+    const visuMessages: Record<string, string> = { ...PREVIEW_MESSAGE };
+    // Der Vergleich waere wertlos, wenn beide Seiten leer waeren - und eine
+    // Erweiterung des Protokolls soll hier auffallen, nicht durchrutschen.
+    expect(Object.keys(visuMessages).sort()).toEqual([
+      'accepted',
+      'draft',
+      'draftApplied',
+      'init',
+      'ready',
+      'rejected',
+    ]);
+    for (const value of Object.values(visuMessages)) expect(value).toMatch(/\S/);
+    expect({ ...(exported(gui, 'VISU_PREVIEW_MESSAGE') as object) }).toEqual(visuMessages);
   });
 });

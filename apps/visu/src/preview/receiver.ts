@@ -12,7 +12,9 @@
  *  - **Handshake mit Versionsangabe.** `preview/ready` -> `preview/init` ->
  *    `preview/accepted`. Erst danach wird ein `preview/draft` angenommen; eine
  *    abweichende Protokollversion schliesst die Bruecke dauerhaft - geprueft an
- *    jeder Nachricht, nicht nur am Handshake.
+ *    jeder Nachricht, nicht nur am Handshake. Und erst danach merkt sich die
+ *    Bruecke ihr Gegenueber: eine Herkunft festzuhalten, die im selben Atemzug
+ *    abgelehnt wird, waere unnoetig grosszuegig.
  *  - **Kein I/O.** Der Empfaenger liest, prueft und reicht weiter. Er speichert
  *    nichts, er laedt nichts, er loggt nichts - insbesondere nie die Session.
  *
@@ -73,6 +75,12 @@ export interface PreviewReceiver {
   start(): void;
   stop(): void;
   status(): PreviewReceiverState;
+  /**
+   * Die Herkunft, mit der die Bruecke gerade spricht - oder `null`, solange
+   * keine geprueft ist. Sie ist das Ziel jeder Rueckmeldung; wer wissen will,
+   * ob die Naht steht, fragt hier, statt es aus `status()` zu raten.
+   */
+  peer(): string | null;
   /** Rueckmeldung an den Editor, dass der Entwurf gerendert ist. */
   applied(info: { readonly pageId: string; readonly widgetCount: number }): void;
 }
@@ -104,8 +112,6 @@ export function createPreviewReceiver(options: PreviewReceiverOptions): PreviewR
     const envelope = readEnvelope(ev.data);
     if (!envelope) return;
 
-    peerOrigin = ev.origin;
-
     // 4. Version - an JEDER Nachricht, nicht nur am Handshake. Editor und
     //    Vorschau werden getrennt ausgeliefert; ein Peer, der mitten in der
     //    Sitzung eine andere Version spricht, ist ein anderes Bundle und kein
@@ -117,6 +123,11 @@ export function createPreviewReceiver(options: PreviewReceiverOptions): PreviewR
       reject(ev.origin, 'protocol');
       return;
     }
+
+    // Erst JETZT ist das ein Gegenueber, mit dem diese Bruecke spricht: Herkunft,
+    // Quelle, Kanal und Version sind durch. Frueher gesetzt hiesse, sich eine
+    // Herkunft zu merken, die im selben Atemzug abgelehnt wird.
+    peerOrigin = ev.origin;
 
     if (envelope.type === PREVIEW_MESSAGE.init) {
       const session = readSession(envelope.body.session);
@@ -163,6 +174,9 @@ export function createPreviewReceiver(options: PreviewReceiverOptions): PreviewR
     },
     status(): PreviewReceiverState {
       return state;
+    },
+    peer(): string | null {
+      return peerOrigin;
     },
     applied(info): void {
       if (state !== 'ready' || peerOrigin === null) return;

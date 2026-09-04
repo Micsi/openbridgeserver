@@ -42,6 +42,13 @@ const bridge = createVisuPreviewBridge({
     return accessToken ? { accessToken } : null
   },
   getDraft: () => props.draft,
+  // Der Handshake steht - auch wenn er die Frist gerissen hat. Der Hinweis
+  // „keine Vorschau erreichbar" waere ab jetzt falsch. Auf `draft-applied` zu
+  // warten reicht dafuer nicht: solange der Editor keinen Entwurf haelt, kommt
+  // nie einer, und der Hinweis stuende dauerhaft.
+  onAccepted: () => {
+    unreachable.value = false
+  },
   onApplied: (info) => {
     unreachable.value = false
     emit('applied', info)

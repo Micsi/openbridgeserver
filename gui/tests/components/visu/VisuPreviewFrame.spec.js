@@ -210,6 +210,28 @@ describe('VisuPreviewFrame — die Bruecke an der echten Komponente', () => {
     }
   })
 
+  it('nimmt den Hinweis zurueck, wenn sich die Vorschau doch noch meldet', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = await mountFrame()
+      await vi.advanceTimersByTimeAsync(30000)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="visu-preview-unreachable"]').exists()).toBe(true)
+
+      // Ein langsam ladendes Visu-Bundle meldet sich nach der Frist. Der
+      // Handshake steht damit; der Hinweis behauptet ab jetzt etwas Falsches.
+      // Auf einen `draft-applied` zu warten hilft nicht: solange der Editor
+      // keinen Entwurf hat, kommt keiner.
+      emit(message(VISU_PREVIEW_MESSAGE.ready))
+      emit(message(VISU_PREVIEW_MESSAGE.accepted))
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="visu-preview-unreachable"]').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('hoert nach dem Ausbauen nicht mehr zu', async () => {
     const wrapper = await mountFrame()
     wrapper.unmount()

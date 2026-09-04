@@ -110,6 +110,51 @@ const message = (type: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+/**
+ * Eine FALLE auf beide Browser-Ablagen (dieselbe wie in `receiver.spec.ts`).
+ *
+ * Ein Spion auf `Storage.prototype` faengt in dieser Umgebung nicht, was ueber
+ * `sessionStorage` laeuft, und macht `localStorage` nur ueber einen `TypeError`
+ * rot - also nicht ueber die Zusicherung. Die Doppel hier funktionieren normal
+ * und protokollieren jeden Schreibversuch, egal auf welcher Ablage.
+ */
+function trapStorage(): { writes: string[]; restore: () => void } {
+  const writes: string[] = [];
+  const originals: [string, PropertyDescriptor | undefined][] = [];
+  for (const name of ['localStorage', 'sessionStorage'] as const) {
+    originals.push([name, Object.getOwnPropertyDescriptor(window, name)]);
+    const data = new Map<string, string>();
+    const fake = {
+      get length(): number {
+        return data.size;
+      },
+      key: (i: number): string | null => Array.from(data.keys())[i] ?? null,
+      getItem: (k: string): string | null => data.get(k) ?? null,
+      setItem: (k: string, v: string): void => {
+        writes.push(`${name}.setItem(${k})`);
+        data.set(k, String(v));
+      },
+      removeItem: (k: string): void => {
+        writes.push(`${name}.removeItem(${k})`);
+        data.delete(k);
+      },
+      clear: (): void => {
+        writes.push(`${name}.clear()`);
+        data.clear();
+      },
+    } as unknown as Storage;
+    Object.defineProperty(window, name, { value: fake, configurable: true, writable: true });
+  }
+  return {
+    writes,
+    restore(): void {
+      for (const [name, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(window, name, descriptor);
+      }
+    },
+  };
+}
+
 describe('preview/PreviewPage - der ganze Weg vom Editor bis ins DOM', () => {
   let parent: ReturnType<typeof fakeParent>;
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -218,18 +263,37 @@ describe('preview/PreviewPage - der ganze Weg vom Editor bis ins DOM', () => {
     expect(root(wrapper).attributes('data-preview-state')).toBe('unknown-skin');
   });
 
-  it('haelt die Session aus URL, Query und Log heraus', async () => {
-    await mountPreview();
-    emit(message(PREVIEW_MESSAGE.init, { session: { accessToken: TOKEN } }), ADMIN_ORIGIN, parent);
-    emit(message(PREVIEW_MESSAGE.draft, { draft: DRAFT }), ADMIN_ORIGIN, parent);
-    await flushPromises();
+  it('haelt die Session aus Ablage, DOM, Nachrichten und Log heraus', async () => {
+    // Hier standen frueher zwei Zusicherungen ueber `window.location`. Weder die
+    // Seite noch der Empfaenger fassen `location` je an - die beiden Zeilen
+    // konnten aus diesem Modul heraus gar nicht rot werden und haben nichts
+    // bewiesen. Geprueft werden jetzt die vier Wege, die es hier wirklich gibt.
+    const trap = trapStorage();
+    let wrapper;
+    try {
+      wrapper = await mountPreview();
+      emit(message(PREVIEW_MESSAGE.init, { session: { accessToken: TOKEN } }), ADMIN_ORIGIN, parent);
+      emit(message(PREVIEW_MESSAGE.draft, { draft: DRAFT }), ADMIN_ORIGIN, parent);
+      await flushPromises();
+    } finally {
+      trap.restore();
+    }
 
-    expect(window.location.search).toBe('');
-    expect(window.location.href).not.toContain(TOKEN);
+    // 1. Keine Ablage: die Session lebt nur in der Closure der Seite. Die Falle
+    //    faengt `localStorage` UND `sessionStorage`, jeden Schreibweg.
+    expect(trap.writes).toEqual([]);
+    // 2. Nicht im gerenderten DOM - kein Attribut, kein Text, kein Link.
+    expect(wrapper!.html()).not.toContain(TOKEN);
+    // 3. Nicht in einer ausgehenden Nachricht (auch nicht an den erlaubten Origin).
     for (const s of parent.sent) expect(JSON.stringify(s.message)).not.toContain(TOKEN);
+    // 4. Nicht in einem Log, auf keiner der fuenf Ebenen.
     for (const spy of consoleSpies) {
       for (const call of spy.mock.calls) expect(JSON.stringify(call)).not.toContain(TOKEN);
     }
+    // Und der Weg, auf dem sie ueberhaupt hinausdarf, wurde wirklich gegangen -
+    // sonst waeren die vier Zusicherungen oben auch ohne Session gruen.
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(`Bearer ${TOKEN}`);
   });
 
   it('loest einen Link auf, ohne die Vorschau von der Entwurfsseite wegzufuehren', async () => {

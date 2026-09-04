@@ -51,6 +51,7 @@ function setup({ previewOrigin = PREVIEW_ORIGIN, token = TOKEN, handshakeTimeout
     getSession: () => (token === null ? null : { accessToken: token }),
     getDraft: () => DRAFT,
     onApplied: (p) => events.push(['applied', p]),
+    onAccepted: () => events.push(['accepted']),
     onRejected: (r) => events.push(['rejected', r]),
     onTimeout: () => events.push(['timeout']),
     ...(handshakeTimeoutMs === undefined ? {} : { handshakeTimeoutMs }),
@@ -61,6 +62,12 @@ function setup({ previewOrigin = PREVIEW_ORIGIN, token = TOKEN, handshakeTimeout
 const readyMessage = (protocol = VISU_PREVIEW_PROTOCOL) => ({
   channel: VISU_PREVIEW_CHANNEL,
   type: VISU_PREVIEW_MESSAGE.ready,
+  protocol,
+})
+
+const acceptedMessage = (protocol = VISU_PREVIEW_PROTOCOL) => ({
+  channel: VISU_PREVIEW_CHANNEL,
+  type: VISU_PREVIEW_MESSAGE.accepted,
   protocol,
 })
 
@@ -257,6 +264,23 @@ describe('useVisuPreviewBridge — wenn gar keine Vorschau antwortet', () => {
 
     vi.advanceTimersByTime(60000)
     expect(events.some(([name]) => name === 'timeout')).toBe(false)
+  })
+
+  it('meldet einen Handshake, der erst NACH der Frist zustande kommt', () => {
+    const { frame, bus, events, bridge } = setup({ handshakeTimeoutMs: 5000 })
+    bridge.start()
+    vi.advanceTimersByTime(5000)
+    expect(events).toEqual([['timeout']])
+
+    // Ein langsam ladendes Visu-Bundle meldet sich spaeter doch noch. Ab jetzt
+    // steht die Bruecke - und wer die Frist gemeldet bekommen hat, muss auch
+    // erfahren, dass die Lage vorbei ist. Sonst bliebe der Hinweis „keine
+    // Vorschau erreichbar" dauerhaft stehen, obwohl der Handshake laeuft.
+    bus.emit({ data: readyMessage(), origin: PREVIEW_ORIGIN, source: frame })
+    bus.emit({ data: acceptedMessage(), origin: PREVIEW_ORIGIN, source: frame })
+
+    expect(events).toEqual([['timeout'], ['accepted']])
+    expect(bridge.isReady()).toBe(true)
   })
 
   it('laesst die Frist nach stop() nicht weiterlaufen', () => {

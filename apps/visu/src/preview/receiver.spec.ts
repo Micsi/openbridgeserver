@@ -178,6 +178,35 @@ describe('preview/receiver - Handshake', () => {
     expect(drafts).toHaveLength(0);
   });
 
+  it('merkt sich den Gegenueber erst, wenn die Version geprueft ist', () => {
+    // Reihenfolge, nicht Geschmack: `peerOrigin` ist das Ziel jeder spaeteren
+    // Rueckmeldung. Wird es schon gesetzt, BEVOR die Version passt, haelt der
+    // Empfaenger einen Peer fest, den er gerade abgelehnt hat. Heute bleibt das
+    // folgenlos (nach `rejected` sendet er nichts mehr), aber die Reihenfolge
+    // ist die Zusage - nicht der Zufall, dass ein zweiter Riegel greift.
+    const { parent, bus, receiver } = setup();
+    receiver.start();
+    expect(receiver.peer()).toBeNull();
+
+    bus.emit({ data: initMessage('0.9'), origin: ADMIN_ORIGIN, source: parent });
+    expect(receiver.status()).toBe('rejected');
+    expect(receiver.peer()).toBeNull();
+  });
+
+  it('merkt sich den Gegenueber, sobald die Version passt', () => {
+    // Die Gegenprobe: ohne sie waere „peer bleibt null" auch mit einem
+    // Empfaenger gruen, der ihn NIE setzt.
+    const { parent, bus, receiver } = setup();
+    receiver.start();
+    bus.emit({ data: initMessage(), origin: ADMIN_ORIGIN, source: parent });
+
+    expect(receiver.status()).toBe('ready');
+    expect(receiver.peer()).toBe(ADMIN_ORIGIN);
+
+    receiver.stop();
+    expect(receiver.peer()).toBeNull();
+  });
+
   it('prueft die Version an JEDER Nachricht, nicht nur am Handshake', () => {
     const { parent, bus, drafts, receiver } = setup();
     receiver.start();
@@ -352,6 +381,58 @@ describe('preview/receiver - Entwurf wird gerendert, nicht gespeichert', () => {
   });
 });
 
+/**
+ * Eine FALLE statt eines Spions auf `Storage.prototype`.
+ *
+ * Ein `vi.spyOn(Storage.prototype, 'setItem')` faengt nur, was tatsaechlich ueber
+ * diesen Prototyp laeuft: ein `sessionStorage.setItem` ging in dieser Umgebung
+ * daran vorbei (die Zusicherung blieb gruen), und ein `localStorage.setItem`
+ * wurde nur rot, weil die Spionage den Schim der Umgebung zerlegt hat - also
+ * durch einen `TypeError`, nicht durch die Zusicherung. Beides ist keine Probe.
+ *
+ * Hier werden deshalb BEIDE Ablagen durch vollwertige Doppel ersetzt, die jeden
+ * Schreibversuch protokollieren und sonst normal funktionieren. Jeder Weg, eine
+ * Session zu persistieren - `setItem`, `removeItem`, `clear`, auf welcher der
+ * beiden Ablagen auch immer - macht die Zusicherung rot, und zwar durch sich
+ * selbst.
+ */
+function trapStorage(): { writes: string[]; restore: () => void } {
+  const writes: string[] = [];
+  const originals: [string, PropertyDescriptor | undefined][] = [];
+  for (const name of ['localStorage', 'sessionStorage'] as const) {
+    originals.push([name, Object.getOwnPropertyDescriptor(window, name)]);
+    const data = new Map<string, string>();
+    const fake = {
+      get length(): number {
+        return data.size;
+      },
+      key: (i: number): string | null => Array.from(data.keys())[i] ?? null,
+      getItem: (k: string): string | null => data.get(k) ?? null,
+      setItem: (k: string, v: string): void => {
+        writes.push(`${name}.setItem(${k})`);
+        data.set(k, String(v));
+      },
+      removeItem: (k: string): void => {
+        writes.push(`${name}.removeItem(${k})`);
+        data.delete(k);
+      },
+      clear: (): void => {
+        writes.push(`${name}.clear()`);
+        data.clear();
+      },
+    } as unknown as Storage;
+    Object.defineProperty(window, name, { value: fake, configurable: true, writable: true });
+  }
+  return {
+    writes,
+    restore(): void {
+      for (const [name, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(window, name, descriptor);
+      }
+    },
+  };
+}
+
 describe('preview/receiver - die Session bleibt geheim', () => {
   const spies: ReturnType<typeof vi.spyOn>[] = [];
 
@@ -368,20 +449,44 @@ describe('preview/receiver - die Session bleibt geheim', () => {
     // Frueher stand hier eine Zusicherung ueber `window.location`. Die kann nie
     // rot werden: der Empfaenger fasst `location` gar nicht an. Geprueft wird
     // jetzt, was er tatsaechlich koennte - persistieren.
-    const setItem = vi.spyOn(Storage.prototype, 'setItem');
-    const { parent, bus, sessions, receiver } = setup();
-    receiver.start();
-    bus.emit({ data: initMessage(), origin: ADMIN_ORIGIN, source: parent });
-    bus.emit({ data: draftMessage(), origin: ADMIN_ORIGIN, source: parent });
+    const trap = trapStorage();
+    try {
+      const { parent, bus, sessions, receiver } = setup();
+      receiver.start();
+      bus.emit({ data: initMessage(), origin: ADMIN_ORIGIN, source: parent });
+      bus.emit({ data: draftMessage(), origin: ADMIN_ORIGIN, source: parent });
 
-    // Der einzige Weg nach draussen ist der Rueckruf des Hosts ...
-    expect(sessions).toEqual([{ accessToken: TOKEN }]);
-    // ... nicht localStorage/sessionStorage (ein Schreibversuch beider ginge
-    // durch dieselbe Prototyp-Methode) ...
-    expect(setItem).not.toHaveBeenCalled();
-    // ... und auch nicht eine ausgehende Nachricht.
-    for (const s of parent.sent) expect(JSON.stringify(s.message)).not.toContain(TOKEN);
-    setItem.mockRestore();
+      // Der einzige Weg nach draussen ist der Rueckruf des Hosts ...
+      expect(sessions).toEqual([{ accessToken: TOKEN }]);
+      // ... nicht `localStorage` und nicht `sessionStorage`: die Falle haelt
+      // JEDEN Schreibversuch auf BEIDEN Ablagen fest, nicht nur den einen Weg
+      // ueber `Storage.prototype`.
+      expect(trap.writes).toEqual([]);
+      // ... und auch nicht eine ausgehende Nachricht.
+      for (const s of parent.sent) expect(JSON.stringify(s.message)).not.toContain(TOKEN);
+    } finally {
+      trap.restore();
+    }
+  });
+
+  it('und die Falle selbst greift auf beiden Ablagen', () => {
+    // Die Gegenprobe zur Zusicherung darueber: eine Falle, die nichts faengt,
+    // waere genau das Vakuum, das sie ersetzen soll. Beide Ablagen, beide Wege.
+    const trap = trapStorage();
+    try {
+      window.sessionStorage.setItem('preview_session', TOKEN);
+      window.localStorage.setItem('preview_session', TOKEN);
+      window.sessionStorage.removeItem('preview_session');
+      window.localStorage.clear();
+    } finally {
+      trap.restore();
+    }
+    expect(trap.writes).toEqual([
+      'sessionStorage.setItem(preview_session)',
+      'localStorage.setItem(preview_session)',
+      'sessionStorage.removeItem(preview_session)',
+      'localStorage.clear()',
+    ]);
   });
 
   it('schreibt die Session nie in ein Log', () => {
