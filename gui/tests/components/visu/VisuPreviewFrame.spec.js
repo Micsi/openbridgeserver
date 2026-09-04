@@ -15,6 +15,21 @@ import {
  * an der echten Komponente: iframe, Session aus dem Admin-Login, Entwurf, und
  * die beiden Rueckmeldungen. Wichtigster Punkt: die Session geht per
  * postMessage an den geprueften Origin und steht nie in der iframe-URL.
+ *
+ * Und dazu DER RAHMEN SELBST. Er gehoert zum Paritaetsnachweis der Vorschau
+ * (`apps/visu/src/preview/PreviewParity.spec.ts`, Messlatte E3), laesst sich
+ * dort aber nicht messen: jene Spec liest `apps/visu`, `packages` und die
+ * Skin-Pakete, nicht `gui/` - und der Vorschau-DOM weiss nichts von dem
+ * Element, in dem er steckt. `transform`, `filter` oder `zoom` am `<iframe>`
+ * (eine Utility-Klasse `scale-90 saturate-50` genuegt) zeigen dem Autor ein
+ * verkleinertes, entsaettigtes Bild derselben Seite. Der Test „steht in einem
+ * gepinnten Rahmen" haelt deshalb die Klassenliste und das `style`-Attribut des
+ * `<iframe>` Zeichen fuer Zeichen fest.
+ *
+ * Was dieser Pin NICHT sieht: eine Deklaration, die erst ein anderes Blatt auf
+ * eine dieser Klassen legt (`.rounded-lg { transform: scale(.9) }`) - happy-dom
+ * rechnet die Blaetter der GUI hier nicht aus. Das bleibt beim Pixel-Diff von
+ * Teil E.
  */
 
 const PREVIEW_ORIGIN = window.location.origin
@@ -92,6 +107,34 @@ describe('VisuPreviewFrame — die Bruecke an der echten Komponente', () => {
     expect(src).toBeTruthy()
     expect(src).not.toContain(TOKEN)
     expect(src).not.toContain('?')
+  })
+
+  /**
+   * DER RAHMEN, GEPINNT. Was hier steht, ist der „Bildschirm", auf dem die
+   * Vorschau laeuft: eine Klasse mehr - `scale-90`, `saturate-50`, `blur-sm`,
+   * `zoom-90` - und der Autor sieht ein anderes Bild als der Nutzer, ohne dass
+   * die Paritaets-Spec der Visu etwas davon merken koennte (sie liest `gui/`
+   * nicht). Deshalb steht die Klassenliste hier ausgeschrieben statt als
+   * `toContain`, und das `style`-Attribut muss fehlen.
+   *
+   * Gemessen wird das ATTRIBUT, nicht der gerechnete Stil: welche Deklaration
+   * ein Blatt der GUI am Ende auf `rounded-lg` legt, sieht dieser Test nicht.
+   */
+  it('steht in einem gepinnten Rahmen - Klassenliste und style-Attribut', async () => {
+    const wrapper = await mountFrame()
+    const frameEl = wrapper.find('[data-testid="visu-preview-frame"]')
+    expect(frameEl.classes()).toEqual([
+      'w-full',
+      'h-[70vh]',
+      'rounded-lg',
+      'border',
+      'border-slate-200',
+      'dark:border-slate-700/60',
+      'bg-white',
+    ])
+    // Kein Inline-Stil: `transform`, `filter` und `zoom` kaemen sonst auch auf
+    // diesem Weg an den Rahmen, ohne die Klassenliste zu beruehren.
+    expect(frameEl.attributes('style')).toBeUndefined()
   })
 
   it('schickt die Admin-Session erst auf preview/ready und nur an den geprueften Origin', async () => {

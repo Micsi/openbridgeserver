@@ -50,12 +50,17 @@
  * ganzen `<style scoped>`-Block Regel fuer Regel; dazu, welcher GELESENE Selektor
  * in der Vorschau greift und auf der echten Seite nicht - gelesen werden alle
  * Stylesheets und alle `<style>`-Bloecke (ein- wie mehrzeilig) unter `apps/visu`
- * und `packages` sowie die drei per `link:` eingebundenen Skin-Pakete, gehalten
- * gegen ZWEI Boeden (die volle und die leere Seite) und je Selektor auch Glied
- * fuer Glied; und dazu den Zustand des Dokuments neben dem Rahmen - `<html>` und
- * `<body>` selbst, jeder Knoten in `<head>` und `<body>`, jede Stilquelle im
- * Testdokument, aufgenommen nach dem Mount UND nach einer Interaktion und in
- * beide Richtungen verglichen (dazugekommen, geaendert, entfernt). Alles, was
+ * und `packages` sowie die drei per `link:` eingebundenen Skin-Pakete, jeweils
+ * samt ihrer `@import`-Kette, gehalten gegen ZWEI gemeinsame Boeden (die volle
+ * und die leere Seite) und je Selektor auch Glied fuer Glied, und dazu gegen die
+ * zwei Zustaende, die es nur in der Vorschau gibt (`waiting`, `unknown-skin` -
+ * der Wartehinweis); und dazu den Zustand des Dokuments neben dem Rahmen -
+ * `<html>` und `<body>` selbst, jeder Knoten in `<head>` und `<body>`, jede
+ * Stilquelle im Testdokument, aufgenommen nach dem Mount UND nach einer
+ * Interaktion und in beide Richtungen verglichen (dazugekommen, geaendert,
+ * entfernt). Weil ein Unterschied immer nur gegen eine Aufnahme misst, steht
+ * daneben der BESTAND absolut: `<head>` und `<body>` tragen keinen Knoten - auch
+ * keinen, den ein Modul schon beim Laden anhaengt und behaelt. Alles, was
  * abweichen darf, steht dort als kurze, benannte Ausnahmeliste (A1-A6): das
  * Editor-Chrome der Live-Seite (der Tweak-Umschalter - im Vorschau-Modus
  * bedient der Autor ihn in der Admin-GUI), die Vorschau-Marker (nur an der
@@ -64,23 +69,34 @@
  * Stilregel `.preview-hint`. Was hier also neu gerendert wird, muss auch auf der
  * echten Seite stehen oder in dieser Liste - sonst faellt der Nachweis.
  *
- * Und was er NICHT leistet - drei Grenzen, die AN TEIL E (Szenario E3, Pixel-Diff
- * im echten Browser) UEBERGEBEN sind statt wegdefiniert. Teil E misst sie:
+ * Und was er NICHT leistet - ZWEI Grenzen, die AN TEIL E (Szenario E3, Pixel-Diff
+ * im echten Browser) UEBERGEBEN sind statt wegdefiniert. Beide kann ein
+ * jsdom-Lauf nicht entscheiden, weil er keinen Viewport hat und kein CSS
+ * ausrechnet; Teil E misst sie:
  *
  *   E3-1  der VIEWPORT-ANTEIL groessenabhaengiger Regeln (`@media (max-width:…)`,
  *         `@container (width …)`): die Vorschau ist ein schmales `<iframe>`, die
  *         echte Seite der ganze Bildschirm, dieselbe Regel greift dort und hier
- *         nicht. Die Spec MELDET jeden solchen Selektor namentlich und schreibt
- *         ihn aus; ob er ein Pixel bewegt, entscheidet erst der Pixel-Diff.
- *   E3-2  der RAHMEN um die Vorschau - `transform`, `filter`, `zoom` oder eine
- *         Utility-Klasse (`scale-90 saturate-50`) am `<iframe>` in `gui/`. Das
- *         ist kein Stil dieser Seite, sondern der Bildschirm, auf dem sie steht;
- *         weder diese Seite noch ihr DOM wissen davon.
+ *         nicht. Genauer: der terminal-Skin baut sein Raster ueber `@container`
+ *         an einer 700-px-Schwelle um, und der Container ist die Skin-Wurzel
+ *         `.t-root` (`container-type: inline-size`) - es entscheidet also ihre
+ *         Breite, die der Rahmen vorgibt, nicht die des Viewports. Die Spec
+ *         MELDET jeden solchen Selektor namentlich und schreibt ihn aus; ob er
+ *         ein Pixel bewegt, entscheidet erst der Pixel-Diff.
  *   E3-3  jede AENDERUNG AN DEN DEKLARATIONEN eines ausgelieferten Blattes
  *         (`inset: 0` -> `inset: 40%`): ein jsdom-Lauf rechnet kein CSS aus. Der
  *         Wirkungsvergleich misst, welcher Selektor wo greift - nicht, welcher
  *         Wert am Ende gewinnt. Berechnete Stile und Pseudo-Elemente sind aus
  *         demselben Grund unsichtbar.
+ *
+ * NICHT MEHR UEBERGEBEN ist der RAHMEN um die Vorschau (frueher E3-2):
+ * `transform`, `filter`, `zoom` oder eine Utility-Klasse (`scale-90
+ * saturate-50`) am `<iframe>` in `gui/` sind kein Stil dieser Seite, und weder
+ * sie noch ihr DOM wissen davon - aber das war eine Testluecke und keine Grenze
+ * des Verfahrens. Sie ist in `gui/tests/components/visu/VisuPreviewFrame.spec.js`
+ * geschlossen, wo Klassenliste und `style`-Attribut des Rahmens gepinnt sind;
+ * fuer den Pixel-Diff bleibt nur, was ein anderes Blatt zur Laufzeit auf diese
+ * Klassen legt.
  */
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watchEffect } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -295,24 +311,27 @@ onBeforeUnmount(() => receiver.stop());
    und ebenso ein eigenes Stylesheet neben dieser Datei. Und was NICHT in
    diesem Block steht, faellt trotzdem auf: die Probe haelt jeden GELESENEN
    Selektor gegen den wirklichen Vorschau- und Live-DOM, und zwar auch Glied
-   fuer Glied und auf zwei Boeden (die volle und die leere Seite). Gelesen wird
-   dabei jedes Stylesheet und jeder `<style>`-Block - ein- wie mehrzeilig
-   geschrieben - unter `apps/visu` und `packages` sowie in den drei per `link:`
-   eingebundenen Skin-Paketen; also auch das ausgelieferte `index.html` und das
-   globale `link-affordance.css`.
+   fuer Glied, auf zwei gemeinsamen Boeden (die volle und die leere Seite) und
+   dazu in den zwei Zustaenden, die es nur hier gibt (`waiting`,
+   `unknown-skin` - der Wartehinweis darunter). Gelesen wird dabei jedes
+   Stylesheet und jeder `<style>`-Block - ein- wie mehrzeilig geschrieben -
+   unter `apps/visu` und `packages` sowie in den drei per `link:` eingebundenen
+   Skin-Paketen, jeweils samt der `@import`-Kette dieser Blaetter; also auch das
+   ausgelieferte `index.html` und das globale `link-affordance.css`.
 
    GRENZEN, damit niemand mehr hineinliest, als dort gemessen wird: das ist ein
    QUELLTEXT-Vergleich, und der Wirkungsvergleich daneben misst, welcher
    SELEKTOR wo greift - nicht, welche Deklaration am Ende gewinnt. Ein
    jsdom-Lauf rechnet keine Stylesheets aus, also sind berechnete Stile aus
-   globalen Blaettern und Pseudo-Elemente (`::before`/`::after`) unsichtbar.
-   Nicht gelesen wird, was in keiner der beiden Formen steht: `gui/` - der
-   Rahmen um die Vorschau (E3-2) - und CSS, das erst ein Loader zur Laufzeit zu
-   einem Blatt macht. Und ob eine groessenabhaengige Regel
-   (`@media (max-width:…)`, `@container (width …)`) im schmalen
-   Vorschau-`<iframe>` anders greift als auf der vollflaechigen Seite, kann
-   jsdom nicht entscheiden - die Spec meldet solche Selektoren namentlich
-   (E3-1). Diese drei Grenzen misst Teil E als Szenario E3 (Pixel-Diff im echten
+   globalen Blaettern und Pseudo-Elemente (`::before`/`::after`) unsichtbar
+   (E3-3). Nicht gelesen wird ausserdem CSS, das erst ein Loader zur Laufzeit zu
+   einem Blatt macht, und `gui/` - der Rahmen um die Vorschau; dessen
+   Klassenliste und `style`-Attribut pinnt dafuer
+   `gui/tests/components/visu/VisuPreviewFrame.spec.js`. Und ob eine
+   groessenabhaengige Regel (`@media (max-width:…)`, `@container (width …)`) im
+   schmalen Vorschau-`<iframe>` anders greift als auf der vollflaechigen Seite,
+   kann jsdom nicht entscheiden - die Spec meldet solche Selektoren namentlich
+   (E3-1). Diese zwei Grenzen misst Teil E als Szenario E3 (Pixel-Diff im echten
    Browser); dieser Block ist die Vorbedingung dafuer, nicht sein Ersatz.
 
    Der Inhalt: `.ion-page` ist `position: absolute; inset: 0`, der Kasten einer
