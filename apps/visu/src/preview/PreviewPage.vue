@@ -46,13 +46,20 @@
  *
  * Wer das nachhaelt: `PreviewParity.spec.ts` stellt beide Seiten auf DENSELBEN
  * Entwurfsboden und vergleicht die GANZE gerenderte Flaeche Element fuer Element
- * - Tag, Klassen, alle Attribute, alle Stil-Eigenschaften, den Text. Alles, was
- * abweichen darf, steht dort als kurze, benannte Ausnahmeliste (A1-A4): das
- * Editor-Chrome der Live-Seite (der Tweak-Umschalter - im Vorschau-Modus bedient
- * der Autor ihn in der Admin-GUI), die reinen Vorschau-Marker, Vues
- * Scoped-Marker und der Seitenrahmen. Was hier also neu gerendert wird, muss
- * entweder auch auf der echten Seite stehen oder in dieser Liste - sonst faellt
- * der Nachweis.
+ * - Tag, Klassen, alle Attribute, alle Stil-Eigenschaften, den Text; dazu, was
+ * die Seite NEBEN ihren Rahmen haengt (Teleport, Portal, Overlay am `<body>`),
+ * und den ganzen `<style scoped>`-Block Regel fuer Regel. Alles, was abweichen
+ * darf, steht dort als kurze, benannte Ausnahmeliste (A1-A6): das Editor-Chrome
+ * der Live-Seite (der Tweak-Umschalter - im Vorschau-Modus bedient der Autor ihn
+ * in der Admin-GUI), die Vorschau-Marker (nur an der Wurzel, nur mit ihrem
+ * Wert), Vues Scoped-Marker, der Seitenrahmen, die Umbenennung
+ * `.preview-page` -> `.skin-page` und die eine vorschau-eigene Stilregel
+ * `.preview-hint`. Was hier also neu gerendert wird, muss entweder auch auf der
+ * echten Seite stehen oder in dieser Liste - sonst faellt der Nachweis.
+ *
+ * Und was er NICHT leistet: berechnete Stile und Pseudo-Elemente kann ein
+ * jsdom-Lauf grundsaetzlich nicht messen. Die Pixelgleichheit selbst faehrt
+ * Teil E als Szenario E3 (Pixel-Diff im echten Browser).
  */
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watchEffect } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -252,17 +259,28 @@ onBeforeUnmount(() => receiver.stop());
 </template>
 
 <style scoped>
-/* QUELLE DIESER BEIDEN REGELN IST `pages/SkinPage.vue` (`.skin-page` /
+/* QUELLE DIESER REGELN IST `pages/SkinPage.vue` (`.skin-page` /
    `.overview-root`), nicht diese Datei. Warum sie hier trotzdem noch einmal
-   steht: `<style scoped>` traegt den `data-v-*`-Marker genau EINES SFC, eine
+   stehen: `<style scoped>` traegt den `data-v-*`-Marker genau EINES SFC, eine
    Regel laesst sich zwischen zwei Komponenten also nicht teilen - und ein
    globales Stylesheet daraus zu machen hiesse, die Kasten-Regel der echten Seite
    umzubauen. Die Kopie ist damit unvermeidbar, das Auseinanderlaufen nicht:
-   `PreviewParity.spec.ts` ("der Seitenkasten beider Seiten") haelt beide Stellen
-   Deklaration fuer Deklaration aneinander und faellt mit Klartext, sobald eine
-   von beiden wandert. Wer hier etwas aendert, aendert es dort mit - oder die
-   Probe sagt, dass die Vorschau gerade in einem anderen Kasten sitzt als die
-   Seite, die sie zeigen soll.
+   `PreviewParity.spec.ts` ("der Stilblock beider Seiten") vergleicht den GANZEN
+   Block - jede Regel dieser Datei muss eine Entsprechung in `SkinPage.vue`
+   haben oder dort als benannte Ausnahme stehen. Benannt ist genau eine:
+   `.preview-hint`, der Platzhalter VOR dem ersten Entwurf, der aus dem DOM ist,
+   sobald etwas zu vergleichen da ist. Alles andere faellt: eine zweite Regel
+   mit demselben Selektor, eine in `@media`, eine mit `:deep()`, ein `@import` -
+   und ebenso ein eigenes Stylesheet neben dieser Datei (die Probe zaehlt, was
+   der Vorschau-Chunk ueberhaupt an Stil mitbringt, und sucht in jedem
+   ausgelieferten Blatt nach Vorschau-Selektoren).
+
+   GRENZE, damit niemand mehr hineinliest, als dort gemessen wird: das ist ein
+   QUELLTEXT-Vergleich. Ein jsdom-Lauf rechnet keine Stylesheets aus, also sind
+   berechnete Stile aus globalen Blaettern und Pseudo-Elemente
+   (`::before`/`::after`) dort grundsaetzlich unsichtbar. Die Pixel selbst misst
+   Teil E als Szenario E3 (Pixel-Diff im echten Browser); dieser Block ist die
+   Vorbedingung dafuer, nicht sein Ersatz.
 
    Der Inhalt: `.ion-page` ist `position: absolute; inset: 0`, der Kasten einer
    Ansicht, die den Viewport BESITZT. Hier liegt die Seite im scrollenden
