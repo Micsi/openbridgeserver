@@ -57,11 +57,12 @@ import {
 } from './mapping';
 import {
   composeLayers,
+  composePopup,
   buildNavTree,
+  type HostNavNode,
   type LayeringCapableDataSource,
-  type NavNode,
 } from './compose';
-import type { PageLayer } from '@obs/visu-contract';
+import type { PageLayer, PopupDescriptor } from '@obs/visu-contract';
 
 /**
  * A {@link DataSource} backed by the obs server. Construct directly with an
@@ -105,6 +106,14 @@ export class ObsDataSource
   private tree: readonly ObsVisuNode[] = [];
   /** The datapoint values of the last list(), so composed layers carry live state. */
   private treeValues: ReadonlyMap<string, unknown> = new Map();
+  /**
+   * The pages the server declared readonly when their config was loaded
+   * (`X-Source-Page-Readonly`, M5 R15). Their widgets are locked regardless of
+   * what the tree's raw `access` or the per-datapoint verdict say; the header is
+   * the only reliable readonly source (CONTRIBUTING-visu-m5.md §2.1). Rebuilt on
+   * every {@link list}; a page whose config came inline never appears here.
+   */
+  private readonly readonlyPages = new Set<string>();
   /** Guest poll cadence (ms). Live WS is used instead once logged in. */
   private static readonly POLL_INTERVAL_MS = 4000;
   /**
@@ -247,14 +256,24 @@ export class ObsDataSource
    * last {@link list}. A skin renders its own navigation from this; the responsive
    * skin ignores it. Empty before the first list().
    */
-  navTree(): NavNode[] {
+  navTree(): HostNavNode[] {
     return buildNavTree(this.tree);
   }
 
   /**
-   * The ordered layer stack for a page (layering W3c): ancestors + own, root-first,
-   * composed from the last {@link list}'s tree + live values. A skin overlays this;
-   * the responsive skin ignores it. Empty for an unknown page.
+   * The popup descriptor of a popup page (M5 R2-R6), or null for any other page.
+   * The host (SkinHost) owns the open-state and the auto-close timer; this only
+   * hands out the author's data for a page it already loaded.
+   */
+  popupFor(pageId: string): PopupDescriptor | null {
+    return composePopup(this.tree, pageId);
+  }
+
+  /**
+   * The ordered layer stack for a page (M5 R9-R15): global include pages, the
+   * page's own includes and its own content, composed from the last {@link list}'s
+   * tree + live values. A skin overlays this; the responsive skin ignores it.
+   * Empty for an unknown page.
    */
   layersFor(pageId: string): PageLayer[] {
     return composeLayers(this.tree, pageId, this.treeValues);
@@ -347,12 +366,16 @@ export class ObsDataSource
    * keeps no widgets and simply shows its gate until unlocked or the user logs in.
    */
   private async loadPageConfigs(nodes: readonly ObsVisuNode[]): Promise<ObsVisuNode[]> {
+    this.readonlyPages.clear();
     return Promise.all(
       nodes.map(async (node) => {
         if (node.type !== 'PAGE' || node.page_config) return node;
         try {
-          const page_config = await this.client.getPage(node.id, this.sessionTokenFor(node.id));
-          return { ...node, page_config };
+          const page = await this.client.getPage(node.id, this.sessionTokenFor(node.id));
+          // M5 R15: remember the server's readonly verdict for this page as an
+          // include source; it is what locks its widgets (§2.1).
+          if (page.sourceReadonly) this.readonlyPages.add(node.id);
+          return { ...node, page_config: page.config };
         } catch {
           return node;
         }
@@ -368,6 +391,10 @@ export class ObsDataSource
   ): boolean {
     // readonly page, or a user page we cannot operate in v1 → locked outright.
     if (access === 'readonly' || access === 'user') return false;
+    // M5 R15: the server called this page readonly when we loaded it. That
+    // verdict outranks everything below; an include source may resolve its
+    // readonly level from an ancestor the client cannot see.
+    if (this.readonlyPages.has(m.pageId ?? '')) return false;
     const dps = deviceWriteDps(m.writes);
     // Operable only when every write datapoint is confirmed writable by the host.
     return dps.length > 0 && dps.every((dp) => writableMap?.[dp] === true);
