@@ -24,7 +24,13 @@ export default defineConfig({
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
-  timeout: 30_000,
+  // 60 s statt der fruehreren 30 s: seit dem M5-Seed traegt die Beispielwelt rund
+  // 20 Seiten (Seitentypen, Popups, Zugriffsgrenzen) statt fuenf, und die Visu
+  // laedt jede Seiten-Config einzeln und page-scoped (`GET /visu/pages/{id}`).
+  // Ein Browser-Szenario lief damit auf 30 s zu und waere aus Zeitgruenden rot
+  // geworden statt aus einer Aussage heraus. Die Einzel-Erwartung bleibt bei 7 s,
+  // damit eine echte Fehlaussage weiterhin schnell auffliegt.
+  timeout: 60_000,
   expect: { timeout: 7_000 },
   use: {
     baseURL,

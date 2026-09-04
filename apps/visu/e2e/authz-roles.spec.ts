@@ -85,19 +85,26 @@ test.describe('Visu authz roles (live server)', () => {
   test('protected page shows a PIN gate; a wrong PIN is inline, the correct PIN unlocks it', async ({ page }) => {
     await page.goto('/');
 
-    const gate = page.locator('.access-gate');
-    await expect(gate).toBeVisible();
+    await expect(page.locator('.access-gate')).toBeVisible();
     await expect(page.getByText(`PIN required for ${PROTECTED_PAGE}`)).toBeVisible();
 
+    // Since M5 the seeded world holds more than one PIN-protected page (the
+    // include source behind an access boundary, seed.py `guard_pin`), so the
+    // gate strip renders several PIN forms. Scope every interaction to THIS
+    // page's form — that is also the sharper assertion the component promises:
+    // the inline note appears at that item only, not somewhere in the strip.
+    const gate = page.locator('.access-gate-pin').filter({ hasText: `PIN required for ${PROTECTED_PAGE}` });
+    await expect(gate).toHaveCount(1);
+
     // wrong PIN → inline note, not a global failure
-    await page.getByLabel('Enter PIN').fill('0000');
-    await page.locator('.access-gate-unlock').click();
-    await expect(page.getByText('Wrong PIN')).toBeVisible();
+    await gate.getByLabel('Enter PIN').fill('0000');
+    await gate.locator('.access-gate-unlock').click();
+    await expect(gate.getByText('Wrong PIN')).toBeVisible();
     await expect(page.locator('.shell-error')).toHaveCount(0);
 
     // correct PIN → the gate for this page disappears (session token cached)
-    await page.getByLabel('Enter PIN').fill(PIN);
-    await page.locator('.access-gate-unlock').click();
+    await gate.getByLabel('Enter PIN').fill(PIN);
+    await gate.locator('.access-gate-unlock').click();
     await expect(page.getByText(`PIN required for ${PROTECTED_PAGE}`)).toHaveCount(0);
   });
 
