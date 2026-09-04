@@ -47,11 +47,15 @@
  * Wer das nachhaelt: `PreviewParity.spec.ts` stellt beide Seiten auf DENSELBEN
  * Entwurfsboden und vergleicht die GANZE gerenderte Flaeche Element fuer Element
  * - Tag, Klassen, alle Attribute, alle Stil-Eigenschaften, den Text; dazu den
- * ganzen `<style scoped>`-Block Regel fuer Regel; dazu, welcher Selektor aller
- * ausgelieferten Blaetter in der Vorschau greift und auf der echten Seite
- * nicht; und dazu den ZUSTAND DES DOKUMENTS neben dem Rahmen - `<html>` und
- * `<body>` selbst, jeder Knoten in `<head>` und `<body>`, jede aktive
- * Stilquelle, gemessen nach dem Mount UND nach einer Interaktion. Alles, was
+ * ganzen `<style scoped>`-Block Regel fuer Regel; dazu, welcher GELESENE Selektor
+ * in der Vorschau greift und auf der echten Seite nicht - gelesen werden alle
+ * Stylesheets und alle `<style>`-Bloecke (ein- wie mehrzeilig) unter `apps/visu`
+ * und `packages` sowie die drei per `link:` eingebundenen Skin-Pakete, gehalten
+ * gegen ZWEI Boeden (die volle und die leere Seite) und je Selektor auch Glied
+ * fuer Glied; und dazu den Zustand des Dokuments neben dem Rahmen - `<html>` und
+ * `<body>` selbst, jeder Knoten in `<head>` und `<body>`, jede Stilquelle im
+ * Testdokument, aufgenommen nach dem Mount UND nach einer Interaktion und in
+ * beide Richtungen verglichen (dazugekommen, geaendert, entfernt). Alles, was
  * abweichen darf, steht dort als kurze, benannte Ausnahmeliste (A1-A6): das
  * Editor-Chrome der Live-Seite (der Tweak-Umschalter - im Vorschau-Modus
  * bedient der Autor ihn in der Admin-GUI), die Vorschau-Marker (nur an der
@@ -60,9 +64,23 @@
  * Stilregel `.preview-hint`. Was hier also neu gerendert wird, muss auch auf der
  * echten Seite stehen oder in dieser Liste - sonst faellt der Nachweis.
  *
- * Und was er NICHT leistet: berechnete Stile und Pseudo-Elemente kann ein
- * jsdom-Lauf grundsaetzlich nicht messen. Die Pixelgleichheit selbst faehrt
- * Teil E als Szenario E3 (Pixel-Diff im echten Browser).
+ * Und was er NICHT leistet - drei Grenzen, die AN TEIL E (Szenario E3, Pixel-Diff
+ * im echten Browser) UEBERGEBEN sind statt wegdefiniert. Teil E misst sie:
+ *
+ *   E3-1  der VIEWPORT-ANTEIL groessenabhaengiger Regeln (`@media (max-width:…)`,
+ *         `@container (width …)`): die Vorschau ist ein schmales `<iframe>`, die
+ *         echte Seite der ganze Bildschirm, dieselbe Regel greift dort und hier
+ *         nicht. Die Spec MELDET jeden solchen Selektor namentlich und schreibt
+ *         ihn aus; ob er ein Pixel bewegt, entscheidet erst der Pixel-Diff.
+ *   E3-2  der RAHMEN um die Vorschau - `transform`, `filter`, `zoom` oder eine
+ *         Utility-Klasse (`scale-90 saturate-50`) am `<iframe>` in `gui/`. Das
+ *         ist kein Stil dieser Seite, sondern der Bildschirm, auf dem sie steht;
+ *         weder diese Seite noch ihr DOM wissen davon.
+ *   E3-3  jede AENDERUNG AN DEN DEKLARATIONEN eines ausgelieferten Blattes
+ *         (`inset: 0` -> `inset: 40%`): ein jsdom-Lauf rechnet kein CSS aus. Der
+ *         Wirkungsvergleich misst, welcher Selektor wo greift - nicht, welcher
+ *         Wert am Ende gewinnt. Berechnete Stile und Pseudo-Elemente sind aus
+ *         demselben Grund unsichtbar.
  */
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watchEffect } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -275,17 +293,27 @@ onBeforeUnmount(() => receiver.stop());
    sobald etwas zu vergleichen da ist. Alles andere faellt: eine zweite Regel
    mit demselben Selektor, eine in `@media`, eine mit `:deep()`, ein `@import` -
    und ebenso ein eigenes Stylesheet neben dieser Datei. Und was NICHT in
-   diesem Block steht, faellt trotzdem auf: die Probe haelt alle Selektoren
-   aller ausgelieferten Blaetter gegen den wirklichen Vorschau- und Live-DOM -
-   ein Blatt, das nur die Vorschau faerbt, ist genau das, egal wo es liegt und
-   an welchem Griff es haengt.
+   diesem Block steht, faellt trotzdem auf: die Probe haelt jeden GELESENEN
+   Selektor gegen den wirklichen Vorschau- und Live-DOM, und zwar auch Glied
+   fuer Glied und auf zwei Boeden (die volle und die leere Seite). Gelesen wird
+   dabei jedes Stylesheet und jeder `<style>`-Block - ein- wie mehrzeilig
+   geschrieben - unter `apps/visu` und `packages` sowie in den drei per `link:`
+   eingebundenen Skin-Paketen; also auch das ausgelieferte `index.html` und das
+   globale `link-affordance.css`.
 
-   GRENZE, damit niemand mehr hineinliest, als dort gemessen wird: das ist ein
-   QUELLTEXT-Vergleich. Ein jsdom-Lauf rechnet keine Stylesheets aus, also sind
-   berechnete Stile aus globalen Blaettern und Pseudo-Elemente
-   (`::before`/`::after`) dort grundsaetzlich unsichtbar. Die Pixel selbst misst
-   Teil E als Szenario E3 (Pixel-Diff im echten Browser); dieser Block ist die
-   Vorbedingung dafuer, nicht sein Ersatz.
+   GRENZEN, damit niemand mehr hineinliest, als dort gemessen wird: das ist ein
+   QUELLTEXT-Vergleich, und der Wirkungsvergleich daneben misst, welcher
+   SELEKTOR wo greift - nicht, welche Deklaration am Ende gewinnt. Ein
+   jsdom-Lauf rechnet keine Stylesheets aus, also sind berechnete Stile aus
+   globalen Blaettern und Pseudo-Elemente (`::before`/`::after`) unsichtbar.
+   Nicht gelesen wird, was in keiner der beiden Formen steht: `gui/` - der
+   Rahmen um die Vorschau (E3-2) - und CSS, das erst ein Loader zur Laufzeit zu
+   einem Blatt macht. Und ob eine groessenabhaengige Regel
+   (`@media (max-width:…)`, `@container (width …)`) im schmalen
+   Vorschau-`<iframe>` anders greift als auf der vollflaechigen Seite, kann
+   jsdom nicht entscheiden - die Spec meldet solche Selektoren namentlich
+   (E3-1). Diese drei Grenzen misst Teil E als Szenario E3 (Pixel-Diff im echten
+   Browser); dieser Block ist die Vorbedingung dafuer, nicht sein Ersatz.
 
    Der Inhalt: `.ion-page` ist `position: absolute; inset: 0`, der Kasten einer
    Ansicht, die den Viewport BESITZT. Hier liegt die Seite im scrollenden

@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent, h, reactive } from 'vue';
 import { createI18n } from 'vue-i18n';
 import { setActivePinia, createPinia } from 'pinia';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 /**
@@ -51,15 +51,20 @@ import { dirname, join, resolve } from 'node:path';
  *                        Kopie ist deshalb per QUELLTEXT gebunden, und zwar der
  *                        GANZE Block Regel fuer Regel, nicht zwei Selektoren
  *   - die Stilquellen  - und daneben dieselbe Frage in WIRKUNG statt in
- *                        Quellen: welcher Selektor aller ausgelieferten
- *                        Blaetter greift am Ende in der Vorschau und nicht auf
- *                        der echten Seite? Ein Blatt, das nur die Vorschau
- *                        faerbt, ist genau das - egal wo es liegt
- *   - der Rand         - der Zustand des DOKUMENTS neben dem Rahmen, zum
- *                        Messzeitpunkt aufgenommen: `<html>` und `<body>`
+ *                        Quellen: welcher gelesene Selektor greift am Ende in
+ *                        der Vorschau und nicht auf der echten Seite? Gelesen
+ *                        werden alle Stylesheets und alle `<style>`-Bloecke
+ *                        (ein- wie mehrzeilig) unter `apps/visu` und
+ *                        `packages` UND die drei per `link:` eingebundenen
+ *                        Skin-Pakete; gehalten wird jeder Selektor - und jedes
+ *                        seiner GLIEDER - gegen ZWEI Boeden, die volle und die
+ *                        leere Seite
+ *   - der Rand         - der Zustand des DOKUMENTS neben dem Rahmen, an zwei
+ *                        Messzeitpunkten aufgenommen: `<html>` und `<body>`
  *                        selbst, jeder Knoten in `<head>` und `<body>`, jede
- *                        aktive Stilquelle - und dasselbe noch einmal NACH
- *                        einer Interaktion, nicht nur direkt nach dem Mount
+ *                        Stilquelle im Testdokument - beim Mount UND nach einer
+ *                        Interaktion, und in beide Richtungen (dazugekommen,
+ *                        geaendert, entfernt)
  *
  * WAS DIESER NACHWEIS NICHT MISST - ausdruecklich, damit ihn niemand fuer eine
  * Pixelgarantie haelt: ein jsdom-Lauf rechnet KEINE Stylesheets aus. Berechnete
@@ -70,6 +75,37 @@ import { dirname, join, resolve } from 'node:path';
  * Pixelvergleich. Die Pixel selbst misst Teil E als Szenario E3 (Pixel-Diff im
  * echten Browser); die jsdom-Paritaet ist dessen Vorbedingung, nicht sein
  * Ersatz.
+ *
+ * ══ AN TEIL E (Szenario E3) UEBERGEBEN ══════════════════════════════════════
+ *
+ * Drei Abweichungen sind hier STRUKTURELL nicht messbar. Sie sind nicht
+ * vergessen und nicht wegdefiniert - sie sind uebergeben, und Teil E misst sie
+ * im Pixel-Diff im echten Browser:
+ *
+ *   E3-1  DER VIEWPORT-ANTEIL groessenabhaengiger Regeln. Ob eine Regel unter
+ *         `@media (max-width:…)` oder `@container (width …)` greift, haengt an
+ *         der Breite der Flaeche - und die Vorschau ist ein schmales `<iframe>`
+ *         (`w-full h-[70vh]` in einer Editorspalte,
+ *         `gui/src/components/visu/VisuPreviewFrame.vue`), die echte Seite
+ *         fuellt den Bildschirm. Der Test unten MELDET jeden solchen Selektor
+ *         namentlich (heute acht aus dem terminal-Skin) und schreibt ihn aus;
+ *         ENTSCHEIDEN, ob er ein Pixel bewegt, kann nur der Pixel-Diff.
+ *
+ *   E3-2  DER RAHMEN UM DIE VORSCHAU. `transform`, `filter`, `zoom` oder eine
+ *         Utility-Klasse (`scale-90 saturate-50`) am `<iframe>` in `gui/` sind
+ *         kein Stil der Seite, sondern der Bildschirm, auf dem sie steht. Diese
+ *         Spec liest `apps/visu`, `packages` und die Skin-Pakete - `gui/` gar
+ *         nicht, und der Vorschau-DOM weiss nichts von seinem Rahmen. Der Autor
+ *         saehe ein verkleinertes, entsaettigtes Bild; das faengt nur der
+ *         Pixel-Diff (oder ein GUI-seitiger Test, der die Klassenliste des
+ *         `<iframe>` pinnt).
+ *
+ *   E3-3  JEDE AENDERUNG AN DEN DEKLARATIONEN eines ausgelieferten Blattes.
+ *         `inset: 0` -> `inset: 40%` in `link-affordance.css` bewegt Pixel auf
+ *         beiden Seiten und ist hier unsichtbar: der Wirkungsvergleich misst,
+ *         welcher SELEKTOR wo greift, nicht welche Deklaration am Ende gewinnt
+ *         und wie sie aussieht - jsdom rechnet kein CSS aus. Der Test "misst
+ *         KEINE berechneten Stile" haelt genau diese Grenze fest.
  */
 
 // Ionic-Webkomponenten sind nicht jsdom-freundlich (gleiches Muster wie
@@ -194,6 +230,64 @@ const DRAFT_NODES: readonly PreviewDraftNode[] = PAGES.map((p) => ({
   type: 'PAGE' as const,
   kind: 'normal' as const,
   page_config: { widgets: draftWidgets(p.id) },
+}));
+
+/**
+ * DER ZWEITE PARITAETSBODEN - die Zustaende, die der erste nie rendert.
+ *
+ * Der erste Boden ist eine volle Seite: drei Widgets, Kacheln, ein aktiver
+ * Seitenlink. Was er NICHT zeigt, ist die leere Seite und die Seite, auf der der
+ * Autor etwas abgelegt hat, das die Kette nicht rendert - und ein Vergleich ist
+ * nur so breit wie der Boden, den er rendert: eine vorschau-eigene Regel auf ein
+ * Element, das der eine Boden nicht kennt, „trifft auf beiden Seiten gleich oft:
+ * null" und galt damit als gleich (Kritik R6, T6a).
+ *
+ * Dieser Boden deckt beide Zustaende in einem: die gezeigte Seite traegt zwei
+ * Widgets von Typen, die `mapTree` bewusst NICHT abbildet (`Kamera`,
+ * `ValueDisplay` - #124), also kommt kein Geraet und kein Layer-Item heraus. Der
+ * Autor sieht eine Seite, auf der etwas liegt und nichts erscheint; beide
+ * Seiten muessen dieselbe leere Flaeche zeigen. Die uebrigen Seiten des Baums
+ * bleiben voll, damit Nav-Baum und Linknamen dieselben sind wie oben.
+ *
+ * GRENZE, ausdruecklich: `.skin-host-unsupported` (eine im Manifest ERKLAERT
+ * nicht unterstuetzte Kachel) und `.skin-host-missing` (ein Layer-Item ohne
+ * Geraet) sind mit den drei ausgelieferten Skins auf KEINEM Boden erreichbar -
+ * kein Manifest fuehrt `unsupported`, und ein nicht abgebildetes Widget kommt
+ * gar nicht erst in einen Layer. Eine Regel auf diese Elemente faellt deshalb
+ * nicht am Rendern auf, sondern am Glied-Vergleich ({@link selectorLinks}).
+ */
+const unrenderedWidgets = (pageId: string) => [
+  {
+    id: `${pageId}-cam`,
+    name: 'Hofkamera',
+    type: 'Kamera',
+    datapoint_id: null,
+    status_datapoint_id: null,
+    config: { url: '/cam/hof.jpg' },
+    x: 0,
+    y: 0,
+    w: 4,
+    h: 3,
+  },
+  {
+    id: `${pageId}-value`,
+    name: 'Zaehlerstand',
+    type: 'ValueDisplay',
+    datapoint_id: `dp-${pageId}-value`,
+    status_datapoint_id: null,
+    config: {},
+    x: 4,
+    y: 0,
+    w: 2,
+    h: 1,
+  },
+];
+
+// Die Uebersicht zeigt die Geraete ALLER Seiten nach Raum gruppiert - leer ist
+// sie deshalb erst, wenn keine Seite ein abbildbares Widget traegt.
+const EMPTY_FLOOR_NODES: readonly PreviewDraftNode[] = DRAFT_NODES.map((n) => ({
+  ...n,
+  page_config: { widgets: unrenderedWidgets(n.id) },
 }));
 
 /**
@@ -500,23 +594,25 @@ function structure(
  * IST der `<body>` die Seite); eine Aenderung an einem schon vorhandenen Kind;
  * und ein Knoten, der erst NACH einer Interaktion entsteht.
  *
- * Aufgenommen wird deshalb der ZUSTAND des Dokuments zum Messzeitpunkt:
+ * AUFGENOMMEN wird der Zustand des Dokuments zum Messzeitpunkt:
  *
  *   - `<html>` und `<body>` selbst, mit allen Attributen und ihrem Stil,
  *   - jeder Knoten in `<head>` UND `<body>` (ohne den verglichenen Rahmen, der
  *     oben Element fuer Element gehalten wird),
- *   - jede aktive Stilquelle ({@link documentStyleSources}).
+ *   - jede Stilquelle im Testdokument ({@link documentStyleSources}).
  *
- * Verglichen wird die VERAENDERUNG gegen eine Aufnahme von vor dem Mount, damit
+ * VERGLICHEN wird davon der UNTERSCHIED zu einer Aufnahme von vor dem Mount -
+ * was dazukam, was sich aenderte und was verschwand ({@link edgeSince}) -, damit
  * Reste frueherer Mounts im selben Lauf nicht als Rand der Seite gelten. Und
- * gemessen wird zweimal: direkt nach dem Mount und noch einmal nach einer
- * Interaktion.
+ * gemessen wird an zwei Zeitpunkten: direkt nach dem Mount und noch einmal nach
+ * einer Interaktion; was zwischen ihnen entsteht und wieder vergeht, sieht diese
+ * Aufnahme nicht.
  *
  * GRENZE: ein echtes Ionic-Overlay ist hier strukturell nicht messbar -
  * `IonModal`/`IonPopover` sind auf durchreichende Tags gestubbt (oben), sie
- * teleportieren also nie an den `<body>`. Was dieser Zaun misst, ist alles,
- * was die Seite selbst am Dokument aendert; das Verhalten der echten
- * Ionic-Overlays gehoert zu Teil E.
+ * teleportieren also nie an den `<body>`. Was dieser Zaun misst, ist, was die
+ * Seite an den zwei Messzeitpunkten am Dokument stehen hat; das Verhalten der
+ * echten Ionic-Overlays gehoert zu Teil E.
  */
 type DocEdge = {
   html: string;
@@ -526,10 +622,15 @@ type DocEdge = {
 };
 
 /**
- * ALLE Stilquellen, die im Dokument gerade WIRKEN - gezaehlt, nicht gesucht:
- * jedes `<style>` und jedes `<link rel=stylesheet>`, im `<head>` wie im
- * `<body>`, samt der Zahl der Blaetter im CSSOM (was ohne eigenes Element
- * eingehaengt wurde, faellt an ihr auf).
+ * Die Stilquellen, die im TESTDOKUMENT haengen - gezaehlt, nicht gesucht: jedes
+ * `<style>` und jedes `<link rel=stylesheet>`, im `<head>` wie im `<body>`, samt
+ * der Zahl der Blaetter im CSSOM (was ohne eigenes Element eingehaengt wurde,
+ * faellt an ihr auf).
+ *
+ * Nicht „alles, was wirkt": in jsdom WIRKT keine dieser Quellen, es wird kein
+ * CSS ausgerechnet. Gelesen wird ausschliesslich das Dokument dieses Laufs -
+ * was ein Bundler spaeter in die ausgelieferte Seite haengt, misst der
+ * Wirkungsvergleich weiter unten, und die Pixel misst Teil E (E3).
  */
 function documentStyleSources(): string[] {
   const out: string[] = [];
@@ -570,7 +671,19 @@ function edgeSnapshot(frame: Element | null = null): DocEdge {
   };
 }
 
-/** Was sich am Rand seit `before` geaendert hat - der Rand DIESER Seite. */
+/**
+ * Der UNTERSCHIED des Randes gegen `before` - in beide Richtungen: was
+ * dazugekommen ist, was sich geaendert hat UND was verschwunden ist. Der
+ * Weg-Zweig fuer Knoten fehlte, und genau dort lief ein Angriff durch: eine
+ * Seite, die beim Modulladen ein `div.obs-splash` an den `<body>` haengt und es
+ * in `onMounted` wieder ENTFERNT, nahm dem Dokument einen Knoten, ohne dass der
+ * Vergleich etwas meldete (Kritik R6, T4). Im echten Vorschau-iframe ist genau
+ * das sichtbar: ein entferntes `<meta name="viewport">` ist ein anderer Massstab.
+ *
+ * Was hier NICHT steht: ein Knoten, den die Seite anlegt und vor der Messung
+ * selbst wieder wegnimmt, hinterlaesst keine Spur - gemessen wird der Zustand zu
+ * den zwei Messzeitpunkten (Mount, Interaktion), nicht jeder Zwischenschritt.
+ */
 function edgeSince(before: DocEdge, frame: Element | null): string[] {
   const now = edgeSnapshot(frame);
   const out: string[] = [];
@@ -588,6 +701,13 @@ function edgeSince(before: DocEdge, frame: Element | null): string[] {
     if (was === undefined) out.push(`neu ${print}`);
     else if (was !== print) out.push(`geaendert ${was} -> ${print}`);
   }
+  // Und die Gegenrichtung: ein Knoten, der vor der Aufnahme im Dokument stand
+  // und jetzt nicht mehr. `frame` bleibt aussen vor - der Rahmen selbst wird
+  // Element fuer Element verglichen, nicht am Rand gezaehlt.
+  for (const [el, print] of before.nodes) {
+    if (el === frame || frame?.contains(el) === true) continue;
+    if (!now.nodes.has(el)) out.push(`Knoten weg: ${print}`);
+  }
   return out;
 }
 
@@ -600,6 +720,21 @@ function edgeSince(before: DocEdge, frame: Element | null): string[] {
  * denen er sich fuellt.
  */
 const RUHIGER_RAND: readonly string[] = [];
+
+/**
+ * Das Dokument, wie dieser Lauf es beim LADEN DER MODULE vorfindet - aufgenommen
+ * im Modulrumpf, also nach allen `import`s und vor jedem Mount.
+ *
+ * Warum es diese zweite, frueheste Aufnahme gibt: alles andere hier vergleicht
+ * gegen einen Stand, der VOR einem Mount, aber NACH dem Laden genommen wurde.
+ * Was ein Modul schon beim Laden tut, liegt davor - und wenn es beim ersten
+ * Mount rueckgaengig gemacht wird, faellt es in keinem Unterschied mehr auf. Ein
+ * `div.obs-splash`, das beim Modulladen an den `<body>` kommt und in `onMounted`
+ * wieder verschwindet, ging genau so durch (Kritik R6, T4): im echten
+ * Vorschau-`<iframe>` nimmt so eine Seite dem Dokument einen Knoten weg - ein
+ * entferntes `<meta name="viewport">` ist dort ein anderer Massstab.
+ */
+const DOCUMENT_AT_IMPORT: DocEdge = edgeSnapshot();
 
 /**
  * Die Texte, die der Entwurfsboden auf JEDER Flaeche erzeugt: der Name einer
@@ -654,13 +789,17 @@ function expectSubstance(tree: string[]): void {
 }
 
 /**
- * DIE PLATZIERUNG einer Flaeche - die zweite Haelfte derselben Selbstsicherung.
- * {@link contentFacts} schaut IN die Kacheln, aber nicht darauf, WO sie liegen:
- * der ganze `style`-Block der Zelle (`SkinHost.renderCell`) auf `{}` gesetzt
- * nimmt beiden Seiten gleichzeitig die absolute Platzierung aus der Autorenbox,
- * die Rasterspanne, die Aktiv-Markierung und den Zeiger - und der Vergleich
- * blieb 79 von 79 gruen (Kritik R5, Probe B4). Genau darum geht es bei
- * Pixelparitaet, also wird es hier gezaehlt und je Skin ausgeschrieben.
+ * WIE VIELE ZELLEN ueberhaupt eine Platzierung TRAGEN - nicht, ob die Werte
+ * stimmen. Der ganze `style`-Block der Zelle (`SkinHost.renderCell`) auf `{}`
+ * gesetzt nimmt beiden Seiten gleichzeitig die absolute Platzierung aus der
+ * Autorenbox, die Rasterspanne, die Aktiv-Markierung und den Zeiger - und der
+ * Vergleich blieb 79 von 79 gruen (Kritik R5, Probe B4); an diesen Zahlen faellt
+ * er auf. Gezaehlt wird ANWESENHEIT: „Rasterspanne: 15" heisst „15 Zellen tragen
+ * ueberhaupt eine `grid-column`-Spanne", nicht „die Spannen stimmen"; `grid-row`
+ * wird gar nicht gezaehlt, und auf diesem Boden ist jede Spanne 1 und
+ * `absolutPlatziert` bei allen drei Skins 0 (Kritik R6 §3). Ob die Zahlen selbst
+ * richtig sind, haelt der Element-fuer-Element-Vergleich darueber; ob sie
+ * Pixel ergeben, misst Teil E (E3).
  */
 function placementFacts(tree: string[]): Record<string, number> {
   const isCell = (l: string): boolean => l.split(' | ')[2].split('.').includes('skin-host-cell');
@@ -953,11 +1092,11 @@ function normalizeSelector(raw: string): string {
  *   - Custom-Property-NAMEN (`var(--Gap)` ist eine andere Variable als
  *     `var(--gap)`).
  *
- * Was dabei als Rest mitlaeuft, sind selbstgewaehlte Bezeichner
- * (`animation-name: Foo`). Sie werden mit klein geschrieben; unbemerkt
- * durchrutschen kann darueber trotzdem nichts, weil die Deklarationen BEIDER
- * Bloecke unten im Klartext gepinnt sind - eine neue Deklaration faellt schon
- * dort auf, egal wie sie geschrieben ist.
+ * Die vierte Stelle steht nicht hier, sondern in {@link CASE_SENSITIVE_VALUES}:
+ * Eigenschaften, deren WERT ein selbstgewaehlter Bezeichner ist
+ * (`animation-name: Slide`, `counter-reset: Foo`, `grid-area: Header`). Sie
+ * gingen frueher durch diese Funktion und galten damit als gleich, obwohl CSS
+ * sie gross/klein-empfindlich liest (Kritik R6 §4).
  */
 const lowerValue = (value: string): string =>
   cssParts(value)
@@ -967,6 +1106,47 @@ const lowerValue = (value: string): string =>
         : p.text,
     )
     .join('');
+
+/**
+ * Eigenschaften, deren Wert ein SELBSTGEWAEHLTER BEZEICHNER ist und die CSS
+ * darum gross/klein-empfindlich liest: eine Animation namens `Slide` ist nicht
+ * `slide`, ein Zaehler `Foo` nicht `foo`, ein Rasterbereich `Header` nicht
+ * `header`. Ihr Wert bleibt deshalb stehen, wie er dasteht - er laeuft nicht
+ * durch {@link lowerValue}. Vorher ebnete die Normalisierung genau diese Klasse
+ * ein (Kritik R6 §4); die Gegenproben dazu stehen im Test „zaehlt gleiche
+ * Wirkung gleich - und andere Wirkung nicht".
+ *
+ * Die Kurzschreibweisen stehen mit drin, weil sie den Namen enthalten
+ * (`animation: 2s Slide`, `grid-row: Header / Footer`).
+ */
+const CASE_SENSITIVE_VALUES: ReadonlySet<string> = new Set([
+  'animation',
+  'animation-name',
+  'counter-increment',
+  'counter-reset',
+  'counter-set',
+  'grid',
+  'grid-area',
+  'grid-column',
+  'grid-column-end',
+  'grid-column-start',
+  'grid-row',
+  'grid-row-end',
+  'grid-row-start',
+  'grid-template',
+  'grid-template-areas',
+  'container-name',
+  'view-transition-name',
+  'anchor-name',
+  'position-anchor',
+  'timeline-scope',
+  'scroll-timeline',
+  'scroll-timeline-name',
+  'view-timeline',
+  'view-timeline-name',
+  'animation-timeline',
+  'will-change',
+]);
 
 /**
  * Deklarationen normalisiert: Eigenschaft klein, GENAU ein Leerzeichen nach dem
@@ -990,7 +1170,9 @@ function normalizeDecls(body: string): string[] {
       const name = d.slice(0, i).trim();
       const value = d.slice(i + 1).trim();
       if (name.startsWith('--')) return `${name}: ${value}`;
-      return `${name.toLowerCase()}: ${lowerValue(value)}`;
+      const prop = name.toLowerCase();
+      if (CASE_SENSITIVE_VALUES.has(prop)) return `${prop}: ${value}`;
+      return `${prop}: ${lowerValue(value)}`;
     })
     .sort();
 }
@@ -1059,12 +1241,20 @@ function parseRules(css: string): CssRule[] {
 }
 
 /**
- * Ein SFC-Block steht am Zeilenanfang - die Verankerung ist kein Schoenheits-
- * fehler, sondern noetig: ohne sie liest der Ausdruck die Erwaehnung
+ * Das OEFFNENDE Tag steht am Zeilenanfang - diese Verankerung ist kein
+ * Schoenheitsfehler, sondern noetig: ohne sie liest der Ausdruck die Erwaehnung
  * "`<style scoped>`" in einem Kommentar als oeffnendes Tag und haelt danach den
  * halben Quelltext fuer CSS.
+ *
+ * Das SCHLIESSENDE Tag ist dagegen NICHT verankert - genau daran ging der
+ * Angriff vorbei: `<style>.preview-page .visu-root{outline:6px solid magenta}
+ * </style>` auf EINER Zeile (die normale Schreibweise in einem HTML-Dokument)
+ * wurde von der alten Verankerung `^[ \t]*<\/style>` gar nicht gefunden, also
+ * weder vom Verzeichnisscan noch vom Wirkungsvergleich gelesen (Kritik R6, T3;
+ * S2 war nur zur Haelfte geschlossen). Der Block endet jetzt dort, wo er in HTML
+ * endet: am ersten `</style>`.
  */
-const STYLE_BLOCK = /^[ \t]*<style([^>]*)>([\s\S]*?)^[ \t]*<\/style>/gm;
+const STYLE_BLOCK = /^[ \t]*<style([^>]*)>([\s\S]*?)<\/style>/gm;
 
 function styleBlocks(source: string): { attrs: string; css: string }[] {
   return Array.from(source.matchAll(STYLE_BLOCK)).map((m) => ({
@@ -1124,6 +1314,21 @@ const LIVE_ONLY_RULES: readonly string[] = ['.overview-tweaks-toggle'];
 const LIVE_ONLY_MATCHES: readonly string[] = ['.overview-tweaks-toggle', '.skin-page'];
 
 /**
+ * Und dieselbe Ausnahme noch einmal auf der Ebene der GLIEDER (s.
+ * {@link selectorLinks}). Sie ist um zwei Zeilen laenger, und beide sind
+ * dieselbe benannte Abweichung von einer anderen Seite gesehen: das
+ * Editor-Chrome (A1) ist das EINZIGE `<button>` der Live-Seite, also trifft
+ * jedes Glied, das ein `<button>` beschreibt, nur sie. Ausgeschrieben statt
+ * ueber eine Regel weggewischt - waechst die Liste, ist das eine Aussage.
+ */
+const LIVE_ONLY_LINKS: readonly string[] = [
+  '.overview-tweaks-toggle',
+  '.skin-page',
+  'button',
+  'button:not(.on)',
+];
+
+/**
  * Der zweite Weg zu demselben Pixel: ein eigenes Stylesheet im Vorschau-Chunk.
  * Ein Blatt, das der Vorschau-Modus nachlaedt, haengt genauso an
  * `.preview-page` und faerbt genauso nur die Vorschau - dieselbe Abweichung,
@@ -1180,49 +1385,192 @@ function previewStyleArtifacts(): string[] {
 const DELIVERED_ROOTS: readonly string[][] = [['apps', 'visu'], ['packages']];
 
 /**
- * Jede Datei unter diesen Wurzeln, die CSS AUSLIEFERT: Stylesheets, die
- * `<style>`-Bloecke der SFC und die des HTML-Dokuments selbst. `dist/` und
- * `node_modules/` bleiben aussen vor - das eine ist das Ergebnis dieser
- * Quellen, das andere nicht unser Code.
+ * Und die drei SKIN-PAKETE. Sie liegen nicht in diesem Repo, sondern haengen per
+ * `link:` in `apps/visu/node_modules/@obs-visu-skins/*` (auf `obs-visu-skins`)
+ * - und ausgerechnet dort lief ein Angriff durch: eine Regel
+ * `ion-page[data-page='preview'] .skin-host-cell{…}` in `ionic/ionic.css` blieb
+ * ungelesen, weil der Verzeichnisscan `node_modules` pauschal ueberspringt
+ * (Kritik R6, T2). Die Begruendung „sie kennen die Vorschau nicht" war eine
+ * Annahme; erreichbar ist es, denn es ist dieselbe Kette desselben Produkts, und
+ * `main.ts`/`SkinPage.vue` importieren die drei Blaetter ausdruecklich.
+ *
+ * Gelesen wird das ZIEL des Symlinks, ohne `node_modules` und `dist` darin. Die
+ * Gegenprobe, dass hier wirklich drei Blaetter ankommen, steht als eigene
+ * Zusicherung im Test - ein Scanner, der die Pakete nicht mehr findet, faellt
+ * daran auf, statt still nichts zu lesen.
+ */
+const SKIN_PACKAGE_DIR = join('apps', 'visu', 'node_modules', '@obs-visu-skins');
+
+function deliveredSkinPackages(): { dir: string; label: string }[] {
+  const base = join(repoRoot(), SKIN_PACKAGE_DIR);
+  if (!existsSync(base)) return [];
+  return readdirSync(base)
+    .sort()
+    .map((name) => ({ dir: realpathSync(join(base, name)), label: `@obs-visu-skins/${name}` }))
+    .filter((p) => statSync(p.dir).isDirectory());
+}
+
+/**
+ * Die CSS-TRAGENDEN Dateien unter diesen Wurzeln: Stylesheets, die
+ * `<style>`-Bloecke der SFC (ein- wie mehrzeilig, s. {@link STYLE_BLOCK}) und die
+ * des HTML-Dokuments selbst. `dist/` und `node_modules/` bleiben aussen vor -
+ * das eine ist das Ergebnis dieser Quellen, das andere nicht unser Code; die
+ * drei per `link:` eingebundenen Skin-Pakete kommen dafuer ueber
+ * {@link deliveredSkinPackages} eigens dazu.
+ *
+ * Was das NICHT liest: CSS, das kein Stylesheet und kein `<style>`-Block ist -
+ * eine Zeichenkette, die ein Bundler-Plugin oder ein Loader zur Laufzeit in ein
+ * Blatt verwandelt, steht in keiner der beiden Formen. Dass der Vorschau-Chunk
+ * so etwas nicht mitbringt, haelt der Verzeichnisscan
+ * ({@link previewStyleArtifacts}); fuer alles andere ist es eine offene Flanke,
+ * und der Rand des Dokuments ({@link edgeSince}) ist der Zaun dagegen.
  */
 function deliveredStyleFiles(): { path: string; css: string }[] {
-  const root = repoRoot();
   const out: { path: string; css: string }[] = [];
-  const walk = (dir: string): void => {
+  const walk = (dir: string, base: string, label: string): void => {
     for (const name of readdirSync(dir).sort()) {
       if (name === 'node_modules' || name === 'dist' || name.startsWith('.')) continue;
       const path = join(dir, name);
       if (statSync(path).isDirectory()) {
-        walk(path);
+        walk(path, base, label);
         continue;
       }
       const isSheet = /\.(css|scss|sass|less|styl)$/.test(name);
       if (!isSheet && !/\.(vue|html)$/.test(name)) continue;
       const src = readFileSync(path, 'utf8');
       const css = isSheet ? src : styleBlocks(src).map((b) => b.css).join('\n');
-      out.push({ path: path.slice(root.length + 1), css });
+      out.push({ path: join(label, path.slice(base.length + 1)), css });
     }
   };
-  for (const parts of DELIVERED_ROOTS) walk(join(root, ...parts));
+  const root = repoRoot();
+  for (const parts of DELIVERED_ROOTS) walk(join(root, ...parts), root, '');
+  for (const pkg of deliveredSkinPackages()) walk(pkg.dir, pkg.dir, pkg.label);
   return out;
 }
 
 /**
+ * Ein ausgelieferter Selektor - MIT seinem At-Kontext. Der Kontext wurde frueher
+ * weggeworfen, und genau daran lief ein Angriff vorbei: eine Regel
+ * `@media (max-width:700px){.skin-host-cell{padding:40px}}` meldete nur
+ * `.skin-host-cell`, der auf beiden Seiten greift - also „gleich". In
+ * Wirklichkeit ist die Vorschau ein schmales `<iframe>` und die echte Seite der
+ * ganze Bildschirm, dieselbe Regel greift dort und hier nicht (Kritik R6, T1).
+ */
+type DeliveredSelector = {
+  /** Der At-Kontext der Regel, leer wenn die Regel auf oberster Ebene steht. */
+  at: string;
+  /** Ein einzelner Selektor der Regel (eine Selektorliste zaehlt als ihre Teile). */
+  selector: string;
+  /** Kontext und Selektor als eine Zeile - das, was in Vergleich und Meldung geht. */
+  key: string;
+};
+
+/**
  * Alle Selektoren dieser Blaetter, einzeln (eine Selektorliste zaehlt als ihre
  * Teile - `.a, .preview-page` faerbt die Vorschau genauso wie `.preview-page`
- * allein). At-Regeln ohne Selektor (`@import`, `@keyframes`) bleiben aussen
- * vor; ein `@import` faellt schon am Verzeichnisscan und am Blockvergleich auf.
+ * allein) und je mit ihrem At-Kontext. At-Regeln ohne Selektor (`@import`,
+ * `@keyframes`) bleiben aussen vor; ein `@import` faellt schon am
+ * Verzeichnisscan und am Blockvergleich auf.
  */
-function deliveredSelectors(): string[] {
-  const out = new Set<string>();
+function deliveredSelectors(): DeliveredSelector[] {
+  const seen = new Set<string>();
+  const out: DeliveredSelector[] = [];
   for (const file of deliveredStyleFiles()) {
     for (const rule of parseRules(file.css)) {
       if (rule.selector.startsWith('@')) continue;
-      for (const part of rule.selector.split(', ')) out.add(part);
+      for (const selector of rule.selector.split(', ')) {
+        const key = rule.at.length > 0 ? `${rule.at} ${selector}` : selector;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ at: rule.at, selector, key });
+      }
     }
   }
-  return [...out].sort();
+  return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
+
+/**
+ * Ein At-Kontext, dessen Bedingung an der GROESSE der Flaeche haengt - und damit
+ * an genau dem Unterschied, den ein jsdom-Lauf nicht hat: die Vorschau steht in
+ * einem `<iframe>` mit `w-full h-[70vh]` in einer Editorspalte
+ * (`gui/src/components/visu/VisuPreviewFrame.vue`), die echte Seite fuellt den
+ * Bildschirm. Ob eine solche Regel dort greift und hier nicht, entscheidet erst
+ * der echte Viewport.
+ *
+ * jsdom kann das nicht entscheiden - also entscheidet es hier auch niemand: die
+ * betroffenen Selektoren werden GEMELDET und im Test ausgeschrieben. Eine neue
+ * groessenabhaengige Regel aendert diese Liste und macht den Test rot; ob sie ein
+ * Pixel bewegt, misst Teil E als Szenario E3 (Pixel-Diff im echten Browser).
+ */
+const SIZE_BOUND_FEATURE =
+  /\b(?:width|height|aspect-ratio|orientation|resolution|device-pixel-ratio)\b/;
+
+const isSizeBound = (at: string): boolean =>
+  at.length > 0 && (/@container\b/.test(at) || SIZE_BOUND_FEATURE.test(at));
+
+/**
+ * Die GLIEDER eines Selektors: `ion-page[data-page='preview'] .skin-host-cell`
+ * ist zwei Glieder, nicht eines. Warum das eine eigene Frage ist: ein Glied, das
+ * es NUR in der Vorschau gibt, macht die ganze Regel vorschau-eigen - auch wenn
+ * das Element, an dem sie haengt, auf KEINER der beiden Seiten gerendert wird.
+ * Der Vergleich ganzer Selektoren sagt dazu „trifft beide Seiten null Mal, also
+ * gleich"; genau so blieb `ion-page[data-page='preview'] .skin-host-unsupported`
+ * unsichtbar (Kritik R6, T6a). Ueber die Glieder faellt sie am Anker auf.
+ *
+ * Kombinatoren fliegen raus: fuer die Frage „gibt es dieses Glied auf dieser
+ * Seite ueberhaupt" ist es gleich, ob es Kind, Nachfahre oder Geschwister ist.
+ */
+function selectorLinks(selector: string): string[] {
+  return splitOutside(selector, ' ')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && p !== '>' && p !== '+' && p !== '~');
+}
+
+/**
+ * Die Zustands-Pseudoklassen, die ein jsdom-Mount nicht hat. Sie stehen als
+ * MENGE da und nicht als Alternation im Ausdruck, weil eine Alternation genau
+ * den Fehler erlaubt, der `:focus-visible` unsichtbar gemacht hat: `focus` stand
+ * vor `focus-visible`, `\b` hielt vor dem Bindestrich, und aus
+ * `.skin-host-link:focus-visible` wurde `.skin-host-link-visible` - ein
+ * gueltiger Selektor, der auf BEIDEN Seiten nichts trifft und die Regel damit
+ * still fuer „gleich" erklaerte (Kritik R6, T6b). Ueber die Menge kann das nicht
+ * mehr passieren: der Name wird ganz gelesen und dann nachgeschlagen.
+ */
+const STATE_PSEUDOS: ReadonlySet<string> = new Set([
+  'hover',
+  'active',
+  'focus',
+  'focus-visible',
+  'focus-within',
+  'visited',
+  'target',
+  'target-within',
+  'checked',
+  'indeterminate',
+  'disabled',
+  'enabled',
+  'placeholder-shown',
+  'autofill',
+  'read-only',
+  'read-write',
+  'default',
+  'valid',
+  'invalid',
+  'user-valid',
+  'user-invalid',
+  'in-range',
+  'out-of-range',
+  'required',
+  'optional',
+  'link',
+  'any-link',
+  'defined',
+  'open',
+  'modal',
+  'popover-open',
+  'fullscreen',
+  'picture-in-picture',
+]);
 
 /**
  * Ein Selektor in der Form, in der ihn `Element.matches` lesen kann. Was
@@ -1233,59 +1581,131 @@ function deliveredSelectors(): string[] {
  *   - ein Zustands-Pseudo (`:hover`, `:focus-visible`) beschreibt einen
  *     Zustand, den ein jsdom-Mount nicht hat.
  *
- * Der Rest zaehlt also im Zweifel als „greift" - eine Regel wird eher zu frueh
- * gemeldet als zu spaet. Was danach immer noch unlesbar ist, wird nicht still
- * uebersprungen, sondern unten ausgeschrieben.
+ * Ein Zustands-Pseudo wird dabei GANZ gelesen und in {@link STATE_PSEUDOS}
+ * nachgeschlagen; ein Name, der dort nicht steht, bleibt unangetastet stehen
+ * und faellt notfalls an {@link splitReadable} auf. Und entfernt wird nur, was
+ * auf der OBERSTEN Ebene steht: in `.a:not(:disabled)` bleibt das `:disabled`
+ * stehen, denn wegzunehmen hiesse dort verengen statt verbreitern (und
+ * `.a:not()` waere ausserdem gar kein Selektor mehr).
+ *
+ * Was diese Funktion ausgibt, greift also mindestens dort, wo die Regel greift -
+ * eine Regel wird eher zu frueh gemeldet als zu spaet. Sie darf einen Selektor
+ * NIE verengen oder verstuemmeln; dass sie es nicht tut, steht als eigene
+ * Zusicherung im Test („liest Zustands-Pseudoklassen ganz").
  */
+function stripStatePseudos(selector: string): string {
+  let out = '';
+  let depth = 0;
+  let quote = '';
+  let i = 0;
+  while (i < selector.length) {
+    const ch = selector[i];
+    if (quote.length > 0) {
+      out += ch;
+      if (ch === '\\' && i + 1 < selector.length) {
+        out += selector[i + 1];
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = '';
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (ch === ':' && depth === 0) {
+      const m = /^:([A-Za-z][\w-]*)(?![\w-(])/.exec(selector.slice(i));
+      if (m !== null && STATE_PSEUDOS.has(m[1].toLowerCase())) {
+        i += m[0].length;
+        continue;
+      }
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
 function matchable(selector: string): string {
-  return selector
-    .replace(/::v-deep\b|>>>|\/deep\//g, ' ')
-    .replace(/:(?:deep|slotted|global)\(([^()]*)\)/g, ' $1 ')
-    .replace(/::[-\w]+(?:\([^()]*\))?/g, '')
-    .replace(
-      /:(?:hover|active|focus|focus-visible|focus-within|visited|target|checked|indeterminate|disabled|enabled|placeholder-shown|autofill|read-only|read-write|default|valid|invalid|required|optional|link|any-link)\b/g,
-      '',
-    )
+  return stripStatePseudos(
+    selector
+      .replace(/::v-deep\b|>>>|\/deep\//g, ' ')
+      .replace(/:(?:deep|slotted|global)\(([^()]*)\)/g, ' $1 ')
+      .replace(/::[-\w]+(?:\([^()]*\))?/g, ''),
+  )
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-/** Welche dieser Selektoren `Element.matches` ueberhaupt lesen kann. */
-function splitReadable(selectors: readonly string[]): { readable: string[]; unreadable: string[] } {
-  const readable: string[] = [];
+/** Eine Probe: was verglichen wird (`key`) und womit `matches` es liest (`probe`). */
+type Probe = { key: string; probe: string };
+
+/**
+ * Welche dieser Proben `Element.matches` ueberhaupt lesen kann. Was er nicht
+ * lesen kann, wird NICHT still uebersprungen, sondern zurueckgegeben und im Test
+ * ausgeschrieben.
+ */
+function splitReadable(probes: readonly Probe[]): { readable: Probe[]; unreadable: string[] } {
+  const readable: Probe[] = [];
   const unreadable: string[] = [];
-  for (const selector of selectors) {
-    const probe = matchable(selector);
-    if (probe.length === 0) {
-      unreadable.push(selector);
+  for (const p of probes) {
+    if (p.probe.length === 0) {
+      unreadable.push(p.key);
       continue;
     }
     try {
-      document.body.matches(probe);
-      readable.push(selector);
+      document.body.matches(p.probe);
+      readable.push(p);
     } catch {
-      unreadable.push(selector);
+      unreadable.push(p.key);
     }
   }
   return { readable, unreadable };
 }
 
+/** Der erste Pruefkatalog: jeder ausgelieferte Selektor, ganz - mit At-Kontext. */
+function selectorProbes(delivered: readonly DeliveredSelector[]): Probe[] {
+  return delivered.map((d) => ({ key: d.key, probe: matchable(d.selector) }));
+}
+
 /**
- * Welche Selektoren auf DIESER Seite wirklich greifen - der Rahmen selbst,
- * alles darin und der Dokumentrahmen darum (`<html>`/`<body>`), damit auch ein
- * Blatt auffaellt, das die Seite ueber das Dokument faerbt.
+ * Der zweite Pruefkatalog: jedes GLIED jedes Selektors, einmal (s.
+ * {@link selectorLinks}). Der At-Kontext faellt hier weg - gefragt ist, ob es
+ * dieses Glied auf dieser Seite ueberhaupt GIBT, und das haengt nicht am
+ * Kontext.
  */
-function matchingSelectors(frame: Element, selectors: readonly string[]): string[] {
-  const scope = [
-    document.documentElement,
-    document.body,
-    frame,
-    ...Array.from(frame.querySelectorAll('*')),
-  ];
-  return selectors.filter((selector) => {
-    const probe = matchable(selector);
-    return scope.some((el) => el.matches(probe));
-  });
+function linkProbes(delivered: readonly DeliveredSelector[]): Probe[] {
+  const seen = new Set<string>();
+  const out: Probe[] = [];
+  for (const d of delivered) {
+    for (const link of selectorLinks(matchable(d.selector))) {
+      if (seen.has(link)) continue;
+      seen.add(link);
+      out.push({ key: link, probe: link });
+    }
+  }
+  return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/** Der Pruefbereich einer Seite: der Rahmen, alles darin, und `<html>`/`<body>`. */
+function scopeOf(frame: Element): Element[] {
+  return [document.documentElement, document.body, frame, ...Array.from(frame.querySelectorAll('*'))];
+}
+
+/**
+ * Welche Proben auf DIESER Seite wirklich greifen - der Rahmen selbst, alles
+ * darin und der Dokumentrahmen darum (`<html>`/`<body>`), damit auch ein Blatt
+ * auffaellt, das die Seite ueber das Dokument faerbt.
+ */
+function matchingProbes(frame: Element, probes: readonly Probe[]): string[] {
+  const scope = scopeOf(frame);
+  return probes.filter((p) => scope.some((el) => el.matches(p.probe))).map((p) => p.key);
 }
 
 /** Die Griffe, an denen NUR die Vorschau haengt - kein Blatt darf an ihnen faerben. */
@@ -1386,7 +1806,11 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
    *     die Navigation nachgestellt, die in der echten Visu auf diese Seite
    *     gefuehrt hat.
    */
-  async function mountLiveOnDraft(pageId: string, tweaks?: Record<string, unknown>) {
+  async function mountLiveOnDraft(
+    pageId: string,
+    tweaks?: Record<string, unknown>,
+    nodes: readonly PreviewDraftNode[] = DRAFT_NODES,
+  ) {
     const edgeBefore = edgeSnapshot();
     const store = useDeviceStore();
     const source = new PreviewDataSource(
@@ -1395,7 +1819,7 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
     source.setDraft({
       skin: PAGES.find((p) => p.id === pageId)!.skin,
       pageId,
-      nodes: DRAFT_NODES,
+      nodes,
       ...(tweaks ? { tweaks: tweaks as PreviewTweaks } : {}),
     });
     await store.init(source);
@@ -1650,14 +2074,17 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
     });
 
     /**
-     * DER RAND DER SEITE, gegen die echte Seite gehalten - und zwar zweimal:
-     * direkt nach dem Mount und noch einmal NACH einer Interaktion. Der
-     * Vorgaenger war eine Momentaufnahme der Kinderliste des `<body>`; ein
-     * `<style>`, das zur Laufzeit in den `<head>` wandert, ein
+     * DER RAND DER SEITE, gegen die echte Seite gehalten - an zwei
+     * Messzeitpunkten: direkt nach dem Mount und noch einmal NACH einer
+     * Interaktion. Der Vorgaenger war eine Momentaufnahme der Kinderliste des
+     * `<body>`; ein `<style>`, das zur Laufzeit in den `<head>` wandert, ein
      * `document.body.style.padding` und ein Knoten, der erst auf einen Klick
      * hin entsteht, lagen alle drei dahinter (Kritik R5, S3-S5).
+     *
+     * Aufgenommen wird der Zustand zu diesen zwei Zeitpunkten - was dazwischen
+     * entsteht und wieder vergeht, sieht diese Probe nicht.
      */
-    it('haelt den ganzen Rand des Dokuments gegen die echte Seite - auch nach einer Interaktion', async () => {
+    it('haelt den aufgenommenen Rand des Dokuments gegen die echte Seite - beim Mount und nach einer Interaktion', async () => {
       const before = edgeSnapshot();
       const live = await mountLiveOnDraft('overview');
       const liveEdge = live.edge();
@@ -1684,6 +2111,15 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       expect(documentStyleSources()).toEqual(['CSSOM: 0 Blatt, 0 adoptiert']);
       expect(printElement(document.documentElement, '@html')).toBe('@html | html |  |  |  | ');
       expect(printElement(document.body, '@body')).toBe('@body | body |  |  |  | ');
+
+      // Und gegen den fruehesten Stand, den dieser Lauf kennt: das Dokument
+      // beim Laden der Module. Was ein Modul schon dort tut und beim ersten
+      // Mount rueckgaengig macht - ein Splash-Knoten, der angehaengt und in
+      // `onMounted` wieder entfernt wird -, liegt vor jeder anderen Aufnahme
+      // und faellt nur hier auf (Kritik R6, T4).
+      expect(edgeSince(DOCUMENT_AT_IMPORT, frameOf(preview.wrapper.element))).toEqual(
+        RUHIGER_RAND,
+      );
     });
 
     /**
@@ -1693,7 +2129,7 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
      * selbst, ein schon vorhandenes Kind, und alles davon auch dann, wenn es
      * erst nach einer Interaktion passiert.
      */
-    it('faengt jeden dieser Wege: Knoten, <head>, <body> selbst, vorhandenes Kind, spaeter', async () => {
+    it('faengt jeden dieser Wege: Knoten, <head>, <body> selbst, vorhandenes Kind, entfernter Knoten, spaeter', async () => {
       const bestand = document.createElement('div');
       bestand.className = 'bestand-probe';
       document.body.appendChild(bestand);
@@ -1746,7 +2182,20 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         ]);
         bestand.removeAttribute('data-spaet');
 
-        // 5 - und dasselbe nach einer Interaktion: der Rand ist kein
+        // 5 - ein Knoten, den die Seite dem Dokument WEGNIMMT (Kritik R6, T4).
+        //     Eine Seite, die beim Modulladen ein `div.obs-splash` anhaengt und
+        //     es in `onMounted` wieder entfernt, aendert den Rand genauso wie
+        //     eine, die etwas hinzufuegt - im `<iframe>` ist ein entferntes
+        //     `<meta name="viewport">` ein anderer Massstab.
+        bestand.remove();
+        expect(edgeSince(before, frame)).toEqual([
+          ...ruhe,
+          'Knoten weg: @body | div | bestand-probe |  |  | ',
+        ]);
+        document.body.appendChild(bestand);
+        expect(edgeSince(before, frame)).toEqual(ruhe);
+
+        // 6 - und dasselbe nach einer Interaktion: der Rand ist kein
         //     Schnappschuss vom Mount (S5).
         await preview.interact();
         expect(edgeSince(before, frame)).toEqual(ruhe);
@@ -2056,6 +2505,21 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       expect(parseRules('.a{background:url(/A.png)}')).not.toEqual(
         parseRules('.a{background:url(/a.png)}'),
       );
+      // ANDERS: ein selbstgewaehlter Bezeichner als WERT ist
+      // gross/klein-empfindlich - eine Animation `Slide` ist nicht `slide`, ein
+      // Zaehler `Foo` nicht `foo`, ein Rasterbereich `Header` nicht `header`
+      // (Kritik R6 §4, s. CASE_SENSITIVE_VALUES).
+      expect(parseRules('.a{animation-name:Slide}')).not.toEqual(
+        parseRules('.a{animation-name:slide}'),
+      );
+      expect(parseRules('.a{animation:2s Slide}')).not.toEqual(parseRules('.a{animation:2s slide}'));
+      expect(parseRules('.a{counter-reset:Foo}')).not.toEqual(parseRules('.a{counter-reset:foo}'));
+      expect(parseRules('.a{grid-area:Header}')).not.toEqual(parseRules('.a{grid-area:header}'));
+      // Und die Gegenrichtung, damit die Ausnahme nicht die Formatierung
+      // wieder falsch rot macht: der EIGENSCHAFTSname bleibt unempfindlich,
+      // und Leerraum zaehlt auch hier nicht.
+      expect(parseRules('.a{GRID-AREA: Header}')).toEqual(parseRules('.a{grid-area:Header}'));
+
       // ANDERS: `.foo\.bar` ist EINE Klasse mit einem Punkt im Namen, nicht
       // zwei Klassen - der Escape wird deshalb nicht aufgeloest.
       expect(parseRules('.foo\\.bar{color:red}')).not.toEqual(
@@ -2099,44 +2563,164 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
     /**
      * DER WIRKUNGSVERGLEICH - die Antwort auf S1 und S2. Nicht „welche Datei
      * nennt einen von vier Griffen", sondern: welcher Selektor GREIFT am Ende
-     * in der Vorschau und nicht auf der echten Seite? Ein Blatt, das nur die
-     * Vorschau faerbt, ist genau das - egal wo es liegt und wie es geschrieben
-     * ist.
+     * in der Vorschau und nicht auf der echten Seite?
      *
-     * GRENZE: die drei Skin-Pakete liegen ausserhalb dieses Repos (`link:` auf
-     * `obs-visu-skins`) und werden hier nicht gelesen. Sie faerben beide Seiten
-     * gleich, weil beide Seiten denselben Skin durch dieselbe Kette rendern -
-     * und sie kennen die Vorschau nicht.
+     * Gelesen wird dafuer jedes Stylesheet und jeder `<style>`-Block unter
+     * `apps/visu` und `packages` - ein- wie mehrzeilig geschrieben - UND die
+     * drei per `link:` eingebundenen Skin-Pakete. Gehalten wird jeder Selektor
+     * gegen zwei Boeden: die volle Seite und die leere
+     * ({@link EMPTY_FLOOR_NODES}). Und zwar in drei Fragen:
+     *
+     *   1. Greift der ganze Selektor nur auf einer Seite?
+     *   2. Gibt es eines seiner GLIEDER nur auf einer Seite? (Damit faellt auch
+     *      eine Regel auf, deren Element KEIN Boden rendert - sie haengt dann an
+     *      einem vorschau-eigenen Anker; Kritik R6, T6a.)
+     *   3. Haengt der Selektor in einem groessenabhaengigen At-Kontext? Dann ist
+     *      er in jsdom NICHT entscheidbar und steht ausgeschrieben da (T1).
+     *
+     * WAS DIESER TEST NICHT SAGT: er ist kein Pixelbeweis. Er misst, welcher
+     * Selektor auf welcher Seite GREIFT - nicht, welche Deklaration am Ende
+     * gewinnt und wie sie aussieht. Eine Deklaration in einem ausgelieferten
+     * Blatt zu aendern (`inset: 0` -> `inset: 40%`) bewegt Pixel und ist hier
+     * unsichtbar; das misst Teil E (E3).
      */
-    it('kein ausgeliefertes Blatt faerbt die Vorschau anders als die echte Seite', async () => {
-      const selectors = deliveredSelectors();
-      // Gegenprobe 1: der Scanner findet ueberhaupt Selektoren, und zwar auch
-      // die des globalen Blattes, an dem S1 haing.
-      expect(selectors.length).toBeGreaterThan(20);
-      expect(selectors).toContain('.skin-host-cell[data-link]');
+    it('haelt jeden gelesenen Selektor und jedes seiner Glieder gegen beide Boeden - vorschau-eigen ist nur .preview-page', async () => {
+      const delivered = deliveredSelectors();
+      // Gegenprobe 1: der Scanner findet ueberhaupt Selektoren - die des
+      // globalen Blattes, an dem S1 hing, die des HTML-Dokuments und die der
+      // drei Skin-Pakete, die frueher gar nicht gelesen wurden (T2).
+      expect(delivered.length).toBeGreaterThan(20);
+      const keys = delivered.map((d) => d.key);
+      expect(keys).toContain('.skin-host-cell[data-link]');
+      expect(keys).toContain('.skin-host-link:focus-visible');
+      const paths = deliveredStyleFiles().map((f) => f.path);
+      expect(paths).toContain(join('apps', 'visu', 'index.html'));
+      expect(paths.filter((p) => p.startsWith('@obs-visu-skins/')).sort()).toEqual([
+        join('@obs-visu-skins', 'edomi', 'src', 'edomi.css'),
+        join('@obs-visu-skins', 'ionic', 'ionic.css'),
+        join('@obs-visu-skins', 'terminal', 'terminal.css'),
+      ]);
 
       // Gegenprobe 2: was `Element.matches` nicht lesen kann, wird nicht still
       // uebersprungen, sondern steht hier - heute ist die Liste leer.
-      const { readable, unreadable } = splitReadable(selectors);
-      expect(unreadable).toEqual([]);
+      const whole = splitReadable(selectorProbes(delivered));
+      const links = splitReadable(linkProbes(delivered));
+      expect(whole.unreadable).toEqual([]);
+      expect(links.unreadable).toEqual([]);
 
-      const live = await mountLiveOnDraft('overview');
-      const liveHits = matchingSelectors(frameOf(live.wrapper.element), readable);
-      live.wrapper.unmount();
+      // T1: was in jsdom NICHT entscheidbar ist, weil seine Bedingung an der
+      // Groesse der Flaeche haengt - die Vorschau ist ein schmales `<iframe>`,
+      // die echte Seite der ganze Bildschirm. Ausgeschrieben statt still als
+      // „gleich" gezaehlt; entschieden wird das im Pixel-Diff von Teil E (E3).
+      // Heute sind das genau die acht Regeln, mit denen der terminal-Skin sein
+      // Raster ab 700px umbaut. Sie sind KEIN Fehler - aber sie greifen im
+      // schmalen Vorschau-`<iframe>` anders als auf der vollflaechigen Seite,
+      // und genau das gehoert nach E3.
+      expect(delivered.filter((d) => isSizeBound(d.at)).map((d) => d.key)).toEqual([
+        '@container (width <= 700px) .t-root .t-cmds',
+        '@container (width <= 700px) .t-root .t-label',
+        '@container (width <= 700px) .t-root .t-led',
+        '@container (width <= 700px) .t-root .t-minmax',
+        '@container (width <= 700px) .t-root .t-row',
+        '@container (width <= 700px) .t-root .t-state',
+        '@container (width > 700px) .t-root .t-label',
+        '@container (width > 700px) .t-root .t-state',
+      ]);
 
-      const preview = await mountPreview('ionic', 'overview');
-      const previewHits = matchingSelectors(frameOf(preview.wrapper.element), readable);
+      const floors: [string, readonly PreviewDraftNode[]][] = [
+        ['die volle Seite', DRAFT_NODES],
+        ['die leere Seite', EMPTY_FLOOR_NODES],
+      ];
+      for (const [name, nodes] of floors) {
+        const live = await mountLiveOnDraft('overview', undefined, nodes);
+        const liveFrame = frameOf(live.wrapper.element);
+        const liveWhole = matchingProbes(liveFrame, whole.readable);
+        const liveLinks = matchingProbes(liveFrame, links.readable);
+        const liveTree = structure(liveFrame, isEditorChrome);
+        live.wrapper.unmount();
 
-      // Gegenprobe 3: der Abgleich trifft ueberhaupt etwas - sonst waeren zwei
-      // leere Mengen still gleich.
-      expect(liveHits.length).toBeGreaterThan(3);
+        const preview = await mountPreview('ionic', 'overview', { nodes });
+        const previewFrame = frameOf(preview.wrapper.element);
+        const previewWhole = matchingProbes(previewFrame, whole.readable);
+        const previewLinks = matchingProbes(previewFrame, links.readable);
 
-      // Was NUR in der Vorschau greift: genau die eine Regel des eigenen
-      // Blocks, die A5 Deklaration fuer Deklaration an `.skin-page` bindet.
-      expect(previewHits.filter((s) => !liveHits.includes(s))).toEqual(['.preview-page']);
-      // Und die Gegenrichtung, ausgeschrieben: die Live-Seite traegt ihren
-      // eigenen Rahmennamen (A4) und ihr Editor-Chrome (A1).
-      expect(liveHits.filter((s) => !previewHits.includes(s))).toEqual(LIVE_ONLY_MATCHES);
+        // Gegenprobe 3: beide Boeden zeigen wirklich, was sie zeigen sollen -
+        // sonst waere die leere Seite nur ein zweiter Fehlschlag. Und der
+        // Abgleich trifft ueberhaupt etwas, sonst waeren zwei leere Mengen
+        // still gleich.
+        expect(contentFacts(liveTree).cells).toBe(nodes === DRAFT_NODES ? 15 : 0);
+        // Auch der leere Boden ist eine gerenderte Seite und kein Nichts: die
+        // Skin-Wurzel steht, sonst verglichen beide Seiten einen leeren Baum.
+        expect(liveTree.some((l) => l.split(' | ')[2].split('.').includes('overview-root'))).toBe(
+          true,
+        );
+        expect(structure(previewFrame)).toEqual(liveTree);
+        expect(liveWhole.length).toBeGreaterThan(3);
+        expect(liveLinks.length).toBeGreaterThan(3);
+
+        // Was NUR in der Vorschau greift: genau die eine Regel des eigenen
+        // Blocks, die A5 Deklaration fuer Deklaration an `.skin-page` bindet.
+        expect([name, previewWhole.filter((s) => !liveWhole.includes(s))]).toEqual([
+          name,
+          ['.preview-page'],
+        ]);
+        expect([name, previewLinks.filter((s) => !liveLinks.includes(s))]).toEqual([
+          name,
+          ['.preview-page'],
+        ]);
+        // Und die Gegenrichtung, ausgeschrieben: die Live-Seite traegt ihren
+        // eigenen Rahmennamen (A4) und ihr Editor-Chrome (A1).
+        expect([name, liveWhole.filter((s) => !previewWhole.includes(s))]).toEqual([
+          name,
+          LIVE_ONLY_MATCHES,
+        ]);
+        expect([name, liveLinks.filter((s) => !previewLinks.includes(s))]).toEqual([
+          name,
+          LIVE_ONLY_LINKS,
+        ]);
+        preview.wrapper.unmount();
+      }
+    });
+
+    /**
+     * Die Gegenproben zu den drei Werkzeugen des Wirkungsvergleichs - dass sie
+     * nicht nur deshalb nichts finden, weil sie nichts lesen. Jede steht fuer
+     * einen Angriff, der genau hier durchlief (Kritik R6).
+     */
+    it('liest Zustands-Pseudoklassen ganz, einzeilige Bloecke und die Glieder eines Selektors', () => {
+      // T6b: `focus` stand vor `focus-visible`, `\b` hielt vor dem Bindestrich -
+      // aus dem Selektor wurde `.skin-host-link-visible`, der nirgends greift.
+      expect(matchable('.skin-host-link:focus-visible')).toBe('.skin-host-link');
+      expect(matchable('.a:focus-within .b')).toBe('.a .b');
+      expect(matchable('.a:hover')).toBe('.a');
+      // Und was KEINE bekannte Zustandsklasse ist, bleibt stehen, statt still
+      // abgeschnitten zu werden.
+      expect(matchable('.a:not(.b)')).toBe('.a:not(.b)');
+      expect(matchable('.a:nth-child(2)')).toBe('.a:nth-child(2)');
+
+      // T3: ein `<style>`-Block auf EINER Zeile - die normale Schreibweise in
+      // einem HTML-Dokument - wurde von der alten Verankerung nicht gefunden.
+      expect(styleBlocks('<style>.a{color:red}</style>')).toEqual([
+        { attrs: '', css: '.a{color:red}' },
+      ]);
+      expect(styleBlocks('<style scoped>\n.a{color:red}\n</style>')).toEqual([
+        { attrs: 'scoped', css: '\n.a{color:red}\n' },
+      ]);
+
+      // T6a: die Glieder eines Selektors einzeln - daran faellt ein
+      // vorschau-eigener Anker auch dann auf, wenn sein Ziel nirgends rendert.
+      expect(selectorLinks("ion-page[data-page='preview'] .skin-host-unsupported")).toEqual([
+        "ion-page[data-page='preview']",
+        '.skin-host-unsupported',
+      ]);
+      expect(selectorLinks('.a > .b + .c')).toEqual(['.a', '.b', '.c']);
+
+      // T1: ein groessenabhaengiger At-Kontext wird als solcher erkannt, ein
+      // groessenunabhaengiger nicht.
+      expect(isSizeBound('@media (max-width:700px)')).toBe(true);
+      expect(isSizeBound('@container (width > 700px)')).toBe(true);
+      expect(isSizeBound('@media (prefers-reduced-motion: reduce)')).toBe(false);
+      expect(isSizeBound('')).toBe(false);
     });
 
     /**
