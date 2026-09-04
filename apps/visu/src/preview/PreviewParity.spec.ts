@@ -83,12 +83,12 @@ import { dirname, join, resolve } from 'node:path';
  *
  * ══ AN TEIL E (Szenario E3) UEBERGEBEN ══════════════════════════════════════
  *
- * ZWEI Abweichungen bleiben hier ungemessen, weil ein jsdom-Lauf sie nicht
- * entscheiden KANN - er hat keinen Viewport und rechnet kein CSS aus. Sie sind
- * nicht vergessen und nicht wegdefiniert, sondern uebergeben; Teil E misst sie
- * im Pixel-Diff im echten Browser:
+ * DREI Abweichungen bleiben hier ungemessen, weil weder ein jsdom- noch ein
+ * happy-dom-Lauf sie entscheiden KANN - keiner hat einen Viewport, keiner
+ * rechnet CSS aus. Sie sind nicht vergessen und nicht wegdefiniert, sondern
+ * uebergeben; Teil E misst sie im Pixel-Diff im echten Browser:
  *
- *   E3-1  DER VIEWPORT-ANTEIL groessenabhaengiger Regeln. Ob eine Regel unter
+ *   E3-1  DER CONTAINER-/VIEWPORT-ANTEIL groessenabhaengiger Regeln. Ob eine Regel unter
  *         `@media (max-width:…)` oder `@container (width …)` greift, haengt an
  *         der Breite der Flaeche - und die Vorschau ist ein schmales `<iframe>`
  *         (`w-full h-[70vh]` in einer Editorspalte,
@@ -108,14 +108,24 @@ import { dirname, join, resolve } from 'node:path';
  *         und wie sie aussieht - jsdom rechnet kein CSS aus. Der Test "misst
  *         KEINE berechneten Stile" haelt genau diese Grenze fest.
  *
- * NICHT MEHR UEBERGEBEN: der RAHMEN um die Vorschau (frueher E3-2). `transform`,
- * `filter`, `zoom` oder eine Utility-Klasse (`scale-90 saturate-50`) am
- * `<iframe>` in `gui/` sind kein Stil dieser Seite, und diese Spec liest `gui/`
- * nicht - aber das war eine Testluecke und keine Grenze von jsdom: sie ist in
- * `gui/tests/components/visu/VisuPreviewFrame.spec.js` geschlossen, wo die
- * Klassenliste und das `style`-Attribut des Rahmens gepinnt sind. Beim
- * Pixel-Diff bleibt davon nur, was ein anderes Blatt zur Laufzeit auf diese
- * Klassen legt.
+ *   E3-2  DIE BERECHNETE UTILITY-DEKLARATION DES RAHMENS - und nur noch sie.
+ *         Der Rahmen um die Vorschau steht in `gui/`, und diese Spec liest
+ *         `gui/` nicht; gemessen wird er drueben in
+ *         `gui/tests/components/visu/VisuPreviewFrame.spec.js`, auf drei Wegen:
+ *         (a) Klassenliste und `style`-Attribut des `<iframe>` selbst; (b)
+ *         JEDES Element seines VORFAHRENPFADES bis zur Komponentenwurzel, dazu
+ *         negativ der ganze Pfad darueber - `transform` und `filter` erben, ein
+ *         `scale-90 saturate-50` am Eltern-`<div>` wirkt Zeichen fuer Zeichen
+ *         wie dieselbe Klasse am Rahmen (Kritik R8, D1); (c) ein Quelltextscan
+ *         ueber alle handgeschriebenen Blaetter unter `gui/src` und das
+ *         ausgelieferte `index.html` - nennt eines von ihnen eine der
+ *         gepinnten Klassen, faellt der Test.
+ *
+ *         Diese drei waren Testluecken und keine Grenzen des Verfahrens; sie
+ *         sind geschlossen. UEBERGEBEN ist genau der Rest: was das GEBAUTE
+ *         Utility-Blatt aus `rounded-lg`, `bg-white`, `w-full` oder `flex`
+ *         berechnet. Es steht in keinem Quelltext dieses Repos, und weder
+ *         jsdom noch happy-dom rechnet es aus - das entscheidet der Pixel-Diff.
  */
 
 // Ionic-Webkomponenten sind nicht jsdom-freundlich (gleiches Muster wie
@@ -634,10 +644,47 @@ function structure(
  */
 type DocEdge = {
   html: string;
+  head: string;
   body: string;
   nodes: Map<Element, string>;
   styles: string[];
 };
+
+/**
+ * JEDES Element unter `<html>` - und der Einstieg ist `<html>`, nicht `<head>`
+ * und `<body>`. Genau das war die Luecke: beide Aufnahmen begannen frueher bei
+ * `document.head` und `document.body`, ein Knoten, den ein Modul beim Laden an
+ * `document.documentElement` haengt (ein Geschwister von `<head>` und
+ * `<body>`), stand damit weder im Unterschied noch im absoluten Bestand
+ * (Kritik R8, B1). Im echten Vorschau-`<iframe>` ist auch er die Seite.
+ *
+ * `<head>` und `<body>` selbst zaehlen hier nicht als Knoten - sie sind der
+ * Rahmen und stehen in {@link DocEdge} mit einer eigenen, vollstaendigen Zeile;
+ * durchschritten werden sie mit ihrem eigenen Wegnamen (`@head`, `@body`),
+ * damit die Meldung sagt, WO etwas haengt.
+ *
+ * Was das nicht sieht: Kommentarknoten. Textknoten dagegen schon - sie stehen
+ * beim Traeger, denn {@link printElement} druckt den eigenen Text jedes
+ * Elements ab, und `<html>`, `<head>` und `<body>` haben ihre eigene Zeile.
+ */
+function walkDocument(
+  visit: (el: Element, where: string) => void,
+  skip: Element | null = null,
+): void {
+  const walk = (parent: Element, where: string): void => {
+    for (const child of Array.from(parent.children)) {
+      if (child === skip) continue;
+      const tag = child.tagName.toLowerCase();
+      if (parent === document.documentElement && (tag === 'head' || tag === 'body')) {
+        walk(child, `@${tag}`);
+        continue;
+      }
+      visit(child, where);
+      walk(child, where);
+    }
+  };
+  walk(document.documentElement, '@html');
+}
 
 /**
  * Die Stilquellen, die im TESTDOKUMENT haengen - gezaehlt, nicht gesucht: jedes
@@ -686,40 +733,26 @@ function documentStyleSources(): string[] {
  * auf, ein eingehaengter KNOTEN an keiner von beiden. Der Fall ist alltaeglich:
  * ein Toast-Container, ein Splash-Overlay, ein Debug-Banner.
  *
- * Deshalb steht hier der BESTAND: was in `<head>` und `<body>` haengt, ist im
- * Test Zeile fuer Zeile ausgeschrieben und heute leer ({@link LEERES_DOKUMENT})
- * - unabhaengig davon, WANN es dorthin kam. Der verglichene Rahmen taucht darin
+ * Deshalb steht hier der BESTAND: was unter `<html>` haengt, ist im Test Zeile
+ * fuer Zeile ausgeschrieben und heute leer ({@link LEERES_DOKUMENT}) -
+ * unabhaengig davon, WANN es dorthin kam. Der verglichene Rahmen taucht darin
  * nicht auf: Vue Test Utils spannt den Mount in einem losgeloesten Knoten auf,
  * er haengt also gar nicht am Dokument (dass das so ist, haelt derselbe Test
  * fest - stuende er im Dokument, waere diese Liste nicht leer).
  */
 function documentNodes(): string[] {
   const out: string[] = [];
-  const walk = (parent: Element, where: string): void => {
-    for (const child of Array.from(parent.children)) {
-      out.push(printElement(child, where));
-      walk(child, where);
-    }
-  };
-  walk(document.head, '@head');
-  walk(document.body, '@body');
+  walkDocument((el, where) => out.push(printElement(el, where)));
   return out;
 }
 
 /** Eine Aufnahme des Dokumentrandes - `frame` und sein Baum bleiben aussen vor. */
 function edgeSnapshot(frame: Element | null = null): DocEdge {
   const nodes = new Map<Element, string>();
-  const walk = (parent: Element, where: string): void => {
-    for (const child of Array.from(parent.children)) {
-      if (child === frame) continue;
-      nodes.set(child, printElement(child, where));
-      walk(child, where);
-    }
-  };
-  walk(document.head, '@head');
-  walk(document.body, '@body');
+  walkDocument((el, where) => nodes.set(el, printElement(el, where)), frame);
   return {
     html: printElement(document.documentElement, '@html'),
+    head: printElement(document.head, '@head'),
     body: printElement(document.body, '@body'),
     nodes,
     styles: documentStyleSources(),
@@ -743,6 +776,7 @@ function edgeSince(before: DocEdge, frame: Element | null): string[] {
   const now = edgeSnapshot(frame);
   const out: string[] = [];
   if (now.html !== before.html) out.push(`geaendert ${before.html} -> ${now.html}`);
+  if (now.head !== before.head) out.push(`geaendert ${before.head} -> ${now.head}`);
   if (now.body !== before.body) out.push(`geaendert ${before.body} -> ${now.body}`);
   const wasStyle = [...before.styles];
   for (const src of now.styles) {
@@ -777,10 +811,15 @@ function edgeSince(before: DocEdge, frame: Element | null): string[] {
 const RUHIGER_RAND: readonly string[] = [];
 
 /**
- * Und derselbe Rand ABSOLUT statt als Unterschied: `<head>` und `<body>` tragen
- * ueberhaupt keinen Knoten (s. {@link documentNodes}). Diese Liste ist der Zaun
- * gegen alles, was VOR jeder Aufnahme entsteht und bleibt - ein Knoten, den ein
- * Modul beim Laden anhaengt, steht in keinem Unterschied, aber hier.
+ * Und derselbe Rand ABSOLUT statt als Unterschied: unter `<html>` haengt
+ * ueberhaupt kein Element - weder in `<head>` noch in `<body>` noch neben den
+ * beiden (s. {@link walkDocument}). Wofuer diese Liste der Zaun ist, genau: fuer
+ * jedes ELEMENT, das VOR jeder Aufnahme entsteht und bleibt - ein Knoten, den
+ * ein Modul beim Laden anhaengt, steht in keinem Unterschied, aber hier. Wofuer
+ * sie es NICHT ist: fuer Kommentarknoten, und fuer alles, was ausserhalb dieses
+ * Testdokuments liegt (ein Blatt, das erst der ausgelieferte Bundler baut).
+ * Textknoten stehen beim Traeger, denn {@link printElement} nimmt den eigenen
+ * Text jedes Elements mit - `<html>`, `<head>` und `<body>` eingeschlossen.
  */
 const LEERES_DOKUMENT: readonly string[] = [];
 
@@ -1517,11 +1556,19 @@ function deliveredSkinPackages(): { dir: string; label: string }[] {
  * (jede Datei wird an ihrem aufgeloesten Pfad genau einmal gelesen, egal ueber
  * wie viele Wege sie erreichbar ist).
  *
- * Was sich nicht aufloesen laesst - eine URL, ein Paket, das hier nicht liegt -
- * wird NICHT still uebersprungen, sondern als `unresolved` zurueckgegeben und
- * im Test ausgeschrieben. Heute ist diese Liste leer; das eine vorhandene
- * `@import` (`edomi.css` laedt `@obs-visu-skins/ionic/ionic.css`) loest ueber
- * dieselben `link:`-Pakete auf und ist damit ohnehin schon gelesen.
+ * Und ZWEI Sorten von `@import` gehen dabei nicht still verloren, sondern
+ * kommen als `unresolved` zurueck und stehen im Test ausgeschrieben: eines,
+ * dessen Ziel sich nicht AUFLOESEN laesst (eine URL, ein Paket, das hier nicht
+ * liegt), und eines, dessen Ziel sich nicht LESEN laesst
+ * (`@import var(--sheet)`). Die zweite Sorte fiel frueher unter den Tisch, weil
+ * ein leeres Leseergebnis weggefiltert wurde - und mit ihr `@import"x.css"`
+ * (die Normalform jedes CSS-Minifiers, ohne Leerzeichen) und `@IMPORT`
+ * (At-Regelnamen liest CSS gross/klein-unempfindlich), die beide gar nicht
+ * erst als `@import` erkannt wurden; das nachgeladene Blatt blieb ganz
+ * ungelesen (Kritik R8, C3/C4). Beide Schreibweisen liest der Ausdruck jetzt.
+ * Heute ist die Liste leer; das eine vorhandene `@import` (`edomi.css` laedt
+ * `@obs-visu-skins/ionic/ionic.css`) loest ueber dieselben `link:`-Pakete auf
+ * und ist damit ohnehin schon gelesen.
  *
  * Was das NICHT liest: CSS, das kein Stylesheet und kein `<style>`-Block ist -
  * eine Zeichenkette, die ein Bundler-Plugin oder ein Loader zur Laufzeit in ein
@@ -1532,16 +1579,30 @@ function deliveredSkinPackages(): { dir: string; label: string }[] {
  * gegen die Stilquellen und Knoten, die im TESTDOKUMENT auftauchen - nicht
  * gegen ein Blatt, das erst der ausgelieferte Bundler baut.
  */
-function importTargets(css: string): string[] {
+/** Ein `@import` einer Datei: das gelesene Ziel und die At-Regel im Wortlaut. */
+type ImportTarget = {
+  /** Das Ziel, wie es dasteht - LEER, wenn die Zeile sich nicht lesen laesst. */
+  spec: string;
+  /** Die At-Regel selbst - sie geht in die Meldung, damit nichts still faellt. */
+  raw: string;
+};
+
+function importTargets(css: string): ImportTarget[] {
   return parseRules(css)
-    .filter((r) => /^@import\b/.test(r.selector))
+    .filter((r) => /^@import\b/i.test(r.selector))
     .map((r) => {
-      const m = /^@import\s+(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)|"([^"]*)"|'([^']*)')/.exec(
-        r.selector,
-      );
-      return (m?.[1] ?? m?.[2] ?? m?.[3] ?? m?.[4] ?? m?.[5] ?? '').trim();
-    })
-    .filter((spec) => spec.length > 0);
+      // `\s*` statt `\s+`: `@import"x.css"` ist die Ausgabe jedes Minifiers.
+      // `i`: At-Regelnamen sind gross/klein-unempfindlich, und
+      // `normalizeSelector` schreibt sie nicht klein.
+      const m =
+        /^@import\s*(?:url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)|"([^"]*)"|'([^']*)')/i.exec(
+          r.selector,
+        );
+      return {
+        spec: (m?.[1] ?? m?.[2] ?? m?.[3] ?? m?.[4] ?? m?.[5] ?? '').trim(),
+        raw: r.selector,
+      };
+    });
 }
 
 /**
@@ -1607,13 +1668,20 @@ function deliveredStyleSet(): {
   // Und jetzt die Kette - so lange, bis kein neues Blatt mehr dazukommt.
   for (let i = 0; i < queue.length; i += 1) {
     const from = queue[i];
-    for (const spec of importTargets(from.css)) {
-      const target = resolveImport(spec, dirname(from.abs));
-      if (target === null) {
-        unresolved.push(`${from.label} @import ${spec}`);
+    for (const imp of importTargets(from.css)) {
+      // Ein Ziel, das sich nicht LESEN laesst, ist genau dasselbe Loch wie
+      // eines, das sich nicht aufloesen laesst: ein Blatt, das die Vorschau
+      // faerbt und diese Probe nicht kennt. Beide gehen laut, keines still.
+      if (imp.spec.length === 0) {
+        unresolved.push(`${from.label} @import UNLESBAR: ${imp.raw}`);
         continue;
       }
-      add(target, `${from.label} @import ${spec}`);
+      const target = resolveImport(imp.spec, dirname(from.abs));
+      if (target === null) {
+        unresolved.push(`${from.label} @import ${imp.spec}`);
+        continue;
+      }
+      add(target, `${from.label} @import ${imp.spec}`);
     }
   }
   return { files, unresolved };
@@ -1765,26 +1833,68 @@ const STATE_PSEUDOS: ReadonlySet<string> = new Set([
  *
  * Ein Zustands-Pseudo wird dabei GANZ gelesen und in {@link STATE_PSEUDOS}
  * nachgeschlagen; ein Name, der dort nicht steht, bleibt unangetastet stehen
- * und faellt notfalls an {@link splitReadable} auf. Und entfernt wird nur, was
- * auf der OBERSTEN Ebene steht: in `.a:not(:disabled)` bleibt das `:disabled`
- * stehen, denn wegzunehmen hiesse dort verengen statt verbreitern (und
- * `.a:not()` waere ausserdem gar kein Selektor mehr).
+ * und faellt notfalls an {@link splitReadable} auf. Und WO entfernt wird,
+ * entscheidet die Klammer darum, nicht die Ebene allein: auf der obersten Ebene
+ * und in `:is()`, `:where()`, `:has()` ist Wegnehmen die verbreiternde Wahl, in
+ * `:not()` ist es die verengende. In `.a:not(:disabled)` bleibt das `:disabled`
+ * deshalb stehen (und `.a:not()` waere ausserdem gar kein Selektor mehr); in
+ * `.a:is(.b:hover)` faellt es, denn stehen gelassen traf der Selektor in jsdom
+ * NICHTS und hiess damit still „auf beiden Seiten gleich" (Kritik R8 §4). Was
+ * beim Schneiden leer wuerde (`.a:is(:hover)`), bleibt unangetastet.
  *
  * Was diese Funktion ausgibt, greift also mindestens dort, wo die Regel greift -
  * eine Regel wird eher zu frueh gemeldet als zu spaet.
  *
  * SIE SOLL DABEI NICHT VERENGEN UND NICHT VERSTUEMMELN, und der Test
  * („liest Zustands-Pseudoklassen ganz") haelt dazu eine ABZAEHLBARE Liste von
- * Formen fest, keine Allaussage: die drei entfernten Sorten, ein `:not()` und
- * ein `:nth-child()`, die als Ganzes stehen bleiben, ein Zustandsname in einem
- * Attributwert, ein ESCAPTER Doppelpunkt vor einem Zustandsnamen (`.md\:hover`
+ * Formen fest, keine Allaussage: die drei entfernten Sorten; ein `:not()` und
+ * ein `:nth-child()`, die als Ganzes stehen bleiben; ein Zustandsname in einem
+ * Attributwert; ein ESCAPTER Doppelpunkt vor einem Zustandsnamen (`.md\:hover`
  * ist eine Klasse namens `md:hover`, kein Pseudo - er wurde frueher still
- * weggeschnitten, Kritik R7, N6) und `::slotted()`/`::v-deep()` (die frueher als
- * `.a: .b` bzw. ` (.b)` herauskamen). Wofuer die Liste NICHT buergt: eine Form,
- * die dort nicht steht. Was `Element.matches` danach nicht mehr lesen kann,
- * landet laut in `unreadable` ({@link splitReadable}) statt still zu treffen -
- * das ist der Zaun, nicht dieser Absatz.
+ * weggeschnitten, Kritik R7, N6); `::slotted()`/`::v-deep()` (die frueher als
+ * `.a: .b` bzw. ` (.b)` herauskamen); ein `::`-LITERAL in einem Attributwert
+ * (`.a[data-x="::before"]` wurde still zu `.a[data-x=""]`) und ein ZUSTAND in
+ * `:is()`/`:where()`/`:has()` (`.a:is(.b:hover)` blieb stehen und traf nichts) -
+ * die beiden letzten aus Kritik R8 §4.
+ *
+ * WOFUER DIE LISTE NICHT BUERGT, ausdruecklich: eine Form, die dort nicht
+ * steht. Und `unreadable` ({@link splitReadable}) ist dagegen KEIN Zaun: es
+ * faengt ausschliesslich, was `Element.matches` nicht mehr PARSEN kann. Eine
+ * stille Verengung ist einwandfrei parsbar - `.a[data-x=""]` und
+ * `.a:is(.b:hover)` sind gueltige Selektoren, sie treffen nur etwas anderes
+ * bzw. nichts. Der Zaun gegen diese Sorte ist die Formenliste im Test, sonst
+ * nichts.
  */
+/**
+ * Die schliessende Klammer zu der bei `open` - Zeichenketten und Escapes zaehlen
+ * dabei nicht mit. `-1`, wenn sie fehlt.
+ */
+function closingParen(text: string, open: number): number {
+  let depth = 0;
+  let quote = '';
+  for (let i = open; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '\\') {
+      i += 1;
+      continue;
+    }
+    if (quote.length > 0) {
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 function stripStatePseudos(selector: string): string {
   let out = '';
   let depth = 0;
@@ -1821,6 +1931,22 @@ function stripStatePseudos(selector: string): string {
     if (ch === '(') depth += 1;
     else if (ch === ')') depth = Math.max(0, depth - 1);
     else if (ch === ':' && depth === 0) {
+      // `:is()`, `:where()`, `:has()`: dort ist WEGNEHMEN die verbreiternde
+      // Wahl, anders als in `:not()`. Also weiter hinein statt darum herum -
+      // `.a:is(.b:hover)` blieb sonst stehen und traf in jsdom nichts
+      // (Kritik R8 §4). Wird der Rumpf dabei leer, bleibt er, wie er war.
+      const fn = /^:(is|where|has|matches|any)\(/i.exec(selector.slice(i));
+      if (fn !== null) {
+        const open = i + fn[0].length - 1;
+        const close = closingParen(selector, open);
+        if (close > 0) {
+          const inner = selector.slice(open + 1, close);
+          const stripped = stripStatePseudos(inner);
+          out += `:${fn[1]}(${stripped.trim().length > 0 ? stripped : inner})`;
+          i = close + 1;
+          continue;
+        }
+      }
       const m = /^:([A-Za-z][\w-]*)(?![\w-(])/.exec(selector.slice(i));
       if (m !== null && STATE_PSEUDOS.has(m[1].toLowerCase())) {
         i += m[0].length;
@@ -1833,9 +1959,32 @@ function stripStatePseudos(selector: string): string {
   return out;
 }
 
+/**
+ * Dieselbe Zeichenkette, aber mit ausgeblendeten CSS-Zeichenketten: jede steht
+ * waehrend `run` als ein Platzhalter da, der weder `:` noch Klammern noch
+ * Wortzeichen enthaelt, und kommt danach unveraendert zurueck.
+ *
+ * Warum es das braucht: die drei Ersetzungen in {@link matchable} liefen auf dem
+ * ROHEN Selektor, also auch INNERHALB von Anfuehrungszeichen. Aus
+ * `.a[data-x="::before"]` wurde damit still `.a[data-x=""]` - ein einwandfrei
+ * lesbarer Selektor, der etwas anderes trifft; `unreadable` faengt so etwas per
+ * Konstruktion nicht (Kritik R8 §4).
+ */
+function hideStrings(text: string, run: (hidden: string) => string): string {
+  const strings: string[] = [];
+  const hidden = cssParts(text)
+    .map((p) => {
+      if (p.kind !== 'string') return p.text;
+      strings.push(p.text);
+      return `\uE000${strings.length - 1}\uE001`;
+    })
+    .join('');
+  return run(hidden).replace(/\uE000(\d+)\uE001/g, (_m, i: string) => strings[Number(i)]);
+}
+
 function matchable(selector: string): string {
-  return stripStatePseudos(
-    selector
+  const ohneKapseln = hideStrings(selector, (code) =>
+    code
       // Zuerst die Formen MIT Klammer, und mit einem wie zwei Doppelpunkten:
       // `::slotted(.b)` traf frueher nur der Ein-Doppelpunkt-Zweig und liess
       // den ersten stehen (`.a: .b`), `::v-deep(.b)` wurde vom Zweig darunter
@@ -1843,9 +1992,10 @@ function matchable(selector: string): string {
       .replace(/::?(?:v-)?(?:deep|slotted|global)\(([^()]*)\)/g, ' $1 ')
       .replace(/::v-deep\b|>>>|\/deep\//g, ' ')
       .replace(/::[-\w]+(?:\([^()]*\))?/g, ''),
-  )
-    .replace(/\s+/g, ' ')
-    .trim();
+  );
+  // Und der Leerraum wird auch nur AUSSERHALB von Zeichenketten
+  // zusammengezogen: `[data-x="a  b"]` ist ein anderer Wert als `[data-x="a b"]`.
+  return squeeze(stripStatePseudos(ohneKapseln)).trim();
 }
 
 /** Eine Probe: was verglichen wird (`key`) und womit `matches` es liest (`probe`). */
@@ -2366,12 +2516,13 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
 
     /**
      * Die Gegenproben zum Rand: dass er nicht nur deshalb leer ist, weil er
-     * nicht hinsieht. Jede der fuenf steht fuer einen Weg, der frueher an ihm
+     * nicht hinsieht. Jede der sechs steht fuer einen Weg, der frueher an ihm
      * vorbeilief - ein Knoten am `<body>`, ein Blatt im `<head>`, das `<body>`
-     * selbst, ein schon vorhandenes Kind, und alles davon auch dann, wenn es
-     * erst nach einer Interaktion passiert.
+     * selbst, ein schon vorhandenes Kind, ein Knoten NEBEN `<head>` und
+     * `<body>` (direkt an `<html>`), und alles davon auch dann, wenn es erst
+     * nach einer Interaktion passiert.
      */
-    it('faengt jeden dieser Wege: Knoten, <head>, <body> selbst, vorhandenes Kind, entfernter Knoten, spaeter', async () => {
+    it('faengt jeden dieser Wege: Knoten, <head>, <body> selbst, vorhandenes Kind, entfernter Knoten, ein Knoten an <html>, spaeter', async () => {
       const bestand = document.createElement('div');
       bestand.className = 'bestand-probe';
       document.body.appendChild(bestand);
@@ -2386,6 +2537,9 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       probe.textContent = 'Entwurfsvorschau';
       const sheet = document.createElement('style');
       sheet.textContent = '.preview-page .visu-root { padding: 40px }';
+      const htmlKind = document.createElement('div');
+      htmlKind.className = 'html-probe';
+      htmlKind.textContent = 'Entwurfsvorschau';
       try {
         // 1 - ein Knoten am `<body>` (Teleport, Portal, Banner).
         document.body.appendChild(probe);
@@ -2444,7 +2598,24 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         document.body.appendChild(bestand);
         expect(edgeSince(before, frame)).toEqual(ruhe);
 
-        // 6 - und dasselbe nach einer Interaktion: der Rand ist kein
+        // 6 - ein Knoten NEBEN `<head>` und `<body>`, direkt an `<html>`.
+        //     Der Bestandspin stieg frueher bei `document.head` und
+        //     `document.body` ein; was ein Modul beim Laden hierhin haengt,
+        //     stand damit in keiner der beiden Listen (Kritik R8, B1). Im
+        //     echten Vorschau-`<iframe>` ist auch das die Seite.
+        document.documentElement.appendChild(htmlKind);
+        expect(documentNodes()).toEqual([
+          '@body | div | bestand-probe |  |  | ',
+          '@html | div | html-probe |  |  | Entwurfsvorschau',
+        ]);
+        expect(edgeSince(before, frame)).toEqual([
+          ...ruhe,
+          'neu @html | div | html-probe |  |  | Entwurfsvorschau',
+        ]);
+        htmlKind.remove();
+        expect(edgeSince(before, frame)).toEqual(ruhe);
+
+        // 7 - und dasselbe nach einer Interaktion: der Rand ist kein
         //     Schnappschuss vom Mount (S5).
         await preview.interact();
         expect(edgeSince(before, frame)).toEqual(ruhe);
@@ -2457,6 +2628,7 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         probe.remove();
         sheet.remove();
         bestand.remove();
+        htmlKind.remove();
         document.body.removeAttribute('style');
       }
     });
@@ -2801,19 +2973,43 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
     });
 
     /**
-     * Die Gegenprobe zum `@import`-Leser: dass er die Zeile in ihren
-     * ueblichen Schreibweisen findet und sein Ziel dort sucht, wo der Browser
-     * es suchen wuerde - relativ zur IMPORTIERENDEN Datei, nicht zum
-     * Verzeichnisscan. Was er nicht findet, gibt er als `null` zurueck und
-     * landet damit in der ausgeschriebenen `unresolved`-Liste (Kritik R7, N4).
+     * Die Gegenprobe zum `@import`-Leser an seiner engsten Stelle: dem Ausdruck,
+     * der das Ziel aus der At-Regel liest, und der Aufloesung dieses Ziels dort,
+     * wo der Browser es suchen wuerde - relativ zur IMPORTIERENDEN Datei, nicht
+     * zum Verzeichnisscan.
+     *
+     * Der Ausdruck verlangte frueher `@import` + LEERRAUM und las
+     * gross/klein-empfindlich. `@import"x.css"` (die Normalform jedes
+     * CSS-Minifiers) und `@IMPORT "x.css"` fielen damit durch - und zwar STILL:
+     * das leere Leseergebnis wurde weggefiltert, statt in `unresolved` zu
+     * landen, und das nachgeladene Blatt blieb ganz ungelesen (Kritik R8,
+     * C3/C4). Beides steht hier jetzt Form fuer Form.
      */
-    it('liest die @import-Zeilen eines Blattes und loest ihr Ziel auf', () => {
-      expect(importTargets("@import '../../shared-preview.css';\n.a{color:red}")).toEqual([
+    it('liest jede @import-Zeile - ohne Leerzeichen, gross geschrieben - und laesst keine still fallen', () => {
+      const specs = (css: string): string[] => importTargets(css).map((t) => t.spec);
+      // Die Formen, die schon hielten.
+      expect(specs("@import '../../shared-preview.css';\n.a{color:red}")).toEqual([
         '../../shared-preview.css',
       ]);
-      expect(importTargets('@import url("x/y.css") screen;')).toEqual(['x/y.css']);
-      expect(importTargets('@import url(z.css);')).toEqual(['z.css']);
-      expect(importTargets('.a{color:red}')).toEqual([]);
+      expect(specs('@import "../../shared-preview.css";')).toEqual(['../../shared-preview.css']);
+      expect(specs('@import url("x/y.css") screen;')).toEqual(['x/y.css']);
+      expect(specs('@import url(z.css);')).toEqual(['z.css']);
+      expect(specs('.a{color:red}')).toEqual([]);
+      expect(specs('@charset "utf-8";')).toEqual([]);
+      // C3: kein Leerzeichen hinter der At-Regel.
+      expect(specs('@import"../c.css";')).toEqual(['../c.css']);
+      expect(specs("@import'../c.css';")).toEqual(['../c.css']);
+      // C4: At-Regelnamen liest CSS gross/klein-unempfindlich.
+      expect(specs('@IMPORT "../d.css";')).toEqual(['../d.css']);
+      expect(specs("@Import'../d.css';")).toEqual(['../d.css']);
+      // Und der eigentliche Punkt: was sich nicht LESEN laesst, faellt nicht
+      // still weg, sondern kommt mit leerem `spec` zurueck und geht damit
+      // denselben Weg wie ein Ziel, das sich nicht AUFLOESEN laesst - nach
+      // `unresolved`, oben im Test ausgeschrieben.
+      expect(importTargets('@import var(--sheet);')).toEqual([
+        { spec: '', raw: '@import var(--sheet)' },
+      ]);
+      expect(importTargets('@import;')).toEqual([{ spec: '', raw: '@import' }]);
 
       const previewDir = join(repoRoot(), 'apps', 'visu', 'src', 'preview');
       expect(resolveImport('./PreviewPage.vue', previewDir)).toBe(
@@ -2887,7 +3083,9 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       const edomi = set.files.find(
         (f) => f.path === join('@obs-visu-skins', 'edomi', 'src', 'edomi.css'),
       );
-      expect(importTargets(edomi!.css)).toEqual(['@obs-visu-skins/ionic/ionic.css']);
+      expect(importTargets(edomi!.css).map((t) => t.spec)).toEqual([
+        '@obs-visu-skins/ionic/ionic.css',
+      ]);
       expect(paths.filter((p) => p.endsWith(join('ionic', 'ionic.css')))).toHaveLength(1);
 
       // Gegenprobe 2: was `Element.matches` nicht lesen kann, wird nicht still
@@ -2987,6 +3185,15 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
      * Gegenrichtung (was die Live-Seite hat und die wartende Vorschau nicht)
      * ist per Konstruktion die halbe Seite und wird hier nicht behauptet - sie
      * steht in den zwei gemeinsamen Boeden oben.
+     *
+     * UND DAZU DAS RENDERING SELBST, nicht nur die Selektoren, die darauf
+     * zielen: Rahmen und Baum stehen Element fuer Element ausgeschrieben, samt
+     * Inline-Stil. Ohne das ging ein `<div class="preview-scrim"
+     * style="position:fixed;inset:0;background:red">` neben dem Hinweis durch
+     * die volle Suite - es nennt kein ausgeliefertes Blatt, steht also in
+     * keiner Probe, und die drei Gegenproben darunter (Zustand steht, genau ein
+     * `.preview-hint`, keine `preview-canvas`) uebersieht ein zusaetzlicher
+     * Bruder alle drei (Kritik R8, A1).
      */
     it('haelt jeden gelesenen Selektor und jedes Glied auch in den vorschau-eigenen Zustaenden gegen die Live-Seite - was nur dort greift, ist .preview-page und .preview-hint', async () => {
       const delivered = deliveredSelectors();
@@ -3005,11 +3212,15 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       expect(liveWhole.length).toBeGreaterThan(3);
       expect(liveLinks.length).toBeGreaterThan(3);
 
-      const eigene: [string, string | null][] = [
-        ['waiting', null],
-        ['unknown-skin', 'gibtesnichtimprodukt'],
+      const eigene: [string, string | null, string][] = [
+        ['waiting', null, 'Warte auf einen Entwurf aus dem Editor.'],
+        [
+          'unknown-skin',
+          'gibtesnichtimprodukt',
+          'Dieser Skin wird von dieser Visu nicht ausgeliefert.',
+        ],
       ];
-      for (const [zustand, skin] of eigene) {
+      for (const [zustand, skin, hinweis] of eigene) {
         const wrapper = await mountPreviewOwnState(skin);
         const frame = frameOf(wrapper.element);
 
@@ -3019,6 +3230,21 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         expect(frame.getAttribute('data-preview-state')).toBe(zustand);
         expect(frame.querySelectorAll('.preview-hint')).toHaveLength(1);
         expect(frame.querySelector('[data-testid="preview-canvas"]')).toBeNull();
+
+        // Und das RENDERING dieser Zustaende, Element fuer Element - nicht nur,
+        // welcher gelesene Selektor auf sie zielt. Ein zweiter Knoten im
+        // `v-else`-Zweig (`<div class="preview-scrim"
+        // style="position:fixed;inset:0;background:red">`) nennt kein
+        // ausgeliefertes Blatt, steht damit in keiner Probe und ging durch die
+        // volle Suite (Kritik R8, A1). Hier faellt er auf - samt seinem
+        // Inline-Stil, den kein Blattvergleich je liest, und samt einem
+        // Inline-Stil am Rahmen selbst.
+        expect(printElement(frame, '@frame')).toBe(
+          `@frame | ion-page | preview-page | data-page=preview data-preview-state=${zustand} |  | `,
+        );
+        expect(structure(frame)).toEqual([
+          `/0 | p | preview-hint | data-testid=preview-hint |  | ${hinweis}`,
+        ]);
 
         const eigenWhole = matchingProbes(frame, whole.readable);
         const eigenLinks = matchingProbes(frame, links.readable);
@@ -3062,6 +3288,26 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       expect(matchable('.a::v-deep(.b)')).toBe('.a .b');
       expect(matchable('.a :deep(.b)')).toBe('.a .b');
 
+      // R8: die drei Ersetzungen liefen auf dem ROHEN String, also auch in
+      // Anfuehrungszeichen. Aus `.a[data-x="::before"]` wurde still
+      // `.a[data-x=""]` - ein lesbarer Selektor, der etwas anderes trifft, und
+      // `unreadable` faengt so etwas per Konstruktion nicht (Kritik R8 §4).
+      expect(matchable('.a[data-x="::before"]')).toBe('.a[data-x="::before"]');
+      expect(matchable('.a[data-x="::v-deep(.b)"]')).toBe('.a[data-x="::v-deep(.b)"]');
+      expect(matchable("[data-x='::slotted(.b)'] .c")).toBe("[data-x='::slotted(.b)'] .c");
+
+      // R8: in `:is()`/`:where()`/`:has()` ist STEHENLASSEN die verengende
+      // Wahl - `.a:is(.b:hover)` traf in jsdom nichts und hiess damit still
+      // „gleich". Dort wird der Zustand deshalb mitgeschnitten; in `:not()`
+      // ist es genau umgekehrt (s. oben), dort bleibt er stehen.
+      expect(matchable('.a:is(.b:hover)')).toBe('.a:is(.b)');
+      expect(matchable('.a:has(.b:focus-visible)')).toBe('.a:has(.b)');
+      expect(matchable('.a:where(.b:hover, .c)')).toBe('.a:where(.b, .c)');
+      expect(matchable('.a:is(.b:hover):not(.c:disabled)')).toBe('.a:is(.b):not(.c:disabled)');
+      // Und was dabei LEER wuerde, bleibt stehen statt verstuemmelt zu werden -
+      // `.a:is()` waere kein Selektor mehr.
+      expect(matchable('.a:is(:hover)')).toBe('.a:is(:hover)');
+
       // T3: ein `<style>`-Block auf EINER Zeile - die normale Schreibweise in
       // einem HTML-Dokument - wurde von der alten Verankerung nicht gefunden.
       expect(styleBlocks('<style>.a{color:red}</style>')).toEqual([
@@ -3086,6 +3332,7 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       expect(isSizeBound('@media (prefers-reduced-motion: reduce)')).toBe(false);
       expect(isSizeBound('')).toBe(false);
     });
+
 
     /**
      * Und die Grenze als Test statt als Fussnote. Diese Zusicherung DARF nicht
