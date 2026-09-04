@@ -42,10 +42,17 @@
  * Shell-Kanal (`shellContext`). Diese Seite speist ihn mit DEMSELBEN Satz Felder
  * wie `SkinPage` - Titel, Nav-Zustand, Wurzel-Bindung, Skin-Flaeche -, sonst
  * stuende im Kopf des Vorschaurahmens dauerhaft der Nav-Ruecktitel „Übersicht"
- * statt der Seite, die der Autor gerade bearbeitet. `PreviewParity.spec.ts`
- * haelt beide Seiten Ebene fuer Ebene gegeneinander und benennt die eine
- * Abweichung, die bewusst bleibt (der Tweak-Editor der Live-Seite ist
- * Editor-Chrome - im Vorschau-Modus bedient der Autor ihn in der Admin-GUI).
+ * statt der Seite, die der Autor gerade bearbeitet.
+ *
+ * Wer das nachhaelt: `PreviewParity.spec.ts` stellt beide Seiten auf DENSELBEN
+ * Entwurfsboden und vergleicht die GANZE gerenderte Flaeche Element fuer Element
+ * - Tag, Klassen, alle Attribute, alle Stil-Eigenschaften, den Text. Alles, was
+ * abweichen darf, steht dort als kurze, benannte Ausnahmeliste (A1-A4): das
+ * Editor-Chrome der Live-Seite (der Tweak-Umschalter - im Vorschau-Modus bedient
+ * der Autor ihn in der Admin-GUI), die reinen Vorschau-Marker, Vues
+ * Scoped-Marker und der Seitenrahmen. Was hier also neu gerendert wird, muss
+ * entweder auch auf der echten Seite stehen oder in dieser Liste - sonst faellt
+ * der Nachweis.
  */
 import { computed, onBeforeUnmount, onMounted, ref, nextTick, watchEffect } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -245,8 +252,21 @@ onBeforeUnmount(() => receiver.stop());
 </template>
 
 <style scoped>
-/* Wie `.skin-page`: die Seite liegt im scrollenden Shell-Content, nicht im
-   Outlet-eigenen Kasten (#118). */
+/* QUELLE DIESER BEIDEN REGELN IST `pages/SkinPage.vue` (`.skin-page` /
+   `.overview-root`), nicht diese Datei. Warum sie hier trotzdem noch einmal
+   steht: `<style scoped>` traegt den `data-v-*`-Marker genau EINES SFC, eine
+   Regel laesst sich zwischen zwei Komponenten also nicht teilen - und ein
+   globales Stylesheet daraus zu machen hiesse, die Kasten-Regel der echten Seite
+   umzubauen. Die Kopie ist damit unvermeidbar, das Auseinanderlaufen nicht:
+   `PreviewParity.spec.ts` ("der Seitenkasten beider Seiten") haelt beide Stellen
+   Deklaration fuer Deklaration aneinander und faellt mit Klartext, sobald eine
+   von beiden wandert. Wer hier etwas aendert, aendert es dort mit - oder die
+   Probe sagt, dass die Vorschau gerade in einem anderen Kasten sitzt als die
+   Seite, die sie zeigen soll.
+
+   Der Inhalt: `.ion-page` ist `position: absolute; inset: 0`, der Kasten einer
+   Ansicht, die den Viewport BESITZT. Hier liegt die Seite im scrollenden
+   Shell-Content (#118), also zurueck in den Fluss - genau wie `.skin-page`. */
 .preview-page {
   position: relative;
   contain: layout style;
