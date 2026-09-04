@@ -75,6 +75,52 @@ Upstream-PR mergebar.
 - Jede Formänderung am Vertrag = Semver-Bump + `CHANGELOG.md`. Bricht ein Skin, wird seine
   Fixture-Wand rot — das ist gewollt.
 
+### Contract-Bump: der rote Zwischenschritt ist eingebaut (MUST)
+
+Ein Minor-Bump am Vertrag macht **zwangsläufig genau einen PR rot**. Das ist kein Defekt,
+sondern die Folge zweier Gates, die einander bedingen:
+
+- Die App-CI (`visu`) prüft per Dev-Link-Test, dass die Skin-Manifeste **exakt** die
+  Vertragsversion targeten (`apps/visu/tests/*-skin-link.test.ts` — bewusst als Wächter
+  gegen cross-repo-Versionsdrift gebaut, ohne hartkodiertes Literal).
+- Die Skins-CI baut den Vertrag gegen `openbridgeserver@feat/visu-mobile-skins`
+  (`obs-visu-skins/.github/workflows/ci.yml`, Schritt „Recreate dev-link path").
+
+Daraus folgt: Der Contract-PR kann nicht grün werden, bevor die Skins nachgezogen haben —
+und die Skins können nicht bauen, bevor der Vertrag gemergt ist.
+
+**Reihenfolge, in der die Kette aufgeht:**
+
+1. Contract-PR (dieses Repo) **mit rotem `visu`-Check** nach `feat/visu-mobile-skins`
+   mergen. Alle übrigen Checks müssen grün sein.
+2. Skins-PR mit dem Manifest-Bump (`targetsContract`) — dessen CI wird jetzt grün, weil der
+   Vertrag am Dev-Link-Ziel steht.
+3. Nach dem Skins-Merge ist die App-Kette wieder grün.
+
+**Pflichten vor Schritt 1:**
+
+- **Den Operator informieren und die Freigabe einholen.** Einen PR mit rotem CI zu mergen
+  ist nie eine Agenten-Entscheidung, auch wenn der Präzedenzfall eindeutig ist.
+- **Verifizieren, dass es der ERWARTETE rote Check ist.** Der Fehler muss genau
+  `expected '<alt>' to be '<neu>'` in `tests/*-skin-link.test.ts` sein. Ein `visu`-Check,
+  der aus einem anderen Grund rot ist, ist ein Stopp-Signal.
+- **Auf den Stand achten.** GitHub zeigt zu einem PR oft mehrere `visu`-Einträge; nur der
+  Lauf mit dem jüngsten `startedAt` zählt. Ein alter Fehllauf von vor dem Nachbar-Merge
+  sagt nichts:
+  `gh pr view <n> --json statusCheckRollup --jq '.statusCheckRollup[]|select(.name=="visu")|"\(.startedAt) \(.conclusion)"'`
+
+**Präzedenzfälle:** `#151` (Vertrag 1.12, gemergt 2026-09-03) und `#153` (Vertrag 1.13,
+2026-09-04) — beide vom Operator so entschieden.
+
+**Gegenrichtung:** Ein Skins-PR, der neue Vertrags-Typen benutzt, ist rot, bis der
+zugehörige Contract-PR hier gemergt ist. Auch dann gilt: erst App, dann Skins. Wer die
+Reihenfolge dreht, sitzt in einem Deadlock, der wie ein Codefehler aussieht und keiner ist.
+
+> **Nur die Dev-Link-Phase.** Der erzwungene Gleichstand ist eine Eigenschaft des
+> `link:`-Aufbaus, nicht des Vertrags. Nach dem Release (publizierte npm-Versionen) darf ein
+> Skin hinter dem Vertrag herhinken — der Konformitätsreport macht den Versatz über
+> `targetsContract` gegen `contractLatest` sichtbar.
+
 ### Dev-Link (M2)
 
 Während M2 hängen App, Skin und Vertrag über lokale `link:`-Pfade zusammen (kein npm-publish).
