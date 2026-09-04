@@ -40,13 +40,19 @@ const store = useDeviceStore();
  * Nutzer nie aufgerufen hat. Der Host weiss das (er komponiert den Stapel), der
  * Skin könnte es nicht wissen.
  *
+ * Gelesen wird `store.shownPageId`, NICHT `currentPageId`: letzteres hält nur,
+ * was jemand ausdrücklich angesteuert hat, und ist bis zur ersten Navigation
+ * null — die Zuordnung wirkte damit ausgerechnet auf der Startseite nicht, also
+ * direkt nach jedem Laden der App. Die gezeigte Seite steht dagegen von Anfang
+ * an fest (die erste normale Seite des Baums).
+ *
  * Die zweite Hälfte von §2.1 — die Ebene AN ihrem Platz im Stapel als „gesperrt"
  * zeichnen — geht erst mit einer Vertragsergänzung (`PageLayer.locked`, notiert
  * in core/obs/compose): heute kann der Host dem Skin keine gesperrte Ebene
  * übergeben, nur diesen Hinweis daneben stellen.
  */
 const includedGates = computed(() => {
-  const page = store.currentPageId;
+  const page = store.shownPageId;
   return new Set(page ? store.gatedIncludesFor(page).map((g) => g.pageId) : []);
 });
 
@@ -129,7 +135,7 @@ async function submitPin(pageId: string): Promise<void> {
         :class="{ 'is-pending': gate.pageId === store.pendingGate }"
         :data-page="gate.pageId"
         :data-pending="gate.pageId === store.pendingGate ? 'true' : undefined"
-        :data-include-of="includedGates.has(gate.pageId) ? store.currentPageId : undefined"
+        :data-include-of="includedGates.has(gate.pageId) ? store.shownPageId : undefined"
         @submit.prevent="submitPin(gate.pageId)"
       >
         <IonItem

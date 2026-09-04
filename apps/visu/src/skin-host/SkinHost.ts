@@ -356,10 +356,13 @@ export default defineComponent({
       if (props.currentPage) return props.currentPage;
       if (currentPageId.value) return currentPageId.value;
       // The floor has no "page shown" at all, so nothing is active there — only a
-      // page-owning skin gets the tree's first page handed to it. "First page"
-      // means the first NORMAL one: a global include page is a fragment and a
-      // popup is an overlay (M5), neither is something to open as the page.
-      return skin.value.page ? store.firstPageId() : null;
+      // page-owning skin gets the tree's first page handed to it. WHICH page that
+      // is, is the STORE's answer (`shownPageId`), not a second rule here: the
+      // access gate has to name the same page, and two copies of the fallback
+      // drift apart. "First page" means the first NORMAL one: a global include
+      // page is a fragment and a popup is an overlay (M5), neither is something
+      // to open as the page.
+      return skin.value.page ? store.shownPageId : null;
     }
 
     /** Is a link's target the current page or an ancestor of it? (host state) */

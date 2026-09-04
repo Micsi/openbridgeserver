@@ -28,7 +28,7 @@
  */
 
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type {
   Device,
   LightDevice,
@@ -115,7 +115,9 @@ export const useDeviceStore = defineStore('devices', () => {
    * The page the host currently shows (#1194 / layering W4). The HOST owns this,
    * never a skin (golden rule 4): a page-owning skin reads it through `PageHost`,
    * and the link action ({@link followLink}) is the only other writer besides the
-   * routed page announcing itself. Null until something navigates.
+   * routed page announcing itself. Null until something navigates — wer die
+   * gezeigte Seite braucht (auch VOR der ersten Navigation), liest
+   * {@link shownPageId}.
    */
   const currentPageId = ref<string | null>(null);
 
@@ -235,6 +237,30 @@ export const useDeviceStore = defineStore('devices', () => {
   function firstPageId(): string | null {
     return firstNormalPageId(navTree.value);
   }
+
+  /**
+   * Die Seite, die der Host ZEIGT — von Anfang an bestimmt, nicht erst nach der
+   * ersten Navigation.
+   *
+   * {@link currentPageId} haelt nur, was jemand ausdruecklich angesteuert hat,
+   * und ist bis dahin null; gezeigt wird trotzdem schon eine Seite, naemlich die
+   * erste normale des Baums ({@link firstPageId}), auf der ein seitenbesitzender
+   * Skin startet. Wer die gezeigte Seite braucht — der `SkinHost` fuer den
+   * `PageHost`, der Zugriffs-Hinweis fuer die Include-Stelle (M5 R15c, §2.1) —
+   * liest DIESEN Wert. Mit `currentPageId` wirkte die Include-Zuordnung genau
+   * auf der Startseite nicht, also im haeufigsten Zustand ueberhaupt: direkt
+   * nach jedem Laden der App.
+   *
+   * Ein Popup wechselt die Seite nicht ({@link navigate}), also bewegt es diesen
+   * Wert auch nicht — die Seite darunter bleibt die gezeigte.
+   *
+   * Grenze: ohne Baum (Mock, statischer Boden) ist der Wert null. Ein Skin OHNE
+   * Seitenbesitz (der Boden) ueber einem Baum bekommt trotzdem die erste normale
+   * Seite genannt; er zeichnet zwar keine Seite des Baums, aber es ist die Seite,
+   * auf der die App startet — ungenauer als beim seitenbesitzenden Skin, nie auf
+   * eine Seite verweisend, die es nicht gibt.
+   */
+  const shownPageId = computed(() => currentPageId.value ?? firstPageId());
 
   /**
    * The gates (PIN / login) that belong to the include SOURCES of `pageId`
@@ -511,6 +537,7 @@ export const useDeviceStore = defineStore('devices', () => {
     links,
     navTree,
     currentPageId,
+    shownPageId,
     pendingGate,
     openPopups,
     navigate,

@@ -83,6 +83,14 @@ const TREE: ObsVisuNode[] = [
       popup: { x: 10, y: 20, w: 300, h: 200, modal: true, dim_backdrop: true },
     },
   }),
+  page('pop-auto', {
+    kind: 'popup',
+    page_config: {
+      widgets: [toggle('w-pop-auto', 'dp-pop-auto')],
+      // R4 am echten Weg: die Frist steht als Backend-Feld im Seiten-Config.
+      popup: { auto_close_ms: 1500 },
+    },
+  }),
   page('home'),
   page('home2'),
 ];
@@ -173,6 +181,33 @@ describe('SkinHost — eine Popup-Seite öffnet als Popup (R2-R6 erreichen den R
     await nextTick();
     expect(captured!.openPopups).toEqual([]);
     expect(wrapper!.find('.popup').exists()).toBe(false);
+  });
+});
+
+describe('SkinHost — R4: `auto_close_ms` vom Backend-Feld bis in den laufenden Timer', () => {
+  it('schliesst das Popup nach der Frist, die im Backend-JSON stand', async () => {
+    await mountWithTree();
+    // Erst ab hier die Zeit anhalten: der Mount selbst soll echt laufen.
+    vi.useFakeTimers();
+    try {
+      captured!.navigate('pop-auto');
+      await nextTick();
+      // Die Frist ist als Deskriptor-Feld beim Skin angekommen …
+      expect(captured!.openPopups).toEqual([{ id: 'pop-auto', autoCloseMs: 1500 }]);
+      expect(wrapper!.find('.popup[data-id="pop-auto"]').exists()).toBe(true);
+
+      // … und der Host läuft sie tatsächlich ab: kurz davor steht das Popup noch,
+      vi.advanceTimersByTime(1400);
+      await nextTick();
+      expect(wrapper!.find('.popup[data-id="pop-auto"]').exists()).toBe(true);
+      // danach ist es von selbst weg.
+      vi.advanceTimersByTime(100);
+      await nextTick();
+      expect(wrapper!.find('.popup').exists()).toBe(false);
+      expect(captured!.openPopups).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

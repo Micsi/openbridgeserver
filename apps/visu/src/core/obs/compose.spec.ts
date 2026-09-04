@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { composeLayers, composePopup, buildNavTree, includeSourceIds } from './compose';
+import {
+  composeLayers,
+  composePopup,
+  buildNavTree,
+  includeSourceIds,
+  firstNormalPageId,
+} from './compose';
 import { ObsClient } from './client';
 import { ObsDataSource } from './obs-datasource';
 import type { ObsVisuNode } from './mapping';
@@ -639,5 +645,55 @@ describe('buildNavTree: die sichtbare PAGE/LOCATION-Hierarchie', () => {
       { id: 'loc', parent_id: null, name: 'EG', type: 'LOCATION', access: null, page_config: null },
     ];
     expect(buildNavTree(tree).map((n) => n.kind)).toEqual(['normal', 'globalInclude', 'popup', 'normal']);
+  });
+});
+
+/* ------------------------------------------------------- Startseitenwahl */
+
+/**
+ * `firstNormalPageId` entscheidet, worauf ein seitenbesitzender Skin startet.
+ * Die Hauptrichtung (eine globale Includeseite davor wird übersprungen) hängt
+ * am Mount in `SkinHost.pagekind.spec.ts`; hier stehen die Ränder, für die es
+ * dort keinen Fall gibt — sie sind die Gegenrichtung zur Bedingung „normal".
+ */
+describe('firstNormalPageId: die Startseite ist die erste NORMALE Seite', () => {
+  it('überspringt globale Includeseiten und Popups davor', () => {
+    const nav = buildNavTree([
+      page('glob', { kind: 'globalInclude' }),
+      page('pop', { kind: 'popup' }),
+      page('home'),
+      page('home2'),
+    ]);
+    expect(firstNormalPageId(nav)).toBe('home');
+  });
+
+  it('findet eine normale Seite auch unter einem LOCATION-Knoten', () => {
+    const nav = buildNavTree([
+      { id: 'eg', parent_id: null, name: 'EG', type: 'LOCATION', access: null, page_config: null },
+      page('tief', { parent_id: 'eg' }),
+    ]);
+    expect(firstNormalPageId(nav)).toBe('tief');
+  });
+
+  it('liefert null, wenn der Baum NUR Popups enthält', () => {
+    const nav = buildNavTree([page('p1', { kind: 'popup' }), page('p2', { kind: 'popup' })]);
+    expect(firstNormalPageId(nav)).toBeNull();
+  });
+
+  it('liefert null, wenn der Baum NUR globale Includeseiten enthält', () => {
+    const nav = buildNavTree([page('g1', { kind: 'globalInclude' }), page('g2', { kind: 'globalInclude' })]);
+    expect(firstNormalPageId(nav)).toBeNull();
+  });
+
+  it('liefert null für einen leeren Baum', () => {
+    expect(firstNormalPageId([])).toBeNull();
+  });
+
+  it('behandelt einen Knoten ohne `kind` wie den Backend-Default `normal`', () => {
+    // Ein Vor-M5-Backend (und der Mock) liefert keinen Seitentyp; ohne diesen
+    // Default hätte eine solche Quelle gar keine Startseite mehr.
+    const nav = buildNavTree([page('alt')]);
+    expect(nav[0].kind).toBe('normal');
+    expect(firstNormalPageId([{ ...nav[0], kind: undefined }])).toBe('alt');
   });
 });
