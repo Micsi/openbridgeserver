@@ -10,10 +10,20 @@
  *  - **Origin-Pruefung in beide Richtungen.** Angenommen wird nur, was aus dem
  *    Origin der Vorschau kommt; gesendet wird nur dorthin, nie an `'*'`. Ohne
  *    bekannten Origin wird gar keine Bruecke aufgebaut.
- *  - **Handshake mit Versionsangabe**, damit ein getrennt ausgeliefertes
- *    `gui_dist` und Visu-Bundle nicht still halb zusammenpassen.
+ *  - **Quellenpruefung.** Auch aus der richtigen Herkunft darf nur DAS Fenster
+ *    reden, in dem die Vorschau laeuft (`iframe.contentWindow`). Der Normalfall
+ *    ist same-origin, dort koennte sonst jedes gleich-origin Fenster
+ *    `accepted`/`rejected`/`draft-applied` faelschen. Spiegelbild von
+ *    `receiver.ts` Schritt 2.
+ *  - **Erst die Version, dann die Session.** Die Protokollversion der Gegenseite
+ *    wird geprueft, BEVOR das Admin-Token hinausgeht - eine Vorschau, die eine
+ *    andere Version spricht, bekommt es gar nicht erst zu sehen. Eine
+ *    Abweichung schliesst die Bruecke dauerhaft.
  *  - **Die Session geht nur per postMessage.** Sie steht in keiner iframe-URL,
  *    keiner Query und keinem Log; ohne Session wird nichts gesendet.
+ *  - **Eine Frist.** Meldet sich in `handshakeTimeoutMs` keine Vorschau, sagt die
+ *    Bruecke das nach oben. Ohne sie bliebe ein iframe, der etwas ganz anderes
+ *    geladen hat, still stehen - der Autor saehe ein fremdes Bild ohne Hinweis.
  *
  * ACHTUNG bei Aenderungen: Kanal, Version und Typen muessen mit
  * `apps/visu/src/preview/protocol.ts` uebereinstimmen. Die GUI liegt nicht im
@@ -23,7 +33,14 @@
  */
 
 export const VISU_PREVIEW_CHANNEL = 'obs-visu-preview'
-export const VISU_PREVIEW_PROTOCOL = '1.0'
+export const VISU_PREVIEW_PROTOCOL = '1.1'
+
+/**
+ * Wie lange auf ein `preview/ready` gewartet wird, bevor die Lage als „keine
+ * Vorschau" gilt. Grosszuegig genug fuer ein langsam ladendes Visu-Bundle, kurz
+ * genug, dass niemand minutenlang auf ein falsches Bild schaut.
+ */
+export const VISU_PREVIEW_HANDSHAKE_TIMEOUT_MS = 8000
 
 export const VISU_PREVIEW_MESSAGE = {
   ready: 'preview/ready',
@@ -45,6 +62,8 @@ export const VISU_PREVIEW_MESSAGE = {
  * @param {Function} options.getDraft          Liefert den aktuellen Entwurf oder null.
  * @param {Function} [options.onApplied]       Die Vorschau hat gerendert.
  * @param {Function} [options.onRejected]      Die Vorschau hat abgelehnt (mit Grund).
+ * @param {Function} [options.onTimeout]       Innerhalb der Frist kam kein Handshake.
+ * @param {number}   [options.handshakeTimeoutMs] Die Frist in ms.
  */
 export function createVisuPreviewBridge({
   previewOrigin,
@@ -54,9 +73,21 @@ export function createVisuPreviewBridge({
   getDraft,
   onApplied,
   onRejected,
+  onTimeout,
+  handshakeTimeoutMs = VISU_PREVIEW_HANDSHAKE_TIMEOUT_MS,
 }) {
   /** Steht der Handshake? Vorher wird kein Entwurf gesendet. */
   let ready = false
+  /** Endgueltig zu (Versionsabweichung) - danach wird nichts mehr angenommen. */
+  let closed = false
+  /** Laufende Frist auf den Handshake. */
+  let timer = null
+
+  function clearHandshakeTimer() {
+    if (timer === null) return
+    clearTimeout(timer)
+    timer = null
+  }
 
   function post(message) {
     if (!previewOrigin) return
@@ -76,10 +107,24 @@ export function createVisuPreviewBridge({
   }
 
   function handle(ev) {
+    if (closed) return
+    // 1. Herkunft.
     if (!previewOrigin || !ev || ev.origin !== previewOrigin) return
+    // 2. Quelle: nur das Fenster, in dem die Vorschau laeuft.
+    const target = getFrameWindow ? getFrameWindow() : null
+    if (!target || ev.source !== target) return
+    // 3. Kanal.
     const data = ev.data
     if (!data || typeof data !== 'object') return
     if (data.channel !== VISU_PREVIEW_CHANNEL) return
+    // 4. Version - VOR jeder Antwort, also insbesondere vor der Session.
+    if (data.protocol !== VISU_PREVIEW_PROTOCOL) {
+      closed = true
+      ready = false
+      clearHandshakeTimer()
+      if (onRejected) onRejected('protocol')
+      return
+    }
 
     if (data.type === VISU_PREVIEW_MESSAGE.ready) {
       const session = getSession ? getSession() : null
@@ -91,11 +136,13 @@ export function createVisuPreviewBridge({
     }
     if (data.type === VISU_PREVIEW_MESSAGE.accepted) {
       ready = true
+      clearHandshakeTimer()
       sendDraft()
       return
     }
     if (data.type === VISU_PREVIEW_MESSAGE.rejected) {
       ready = false
+      clearHandshakeTimer()
       if (onRejected) onRejected(data.reason || 'payload')
       return
     }
@@ -107,18 +154,25 @@ export function createVisuPreviewBridge({
   return {
     start() {
       listener.addEventListener('message', handle)
+      // Die Vorschau meldet sich von selbst (`preview/ready`). Bleibt das aus,
+      // hat der Rahmen etwas anderes geladen — heute im Standardfall die
+      // Admin-GUI selbst ueber den SPA-404-Fallback, weil die Ausliefer-Route
+      // der Vorschau noch fehlt (Teil D, s. `visuEditorAccess.js`).
+      clearHandshakeTimer()
+      if (handshakeTimeoutMs > 0) {
+        timer = setTimeout(() => {
+          timer = null
+          if (ready || closed) return
+          if (onTimeout) onTimeout()
+        }, handshakeTimeoutMs)
+      }
     },
     stop() {
       listener.removeEventListener('message', handle)
+      clearHandshakeTimer()
       ready = false
     },
     sendDraft,
     isReady: () => ready,
-    /**
-     * Die iframe-Adresse — unveraendert. Existiert als ausdrueckliche Stelle,
-     * an der man sieht, dass hier NICHTS angehaengt wird: keine Session, kein
-     * Token, kein Origin. Alles Vertrauliche geht ueber `postMessage`.
-     */
-    frameSrc: (url) => url,
   }
 }

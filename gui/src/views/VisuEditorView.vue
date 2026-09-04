@@ -20,7 +20,15 @@ import VisuPreviewFrame from '@/components/visu/VisuPreviewFrame.vue'
 const auth = useAuthStore()
 const allowed = computed(() => canUseVisuEditor(auth))
 
-/** Der Entwurf, den die Vorschau zeigt. C1–C3 schreiben ihn; C4 transportiert ihn. */
+/**
+ * Der Entwurf, den die Vorschau zeigt. C1–C3 schreiben ihn; C4 transportiert ihn.
+ *
+ * Form (Protokoll 1.1): `{ skin, pageId, nodes, tweaks?, theme? }`. `tweaks` und
+ * `theme` sind nicht schmueckendes Beiwerk: an ihnen haengen die Wurzel-Attribute
+ * und `--vz-*`-Variablen, aus denen der Skin seine Flaechen- und Kachel-Tokens
+ * zieht. Wer sie weglaesst, bekommt dieselben Komponenten auf einer anderen
+ * Seite — genau das, was Messlatte E3 ausschliesst.
+ */
 const draft = ref(null)
 const applied = ref(null)
 </script>

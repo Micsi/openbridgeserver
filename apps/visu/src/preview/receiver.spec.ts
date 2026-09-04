@@ -178,6 +178,28 @@ describe('preview/receiver - Handshake', () => {
     expect(drafts).toHaveLength(0);
   });
 
+  it('prueft die Version an JEDER Nachricht, nicht nur am Handshake', () => {
+    const { parent, bus, drafts, receiver } = setup();
+    receiver.start();
+    bus.emit({ data: initMessage(), origin: ADMIN_ORIGIN, source: parent });
+    expect(receiver.status()).toBe('ready');
+
+    // Derselbe geprueffte Peer, aber ploetzlich eine andere Version: das ist ein
+    // anders ausgeliefertes gui_dist, kein halb passender Entwurf.
+    bus.emit({
+      data: { ...draftMessage(), protocol: '2.0' },
+      origin: ADMIN_ORIGIN,
+      source: parent,
+    });
+
+    expect(drafts).toHaveLength(0);
+    expect(receiver.status()).toBe('rejected');
+    expect(parent.sent.at(-1)!.message).toMatchObject({
+      type: PREVIEW_MESSAGE.rejected,
+      reason: 'protocol',
+    });
+  });
+
   it('nimmt einen Entwurf vor dem Handshake nicht an', () => {
     const { parent, bus, drafts, receiver } = setup();
     receiver.start();
@@ -342,15 +364,24 @@ describe('preview/receiver - die Session bleibt geheim', () => {
     for (const s of spies.splice(0)) s.mockRestore();
   });
 
-  it('schreibt die Session nie in URL oder Query', () => {
-    const { parent, bus, receiver } = setup();
+  it('legt die Session nirgends ab - sie geht nur an den Rueckruf', () => {
+    // Frueher stand hier eine Zusicherung ueber `window.location`. Die kann nie
+    // rot werden: der Empfaenger fasst `location` gar nicht an. Geprueft wird
+    // jetzt, was er tatsaechlich koennte - persistieren.
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    const { parent, bus, sessions, receiver } = setup();
     receiver.start();
     bus.emit({ data: initMessage(), origin: ADMIN_ORIGIN, source: parent });
     bus.emit({ data: draftMessage(), origin: ADMIN_ORIGIN, source: parent });
 
-    expect(window.location.search).toBe('');
-    expect(window.location.hash).not.toContain(TOKEN);
-    expect(window.location.href).not.toContain(TOKEN);
+    // Der einzige Weg nach draussen ist der Rueckruf des Hosts ...
+    expect(sessions).toEqual([{ accessToken: TOKEN }]);
+    // ... nicht localStorage/sessionStorage (ein Schreibversuch beider ginge
+    // durch dieselbe Prototyp-Methode) ...
+    expect(setItem).not.toHaveBeenCalled();
+    // ... und auch nicht eine ausgehende Nachricht.
+    for (const s of parent.sent) expect(JSON.stringify(s.message)).not.toContain(TOKEN);
+    setItem.mockRestore();
   });
 
   it('schreibt die Session nie in ein Log', () => {

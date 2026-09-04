@@ -8,6 +8,13 @@
  *
  * Die Admin-Session geht ausschliesslich ueber die Bruecke an den geprueften
  * Origin — nie an die iframe-URL (`src` bleibt der nackte Pfad).
+ *
+ * Wenn im Rahmen gar keine Vorschau antwortet, ist das eine sichtbare Lage und
+ * kein Schweigen: heute liefert der Server unter der Standard-Vorschauadresse
+ * ueber seinen SPA-404-Fallback die Admin-GUI selbst aus, im Vorschaukasten
+ * stuende also ein verschachteltes Dashboard. Nach der Handshake-Frist steht
+ * stattdessen ein Hinweis. Die echte Ausliefer-Route der Vorschau gehoert zu
+ * **Teil D** (s. `visuEditorAccess.js`).
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { createVisuPreviewBridge } from '@/composables/useVisuPreviewBridge'
@@ -21,6 +28,8 @@ const emit = defineEmits(['applied', 'rejected'])
 
 const frame = ref(null)
 const rejected = ref(null)
+/** Kein Handshake innerhalb der Frist — im Rahmen liegt keine Vorschau. */
+const unreachable = ref(false)
 const previewUrl = VISU_PREVIEW_URL
 const previewOrigin = computed(() => previewOriginOf(previewUrl, window.location.href))
 
@@ -33,10 +42,16 @@ const bridge = createVisuPreviewBridge({
     return accessToken ? { accessToken } : null
   },
   getDraft: () => props.draft,
-  onApplied: (info) => emit('applied', info),
+  onApplied: (info) => {
+    unreachable.value = false
+    emit('applied', info)
+  },
   onRejected: (reason) => {
     rejected.value = reason
     emit('rejected', reason)
+  },
+  onTimeout: () => {
+    unreachable.value = true
   },
 })
 
@@ -61,6 +76,13 @@ watch(() => props.draft, () => bridge.sendDraft(), { deep: true })
       class="text-sm text-amber-600 dark:text-amber-400"
     >
       {{ $t('visuEditor.rejected') }}
+    </p>
+    <p
+      v-if="unreachable && !rejected"
+      data-testid="visu-preview-unreachable"
+      class="text-sm text-amber-600 dark:text-amber-400"
+    >
+      {{ $t('visuEditor.unreachable') }}
     </p>
   </div>
 </template>

@@ -29,8 +29,14 @@ export const PREVIEW_CHANNEL = 'obs-visu-preview';
  * Version der Bruecke. Editor und Vorschau werden getrennt ausgeliefert
  * (`gui_dist` vs. Visu-Bundle), koennen also auseinanderlaufen; eine
  * abweichende Version wird sichtbar abgelehnt statt still halb zu funktionieren.
+ *
+ * 1.0 -> 1.1: der Entwurf traegt jetzt `theme` und `tweaks`. Ohne sie kann die
+ * Vorschau die Wurzel-Bindungen der echten Seite gar nicht setzen (E3), ein
+ * 1.0-Editor wuerde also stumm eine andere Seite zeigen. Genau deshalb ist das
+ * eine Versionsanhebung und keine stille Erweiterung: die Abweichung wird an
+ * jeder Nachricht geprueft (siehe `receiver.ts`) und sichtbar abgelehnt.
  */
-export const PREVIEW_PROTOCOL_VERSION = '1.0';
+export const PREVIEW_PROTOCOL_VERSION = '1.1';
 
 /** Die Nachrichtentypen, klar benannt und in beide Richtungen eindeutig. */
 export const PREVIEW_MESSAGE = {
@@ -66,6 +72,48 @@ export interface PreviewSession {
 }
 
 /**
+ * Das Theme, das der Host jedem Renderer als Token-Boden reicht (Goldene Regel 6).
+ * Dieselben drei Werte wie im Tweak-Schema des ionic-Skins.
+ */
+export type PreviewTheme = 'light' | 'dark' | 'image';
+
+/** Ein einzelner Tweak-Wert - genau das, was der Tweak-Editor der Seite haelt. */
+export type PreviewTweakValue = string | number | boolean;
+
+/**
+ * Die Tweak-Werte, die der Autor gewaehlt hat. Absichtlich ein offener Record und
+ * keine skin-spezifische Form: der Host reicht sie unveraendert an `applyTweaks`
+ * des Skins weiter, der unbekannte Schluessel ignoriert und jeden Wert gegen sein
+ * Manifest klemmt. Ein neuer Tweak eines Skins braucht damit keine neue Version.
+ */
+export type PreviewTweaks = Readonly<Record<string, PreviewTweakValue>>;
+
+/** Sind das brauchbare Tweak-Werte? (Nur Primitive - nichts, was der Skin nicht
+ *  in ein Attribut oder eine CSS-Variable schreiben koennte.) */
+function isTweaks(value: unknown): value is PreviewTweaks {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(
+    (v) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean',
+  );
+}
+
+/** Ist das eines der drei Themes? */
+function isTheme(value: unknown): value is PreviewTheme {
+  return value === 'light' || value === 'dark' || value === 'image';
+}
+
+/**
+ * Das Token-Theme aus den Tweak-Werten - **die Regel der echten Seite**
+ * (`SkinPage.vue`: alles ausser `dark`/`image` ist `light`). Sie steht hier, weil
+ * die Vorschau exakt dieselbe Ableitung braucht; `PreviewParity.spec.ts` haelt
+ * beide Seiten gegeneinander, damit die Regel nicht auseinanderlaeuft.
+ */
+export function themeOfTweaks(tweaks: PreviewTweaks | undefined): PreviewTheme {
+  const v = tweaks?.['theme'];
+  return v === 'dark' || v === 'image' ? v : 'light';
+}
+
+/**
  * Ein Knoten des Entwurfs: die Backend-Form plus der Seitentyp, den der Editor
  * gerade waehlt. `kind` ist additiv - solange Teil A/B ihn nicht auswerten,
  * komponiert der Host wie bisher; danach wirkt er ohne Aenderung hier.
@@ -80,6 +128,19 @@ export interface PreviewDraft {
   readonly pageId: string;
   /** Der Entwurfsbaum. Nicht gespeichert - er existiert nur in dieser Sitzung. */
   readonly nodes: readonly PreviewDraftNode[];
+  /**
+   * Die Tweak-Werte der Seite (v1.1). Sie bestimmen die Wurzel-Attribute und die
+   * `--vz-*`-Variablen, an denen die Flaechen- und Kachel-Regeln des Skins
+   * haengen - ohne sie rendert dieselbe Komponentenkette eine ANDERE Seite, und
+   * E3 ("0 abweichende Pixel") ist strukturell unerreichbar.
+   */
+  readonly tweaks?: PreviewTweaks;
+  /**
+   * Das Token-Theme (v1.1). Fehlt es, gilt dieselbe Ableitung aus den Tweaks wie
+   * auf der echten Seite ({@link themeOfTweaks}) - der Editor muss es also nur
+   * schicken, wenn er das Theme ausserhalb der Tweaks fuehrt.
+   */
+  readonly theme?: PreviewTheme;
 }
 
 /* ------------------------------------------------------------- Nachrichten */
@@ -162,5 +223,17 @@ export function readDraft(value: unknown): PreviewDraft | null {
     if (typeof node.id !== 'string' || node.id.length === 0) return null;
     if (node.type !== 'PAGE' && node.type !== 'LOCATION') return null;
   }
-  return { skin, pageId, nodes: nodes as readonly PreviewDraftNode[] };
+  // Theme und Tweaks sind optional (ein Editor darf sie weglassen), aber wenn sie
+  // da sind, muessen sie brauchbar sein: ein halb gerenderter Entwurf mit
+  // stillschweigend verworfenem Theme waere genau die Abweichung, die E3 verbietet.
+  const { theme, tweaks } = value;
+  if (theme !== undefined && !isTheme(theme)) return null;
+  if (tweaks !== undefined && !isTweaks(tweaks)) return null;
+  return {
+    skin,
+    pageId,
+    nodes: nodes as readonly PreviewDraftNode[],
+    ...(tweaks !== undefined ? { tweaks } : {}),
+    ...(theme !== undefined ? { theme } : {}),
+  };
 }

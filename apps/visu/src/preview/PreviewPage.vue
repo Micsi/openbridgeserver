@@ -30,11 +30,20 @@
  * Sicherheit: die Admin-Session lebt ausschliesslich in dieser Closure. Sie
  * steht in keiner URL, keiner Query und keinem Log, und sie verlaesst das Modul
  * nur als `Authorization`-Header an den eigenen Server.
+ *
+ * Wurzel-Bindungen (v1.1): derselbe Renderer allein macht noch nicht dieselbe
+ * SEITE. Die Flaechen-, Kachel- und Rastertokens des Skins haengen an den
+ * `data-*`-Attributen und `--vz-*`-Variablen der Wurzel, die der Host aus den
+ * Tweak-Werten rechnet (`applyTweaks`). Diese Seite rechnet sie deshalb genauso
+ * wie `SkinPage` und setzt sie an dieselben drei Stellen: Wurzel-Attribute,
+ * Wurzel-Style und `root-bind` des Hosts (fuer die ausgelagerte Detail-Flaeche).
+ * `PreviewParity.spec.ts` haelt beide Wurzeln gegeneinander.
  */
-import { computed, onBeforeUnmount, onMounted, ref, nextTick } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, nextTick, watchEffect } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
 import { IonPage } from '@ionic/vue';
+import { applyTweaks, type IonicTweaks } from '@obs-visu-skins/ionic';
 
 import DetailModalHost from '../app/DetailModalHost.vue';
 import OverviewGrid from '../pages/OverviewGrid';
@@ -42,11 +51,13 @@ import { groupDevicesByRoom } from '../pages/pages';
 import { resolveSkin } from '../skin-host/skins';
 import { useDeviceStore } from '../core/store';
 
+import { useShellContext } from '../app/shell/shellContext';
+
 import { PreviewDataSource } from './PreviewDataSource';
 import { createHttpValueBackend } from './values';
 import { createPreviewReceiver } from './receiver';
 import { allowedPreviewOrigins } from './origins';
-import type { PreviewDraft, PreviewSession } from './protocol';
+import { themeOfTweaks, type PreviewDraft, type PreviewSession, type PreviewTheme } from './protocol';
 
 const { t } = useI18n();
 const store = useDeviceStore();
@@ -104,6 +115,30 @@ async function applyDraft(d: PreviewDraft): Promise<void> {
 const groups = computed(() => groupDevicesByRoom(devices.value, positions.value, links.value));
 const skinRootClass = computed(() => (draft.value ? resolveSkin(draft.value.skin).rootClass : ''));
 
+/**
+ * Die Wurzel-Bindungen aus den Tweak-Werten des Entwurfs - dieselbe reine
+ * Abbildung wie auf der echten Seite (`SkinPage.vue`). `applyTweaks` klemmt jeden
+ * Wert gegen das Manifest und faellt bei unbekannten Auswahlwerten auf den
+ * Default zurueck, weshalb hier auch ein fremder Entwurf nichts Unerwartetes in
+ * Attribute oder CSS-Variablen schreiben kann.
+ */
+const rootTweaks = computed(() => applyTweaks((draft.value?.tweaks ?? {}) as IonicTweaks));
+
+/** Das Token-Theme: was der Entwurf sagt, sonst dieselbe Ableitung wie live. */
+const theme = computed<PreviewTheme>(
+  () => draft.value?.theme ?? themeOfTweaks(draft.value?.tweaks),
+);
+
+// Die App-Shell liegt auch im Vorschau-Modus um die Seite (App.vue). Sie zeichnet
+// ihr Chrome auf der Flaeche des aktiven Skins - genau wie bei der echten Seite,
+// die diese Naht fuellt. Ohne das saesse die Vorschau in einem Chrome, das eine
+// andere Oberflaeche traegt als die Seite darin.
+const shellContext = useShellContext();
+watchEffect(() => {
+  shellContext.rootBind = rootTweaks.value;
+  shellContext.rootClass = skinRootClass.value;
+});
+
 onMounted(() => {
   // Ohne Elternfenster gibt es keine Bruecke - die Vorschau ist dann nur eine
   // leere Seite statt einer Naht, die mit sich selbst spricht.
@@ -121,18 +156,21 @@ onBeforeUnmount(() => receiver.stop());
     <DetailModalHost
       v-if="draft"
       :skin="draft.skin"
-      theme="light"
+      :theme="theme"
+      :root-bind="rootTweaks"
     >
       <div
         class="overview-root"
         :class="skinRootClass"
+        v-bind="rootTweaks.attrs"
+        :style="rootTweaks.style"
         data-testid="preview-canvas"
         :data-preview-page="draft.pageId"
       >
         <OverviewGrid
           :skin="draft.skin"
           :groups="groups"
-          theme="light"
+          :theme="theme"
           :current-page="draft.pageId"
         />
       </div>

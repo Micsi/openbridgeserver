@@ -3383,6 +3383,7 @@
     "intro": "The preview renders the draft in the real visu. Nothing is saved while you work.",
     "previewTitle": "Visu preview",
     "rejected": "The preview rejected the draft. Please bring editor and visu to the same version.",
+    "unreachable": "No visu preview answers in this frame. What you see is whatever the preview address serves, not your draft. Please check how the preview is served (VITE_VISU_PREVIEW_URL).",
     "applied": "Draft rendered in the preview ({count} widgets)."
   }
 }

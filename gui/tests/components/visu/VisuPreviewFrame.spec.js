@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import VisuPreviewFrame from '@/components/visu/VisuPreviewFrame.vue'
@@ -27,9 +27,15 @@ const DRAFT = {
   nodes: [{ id: 'p1', parent_id: null, name: 'W', type: 'PAGE', kind: 'normal', page_config: { widgets: [] } }],
 }
 
+/**
+ * Das Fenster-Doppel des iframes dieser Montage. Es ist die einzige Quelle, von
+ * der die Bruecke etwas annimmt - genau wie im Browser `iframe.contentWindow`.
+ */
+let frameWindow = null
+
 /** Ein `message`-Ereignis von Hand einspeisen (happy-dom laesst kein fremdes source zu). */
-function emit(data, origin = PREVIEW_ORIGIN) {
-  window.dispatchEvent(Object.assign(new Event('message'), { data, origin, source: null }))
+function emit(data, origin = PREVIEW_ORIGIN, source = frameWindow) {
+  window.dispatchEvent(Object.assign(new Event('message'), { data, origin, source }))
 }
 
 const message = (type, extra = {}) => ({
@@ -54,11 +60,12 @@ describe('VisuPreviewFrame — die Bruecke an der echten Komponente', () => {
     // Nachrichten pruefbar sind.
     const box = []
     sent = box
+    frameWindow = {
+      postMessage: (msgObj, targetOrigin) => box.push({ message: msgObj, targetOrigin }),
+    }
     Object.defineProperty(wrapper.find('iframe').element, 'contentWindow', {
       configurable: true,
-      value: {
-        postMessage: (msgObj, targetOrigin) => box.push({ message: msgObj, targetOrigin }),
-      },
+      value: frameWindow,
     })
     return wrapper
   }
@@ -154,6 +161,53 @@ describe('VisuPreviewFrame — die Bruecke an der echten Komponente', () => {
 
     expect(sent).toHaveLength(0)
     expect(wrapper.emitted('applied')).toBeFalsy()
+  })
+
+  it('glaubt einem fremden Fenster nichts, auch nicht bei passender Herkunft', async () => {
+    const wrapper = await mountFrame()
+    const fremdesFenster = { postMessage: () => {} }
+
+    emit(message(VISU_PREVIEW_MESSAGE.ready), PREVIEW_ORIGIN, fremdesFenster)
+    emit(message(VISU_PREVIEW_MESSAGE.draftApplied, { pageId: 'p1', widgetCount: 4 }), PREVIEW_ORIGIN, fremdesFenster)
+    emit(message(VISU_PREVIEW_MESSAGE.rejected, { reason: 'protocol' }), PREVIEW_ORIGIN, fremdesFenster)
+    await flushPromises()
+
+    expect(sent).toHaveLength(0)
+    expect(wrapper.emitted('applied')).toBeFalsy()
+    expect(wrapper.find('[data-testid="visu-preview-rejected"]').exists()).toBe(false)
+  })
+
+  it('sagt es, wenn im Rahmen ueberhaupt keine Vorschau antwortet', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = await mountFrame()
+      expect(wrapper.find('[data-testid="visu-preview-unreachable"]').exists()).toBe(false)
+
+      // Der Rahmen laedt etwas anderes (heute: die Admin-GUI ueber den
+      // SPA-404-Fallback) und meldet sich nie. Ohne Frist bliebe das stumm.
+      await vi.advanceTimersByTimeAsync(30000)
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="visu-preview-unreachable"]').exists()).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('zeigt den Hinweis nicht, wenn die Vorschau sich meldet', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = await mountFrame()
+      emit(message(VISU_PREVIEW_MESSAGE.ready))
+      emit(message(VISU_PREVIEW_MESSAGE.accepted))
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(30000)
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="visu-preview-unreachable"]').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('hoert nach dem Ausbauen nicht mehr zu', async () => {

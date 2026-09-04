@@ -11,7 +11,8 @@
  *    schon eine Auskunft).
  *  - **Handshake mit Versionsangabe.** `preview/ready` -> `preview/init` ->
  *    `preview/accepted`. Erst danach wird ein `preview/draft` angenommen; eine
- *    abweichende Protokollversion schliesst die Bruecke dauerhaft.
+ *    abweichende Protokollversion schliesst die Bruecke dauerhaft - geprueft an
+ *    jeder Nachricht, nicht nur am Handshake.
  *  - **Kein I/O.** Der Empfaenger liest, prueft und reicht weiter. Er speichert
  *    nichts, er laedt nichts, er loggt nichts - insbesondere nie die Session.
  *
@@ -105,13 +106,19 @@ export function createPreviewReceiver(options: PreviewReceiverOptions): PreviewR
 
     peerOrigin = ev.origin;
 
+    // 4. Version - an JEDER Nachricht, nicht nur am Handshake. Editor und
+    //    Vorschau werden getrennt ausgeliefert; ein Peer, der mitten in der
+    //    Sitzung eine andere Version spricht, ist ein anderes Bundle und kein
+    //    halb passender Entwurf. Einmal abgelehnt bleibt die Bruecke zu, und
+    //    zwar stumm: eine zweite Auskunft waere schon wieder eine.
+    if (state === 'rejected') return;
+    if (envelope.protocol !== PREVIEW_PROTOCOL_VERSION) {
+      state = 'rejected';
+      reject(ev.origin, 'protocol');
+      return;
+    }
+
     if (envelope.type === PREVIEW_MESSAGE.init) {
-      if (state === 'rejected') return;
-      if (envelope.protocol !== PREVIEW_PROTOCOL_VERSION) {
-        state = 'rejected';
-        reject(ev.origin, 'protocol');
-        return;
-      }
       const session = readSession(envelope.body.session);
       if (!session) {
         reject(ev.origin, 'payload');

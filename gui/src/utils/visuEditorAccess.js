@@ -21,6 +21,14 @@ export const VISU_EDITOR_ROUTE = '/visu-editor'
  * Bruecke wird daraus abgeleitet, und ein aus der Adresszeile gelesener Origin
  * waere gar keine Pruefung mehr. Der Standardpfad ist relativ, also
  * same-origin — der Normalfall, weil FastAPI Admin-GUI und Visu ausliefert.
+ *
+ * OFFEN (Teil D): diesen Pfad liefert heute noch niemand aus. Der Server mountet
+ * `/assets`, `/visu/assets`, `/visu/{path}` und `/help`; alles andere faellt in
+ * den SPA-404-Fallback, der `gui_dist/index.html` zurueckgibt — im Vorschaukasten
+ * stuende also die Admin-GUI selbst. Teil C4 kann das nicht heilen (`obs/` gehoert
+ * nicht dazu), macht die Lage aber sichtbar: bleibt der Handshake aus, zeigt
+ * `VisuPreviewFrame` einen Hinweis statt eines verschachtelten Dashboards. Teil D
+ * legt die echte Route und setzt `VITE_VISU_PREVIEW_URL` darauf.
  */
 export const VISU_PREVIEW_URL = import.meta.env.VITE_VISU_PREVIEW_URL || '/visu-v2/preview'
 
