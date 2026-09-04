@@ -43,6 +43,19 @@ export function el(page: Page, name: string) {
   return page.locator('.editor-canvas [data-el]', { hasText: name }).first();
 }
 
+/**
+ * Der Anfasser, an dem ein Element größer gezogen wird (Marke:
+ * `[data-resize="se"]`, die untere rechte Ecke des ausgewählten Elements).
+ *
+ * Steht bei den übrigen Bedien-Affordanzen und nicht in der Spec-Datei, die ihn
+ * heute allein benutzt (E14): auch das Größerziehen ist eine ANFORDERUNG des
+ * Harness an den V2-Editor, und die gehört an dieselbe eine Stelle wie
+ * {@link el} und {@link box}.
+ */
+export function resizeHandle(page: Page, name: string) {
+  return el(page, name).locator('[data-resize="se"]');
+}
+
 /** Die Box eines Canvas-Elements in Autoren-Einheiten (x/y/w/h aus dem Modell). */
 export async function box(page: Page, name: string) {
   return el(page, name).evaluate((node) => ({

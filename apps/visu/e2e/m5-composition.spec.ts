@@ -5,26 +5,24 @@ import { adminHeaders, api, seeded, type PageConfigResponse } from './fixtures';
  * M5 Messlatte — Regeltabelle R9-R14 (CONTRIBUTING-visu-m5.md §1): die
  * Komposition. Genau EIN Szenario je Zeile, der Testname ist das Kriterium.
  *
- * R12 ist eine Backend-Validierung (400) und läuft heute. Alles andere in
- * diesem Block ist Host-Komposition: `apps/visu/src/core/obs/compose.ts` leitet
- * den Layer-Stack derzeit noch aus der `parent_id`-Näherung ab („W3b
- * approximation", im Modul selbst dokumentiert) und kennt weder
- * `kind=globalInclude` noch `PageConfig.includes`. Diese Szenarien sind deshalb
- * vollständig ausgeschrieben, aber `fixme` bis Teil B (#167) liefert — nicht
- * ausgelassen und nicht auf eine Attrappe abgesenkt.
+ * R12 ist eine Backend-Validierung (400). Alles andere in diesem Block ist
+ * Host-Komposition, und seit Teil B (#167) geliefert hat, läuft sie:
+ * `apps/visu/src/core/obs/compose.ts` stapelt nach `kind=globalInclude`,
+ * Knoten-`order`, `PageConfig.includes` und `ignore_global_includes` statt nach
+ * der alten `parent_id`-Näherung. Die Szenarien stehen unverändert so da, wie
+ * sie vor der Lieferung geschrieben wurden.
+ *
+ * R13 hat zwei Hälften, genau wie R2-R6: die GESPEICHERTE (`page_config
+ * .ignore_global_includes` am Backend, beide Seiten der Bedingung) und die
+ * DARGESTELLTE (kein globaler Layer auf der Seite). Ohne die erste käme eine
+ * Änderung, die das Flag im Modell fallen lässt, an jedem laufenden Szenario
+ * vorbei, solange der Host bloss „keine globalen Layer" zeigt.
  *
  * Die Selektoren sind die des Edomi-Skins (`obs-visu-skins/packages/skins/edomi/
  * src/page.ts`), des einzigen seitenbesitzenden Skins: `.edomi-layer` trägt
  * `data-layer` (die Quellseiten-ID) und `edomi-layer-{global|include|own}`
  * (`PageLayer.origin`).
  */
-
-const BLOCKED_BY_B = {
-  annotation: {
-    type: 'blocked-by',
-    description: 'Teil B Host-Komposition — Micsi/openbridgeserver#167 (compose.ts nutzt noch die parent_id-Näherung)',
-  },
-} as const;
 
 async function openEdomiPage(page: Page, pageName: string) {
   await page.goto('/edomi');
@@ -78,10 +76,9 @@ test.describe('M5 Regeltabelle R12 · Backend-Validierung (läuft gegen das echt
   });
 });
 
-test.describe('M5 Regeltabelle R9-R14 · Komposition im Host (wartet auf Teil B, #167)', () => {
-  test.fixme(
+test.describe('M5 Regeltabelle R9-R14 · Komposition im Host (läuft gegen den Host aus Teil B)', () => {
+  test(
     'R9 Globale Inkludeseite wird in jede normale Seite inkludiert, nicht in Popups',
-    BLOCKED_BY_B,
     async ({ page }) => {
       const fx = seeded();
 
@@ -102,7 +99,7 @@ test.describe('M5 Regeltabelle R9-R14 · Komposition im Host (wartet auf Teil B,
     },
   );
 
-  test.fixme('R10 Mehrere globale Includes: aufsteigend gestapelt, kleinste zuerst', BLOCKED_BY_B, async ({ page }) => {
+  test('R10 Mehrere globale Includes: aufsteigend gestapelt, kleinste zuerst', async ({ page }) => {
     const fx = seeded();
     // Bewusste Abweichung von Edomi (§2.2): gestapelt wird nach Knoten-`order`,
     // nicht nach ID. Der Seed vergibt deshalb 10 (Global A) und 20 (Global B).
@@ -118,7 +115,7 @@ test.describe('M5 Regeltabelle R9-R14 · Komposition im Host (wartet auf Teil B,
     await expect(globals.nth(1)).toHaveAttribute('data-layer', fx.m5.node_ids.global_b);
   });
 
-  test.fixme('R11 Direktaufruf einer globalen Inkludeseite zeigt die anderen globalen nicht', BLOCKED_BY_B, async ({ page }) => {
+  test('R11 Direktaufruf einer globalen Inkludeseite zeigt die anderen globalen nicht', async ({ page }) => {
     const fx = seeded();
     await openEdomiPage(page, fx.m5.names.home);
 
@@ -133,10 +130,26 @@ test.describe('M5 Regeltabelle R9-R14 · Komposition im Host (wartet auf Teil B,
     await expect(page.getByText(fx.m5.widgets.global_b, { exact: false })).toHaveCount(0);
   });
 
-  test.fixme('R13 Normale Seite kann globale Includes ignorieren', BLOCKED_BY_B, async ({ page }) => {
+  test('R13 Normale Seite kann globale Includes ignorieren', async ({ page, request }) => {
     const fx = seeded();
 
-    // Die Gegenprobe zuerst: ohne das Flag sind beide globalen Layer da.
+    // (a) Die GESPEICHERTE Hälfte, beide Seiten der Bedingung. Sie steht hier
+    //     aus demselben Grund, aus dem R2-R6 den Deskriptor am Backend prüfen:
+    //     das Flag ist der Vertrag zwischen Editor und Host, und ein Modell, das
+    //     es beim Lesen verwirft, liefert dieselbe Darstellung wie eine Seite,
+    //     die es nie gesetzt hatte („keine globalen Layer" ist auf `M5 Solo`
+    //     genau das Bild, das auch ein verlorenes Flag erzeugt, sobald der Host
+    //     die Ebenen aus anderen Gründen nicht zeichnet). Ohne diese Zeilen käme
+    //     ein stiller Verlust an jedem laufenden Szenario vorbei.
+    const headers = await adminHeaders(request);
+    const readCfg = async (id: string) =>
+      (await (await request.get(api(`/visu/pages/${id}`), { headers })).json()) as PageConfigResponse;
+
+    expect((await readCfg(fx.m5.node_ids.solo)).ignore_global_includes).toBe(true);
+    expect((await readCfg(fx.m5.node_ids.home)).ignore_global_includes).toBe(false);
+
+    // (b) Die DARGESTELLTE Hälfte. Die Gegenprobe zuerst: ohne das Flag sind
+    //     beide globalen Layer da.
     await openEdomiPage(page, fx.m5.names.home);
     expect(await layerIds(page, 'global')).toEqual([fx.m5.node_ids.global_a, fx.m5.node_ids.global_b]);
 
@@ -148,7 +161,7 @@ test.describe('M5 Regeltabelle R9-R14 · Komposition im Host (wartet auf Teil B,
     await expect(page.getByText(fx.m5.widgets.solo, { exact: false })).toBeVisible();
   });
 
-  test.fixme('R14 Individuelle Inkludeseite: gewählte Seite wird eingebettet', BLOCKED_BY_B, async ({ page }) => {
+  test('R14 Individuelle Inkludeseite: gewählte Seite wird eingebettet', async ({ page }) => {
     const fx = seeded();
     await openEdomiPage(page, fx.m5.names.home);
 

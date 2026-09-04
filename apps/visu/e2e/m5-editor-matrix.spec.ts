@@ -151,13 +151,23 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
         width: Math.round((node as HTMLIFrameElement).clientWidth),
         height: Math.round((node as HTMLIFrameElement).clientHeight),
       }));
-      const live = await (
-        await browser.newContext({ baseURL: VISU_BASE, viewport: frameViewport, deviceScaleFactor: 1, locale: 'en-US' })
-      ).newPage();
-      await live.goto('/edomi');
-      await live.locator('.edomi-nav-link', { hasText: fx.m5.names.home }).first().click();
-      await expect(live.locator('.edomi-canvas')).toBeVisible();
-      const inLive = await live.locator('.edomi-root').screenshot();
+      const liveCtx = await browser.newContext({
+        baseURL: VISU_BASE,
+        viewport: frameViewport,
+        deviceScaleFactor: 1,
+        locale: 'en-US',
+      });
+      // Der zweite Kontext gehört diesem Szenario, nicht dem Lauf: `finally`
+      // schließt ihn auch dann, wenn die Live-Seite unterwegs scheitert.
+      // (`browser` ist eine Worker-Fixture; Playwright räumt nur den Kontext der
+      // `page`-Fixture ab, nicht einen selbst geöffneten.)
+      const inLive = await (async () => {
+        const live = await liveCtx.newPage();
+        await live.goto('/edomi');
+        await live.locator('.edomi-nav-link', { hasText: fx.m5.names.home }).first().click();
+        await expect(live.locator('.edomi-canvas')).toBeVisible();
+        return live.locator('.edomi-root').screenshot();
+      })().finally(() => liveCtx.close());
 
       // Gleiche Abmessung ist Vorbedingung, nicht Ergebnis: sie wird getrennt
       // behauptet, damit ein Groessenunterschied als solcher gemeldet wird und

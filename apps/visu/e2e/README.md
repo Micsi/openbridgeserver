@@ -214,6 +214,10 @@ rm -f apps/visu/e2e/.seeded.json
 # das verbrauchte Login-Kontingent. Bei einer FRISCHEN Instanz darf es weg (die
 # alten Tokens werden ohnehin erkannt und verworfen); es kostet dann nur bis zu
 # einer Minute Wartezeit, wenn kurz zuvor schon ein Lauf gefahren wurde.
+# Wird die Datei ZWISCHEN Seed und Lauf zerstört (kaputter Inhalt statt gelöscht),
+# ist die Anmeldung des Seeds nicht mehr verbucht und der Lauf kann in ein 429
+# laufen. Der sichere Weg ist immer: erst `.auth` weg, DANN seeden, dann fahren;
+# der Seed baut die Buchführung dabei wieder auf.
 
 # 2) Seed (idempotent — zweimal laufen lassen ist erlaubt und aendert nichts)
 OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
@@ -312,33 +316,42 @@ rm -rf "$(dirname "$OBS_DATABASE__PATH")/archives" "${OBS_DATABASE__PATH%.db}_ri
 >    Mosquitto/Backend setzen, aber **nicht** in die Shell exportieren, in der
 >    `playwright test` läuft.
 
-### Ergebnis der Pflichtläufe (Runde 2, 2026-09-04)
+### Ergebnis der Pflichtläufe (Runde 3, 2026-09-04, mit dem Host aus Teil B)
 
-`OBS_BASE` = `http://127.0.0.1:8087` (Backend, venv/uvicorn), Visu-Dev-Server auf
-`http://localhost:5187`, Mosquitto anonym auf `127.0.0.1:1887` (Colima).
+`OBS_BASE` = `http://127.0.0.1:8099` (Backend, venv/uvicorn), Visu-Dev-Server auf
+`http://localhost:5199`, Mosquitto anonym auf `127.0.0.1:1899` (Colima).
 Health-Check vor beiden Läufen grün.
 
 | Lauf | Instanz | pass | fixme | flaky | fail | Dauer |
 |---|---|---|---|---|---|---|
-| 1 | frisch + leer, Dev-Server **kalt**, Seed **einmal** | 12 | 27 | 0 | 0 | 23,3 s |
-| 2 | dieselbe Instanz, Seed **erneut**, direkt im Anschluss | 12 | 27 | 0 | 0 | 1,1 min, davon 24 s gewolltes Warten |
+| 1 | frisch + leer, Dev-Server **kalt**, Seed **einmal** | 19 | 20 | 0 | 0 | 45,0 s |
+| 2 | dieselbe Instanz, Seed **erneut**, direkt im Anschluss | 19 | 20 | 0 | 0 | 1,3 min |
 
-Lauf 2 folgte absichtlich unmittelbar auf Lauf 1. `global-setup.ts` fand
-5 von 5 Anmeldungen im laufenden Minutenfenster verbraucht, meldete das und
-wartete 24 s, bevor es an die Szenarien übergab. Genau dieser Fall (zwei Läufe
-dicht hintereinander) hat in der Erprobung zwei UI-Szenarien in ein 429 laufen
-lassen, solange die Buchführung nur Tokens statt Anmeldungen zählte.
+Der Sprung von 12 auf 19 ist die Lieferung von Teil B (#167): **R7, R8, R9, R10,
+R11, R13 und R14** waren mit `blocked-by`-Annotation auf die Host-Komposition
+ausgeschrieben und laufen seither **unverändert**: kein Selektor, keine
+Erwartung und kein Timing musste nachgezogen werden, damit sie grün werden.
+
+Über beide Läufe: **7 Anmeldungen, alle `200`, kein einziges `429`** (Seed 1,
+vorgeholt 2, UI 2 je Lauf). Lauf 2 folgte unmittelbar auf Lauf 1; das
+Minutenfenster war beim Übergeben bereits wieder offen, `global-setup.ts` musste
+diesmal nicht warten. Der Fall „Fenster voll" ist getrennt belegt (Runde 2:
+Meldung `5 von 5 Anmeldungen … verbraucht`, 38 s gewolltes Warten, danach grün).
 
 Nach dem zweiten Seed stehen weiterhin **20 Knoten** und **20 Datenpunkte** in
 der Instanz — die Idempotenz ist damit an der Instanz belegt, nicht nur behauptet.
-Die 12 grünen Szenarien sind R1-R6, R12, R15 sowie die vier Bestands-Szenarien
-der authz-Welle 4; die 27 `fixme` sind R7-R11, R13, R14, R16, E1-E13 und E15-E19.
+(Am Baum sieht ein Admin davon 18: die beiden `user`-Seiten `E2E Private` und
+`M5 Guard User` haben eine Zielgruppe, in der er nicht steht. Gezählt wird
+deshalb in der Datenbank.) Die 19 grünen Szenarien sind R1-R15 ohne R16 und ohne
+R17 sowie die vier Bestands-Szenarien der authz-Welle 4; die 20 `fixme` sind R16,
+E1-E13 und E15-E19.
 
 Die vier Browser-Szenarien der authz-Welle, an denen die Timeout-Frage hing,
-brauchten mit Warmlauf **3,3 / 3,0 / 1,1 / 1,4 s** (Lauf 1, kalt gestarteter
-Dev-Server) statt der 26-48 s ohne Warmlauf. Das ist der Beleg dafür, dass der
-Kostentreiber die Vite-Transpilierung war und nicht die gewachsene Beispielwelt,
-und dass die 30-s-Decke reicht.
+brauchten in Lauf 1 (kalt gestarteter Dev-Server, Warmlauf davor) **10,0 / 5,2 /
+3,2 / 3,2 s** statt der 26-48 s ohne Warmlauf; die sieben neu hinzugekommenen
+Host-Szenarien R7-R11/R13/R14 liegen zwischen **1,1 und 2,1 s**. Das ist der
+Beleg dafür, dass der Kostentreiber die Vite-Transpilierung war und nicht die
+gewachsene Beispielwelt, und dass die 30-s-Decke mit Rand reicht.
 
 **Belegte Heilung des Seeds.** Vorbedingung von Hand hergestellt (direkter
 SQLite-Schreibzugriff: `M5 Global A` bekommt bei `kind=globalInclude` einen
@@ -366,14 +379,14 @@ Policy denselben 403 nachgeliefert und die Mutation überlebt.
 | R4 Popup automatisch schließen nach Zeitspanne | `m5-pagetypes.spec.ts` | **läuft** | `auto_close_ms` gesetzt und (Gegenprobe) `null` statt 0 |
 | R5 Popup exklusiv öffnen = modal, Rest inert | `m5-pagetypes.spec.ts` | **läuft** | `modal` beide Seiten; das `inert` im Skin belegt R16 |
 | R6 Animation, Schlagschatten, Hintergrund abdunkeln | `m5-pagetypes.spec.ts` | **läuft** | die drei Flags einzeln und unabhängig |
-| R7 Auto-Close verlängert sich beim erneuten Öffnen nicht | `m5-pagetypes.spec.ts` | `fixme` | Teil B #167 |
-| R8 Beliebig viele verschiedene Popups gleichzeitig | `m5-pagetypes.spec.ts` | `fixme` | Teil B #167 |
-| R9 globale Inkludeseite in jede normale Seite, nicht in Popups | `m5-composition.spec.ts` | `fixme` | Teil B #167 |
-| R10 mehrere globale Includes aufsteigend nach `order` | `m5-composition.spec.ts` | `fixme` | Teil B #167 |
-| R11 Direktaufruf zeigt die anderen globalen nicht | `m5-composition.spec.ts` | `fixme` | Teil B #167 |
+| R7 Auto-Close verlängert sich beim erneuten Öffnen nicht | `m5-pagetypes.spec.ts` | **läuft** | echte Zeitachse: öffnen, nach 900 ms erneut öffnen, bei 1600 ms muss es zu sein |
+| R8 Beliebig viele verschiedene Popups gleichzeitig | `m5-pagetypes.spec.ts` | **läuft** | zwei verschiedene Popups nebeneinander; dasselbe zweimal geöffnet gibt keine Dublette |
+| R9 globale Inkludeseite in jede normale Seite, nicht in Popups | `m5-composition.spec.ts` | **läuft** | beide Seiten der Regel: zwei normale Seiten mit beiden globalen Layern, ein Popup ohne |
+| R10 mehrere globale Includes aufsteigend nach `order` | `m5-composition.spec.ts` | **läuft** | `data-layer` in Renderreihenfolge = Stapelreihenfolge, kleinste `order` zuunterst |
+| R11 Direktaufruf zeigt die anderen globalen nicht | `m5-composition.spec.ts` | **läuft** | über die Link-Kachel aufgerufen; die eigene Ebene steht, die zweite globale fehlt |
 | R12 globale Inkludeseite inkludiert selbst nichts (400) | `m5-composition.spec.ts` | **läuft** | 400 + folgenlos + erlaubte Gegenprobe auf einer normalen Seite |
-| R13 normale Seite kann globale Includes ignorieren | `m5-composition.spec.ts` | `fixme` | Teil B #167 |
-| R14 individuelle Inkludeseite wird eingebettet | `m5-composition.spec.ts` | `fixme` | Teil B #167 |
+| R13 normale Seite kann globale Includes ignorieren | `m5-composition.spec.ts` | **läuft** | beide Hälften wie bei R2-R6: `ignore_global_includes` am Backend (true **und** false) und kein globaler Layer im Bild |
+| R14 individuelle Inkludeseite wird eingebettet | `m5-composition.spec.ts` | **läuft** | `include`-Ebene unter der eigenen; die eingebetteten Elemente tragen dieselben `data-id` wie beim Direktaufruf (kein Datenfork) |
 | R15 Include quer über eine Zugriffsgrenze | `m5-authz-include.spec.ts` | **läuft** | die ganze Signalliste aus §2.1 + `X-Source-Page-Readonly` + Verdeckung im Baum |
 | R16 Editor-Round-Trip | `m5-editor-roundtrip.spec.ts` | `fixme` | Teil C1 #168 **und** Teil B #167 |
 
@@ -423,8 +436,14 @@ Vorkehrung:
   `m5-editor-touch.spec.ts` mit `hasTouch: true` fährt; das Projekt `chromium`
   nimmt diese Datei aus, damit sie nicht zweimal läuft. Das Szenario prüft als
   erstes seine eigene Voraussetzung (`navigator.maxTouchPoints > 0`) und dann
-  die Zeile: derselbe Zug per Finger bewegt das Element um **dieselbe Distanz**
-  wie der Maus-Zug, gemessen vom selben Ausgangswert (dazwischen ein Undo).
+  **beide Hälften seiner Planzeile**: derselbe Zug per Finger bewegt das Element
+  um **dieselbe Distanz** wie der Maus-Zug, und derselbe Zug am Anfasser
+  (`[data-resize="se"]`, in `editor-helpers.ts`) macht es um **dasselbe Maß**
+  größer, ohne es zu verschieben. Beide Male wird vom selben Ausgangswert
+  gemessen (dazwischen je ein Undo) und beide Male über denselben synthetischen
+  Touch-Zug, damit sich die Hälften nicht in zwei Nachbildungen unterscheiden.
+  Bis Runde 2 behauptete E14 nur das Ziehen; ein Editor, der per Finger schieben,
+  aber nicht größer ziehen lässt, wäre durchgekommen.
 - **E3 (Vorschau = Live-Renderer)** verglich zwei verschieden große Ausschnitte
   byteweise; das konnte nie 0 ergeben und war auch nicht das Kriterium. Jetzt
   wird auf **beiden** Seiten derselbe Ausschnitt fotografiert (`.edomi-root`,
@@ -433,7 +452,10 @@ Vorkehrung:
   Live-Visu bekommt exakt das Fenster der Vorschau (Breite, Höhe,
   `deviceScaleFactor`), die gleiche Abmessung wird getrennt behauptet, und dann
   zählt das Szenario die **abweichenden Pixel** (Dekodierung im Browser über
-  `canvas`/`getImageData`, keine zusätzliche Abhängigkeit) und verlangt 0.
+  `canvas`/`getImageData`, keine zusätzliche Abhängigkeit) und verlangt 0. Der
+  zweite Browser-Kontext gehört dem Szenario und wird in einem `finally` wieder
+  geschlossen; Playwright räumt nur den Kontext der `page`-Fixture ab, ein
+  selbst geöffneter bliebe sonst bis zum Prozessende stehen.
 
 ## Die Beispielwelt (`seed.py`, M5-Teil)
 
@@ -505,6 +527,23 @@ sie im Speicher, `.seeded.json` enthält keine Admin-Zugangsdaten.
   die Zeile rot. R15 behauptet die Vorbedingung ausdrücklich mit
   (`GET /datapoints/{dp}` als operator → 200), damit die Trennung nicht still
   wegkonfiguriert werden kann.
+- **Ein gespeichertes Flag ohne laufende Behauptung fällt still.** Bis Runde 2
+  war `ignore_global_includes` (R13) allein vom Read-Back des Seeds gedeckt, und
+  der ist Aufbau, kein Szenario: ein Modell, das das Flag beim Lesen verwirft,
+  kam an jedem laufenden Szenario vorbei. R13 trägt deshalb jetzt dieselbe
+  Zweiteilung wie R2-R6: erst der Deskriptor am Backend (beide Seiten der
+  Bedingung), dann das Bild. Belegt mit der Mutation „`ignore_global_includes`
+  liefert immer `False`" (an der API belegt: `M5 Solo` meldet `False`): R13 wird
+  rot, `Expected: true / Received: false`, nach 73 ms und noch vor dem Browser.
+- **An Teil B kein Mangel gefunden.** Die sieben Szenarien, die auf die
+  Host-Komposition warteten (R7, R8, R9, R10, R11, R13, R14), wurden zuerst
+  **unverändert** gegen den gelieferten Host gefahren und waren auf Anhieb grün.
+  Es wurde weder eine Erwartung abgeschwächt noch ein Selektor nachgezogen. Dass
+  sie tragen und nicht bloss leer durchlaufen, ist an einer Mutationsprobe belegt:
+  mit `kind` im `VisuNodeSummary` fest auf `normal` (an der API belegt, der Baum
+  meldet nur noch `['normal']`) werden R9, R10, R13, R7 und R8 rot. R11 und R14
+  bleiben zu Recht grün, denn sie hängen nicht an der Einstufung als globale
+  Inkludeseite.
 - **Die authz-Welle-4-Spec musste enger werden, nicht lockerer.** Seit die
   Beispielwelt eine zweite PIN-geschützte Seite kennt (`M5 Guard Pin`), rendert
   der `AccessGate`-Streifen mehrere PIN-Formulare. `authz-roles.spec.ts` fasst
@@ -514,9 +553,12 @@ sie im Speicher, `.seeded.json` enthält keine Admin-Zugangsdaten.
 
 ## Was bewusst offen bleibt
 
+- **R16 (Editor-Round-Trip) bleibt `fixme`.** Teil B liefert nur die eine Hälfte
+  seiner Blockade; die andere ist der V2-Editor in `gui/` (C1 #168), und ohne ihn
+  gibt es die Seite gar nicht, deren Round-Trip die Zeile behauptet.
 - Die **Darstellungshälfte** von R2-R6 (zentriertes Popup, Schatten, `inert`) hat
-  kein eigenes laufendes Szenario: sie hängt an Teil B und wird über R16
-  nachgewiesen. Die laufenden Szenarien prüfen den Deskriptor genau so, wie der
+  kein eigenes laufendes Szenario: sie hängt an der Darstellung des Skins und
+  wird über R16 nachgewiesen. Die laufenden Szenarien prüfen den Deskriptor genau so, wie der
   Host ihn liest — inklusive der scharfen Kante „fehlende Koordinate bleibt
   `null`".
 - **R17** und die Contract-/Skins-Gates gehören nicht in diesen Harness.

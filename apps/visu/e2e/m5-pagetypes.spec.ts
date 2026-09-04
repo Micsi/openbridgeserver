@@ -15,18 +15,12 @@ import { adminHeaders, api, seeded, type NodeSummary, type PageConfigResponse } 
  * siehe e2e/README.md.
  *
  * R7 und R8 sind reine Host-Verhaltensregeln (Timer, mehrere offene Popups).
- * Sie sind vollständig ausgeschrieben, aber `fixme`, bis Teil B (#167) die
- * `kind=popup`-Seiten in `PopupDescriptor`s übersetzt. Heute leitet
- * `core/obs/compose.ts` den Layer-Stack noch aus der `parent_id`-Näherung ab
- * und kennt überhaupt keine Popups.
+ * Seit Teil B (#167) geliefert hat, laufen sie: `core/obs/compose.ts` übersetzt
+ * `kind=popup`-Seiten in `PopupDescriptor`s, `store.navigate` öffnet sie als
+ * Overlay über der aktuellen Seite, und der Offen-Zustand samt Auto-Close-Timer
+ * gehört dem Store. Beide Szenarien stehen unverändert so da, wie sie vor der
+ * Lieferung geschrieben wurden.
  */
-
-const BLOCKED_BY_B = {
-  annotation: {
-    type: 'blocked-by',
-    description: 'Teil B Host-Komposition — Micsi/openbridgeserver#167 (compose.ts kennt noch keine kind=popup-Seiten)',
-  },
-} as const;
 
 /** Öffnet die Edomi-Seite (der einzige seitenbesitzende Skin) auf einer Wirtsseite. */
 async function openEdomiPage(page: Page, pageName: string) {
@@ -197,8 +191,8 @@ test.describe('M5 Regeltabelle R1-R6 · Seitentyp + Popup-Deskriptor (läuft geg
   });
 });
 
-test.describe('M5 Regeltabelle R7-R8 · Popup-Verhalten im Host (wartet auf Teil B, #167)', () => {
-  test.fixme('R7 Auto-Close-Zeit wird beim erneuten Öffnen nicht verlängert', BLOCKED_BY_B, async ({ page }) => {
+test.describe('M5 Regeltabelle R7-R8 · Popup-Verhalten im Host (läuft gegen den Host aus Teil B)', () => {
+  test('R7 Auto-Close-Zeit wird beim erneuten Öffnen nicht verlängert', async ({ page }) => {
     const fx = seeded();
     await openEdomiPage(page, fx.m5.names.home);
 
@@ -220,7 +214,7 @@ test.describe('M5 Regeltabelle R7-R8 · Popup-Verhalten im Host (wartet auf Teil
     await expect(popup).toHaveCount(0);
   });
 
-  test.fixme('R8 Beliebig viele verschiedene Popups gleichzeitig', BLOCKED_BY_B, async ({ page }) => {
+  test('R8 Beliebig viele verschiedene Popups gleichzeitig', async ({ page }) => {
     const fx = seeded();
     await openEdomiPage(page, fx.m5.names.home);
 

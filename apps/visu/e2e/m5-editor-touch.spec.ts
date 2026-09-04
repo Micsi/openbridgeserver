@@ -1,6 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Locator } from '@playwright/test';
 import { seeded } from './fixtures';
-import { C5, box, el, openEditor } from './editor-helpers';
+import { C5, box, el, openEditor, resizeHandle } from './editor-helpers';
 
 /**
  * M5 Messlatte: Editor-Matrix E14 (CONTRIBUTING-visu-m5.md §1.1).
@@ -41,17 +41,48 @@ test.describe('M5 Editor-Matrix E14 · Touch-Eingabe (wartet auf Teil C5)', () =
       expect(await page.evaluate(() => navigator.maxTouchPoints > 0 || 'ontouchstart' in window)).toBe(true);
 
       const start = await box(page, fx.m5.widgets.solo);
-      const handle = (await el(page, fx.m5.widgets.solo).boundingBox())!;
-      const from = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
       const DISTANCE = 60;
 
-      // (a) Maus-Drag um 60 px, der Bezugswert, gegen den Touch gemessen wird.
-      await page.mouse.move(from.x, from.y);
-      await page.mouse.down();
-      await page.mouse.move(from.x + DISTANCE, from.y, { steps: 10 });
-      await page.mouse.up();
-      const afterMouse = await box(page, fx.m5.widgets.solo);
-      const mouseDelta = afterMouse.x - start.x;
+      /**
+       * Ein Zug per Finger über `DISTANCE` Pixel nach rechts.
+       *
+       * `page.touchscreen.tap` setzt den Finger auf (das ist die Affordanz, die
+       * die Planzeile wörtlich nennt); die Bewegung selbst fährt als
+       * Touch-Sequenz auf demselben Element, weil Playwrights Touchscreen-API
+       * kein Ziehen kennt. Beide Hälften der Zeile (Ziehen und Größerziehen)
+       * benutzen genau diesen einen Weg, damit sie sich nicht in zwei
+       * verschiedenen Nachbildungen unterscheiden.
+       */
+      async function touchDragRight(target: Locator, from: { x: number; y: number }) {
+        const at = (x: number) => ({ identifier: 0, clientX: x, clientY: from.y, pageX: x, pageY: from.y });
+        await page.touchscreen.tap(from.x, from.y);
+        await target.dispatchEvent('touchstart', { touches: [at(from.x)], changedTouches: [at(from.x)], targetTouches: [at(from.x)] });
+        await target.dispatchEvent('touchmove', {
+          touches: [at(from.x + DISTANCE)],
+          changedTouches: [at(from.x + DISTANCE)],
+          targetTouches: [at(from.x + DISTANCE)],
+        });
+        await target.dispatchEvent('touchend', { touches: [], changedTouches: [at(from.x + DISTANCE)], targetTouches: [] });
+      }
+
+      /** Ein Maus-Zug über dieselbe Distanz: der Bezugswert, gegen den gemessen wird. */
+      async function mouseDragRight(from: { x: number; y: number }) {
+        await page.mouse.move(from.x, from.y);
+        await page.mouse.down();
+        await page.mouse.move(from.x + DISTANCE, from.y, { steps: 10 });
+        await page.mouse.up();
+      }
+
+      /* ------------------------------------------------ (I) Touch-DRAG */
+
+      const tile = el(page, fx.m5.widgets.solo);
+      const tileBox = (await tile.boundingBox())!;
+      const onTile = { x: tileBox.x + tileBox.width / 2, y: tileBox.y + tileBox.height / 2 };
+
+      // (a) Maus-Drag um 60 px, der Bezugswert.
+      await mouseDragRight(onTile);
+      const afterMouseDrag = await box(page, fx.m5.widgets.solo);
+      const mouseDelta = afterMouseDrag.x - start.x;
       expect(mouseDelta).toBeGreaterThan(0);
 
       // (b) Zurück auf den Ausgangswert, damit beide Wege bei derselben Marke
@@ -59,33 +90,45 @@ test.describe('M5 Editor-Matrix E14 · Touch-Eingabe (wartet auf Teil C5)', () =
       await page.keyboard.press('Control+z');
       expect(await box(page, fx.m5.widgets.solo)).toMatchObject({ x: start.x });
 
-      // (c) Derselbe Zug per Finger. `page.touchscreen.tap` setzt den Finger auf
-      //     das Element (das ist die Affordanz, die die Planzeile wörtlich
-      //     nennt); die Bewegung selbst fährt als Touch-Sequenz über dasselbe
-      //     Element, weil Playwrights Touchscreen-API kein Ziehen kennt.
-      await page.touchscreen.tap(from.x, from.y);
-      const target = el(page, fx.m5.widgets.solo);
-      const touchPoint = (x: number) => ({ identifier: 0, clientX: x, clientY: from.y, pageX: x, pageY: from.y });
-      await target.dispatchEvent('touchstart', {
-        touches: [touchPoint(from.x)],
-        changedTouches: [touchPoint(from.x)],
-        targetTouches: [touchPoint(from.x)],
-      });
-      await target.dispatchEvent('touchmove', {
-        touches: [touchPoint(from.x + DISTANCE)],
-        changedTouches: [touchPoint(from.x + DISTANCE)],
-        targetTouches: [touchPoint(from.x + DISTANCE)],
-      });
-      await target.dispatchEvent('touchend', {
-        touches: [],
-        changedTouches: [touchPoint(from.x + DISTANCE)],
-        targetTouches: [],
-      });
+      // (c) Derselbe Zug per Finger …
+      await touchDragRight(tile, onTile);
 
-      // (d) Die Zeile selbst: dieselbe Distanz, nicht nur „auch bewegt".
-      const afterTouch = await box(page, fx.m5.widgets.solo);
-      expect(afterTouch.x - start.x).toBe(mouseDelta);
-      expect(afterTouch).toMatchObject({ x: afterMouse.x, y: afterMouse.y });
+      // (d) … und die Zeile selbst: dieselbe Distanz, nicht nur „auch bewegt".
+      const afterTouchDrag = await box(page, fx.m5.widgets.solo);
+      expect(afterTouchDrag.x - start.x).toBe(mouseDelta);
+      expect(afterTouchDrag).toMatchObject({ x: afterMouseDrag.x, y: afterMouseDrag.y });
+
+      /* ---------------------------------------------- (II) Touch-RESIZE */
+      // Die zweite Hälfte der Planzeile. Ohne sie behauptete E14 nur das Ziehen,
+      // und ein Editor, der per Finger zwar schieben, aber nicht größer ziehen
+      // lässt, käme durch.
+
+      // Zurück auf den Ausgangswert, und zwar auch das Maß, nicht nur die Lage.
+      await page.keyboard.press('Control+z');
+      expect(await box(page, fx.m5.widgets.solo)).toMatchObject({ x: start.x, w: start.w, h: start.h });
+
+      const grip = resizeHandle(page, fx.m5.widgets.solo);
+      const gripBox = (await grip.boundingBox())!;
+      const onGrip = { x: gripBox.x + gripBox.width / 2, y: gripBox.y + gripBox.height / 2 };
+
+      // (e) Maus-Resize um dieselben 60 px, der Bezugswert.
+      await mouseDragRight(onGrip);
+      const afterMouseResize = await box(page, fx.m5.widgets.solo);
+      const mouseGrowth = afterMouseResize.w - start.w;
+      expect(mouseGrowth).toBeGreaterThan(0);
+      // Das Größerziehen an der Ecke verschiebt das Element nicht.
+      expect(afterMouseResize).toMatchObject({ x: start.x, y: start.y });
+
+      await page.keyboard.press('Control+z');
+      expect(await box(page, fx.m5.widgets.solo)).toMatchObject({ w: start.w, h: start.h });
+
+      // (f) Derselbe Zug am selben Griff, per Finger.
+      await touchDragRight(grip, onGrip);
+
+      // (g) Und dieselbe Aussage wie beim Ziehen: dieselbe Distanz, dieselbe Box.
+      const afterTouchResize = await box(page, fx.m5.widgets.solo);
+      expect(afterTouchResize.w - start.w).toBe(mouseGrowth);
+      expect(afterTouchResize).toMatchObject({ w: afterMouseResize.w, h: afterMouseResize.h, x: start.x, y: start.y });
     },
   );
 });
