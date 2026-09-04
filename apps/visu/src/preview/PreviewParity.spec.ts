@@ -50,9 +50,16 @@ import { dirname, join, resolve } from 'node:path';
  *                        teilen und wird im jsdom-Mount nie ausgerechnet; die
  *                        Kopie ist deshalb per QUELLTEXT gebunden, und zwar der
  *                        GANZE Block Regel fuer Regel, nicht zwei Selektoren
- *   - der Rand          - was eine Seite NEBEN ihren Rahmen haengt (Teleport,
- *                        Portal, Overlay am `<body>`) - der Abdruck beginnt am
- *                        `ion-page`, dort endet er aber nicht
+ *   - die Stilquellen  - und daneben dieselbe Frage in WIRKUNG statt in
+ *                        Quellen: welcher Selektor aller ausgelieferten
+ *                        Blaetter greift am Ende in der Vorschau und nicht auf
+ *                        der echten Seite? Ein Blatt, das nur die Vorschau
+ *                        faerbt, ist genau das - egal wo es liegt
+ *   - der Rand         - der Zustand des DOKUMENTS neben dem Rahmen, zum
+ *                        Messzeitpunkt aufgenommen: `<html>` und `<body>`
+ *                        selbst, jeder Knoten in `<head>` und `<body>`, jede
+ *                        aktive Stilquelle - und dasselbe noch einmal NACH
+ *                        einer Interaktion, nicht nur direkt nach dem Mount
  *
  * WAS DIESER NACHWEIS NICHT MISST - ausdruecklich, damit ihn niemand fuer eine
  * Pixelgarantie haelt: ein jsdom-Lauf rechnet KEINE Stylesheets aus. Berechnete
@@ -480,30 +487,119 @@ function structure(
   return out;
 }
 
+/* ------------------------------------------------------------- der Rand */
+
 /**
- * WAS DIE SEITE NEBEN IHREM RAHMEN ERZEUGT. Der Abdruck oben beginnt am
- * `ion-page` - und endete frueher auch dort. Ein `<Teleport to="body">` haengt
- * aber daneben, genau dort, wo in der echten App auch Ionics Overlays landen:
- * ein sichtbares „Entwurfsvorschau"-Banner am `<body>` blieb deshalb unsichtbar
- * (Kritik R4, Probe N3). Gemessen wird jetzt, was zwischen dem Zeitpunkt VOR
- * dem Mount und jetzt neu am `<body>` haengt - ohne den Behaelter, in dem der
- * Rahmen selbst steckt, denn der IST die Seite und wird oben verglichen.
+ * DER RAND DER SEITE - und zwar in WIRKUNG gemessen, nicht in Quellen gesucht.
  *
- * Ausgenommen bleibt nur das: der eigene Behaelter. Alles andere - Portale,
- * Teleports, direkt angehaengte Knoten - wird mit Tag, Klassen, Attributen,
- * Stil und Text abgedruckt wie jedes Element im Rahmen. Dass der Zaun nicht nur
- * deshalb leer ist, weil er nicht hinsieht, prueft die Gegenprobe im Test
- * "sieht auch, was neben dem Rahmen am <body> haengt".
+ * Der Vorgaenger war ein Schnappschuss EINER Kinderliste: was beim Mount neu an
+ * `document.body` kam. Vier Wege liefen daran vorbei, jeder einzeln sichtbar
+ * und jeder nur in der Vorschau (Kritik R5, S3-S5): ein `<style>`, das zur
+ * Laufzeit in den `<head>` gehaengt wird; `document.body.style.padding`, weil
+ * das `<body>`-Element selbst nie abgedruckt wurde (im echten Vorschau-iframe
+ * IST der `<body>` die Seite); eine Aenderung an einem schon vorhandenen Kind;
+ * und ein Knoten, der erst NACH einer Interaktion entsteht.
+ *
+ * Aufgenommen wird deshalb der ZUSTAND des Dokuments zum Messzeitpunkt:
+ *
+ *   - `<html>` und `<body>` selbst, mit allen Attributen und ihrem Stil,
+ *   - jeder Knoten in `<head>` UND `<body>` (ohne den verglichenen Rahmen, der
+ *     oben Element fuer Element gehalten wird),
+ *   - jede aktive Stilquelle ({@link documentStyleSources}).
+ *
+ * Verglichen wird die VERAENDERUNG gegen eine Aufnahme von vor dem Mount, damit
+ * Reste frueherer Mounts im selben Lauf nicht als Rand der Seite gelten. Und
+ * gemessen wird zweimal: direkt nach dem Mount und noch einmal nach einer
+ * Interaktion.
+ *
+ * GRENZE: ein echtes Ionic-Overlay ist hier strukturell nicht messbar -
+ * `IonModal`/`IonPopover` sind auf durchreichende Tags gestubbt (oben), sie
+ * teleportieren also nie an den `<body>`. Was dieser Zaun misst, ist alles,
+ * was die Seite selbst am Dokument aendert; das Verhalten der echten
+ * Ionic-Overlays gehoert zu Teil E.
  */
-function outsideFrame(before: readonly Element[], frame: Element): string[] {
-  const roots = Array.from(document.body.children).filter(
-    (el) => !before.includes(el) && !el.contains(frame),
-  );
-  return roots.flatMap((root, i) => [
-    printElement(root, `@body/${i}`),
-    ...structure(root, () => false, `@body/${i}`),
-  ]);
+type DocEdge = {
+  html: string;
+  body: string;
+  nodes: Map<Element, string>;
+  styles: string[];
+};
+
+/**
+ * ALLE Stilquellen, die im Dokument gerade WIRKEN - gezaehlt, nicht gesucht:
+ * jedes `<style>` und jedes `<link rel=stylesheet>`, im `<head>` wie im
+ * `<body>`, samt der Zahl der Blaetter im CSSOM (was ohne eigenes Element
+ * eingehaengt wurde, faellt an ihr auf).
+ */
+function documentStyleSources(): string[] {
+  const out: string[] = [];
+  for (const el of Array.from(document.querySelectorAll('style, link'))) {
+    const tag = el.tagName.toLowerCase();
+    const rel = (el.getAttribute('rel') ?? '').toLowerCase().split(/\s+/);
+    if (tag === 'link' && !rel.includes('stylesheet')) continue;
+    const where = document.head.contains(el) ? 'head' : 'body';
+    const what =
+      tag === 'link'
+        ? (el.getAttribute('href') ?? '')
+        : (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+    out.push(`${where} <${tag}> ${what}`);
+  }
+  const adopted = (document as unknown as { adoptedStyleSheets?: readonly unknown[] })
+    .adoptedStyleSheets;
+  out.push(`CSSOM: ${document.styleSheets.length} Blatt, ${adopted?.length ?? 0} adoptiert`);
+  return out;
 }
+
+/** Eine Aufnahme des Dokumentrandes - `frame` und sein Baum bleiben aussen vor. */
+function edgeSnapshot(frame: Element | null = null): DocEdge {
+  const nodes = new Map<Element, string>();
+  const walk = (parent: Element, where: string): void => {
+    for (const child of Array.from(parent.children)) {
+      if (child === frame) continue;
+      nodes.set(child, printElement(child, where));
+      walk(child, where);
+    }
+  };
+  walk(document.head, '@head');
+  walk(document.body, '@body');
+  return {
+    html: printElement(document.documentElement, '@html'),
+    body: printElement(document.body, '@body'),
+    nodes,
+    styles: documentStyleSources(),
+  };
+}
+
+/** Was sich am Rand seit `before` geaendert hat - der Rand DIESER Seite. */
+function edgeSince(before: DocEdge, frame: Element | null): string[] {
+  const now = edgeSnapshot(frame);
+  const out: string[] = [];
+  if (now.html !== before.html) out.push(`geaendert ${before.html} -> ${now.html}`);
+  if (now.body !== before.body) out.push(`geaendert ${before.body} -> ${now.body}`);
+  const wasStyle = [...before.styles];
+  for (const src of now.styles) {
+    const i = wasStyle.indexOf(src);
+    if (i < 0) out.push(`neue Stilquelle: ${src}`);
+    else wasStyle.splice(i, 1);
+  }
+  for (const src of wasStyle) out.push(`Stilquelle weg: ${src}`);
+  for (const [el, print] of now.nodes) {
+    const was = before.nodes.get(el);
+    if (was === undefined) out.push(`neu ${print}`);
+    else if (was !== print) out.push(`geaendert ${was} -> ${print}`);
+  }
+  return out;
+}
+
+/**
+ * Was eine Seite am Rand des Dokuments aendern darf: NICHTS. Vue Test Utils
+ * rendert in einen losgeloesten Knoten, der Mount selbst haengt also nichts an
+ * `<html>`, `<head>` oder `<body>` - was dort auftaucht, kommt von der Seite.
+ * Der leere Rand steht in den Tests ausgeschrieben, damit „beide gleich" nicht
+ * „beide blind" heissen kann; die Gegenproben unten zeigen fuenf Wege, auf
+ * denen er sich fuellt.
+ */
+const RUHIGER_RAND: readonly string[] = [];
 
 /**
  * Die Texte, die der Entwurfsboden auf JEDER Flaeche erzeugt: der Name einer
@@ -555,6 +651,62 @@ function expectSubstance(tree: string[]): void {
   // Eine Kachel ohne Koerper haette hier 0 bis 2 Zeilen.
   expect(facts.thinnestCell).toBeGreaterThanOrEqual(5);
   expect(facts.widgetTexts).toEqual(WIDGET_TEXTS);
+}
+
+/**
+ * DIE PLATZIERUNG einer Flaeche - die zweite Haelfte derselben Selbstsicherung.
+ * {@link contentFacts} schaut IN die Kacheln, aber nicht darauf, WO sie liegen:
+ * der ganze `style`-Block der Zelle (`SkinHost.renderCell`) auf `{}` gesetzt
+ * nimmt beiden Seiten gleichzeitig die absolute Platzierung aus der Autorenbox,
+ * die Rasterspanne, die Aktiv-Markierung und den Zeiger - und der Vergleich
+ * blieb 79 von 79 gruen (Kritik R5, Probe B4). Genau darum geht es bei
+ * Pixelparitaet, also wird es hier gezaehlt und je Skin ausgeschrieben.
+ */
+function placementFacts(tree: string[]): Record<string, number> {
+  const isCell = (l: string): boolean => l.split(' | ')[2].split('.').includes('skin-host-cell');
+  const styleOf = (l: string): string => l.split(' | ')[4] ?? '';
+  const cells = tree.filter(isCell);
+  const count = (re: RegExp): number => cells.filter((l) => re.test(styleOf(l))).length;
+  return {
+    Zellen: cells.length,
+    Rasterspanne: count(/(^|; )grid-column:span \d/),
+    absolutPlatziert: count(/(^|; )position:absolute/),
+    Zeiger: count(/(^|; )cursor:pointer/),
+    Bezugsrahmen: count(/(^|; )position:relative/),
+  };
+}
+
+/**
+ * DIE FARBE einer Flaeche - die dritte Haelfte. `SkinHost.renderCell` rechnet
+ * die Tokens jeder Kachel aus dem Thema des Autors und dem Akzent des Geraets
+ * (`makeTokens(props.theme, device.accent)`); auf `makeTokens('light',
+ * 'neutral')` festgenagelt rendern BEIDE Seiten mit hellem Standardton, und der
+ * ganze Lauf blieb gruen (Kritik R5, Probe B5) - obwohl die Szenarien unten
+ * nach genau diesen Einstellungen benannt sind. Gezaehlt wird deshalb jeder
+ * Farbwert, den der Kachelinhalt selbst traegt.
+ */
+/**
+ * Was jeder Skin platziert - ausgeschrieben, weil die drei es verschieden tun:
+ * ionic gibt jeder Zelle ihre Rasterspanne, terminal legt eine flache Liste
+ * ohne Platzierung (nur der Seitenlink bekommt seinen Zeiger), und edomi
+ * zeichnet seine Seite selbst aus dem Layerstapel, also platziert dort der
+ * Skin und nicht der Host. Ein Skin, der ploetzlich nichts mehr platziert,
+ * faellt an diesen Zahlen auf.
+ */
+const PLACEMENT_BY_SKIN: Record<string, Record<string, number>> = {
+  ionic: { Zellen: 15, Rasterspanne: 15, absolutPlatziert: 0, Zeiger: 5, Bezugsrahmen: 5 },
+  terminal: { Zellen: 15, Rasterspanne: 0, absolutPlatziert: 0, Zeiger: 5, Bezugsrahmen: 0 },
+  edomi: { Zellen: 3, Rasterspanne: 0, absolutPlatziert: 0, Zeiger: 0, Bezugsrahmen: 0 },
+};
+
+function paintFacts(tree: string[]): string[] {
+  const out = new Set<string>();
+  for (const line of tree) {
+    for (const decl of (line.split(' | ')[4] ?? '').split('; ')) {
+      if (/#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i.test(decl)) out.add(decl);
+    }
+  }
+  return [...out].sort();
 }
 
 /** A1: der Tweak-Editor der Live-Seite - die eine benannte Ausnahme im Abdruck. */
@@ -637,35 +789,208 @@ function repoRoot(): string {
 type CssRule = { at: string; selector: string; decls: string[] };
 
 /**
- * Selektor normalisiert: Leerraum zusammengezogen, Kombinatoren mit festem
- * Abstand, Selektorlisten sortiert. Damit faellt eine Regel nicht wegen der
- * Formatierung auf, sondern nur, wenn sie wirklich eine andere ist.
+ * CSS in seine drei Sorten zerlegt: Code, Zeichenkette, Kommentar. JEDE
+ * Normalisierung unten arbeitet auf diesem Schnitt, und das ist der Grund
+ * dafuer: ausserhalb einer Zeichenkette darf Leerraum zusammengezogen und
+ * Schreibweise vereinheitlicht werden, INNERHALB nicht - `content: "a  b"` und
+ * `content: "a b"` sind zwei verschiedene Texte, und `grid-template-areas`
+ * traegt sein ganzes Layout in genau diesen Leerzeichen. Aus demselben Grund
+ * darf auch die Struktursuche (`{`, `}`, `;`, `,`) nicht auf den rohen Text
+ * schauen: eine Klammer in einer Zeichenkette ist keine Klammer.
+ *
+ * Was der Scanner nicht lesen kann, WIRFT: eine Zeichenkette oder ein Kommentar
+ * ohne Ende bekommt eine Fehlermeldung, statt still den halben Block zu
+ * verschlucken.
+ */
+type CssPart = { text: string; kind: 'code' | 'string' | 'comment' };
+
+function cssParts(text: string): CssPart[] {
+  const out: CssPart[] = [];
+  let buf = '';
+  const flush = (): void => {
+    if (buf.length > 0) out.push({ text: buf, kind: 'code' });
+    buf = '';
+  };
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end < 0) throw new Error(`CSS-Kommentar ohne Ende: "${text.slice(i, i + 24)}"`);
+      flush();
+      out.push({ text: text.slice(i, end + 2), kind: 'comment' });
+      i = end + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      let str = ch;
+      let closed = false;
+      while (j < text.length) {
+        if (text[j] === '\\') {
+          str += text.slice(j, j + 2);
+          j += 2;
+          continue;
+        }
+        str += text[j];
+        j += 1;
+        if (str[str.length - 1] === ch) {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) throw new Error(`CSS-Zeichenkette ohne Ende: ${str.slice(0, 24)}`);
+      flush();
+      out.push({ text: str, kind: 'string' });
+      i = j;
+      continue;
+    }
+    buf += ch;
+    i += 1;
+  }
+  flush();
+  return out;
+}
+
+/** Leerraum zusammenziehen - aber nur ausserhalb von Zeichenketten. */
+const squeeze = (text: string): string =>
+  cssParts(text)
+    .map((p) => (p.kind === 'code' ? p.text.replace(/\s+/g, ' ') : p.text))
+    .join('');
+
+/** Kommentare weg, Zeichenketten unangetastet. */
+const stripComments = (css: string): string =>
+  cssParts(css)
+    .map((p) => (p.kind === 'comment' ? ' ' : p.text))
+    .join('');
+
+/**
+ * Derselbe Text, aber mit ausgeblendeten Zeichenketten (gleiche Laenge, damit
+ * die Stellen aufeinanderliegen). Darauf sucht der Parser seine Klammern.
+ */
+const cssMask = (css: string): string =>
+  cssParts(css)
+    .map((p) => (p.kind === 'string' ? ' '.repeat(p.text.length) : p.text))
+    .join('');
+
+/** An `sep` teilen - nicht in Zeichenketten und nicht in Klammern. */
+function splitOutside(text: string, sep: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let depth = 0;
+  for (const part of cssParts(text)) {
+    if (part.kind !== 'code') {
+      cur += part.text;
+      continue;
+    }
+    for (const ch of part.text) {
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth = Math.max(0, depth - 1);
+      if (ch === sep && depth === 0) {
+        out.push(cur);
+        cur = '';
+        continue;
+      }
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+/** Der erste Doppelpunkt ausserhalb einer Zeichenkette. */
+function colonOutside(decl: string): number {
+  let at = 0;
+  for (const part of cssParts(decl)) {
+    if (part.kind === 'code') {
+      const i = part.text.indexOf(':');
+      if (i >= 0) return at + i;
+    }
+    at += part.text.length;
+  }
+  return -1;
+}
+
+/**
+ * CSS-Escapes auf EINE Form gebracht. `.preview\2Dpage` und `.preview-page`
+ * sind buchstabengleiches CSS ohne einen bewegten Pixel, machten den Vergleich
+ * aber falsch rot (Kritik R5, Probe Q6).
+ *
+ * Aufgeloest wird nur, was danach ohne Escape dasselbe bedeutet: ein Zeichen,
+ * das in einem Bezeichner stehen darf. Alles andere bleibt escaped - sonst
+ * wuerde aus `.foo\.bar` (EINE Klasse mit einem Punkt im Namen) der ganz
+ * andere Selektor `.foo.bar`, und der Vergleich liesse eine echte Abweichung
+ * durch.
+ */
+function decodeEscapes(text: string): string {
+  return text.replace(/\\(?:([0-9a-fA-F]{1,6})[ \t\n]?|([\s\S]))/g, (_m, hex: string, raw: string) => {
+    const ch = hex ? String.fromCodePoint(Number.parseInt(hex, 16)) : raw;
+    return /^[A-Za-z0-9_-]$/.test(ch) || ch.codePointAt(0)! > 0x7f ? ch : `\\${ch}`;
+  });
+}
+
+/**
+ * Selektor normalisiert: Leerraum zusammengezogen (nicht in Zeichenketten),
+ * Escapes aufgeloest, Kombinatoren mit festem Abstand, Selektorlisten sortiert.
+ * Damit faellt eine Regel nicht wegen der Formatierung auf, sondern nur, wenn
+ * sie wirklich eine andere ist.
  */
 function normalizeSelector(raw: string): string {
-  return raw
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(',')
-    .map((part) => part.trim().replace(/\s*([>+~])\s*/g, ' $1 '))
+  return splitOutside(squeeze(raw).trim(), ',')
+    .map((part) => decodeEscapes(part.trim()).replace(/\s*([>+~])(?!=)\s*/g, ' $1 '))
     .filter(Boolean)
     .sort()
     .join(', ');
 }
 
 /**
+ * Einen Wert klein schreiben - aber nur dort, wo CSS ihn ohnehin
+ * gross/klein-unempfindlich liest. AUSGENOMMEN bleiben drei Stellen, weil sie
+ * es nicht sind:
+ *
+ *   - Zeichenketten (`content: "Aus"`),
+ *   - `url(...)` (ein Pfad ist gross/klein-empfindlich),
+ *   - Custom-Property-NAMEN (`var(--Gap)` ist eine andere Variable als
+ *     `var(--gap)`).
+ *
+ * Was dabei als Rest mitlaeuft, sind selbstgewaehlte Bezeichner
+ * (`animation-name: Foo`). Sie werden mit klein geschrieben; unbemerkt
+ * durchrutschen kann darueber trotzdem nichts, weil die Deklarationen BEIDER
+ * Bloecke unten im Klartext gepinnt sind - eine neue Deklaration faellt schon
+ * dort auf, egal wie sie geschrieben ist.
+ */
+const lowerValue = (value: string): string =>
+  cssParts(value)
+    .map((p) =>
+      p.kind === 'code'
+        ? p.text.replace(/url\([^)]*\)|--[\w-]+|[\s\S]/g, (m) => (m.length > 1 ? m : m.toLowerCase()))
+        : p.text,
+    )
+    .join('');
+
+/**
  * Deklarationen normalisiert: Eigenschaft klein, GENAU ein Leerzeichen nach dem
- * Doppelpunkt, sortiert. Ohne den Doppelpunkt-Teil machte ein Prettier-Lauf mit
- * anderer Konfiguration die Probe falsch rot (`position:relative` statt
- * `position: relative`), ohne dass sich ein Pixel bewegt (Kritik R4, Probe F1).
+ * Doppelpunkt, Wert klein (s. {@link lowerValue}), sortiert. Ohne den
+ * Doppelpunkt-Teil machte ein Prettier-Lauf mit anderer Konfiguration die Probe
+ * falsch rot (`position:relative` statt `position: relative`), ohne dass sich
+ * ein Pixel bewegt (Kritik R4, Probe F1); ohne den Wert-Teil tat es
+ * `POSITION: RELATIVE` (Kritik R5, Probe Q6).
+ *
+ * Eine Custom Property bleibt in BEIDEN Haelften stehen, wie sie dasteht:
+ * `--Gap` und `--gap` sind zwei verschiedene Variablen, und ihr Wert wird als
+ * Token-Strom eingesetzt, also gross/klein-empfindlich gelesen.
  */
 function normalizeDecls(body: string): string[] {
-  return body
-    .split(';')
-    .map((d) => d.replace(/\s+/g, ' ').trim())
+  return splitOutside(body, ';')
+    .map((d) => squeeze(d).trim())
     .filter(Boolean)
     .map((d) => {
-      const i = d.indexOf(':');
-      return i < 0 ? d : `${d.slice(0, i).trim().toLowerCase()}: ${d.slice(i + 1).trim()}`;
+      const i = colonOutside(d);
+      if (i < 0) return d;
+      const name = d.slice(0, i).trim();
+      const value = d.slice(i + 1).trim();
+      if (name.startsWith('--')) return `${name}: ${value}`;
+      return `${name.toLowerCase()}: ${lowerValue(value)}`;
     })
     .sort();
 }
@@ -680,24 +1005,35 @@ function normalizeDecls(body: string): string[] {
 function parseRules(css: string): CssRule[] {
   const out: CssRule[] = [];
   const walk = (text: string, at: string): void => {
+    // Gesucht wird auf dem MASKIERTEN Text (Zeichenketten ausgeblendet),
+    // geschnitten wird aus dem echten - eine Klammer oder ein Semikolon in
+    // `content: "}"` ist keine Klammer und kein Semikolon (Kritik R5, Q3/Q5).
+    const mask = cssMask(text);
     let head = '';
     let i = 0;
     while (i < text.length) {
-      const ch = text[i];
+      const ch = mask[i];
       if (ch === '{') {
         let depth = 1;
         let j = i + 1;
         while (j < text.length && depth > 0) {
-          if (text[j] === '{') depth += 1;
-          else if (text[j] === '}') depth -= 1;
+          if (mask[j] === '{') depth += 1;
+          else if (mask[j] === '}') depth -= 1;
           j += 1;
         }
+        if (depth > 0) throw new Error(`CSS-Block ohne schliessende Klammer: "${head.trim()}"`);
         const body = text.slice(i + 1, j - 1);
         const selector = normalizeSelector(head);
         if (/^@(media|supports|container|layer|scope|document)\b/.test(selector)) {
           walk(body, at.length > 0 ? `${at} ${selector}` : selector);
+        } else if (/^@(-[\w]+-)?keyframes\b/.test(selector)) {
+          // Ein Keyframe-Block traegt keine Selektoren, sondern Zeitpunkte. Er
+          // wandert als EINE Regel mit seinem ganzen Rumpf in den Vergleich -
+          // eine zusaetzliche Animation faellt damit auf, ohne dass der Parser
+          // ihre Prozentmarken fuer Selektoren haelt.
+          out.push({ at, selector, decls: [squeeze(body).trim()] });
         } else {
-          if (body.includes('{')) {
+          if (cssMask(body).includes('{')) {
             throw new Error(`Verschachtelte Regel in "${selector}" - der Vergleich liest sie nicht`);
           }
           out.push({ at, selector, decls: normalizeDecls(body) });
@@ -713,12 +1049,12 @@ function parseRules(css: string): CssRule[] {
         i += 1;
         continue;
       }
-      head += ch;
+      head += text[i];
       i += 1;
     }
     if (head.trim().length > 0) throw new Error(`CSS-Rest ohne Block: "${head.trim()}"`);
   };
-  walk(css.replace(/\/\*[\s\S]*?\*\//g, ''), '');
+  walk(stripComments(css), '');
   return out;
 }
 
@@ -779,6 +1115,15 @@ const PREVIEW_ONLY_RULES: readonly string[] = ['.preview-hint'];
 const LIVE_ONLY_RULES: readonly string[] = ['.overview-tweaks-toggle'];
 
 /**
+ * Und dieselbe Ausnahme fuer den Wirkungsvergleich weiter unten: die
+ * Selektoren, die auf der echten Seite greifen und in der Vorschau nicht. Es
+ * sind genau die beiden benannten Abweichungen - der eigene Rahmenname (A4)
+ * und das Editor-Chrome (A1). Ausgeschrieben, weil eine offene Menge hier
+ * dieselbe Tuer waere wie ein zu kurzer Griffkatalog.
+ */
+const LIVE_ONLY_MATCHES: readonly string[] = ['.overview-tweaks-toggle', '.skin-page'];
+
+/**
  * Der zweite Weg zu demselben Pixel: ein eigenes Stylesheet im Vorschau-Chunk.
  * Ein Blatt, das der Vorschau-Modus nachlaedt, haengt genauso an
  * `.preview-page` und faerbt genauso nur die Vorschau - dieselbe Abweichung,
@@ -812,25 +1157,37 @@ function previewStyleArtifacts(): string[] {
   return out;
 }
 
-/** Die Griffe, an denen NUR die Vorschau haengt - kein Blatt darf an ihnen faerben. */
-const PREVIEW_HOOKS = ['preview-page', 'preview-canvas', 'preview-hint', 'data-preview'];
+/* ------------------------------------------- die ausgelieferten Stilquellen */
 
 /**
- * Und derselbe Weg von der anderen Seite - denn ein Blatt muss nicht im
- * Vorschau-Verzeichnis liegen, um nur die Vorschau zu faerben: es muss nur an
- * einem Vorschau-Griff haengen. Gesucht wird deshalb in JEDEM Stylesheet und
- * jedem `<style>`-Block unter `apps/visu/src` und `packages/` - dort liegt
- * jedes CSS, das diese App ausliefert. Zusammen mit
- * {@link previewStyleArtifacts} ist damit beides zu: ein neues Blatt im
- * Vorschau-Chunk und ein Vorschau-Selektor in einem fremden Blatt. `scanned`
- * ist die Gegenprobe: ein Scanner, der nichts findet, weil er nichts liest,
- * faellt an dieser Zahl auf.
+ * DENKEN IN WIRKUNG STATT IN QUELLEN. Der Blockvergleich oben bindet EINEN
+ * Block, und der Verzeichnisscan darunter EIN Verzeichnis. Daneben blieb
+ * beides offen (Kritik R5, S1/S2): eine Regel
+ * `ion-page[data-page='preview'] .visu-root { padding: 40px }` im
+ * ausgelieferten globalen Blatt `skin-host/link-affordance.css` faerbt genauso
+ * nur die Vorschau, und ein `<style>` in `apps/visu/index.html` liegt
+ * ausserhalb von `src` und wurde nie gelesen. Nach vier festen Zeichenketten zu
+ * suchen ist ein Katz-und-Maus-Spiel; ein Griff, den die Liste nicht kennt
+ * (`[data-page="preview"]`), gewinnt es.
+ *
+ * Deshalb wird hier nicht mehr gesucht, sondern GEMESSEN: alle Selektoren aller
+ * ausgelieferten Blaetter werden gegen den WIRKLICHEN Vorschau-DOM und gegen
+ * den WIRKLICHEN Live-DOM gehalten. Ein Selektor, der in der Vorschau greift
+ * und auf der echten Seite nicht, faerbt genau eine der beiden - egal wie er
+ * geschrieben ist, egal in welcher Datei er steht, egal an welchem Griff er
+ * haengt.
  */
-function foreignPreviewStyles(): { scanned: number; hits: string[] } {
+const DELIVERED_ROOTS: readonly string[][] = [['apps', 'visu'], ['packages']];
+
+/**
+ * Jede Datei unter diesen Wurzeln, die CSS AUSLIEFERT: Stylesheets, die
+ * `<style>`-Bloecke der SFC und die des HTML-Dokuments selbst. `dist/` und
+ * `node_modules/` bleiben aussen vor - das eine ist das Ergebnis dieser
+ * Quellen, das andere nicht unser Code.
+ */
+function deliveredStyleFiles(): { path: string; css: string }[] {
   const root = repoRoot();
-  const own = join(root, 'apps', 'visu', 'src', 'preview', 'PreviewPage.vue');
-  const hits: string[] = [];
-  let scanned = 0;
+  const out: { path: string; css: string }[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir).sort()) {
       if (name === 'node_modules' || name === 'dist' || name.startsWith('.')) continue;
@@ -840,19 +1197,118 @@ function foreignPreviewStyles(): { scanned: number; hits: string[] } {
         continue;
       }
       const isSheet = /\.(css|scss|sass|less|styl)$/.test(name);
-      if (!isSheet && !name.endsWith('.vue')) continue;
-      scanned += 1;
-      if (path === own) continue;
+      if (!isSheet && !/\.(vue|html)$/.test(name)) continue;
       const src = readFileSync(path, 'utf8');
       const css = isSheet ? src : styleBlocks(src).map((b) => b.css).join('\n');
-      for (const hook of PREVIEW_HOOKS) {
-        if (css.includes(hook)) hits.push(`${path.slice(root.length + 1)}: ${hook}`);
-      }
+      out.push({ path: path.slice(root.length + 1), css });
     }
   };
-  walk(join(root, 'apps', 'visu', 'src'));
-  walk(join(root, 'packages'));
-  return { scanned, hits };
+  for (const parts of DELIVERED_ROOTS) walk(join(root, ...parts));
+  return out;
+}
+
+/**
+ * Alle Selektoren dieser Blaetter, einzeln (eine Selektorliste zaehlt als ihre
+ * Teile - `.a, .preview-page` faerbt die Vorschau genauso wie `.preview-page`
+ * allein). At-Regeln ohne Selektor (`@import`, `@keyframes`) bleiben aussen
+ * vor; ein `@import` faellt schon am Verzeichnisscan und am Blockvergleich auf.
+ */
+function deliveredSelectors(): string[] {
+  const out = new Set<string>();
+  for (const file of deliveredStyleFiles()) {
+    for (const rule of parseRules(file.css)) {
+      if (rule.selector.startsWith('@')) continue;
+      for (const part of rule.selector.split(', ')) out.add(part);
+    }
+  }
+  return [...out].sort();
+}
+
+/**
+ * Ein Selektor in der Form, in der ihn `Element.matches` lesen kann. Was
+ * entfernt wird, entfernt KEINE Wirkung, sondern verbreitert sie nur:
+ *
+ *   - Vues `:deep()`/`::v-deep`/`>>>` sind Nachfahren-Kombinatoren,
+ *   - ein Pseudo-ELEMENT (`::before`) haengt am selben Element wie sein Traeger,
+ *   - ein Zustands-Pseudo (`:hover`, `:focus-visible`) beschreibt einen
+ *     Zustand, den ein jsdom-Mount nicht hat.
+ *
+ * Der Rest zaehlt also im Zweifel als „greift" - eine Regel wird eher zu frueh
+ * gemeldet als zu spaet. Was danach immer noch unlesbar ist, wird nicht still
+ * uebersprungen, sondern unten ausgeschrieben.
+ */
+function matchable(selector: string): string {
+  return selector
+    .replace(/::v-deep\b|>>>|\/deep\//g, ' ')
+    .replace(/:(?:deep|slotted|global)\(([^()]*)\)/g, ' $1 ')
+    .replace(/::[-\w]+(?:\([^()]*\))?/g, '')
+    .replace(
+      /:(?:hover|active|focus|focus-visible|focus-within|visited|target|checked|indeterminate|disabled|enabled|placeholder-shown|autofill|read-only|read-write|default|valid|invalid|required|optional|link|any-link)\b/g,
+      '',
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Welche dieser Selektoren `Element.matches` ueberhaupt lesen kann. */
+function splitReadable(selectors: readonly string[]): { readable: string[]; unreadable: string[] } {
+  const readable: string[] = [];
+  const unreadable: string[] = [];
+  for (const selector of selectors) {
+    const probe = matchable(selector);
+    if (probe.length === 0) {
+      unreadable.push(selector);
+      continue;
+    }
+    try {
+      document.body.matches(probe);
+      readable.push(selector);
+    } catch {
+      unreadable.push(selector);
+    }
+  }
+  return { readable, unreadable };
+}
+
+/**
+ * Welche Selektoren auf DIESER Seite wirklich greifen - der Rahmen selbst,
+ * alles darin und der Dokumentrahmen darum (`<html>`/`<body>`), damit auch ein
+ * Blatt auffaellt, das die Seite ueber das Dokument faerbt.
+ */
+function matchingSelectors(frame: Element, selectors: readonly string[]): string[] {
+  const scope = [
+    document.documentElement,
+    document.body,
+    frame,
+    ...Array.from(frame.querySelectorAll('*')),
+  ];
+  return selectors.filter((selector) => {
+    const probe = matchable(selector);
+    return scope.some((el) => el.matches(probe));
+  });
+}
+
+/** Die Griffe, an denen NUR die Vorschau haengt - kein Blatt darf an ihnen faerben. */
+const PREVIEW_HOOKS = ['preview-page', 'preview-canvas', 'preview-hint', 'data-preview'];
+
+/**
+ * Der literale Gegencheck zum Wirkungsvergleich oben: nennt ueberhaupt ein
+ * ausgeliefertes Blatt einen Vorschau-Griff? Er ist enger als die Messung (vier
+ * Zeichenketten statt aller Selektoren), faengt dafuer aber auch, was ein
+ * jsdom-Mount gar nicht erst rendert. `scanned` ist die Gegenprobe: ein
+ * Scanner, der nichts findet, weil er nichts liest, faellt an dieser Zahl auf.
+ */
+function foreignPreviewStyles(): { scanned: number; hits: string[] } {
+  const own = join('apps', 'visu', 'src', 'preview', 'PreviewPage.vue');
+  const hits: string[] = [];
+  const files = deliveredStyleFiles();
+  for (const file of files) {
+    if (file.path === own) continue;
+    for (const hook of PREVIEW_HOOKS) {
+      if (file.css.includes(hook)) hits.push(`${file.path}: ${hook}`);
+    }
+  }
+  return { scanned: files.length, hits };
 }
 
 describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
@@ -878,8 +1334,22 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
    * Der Shell-Kanal wird bereitgestellt wie in der laufenden App (`App.vue`),
    * damit sichtbar wird, was die Seite dem Rahmen ueberhaupt sagt.
    */
+  /**
+   * Eine Interaktion - der zweite Messzeitpunkt. Der Zaun um die Seite war
+   * bisher eine Momentaufnahme direkt nach dem Mount; ein Knoten, der erst nach
+   * einem Klick entsteht, lag dahinter (Kritik R5, Probe S5). Geklickt wird auf
+   * den Rahmen und auf die Skin-Wurzel: beides sind Flaechen ohne eigene
+   * Wirkung, ein Unterschied danach kommt also von der Seite selbst.
+   */
+  async function interact(wrapper: { element: Element }): Promise<void> {
+    const frame = frameOf(wrapper.element);
+    frame.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    frame.querySelector('.overview-root')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+  }
+
   async function mountLive(pageId: string, tweaks?: Record<string, unknown>) {
-    const bodyBefore = Array.from(document.body.children);
+    const edgeBefore = edgeSnapshot();
     // Der statische Boden der Live-Seite kommt aus der Demo-Quelle (wie main.ts).
     await useDeviceStore().init(new MockDataSource());
     const ctx = reactive<ShellContext>({});
@@ -894,7 +1364,12 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       wrapper.findComponent(TweaksPanel).vm.$emit('update:modelValue', tweaks);
       await flushPromises();
     }
-    return { wrapper, ctx, outside: () => outsideFrame(bodyBefore, frameOf(wrapper.element)) };
+    return {
+      wrapper,
+      ctx,
+      edge: () => edgeSince(edgeBefore, frameOf(wrapper.element)),
+      interact: () => interact(wrapper),
+    };
   }
 
   /**
@@ -912,7 +1387,7 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
    *     gefuehrt hat.
    */
   async function mountLiveOnDraft(pageId: string, tweaks?: Record<string, unknown>) {
-    const bodyBefore = Array.from(document.body.children);
+    const edgeBefore = edgeSnapshot();
     const store = useDeviceStore();
     const source = new PreviewDataSource(
       createHttpValueBackend(() => ({ accessToken: TOKEN })),
@@ -941,7 +1416,12 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       await wrapper.find('.overview-tweaks-toggle').trigger('click');
       await flushPromises();
     }
-    return { wrapper, ctx, outside: () => outsideFrame(bodyBefore, frameOf(wrapper.element)) };
+    return {
+      wrapper,
+      ctx,
+      edge: () => edgeSince(edgeBefore, frameOf(wrapper.element)),
+      interact: () => interact(wrapper),
+    };
   }
 
   /** Dieselbe Seite ueber die Bruecke: Handshake, dann der Entwurf. */
@@ -950,7 +1430,7 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
     pageId: string,
     draftExtra: Record<string, unknown> = {},
   ) {
-    const bodyBefore = Array.from(document.body.children);
+    const edgeBefore = edgeSnapshot();
     // A2 laesst den Wurzel-Marker nur mit DIESEM Wert durch (s. isPreviewMarker).
     markedPageId = pageId;
     const ctx = reactive<ShellContext>({});
@@ -967,7 +1447,12 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       parent,
     );
     await flushPromises();
-    return { wrapper, ctx, outside: () => outsideFrame(bodyBefore, frameOf(wrapper.element)) };
+    return {
+      wrapper,
+      ctx,
+      edge: () => edgeSince(edgeBefore, frameOf(wrapper.element)),
+      interact: () => interact(wrapper),
+    };
   }
 
   describe('die Skin-Wurzel', () => {
@@ -1040,7 +1525,7 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         const liveFrame = frameFacts(frameOf(live.wrapper.element));
         const liveTree = structure(frameOf(live.wrapper.element), isEditorChrome);
         const liveExtras = extrasBesideRoot(frameOf(live.wrapper.element));
-        const liveOutside = live.outside();
+        const liveEdge = live.edge();
         live.wrapper.unmount();
 
         const preview = await mountPreview(
@@ -1057,8 +1542,16 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         expect(liveTree.some((l) => l.includes('data-link-active=true'))).toBe(true);
         expect(liveExtras).toEqual(['button.overview-tweaks-toggle']);
         // Und die Sicherung gegen „beide Seiten gleich kaputt": nicht die Zahl
-        // der Zeilen, sondern der Inhalt der Kacheln (s. contentFacts).
+        // der Zeilen, sondern der Inhalt der Kacheln (s. contentFacts) und ihre
+        // Platzierung (s. placementFacts) - beides ausgeschrieben.
         expectSubstance(liveTree);
+        expect(placementFacts(liveTree)).toEqual({
+          Zellen: 15,
+          Rasterspanne: 15,
+          absolutPlatziert: 0,
+          Zeiger: 5,
+          Bezugsrahmen: 5,
+        });
 
         // A4: der Seitenrahmen ist die eine Stelle, die verschieden sein DARF -
         // und genau deshalb steht sie hier beidseitig vollstaendig ausgeschrieben.
@@ -1077,10 +1570,13 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         // kein Text darf abweichen.
         expect(structure(frameOf(preview.wrapper.element))).toEqual(liveTree);
 
-        // Der Zaun endet nicht am Rahmen: was eine Seite NEBEN ihn haengt
-        // (Teleport, Portal, Overlay am `<body>`), zaehlt genauso.
-        expect(liveOutside).toEqual([]);
-        expect(preview.outside()).toEqual(liveOutside);
+        // Der Zaun endet nicht am Rahmen: der ganze Rand des Dokuments -
+        // `<html>`, `<body>`, jeder Knoten in `<head>` und `<body>` und jede
+        // aktive Stilquelle - zaehlt genauso. Ausgeschrieben, damit „gleich"
+        // nicht „beidseitig blind" heisst: die Seite haengt nichts an das
+        // Dokument ausser dem Behaelter, in dem der Mount sie aufspannt.
+        expect(liveEdge).toEqual(RUHIGER_RAND);
+        expect(preview.edge()).toEqual(liveEdge);
       });
     }
 
@@ -1101,18 +1597,19 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         const live = await mountLiveOnDraft(pageId);
         const liveTree = structure(frameOf(live.wrapper.element), isEditorChrome);
         const liveRoot = rootFacts(live.wrapper.find('.overview-root').element);
-        const liveOutside = live.outside();
+        const liveEdge = live.edge();
         live.wrapper.unmount();
 
         const preview = await mountPreview(skin, pageId);
         expectSubstance(liveTree);
+        expect(placementFacts(liveTree)).toEqual(PLACEMENT_BY_SKIN[skin]);
         expect(liveRoot.classes.length).toBeGreaterThan(0);
         expect(
           rootFacts(preview.wrapper.find('[data-testid="preview-canvas"]').element),
         ).toEqual(liveRoot);
         expect(structure(frameOf(preview.wrapper.element))).toEqual(liveTree);
-        expect(liveOutside).toEqual([]);
-        expect(preview.outside()).toEqual(liveOutside);
+        expect(liveEdge).toEqual(RUHIGER_RAND);
+        expect(preview.edge()).toEqual(liveEdge);
         prints[skin] = liveTree;
         preview.wrapper.unmount();
       }
@@ -1123,30 +1620,146 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
     });
 
     /**
-     * Der Zaun ausserhalb des Rahmens - und die Gegenprobe dazu. Ein
-     * `<Teleport to="body">` haengt neben dem `ion-page`, genau dort, wo in der
-     * echten App auch Ionics Overlays landen; der Abdruck begann und endete
-     * frueher am Rahmen, ein sichtbares Banner am `<body>` blieb also
-     * unsichtbar (Kritik R4, Probe N3). Dass der Zaun jetzt nicht nur deshalb
-     * leer ist, weil er nicht hinsieht, zeigt die zweite Haelfte dieses Tests:
-     * ein angehaengter Knoten MUSS im Abdruck auftauchen.
+     * DIE FARBE - die Sicherung gegen „beide Seiten gleich blass". Der
+     * Flaechenvergleich haelt Vorschau und Live gegeneinander; wenn BEIDE
+     * gleichzeitig ihr Thema verlieren, sagt er nichts. Genau das passierte:
+     * `makeTokens(props.theme, device.accent)` auf `makeTokens('light',
+     * 'neutral')` festgenagelt liess 79/79 und die ganze App 657/657 gruen
+     * (Kritik R5, Probe B5), obwohl die vier Szenarien oben nach genau diesen
+     * Einstellungen benannt sind. Hier stehen die Farbwerte deshalb
+     * ausgeschrieben, und zwar fuer zwei Themen - gleiche Farben bei
+     * verschiedenem Thema sind der Fehler.
+     *
+     * (`makeTokens` liest den Akzent nicht selbst - er faerbt ueber die
+     * `--vz-acc-*`-Variablen der Wurzel, die `rootFacts` oben haelt. Was diese
+     * Probe sichert, ist das THEMA, aus dem beide Aufrufe ihren Untergrund
+     * nehmen.)
      */
-    it('sieht auch, was neben dem Rahmen am <body> haengt', async () => {
-      const before = Array.from(document.body.children);
+    it('faerbt die Kacheln aus dem Thema des Autors, nicht aus einem Standardton', async () => {
+      const paintOf = async (tweaks: Record<string, unknown>): Promise<string[]> => {
+        const live = await mountLiveOnDraft('overview', tweaks);
+        const paint = paintFacts(structure(frameOf(live.wrapper.element), isEditorChrome));
+        live.wrapper.unmount();
+        return paint;
+      };
+      const dark = await paintOf(SCENARIOS[1].tweaks!);
+      const light = await paintOf(SCENARIOS[3].tweaks!);
+      expect(dark).toEqual(['--acc:#838b9b', 'background:rgb(214, 168, 0)']);
+      expect(light).toEqual(['--acc:#676f7f', 'background:rgb(214, 168, 0)']);
+      expect(dark).not.toEqual(light);
+    });
+
+    /**
+     * DER RAND DER SEITE, gegen die echte Seite gehalten - und zwar zweimal:
+     * direkt nach dem Mount und noch einmal NACH einer Interaktion. Der
+     * Vorgaenger war eine Momentaufnahme der Kinderliste des `<body>`; ein
+     * `<style>`, das zur Laufzeit in den `<head>` wandert, ein
+     * `document.body.style.padding` und ein Knoten, der erst auf einen Klick
+     * hin entsteht, lagen alle drei dahinter (Kritik R5, S3-S5).
+     */
+    it('haelt den ganzen Rand des Dokuments gegen die echte Seite - auch nach einer Interaktion', async () => {
+      const before = edgeSnapshot();
+      const live = await mountLiveOnDraft('overview');
+      const liveEdge = live.edge();
+      await live.interact();
+      const liveAfter = live.edge();
+      live.wrapper.unmount();
+
+      const preview = await mountPreview('ionic', 'overview');
+      expect(preview.edge()).toEqual(liveEdge);
+      await preview.interact();
+      expect(preview.edge()).toEqual(liveAfter);
+
+      // Und ausgeschrieben, damit „gleich" nicht „beidseitig blind" heisst:
+      // keine der beiden Seiten aendert irgendetwas am Dokument - weder beim
+      // Mount noch nach dem Klick.
+      expect(liveEdge).toEqual(RUHIGER_RAND);
+      expect(liveAfter).toEqual(RUHIGER_RAND);
+      expect(edgeSince(before, frameOf(preview.wrapper.element))).toEqual(RUHIGER_RAND);
+
+      // Und ABSOLUT, nicht nur als Unterschied gegen eine Aufnahme: so sieht
+      // das Dokument aus. Ein Blatt, das schon beim Laden des Moduls
+      // eingehaengt wuerde, laege vor jeder Aufnahme und fiele im Unterschied
+      // nicht auf - hier faellt es auf.
+      expect(documentStyleSources()).toEqual(['CSSOM: 0 Blatt, 0 adoptiert']);
+      expect(printElement(document.documentElement, '@html')).toBe('@html | html |  |  |  | ');
+      expect(printElement(document.body, '@body')).toBe('@body | body |  |  |  | ');
+    });
+
+    /**
+     * Die Gegenproben zum Rand: dass er nicht nur deshalb leer ist, weil er
+     * nicht hinsieht. Jede der fuenf steht fuer einen Weg, der frueher an ihm
+     * vorbeilief - ein Knoten am `<body>`, ein Blatt im `<head>`, das `<body>`
+     * selbst, ein schon vorhandenes Kind, und alles davon auch dann, wenn es
+     * erst nach einer Interaktion passiert.
+     */
+    it('faengt jeden dieser Wege: Knoten, <head>, <body> selbst, vorhandenes Kind, spaeter', async () => {
+      const bestand = document.createElement('div');
+      bestand.className = 'bestand-probe';
+      document.body.appendChild(bestand);
+      const before = edgeSnapshot();
       const preview = await mountPreview('ionic', 'overview');
       const frame = frameOf(preview.wrapper.element);
-      expect(outsideFrame(before, frame)).toEqual([]);
+      const ruhe = edgeSince(before, frame);
+      expect(ruhe).toEqual(RUHIGER_RAND);
 
       const probe = document.createElement('div');
       probe.className = 'zaun-probe';
       probe.textContent = 'Entwurfsvorschau';
-      document.body.appendChild(probe);
+      const sheet = document.createElement('style');
+      sheet.textContent = '.preview-page .visu-root { padding: 40px }';
       try {
-        expect(outsideFrame(before, frame)).toEqual([
-          '@body/0 | div | zaun-probe |  |  | Entwurfsvorschau',
+        // 1 - ein Knoten am `<body>` (Teleport, Portal, Banner).
+        document.body.appendChild(probe);
+        expect(edgeSince(before, frame)).toEqual([
+          ...ruhe,
+          'neu @body | div | zaun-probe |  |  | Entwurfsvorschau',
+        ]);
+        probe.remove();
+
+        // 2 - ein Blatt, das zur Laufzeit in den `<head>` gehaengt wird (S3).
+        document.head.appendChild(sheet);
+        expect(edgeSince(before, frame)).toEqual([
+          'neue Stilquelle: head <style> .preview-page .visu-root { padding: 40px }',
+          'neue Stilquelle: CSSOM: 1 Blatt, 0 adoptiert',
+          'Stilquelle weg: CSSOM: 0 Blatt, 0 adoptiert',
+          ...ruhe,
+          'neu @head | style |  |  |  | .preview-page .visu-root { padding: 40px }',
+        ]);
+        sheet.remove();
+
+        // 3 - das `<body>`-Element selbst (S4). Im echten Vorschau-iframe IST
+        //     der `<body>` die Seite.
+        document.body.style.padding = '40px';
+        expect(edgeSince(before, frame)).toEqual([
+          'geaendert @body | body |  |  |  |  -> @body | body |  |  | padding:40px | ',
+          ...ruhe,
+        ]);
+        document.body.removeAttribute('style');
+
+        // 4 - ein Kind, das es schon vor dem Mount gab.
+        bestand.setAttribute('data-spaet', '1');
+        expect(edgeSince(before, frame)).toEqual([
+          ...ruhe,
+          'geaendert @body | div | bestand-probe |  |  |  ->' +
+            ' @body | div | bestand-probe | data-spaet=1 |  | ',
+        ]);
+        bestand.removeAttribute('data-spaet');
+
+        // 5 - und dasselbe nach einer Interaktion: der Rand ist kein
+        //     Schnappschuss vom Mount (S5).
+        await preview.interact();
+        expect(edgeSince(before, frame)).toEqual(ruhe);
+        document.body.appendChild(probe);
+        expect(edgeSince(before, frame)).toEqual([
+          ...ruhe,
+          'neu @body | div | zaun-probe |  |  | Entwurfsvorschau',
         ]);
       } finally {
         probe.remove();
+        sheet.remove();
+        bestand.remove();
+        document.body.removeAttribute('style');
       }
     });
   });
@@ -1416,15 +2029,114 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       );
     });
 
-    it('bringt seinen Stil nur aus diesem einen Block - kein zweites Blatt', () => {
+    /**
+     * Die zweite Haelfte derselben Frage: was NICHT gleich zaehlen darf. Eine
+     * Normalisierung, die zu viel glattzieht, laesst echte Abweichungen durch -
+     * deshalb steht hier beides nebeneinander, gleiche Wirkung und andere.
+     */
+    it('zaehlt gleiche Wirkung gleich - und andere Wirkung nicht', () => {
+      // Gleich: Schreibweise von Eigenschaft und Wert (Kritik R5, Probe Q6).
+      expect(parseRules('.a{POSITION:RELATIVE;contain:LAYOUT STYLE}')).toEqual(
+        parseRules('.a{position:relative;contain:layout style}'),
+      );
+      // Gleich: ein CSS-Escape, der denselben Namen schreibt.
+      expect(parseRules('.preview\\2Dpage{color:red}')).toEqual(
+        parseRules('.preview-page{color:red}'),
+      );
+
+      // ANDERS: eine Custom Property ist gross/klein-empfindlich, in Name
+      // UND Wert - `--Gap` ist nicht `--gap`.
+      expect(parseRules('.a{--Gap:1px}')).not.toEqual(parseRules('.a{--gap:1px}'));
+      expect(parseRules('.a{color:var(--Gap)}')).not.toEqual(
+        parseRules('.a{color:var(--gap)}'),
+      );
+      // ANDERS: Leerraum IN einer Zeichenkette ist Inhalt, kein Leerraum.
+      expect(parseRules('.a{content:"x  y"}')).not.toEqual(parseRules('.a{content:"x y"}'));
+      // ANDERS: ein Pfad ist gross/klein-empfindlich.
+      expect(parseRules('.a{background:url(/A.png)}')).not.toEqual(
+        parseRules('.a{background:url(/a.png)}'),
+      );
+      // ANDERS: `.foo\.bar` ist EINE Klasse mit einem Punkt im Namen, nicht
+      // zwei Klassen - der Escape wird deshalb nicht aufgeloest.
+      expect(parseRules('.foo\\.bar{color:red}')).not.toEqual(
+        parseRules('.foo.bar{color:red}'),
+      );
+
+      // Und der Parser laesst sich von einer Klammer in einer Zeichenkette
+      // nicht mehr aus der Regel druecken (Kritik R5, Proben Q3 und Q5).
+      const tricky = parseRules('.a{--m:"}";padding:40px}');
+      expect(tricky).toHaveLength(1);
+      expect(tricky[0].decls).toEqual(['--m: "}"', 'padding: 40px']);
+      // Ein Kommentar oder eine Zeichenkette ohne Ende wirft, statt still den
+      // halben Block zu verschlucken.
+      expect(() => parseRules('.a{color:red} /* offen')).toThrow(/Kommentar ohne Ende/);
+      expect(() => parseRules('.a{content:"offen}')).toThrow(/Zeichenkette ohne Ende/);
+    });
+
+    /**
+     * Der Name sagt genau, was hier gemessen wird, und nicht mehr: das
+     * VERZEICHNIS `src/preview` traegt genau einen Stilblock und kein eigenes
+     * Blatt. Frueher hiess dieser Test „bringt seinen Stil nur aus diesem
+     * einen Block - kein zweites Blatt" - das behauptete drei Nummern zu viel
+     * (Kritik R5: S1, S2, S3 sind drei zweite Blaetter, die er nicht sieht).
+     * Was daneben liegt, misst der Wirkungsvergleich darunter.
+     */
+    it('legt im Vorschau-Verzeichnis genau einen Stilblock ab und kein eigenes Blatt', () => {
       // N1 war ein eigenes `preview-frame.css` im Vorschau-Chunk: dieselbe
       // Abweichung, nur ausserhalb des Blocks geschrieben.
       expect(previewStyleArtifacts()).toEqual(['PreviewPage.vue <style scoped>']);
+    });
 
+    it('nennt in keinem anderen ausgelieferten Blatt einen Vorschau-Griff', () => {
       const foreign = foreignPreviewStyles();
-      // Gegenprobe: der Scanner liest ueberhaupt Dateien.
+      // Gegenprobe: der Scanner liest ueberhaupt Dateien - und zwar auch das
+      // ausgelieferte Dokument selbst, nicht nur `src` (Kritik R5, Probe S2).
       expect(foreign.scanned).toBeGreaterThan(10);
+      expect(deliveredStyleFiles().map((f) => f.path)).toContain(join('apps', 'visu', 'index.html'));
       expect(foreign.hits).toEqual([]);
+    });
+
+    /**
+     * DER WIRKUNGSVERGLEICH - die Antwort auf S1 und S2. Nicht „welche Datei
+     * nennt einen von vier Griffen", sondern: welcher Selektor GREIFT am Ende
+     * in der Vorschau und nicht auf der echten Seite? Ein Blatt, das nur die
+     * Vorschau faerbt, ist genau das - egal wo es liegt und wie es geschrieben
+     * ist.
+     *
+     * GRENZE: die drei Skin-Pakete liegen ausserhalb dieses Repos (`link:` auf
+     * `obs-visu-skins`) und werden hier nicht gelesen. Sie faerben beide Seiten
+     * gleich, weil beide Seiten denselben Skin durch dieselbe Kette rendern -
+     * und sie kennen die Vorschau nicht.
+     */
+    it('kein ausgeliefertes Blatt faerbt die Vorschau anders als die echte Seite', async () => {
+      const selectors = deliveredSelectors();
+      // Gegenprobe 1: der Scanner findet ueberhaupt Selektoren, und zwar auch
+      // die des globalen Blattes, an dem S1 haing.
+      expect(selectors.length).toBeGreaterThan(20);
+      expect(selectors).toContain('.skin-host-cell[data-link]');
+
+      // Gegenprobe 2: was `Element.matches` nicht lesen kann, wird nicht still
+      // uebersprungen, sondern steht hier - heute ist die Liste leer.
+      const { readable, unreadable } = splitReadable(selectors);
+      expect(unreadable).toEqual([]);
+
+      const live = await mountLiveOnDraft('overview');
+      const liveHits = matchingSelectors(frameOf(live.wrapper.element), readable);
+      live.wrapper.unmount();
+
+      const preview = await mountPreview('ionic', 'overview');
+      const previewHits = matchingSelectors(frameOf(preview.wrapper.element), readable);
+
+      // Gegenprobe 3: der Abgleich trifft ueberhaupt etwas - sonst waeren zwei
+      // leere Mengen still gleich.
+      expect(liveHits.length).toBeGreaterThan(3);
+
+      // Was NUR in der Vorschau greift: genau die eine Regel des eigenen
+      // Blocks, die A5 Deklaration fuer Deklaration an `.skin-page` bindet.
+      expect(previewHits.filter((s) => !liveHits.includes(s))).toEqual(['.preview-page']);
+      // Und die Gegenrichtung, ausgeschrieben: die Live-Seite traegt ihren
+      // eigenen Rahmennamen (A4) und ihr Editor-Chrome (A1).
+      expect(liveHits.filter((s) => !previewHits.includes(s))).toEqual(LIVE_ONLY_MATCHES);
     });
 
     /**

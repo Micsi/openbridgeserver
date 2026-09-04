@@ -46,15 +46,18 @@
  *
  * Wer das nachhaelt: `PreviewParity.spec.ts` stellt beide Seiten auf DENSELBEN
  * Entwurfsboden und vergleicht die GANZE gerenderte Flaeche Element fuer Element
- * - Tag, Klassen, alle Attribute, alle Stil-Eigenschaften, den Text; dazu, was
- * die Seite NEBEN ihren Rahmen haengt (Teleport, Portal, Overlay am `<body>`),
- * und den ganzen `<style scoped>`-Block Regel fuer Regel. Alles, was abweichen
- * darf, steht dort als kurze, benannte Ausnahmeliste (A1-A6): das Editor-Chrome
- * der Live-Seite (der Tweak-Umschalter - im Vorschau-Modus bedient der Autor ihn
- * in der Admin-GUI), die Vorschau-Marker (nur an der Wurzel, nur mit ihrem
- * Wert), Vues Scoped-Marker, der Seitenrahmen, die Umbenennung
- * `.preview-page` -> `.skin-page` und die eine vorschau-eigene Stilregel
- * `.preview-hint`. Was hier also neu gerendert wird, muss entweder auch auf der
+ * - Tag, Klassen, alle Attribute, alle Stil-Eigenschaften, den Text; dazu den
+ * ganzen `<style scoped>`-Block Regel fuer Regel; dazu, welcher Selektor aller
+ * ausgelieferten Blaetter in der Vorschau greift und auf der echten Seite
+ * nicht; und dazu den ZUSTAND DES DOKUMENTS neben dem Rahmen - `<html>` und
+ * `<body>` selbst, jeder Knoten in `<head>` und `<body>`, jede aktive
+ * Stilquelle, gemessen nach dem Mount UND nach einer Interaktion. Alles, was
+ * abweichen darf, steht dort als kurze, benannte Ausnahmeliste (A1-A6): das
+ * Editor-Chrome der Live-Seite (der Tweak-Umschalter - im Vorschau-Modus
+ * bedient der Autor ihn in der Admin-GUI), die Vorschau-Marker (nur an der
+ * Wurzel, nur mit ihrem Wert), Vues Scoped-Marker, der Seitenrahmen, die
+ * Umbenennung `.preview-page` -> `.skin-page` und die eine vorschau-eigene
+ * Stilregel `.preview-hint`. Was hier also neu gerendert wird, muss auch auf der
  * echten Seite stehen oder in dieser Liste - sonst faellt der Nachweis.
  *
  * Und was er NICHT leistet: berechnete Stile und Pseudo-Elemente kann ein
@@ -271,9 +274,11 @@ onBeforeUnmount(() => receiver.stop());
    `.preview-hint`, der Platzhalter VOR dem ersten Entwurf, der aus dem DOM ist,
    sobald etwas zu vergleichen da ist. Alles andere faellt: eine zweite Regel
    mit demselben Selektor, eine in `@media`, eine mit `:deep()`, ein `@import` -
-   und ebenso ein eigenes Stylesheet neben dieser Datei (die Probe zaehlt, was
-   der Vorschau-Chunk ueberhaupt an Stil mitbringt, und sucht in jedem
-   ausgelieferten Blatt nach Vorschau-Selektoren).
+   und ebenso ein eigenes Stylesheet neben dieser Datei. Und was NICHT in
+   diesem Block steht, faellt trotzdem auf: die Probe haelt alle Selektoren
+   aller ausgelieferten Blaetter gegen den wirklichen Vorschau- und Live-DOM -
+   ein Blatt, das nur die Vorschau faerbt, ist genau das, egal wo es liegt und
+   an welchem Griff es haengt.
 
    GRENZE, damit niemand mehr hineinliest, als dort gemessen wird: das ist ein
    QUELLTEXT-Vergleich. Ein jsdom-Lauf rechnet keine Stylesheets aus, also sind
