@@ -17,7 +17,8 @@
     "logs": "Logs",
     "logic": "Logic Engine",
     "settings": "Settings",
-    "visu": "Visu"
+    "visu": "Visu",
+    "visuEditor": "Visu editor"
   },
   "sidebar": {
     "productName": "open bridge server",
@@ -3376,5 +3377,12 @@
     "openLabel": "Open help for this section",
     "unavailable": "No help is available for this section yet.",
     "openInNewTab": "Open in new tab"
+  },
+  "visuEditor": {
+    "title": "Visu editor",
+    "intro": "The preview renders the draft in the real visu. Nothing is saved while you work.",
+    "previewTitle": "Visu preview",
+    "rejected": "The preview rejected the draft. Please bring editor and visu to the same version.",
+    "applied": "Draft rendered in the preview ({count} widgets)."
   }
 }
