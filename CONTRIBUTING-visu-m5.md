@@ -327,7 +327,7 @@ Tracking: GitHub-Issues im Fork, Milestone M5 (Authoring + V2-Editor, Nr. 6), Su
 | C5 Editor Ergonomie (Micsi/openbridgeserver#172) | 0 | - | offen |
 | C6 Editor Dualität+Verlauf (Micsi/openbridgeserver#173) | 0 | - | offen |
 | D Admin+Doku+i18n (Micsi/openbridgeserver#174) | 0 | - | offen |
-| E Messlatten-Harness (Micsi/openbridgeserver#175) | 0 | - | offen |
+| E Messlatten-Harness (Micsi/openbridgeserver#175) | 4 | R4 Kritiker: **Messlatte erreicht**. 19 Szenarien laufen gegen das echte Backend, 20 bleiben `fixme` (nur der fehlende Editor C1-C6). R1 zurückgewiesen (E14 und E3 waren nie abnehmbar: Touch ausgeschlossen, Bilder verschiedener Größe byteweise verglichen), R2 erreicht mit einem Loch (`ignore_global_includes` von keinem laufenden Szenario gefangen), R3 zurückgewiesen (R7 überlebte seine eigene Mutation: 7-s-Retry verschluckte die verschobene Frist), R4: R7 misst jetzt zeitscharf, kleinste gefangene Verschiebung rund 350 ms, unter Last 20/20 grün. Zuordnung 35 Präfixe je genau einmal, Seed idempotent und selbstheilend, kein 429 | **durch** |
 | Integrationsrunde (E gegen A+B+C) | 0 | - | offen |
 
 ## 7. Owner-Entscheide (getroffen am 2026-09-03)
