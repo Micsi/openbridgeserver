@@ -127,7 +127,9 @@ class VisuNode(BaseModel):
     kind: PageKind = "normal"           # NEUE SPALTE (Nav/Summary brauchen es ohne page_config)
 ```
 
-- `kind` als Spalte (Migration im bestehenden `visu_nodes_vNN`-Muster, Default `normal` →
+- `kind` als Spalte. **Nicht** im `visu_nodes_vNN`-Copy-Muster: das `DROP TABLE` des Kopiermusters
+  loescht per `ON DELETE CASCADE` die authz-Seiten-Policies und PIN-Credentials (durch SQLite-Probe
+  belegt, Regressionstest vorhanden). Stattdessen `ALTER TABLE ADD COLUMN` mit `CHECK`, Default `normal` →
   alle Bestandsseiten bleiben normal, V1 ignoriert unbekannte Felder - R17 per Test belegen).
 - `VisuNodeSummary`, `VisuNodeCreate`, `VisuNodeUpdate` tragen `kind`.
 - **Validierung (400):** globalInclude darf nicht inkludieren (R12); popup hat keine globalen
@@ -187,6 +189,16 @@ class VisuNode(BaseModel):
   auf `null` gekappt, sobald der Elternknoten verdeckt ist – die Vererbungskette ist clientseitig
   also nicht zuverlässig auflösbar. Der Header ist damit die einzige verlässliche Quelle; B/E lesen
   ihn beim Laden einer Include-Quelle und setzen daraus `writable=false`.
+
+- **Grenzen der obigen Zusagen (vom Kritiker belegt, Teil B muss damit rechnen):**
+  - Die Ausnahme fuer gespeicherte `includes` gilt fuer die Ziel-Pruefungen, **nicht** fuer Zyklus und
+    Selbst-Include: die werden ueber die ganze Liste geprueft. Ein roh in die DB gesetzter Zyklus laesst
+    daher auch einen unveraenderten Round-Trip mit 400 scheitern (Micsi/openbridgeserver#177).
+  - Die Dublettenfreiheit wirkt im Modell, also **auch beim Lesen**: die Antwort kann still von der
+    gespeicherten Zeile abweichen, und ein unveraenderter Round-Trip schreibt die Bereinigung fest.
+  - `GET /visu/nodes/{id}/export` und das Config-Backup lesen **roh** an der Modellschicht vorbei und
+    sind daher nicht dublettenfrei. Wer Export-Daten weiterverarbeitet, dedupliziert selbst.
+  - `POST /visu/nodes/{id}/copy` validiert `includes` derzeit nicht (Micsi/openbridgeserver#178).
 
 ### 2.2 Bewusste Abweichung von Edomi
 
@@ -302,7 +314,7 @@ Tracking: GitHub-Issues im Fork, Milestone M5 (Authoring + V2-Editor, Nr. 6), Su
 |---|---|---|---|
 | A0 Vorab-Entscheide | - | Owner-Entscheide 1-5 getroffen (§7, 2026-09-03) | durch |
 | M Messlatten-Recherche (Micsi/openbridgeserver#165) | 3 | R3 Kritiker: g14c + E15 an der Quelle bestätigt, Zahlen exakt (31/25/42/7), jede Zeile mit Champion → **Messlatte tauglich** | durch |
-| A Backend-Modell (Micsi/openbridgeserver#166) | 2 | R2 Kritiker: **Messlatte erreicht**. 17 Umgehungssonden (PUT/PATCH/Copy/Import/Delete/zweistufig) brechen R9/R12/R14 nicht; Aufräumen transaktionssicher, V1-Fremdfelder bleiben. 10/11 Mutationen rot (überlebt: Zyklusprüfung für Bestandseinträge, über API nicht ausnutzbar). Angepasster Bestandstest legitim (page_config ist NOT NULL). Gates: lint grün, 7051 unit/adapters/contracts, 876 integration, V1 332/332 unter Node 24; keine neue Zeile unter Missing/partial. Restpunkte → Runde 3 | offen |
+| A Backend-Modell (Micsi/openbridgeserver#166) | 3 | R3 Kritiker: **Messlatte erreicht** (Härtung ohne Regression). Dedup-Validator sachlich korrekt (erstes Vorkommen gewinnt, keine Prüfung umgehbar); 8 geänderte Bestands-Mock-Zeilen sind reine `kind`-Additionen, keine Assertion entschärft; entfernter Fallback nachweislich unerreichbar (alle 7 Leser holen `SELECT *`); 4/4 Mutationen rot. Gates: lint grün, 7055 unit/adapters/contracts, 876 integration, V1 332/332 (Node 24), `models/visu.py` 100 %. Grenzen der Zusagen in §2.1 ergänzt; `copy_node` ohne Include-Validierung → #178 | **durch** |
 | B Host-Komposition (Micsi/openbridgeserver#167) | 0 | - | offen |
 | C1 Editor Baum+Eigenschaften (Micsi/openbridgeserver#168) | 0 | - | offen |
 | C2 Editor WYSIWYG-Canvas (Micsi/openbridgeserver#169) | 0 | - | offen |
