@@ -27,6 +27,7 @@ import type {
   JalousieStatus,
   AccentToken,
   LinkIndicator,
+  PageKind,
   PageLink,
   WidgetPosition,
 } from '@obs/visu-contract';
@@ -52,9 +53,39 @@ export interface ObsWidget {
   readonly h?: number;
 }
 
+/**
+ * A popup page's presentation descriptor (obs/models/visu.py → PopupConfig).
+ * Pure data: the backend never evaluates it, the host translates it into a
+ * contract {@link import('@obs/visu-contract').PopupDescriptor} (M5 R2-R6).
+ * Every field may be absent/null; an unset coordinate means "centre me" (R2).
+ */
+export interface ObsPopupConfig {
+  readonly x?: number | null;
+  readonly y?: number | null;
+  readonly w?: number | null;
+  readonly h?: number | null;
+  readonly auto_close_ms?: number | null; // R4
+  readonly modal?: boolean; // "exklusiv öffnen" (R5)
+  readonly animate?: boolean; // R6
+  readonly shadow?: boolean; // R6
+  readonly dim_backdrop?: boolean; // R6
+}
+
 /** A page's render config (obs/models/visu.py → PageConfig). */
 export interface ObsPageConfig {
   readonly widgets?: readonly ObsWidget[];
+  /**
+   * The individual include pages of this page, in author order (M5 R14). The
+   * backend model drops duplicates on every path (read included), so the host
+   * composes each entry at most once without de-duplicating itself; entries may
+   * still point at a concealed/deleted/non-PAGE node (CONTRIBUTING-visu-m5.md
+   * §2.1); the composition drops those silently.
+   */
+  readonly includes?: readonly string[];
+  /** Opt out of the global include pages for THIS page (M5 R13). */
+  readonly ignore_global_includes?: boolean;
+  /** Presentation of this page as a popup; only meaningful for `kind: 'popup'`. */
+  readonly popup?: ObsPopupConfig | null;
 }
 
 /**
@@ -77,6 +108,19 @@ export interface ObsVisuNode {
    * resolved by walking up `parent_id` — see {@link resolveEffectiveAccess}.
    */
   readonly access?: PageAccess | null;
+  /**
+   * The page type (M5 R1, `obs/models/visu.py → PageKind`). A column on the node
+   * (not in `page_config`), so `/visu/tree` carries it for navigation without
+   * loading a page. Absent on a pre-M5 server → `normal`, which is exactly the
+   * backend default, so an old tree composes as it always did.
+   */
+  readonly kind?: PageKind;
+  /**
+   * The node's sibling order (`VisuNode.order`). Global include pages stack by
+   * it, ascending (CONTRIBUTING-visu-m5.md §2.2; the deliberate deviation from
+   * Edomi's id order). Absent → 0.
+   */
+  readonly order?: number;
 }
 
 /** A single datapoint value (websocket value-event / GET …/value, normalised). */

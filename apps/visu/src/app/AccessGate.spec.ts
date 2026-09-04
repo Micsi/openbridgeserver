@@ -56,6 +56,7 @@ vi.mock('@ionic/vue', () => {
 import AccessGate from './AccessGate.vue';
 import { useDeviceStore } from '../core/store';
 import type { DataSource, PageGate } from '../core/datasource';
+import type { HostNavNode } from '../core/obs/compose';
 import type { Device } from '@obs/visu-contract';
 
 /** A page-auth-capable fake: records PIN attempts and drops a gate on the right PIN. */
@@ -257,5 +258,109 @@ describe('AccessGate – a link stopped by the PIN gate becomes visible (#1194)'
     const wrapper = mountGate();
     await flushPromises();
     expect(wrapper.find('.access-gate-pin[data-page="p1"]').attributes('data-pending')).toBeUndefined();
+  });
+});
+
+/**
+ * M5 R15 / §2.1: eine PIN-geschützte Include-QUELLE hinterlässt auf der Seite,
+ * die sie inkludiert, keine Ebene und damit keine Spur. Der Vertrag kann eine
+ * gesperrte Ebene heute nicht ausdrücken (`PageLayer` hat kein `locked`), aber
+ * die PIN-Abfrage darf trotzdem sagen, WOZU sie gehört: zu der Seite, die man
+ * gerade ansieht, nicht zu einem fremden Seitennamen.
+ */
+class FakeIncludeSource extends FakePageSource {
+  /** Kein Baum: die gezeigte Seite muss dann ausdrücklich angesteuert worden sein. */
+  navTree(): HostNavNode[] {
+    return [];
+  }
+  layersFor(): [] {
+    return [];
+  }
+  /** `ziel` inkludiert `src`; jede andere Seite inkludiert nichts. */
+  includeSourcesFor(pageId: string): readonly string[] {
+    return pageId === 'ziel' ? ['src'] : [];
+  }
+}
+
+/**
+ * Dieselbe Quelle MIT Baum: `glob` (eine globale Includeseite) steht zuerst,
+ * `ziel` ist die erste NORMALE Seite — also die Seite, auf der die App startet,
+ * ohne dass jemand navigiert hätte.
+ */
+class FakeIncludeTreeSource extends FakeIncludeSource {
+  navTree(): HostNavNode[] {
+    return [
+      { id: 'glob', name: 'Kopf', type: 'PAGE', access: 'public', kind: 'globalInclude', children: [] },
+      { id: 'ziel', name: 'Ziel', type: 'PAGE', access: 'public', kind: 'normal', children: [] },
+    ];
+  }
+}
+
+describe('AccessGate – die PIN einer Include-Quelle steht an der Include-Stelle', () => {
+  const gated = [{ pageId: 'src', name: 'Heizung', access: 'protected' as const }];
+
+  it('nennt die gesperrte Quelle als Ebene DIESER Seite, nicht als fremde Seite', async () => {
+    const store = useDeviceStore();
+    await store.init(new FakeIncludeSource(gated));
+    store.navigate('ziel');
+
+    const w = mountGate();
+    expect(w.find('.access-gate-hint').text()).toBe(
+      'PIN erforderlich für die gesperrte Ebene Heizung auf dieser Seite',
+    );
+    // Die Zuordnung steht auch am Markup, damit ein Skin/Test sie greifen kann.
+    expect(w.find('.access-gate-pin').attributes('data-include-of')).toBe('ziel');
+    // Und die PIN löst weiterhin genau diese Quelle frei.
+    await w.find('.access-gate-input').setValue('1234');
+    await w.find('.access-gate-pin').trigger('submit');
+    await flushPromises();
+    expect(store.pageGates).toEqual([]);
+  });
+
+  it('Gegenrichtung: auf einer Seite ohne diese Include-Quelle bleibt der schlichte Hinweis', async () => {
+    const store = useDeviceStore();
+    await store.init(new FakeIncludeSource(gated));
+    store.navigate('woanders');
+
+    const w = mountGate();
+    expect(w.find('.access-gate-hint').text()).toBe('PIN erforderlich für Heizung');
+    expect(w.find('.access-gate-pin').attributes('data-include-of')).toBeUndefined();
+  });
+
+  /**
+   * Der häufigste Zustand überhaupt: die App ist gerade geladen, niemand hat
+   * navigiert. Gezeigt wird trotzdem schon eine Seite — die erste NORMALE des
+   * Baums. Die Zuordnung muss also hier bereits greifen, sonst steht
+   * ausgerechnet auf der Startseite der kontextfreie Text „PIN erforderlich für
+   * <fremde Seite>".
+   */
+  it('greift schon auf der STARTSEITE, ohne dass jemand navigiert hat', async () => {
+    const store = useDeviceStore();
+    await store.init(new FakeIncludeTreeSource(gated));
+
+    // Ausdrücklich NICHT navigiert: der Host hat noch keine Seite angesteuert …
+    expect(store.currentPageId).toBeNull();
+    // … zeigt aber trotzdem schon eine, und zwar die erste normale des Baums
+    // (die globale Includeseite davor ist ein Fragment, keine Startseite).
+    expect(store.shownPageId).toBe('ziel');
+
+    const w = mountGate();
+    expect(w.find('.access-gate-hint').text()).toBe(
+      'PIN erforderlich für die gesperrte Ebene Heizung auf dieser Seite',
+    );
+    expect(w.find('.access-gate-pin').attributes('data-include-of')).toBe('ziel');
+  });
+
+  it('Gegenrichtung auf der Startseite: eine Navigation weg davon nimmt die Zuordnung zurück', async () => {
+    const store = useDeviceStore();
+    await store.init(new FakeIncludeTreeSource(gated));
+
+    const w = mountGate();
+    expect(w.find('.access-gate-pin').attributes('data-include-of')).toBe('ziel');
+
+    store.navigate('woanders');
+    await flushPromises();
+    expect(w.find('.access-gate-hint').text()).toBe('PIN erforderlich für Heizung');
+    expect(w.find('.access-gate-pin').attributes('data-include-of')).toBeUndefined();
   });
 });

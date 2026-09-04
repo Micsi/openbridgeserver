@@ -29,7 +29,6 @@ import {
   h,
   computed,
   inject,
-  ref,
   onBeforeUnmount,
   Fragment,
   type PropType,
@@ -44,7 +43,6 @@ import type {
   NavNode,
   PageHost,
   PageLink,
-  PopupDescriptor,
 } from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
 import { activeCtx } from '../core/ctx';
@@ -308,41 +306,13 @@ export default defineComponent({
     // The current page + the link state live in the STORE (the host's single state
     // owner, #1194): the link action writes them and a page-owning skin reads them
     // through the PageHost, so both navigation paths move the same state.
-    const { navTree, currentPageId, links: deviceLinks } = storeToRefs(store);
-    const openPopups = ref<PopupDescriptor[]>([]);
-    const popupTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-    function firstPageId(nodes: readonly NavNode[]): string | null {
-      for (const n of nodes) {
-        if (n.type === 'PAGE') return n.id;
-        const inner = firstPageId(n.children);
-        if (inner) return inner;
-      }
-      return null;
-    }
-    function closePopup(id: string): void {
-      openPopups.value = openPopups.value.filter((p) => p.id !== id);
-      const t = popupTimers.get(id);
-      if (t) {
-        clearTimeout(t);
-        popupTimers.delete(id);
-      }
-    }
-    function openPopup(descriptor: PopupDescriptor): void {
-      // Re-opening an already-open popup does NOT extend its timer (Edomi rule).
-      if (openPopups.value.some((p) => p.id === descriptor.id)) return;
-      openPopups.value = [...openPopups.value, descriptor];
-      if (descriptor.autoCloseMs && descriptor.autoCloseMs > 0) {
-        popupTimers.set(
-          descriptor.id,
-          setTimeout(() => closePopup(descriptor.id), descriptor.autoCloseMs),
-        );
-      }
-    }
-    onBeforeUnmount(() => {
-      for (const t of popupTimers.values()) clearTimeout(t);
-      popupTimers.clear();
-    });
+    // The popup state (which popups are open + their auto-close timers) lives in
+    // the STORE, not in this component: `store.navigate` opens a popup page as an
+    // overlay (M5 R2-R6), so a nav click and a page link must reach the same
+    // state — and a component-local ref could not be reached from there. The seam
+    // to the skin is unchanged: it still reads/calls these through its PageHost.
+    const { navTree, currentPageId, links: deviceLinks, openPopups } = storeToRefs(store);
+    onBeforeUnmount(() => store.closeAllPopups());
 
     /** Render the host's content tile for a device id — the skin's own type
      *  renderer, wrapped in a cell carrying `data-id` so gestures still resolve.
@@ -386,8 +356,13 @@ export default defineComponent({
       if (props.currentPage) return props.currentPage;
       if (currentPageId.value) return currentPageId.value;
       // The floor has no "page shown" at all, so nothing is active there — only a
-      // page-owning skin gets the tree's first page handed to it.
-      return skin.value.page ? firstPageId(navTree.value) : null;
+      // page-owning skin gets the tree's first page handed to it. WHICH page that
+      // is, is the STORE's answer (`shownPageId`), not a second rule here: the
+      // access gate has to name the same page, and two copies of the fallback
+      // drift apart. "First page" means the first NORMAL one: a global include
+      // page is a fragment and a popup is an overlay (M5), neither is something
+      // to open as the page.
+      return skin.value.page ? store.shownPageId : null;
     }
 
     /** Is a link's target the current page or an ancestor of it? (host state) */
@@ -444,8 +419,8 @@ export default defineComponent({
           layersFor: (id) => store.layersFor(id),
           renderTile,
           openPopups: openPopups.value,
-          openPopup,
-          closePopup,
+          openPopup: store.openPopup,
+          closePopup: store.closePopup,
           // Page links as a HOST service (contract v1.12, #146). Without these a
           // page-owning skin that wanted to honour `LayerItem.link` would have to
           // descend the navTree, read `access` and walk the ancestor chain itself

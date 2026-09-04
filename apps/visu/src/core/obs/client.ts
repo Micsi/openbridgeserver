@@ -41,6 +41,17 @@ export interface ObsClientConfig {
   readonly wsFactory?: (url: string, protocols?: string | string[]) => WsLike;
 }
 
+/**
+ * One page as read from `GET /visu/pages/{id}`: its render config plus the
+ * server's readonly verdict for it, taken from the `X-Source-Page-Readonly`
+ * response header (M5 R15, CONTRIBUTING-visu-m5.md §2.1). `sourceReadonly` is
+ * false whenever the header is absent; an older server simply behaves as before.
+ */
+export interface ObsPageSource {
+  readonly config: ObsPageConfig;
+  readonly sourceReadonly: boolean;
+}
+
 /** The minimal WebSocket surface the client uses (so tests can supply a fake). */
 export interface WsLike {
   send(data: string): void;
@@ -206,7 +217,18 @@ export class ObsClient {
    * {@link ObsAuthError} surface, identical to today's guest behavior. 403/404
    * stay local + silent as before.
    */
-  private async request<T>(path: string, init: RequestInit = {}, allowRefresh = true): Promise<T> {
+  private async request<T>(
+    path: string,
+    init: RequestInit = {},
+    allowRefresh = true,
+    /**
+     * Peek at the successful response before its body is parsed; the only way
+     * to read a response HEADER through this method. Used for the M5 R15 seam
+     * (`X-Source-Page-Readonly`); on a 401 replay it simply runs again for the
+     * replayed response, so the last (authoritative) verdict wins.
+     */
+    onResponse?: (res: Response) => void,
+  ): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(init.headers as Record<string, string> | undefined),
@@ -218,9 +240,9 @@ export class ObsClient {
     if (res.status === 401) {
       // Recover a logged-in 401 once: refresh → replay, else guest → replay.
       if (allowRefresh && access) {
-        if (await this.refresh()) return this.request<T>(path, init, false);
+        if (await this.refresh()) return this.request<T>(path, init, false, onResponse);
         this.logout();
-        return this.request<T>(path, init, false);
+        return this.request<T>(path, init, false, onResponse);
       }
       throw new ObsAuthError(`obs: ${init.method ?? 'GET'} ${path} unauthorized`);
     }
@@ -229,6 +251,7 @@ export class ObsClient {
     if (!res.ok) {
       throw new Error(`obs-datasource: ${init.method ?? 'GET'} ${path} failed (HTTP ${res.status})`);
     }
+    onResponse?.(res);
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
@@ -298,11 +321,24 @@ export class ObsClient {
    * rides along when logged in). A concealed/locked page answers 404/403 → the
    * caller skips it, so it simply contributes no widgets until it is unlocked or
    * the user logs in.
+   *
+   * Returns the config together with the `X-Source-Page-Readonly` verdict (M5
+   * R15, CONTRIBUTING-visu-m5.md §2.1): the response BODY carries no access
+   * level, and the tree's raw `access` cannot be resolved client-side (the parent
+   * chain is capped at the first concealed ancestor), so this header is the only
+   * reliable source for locking an include source's widgets.
    */
-  getPage(pageId: string, sessionToken?: string | null): Promise<ObsPageConfig> {
-    return this.request<ObsPageConfig>(`/visu/pages/${encodeURIComponent(pageId)}`, {
-      headers: this.pageHeaders(pageId, sessionToken),
-    });
+  async getPage(pageId: string, sessionToken?: string | null): Promise<ObsPageSource> {
+    let sourceReadonly = false;
+    const config = await this.request<ObsPageConfig>(
+      `/visu/pages/${encodeURIComponent(pageId)}`,
+      { headers: this.pageHeaders(pageId, sessionToken) },
+      true,
+      (res) => {
+        sourceReadonly = res.headers.get('X-Source-Page-Readonly') === 'true';
+      },
+    );
+    return { config, sourceReadonly };
   }
 
   /**
