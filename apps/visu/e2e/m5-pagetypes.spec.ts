@@ -239,8 +239,12 @@ test.describe('M5 Regeltabelle R7-R8 · Popup-Verhalten im Host (läuft gegen de
     await popup.waitFor({ state: 'detached', timeout: budgetMs });
     const closedAfterMs = Date.now() - openedAt;
 
-    // Die Gegenrichtung: die Frist wird auch nicht VERKÜRZT (ein Wiederöffnen,
-    // das den Timer sofort auslöst, wäre genauso falsch).
+    // Die untere Schranke faengt ein Wiederoeffnen, das den Timer SOFORT ausloest.
+    // Sie ist bewusst keine allgemeine Aussage gegen jedes Verkuerzen: eine Frist,
+    // die schon vor dem Wiederoeffnen ablaeuft, zieht danach einen frischen Timer
+    // auf und landet wieder im Fenster (gemessenes Blindband rund 0,1 bis 0,89 s).
+    // Die Planzeile R7 verlangt nur, dass die Frist nicht VERLAENGERT wird; genau
+    // das faengt die obere Schranke ab rund 350 ms Verschiebung.
     expect(closedAfterMs).toBeGreaterThanOrEqual(AUTO_CLOSE_MS - TOLERANCE_MS);
     expect(closedAfterMs).toBeLessThanOrEqual(AUTO_CLOSE_MS + TOLERANCE_MS);
   });
