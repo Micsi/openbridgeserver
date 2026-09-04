@@ -150,9 +150,35 @@ class VisuNode(BaseModel):
 
   Für den Host heißt das: Verdeckung entsteht **auf der Navigationsebene**. Eine Include-Quelle, die
   der Principal nicht sehen darf, taucht schon im Baum nicht auf. Wird sie trotzdem geladen (weil sie
-  in einer `includes`-Liste steht), ist die vollständige Signalliste **401/403/404** als „verdeckt"
-  zu behandeln – der Include wird still weggelassen, kein Fehlerpfad, keine Meldung. Teil B baut
-  gegen diese Liste, nicht gegen 404 allein.
+  in einer `includes`-Liste steht), gilt für `GET /visu/pages/{id}` diese **vollständige** Signalliste;
+  Teil B baut gegen sie, nicht gegen 404 allein:
+
+  | Signal (Status + `detail`) | Lage | Teil B |
+  |---|---|---|
+  | **404** `Knoten nicht gefunden` | die Seite existiert nicht (mehr) | still weglassen |
+  | **403** `Zugriff verweigert` | verdeckt: die Seite (oder ein Elternknoten) ist `user`-geschützt und der Principal gehört nicht zur Zielgruppe bzw. hat kein Leserecht auf ihre Datenpunkte | still weglassen, kein Fehlerpfad, keine Meldung |
+  | **401** `Anmeldung erforderlich` | verdeckt, solange kein Login vorliegt | still weglassen; nach einem Login neu laden |
+  | **401** `PIN-Authentifizierung erforderlich` | **keine Verdeckung**, sondern eine auflösbare Aufforderung: `POST /visu/nodes/{id}/auth` liefert ein Session-Token, das als `X-Session-Token` dieselbe Seite lesbar macht | nicht kommentarlos verwerfen: entweder die PIN an der Include-Stelle abfragen oder die Include-Stelle sichtbar als „gesperrt" markieren. Ein stilles Weglassen wäre hier ein Bedienfehler, keine Verdeckung |
+  | **400** `Knoten ist keine Seite` | das Ziel ist ein Ordner (`LOCATION`) statt einer Seite. Über die API nicht mehr herstellbar (Include-Ziele werden beim Speichern geprüft, und der Import lehnt `includes` an Nicht-Seiten ab), aber aus Restore/Migration/DB-Zugriff weiterhin möglich | wie „existiert nicht" behandeln: still weglassen |
+
+  **Welche Include-Ziele wann geprüft werden** (bewusste Asymmetrie, damit C1 die Include-Auswahl
+  passend baut): ein **neu** hinzugefügtes direktes Ziel wird streng geprüft (existiert, ist eine
+  Seite, ist kein Popup – sonst 400); ein **unverändert** mitgeschickter, bereits gespeicherter
+  Eintrag wird nicht erneut gegen die Datenbank geprüft, damit eine Seite nie dauerhaft
+  unspeicherbar wird; **verschachtelte** Ziele (das Ziel des Ziels) werden gar nicht geprüft, die
+  Zyklusprüfung folgt der Kette und überspringt fehlende Glieder. Teil B muss deshalb damit rechnen,
+  dass eine `includes`-Liste Einträge enthält, die beim Laden eines der obigen Signale liefern.
+
+  **`includes` ist dublettenfrei.** Das Modell entfernt Duplikate still (erstes Vorkommen gewinnt,
+  Reihenfolge bleibt); Teil B komponiert jede Seite also höchstens einmal und braucht kein eigenes
+  Entdoppeln.
+
+  **Grenze der Verdeckung, offen für Teil B/C1:** `GET /visu/pages/{id}` liefert `includes` roh. Eine
+  lesbare Seite gibt damit die IDs ihrer Include-Quellen preis, auch wenn diese auf der
+  Navigationsebene verdeckt sind – zusammen mit dem Unterschied 401/403 (existiert) vs. 404
+  (existiert nicht) ein Existenz-Orakel. Derselbe Weg existiert seit V1 über
+  `widget.config.source_page_id`; M5 erweitert ihn, erfindet ihn nicht. Verdeckung gilt also für
+  Existenz **in der Navigation**, nicht für die ID in einer fremden Seiten-Konfiguration.
 - **`source_page_readonly`** wird aus dem aufgelösten Zugriffs-Level der Quellseite abgeleitet
   (dieselbe Regel wie `GET /widget-ref/{page_id}`: `access == "readonly"`).
   **Naht:** `GET /visu/pages/{id}` liefert das Ergebnis als Antwort-Header

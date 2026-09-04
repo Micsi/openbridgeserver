@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -75,6 +75,23 @@ class PageConfig(BaseModel):
     includes: list[str] = Field(default_factory=list)  # individuelle Inkludeseiten, geordnet (R14)
     ignore_global_includes: bool = False  # R13
     popup: PopupConfig | None = None
+
+    @field_validator("includes")
+    @classmethod
+    def _drop_duplicate_includes(cls, value: list[str]) -> list[str]:
+        """Duplikate still entfernen, Reihenfolge des ersten Vorkommens behalten.
+
+        R14 wählt je Include-Zeile *eine* Seite; dieselbe Seite zweimal zu
+        komponieren hat keine zusätzliche Bedeutung (identische Widgets auf
+        identischen Datenpunkten) und wäre für Teil B nur eine Doppel-Darstellung.
+        Bewusst **kein** 400: eine bereits gespeicherte Doppelung (Restore,
+        direkter DB-Zugriff) würde die Seite sonst dauerhaft unspeicherbar machen -
+        genau der Fehlertyp, den die Duldung unveränderter Alt-Einträge in
+        ``_validate_page_kind_config`` verhindert. Die Normalisierung ist idempotent
+        und greift auf jedem Weg (PUT, Import, Kopie, Lesen); Teil B bekommt die
+        Liste damit garantiert dublettenfrei, ohne selbst zu entdoppeln.
+        """
+        return list(dict.fromkeys(value))
 
 
 # ── VisuNode ──────────────────────────────────────────────────────────────────

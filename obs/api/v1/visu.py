@@ -73,13 +73,13 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _row_kind(row) -> str:
-    """Seitentyp einer Row, defensiv: Legacy-Rows und schmale SELECTs kennen die Spalte nicht."""
-    return row["kind"] if "kind" in row.keys() else "normal"  # noqa: SIM118 -- sqlite Row membership checks values
-
-
 def _row_to_node(row, *, access: str | None = None) -> VisuNode:
-    """SQLite-Row → VisuNode Pydantic-Modell"""
+    """SQLite-Row → VisuNode Pydantic-Modell.
+
+    Erwartet die **volle** Zeile (alle Leser holen ``SELECT vn.*``). Ein stiller
+    Default für ``kind`` wäre kein Schutz: ein künftiger schmaler SELECT bekäme
+    dann eine falsche Antwort statt eines Fehlers.
+    """
     pc_raw = row["page_config"]
     pc = json.loads(pc_raw) if pc_raw else None
     return VisuNode(
@@ -87,7 +87,7 @@ def _row_to_node(row, *, access: str | None = None) -> VisuNode:
         parent_id=row["parent_id"],
         name=row["name"],
         type=row["type"],
-        kind=_row_kind(row),
+        kind=row["kind"],
         order=row["node_order"],
         icon=row["icon"],
         access=access,
@@ -110,7 +110,7 @@ def _row_to_summary(
         parent_id=row["parent_id"] if parent_id is _UNSET else parent_id,
         name=row["name"],
         type=row["type"],
-        kind=_row_kind(row),
+        kind=row["kind"],
         order=row["node_order"],
         icon=row["icon"],
         access=access,
@@ -389,11 +389,20 @@ async def _validate_page_kind_config(
     Ziele existieren, sind Seiten und sind nie selbst ein Popup; keine Selbst-Includes/Zyklen.
 
     ``previous_includes`` sind die bereits gespeicherten Einträge desselben Knotens.
-    Für sie entfällt die Ziel-Prüfung gegen die Datenbank: ein Ziel kann inzwischen
-    gelöscht oder für den speichernden Principal verdeckt sein, und ein unveränderter
-    Alt-Eintrag darf das Speichern der Seite dann nicht dauerhaft blockieren (R17 –
-    V1 schickt die geladene Konfiguration unverändert zurück und hat keine Include-UI).
-    Neue und geänderte Einträge bleiben streng geprüft.
+    Für sie entfällt die Ziel-Prüfung gegen die Datenbank, damit ein gespeicherter
+    Eintrag eine Seite nie dauerhaft unspeicherbar macht (R17 – V1 schickt die
+    geladene Konfiguration unverändert zurück und hat keine Include-UI).
+
+    Belegbar entstehen solche Einträge nur **außerhalb** dieses Schreibpfads:
+    Zeilen aus Restore/Migration oder direktem DB-Zugriff, Zeilen die
+    ``_drop_include_references`` wegen seines ``json_valid``-Filters nicht erreicht,
+    und das Wettrennen zwischen dem Lesen der Zeile im Aufrufer und einem parallel
+    laufenden ``delete_node``.
+    Ausdrücklich **kein** Grund ist Verdeckung: der Ziel-Lookup unten liest
+    ``visu_nodes`` ohne jede authz-Filterung, ein verdecktes Ziel wird also wie ein
+    sichtbares geprüft (Test: ``test_a_concealed_include_target_is_checked_without_authz_filtering``).
+    Ebenso wenig der Import: er validiert nach dem Einfügen streng und lehnt tote
+    Ziele ab. Neue und geänderte Einträge bleiben streng geprüft.
     """
     if config.popup is not None and kind != "popup":
         raise HTTPException(status_code=400, detail="Popup-Konfiguration ist nur für Seitentyp 'popup' zulässig")
@@ -425,9 +434,9 @@ async def _drop_include_references(db: Database, removed_ids: Iterable[str]) -> 
     Bewusste Wahl: beim Löschen wird **aufgeräumt** statt die toten Verweise stehen
     zu lassen. Sonst trüge der Baum Karteileichen, die im Editor als leere Include-
     Zeile erscheinen und beim Import wieder mitwandern. Die Duldung verwaister
-    Alt-Einträge in ``_validate_page_kind_config`` bleibt trotzdem nötig: Verweise
-    können auch anders entstehen (Import eines Teilbaums ohne das Ziel, Kopie, oder
-    eine Seite, die für den speichernden Principal nur verdeckt ist).
+    Alt-Einträge in ``_validate_page_kind_config`` bleibt trotzdem nötig: dieses
+    Aufräumen erreicht nicht jede Zeile (``json_valid``-Filter unten) und nicht
+    jeden Entstehungsweg (Restore, Migration, direkter DB-Zugriff).
     Die rohe JSON-Struktur wird bearbeitet, damit unbekannte Felder einer V1- oder
     Fremd-Konfiguration erhalten bleiben (R17). Aufgeräumt wird über den ganzen
     Baum, auch auf Seiten ohne Schreibrecht des Löschenden: es ist dieselbe
@@ -782,6 +791,15 @@ async def import_nodes(
         await _require_visu_creation_parent(db, principal, body.target_parent_id)
         for node, _new_id, _new_parent_id, _pc_json, page_config in prepared_nodes:
             _validate_node_kind(node.type, node.kind)
+            if node.type != "PAGE" and page_config.includes:
+                # Ein Nicht-Seiten-Knoten hat keine Include-Semantik, aber
+                # `_assert_not_included_elsewhere` scannt **alle** Zeilen: eine
+                # importierte LOCATION mit `includes` würde der genannten Seite
+                # dauerhaft den Wechsel zu `popup` verwehren. Ablehnen statt still
+                # verwerfen – wie beim Seitentyp auf Nicht-Seiten und beim toten
+                # Include-Ziel bleibt der Import die Stelle, die Unsinn zurückweist,
+                # statt ihn stillschweigend zu reparieren.
+                raise HTTPException(status_code=400, detail="Include-Konfiguration ist nur für Seiten (PAGE) zulässig")
             if node.type == "PAGE":
                 await _check_page_datapoint_policy(
                     db,
@@ -1213,7 +1231,7 @@ async def export_node(
                 "parent_id": row["parent_id"],
                 "name": row["name"],
                 "type": row["type"],
-                "kind": _row_kind(row),
+                "kind": row["kind"],
                 "node_order": row["node_order"],
                 "icon": row["icon"],
                 "access": policy["access_mode"] if policy else None,

@@ -724,6 +724,7 @@ def _make_node_row(**kw):
         "id": str(uuid.uuid4()),
         "parent_id": None,
         "type": "PAGE",
+        "kind": "normal",  # Spalte ist NOT NULL DEFAULT 'normal' (Migration v53)
         "name": "Test",
         "icon": None,
         "node_order": 0,

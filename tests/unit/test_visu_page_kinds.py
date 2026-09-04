@@ -161,14 +161,6 @@ async def test_r1_update_without_kind_keeps_the_stored_type(db: Database) -> Non
     assert updated.kind == "popup"
 
 
-def test_row_kind_falls_back_to_normal_for_rows_without_the_column() -> None:
-    with_kind = {"kind": "popup"}
-    without_kind = {"id": "x"}
-
-    assert visu_api._row_kind(with_kind) == "popup"
-    assert visu_api._row_kind(without_kind) == "normal"
-
-
 # ── Seitentyp nur für Seiten ──────────────────────────────────────────────────
 
 
@@ -646,14 +638,28 @@ async def test_a_kind_change_to_popup_is_still_rejected_with_an_orphaned_include
 
 
 @pytest.mark.asyncio
-async def test_a_concealed_include_target_does_not_block_saving_the_source_page(db: Database) -> None:
-    """Zweiter Fall des Bugs: das Ziel existiert, ist für den Speichernden aber verdeckt."""
+async def test_a_concealed_include_target_is_checked_without_authz_filtering(db: Database) -> None:
+    """Verdeckung ist für die Include-Prüfung ohne Bedeutung - in beide Richtungen.
+
+    Der Ziel-Lookup in `_validate_page_kind_config` liest `visu_nodes` roh, ohne
+    jede authz-Filterung. Ein verdecktes, aber vorhandenes Ziel ist deshalb ein
+    ganz gewöhnliches Ziel: als **neuer** Eintrag wird es akzeptiert, obwohl der
+    Speichernde die Seite selbst nicht lesen darf - und umgekehrt schützt die
+    Verdeckung nicht vor den Regeln, ein verdecktes Popup wird genauso abgelehnt.
+
+    Die Duldung unveränderter Alt-Einträge trägt hier nichts bei: das Ziel
+    existiert, der strenge Zweig läuft durch. Der frühere Name dieses Tests
+    (`..._does_not_block_saving_the_source_page`) behauptete das Gegenteil und war
+    vakuum-erfüllt; die Duldung selbst hängt an
+    `test_an_orphaned_include_entry_does_not_block_saving_the_source_page`.
+    """
     await db.execute_and_commit(
         "INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, 'alice', 'hash', 0, ?)",
         (str(uuid.uuid4()), NOW),
     )
     await _insert_node(db, "verdeckt", access="user")
-    await _insert_node(db, "quelle", access="public", config=PageConfig(includes=["verdeckt"]))
+    await _insert_node(db, "verdecktes-popup", kind="popup", access="user")
+    await _insert_node(db, "quelle", access="public")
     await db.execute_and_commit(
         """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
            VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
@@ -662,6 +668,7 @@ async def test_a_concealed_include_target_does_not_block_saving_the_source_page(
 
     with pytest.raises(HTTPException) as read_exc:
         await visu_api.get_page(node_id="verdeckt", request=_request(), db=db, user=alice)
+    # Neuer Eintrag auf ein verdecktes Ziel: akzeptiert, die Prüfung sieht die Zeile.
     await visu_api.save_page(
         node_id="quelle",
         config=PageConfig(includes=["verdeckt"], widgets=[_widget()]),
@@ -669,9 +676,61 @@ async def test_a_concealed_include_target_does_not_block_saving_the_source_page(
         db=db,
         _user=alice,
     )
+    # Verdecktes Popup: dieselbe ungefilterte Prüfung, deshalb abgelehnt.
+    with pytest.raises(HTTPException) as popup_exc:
+        await visu_api.save_page(
+            node_id="quelle",
+            config=PageConfig(includes=["verdeckt", "verdecktes-popup"]),
+            request=_request(),
+            db=db,
+            _user=alice,
+        )
 
     assert read_exc.value.status_code == 403  # verdeckt für Alice
     assert await _raw_includes(db, "quelle") == ["verdeckt"]
+    assert popup_exc.value.status_code == 400
+    assert popup_exc.value.detail == "Eine Popup-Seite kann nicht inkludiert werden"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_includes_are_deduplicated_keeping_the_first_position(db: Database) -> None:
+    """Bewusster Entscheid statt 400: Duplikate werden im Modell still entfernt (R14).
+
+    Dieselbe Seite zweimal zu komponieren hat keine Bedeutung; ein 400 würde
+    dagegen eine bereits doppelt gespeicherte Zeile dauerhaft unspeicherbar
+    machen. Die Reihenfolge des ersten Vorkommens bleibt erhalten.
+    """
+    await _insert_node(db, "a")
+    await _insert_node(db, "b")
+    await _insert_node(db, "quelle")
+
+    await _save(db, "quelle", PageConfig(includes=["a", "b", "a", "a"]))
+
+    assert await _raw_includes(db, "quelle") == ["a", "b"]
+    stored = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user="admin")
+    assert stored.includes == ["a", "b"]
+
+
+def test_duplicate_includes_are_deduplicated_in_the_model_itself() -> None:
+    # Die Normalisierung sitzt im Modell und greift damit auf jedem Weg
+    # (PUT, Import, Kopie, Lesen) und idempotent.
+    once = PageConfig(includes=["a", "b", "a"])
+
+    assert once.includes == ["a", "b"]
+    assert PageConfig(includes=once.includes).includes == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_of_a_forbidden_include_target_is_still_rejected(db: Database) -> None:
+    # Gegenzweig: Entdoppeln ersetzt keine Prüfung.
+    await _insert_node(db, "popup", kind="popup")
+    await _insert_node(db, "quelle")
+
+    with pytest.raises(HTTPException) as exc:
+        await _save(db, "quelle", PageConfig(includes=["popup", "popup"]))
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Eine Popup-Seite kann nicht inkludiert werden"
 
 
 # ── R15: Zugriffsgrenze über einen Include hinweg ─────────────────────────────
@@ -929,6 +988,64 @@ async def test_import_rejects_a_global_include_that_includes(db: Database) -> No
 
     assert exc.value.status_code == 400
     assert await db.fetchall("SELECT id FROM visu_nodes WHERE name = 'Global'") == []
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_a_location_that_carries_includes(db: Database) -> None:
+    """Gleicher Fehlertyp wie ein verwaister Verweis: eine LOCATION mit `includes`.
+
+    Der Import rief `_validate_page_kind_config` nur für Seiten auf, der Wächter
+    gegen "inkludierte Seite wird Popup" scannt dagegen alle Zeilen. Eine
+    importierte LOCATION konnte einer fremden Seite so dauerhaft den Wechsel zu
+    `popup` verwehren.
+    """
+    await _insert_node(db, "fremd")
+    body = VisuImportRequest(
+        obs_export="visu_subtree",
+        version=1,
+        nodes=[
+            VisuExportNode(
+                id="alt-ordner",
+                parent_id=None,
+                name="Ordner",
+                type="LOCATION",
+                page_config={"includes": ["fremd"]},
+            ),
+        ],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await visu_api.import_nodes(body=body, db=db, _user="admin")
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Include-Konfiguration ist nur für Seiten (PAGE) zulässig"
+    assert await db.fetchall("SELECT id FROM visu_nodes WHERE name = 'Ordner'") == []
+    # Und die fremde Seite bleibt frei: der Wechsel zu `popup` geht weiterhin.
+    updated = await visu_api.update_node(node_id="fremd", body=VisuNodeUpdate(kind="popup"), db=db, _user="admin")
+    assert updated.kind == "popup"
+
+
+@pytest.mark.asyncio
+async def test_import_accepts_a_location_whose_page_config_has_no_includes(db: Database) -> None:
+    # Gegenzweig: nur eine **nicht leere** Include-Liste ist an einer LOCATION Unsinn.
+    body = VisuImportRequest(
+        obs_export="visu_subtree",
+        version=1,
+        nodes=[
+            VisuExportNode(
+                id="alt-ordner",
+                parent_id=None,
+                name="Ordner",
+                type="LOCATION",
+                page_config={"includes": [], "widgets": []},
+            ),
+        ],
+    )
+
+    root = await visu_api.import_nodes(body=body, db=db, _user="admin")
+
+    assert root.type == "LOCATION"
+    assert await _raw_includes(db, root.id) == []
 
 
 @pytest.mark.asyncio
