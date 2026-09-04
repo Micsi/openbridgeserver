@@ -116,6 +116,13 @@ und die Skins können nicht bauen, bevor der Vertrag gemergt ist.
 zugehörige Contract-PR hier gemergt ist. Auch dann gilt: erst App, dann Skins. Wer die
 Reihenfolge dreht, sitzt in einem Deadlock, der wie ein Codefehler aussieht und keiner ist.
 
+**Zwischen Schritt 1 und 2 ist `obs-visu-skins/main` selbst rot** — und damit jeder dort neu
+geöffnete PR, auch einer ohne eine Zeile Code. Grund: `scaffold.spec.ts` misst
+`targetsContract` je Skin gegen den Vertrag statt gegen ein Literal und wird rot, sobald der
+Vertrag ohne die Manifeste weiterzieht. Das ist gewollt (es macht den Versatz sichtbar),
+kostet aber ein Zeitfenster: **Schritt 2 gehört zeitnah hinterher**, sonst suchen fremde
+Agenten den Fehler in ihrem eigenen PR.
+
 > **Nur die Dev-Link-Phase.** Der erzwungene Gleichstand ist eine Eigenschaft des
 > `link:`-Aufbaus, nicht des Vertrags. Nach dem Release (publizierte npm-Versionen) darf ein
 > Skin hinter dem Vertrag herhinken — der Konformitätsreport macht den Versatz über
