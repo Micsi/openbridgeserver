@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
-import { defineComponent, h } from 'vue';
+import { defineComponent, h, nextTick } from 'vue';
 import { createPinia } from 'pinia';
 import { createI18n } from 'vue-i18n';
 import de from '../locales/de.json';
@@ -163,5 +163,53 @@ describe('AppShell — must-keep behaviours', () => {
   it('renders the page title override in the header when `title` is given', () => {
     const w = mountShell({ title: 'Terminal' });
     expect(w.text()).toContain('Terminal');
+  });
+});
+
+describe('AppShell — the chrome sits on the ACTIVE page skin surface', () => {
+  it('carries no skin namespace when no page named one (standalone mount)', async () => {
+    const w = mountShell();
+    await nextTick();
+    const page = w.find('.app-shell-page');
+    expect(page.exists()).toBe(true);
+    // Hardcoding one skin's root here made EVERY page's chrome ionic-toned.
+    expect(page.classes()).not.toContain('visu-root');
+    expect(page.classes()).not.toContain('t-root');
+  });
+
+  it('carries the root class the active page names (ionic → visu-root)', async () => {
+    const w = mountShell({ rootClass: 'visu-root' });
+    await nextTick();
+    const page = w.find('.app-shell-page');
+    expect(page.classes()).toContain('visu-root');
+    expect(page.classes()).toContain('app-shell-page');
+  });
+
+  it('carries the TERMINAL namespace on a terminal page — never the ionic one', async () => {
+    const w = mountShell({ rootClass: 't-root' });
+    await nextTick();
+    const page = w.find('.app-shell-page');
+    expect(page.classes()).toContain('t-root');
+    expect(page.classes()).not.toContain('visu-root');
+  });
+
+  it('swaps the namespace without touching classes Ionic wrote itself', async () => {
+    // `#app-shell-content` is the menu's content target: Ionic sets `menu-content`
+    // and friends on it imperatively. A Vue class BINDING rewrites the whole
+    // attribute, so the first skin-to-skin route change wiped them. The namespace
+    // is applied additively instead — this test is the guard on that.
+    const w = mountShell({ rootClass: 'visu-root' });
+    await nextTick();
+    const el = w.find('.app-shell-page').element as HTMLElement;
+    el.classList.add('menu-content', 'menu-content-overlay');
+
+    await w.setProps({ rootClass: 't-root' });
+    await nextTick();
+
+    expect(el.classList.contains('t-root')).toBe(true);
+    expect(el.classList.contains('visu-root')).toBe(false);
+    expect(el.classList.contains('app-shell-page')).toBe(true);
+    expect(el.classList.contains('menu-content')).toBe(true);
+    expect(el.classList.contains('menu-content-overlay')).toBe(true);
   });
 });

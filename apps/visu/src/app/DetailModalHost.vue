@@ -275,10 +275,12 @@ export default defineComponent({
                 ? h(
                     'div',
                     {
-                      // `.visu-root` + the page tweak attrs/vars recreate the themed
-                      // surface inside the teleported modal so the dialog tokens
-                      // resolve (data-theme drives colours/bg; data-stil the glass).
-                      class: ['visu-root', 'skin-host-modal-body'],
+                      // The ACTIVE skin's root class + the page tweak attrs/vars
+                      // recreate the themed surface inside the teleported modal so
+                      // the dialog tokens resolve (data-theme drives colours/bg;
+                      // data-stil the glass). Naming one skin's namespace here made
+                      // a detail surface opened from a terminal page ionic-styled.
+                      class: [skin.value.rootClass, 'skin-host-modal-body'],
                       ...(props.rootBind?.attrs ?? {}),
                       style: props.rootBind?.style,
                       // Single capture seam: every control inside marks an intent;
@@ -315,8 +317,9 @@ export default defineComponent({
                     'div',
                     {
                       // Same themed surface recreation as the modal body: the
-                      // popover is teleported to <body>, outside the page root.
-                      class: ['visu-root', 'skin-host-presets-body'],
+                      // popover is teleported to <body>, outside the page root —
+                      // and likewise scoped to the ACTIVE skin, not to ionic.
+                      class: [skin.value.rootClass, 'skin-host-presets-body'],
                       ...(props.rootBind?.attrs ?? {}),
                       style: props.rootBind?.style,
                       // Preset buttons are plain buttons – one onClick capture

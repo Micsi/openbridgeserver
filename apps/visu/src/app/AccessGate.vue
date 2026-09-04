@@ -156,15 +156,20 @@ async function submitPin(pageId: string): Promise<void> {
 <style scoped>
 /* A quiet hint strip, never a red error wall. */
 .access-gate {
-  /* The shell's page body is an `ion-router-outlet`, which Ionic positions
-     `absolute; inset: 0` over `app-shell-body`. As an in-flow sibling the gate
-     would be painted UNDER that outlet, so its PIN/login controls would not
-     receive clicks (the tile grid intercepts them). Lift the gate onto its own
-     layer above the outlet, on a solid ground, so it is actually operable. */
+  /* The outlet that holds the routed page is a sibling in `app-shell-body` and
+     carries Ionic's `z-index: 0`. Keep the gate on its own layer above it so its
+     PIN/login controls stay clickable whatever the page paints. (It used to have
+     to escape an `absolute; inset: 0` outlet that covered the whole body; the
+     outlet is in flow now, but the stacking order is still the gate's to own.) */
   position: relative;
   z-index: 2;
   padding: 8px 12px;
-  background: var(--ion-background-color, #fff);
+  /* No ground of its own: the shell page carries the ACTIVE skin's surface, and
+     the gate sits on it. `--ion-background-color` would be the ionic skin's
+     ground — on a terminal page that token no longer resolves, so this painted a
+     light strip across the black page: exactly the leak the skin-scoped shell
+     root closed. Transparent follows whichever skin is on screen. */
+  background: transparent;
 }
 
 .access-gate-pin {

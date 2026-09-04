@@ -29,6 +29,14 @@ export interface ShellContext {
   state?: ShellStateOptions;
   /** The active page's skin root bindings (data-theme + tweak CSS vars). */
   rootBind?: RootTweakStyle;
+  /**
+   * The CSS namespace of the ACTIVE page's skin (`Skin.rootClass` — `.visu-root`
+   * for ionic, `.t-root` for terminal). The shell page carries it so the chrome
+   * sits on the surface of the skin the page actually uses. Hardcoding one skin's
+   * root on the shell made every page's chrome ionic-toned regardless of its skin
+   * — an architectural statement nobody made.
+   */
+  rootClass?: string;
   /** A hard error to surface in the shell's `error` slot. */
   error?: string | null;
   /** Whether the active page body is empty (drives the `empty` slot fallback). */
