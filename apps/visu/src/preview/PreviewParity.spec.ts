@@ -108,24 +108,58 @@ import { dirname, join, resolve } from 'node:path';
  *         und wie sie aussieht - jsdom rechnet kein CSS aus. Der Test "misst
  *         KEINE berechneten Stile" haelt genau diese Grenze fest.
  *
- *   E3-2  DIE BERECHNETE UTILITY-DEKLARATION DES RAHMENS - und nur noch sie.
- *         Der Rahmen um die Vorschau steht in `gui/`, und diese Spec liest
- *         `gui/` nicht; gemessen wird er drueben in
- *         `gui/tests/components/visu/VisuPreviewFrame.spec.js`, auf drei Wegen:
- *         (a) Klassenliste und `style`-Attribut des `<iframe>` selbst; (b)
- *         JEDES Element seines VORFAHRENPFADES bis zur Komponentenwurzel, dazu
- *         negativ der ganze Pfad darueber - `transform` und `filter` erben, ein
- *         `scale-90 saturate-50` am Eltern-`<div>` wirkt Zeichen fuer Zeichen
- *         wie dieselbe Klasse am Rahmen (Kritik R8, D1); (c) ein Quelltextscan
- *         ueber alle handgeschriebenen Blaetter unter `gui/src` und das
- *         ausgelieferte `index.html` - nennt eines von ihnen eine der
- *         gepinnten Klassen, faellt der Test.
+ *   E3-2  WAS DER RAHMEN UM DIE VORSCHAU AM BILD AENDERT, SOWEIT ES NUR EIN
+ *         BROWSER ENTSCHEIDEN KANN. Der Rahmen steht in `gui/`, und diese Spec
+ *         liest `gui/` nicht.
  *
- *         Diese drei waren Testluecken und keine Grenzen des Verfahrens; sie
- *         sind geschlossen. UEBERGEBEN ist genau der Rest: was das GEBAUTE
- *         Utility-Blatt aus `rounded-lg`, `bg-white`, `w-full` oder `flex`
- *         berechnet. Es steht in keinem Quelltext dieses Repos, und weder
- *         jsdom noch happy-dom rechnet es aus - das entscheidet der Pixel-Diff.
+ *         GEMESSEN wird er drueben in `gui/tests/components/visu/` - an
+ *         ATTRIBUTEN, in happy-dom, vom `<iframe>` bis zum `<html>`:
+ *
+ *           (a) Klassenliste und `style`-Attribut des `<iframe>` selbst, und
+ *               zwar in JEDEM Zustand, den die Komponente annehmen kann
+ *               (verbunden, nicht erreichbar, abgelehnt) - ein
+ *               `:class="{ 'scale-90': unreachable }"` faellt damit auch dann
+ *               auf, wenn es beim Mount noch nicht greift (Kritik R9, N-F).
+ *           (b) JEDES Element des VORFAHRENPFADES, und der endet erst am
+ *               `<html>`: das Eltern-`<div>` der Komponente, das einbettende
+ *               `<div>` von `VisuEditorView`, `<main>`, die Spalte, die Wurzel
+ *               von `AppLayout` samt dem Inline-Stil, den `App.vue` dort
+ *               durchreicht, `div.min-h-screen`, `<body>`, `<html>`. Gemessen
+ *               wird `App.vue` mit der ECHTEN `AppLayout`; gestubbt ist nur, was
+ *               NEBEN dem Pfad liegt. `transform` und `filter` erben, ein
+ *               `scale-90 saturate-50` an irgendeinem dieser Elemente wirkt
+ *               Zeichen fuer Zeichen wie dieselbe Klasse am Rahmen
+ *               (Kritik R8 D1, Kritik R9 N-A).
+ *           (c) JEDE Regel jedes handgeschriebenen Blattes unter `gui/src` und
+ *               des ausgelieferten `index.html`, die diesen Pfad TREFFEN KANN -
+ *               nicht nur die, die eine bestimmte Klasse nennt. Gefragt wird
+ *               per echtem `matches()` gegen jedes Element des Pfades und
+ *               zusaetzlich ueber den Schluessel-Compound, fuer Selektoren, deren
+ *               linker Teil in diesem Mount nicht steht
+ *               (`iframe[data-testid="visu-preview-frame"]`, `.p-4 > iframe` -
+ *               Kritik R9, N-B). Die erreichende Menge steht namentlich im Test
+ *               (heute `:root`, `*`, `body`), und keine von ihnen deklariert
+ *               etwas aus der Transform-/Filter-/Zoom-/Opacity-Familie.
+ *
+ *         UEBERGEBEN ist, was ein Lauf ohne Browser nicht entscheiden kann -
+ *         drei Dinge, und keines davon ist eine Testluecke:
+ *
+ *           1. Was das GEBAUTE Utility-Blatt aus `rounded-lg`, `bg-white`,
+ *              `p-6`, `bg-surface-900` oder `min-h-screen` berechnet. Diese
+ *              Deklarationen stehen in KEINER Quelldatei dieses Repos; Tailwind
+ *              erzeugt sie erst beim Bauen, und happy-dom rechnet kein CSS aus.
+ *              Dasselbe gilt fuer alles, was ausserhalb von `gui/src` in dieses
+ *              Blatt einfliesst: `tailwind.config`, PostCSS-Plugins, die
+ *              `@import "tailwindcss"`-Kette.
+ *           2. OB eine erreichende Regel ein Pixel bewegt. Der Scan MELDET
+ *              Selektoren; dass ein `:root` mit Farbtokens oder ein `*` mit dem
+ *              Box-Modell nichts am Bild aendert, ist ein Urteil, keine Messung -
+ *              dieselbe Grenze wie E3-3.
+ *           3. Der Mount ist kein Browser: kein Viewport, kein Layout, keine
+ *              Stapelung. Ein Rahmen, dessen Attribute Zeichen fuer Zeichen
+ *              stimmen, kann vom echten Layout trotzdem beschnitten, gescrollt
+ *              oder skaliert werden (`h-[70vh]` gegen `h-screen` und
+ *              `overflow-hidden`). Das entscheidet der Pixel-Diff.
  */
 
 // Ionic-Webkomponenten sind nicht jsdom-freundlich (gleiches Muster wie
@@ -2210,6 +2244,13 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
    * ausliefert). Beide rendern statt der Seite den Wartehinweis.
    */
   async function mountPreviewOwnState(skin: string | null) {
+    // Auch fuer diese Zustaende laeuft die RANDMESSUNG. Genau die fehlte: der
+    // Rendering-Pin unten misst den `ion-page`-Teilbaum, und ein
+    // `<Teleport to="body">` im `v-else`-Zweig legt seinen Knoten NEBEN diesen
+    // Teilbaum, an den `<body>`. Ein rotes Vollbild-Overlay ging deshalb durch
+    // die volle Suite (Kritik R9, N-E). Der verglichene Rahmen bleibt in dieser
+    // Messung aussen vor - er wird Element fuer Element gehalten.
+    const edgeBefore = edgeSnapshot();
     markedPageId = 'overview';
     const ctx = reactive<ShellContext>({});
     const wrapper = mount(PreviewPage, {
@@ -2227,7 +2268,10 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       );
     }
     await flushPromises();
-    return wrapper;
+    return {
+      wrapper,
+      edge: () => edgeSince(edgeBefore, frameOf(wrapper.element)),
+    };
   }
 
   /** Dieselbe Seite ueber die Bruecke: Handshake, dann der Entwurf. */
@@ -2495,7 +2539,9 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
       expect(printElement(document.body, '@body')).toBe('@body | body |  |  |  | ');
 
       // Und dasselbe fuer den BESTAND, nicht nur fuer `<html>`/`<body>` und die
-      // Stilquellen: `<head>` und `<body>` tragen ueberhaupt keinen Knoten.
+      // Stilquellen: unter `<html>` haengt ueberhaupt kein Element - weder in
+      // `<head>` noch in `<body>` noch NEBEN den beiden (der Gang beginnt am
+      // `<html>`, nicht bei `<head>`/`<body>`; s. walkDocument).
       // Genau hier faellt auf, was ein Vorschau-Modul beim LADEN an den `<body>`
       // haengt und BEHAELT - ein Toast-Container, ein Splash-Overlay, ein
       // Debug-Banner. Ein solcher Knoten steht schon in DOCUMENT_AT_IMPORT (die
@@ -3221,7 +3267,8 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         ],
       ];
       for (const [zustand, skin, hinweis] of eigene) {
-        const wrapper = await mountPreviewOwnState(skin);
+        const eigen = await mountPreviewOwnState(skin);
+        const wrapper = eigen.wrapper;
         const frame = frameOf(wrapper.element);
 
         // Gegenprobe: dieser Zustand steht wirklich, und er rendert wirklich
@@ -3239,12 +3286,28 @@ describe('preview - dieselbe Seite wie die echte Visu (E3)', () => {
         // volle Suite (Kritik R8, A1). Hier faellt er auf - samt seinem
         // Inline-Stil, den kein Blattvergleich je liest, und samt einem
         // Inline-Stil am Rahmen selbst.
+        //
+        // WAS DIESE ZWEI ZEILEN MESSEN, genau: den `ion-page`-Teilbaum. Was
+        // NEBEN ihm liegt, sehen sie nicht - dafuer steht die Randmessung
+        // darunter.
         expect(printElement(frame, '@frame')).toBe(
           `@frame | ion-page | preview-page | data-page=preview data-preview-state=${zustand} |  | `,
         );
         expect(structure(frame)).toEqual([
           `/0 | p | preview-hint | data-testid=preview-hint |  | ${hinweis}`,
         ]);
+
+        // Und der RAND des Dokuments, fuer diese Zustaende genauso wie fuer die
+        // verglichene Seite. Der Rendering-Pin darueber reicht nur so weit wie
+        // die `ion-page`; ein `<Teleport to="body">` haengt seinen Knoten
+        // daneben, an den `<body>` - ein rotes Vollbild-Overlay im
+        // `v-else`-Zweig ging genau deshalb durch alle 665 Tests (Kritik R9,
+        // N-E). Beides zusammen deckt jetzt beides: den Teilbaum und alles, was
+        // ausserhalb von ihm am Dokument steht - als Unterschied gegen die
+        // Aufnahme vor dem Mount UND absolut, damit auch ein Knoten auffaellt,
+        // der schon vor dieser Aufnahme dort stand.
+        expect([zustand, eigen.edge()]).toEqual([zustand, RUHIGER_RAND]);
+        expect([zustand, documentNodes()]).toEqual([zustand, LEERES_DOKUMENT]);
 
         const eigenWhole = matchingProbes(frame, whole.readable);
         const eigenLinks = matchingProbes(frame, links.readable);

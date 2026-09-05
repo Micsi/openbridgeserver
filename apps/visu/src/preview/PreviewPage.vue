@@ -54,11 +54,14 @@
  * samt ihrer `@import`-Kette, gehalten gegen ZWEI gemeinsame Boeden (die volle
  * und die leere Seite) und je Selektor auch Glied fuer Glied. Dazu die zwei
  * Zustaende, die es nur in der Vorschau gibt (`waiting`, `unknown-skin` - der
- * Wartehinweis), und dort in ZWEI Fragen: welcher gelesene Selektor greift da
- * und auf der Live-Seite nicht - UND was diese Zustaende ueberhaupt rendern,
- * Rahmen und Baum Element fuer Element ausgeschrieben, samt Inline-Stil (ein
- * zweiter Knoten neben dem Hinweis faellt damit auch dann auf, wenn ihn kein
- * Blatt beim Namen nennt). Und dazu den Zustand des Dokuments neben dem Rahmen -
+ * Wartehinweis), und dort in DREI Fragen: welcher gelesene Selektor greift da
+ * und auf der Live-Seite nicht; was diese Zustaende INNERHALB der `ion-page`
+ * rendern, Rahmen und Baum Element fuer Element ausgeschrieben, samt Inline-Stil;
+ * und - weil das erste beides nur den `ion-page`-Teilbaum misst - was sie
+ * AUSSERHALB von ihm am Dokument stehen lassen, mit derselben Randmessung wie
+ * die verglichene Seite. Ein `<Teleport to="body">` legt seinen Knoten neben den
+ * Teilbaum; ohne diese dritte Frage bliebe ein Vollbild-Overlay im
+ * `v-else`-Zweig unsichtbar. Und dazu den Zustand des Dokuments neben dem Rahmen -
  * `<html>`, `<head>` und `<body>` selbst, jedes Element darunter - auch eines,
  * das NEBEN `<head>` und `<body>` direkt an `<html>` haengt -, jede Stilquelle
  * im Testdokument, aufgenommen nach dem Mount UND nach einer Interaktion und in
@@ -88,18 +91,22 @@
  *         Breite, die der Rahmen vorgibt, nicht die des Viewports. Die Spec
  *         MELDET jeden solchen Selektor namentlich und schreibt ihn aus; ob er
  *         ein Pixel bewegt, entscheidet erst der Pixel-Diff.
- *   E3-2  die BERECHNETE UTILITY-DEKLARATION DES RAHMENS - und nur noch sie.
- *         Der `<iframe>` um diese Seite steht in `gui/`; weder sie noch ihr DOM
- *         wissen von ihm. Gemessen wird er in
- *         `gui/tests/components/visu/VisuPreviewFrame.spec.js`, auf drei Wegen:
- *         Klassenliste und `style`-Attribut des Rahmens selbst; JEDES Element
- *         seines Vorfahrenpfades bis zur Komponentenwurzel (`transform` und
- *         `filter` erben - `scale-90 saturate-50` am Eltern-`<div>` zeigt
- *         dasselbe verkleinerte, entsaettigte Bild); und ein Quelltextscan ueber
- *         alle handgeschriebenen Blaetter unter `gui/src`. Alle drei waren
- *         Testluecken und sind geschlossen. Offen bleibt genau der Rest: was
- *         das GEBAUTE Utility-Blatt aus `rounded-lg`, `bg-white`, `w-full` oder
- *         `flex` berechnet - das steht in keinem Quelltext dieses Repos.
+ *   E3-2  was der RAHMEN um diese Seite am Bild aendert, soweit es nur ein
+ *         Browser entscheiden kann. Der `<iframe>` steht in `gui/`; weder diese
+ *         Seite noch ihr DOM wissen von ihm. GEMESSEN wird er in
+ *         `gui/tests/components/visu/` an ATTRIBUTEN, vom `<iframe>` bis zum
+ *         `<html>`: Klassenliste und `style`-Attribut des Rahmens in JEDEM
+ *         Zustand der Komponente; JEDES Element seines Vorfahrenpfades - bis
+ *         hinauf in die echte Schale aus `App.vue` und `AppLayout`, samt dem
+ *         Inline-Stil, den `App.vue` dort durchreicht; und jede Regel eines
+ *         handgeschriebenen Blattes unter `gui/src`, die diesen Pfad TREFFEN
+ *         KANN (per `matches()` gegen den Pfad, nicht nur nach Klassennamen).
+ *         OFFEN bleibt dreierlei, und keines davon ist eine Testluecke: was das
+ *         GEBAUTE Utility-Blatt aus `rounded-lg`, `bg-white` oder `p-6`
+ *         berechnet (steht in keinem Quelltext dieses Repos); OB eine
+ *         erreichende Regel ein Pixel bewegt; und was erst das echte Layout
+ *         entscheidet - Viewport, Beschnitt, Stapelung. Der lange Wortlaut steht
+ *         im Kopf von `PreviewParity.spec.ts`.
  *   E3-3  jede AENDERUNG AN DEN DEKLARATIONEN eines ausgelieferten Blattes
  *         (`inset: 0` -> `inset: 40%`): ein jsdom-Lauf rechnet kein CSS aus. Der
  *         Wirkungsvergleich misst, welcher Selektor wo greift - nicht, welcher
