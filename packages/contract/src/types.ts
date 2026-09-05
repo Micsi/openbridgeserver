@@ -563,6 +563,115 @@ export interface SkinGestures {
   readonly doubleTap?: GestureTarget;
 }
 
+/* ------------------------------------------- A11y-Palette (§7, v1.13) ----- */
+
+/**
+ * Rolle eines Farb-Tokens — sie bestimmt die WCAG-Schwelle, gegen die gemessen wird.
+ *
+ *  - `text`    – färbt Fließtext/Beschriftung: 4.5:1 (WCAG 1.4.3).
+ *  - `graphic` – färbt bedeutungstragende Nicht-Text-Grafik: 3:1 (WCAG 1.4.11).
+ *  - `ground`  – ist der Bezug, nicht der Vordergrund; wird selbst nicht gemessen.
+ *  - `exempt`  – bewusst ausgenommen. Verlangt `reason` (Goldene Regel 3):
+ *    „nicht gemessen" muss eine Aussage sein, kein Vergessen — die Begründung
+ *    steht im Report, damit die Auslassung les- und kritisierbar bleibt.
+ */
+export type A11yRoleName = 'text' | 'graphic' | 'ground' | 'exempt';
+
+/**
+ * Die Deklaration EINES Farb-Tokens. Der Skin sagt, was der Token tut; die Farbe
+ * selbst liest der Generator aus dem Stylesheet — deklariert wird die Semantik,
+ * gemessen wird der Wert.
+ */
+export interface A11yTokenDecl {
+  readonly role: A11yRoleName;
+  /**
+   * Die Gründe (Namen aus `grounds`), auf denen dieser Vordergrund real steht.
+   * Fehlt die Angabe, wird gegen ALLE erklärten Gründe gemessen — die strengere
+   * Lesart ist bewusst der Default: wer einschränken will, muss es hinschreiben.
+   */
+  readonly on?: readonly string[];
+  /**
+   * Die Deckkräfte, die der Skin AUF DIESEN Token legt (gesperrte Kachel, inertes
+   * Bedienelement). Fehlt die Angabe, gelten die Deckkräfte des Skins (`alphas`).
+   * Sie stehen je Token und nicht nur global, weil ein Skin seine Kachel dimmt und
+   * seine Seitenüberschrift nicht — eine globale Liste erzeugte sonst Paarungen,
+   * die es auf dem Schirm nie gibt, und ein Wächter mit falschem Alarm wird ignoriert.
+   */
+  readonly alphas?: readonly number[];
+  /** Pflicht bei `exempt`; sonst optional als Kommentar zur Einordnung. */
+  readonly reason?: string;
+}
+
+/**
+ * Ein Grund, auf dem Vordergrund steht. Ist er selbst durchscheinend (`rgba(...)`,
+ * `calc()`-Alpha), nennt `over` den Grund darunter — der Generator mischt die Kette
+ * zu dem Pixel zusammen, das real auf dem Schirm steht. Ein Grund, der nach dem
+ * Mischen noch Alpha trägt, ist ein Befund, keine Messung.
+ */
+export interface A11yGround {
+  readonly token: string;
+  readonly over?: string;
+}
+
+/**
+ * Eine farbwirksame Tweak-Achse (CO5-Garantie, Goldene Regel 6): der benannte Tweak
+ * aus `SkinManifest.tweaks` speist die CSS-Custom-Property `cssVar`. Der Generator
+ * fährt jede Achse an BEIDE Extreme (`min`/`max` bzw. erste/letzte Option) und misst
+ * dort erneut. Ein Kontrast, der nur beim Default hält, ist damit kein Bestehen mehr.
+ */
+export interface A11yTweakAxis {
+  readonly tweak: string;
+  readonly cssVar: string;
+}
+
+/**
+ * Die Palette-Deklaration eines Skins (v1.13). Sie ist die Vertrags-Fläche, über die
+ * ein Skin dem Konformitäts-Generator sagt, wo seine Farben stehen und was sie tun —
+ * ohne dass der Generator ein Stylesheet-Format erraten oder Rollen vermuten müsste.
+ *
+ * Der Generator prüft die Deklaration auf VOLLSTÄNDIGKEIT gegen das echte Stylesheet:
+ * ein Farb-Token in einem erklärten Block, der hier fehlt, ist ein Befund. Deshalb
+ * lässt sich eine unbequeme Farbe nicht durch Weglassen aus der Messung nehmen.
+ */
+export interface SkinA11y {
+  /** Stylesheet(s) mit den Farb-Token — relativ zum Manifest oder als Paket-Export. */
+  readonly stylesheet: string | readonly string[];
+  /** Selektor des themenunabhängigen Token-Blocks (Palette-Boden), z. B. `:root`. */
+  readonly base?: string;
+  /** Theme-Name → Selektor des Blocks, der die Theme-Token setzt. */
+  readonly themes: Readonly<Record<string, string>>;
+  /** Themes, die bewusst NICHT gemessen werden, mit Begründung (Goldene Regel 3). */
+  readonly exemptThemes?: Readonly<Record<string, string>>;
+  /** Die Gründe, auf denen Vordergrund steht — der erste muss deckend sein. */
+  readonly grounds: readonly A11yGround[];
+  /** Jede Deckkraft, die der Skin auf Farbe legt. Default `[1]`. */
+  readonly alphas?: readonly number[];
+  /** Jeder Farb-Token der erklärten Blöcke → seine Rolle. Vollständigkeit wird geprüft. */
+  readonly tokens: Readonly<Record<string, A11yTokenDecl>>;
+  /**
+   * Farbwirksame Tweaks, die als CSS-Variable messbar sind. JEDER Tweak aus
+   * `SkinManifest.tweaks` muss hier ODER in {@link SkinA11y.neutralTweaks} ODER in
+   * {@link SkinA11y.unmeasuredTweaks} stehen — sonst ist er ein Befund. Ohne diesen
+   * Abgleich behauptete ein Report `checkedTweakExtremes: true`, während ein
+   * unbenannter Tweak die Farbe verschiebt: eine ungedeckte positive Aussage.
+   */
+  readonly tweakAxes?: readonly A11yTweakAxis[];
+  /**
+   * Tweaks, die nachweislich KEINE Farbe bewegen (Geometrie, Abstände), je mit
+   * Begründung. Sie senken `checkedTweakExtremes` nicht — die Aussage ist ja, dass
+   * es an ihnen nichts zu messen gibt.
+   */
+  readonly neutralTweaks?: Readonly<Record<string, string>>;
+  /**
+   * Tweaks, die Farbe bewegen, aber von dieser Fläche nicht erfasst werden können
+   * (z. B. ein `select`, das Klassen/Attribute umschaltet statt einer Variable),
+   * je mit Begründung. Sie setzen `checkedTweakExtremes` auf `false`: die Extreme
+   * SIND dann nicht vollständig geprüft, und der Report sagt das, statt es zu
+   * verschweigen (Goldene Regel 3).
+   */
+  readonly unmeasuredTweaks?: Readonly<Record<string, string>>;
+}
+
 /** skins/<name>/manifest.json — CONTRACT-v1.md §7. */
 export interface SkinManifest {
   readonly name: string;
@@ -578,6 +687,14 @@ export interface SkinManifest {
   readonly themes?: readonly string[];
   /** Skin-eigenes Gesten-/Interaktionsmodell (v1.7); optional, Host-Default sonst. */
   readonly gestures?: SkinGestures;
+  /**
+   * Palette-Deklaration für die AA-Messung (v1.13). Optional in der TYPform, damit
+   * 1.12-Manifeste gültig bleiben — der Konformitäts-Generator wertet ein Fehlen aber
+   * als `undeclared` und damit als Fehler: AA ist Pflicht (Goldene Regel 6), und ein
+   * Skin ohne Deklaration ist im Report unterscheidbar von einem, der deklariert und
+   * besteht (Goldene Regel 3).
+   */
+  readonly a11y?: SkinA11y;
 }
 
 /* ---------------------------------------------- Support report (§8) ------- */
@@ -611,5 +728,114 @@ export interface SupportReport {
   readonly summary: SupportSummary;
   readonly widgets: Readonly<Record<string, SupportWidgetEntry>>;
   readonly layout?: Record<string, unknown>;
-  readonly a11y?: Record<string, unknown>;
+  /** Die AA-Messung (v1.13) — `undeclared`, wenn das Manifest keine Palette nennt. */
+  readonly a11y?: SupportA11y;
+}
+
+/* ------------------------------------------- A11y im Report (§8, v1.13) --- */
+
+/** Eine einzelne gemessene Paarung — Vordergrund über Grund, bei einer Deckkraft. */
+export interface A11yMeasurement {
+  readonly theme: string;
+  readonly token: string;
+  readonly role: 'text' | 'graphic';
+  readonly ground: string;
+  readonly alpha: number;
+  /** Die Tweak-Stellung, unter der gemessen wurde — `default` oder `<tweak>=<wert>`. */
+  readonly tweaks: string;
+  /** Gemessenes WCAG-2.1-Verhältnis, auf zwei Stellen gerundet. */
+  readonly ratio: number;
+  /** Die Schwelle, gegen die geprüft wurde (4.5 oder 3). */
+  readonly threshold: number;
+}
+
+/** Ein Befund an der Deklaration selbst — sie ist unvollständig oder unrechenbar. */
+export interface A11yFinding {
+  readonly problem:
+    | 'undeclared'
+    | 'stylesheet-unreadable'
+    | 'selector-missing'
+    | 'unclassified'
+    | 'unresolvable'
+    | 'translucent-ground'
+    | 'unknown-ground'
+    /** Ein `ground`-Token, das in keinem `grounds`-Eintrag steht und keine Begründung trägt. */
+    | 'ground-without-reason'
+    | 'unknown-tweak'
+    /** Ein Tweak aus `manifest.tweaks`, den die a11y-Deklaration nirgends einordnet. */
+    | 'undeclared-tweak'
+    | 'exempt-without-reason';
+  readonly detail: string;
+}
+
+/** Der `a11y`-Block in support.json (§8) — gemessen, nie behauptet. */
+export interface SupportA11y {
+  /**
+   *  - `pass`       – deklariert, vollständig, jede Paarung über der Schwelle.
+   *  - `fail`       – deklariert und GEMESSEN unter der Schwelle, oder die
+   *    Deklaration selbst ist unvollständig/unrechenbar.
+   *  - `undeclared` – keine Palette im Manifest: AA ist ungemessen, nicht bestanden.
+   */
+  readonly status: 'pass' | 'fail' | 'undeclared';
+  /** Kurzform für Registry/Wand: hält der Skin AA über alles Gemessene? */
+  readonly aa: boolean;
+  /** Wurde an den Extremen JEDER farbwirksamen Tweak-Achse gemessen? */
+  readonly checkedTweakExtremes: boolean;
+  readonly thresholds: { readonly text: number; readonly graphic: number };
+  /** Gemessene Themes, und die bewusst ausgenommenen mit ihrer Begründung. */
+  readonly themes: readonly string[];
+  readonly exemptThemes?: Readonly<Record<string, string>>;
+  /** Die angefahrenen Tweak-Stellungen (`default` plus je Achse beide Extreme). */
+  readonly tweakStops: readonly string[];
+  /** Zahl der geprüften Paarungen (Theme × Token × Grund × Deckkraft × Tweak-Stopp). */
+  readonly combinations: number;
+  /**
+   * Die knappste Messung je Rolle — das Minimum über ALLE Paarungen, nicht nur über
+   * die bestandenen. Bei `pass` ist das der Abstand zur Schwelle; bei `fail` ist es
+   * derselbe Wert wie `violations[0]`, also der schlimmste Verstoss.
+   */
+  readonly worst: Readonly<Record<string, A11yMeasurement>>;
+  /** Wie viele Paarungen unter der Schwelle lagen — die VOLLE Zahl. */
+  readonly violationCount: number;
+  /**
+   * Dieselben Verstösse, disjunkt aufgeteilt. Eine Gesamtzahl allein ist irreführend:
+   * sie mischt den harten Kern mit zwei Teilmengen, über die man streiten kann.
+   */
+  readonly violationBreakdown: {
+    /**
+     * Volle Deckkraft UND Werkseinstellung — der Kern. Hier greift keine Ausnahme
+     * und kein „aber nur, wenn man den Regler ganz aufdreht". Das ist die Zahl, die
+     * eine Aussage über einen Skin tragen soll.
+     */
+    readonly atDefault: number;
+    /** Volle Deckkraft, aber erst an einem Tweak-Extrem sichtbar (CO5-Garantie). */
+    readonly atTweakExtreme: number;
+    /**
+     * Nur bei gedimmter Deckkraft (gesperrte/readonly Kachel, inertes Bedienelement).
+     * WCAG 1.4.3 nimmt „inactive user interface components" ausdrücklich aus; diese
+     * Fläche nimmt die Ausnahme NICHT — sie misst konservativ. Die Teilmenge steht
+     * getrennt, damit niemand sie als harten Verstoss verkauft.
+     */
+    readonly whenDimmed: number;
+  };
+  /**
+   * Die schlimmsten Verstösse, aufsteigend nach Verhältnis. Gedeckelt, damit ein
+   * Skin mit systematisch zu blasser Palette nicht hunderte Zeilen in support.json
+   * schreibt; `violationCount` nennt die ungekürzte Zahl.
+   */
+  readonly violations: readonly A11yMeasurement[];
+  /** Bewusst ungemessene Token mit ihrer Begründung (Goldene Regel 3). */
+  readonly exempt?: Readonly<Record<string, string>>;
+  /**
+   * `ground`-Token, die in keinem `grounds`-Eintrag stehen und deshalb NICHT gemessen
+   * wurden — mit ihrer Begründung. Ohne diesen Eintrag verschwände ein Token, das man
+   * `ground` nennt und dann weglässt, spurlos aus dem Artefakt.
+   */
+  readonly unmeasuredGrounds?: Readonly<Record<string, string>>;
+  /** Farbwirksame Tweaks, die diese Fläche nicht erfassen kann — mit Begründung. */
+  readonly unmeasuredTweaks?: Readonly<Record<string, string>>;
+  /** Wie viele Befunde es gab — die VOLLE Zahl. */
+  readonly findingCount: number;
+  /** Die Befunde an der Deklaration selbst, gedeckelt. Leer bei `pass`. */
+  readonly findings: readonly A11yFinding[];
 }

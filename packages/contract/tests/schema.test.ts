@@ -33,8 +33,8 @@ const s = schema as Record<string, any>;
 const f = fixtures as Record<string, any>;
 
 describe('contract.schema.json — Globals (§2)', () => {
-  it('declares version 1.12', () => {
-    expect(s.version).toBe('1.12');
+  it('declares version 1.13', () => {
+    expect(s.version).toBe('1.13');
   });
 
   it('declares roles exactly [compact,default,wide,tall,feature,banner]', () => {
@@ -56,6 +56,14 @@ describe('contract.schema.json — Globals (§2)', () => {
   // Konformität reicht `honors` weiterhin unverändert durch.
   it('declares the layout `honors` vocabulary as a checked list (§ SkinLayout.honors)', () => {
     expect(s.layoutHonors).toEqual(LAYOUT_HONORS);
+  });
+
+  // v1.13: Die AA-Schwellen stehen im Vertrag, damit das Tooling sie nicht als
+  // Literal kopiert — dieselbe Blindheit, die `targetsContract` als Literal neun
+  // Minor-Versionen lang verdeckt hat.
+  it('declares the WCAG thresholds and the a11y role vocabulary (v1.13)', () => {
+    expect(s.a11y.thresholds).toEqual({ text: 4.5, graphic: 3 });
+    expect(s.a11y.roles).toEqual(['text', 'graphic', 'ground', 'exempt']);
   });
 
   it('carries a `link` honors token, distinct from `layers` (v1.12)', () => {
@@ -213,8 +221,8 @@ describe('contract.schema.json — widget types (§3)', () => {
 });
 
 describe('fixtures.json — completeness (§4)', () => {
-  it('declares contractVersion 1.12', () => {
-    expect(f.contractVersion).toBe('1.12');
+  it('declares contractVersion 1.13', () => {
+    expect(f.contractVersion).toBe('1.13');
   });
 
   it('carries a writable fixture example that validates as an optional boolean (v1.5)', () => {
