@@ -1,10 +1,21 @@
 {
   "$schema": "https://obs.visu/contract/v1",
-  "version": "1.12",
+  "version": "1.13",
 
   "roles": ["compact", "default", "wide", "tall", "feature", "banner"],
 
   "layoutHonors": ["order", "grouping", "role", "position", "nav", "layers", "popup", "link"],
+
+  "a11y": {
+    "note": "Palette-Deklarationsfläche (v1.13, Goldene Regel 6). Ein Skin deklariert in seinem Manifest, WELCHE Farb-Token welche Rolle tragen, auf welchen Gründen sie stehen, welche Deckkräfte er auflegt und welche Tweaks Farbe bewegen. Die WERTE liest der Konformitäts-Generator aus dem Stylesheet des Skins — deklariert wird die Semantik, gemessen wird die Farbe.",
+    "thresholds": {
+      "text": 4.5,
+      "graphic": 3
+    },
+    "thresholdNote": "WCAG 2.1: 1.4.3 (Kontrast, Minimum) für Text = 4.5:1; 1.4.11 (Kontrast Nicht-Text) für bedeutungstragende Grafik = 3:1.",
+    "roles": ["text", "graphic", "ground", "exempt"],
+    "roleNote": "text/graphic werden gegen jeden erklärten Grund bei jeder erklärten Deckkraft gemessen; ground ist der Bezug, nicht der Vordergrund; exempt ist die bewusste Auslassung und verlangt eine Begründung (Goldene Regel 3) — sie steht im Report."
+  },
 
   "hostActions": {
     "openDetail": { "kind": "navigation", "note": "open the detail surface (host shell)" },
