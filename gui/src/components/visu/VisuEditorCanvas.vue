@@ -11,13 +11,23 @@
  *    erscheinen bei Kantendeckung, „Verteilen" und „Gleiche Groesse" raeumen auf,
  *    die Z-Ordnung ist die Reihenfolge der Widget-Liste, und ein Element laesst
  *    sich sperren oder ausblenden.
- *  - **Responsiver Modus** (E2/E17): dieselbe Seite ohne jede Koordinate. Nur die
- *    REIHENFOLGE zaehlt, sie wird per Drag gesetzt und sofort gespeichert;
- *    Koordinatenfelder gibt es dann gar nicht. Die Breakpoints stehen in den
- *    Seiteneigenschaften.
+ *  - **Responsiver Modus** (E2/E17): dieselbe Seite, ohne dass eine Koordinate
+ *    WIRKT. Nur die REIHENFOLGE zaehlt, sie wird per Drag gesetzt und sofort
+ *    gespeichert; Koordinatenfelder gibt es dann gar nicht. Die Breakpoints
+ *    stehen in den Seiteneigenschaften.
  *
- * DER MODUS UND DER SKIN SIND ZWEI DINGE. Der Modus sagt, was die Seite TRAEGT
- * (Koordinaten oder nur Reihenfolge), der Skin, was davon HONORIERT wird. Der
+ * DIE KOORDINATEN BLEIBEN DABEI STEHEN - das ist die Korrektur aus Runde 3.
+ * §1.1 sagt „im responsiven Modus wirkt keine Koordinate", nicht „die Zahlen
+ * muessen weg". Sie zu loeschen setzte die Regel zwar durch, brach aber R17: V1
+ * (`frontend/`) liest DIESELBE Seite und erwartet vier `number`. Durchgesetzt
+ * wird die Regel deshalb dort, wo aus Daten ein Bild wird - im Host, an
+ * `layout_mode` (`pageHonoursPosition` in `apps/visu/src/core/obs/mapping.ts`).
+ * Fuer diesen Canvas heisst das: der Moduswechsel nimmt nichts weg, und der
+ * Rueckweg auf Pixel gibt genau die Lage zurueck, die der Autor gesetzt hat.
+ *
+ * DER MODUS UND DER SKIN SIND ZWEI DINGE. Der Modus sagt, WORIN die Seite
+ * verfasst ist (Koordinaten oder nur Reihenfolge), der Skin, was davon
+ * HONORIERT wird. Der
  * Editor leitet deshalb nicht mehr den Skin aus dem Modus ab (so stand es in
  * Runde 1 und kollidierte mit E19/C1), sondern zeigt umgekehrt JE SKIN, welcher
  * Modus gerendert wird - `renderedMode()` in `utils/visuEditorPage.js`. Gewaehlt
@@ -43,9 +53,13 @@
  *    wie bei Grafana und ioBroker vis-2, §1.1 E1/E4/E8); jeden Zug einzeln auf den
  *    Server zu schreiben naehme dem spaeteren Undo-Stapel (Teil C5, E7) den Boden.
  *  - „Gespeichert" wird erst gemeldet, wenn die Seite vom Server ZURUECKGELESEN
- *    wurde und traegt, was sie tragen sollte. Ein 204 allein ist kein Beleg - in
- *    Runde 1 meldete der Editor Erfolg fuer eine Einstellung, die gar keinen
- *    Traeger gefunden hatte.
+ *    wurde und traegt, was sie tragen sollte - Seiteneigenschaften, Reihenfolge
+ *    UND jede Koordinate. Ein 204 allein ist kein Beleg; in Runde 1 meldete der
+ *    Editor Erfolg fuer eine Einstellung, die gar keinen Traeger gefunden hatte.
+ *  - Das Sofort-Sichern liest ebenfalls zurueck. Es meldet keinen Erfolg (es
+ *    steht kein „Gespeichert" dahinter), aber es meldet einen FEHLSCHLAG - sonst
+ *    waere ausgerechnet der Pfad, dem nie ein „Speichern" folgt, der einzige
+ *    ohne Beleg.
  *
  * WAS DIESER CANVAS NICHT IST: ein Renderer. Gezeichnet wird hier nur das
  * Autoren-Gitter (Kasten, Name, Anfasser); wie die Seite AUSSIEHT, zeigt
@@ -70,6 +84,7 @@ import {
   distributeHorizontally,
   ensureBoxes,
   guidesFor,
+  idsWithoutBox,
   matchSize,
   moveItem,
   sendToBack,
@@ -122,6 +137,16 @@ const storedSettings = reactive({
   breakpoints: [],
   skin: null,
 })
+/**
+ * Die Kacheln, denen der Editor beim Laden eine Vorgabe-Lage geben musste.
+ *
+ * Der Normalfall ist die leere Liste: das Backend-Modell traegt vier `int`, und
+ * seit Runde 3 nimmt sie ihm niemand mehr ab. Kommt trotzdem eine Zeile ohne
+ * Box herein (direkter DB-Zugriff, ein altes Restore, eine Zeile aus Runde 2),
+ * dann wird gefuellt - aber sichtbar. Eine erfundene Lage, die der naechste
+ * „Speichern"-Klick festschreibt, darf nicht still bleiben.
+ */
+const placedByDefault = ref([])
 const breakpointText = ref('')
 const previewWidth = ref('')
 const selectedIds = ref([])
@@ -180,14 +205,15 @@ const includeLayerCount = computed(
 )
 
 /**
- * Verliert diese Seite beim naechsten „Speichern" ihre Koordinaten?
+ * Wirken die Koordinaten dieser Seite gerade nicht?
  *
- * Der responsive Modus ist eine Ansage, keine Ansicht: eine gespeicherte
- * responsive Seite traegt KEINE Koordinaten (Design-Invariante §1.1, im Backend
- * durchgesetzt). Das darf den Autor nicht ueberraschen - deshalb steht es da,
- * bevor er speichert, und nicht als Ueberraschung danach.
+ * Der responsive Modus ist eine Ansage, keine Ansicht - und seit Runde 3 auch
+ * kein Datenverlust mehr: die Zahlen bleiben stehen (R17), sie WIRKEN nur nicht,
+ * weil der Host auf einer responsiven Seite gar kein `position` emittiert. Der
+ * Hinweis beschreibt deshalb einen ZUSTAND und verschwindet nicht nach dem
+ * Speichern, sondern erst mit dem Modus.
  */
-const losesCoordinates = computed(
+const coordinatesInactive = computed(
   () =>
     loaded.value &&
     settings.mode === LAYOUT_RESPONSIVE &&
@@ -227,10 +253,13 @@ function adopt(config) {
   breakpointText.value = formatBreakpoints(stored.breakpoints)
   const list = (config.widgets ?? []).map((w) => ({ ...w }))
   storedWidgets.value = list.map((w) => ({ ...w }))
-  // Im Pixel-Modus braucht jede Kachel eine Box: eine Seite, die aus dem
-  // responsiven Modus kommt, traegt keine mehr (§1.1), und der Canvas erfindet
-  // dafuer dieselbe Vorgabe wie das Backend-Modell statt einer dritten Zahl.
-  widgets.value = stored.mode === LAYOUT_PIXEL ? ensureBoxes(list) : list
+  // Gezeichnet wird nur, was eine Box hat - unabhaengig vom Modus, denn der
+  // Modus nimmt seit Runde 3 keine mehr weg. Bleibt trotzdem eine Kachel ohne
+  // Lage uebrig, bekommt sie die Vorgabe des Backend-Modells UND einen Hinweis;
+  // still andichten ist genau der Fehler aus Runde 2.
+  const ohneBox = idsWithoutBox(list)
+  placedByDefault.value = ohneBox
+  widgets.value = ohneBox.length > 0 ? ensureBoxes(list) : list
 }
 
 async function load() {
@@ -298,13 +327,24 @@ async function loadLayers() {
 
 /* --------------------------------------------------------------- speichern */
 
-/** Traegt der Server danach, was er tragen sollte? */
+/**
+ * Traegt der Server danach, was er tragen sollte?
+ *
+ * Verglichen werden die Seiteneigenschaften, die Reihenfolge der Ids UND die
+ * Autoren-Box jeder Kachel. Die Box stand bis Runde 2 nicht drin, und das war
+ * eine Luecke derselben Bauart wie der Fund von Runde 1: ginge serverseitig eine
+ * Koordinate verloren, stuende trotzdem „Gespeichert" da. Sie ist erst seit
+ * dieser Runde vergleichbar - vorher leerte das Backend-Modell die Zahlen im
+ * responsiven Modus selbst, ein Vergleich haette also immer angeschlagen.
+ */
+function boxSignature(list) {
+  return (list ?? []).map((w) => `${w.id}:${w.x},${w.y},${w.w},${w.h}`).join('|')
+}
+
 function confirmed(server, wanted) {
   if (!server || typeof server !== 'object') return false
   if (!sameSettings(readPageSettings(server), readPageSettings(wanted))) return false
-  const there = (server.widgets ?? []).map((w) => w.id).join('|')
-  const here = (wanted.widgets ?? []).map((w) => w.id).join('|')
-  return there === here
+  return boxSignature(server.widgets) === boxSignature(wanted.widgets)
 }
 
 /**
@@ -360,6 +400,12 @@ function orderedStored() {
  * gefahren. Ein Drag ueber drei Nachbarn setzt damit hoechstens eine Anfrage
  * gleichzeitig ab, und eine verspaetete Antwort kann keine veraltete Reihenfolge
  * gewinnen lassen (in Runde 1 lief jeder Zwischenschritt ungebremst hinaus).
+ *
+ * ZURUECKGELESEN WIRD AUCH HIER. Bis Runde 2 setzte dieser Pfad `storedWidgets`
+ * aus der eigenen Nutzlast - er glaubte sich selbst. Das war ausgerechnet dort
+ * die schwaechere Regel, wo nie ein „Speichern" nachkommt, das den Fehler noch
+ * auffangen koennte. Gemeldet wird weiterhin kein Erfolg (dieser Pfad behauptet
+ * keinen), sehr wohl aber ein Fehlschlag.
  */
 let orderSaving = null
 let orderPending = false
@@ -372,13 +418,19 @@ function persistOrder() {
   }
   orderSaving = (async () => {
     try {
+      let ok = true
       do {
         orderPending = false
         const payload = configWith({ ...storedSettings }, orderedStored())
         await visuApi.savePage(props.pageId, payload)
-        storedWidgets.value = payload.widgets.map((w) => ({ ...w }))
+        const server = (await visuApi.getPage(props.pageId))?.data ?? null
+        ok = confirmed(server, payload)
+        // Der neue Boden ist, was der Server WIRKLICH haelt - auch im
+        // Fehlerfall. `storedWidgets` bildet den Server ab, nicht den Wunsch;
+        // sonst faehrt der naechste Zug auf einer Behauptung weiter.
+        storedWidgets.value = (server?.widgets ?? payload.widgets).map((w) => ({ ...w }))
       } while (orderPending)
-      errorKey.value = null
+      errorKey.value = ok ? null : 'save'
     } catch {
       errorKey.value = 'save'
     } finally {
@@ -441,12 +493,17 @@ function setFlag(key, value) {
 /**
  * Der Modus ist JE SEITE waehlbar (Owner-Vorgabe). Er wird hier nur eingestellt,
  * nicht gespeichert - dafuer ist „Speichern" da (s. Kopf).
+ *
+ * Und er fasst die Koordinaten NICHT an, in keiner Richtung. Bis Runde 2 fuellte
+ * der Rueckweg hier jede Kachel mit `0/0/2/2` auf, weil der Hinweg sie geleert
+ * hatte: alle Kacheln lagen danach uebereinander auf dem Ursprung, ohne Hinweis,
+ * und der naechste „Speichern"-Klick schrieb das in die Spalte. Beides ist weg -
+ * der Hinweg nimmt nichts, der Rueckweg erfindet nichts.
  */
 function setMode(mode) {
   if (!LAYOUT_MODES.includes(mode)) return
   settings.mode = mode
   guides.value = []
-  if (mode === LAYOUT_PIXEL) widgets.value = ensureBoxes(widgets.value)
 }
 
 function toFront() {
@@ -837,11 +894,18 @@ function guideStyle(guide) {
         }}
       </span>
       <span
-        v-if="losesCoordinates"
+        v-if="coordinatesInactive"
         data-testid="editor-canvas-mode-hint"
+        class="text-slate-500 dark:text-slate-400"
+      >
+        {{ $t('visuEditor.canvas.coordinatesInactive') }}
+      </span>
+      <span
+        v-if="placedByDefault.length > 0"
+        data-testid="editor-canvas-placed-hint"
         class="text-amber-600 dark:text-amber-400"
       >
-        {{ $t('visuEditor.canvas.coordinateLoss') }}
+        {{ $t('visuEditor.canvas.placedByDefault', { count: placedByDefault.length }) }}
       </span>
       <span
         v-if="saved"

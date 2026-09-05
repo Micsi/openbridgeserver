@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 # ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -29,18 +29,29 @@ LayoutMode = Literal["pixel", "responsive"]
 # ── WidgetInstance ────────────────────────────────────────────────────────────
 
 
+#: Die Vorgabe-Box eines Widgets — dieselben vier Zahlen, die V1 seit jeher
+#: annimmt (``frontend/src/types/index.ts`` → ``WidgetInstance``).
+_BOX_DEFAULTS = {"x": 0, "y": 0, "w": 2, "h": 2}
+
+
 class WidgetInstance(BaseModel):
     """Ein platziertes Widget.
 
-    ``x``/``y``/``w``/``h`` sind die Autoren-Box. Sie sind **optional mit
-    Vorgabe**: wer sie nicht nennt, bekommt wie bisher ``0/0/2/2`` (R17 — V1
-    schickt sie immer und merkt von dieser Zeile nichts). ``None`` ist die
-    ausdrückliche Aussage „diese Seite trägt keine Koordinaten"; sie entsteht auf
-    einer Seite im responsiven Modus (siehe
-    ``PageConfig._responsive_pages_carry_no_coordinates``). Der Host liest die Box
-    genau dann als Position, wenn alle vier Zahlen da sind (``readPosition`` in
-    ``apps/visu/src/core/obs/mapping.ts``) — eine unvollständige Box ist keine Box,
-    und für eine responsive Seite emittiert er deshalb gar kein ``position``.
+    ``x``/``y``/``w``/``h`` sind die Autoren-Box: **vier ganze Zahlen, immer**.
+    Der Typ ist kein Detail, sondern R17 — V1 liest dieselbe Zeile, deklariert
+    ``x: number`` (``frontend/src/types/index.ts:45-48``) und rechnet damit
+    ungeprüft (``w.x * CELL_W``, ``frontend/src/views/VisuEditor.vue:400``; die
+    Belegungsrechnung ``i % w.w``, ``:615``). Ein ``None`` wird dort zu ``0``,
+    und die Seite kollabiert auf ``left:0px; width:0px``.
+
+    Ob die Box **wirkt**, sagt nicht ihr Vorhandensein, sondern der Modus der
+    SEITE (``PageConfig.layout_mode``): auf einer responsiven Seite emittiert der
+    Host gar kein ``position`` (``mapTree``/``itemsOf`` in
+    ``apps/visu/src/core/obs/``). Damit gilt beides — die Design-Invariante §1.1
+    („im responsiven Modus wirkt keine Koordinate") und R17.
+
+    Eine Zeile, in der schon ``null`` steht, wird beim Lesen auf die Vorgabe
+    geheilt statt abgewiesen (siehe ``_a_missing_coordinate_is_the_v1_default``).
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -48,11 +59,24 @@ class WidgetInstance(BaseModel):
     type: str
     datapoint_id: str | None = None
     status_datapoint_id: str | None = None  # optionaler Rückmelde-DP
-    x: int | None = 0
-    y: int | None = 0
-    w: int | None = 2
-    h: int | None = 2
+    x: int = 0
+    y: int = 0
+    w: int = 2
+    h: int = 2
     config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("x", "y", "w", "h", mode="before")
+    @classmethod
+    def _a_missing_coordinate_is_the_v1_default(cls, value: Any, info: Any) -> Any:
+        """``null`` → die V1-Vorgabe, statt die Seite unlesbar zu machen.
+
+        Dieselbe Duldung wie bei ``PageConfig._drop_duplicate_includes``: eine
+        bereits geschriebene Zeile darf nicht dauerhaft unspeicherbar werden.
+        Betroffen sind genau die Seiten, die eine frühere Fassung dieses Modells
+        im responsiven Modus geleert hat — sie heilen beim ersten Lesen, und V1
+        sieht wieder vier Zahlen.
+        """
+        return _BOX_DEFAULTS[info.field_name] if value is None else value
 
 
 class WidgetRefInstance(WidgetInstance):
@@ -107,6 +131,13 @@ class PageConfig(BaseModel):
     # Bewusst NICHT ``grid_cell_width`` mitbenutzt: das ist V1s Zellbreite und
     # bestimmt dort die Kachelgröße. Sie als „Rasterweite" des V2-Editors zu
     # überschreiben würde die V1-Darstellung derselben Seite ändern (R17).
+    # Die Design-Invariante §1.1 hängt an DIESEM Feld — nicht am Fehlen von
+    # Koordinaten. Der Host liest es und emittiert auf einer responsiven Seite
+    # gar kein ``position`` (``mapTree``/``itemsOf`` in
+    # ``apps/visu/src/core/obs/``); die Zahlen selbst bleiben in der Spalte
+    # stehen, weil V1 dieselbe Zeile liest und sie als ``number`` erwartet (R17).
+    # Der Rückweg auf ``pixel`` gibt damit genau die Lage zurück, die der Autor
+    # gesetzt hat — es gibt nichts zu erfinden, weil nichts verworfen wurde.
     layout_mode: LayoutMode = "pixel"
     grid: int = 8  # Rasterweite des V2-Editors in Autoreneinheiten
     breakpoints: list[int] = Field(default_factory=lambda: [480, 768, 1024])  # E17
@@ -140,32 +171,6 @@ class PageConfig(BaseModel):
             return None
         stripped = value.strip()
         return stripped or None
-
-    @model_validator(mode="after")
-    def _responsive_pages_carry_no_coordinates(self) -> PageConfig:
-        """Die Design-Invariante §1.1, durchgesetzt auf der **gespeicherten** Seite.
-
-        „Eine Seite trägt entweder Koordinaten (Pixel-Modus) oder nur
-        Reihenfolge/Gruppe (responsiver Modus)." Solange das nur eine Regel des
-        Editor-Entwurfs war, stand in der Datenbank weiterhin ``x:0,y:0,w:3,h:2``,
-        ``readPosition`` fand also immer eine Box und der Host emittierte für jedes
-        Widget ein ``position`` — die Invariante war damit nicht umgesetzt, sondern
-        nur behauptet.
-
-        Die Verwerfung ist **nicht** heimlich: der Modus ist eine ausdrückliche
-        Wahl des Autors, der Editor sagt vor dem Speichern an, dass die Seite ihre
-        Koordinaten dabei ablegt, und der Rückweg (zurück auf ``pixel``) gibt sie
-        nicht wieder — er lässt sie leer, statt eine Lage zu erfinden, die nie
-        jemand gesetzt hat.
-        """
-        if self.layout_mode != "responsive":
-            return self
-        for widget in self.widgets:
-            widget.x = None
-            widget.y = None
-            widget.w = None
-            widget.h = None
-        return self
 
     @field_validator("includes")
     @classmethod

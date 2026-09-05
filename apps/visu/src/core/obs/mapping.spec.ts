@@ -407,6 +407,67 @@ describe('author position (x/y/w/h) — additive layout hint (CONTRACT-v1.9, lay
   });
 });
 
+/* ------------------------------------ layout_mode: was die Seite WIRKEN lässt */
+
+describe('layout_mode — die Design-Invariante §1.1 wohnt hier, nicht in der Datenlücke', () => {
+  const seite = (layout_mode?: 'pixel' | 'responsive'): ObsVisuNode[] => [
+    {
+      id: 'p1',
+      parent_id: null,
+      name: 'Küche',
+      type: 'PAGE',
+      access: 'public',
+      page_config: {
+        ...(layout_mode ? { layout_mode } : {}),
+        widgets: [lichtSwitch({ id: 'w1', x: 4, y: 8, w: 3, h: 2 })],
+      },
+    },
+  ];
+
+  it('emits no position for a page in the responsive mode', () => {
+    // Der Kern: die Seite TRÄGT ihre Koordinaten weiterhin (V1 liest dieselbe
+    // Zeile, R17) — sie WIRKEN nur nicht. Entschieden wird das hier, nicht
+    // dadurch, dass jemand die Zahlen aus der Datenbank löscht.
+    const mapped = mapTree(seite('responsive'));
+    expect(mapped[0].position).toBeUndefined();
+  });
+
+  it('emits the position for a page in the pixel mode', () => {
+    expect(mapTree(seite('pixel'))[0].position).toEqual({ x: 4, y: 8, w: 3, h: 2 });
+  });
+
+  it('treats a page without layout_mode as pixel — the backend default (R17)', () => {
+    expect(mapTree(seite())[0].position).toEqual({ x: 4, y: 8, w: 3, h: 2 });
+  });
+
+  it('leaves everything else of a responsive page untouched', () => {
+    const mapped = mapTree(seite('responsive'));
+    expect(mapped[0].device.id).toBe('w1');
+    expect(mapped[0].pageId).toBe('p1');
+    expect(mapped[0].binding.deviceId).toBe('w1');
+  });
+
+  it('decides per page, not per tree', () => {
+    const tree: ObsVisuNode[] = [
+      ...seite('responsive'),
+      {
+        id: 'p2',
+        parent_id: null,
+        name: 'Bad',
+        type: 'PAGE',
+        access: 'public',
+        page_config: {
+          layout_mode: 'pixel',
+          widgets: [lichtSwitch({ id: 'w2', x: 1, y: 1, w: 1, h: 1 })],
+        },
+      },
+    ];
+    const mapped = mapTree(tree);
+    expect(mapped[0].position).toBeUndefined();
+    expect(mapped[1].position).toEqual({ x: 1, y: 1, w: 1, h: 1 });
+  });
+});
+
 /* ------------------------------------------------- page links (v1.11, #1194) */
 
 describe('mapWidget — page links from the backend widget config (#1194)', () => {

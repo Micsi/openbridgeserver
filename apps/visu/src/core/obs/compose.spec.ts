@@ -266,6 +266,42 @@ describe('R14: individuelle Includes werden als eigene Ebenen einkomponiert', ()
   });
 });
 
+/* --------------------------------- §1.1: layout_mode entscheidet je Ebene */
+
+describe('§1.1: eine Ebene im responsiven Modus trägt keine `position`', () => {
+  const mitBox = (id: string) => toggle(`w-${id}`, `dp-${id}`, { x: 1, y: 2, w: 3, h: 4 });
+
+  it('lässt die Autorenposition einer responsiven Seite gar nicht erst entstehen', () => {
+    const tree: ObsVisuNode[] = [
+      page('ziel', {
+        page_config: { layout_mode: 'responsive', widgets: [mitBox('ziel')] },
+      }),
+    ];
+    const [eigen] = composeLayers(tree, 'ziel');
+    expect(eigen.items.map((i) => i.id)).toEqual(['w-ziel']);
+    expect(eigen.items[0].position).toBeUndefined();
+    // Kein „position: undefined": der Schlüssel fehlt, wie bei jedem Widget ohne Box.
+    expect(Object.keys(eigen.items[0])).toEqual(['id']);
+  });
+
+  it('entscheidet je EBENE, nicht je Stapel — eine Pixel-Include unter einer responsiven Seite behält ihre', () => {
+    const tree: ObsVisuNode[] = [
+      page('inc', { page_config: { layout_mode: 'pixel', widgets: [mitBox('inc')] } }),
+      page('ziel', {
+        page_config: { layout_mode: 'responsive', widgets: [mitBox('ziel')], includes: ['inc'] },
+      }),
+    ];
+    const [unten, oben] = composeLayers(tree, 'ziel');
+    expect(unten.items[0].position).toEqual({ x: 1, y: 2, w: 3, h: 4 });
+    expect(oben.items[0].position).toBeUndefined();
+  });
+
+  it('eine Seite ohne `layout_mode` ist Pixel — die Bestandsseite bleibt, wie sie war (R17)', () => {
+    const tree: ObsVisuNode[] = [page('ziel', { page_config: { widgets: [mitBox('ziel')] } })];
+    expect(composeLayers(tree, 'ziel')[0].items[0].position).toEqual({ x: 1, y: 2, w: 3, h: 4 });
+  });
+});
+
 /* ----------------------------------------------------- R15 (Zugriffsgrenze) */
 
 describe('R15: Include über eine Zugriffsgrenze: verdeckt bleibt verdeckt', () => {

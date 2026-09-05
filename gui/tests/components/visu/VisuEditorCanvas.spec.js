@@ -16,10 +16,10 @@ import { LAYOUT_PIXEL, LAYOUT_RESPONSIVE, readPageSettings } from '@/utils/visuE
  * DER SERVER IST HIER EIN STAND, KEIN STUMPF. `getPage` liefert, was `savePage`
  * zuletzt abgelegt hat, und legt es mit denselben Regeln ab wie das echte
  * Backend (`PageConfig`: Rasterweite mindestens 1, Breakpoints positiv und
- * sortiert, und eine responsive Seite traegt KEINE Koordinaten). Nur so sind die
- * zwei Aussagen pruefbar, an denen Runde 1 gescheitert ist: dass „Gespeichert"
- * erst nach einem erfolgreichen Ruecklesen erscheint, und dass ein Neuladen
- * wirklich den gespeicherten Stand zeigt statt den, den der Test sich wuenscht.
+ * sortiert, jede Kachel mit vier ganzen Zahlen). Nur so sind die zwei Aussagen
+ * pruefbar, an denen Runde 1 gescheitert ist: dass „Gespeichert" erst nach einem
+ * erfolgreichen Ruecklesen erscheint, und dass ein Neuladen wirklich den
+ * gespeicherten Stand zeigt statt den, den der Test sich wuenscht.
  *
  * Die BEDIEN-AFFORDANZEN sind mitgeprueft (Beschriftung + Zuordnung
  * Label→Bedienelement), weil der Playwright-Harness genau sie anspricht
@@ -73,8 +73,13 @@ const BOX_DEFAULTS = { x: 0, y: 0, w: 2, h: 2 }
 /**
  * Die Normalisierung des Backends (`obs/models/visu.py` → `PageConfig`),
  * nachgezogen. Sie steht hier, damit der Stand, den der Canvas zurueckliest,
- * derselbe ist wie der aus der echten Spalte - insbesondere die
- * Design-Invariante: eine responsive Seite traegt keine Koordinaten.
+ * derselbe ist wie der aus der echten Spalte.
+ *
+ * SEIT RUNDE 3 nimmt sie einer responsiven Seite die Koordinaten NICHT mehr ab:
+ * V1 liest dieselbe Zeile und erwartet vier `number` (R17). Ein `null` in der
+ * Spalte heilt beim Lesen auf die V1-Vorgabe - genau wie im Backend
+ * (`_a_missing_coordinate_is_the_v1_default`). Ob eine Koordinate WIRKT,
+ * entscheidet der Modus, und das entscheidet der Host.
  */
 function normalizeOnServer(config) {
   const next = JSON.parse(JSON.stringify(config ?? {}))
@@ -89,12 +94,7 @@ function normalizeOnServer(config) {
   next.widgets = (next.widgets ?? []).map((w) => {
     const copy = { ...w }
     for (const key of ['x', 'y', 'w', 'h']) {
-      copy[key] =
-        next.layout_mode === LAYOUT_RESPONSIVE
-          ? null
-          : typeof copy[key] === 'number'
-            ? copy[key]
-            : BOX_DEFAULTS[key]
+      copy[key] = typeof copy[key] === 'number' ? copy[key] : BOX_DEFAULTS[key]
     }
     return copy
   })
@@ -181,6 +181,30 @@ async function pick(el, shiftKey = false) {
   window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }))
   await flushPromises()
 }
+
+/**
+ * Dasselbe, aber mit der VOLLEN Ereignisfolge eines echten Browsers:
+ * `mousedown`, `mouseup` UND `click`.
+ *
+ * Der Unterschied ist der Waechter. Bis Runde 1 hing die Auswahl an beiden
+ * Ereignissen; mit gedrueckter Umschalttaste schaltete die additive Wahl damit
+ * zweimal um, und die Mehrfachauswahl war nach dem Loslassen wieder leer - im
+ * Browser. Im Vitest nicht, weil {@link pick} nur `mousedown` schickt. Genau
+ * diese Mutation (MG10 der Kritik zu Runde 2) ueberlebte den gesamten
+ * vitest-Satz und starb erst im E2E. Mit dieser Folge stirbt sie hier.
+ */
+async function pickInABrowser(el, shiftKey = false) {
+  for (const type of ['mousedown', 'mouseup', 'click']) {
+    el.element.dispatchEvent(new window.MouseEvent(type, { bubbles: true, shiftKey, clientX: 0, clientY: 0 }))
+  }
+  await flushPromises()
+}
+
+/** Die Elemente, die der Canvas gerade als ausgewaehlt zeichnet. */
+const selectedIds = (w) =>
+  els(w)
+    .filter((e) => e.classes().includes('is-selected'))
+    .map((e) => e.attributes('data-el'))
 
 /** Maus-Drag ohne Layout: die Verschiebung steckt in den Zeigerkoordinaten. */
 async function drag(wrapper, id, dx, dy) {
@@ -389,6 +413,18 @@ describe('E4 - Ausrichtlinie, Verteilen, gleiche Groesse', () => {
     expect(order(w).map((id) => boxOf(w, id).x)).toEqual(vorher)
   })
 
+  it('haelt eine Umschalt-Mehrfachauswahl auch bei der vollen Browser-Ereignisfolge', async () => {
+    const w = await mountCanvas()
+    await pickInABrowser(els(w)[0])
+    expect(selectedIds(w)).toEqual(['a'])
+    await pickInABrowser(els(w)[1], true)
+    expect(selectedIds(w)).toEqual(['a', 'b'])
+    // Und die Umschalttaste schaltet weiterhin AB, wenn dasselbe Element noch
+    // einmal kommt - genau einmal, nicht zweimal.
+    await pickInABrowser(els(w)[1], true)
+    expect(selectedIds(w)).toEqual(['a'])
+  })
+
   it('uebernimmt bei „Gleiche Groesse" die Masse des zuerst gewaehlten Elements', async () => {
     const w = await mountCanvas([widget('a', 0, 0, { w: 5, h: 7 }), widget('b', 4, 0), widget('c', 4, 4)])
     await w.find('.editor-canvas').trigger('keydown', { key: 'a', ctrlKey: true })
@@ -514,54 +550,98 @@ describe('E2 - responsiver Modus: Reihenfolge statt Koordinaten', () => {
     expect(readPageSettings(server.config).mode).toBe(LAYOUT_RESPONSIVE)
   })
 
-  it('nimmt der gespeicherten Seite im responsiven Modus JEDE Koordinate', async () => {
-    // Die Design-Invariante §1.1 gilt der SEITE, nicht nur dem Vorschau-Entwurf.
+  it('laesst der gespeicherten Seite im responsiven Modus jede Koordinate (R17)', async () => {
+    // Die Korrektur aus Runde 3. §1.1 heisst „im responsiven Modus WIRKT keine
+    // Koordinate" - durchgesetzt wird das im Host ueber `layout_mode`, nicht
+    // dadurch, dass jemand die Zahlen aus der Spalte nimmt. V1 liest dieselbe
+    // Seite und rechnet `w.x * CELL_W`; aus `null` wuerde dort `0`.
     const w = await mountCanvas()
     await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
     await flushPromises()
     await byButton(w, 'Speichern').trigger('click')
     await flushPromises()
-    for (const stored of server.config.widgets) {
-      expect(stored.x).toBeNull()
-      expect(stored.y).toBeNull()
-      expect(stored.w).toBeNull()
-      expect(stored.h).toBeNull()
-    }
+    expect(readPageSettings(server.config).mode).toBe(LAYOUT_RESPONSIVE)
+    expect(server.config.widgets.map((x) => [x.id, x.x, x.y, x.w, x.h])).toEqual([
+      ['a', 0, 0, 3, 2],
+      ['b', 4, 0, 3, 2],
+      ['c', 4, 4, 3, 2],
+    ])
   })
 
-  it('sagt vor dem Speichern an, dass die Seite ihre Koordinaten ablegt', async () => {
+  it('sagt im responsiven Modus an, dass die Koordinaten nicht wirken - und bleibt dabei', async () => {
     const w = await mountCanvas()
     expect(w.find('[data-testid="editor-canvas-mode-hint"]').exists()).toBe(false)
     await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
     await flushPromises()
+    expect(w.find('[data-testid="editor-canvas-mode-hint"]').text()).toContain('wirken')
+    await byButton(w, 'Speichern').trigger('click')
+    await flushPromises()
+    // Der Hinweis beschreibt einen ZUSTAND, keine bevorstehende Loeschung - er
+    // bleibt deshalb stehen, solange die Seite responsiv ist.
     expect(w.find('[data-testid="editor-canvas-mode-hint"]').exists()).toBe(true)
-    await byButton(w, 'Speichern').trigger('click')
-    await flushPromises()
-    // Danach ist nichts mehr abzulegen - der Hinweis verschwindet.
-    expect(w.find('[data-testid="editor-canvas-mode-hint"]').exists()).toBe(false)
-  })
-
-  it('gibt einer Seite ohne Koordinaten beim Wechsel auf Pixel wieder eine Box', async () => {
-    server.config = normalizeOnServer({
-      ...pageConfig([widget('a', 0, 0), widget('b', 4, 0)]),
-      layout_mode: LAYOUT_RESPONSIVE,
-    })
-    wireServer()
-    const w = await mountAgainstServer()
     await byLabel(w, 'Layout-Modus').setValue(LAYOUT_PIXEL)
     await flushPromises()
-    expect(boxOf(w, 'a')).toEqual({ x: 0, y: 0, w: 2, h: 2 })
+    expect(w.find('[data-testid="editor-canvas-mode-hint"]').exists()).toBe(false)
   })
 
-  it('schickt der Vorschau im responsiven Modus keine Koordinaten', async () => {
+  it('gibt beim Wechsel zurueck auf Pixel genau die alte Lage zurueck', async () => {
+    // Der schwerste Fund aus Runde 2: der Rueckweg dichtete JEDER Kachel
+    // `0/0/2/2` an - sieben Kacheln uebereinander auf demselben Punkt -, und der
+    // naechste „Speichern"-Klick schrieb das fest. Es gibt nichts zu erfinden,
+    // wenn nichts verworfen wurde.
+    const w = await mountCanvas()
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
+    await flushPromises()
+    await byButton(w, 'Speichern').trigger('click')
+    await flushPromises()
+    w.unmount()
+
+    const zweiter = await mountAgainstServer()
+    await byLabel(zweiter, 'Layout-Modus').setValue(LAYOUT_PIXEL)
+    await flushPromises()
+    expect(boxOf(zweiter, 'a')).toEqual({ x: 0, y: 0, w: 3, h: 2 })
+    expect(boxOf(zweiter, 'b')).toEqual({ x: 4, y: 0, w: 3, h: 2 })
+    expect(boxOf(zweiter, 'c')).toEqual({ x: 4, y: 4, w: 3, h: 2 })
+    // Und kein Hinweis auf eine erfundene Lage - es wurde keine erfunden.
+    expect(zweiter.find('[data-testid="editor-canvas-placed-hint"]').exists()).toBe(false)
+  })
+
+  it('sagt es an, wenn er einer Kachel doch eine Vorgabe-Lage geben muss', async () => {
+    // Die letzte Sicherung: eine Zeile, die am Modell vorbei geschrieben wurde
+    // (direkter DB-Zugriff, ein altes Restore). Der Editor darf sie zeichnen -
+    // aber nicht so tun, als haette der Autor diese Lage gesetzt.
+    server.config = { ...pageConfig([widget('a', 0, 0), { id: 'b', name: 'Kachel b', type: 'Toggle', config: {} }]) }
+    wireServer()
+    const w = await mountAgainstServer()
+    expect(boxOf(w, 'b')).toEqual({ x: 0, y: 0, w: 2, h: 2 })
+    const hinweis = w.find('[data-testid="editor-canvas-placed-hint"]')
+    expect(hinweis.exists()).toBe(true)
+    expect(hinweis.text()).toContain('1')
+  })
+
+  it('schickt der Vorschau den Modus mit, statt ihr die Koordinaten wegzunehmen', async () => {
+    // Die Vorschau bildet den Entwurf mit denselben Funktionen ab wie die echte
+    // Visu (`mapTree`/`composeLayers`), und die lesen `layout_mode`. Wer hier
+    // vorher loescht, zeigt ein Bild, das der gespeicherte Stand nicht haette.
     const w = await mountCanvas()
     await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
     await flushPromises()
     const draft = w.emitted('draft').at(-1)[0]
     expect(draft.skin).toBe('edomi')
-    for (const item of draft.nodes[0].page_config.widgets) {
-      expect(item.x).toBeUndefined()
-      expect(item.y).toBeUndefined()
+    expect(draft.nodes[0].page_config.layout_mode).toBe(LAYOUT_RESPONSIVE)
+    expect(draft.nodes[0].page_config.widgets[0]).toMatchObject({ id: 'a', x: 0, y: 0, w: 3, h: 2 })
+  })
+
+  it('schickt der Vorschau reine Daten - ein Vue-Proxy kaeme nie an', async () => {
+    // MG9 aus der Kritik zu Runde 2: der `DataCloneError`-Fix hing allein an der
+    // manuellen E2E-Bahn. `postMessage` klont strukturiert, und der Algorithmus
+    // lehnt einen reaktiven Proxy ab - der Entwurf kommt aus `ref()`/`reactive()`.
+    // C1 hat fuer denselben Fehler denselben Waechter; hier ist er nachgezogen.
+    const w = await mountCanvas()
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
+    await flushPromises()
+    for (const [draft] of w.emitted('draft')) {
+      expect(() => structuredClone(draft)).not.toThrow()
     }
   })
 })
@@ -628,6 +708,24 @@ describe('E17 - Breakpoints in den Seiteneigenschaften', () => {
   it('meldet einen Speicherfehler sichtbar, statt „Gespeichert" zu behaupten', async () => {
     const w = await mountCanvas()
     savePage.mockRejectedValue(new Error('nein'))
+    await byButton(w, 'Speichern').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="editor-canvas-saved"]').exists()).toBe(false)
+    expect(w.find('[data-testid="editor-canvas-error"]').exists()).toBe(true)
+  })
+
+  it('meldet KEIN „Gespeichert", wenn dem Server eine KOORDINATE abhanden kommt', async () => {
+    // Die Kante aus der Kritik zu Runde 2: `confirmed()` verglich nur die
+    // Seiteneigenschaften und die Id-Reihenfolge. Ginge im Pixel-Modus eine
+    // Koordinate verloren, stuende trotzdem „Gespeichert" da - dieselbe Klasse
+    // Fehler, gegen die diese Runde angetreten ist, nur eine Ebene tiefer.
+    const w = await mountCanvas()
+    savePage.mockImplementation(async (id, config) => {
+      const abgelegt = normalizeOnServer(config)
+      abgelegt.widgets[0] = { ...abgelegt.widgets[0], x: abgelegt.widgets[0].x + 1 }
+      server.config = abgelegt
+      return { status: 204 }
+    })
     await byButton(w, 'Speichern').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="editor-canvas-saved"]').exists()).toBe(false)
@@ -804,6 +902,27 @@ describe('Wann gespeichert wird - und wann nicht', () => {
 
     expect(server.config.widgets.map((x) => x.id)).toEqual(['c', 'a', 'b'])
     expect(server.config.widgets.find((x) => x.id === 'a').x).toBe(0)
+  })
+
+  it('meldet es, wenn der Server die neue Reihenfolge still nicht annimmt', async () => {
+    // Die zweite Kante aus der Kritik zu Runde 2: `persistOrder` las nicht
+    // zurueck, sondern setzte `storedWidgets` aus der eigenen Nutzlast. Der
+    // Beleg-Anspruch aus dem Kopf galt damit nur fuer die Schaltflaeche - und ein
+    // stiller Fehlschlag blieb unsichtbar, obwohl genau dieser Pfad sofort
+    // speichert und deshalb nie ein „Speichern" hinterher kommt.
+    const w = await mountCanvas()
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
+    await flushPromises()
+    const eingefroren = JSON.parse(JSON.stringify(server.config))
+    savePage.mockImplementation(async () => {
+      server.config = eingefroren
+      return { status: 204 }
+    })
+
+    await reorder(w, 'c', 'a')
+
+    expect(order(w)).toEqual(['c', 'a', 'b'])
+    expect(w.find('[data-testid="editor-canvas-error"]').exists()).toBe(true)
   })
 
   it('faehrt waehrend eines Zuges hoechstens eine Anfrage zugleich', async () => {

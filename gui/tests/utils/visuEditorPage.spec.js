@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { reactive } from 'vue'
 import {
   DEFAULT_BREAKPOINTS,
   DEFAULT_SKIN,
@@ -15,7 +16,6 @@ import {
   toPreviewDraft,
   widgetFlags,
   withWidgetFlags,
-  withoutBox,
   writePageSettings,
 } from '@/utils/visuEditorPage'
 
@@ -31,11 +31,16 @@ import {
  * Seite ohne Widgets gar nicht halten konnte. Diese Datei haelt die Abloesung
  * fest; die Backend-Haelfte steht in `tests/unit/test_visu_page_layout.py`.
  *
- * Der Entwurf fuer die Vorschau ist die zweite Haelfte: **im responsiven Modus
- * traegt er gar keine Koordinaten** (Design-Invariante §1.1 - „Pixel ist ein
- * Angebot"), und der Host emittiert dann auch kein `position`
- * (`readPosition` in `apps/visu/src/core/obs/mapping.ts`: eine unvollstaendige
- * Box ist keine Box).
+ * DIE KORREKTUR AUS RUNDE 3 steht in dieser Datei an mehreren Stellen: bis
+ * Runde 2 nahm `writePageSettings` einer responsiven Seite JEDE Koordinate ab,
+ * und der Entwurf trug sie folglich auch nicht. Das setzte die
+ * Design-Invariante §1.1 durch und brach R17 im selben Zug - V1 liest dieselbe
+ * Seite, deklariert `x: number` und rechnet `w.x * CELL_W`, aus `null` wird `0`,
+ * die Kacheln kollabieren. Jetzt bleiben die Zahlen stehen; ob sie WIRKEN,
+ * entscheidet `layout_mode`, und zwar im Host (`pageHonoursPosition` in
+ * `apps/visu/src/core/obs/mapping.ts`, gelesen von `mapTree` und `itemsOf`).
+ * Der Editor muss dafuer nichts mehr wegnehmen - und erfindet auf dem Rueckweg
+ * folglich auch nichts mehr.
  */
 
 const widget = (id, extra = {}) => ({
@@ -88,23 +93,15 @@ describe('widgetFlags - sperren und ausblenden (E8)', () => {
   })
 })
 
-describe('withoutBox / hasBox - die Autoren-Box', () => {
+describe('hasBox - die Autoren-Box', () => {
   it('erkennt eine vollstaendige Box', () => {
     expect(hasBox(widget('a'))).toBe(true)
   })
 
   it('erkennt eine unvollstaendige oder fehlende Box als keine Box', () => {
     expect(hasBox(widget('a', { y: null }))).toBe(false)
-    expect(hasBox(withoutBox(widget('a')))).toBe(false)
+    expect(hasBox({ id: 'a' })).toBe(false)
     expect(hasBox(null)).toBe(false)
-  })
-
-  it('nimmt genau die vier Zahlen weg und laesst alles andere stehen', () => {
-    const next = withoutBox(widget('a', { config: { editor: { locked: true } } }))
-    expect(next.x).toBeUndefined()
-    expect(next.h).toBeUndefined()
-    expect(next.id).toBe('a')
-    expect(next.config.editor.locked).toBe(true)
   })
 })
 
@@ -150,16 +147,23 @@ describe('readPageSettings / writePageSettings - die Seiteneigenschaften (E1, E2
     })
   })
 
-  it('nimmt einer responsiven Seite JEDE Koordinate ab (Design-Invariante §1.1)', () => {
+  it('laesst auch einer responsiven Seite jede Koordinate stehen (R17)', () => {
+    // Die Korrektur aus Runde 3. Die Zahlen wegzunehmen setzte §1.1 durch und
+    // brach R17: V1 liest dieselbe Seite mit `x: number`. Jetzt entscheidet der
+    // MODUS, ob eine Koordinate wirkt - und der steht daneben in der Seite.
     const next = writePageSettings(page([widget('a', { x: 40, y: 60 }), widget('b')]), {
       mode: LAYOUT_RESPONSIVE,
     })
-    for (const w of next.widgets) {
-      expect(w.x).toBeUndefined()
-      expect(w.y).toBeUndefined()
-      expect(w.w).toBeUndefined()
-      expect(w.h).toBeUndefined()
-    }
+    expect(next.layout_mode).toBe(LAYOUT_RESPONSIVE)
+    expect(next.widgets[0]).toMatchObject({ x: 40, y: 60, w: 3, h: 2 })
+    expect(next.widgets[1]).toMatchObject({ x: 0, y: 0, w: 3, h: 2 })
+  })
+
+  it('macht den Hin- und Rueckweg verlustfrei - es gibt nichts zu erfinden', () => {
+    const original = page([widget('a', { x: 40, y: 60 })])
+    const responsiv = writePageSettings(original, { mode: LAYOUT_RESPONSIVE })
+    const zurueck = writePageSettings(responsiv, { mode: LAYOUT_PIXEL })
+    expect(zurueck.widgets[0]).toMatchObject({ x: 40, y: 60, w: 3, h: 2 })
   })
 
   it('laesst einer Pixel-Seite jede Koordinate', () => {
@@ -317,16 +321,31 @@ describe('toPreviewDraft - was die Vorschau zu sehen bekommt (E2, E8, E19)', () 
     expect(draft.nodes[0].page_config.widgets[0]).toMatchObject({ x: 40, y: 60, w: 3, h: 2 })
   })
 
-  it('laesst im responsiven Modus JEDE Koordinate weg', () => {
+  it('reicht auch im responsiven Modus die Koordinaten durch - samt Modus', () => {
+    // Der Entwurf traegt die BACKEND-Form, und die Vorschau bildet ihn mit
+    // denselben Funktionen ab wie die echte Visu (`mapTree`/`composeLayers`).
+    // Die dortige Regel liest `layout_mode`; der Entwurf muss ihn also
+    // mitbringen, statt vorher selbst zu loeschen - sonst zeigte die Vorschau
+    // ein Bild, das der gespeicherte Stand nicht haette.
     const cfg = writePageSettings(page([widget('a', { x: 40, y: 60 })]), {
       mode: LAYOUT_RESPONSIVE,
     })
-    const w = toPreviewDraft({ ...base, pageConfig: cfg }).nodes[0].page_config.widgets[0]
-    expect(w.x).toBeUndefined()
-    expect(w.y).toBeUndefined()
-    expect(w.w).toBeUndefined()
-    expect(w.h).toBeUndefined()
-    expect(w.id).toBe('a')
+    const node = toPreviewDraft({ ...base, pageConfig: cfg }).nodes[0]
+    expect(node.page_config.layout_mode).toBe(LAYOUT_RESPONSIVE)
+    expect(node.page_config.widgets[0]).toMatchObject({ id: 'a', x: 40, y: 60, w: 3, h: 2 })
+  })
+
+  it('ist reine Daten - strukturiert klonbar, sonst kommt er nie an', () => {
+    // Der `DataCloneError` aus Runde 2: die Bruecke schickt den Entwurf per
+    // `postMessage`, und der Structured-Clone-Algorithmus lehnt einen Vue-Proxy
+    // ab. Bis hierher hing dieser Fix allein an der manuellen E2E-Bahn.
+    const cfg = writePageSettings(page([widget('a')]), { mode: LAYOUT_PIXEL })
+    const draft = toPreviewDraft({
+      ...base,
+      pageConfig: reactive(cfg),
+      layers: [reactive({ id: 'g1', name: 'Kopf', kind: 'globalInclude', page_config: page([widget('gw')]) })],
+    })
+    expect(() => structuredClone(draft)).not.toThrow()
   })
 
   it('haelt die Reihenfolge der Widgets - sie ist der Boden', () => {

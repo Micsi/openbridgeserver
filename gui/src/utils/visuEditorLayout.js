@@ -69,16 +69,38 @@ export function snapSize(box, dx, dy, step) {
   }
 }
 
-/** Die Vorgabe-Box, die eine Kachel im Pixel-Modus bekommt, wenn sie keine traegt. */
+/** Die Vorgabe-Box, die eine Kachel bekommt, wenn sie gar keine traegt. */
 export const DEFAULT_BOX = { x: 0, y: 0, w: 2, h: 2 }
+
+/**
+ * Die Ids der Kacheln OHNE vollstaendige Box - wem {@link ensureBoxes} gleich
+ * eine Lage geben muesste.
+ *
+ * Getrennt von der Fuellung, weil der Editor beides braucht: fuellen, damit er
+ * ueberhaupt zeichnen kann, und ES SAGEN, damit der Autor nicht eine Lage
+ * gespeichert bekommt, die nie jemand gesetzt hat. Genau daran ist Runde 2
+ * gescheitert - dort fuellte der Rueckweg still `0/0/2/2` in jede Kachel.
+ */
+export function idsWithoutBox(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter((item) => ['x', 'y', 'w', 'h'].some((key) => typeof (item || {})[key] !== 'number'))
+    .map((item) => item.id)
+}
 
 /**
  * Dieselbe Liste, aber jede Kachel mit einer vollstaendigen Box.
  *
- * Gebraucht wird das genau einmal: eine Seite im responsiven Modus traegt KEINE
- * Koordinaten (Design-Invariante §1.1), und wer sie danach auf „Pixel" stellt,
- * muss irgendwo anfangen. Die Vorgabe ist dieselbe wie im Backend-Modell
- * (`WidgetInstance`), damit der Editor keine dritte Zahl erfindet. Kachel, die
+ * DIE LETZTE SICHERUNG, nicht der Normalfall. Seit Runde 3 nimmt niemand mehr
+ * einer Seite ihre Koordinaten ab: das Backend-Modell traegt vier `int`
+ * (`WidgetInstance`, R17 - V1 liest dieselbe Zeile), und ob sie WIRKEN,
+ * entscheidet der Modus im Host. Eine Kachel ohne Box kann damit nur noch aus
+ * einer Zeile kommen, die am Modell vorbei geschrieben wurde (direkter
+ * DB-Zugriff, ein altes Restore, eine Zeile aus Runde 2 vor dem ersten Lesen).
+ *
+ * Der Editor fuellt sie trotzdem - ohne Box gaebe es kein `left`/`width` und die
+ * Kachel waere unauffindbar -, aber er tut es NICHT still: {@link idsWithoutBox}
+ * nennt die Betroffenen, und der Canvas zeigt sie an. Die Vorgabe ist dieselbe
+ * wie im Backend-Modell, damit hier keine dritte Zahl entsteht. Eine Kachel, die
  * schon eine Box hat, wird nicht angefasst.
  */
 export function ensureBoxes(list) {

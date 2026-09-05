@@ -125,11 +125,10 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       const headers = await adminHeaders(request);
       const pageUrl = api(`/visu/pages/${fx.m5.node_ids.home}`);
       // Der Layout-Modus ist eine SEITEN-Eigenschaft: dieses Szenario stellt die
-      // Beispielseite dauerhaft um und nimmt ihr dabei die Koordinaten ab
-      // (Design-Invariante §1.1). Der Ausgangsstand wird deshalb vorher GELESEN
-      // und am Ende zurückgeschrieben — nicht geraten —, damit E4 und E8 dieselbe
-      // Welt vorfinden wie E1. Das ist Aufbau, keine Zusicherung: keine Aussage
-      // dieses Szenarios hängt daran.
+      // Beispielseite dauerhaft um. Der Ausgangsstand wird deshalb vorher
+      // GELESEN und am Ende zurückgeschrieben — nicht geraten —, damit E4 und E8
+      // dieselbe Welt vorfinden wie E1. Das ist Aufbau, keine Zusicherung: keine
+      // Aussage dieses Szenarios hängt daran.
       const before = await request.get(pageUrl, { headers }).then((r) => r.json());
       try {
         await openEditor(page, fx.m5.node_ids.home);
@@ -152,10 +151,18 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
         expect(await order()).toEqual(nachher);
 
         // Und die Invariante selbst, am GESPEICHERTEN Zustand statt am
-        // Eingabefeld: eine responsive Seite trägt keine Koordinate. Geprüft
-        // wird beides — was der Editor SCHICKT (die PUT-Nutzlast) und was der
-        // Server danach HÄLT. Ein Wegfall auf nur einer der beiden Seiten bleibt
-        // damit nicht unbemerkt.
+        // Eingabefeld. Sie lautet seit Runde 3: im responsiven Modus WIRKT keine
+        // Koordinate — durchgesetzt im Host über `layout_mode`, nicht dadurch,
+        // dass jemand die Zahlen aus der Spalte nimmt. Denn V1 (`frontend/`)
+        // liest dieselbe Seite und rechnet `w.x * CELL_W`; aus `null` wird dort
+        // `0`, und jede Kachel kollabiert auf `left:0px; width:0px` (R17).
+        // Geprüft wird beides — was der Editor SCHICKT und was der Server HÄLT.
+        // Die Lage jeder Kachel, nach Id — die Reihenfolge hat sich oben durch
+        // das Umsortieren geaendert, die LAGE darf sich davon nicht ruehren.
+        const boxesById = (widgets: Record<string, unknown>[]) =>
+          Object.fromEntries(widgets.map((w) => [String(w.id), [w.x, w.y, w.w, w.h]]));
+        const lageVorher = boxesById(before.widgets);
+        expect(Object.keys(lageVorher).length).toBeGreaterThan(1);
         await page.getByLabel('Layout-Modus', { exact: true }).selectOption('responsive');
         const gesendet = page.waitForRequest(
           (req) => req.method() === 'PUT' && req.url().includes(`/visu/pages/${fx.m5.node_ids.home}`),
@@ -165,20 +172,30 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
         const nutzlast = JSON.parse((await gesendet).postData() ?? '{}');
         expect(nutzlast.layout_mode).toBe('responsive');
         for (const w of nutzlast.widgets ?? []) {
-          expect(w.x, 'der Editor schickt im responsiven Modus keine Koordinate').toBeUndefined();
-          expect(w.y).toBeUndefined();
-          expect(w.w).toBeUndefined();
-          expect(w.h).toBeUndefined();
+          expect(typeof w.x, 'der Editor nimmt der Seite keine Koordinate mehr ab').toBe('number');
+          expect(typeof w.y).toBe('number');
+          expect(typeof w.w).toBe('number');
+          expect(typeof w.h).toBe('number');
         }
         const gespeichert = await request.get(pageUrl, { headers }).then((r) => r.json());
         expect(gespeichert.layout_mode).toBe('responsive');
         expect(gespeichert.widgets.length).toBeGreaterThan(0);
         for (const w of gespeichert.widgets) {
-          expect(w.x, 'die gespeicherte responsive Seite trägt keine Koordinate').toBeNull();
-          expect(w.y).toBeNull();
-          expect(w.w).toBeNull();
-          expect(w.h).toBeNull();
+          for (const [name, wert] of Object.entries({ x: w.x, y: w.y, w: w.w, h: w.h })) {
+            expect(typeof wert, `R17: V1 liest ${name} als number, nie als null`).toBe('number');
+          }
         }
+        // Der Rückweg erfindet nichts: dieselbe Seite auf `pixel` gestellt trägt
+        // wieder genau die Lage, die vor dem Wechsel in der Spalte stand. Bis
+        // Runde 2 stand hier `0/0/2/2` für JEDE Kachel, übereinander.
+        await page.reload();
+        await expect(page.locator('.editor-canvas')).toBeVisible();
+        await page.getByLabel('Layout-Modus', { exact: true }).selectOption('pixel');
+        await page.getByRole('button', { name: 'Speichern' }).click();
+        await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+        const zurueck = await request.get(pageUrl, { headers }).then((r) => r.json());
+        expect(zurueck.layout_mode).toBe('pixel');
+        expect(boxesById(zurueck.widgets)).toEqual(lageVorher);
       } finally {
         await request.put(pageUrl, { headers, data: before });
       }

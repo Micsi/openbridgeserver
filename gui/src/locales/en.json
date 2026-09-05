@@ -3410,7 +3410,8 @@
       "globalLayer": "Global layers ({count})",
       "includeLayer": "Include layers ({count})",
       "layersError": "The layers of this page could not be loaded; the canvas shows only its own elements.",
-      "coordinateLoss": "In responsive mode this page drops its coordinates when you save."
+      "coordinatesInactive": "In responsive mode this page's coordinates have no effect; they are kept and apply again in pixel mode.",
+      "placedByDefault": "{count} element(s) carried no position and sit on the default 0/0/2/2; saving makes that permanent."
     }
   }
 }

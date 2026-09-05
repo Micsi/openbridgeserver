@@ -5,6 +5,7 @@ import {
   bringToFront,
   distributeHorizontally,
   ensureBoxes,
+  idsWithoutBox,
   guidesFor,
   matchSize,
   moveItem,
@@ -234,7 +235,21 @@ describe('snapSize - Groesserziehen am Anfasser (E14, C2-Zeile „Drag/Resize")'
   })
 })
 
-describe('ensureBoxes - eine Seite, die aus dem responsiven Modus kommt', () => {
+describe('idsWithoutBox - wem der Editor gleich eine Lage geben muss', () => {
+  it('nennt jede Kachel ohne vollstaendige Box beim Namen', () => {
+    expect(idsWithoutBox([{ id: 'a' }, { id: 'b', x: 1, y: 2, w: 3, h: 4 }, { id: 'c', x: 1 }])).toEqual([
+      'a',
+      'c',
+    ])
+  })
+
+  it('meldet auf einer vollstaendigen Seite gar nichts', () => {
+    expect(idsWithoutBox([{ id: 'a', x: 0, y: 0, w: 2, h: 2 }])).toEqual([])
+    expect(idsWithoutBox(null)).toEqual([])
+  })
+})
+
+describe('ensureBoxes - die letzte Sicherung, wenn eine Kachel keine Lage traegt', () => {
   it('gibt jeder Kachel ohne Box die Vorgabe des Backend-Modells', () => {
     expect(ensureBoxes([{ id: 'a' }])).toEqual([{ id: 'a', ...DEFAULT_BOX }])
   })

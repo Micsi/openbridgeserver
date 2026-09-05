@@ -21,11 +21,20 @@
  * Traeger jetzt die Seite selbst, und es gibt keinen Rueckfallpfad auf
  * `editor_page`: ein zweiter Leseort waere derselbe Fehler mit einer Ausrede.
  *
- * DIE DESIGN-INVARIANTE (§1.1) gilt hier wie im Backend: eine Seite im
- * responsiven Modus traegt KEINE Koordinaten. `writePageSettings` legt sie beim
- * Wechsel ab, `PageConfig` im Backend tut dasselbe noch einmal - der Editor ist
- * damit ehrlich zu dem, was gleich in der Datenbank steht, und die Regel haengt
- * nicht an ihm allein.
+ * DIE DESIGN-INVARIANTE (§1.1) UND R17 - die Korrektur aus Runde 3. Die Regel
+ * lautet: im responsiven Modus WIRKT keine Koordinate. Bis Runde 2 setzte der
+ * Editor sie durch, indem er die vier Zahlen beim Wechsel wegwarf (und das
+ * Backend gleich noch einmal). Das erfuellte §1.1 und brach R17 im selben Zug:
+ * V1 (`frontend/`) liest DIESELBE Seite, deklariert `x: number`
+ * (`frontend/src/types/index.ts:45-48`) und rechnet ungeprueft `w.x * CELL_W`
+ * (`frontend/src/views/VisuEditor.vue:400`) - aus `null` wird dort `0`, und die
+ * Seite kollabiert auf `left:0px; width:0px`.
+ *
+ * Deshalb entscheidet jetzt der MODUS, nicht das Fehlen der Werte: die
+ * Koordinaten bleiben stehen, `layout_mode` faehrt neben ihnen her, und der Host
+ * liest ihn (`pageHonoursPosition` in `apps/visu/src/core/obs/mapping.ts`,
+ * benutzt von `mapTree` und `itemsOf`). Fuer diesen Editor heisst das: nichts
+ * wegnehmen - und auf dem Rueckweg folglich auch nichts erfinden.
  */
 
 import { DEFAULT_GRID } from '@/utils/visuEditorLayout'
@@ -100,19 +109,6 @@ export function withWidgetFlags(widget, patch) {
       [WIDGET_FLAGS_KEY]: { locked: Boolean(flags.locked), hidden: Boolean(flags.hidden) },
     },
   }
-}
-
-/**
- * Eine Kopie des Widgets OHNE Autoren-Box. Die Schluessel fallen ganz weg statt
- * auf `null` zu gehen: eine unvollstaendige Box ist fuer den Host keine Box
- * (`readPosition`), und ein fehlender Schluessel sagt dasselbe, ohne der Seite
- * eine Zahl anzudichten. Das Backend legt dafuer `null` ab - beides liest
- * `readPosition` gleich.
- */
-export function withoutBox(widget) {
-  const copy = { ...widget }
-  for (const key of BOX_KEYS) delete copy[key]
-  return copy
 }
 
 /** Traegt dieses Widget eine vollstaendige Autoren-Box? */
@@ -210,9 +206,10 @@ export function readPageSettings(pageConfig) {
  * sind erlaubt: was der Aufruf nicht nennt, bleibt so, wie die Seite es heute
  * traegt.
  *
- * Im responsiven Modus verlassen die Koordinaten die Seite schon hier - der
- * Editor schickt damit genau das, was gleich in der Spalte steht, und die
- * Vorschau zeigt kein Bild, das der gespeicherte Stand nicht haette.
+ * DER MODUSWECHSEL LAESST DIE KOORDINATEN IN RUHE - in beide Richtungen. Er ist
+ * eine Aussage darueber, was WIRKT, und nicht ein Loeschbefehl. Damit ist der
+ * Hinweg verlustfrei (V1 liest weiterhin vier Zahlen, R17) und der Rueckweg
+ * ehrlich (es gibt nichts zu erfinden, weil nichts verworfen wurde).
  */
 export function writePageSettings(pageConfig, patch) {
   const current = readPageSettings(pageConfig)
@@ -224,8 +221,7 @@ export function writePageSettings(pageConfig, patch) {
     grid: next.grid,
     breakpoints: [...next.breakpoints],
     skin: next.skin,
-    widgets:
-      next.mode === LAYOUT_RESPONSIVE ? widgets.map(withoutBox) : widgets.map((w) => ({ ...w })),
+    widgets: widgets.map((w) => ({ ...w })),
   }
 }
 
@@ -290,8 +286,12 @@ function draftNode({ id, name, kind, order = 0, pageConfig }) {
  * Vier Regeln stecken darin:
  *  1. Ein AUSGEBLENDETES Widget ist nicht im Entwurf (E8). Es bleibt im Canvas
  *     und im Baum - ausgeblendet heisst „nicht im Bild", nicht „geloescht".
- *  2. Im RESPONSIVEN Modus traegt der Entwurf keine Koordinaten (E2,
- *     Design-Invariante §1.1). Der Host emittiert dann auch kein `position`.
+ *  2. Der Entwurf traegt den MODUS der Seite mit, nicht eine um die Koordinaten
+ *     erleichterte Fassung (E2, Design-Invariante §1.1). Die Vorschau bildet ihn
+ *     mit denselben Funktionen ab wie die echte Visu (`mapTree`/`composeLayers`),
+ *     und die entscheiden an `layout_mode`, ob ein `position` entsteht. Hier
+ *     vorher zu loeschen waere eine zweite Regel an einer zweiten Stelle - genau
+ *     die Bauart Fehler, an der Runde 1 gescheitert ist.
  *  3. Der SKIN ist die Wahl der Seite, keine Ableitung aus dem Modus (E19/C1).
  *     Ohne Wahl gilt {@link DEFAULT_SKIN}.
  *  4. Die LAYER (globale Inkludeseiten, individuelle Inkludeseiten) stehen als
@@ -324,7 +324,10 @@ export function toPreviewDraft({
         status_datapoint_id: w.status_datapoint_id ?? null,
         config: w.config ?? {},
       }
-      if (settings.mode !== LAYOUT_RESPONSIVE) {
+      // Die Autoren-Box faehrt in beiden Modi mit; „unvollstaendig ist keine
+      // Box" bleibt die einzige Bedingung, und der Modus daneben sagt, ob sie
+      // wirkt.
+      if (hasBox(w)) {
         for (const key of BOX_KEYS) item[key] = w[key]
       }
       return item
