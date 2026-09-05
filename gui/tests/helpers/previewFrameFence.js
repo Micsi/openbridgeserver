@@ -82,7 +82,11 @@ export const zeile = (el) =>
  * und diese Liste wird bewusst nachgezogen.
  */
 export const GEPINNTE_KLASSEN = [
-  // der Rahmen selbst
+  // der Rahmen selbst. `editor-preview` ist eine reine MARKE ohne eigenes Blatt:
+  // der E2E-Harness spricht den Rahmen als `iframe.editor-preview` an
+  // (`apps/visu/e2e/m5-editor-matrix.spec.ts`, E10/E11/E16). Dass sie stilfrei
+  // bleibt, haelt der Blattscan weiter unten - eine Regel darauf faellt dort.
+  'editor-preview',
   'w-full',
   'h-[70vh]',
   'rounded-lg',

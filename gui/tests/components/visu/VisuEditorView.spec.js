@@ -279,7 +279,18 @@ describe('VisuEditorView - der Vorfahrenpfad in der echten Schale', () => {
     vi.doMock('@/stores/auth', () => ({
       useAuthStore: () => ({ isLoggedIn: true, isAdmin: true, username: 'admin', loadMe: vi.fn() }),
     }))
-    vi.doMock('@/stores/websocket', () => ({ useWebSocketStore: () => ({ connect: vi.fn() }) }))
+    // Das Doppel muss koennen, was der echte Store kann: der Editor abonniert
+    // hier die Werte, an denen die Sichtbarkeitsregeln haengen (M5 C3, #170).
+    // Ein halbes Doppel liesse die Ansicht schon beim Mounten scheitern - und
+    // der Pfad-Pin darunter maesse dann gar nichts mehr.
+    vi.doMock('@/stores/websocket', () => ({
+      useWebSocketStore: () => ({
+        connect: vi.fn(),
+        subscribe: vi.fn(),
+        unsubscribe: vi.fn(),
+        onValue: vi.fn(() => () => {}),
+      }),
+    }))
     vi.doMock('@/stores/settings', () => ({
       useSettingsStore: () => ({ theme: 'system', load: vi.fn(), applyTheme: vi.fn() }),
     }))

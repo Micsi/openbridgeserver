@@ -16,7 +16,10 @@ const routes = [
   { path: '/settings',             name: 'Settings',   component: () => import('@/views/SettingsView.vue')   },
   { path: '/logic',                name: 'Logic',      component: () => import('@/views/LogicView.vue')      },
   // Visu-Editor (M5 C4, Issue #171) — admin-pflichtig, siehe visuEditorGuard.
-  { path: VISU_EDITOR_ROUTE,       name: 'VisuEditor', component: () => import('@/views/VisuEditorView.vue'), meta: { admin: true } },
+  // Die Seiten-Id steht im Pfad (M5 C3, Issue #170): der Editor bearbeitet immer
+  // GENAU EINE Seite, und ein Deep-Link darauf soll teilbar sein. Optional, damit
+  // der Bereich auch ohne Seite erreichbar bleibt - er sagt dann, was fehlt.
+  { path: `${VISU_EDITOR_ROUTE}/:pageId?`, name: 'VisuEditor', component: () => import('@/views/VisuEditorView.vue'), meta: { admin: true } },
 { path: '/:pathMatch(.*)*',      redirect: '/' },
 ]
 
