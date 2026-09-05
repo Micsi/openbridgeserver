@@ -301,7 +301,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(target).toBeVisible();
   });
 
-  test.fixme('E9 Seitentypen normal/Include/globalInclude/Popup wählbar und wirksam', C1, async ({ page }) => {
+  test('E9 Seitentypen normal/Include/globalInclude/Popup wählbar und wirksam', C1, async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.popup_positioned);
 
@@ -401,7 +401,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     expect((await box(page, fx.m5.widgets.solo)).x).toBe(moved.x + 7);
   });
 
-  test.fixme(
+  test(
     'E15 Zugriff/Zielgruppe direkt in Seiteneigenschaften setzbar (mind. Admin-only/Nutzer-Sichtbarkeit)',
     C1,
     async ({ page }) => {
@@ -486,7 +486,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(page.getByText(fx.m5.names.include_ind)).toHaveCount(2);
   });
 
-  test.fixme('E19 Skin/Theme pro Seite oder global wählbar', C1, async ({ page }) => {
+  test('E19 Skin/Theme pro Seite oder global wählbar', C1, async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.solo);
 
@@ -495,7 +495,15 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await skin.selectOption('edomi');
     await expect(page.frameLocator('iframe.editor-preview').locator('.edomi-root')).toBeVisible();
     await skin.selectOption('terminal');
-    await expect(page.frameLocator('iframe.editor-preview').locator('.t-root')).toBeVisible();
+    // `.first()`, und zwar aus einem gemessenen Grund: der terminal-Skin traegt
+    // seinen `rootClass` ZWEIMAL - einmal an der Schale (`app-shell-page`) und
+    // einmal am Seiten-Wurzelknoten. Das ist keine Eigenheit der Vorschau,
+    // sondern der echten Visu: `http://<visu>/terminal` liefert dieselben zwei
+    // Treffer (nachgemessen, Teil C1 #168). Ohne `.first()` faellt das Szenario
+    // an Playwrights Strict-Mode statt an seiner Behauptung. Der edomi-Skin
+    // bringt seinen eigenen Seiten-Renderer mit und traegt `.edomi-root` genau
+    // einmal - die Zeile darueber bleibt deshalb, wie sie war.
+    await expect(page.frameLocator('iframe.editor-preview').locator('.t-root').first()).toBeVisible();
 
     // Und die Wahl überlebt den Reload (sie gehört der Seite, nicht der Sitzung).
     await page.getByRole('button', { name: 'Speichern' }).click();

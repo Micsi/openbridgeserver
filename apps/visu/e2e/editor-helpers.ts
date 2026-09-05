@@ -28,12 +28,37 @@ export const C4 = blockedBy('C4 Editor Vorschau-Brücke + Admin-Einbettung', 171
 export const C5 = blockedBy('C5 Editor Ergonomie', 172);
 export const C6 = blockedBy('C6 Editor Dualität + Verlauf', 173);
 
-/** Admin-Login + Visu-Editor auf einer geseedeten Seite öffnen. */
+/**
+ * Die Sprache der Admin-GUI, in der die Editor-Szenarien ihre Affordanzen
+ * suchen.
+ *
+ * BEGRUENDUNG (M5 C1, #168): jede Beschriftung in diesen Szenarien ist deutsch
+ * („Benutzername", „Seitentyp", „Zugriff", „Skin", „Speichern"). Die Admin-GUI
+ * waehlt ihre Sprache aber aus `navigator.language`, und `playwright.config.ts`
+ * pinnt die auf `en-US` — damit die ENGLISCHEN Seed-Strings der Visu
+ * (`auth.*`/`access.*`) deterministisch bleiben. Ohne diese Zeile scheiterten
+ * die Editor-Szenarien an der Sprache statt an ihrer Behauptung.
+ *
+ * Gesetzt wird der Speicher der GUI-Herkunft (`obs-locale`), NICHT der der Visu
+ * (`obs-visu-locale`, eigener Schluessel und eigener Origin) — die Visu bleibt
+ * englisch, und keine Erwartung eines Szenarios ist angefasst.
+ */
+const GUI_LOCALE = 'de';
+
+/** Admin-Login + Visu-Editor auf einer geseedeten Seite oeffnen. */
 export async function openEditor(page: Page, pageId: string) {
   await page.goto(`${EDITOR_BASE}/login`);
+  await page.evaluate((code) => localStorage.setItem('obs-locale', code), GUI_LOCALE);
+  await page.reload();
   await page.getByLabel('Benutzername').fill(ADMIN.username);
   await page.getByLabel('Passwort').fill(ADMIN.password);
   await page.getByRole('button', { name: 'Anmelden' }).click();
+  // Auf die abgeschlossene Anmeldung warten, BEVOR die naechste Adresse geladen
+  // wird: `click()` kehrt zurueck, sobald der Klick zugestellt ist, und ein
+  // sofortiges `goto` startet die SPA neu, waehrend das Token noch unterwegs ist
+  // - die Wache der Admin-Routen leitet dann korrekt zur Anmeldung zurueck
+  // (gemessen). Das ist eine Wartebedingung des Harness, keine Erwartung.
+  await page.waitForURL((url) => !url.pathname.endsWith('/login'));
   await page.goto(`${EDITOR_BASE}/visu-editor/${pageId}`);
   await expect(page.locator('.editor-canvas')).toBeVisible();
 }

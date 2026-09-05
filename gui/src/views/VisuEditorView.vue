@@ -1,36 +1,74 @@
 <script setup>
 /**
- * Admin-Bereich „Visu-Editor" (M5 C4, Issue #171).
+ * Admin-Bereich „Visu-Editor" (M5 C4 Issue #171, erweitert um C1 Issue #168).
  *
  * Owner-Entscheid §2.4: der V2-Editor lebt in der Admin-GUI, weil hier die
- * Berechtigungen ausgewertet werden. Teil C4 liefert davon die **Vorschau-
- * Bruecke** und das **Gate**; Baum, Eigenschaften, Canvas und Palette kommen aus
- * C1–C3 und fuellen spaeter denselben `draft`.
+ * Berechtigungen ausgewertet werden. Teil C4 lieferte die **Vorschau-Bruecke**
+ * und das **Gate**; Teil C1 haengt **Seitenbaum** und **Seiteneigenschaften**
+ * daneben und fuellt damit erstmals den `draft`, den C4 transportiert.
  *
  * Das Gate liegt doppelt: die Route wird vom Router weggeleitet (siehe
  * `visuEditorGuard`), und diese Ansicht rendert fuer einen Nicht-Admin gar
  * nichts. Ein direkt gemountetes View darf keine Vorschau zeigen, nur weil die
- * Wache umgangen wurde.
+ * Wache umgangen wurde - und es darf auch keinen Baum laden.
+ *
+ * ZWEI EINHAENGEPUNKTE fuer die parallelen Teile, bewusst leer gelassen:
+ *
+ *  - `.editor-canvas` ist die Flaeche, auf der **Teil C2** den WYSIWYG-Canvas
+ *    baut (Drag/Resize, Raster, Layer). C1 legt nur den Kasten an, weil der
+ *    Playwright-Harness ihn als „der Editor steht" liest
+ *    (`apps/visu/e2e/editor-helpers.ts` → `openEditor`).
+ *  - Die Vorschau bleibt DIREKTES Kind des `visu-editor`-Kastens. Ihr
+ *    Vorfahrenpfad ist in `tests/components/visu/VisuEditorView.spec.js`
+ *    gepinnt (Paritaetsnachweis E3); ein neuer Kasten dazwischen waere ein
+ *    stiller Eingriff in fremdes Beweismaterial.
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+
 import { useAuthStore } from '@/stores/auth'
+import { useVisuEditorStore } from '@/stores/visuEditor'
 import { canUseVisuEditor } from '@/utils/visuEditorAccess'
 import VisuPreviewFrame from '@/components/visu/VisuPreviewFrame.vue'
+import VisuPageTree from '@/components/visu/VisuPageTree.vue'
+import VisuPageProperties from '@/components/visu/VisuPageProperties.vue'
 
 const auth = useAuthStore()
+const route = useRoute()
+const editor = useVisuEditorStore()
 const allowed = computed(() => canUseVisuEditor(auth))
 
 /**
- * Der Entwurf, den die Vorschau zeigt. C1–C3 schreiben ihn; C4 transportiert ihn.
- *
- * Form (Protokoll 1.1): `{ skin, pageId, nodes, tweaks?, theme? }`. `tweaks` und
- * `theme` sind nicht schmueckendes Beiwerk: an ihnen haengen die Wurzel-Attribute
- * und `--vz-*`-Variablen, aus denen der Skin seine Flaechen- und Kachel-Tokens
- * zieht. Wer sie weglaesst, bekommt dieselben Komponenten auf einer anderen
- * Seite — genau das, was Messlatte E3 ausschliesst.
+ * Der Entwurf, den die Vorschau zeigt - jetzt aus dem Editor-Store statt aus
+ * einem Platzhalter. Form (Protokoll 1.1): `{ skin, pageId, nodes, tweaks?,
+ * theme? }`. `tweaks`/`theme` bleiben offen, bis der Tweak-Editor steht; die
+ * Vorschau leitet das Theme dann nach derselben Regel wie die echte Seite ab
+ * (`themeOfTweaks`).
  */
-const draft = ref(null)
+const draft = computed(() => editor.previewDraft)
 const applied = ref(null)
+
+/**
+ * Die Seiten-ID aus der Adresse - defensiv gelesen. Wer diese Ansicht OHNE
+ * Router montiert (die Zaun-Specs des Vorschaurahmens tun das), bekommt aus
+ * `useRoute()` kein Objekt; ohne diese Vorsicht faellt dort die Montage, und der
+ * Zaun um die Vorschau haette nichts mehr zu messen.
+ */
+const routePageId = () => route?.params?.pageId ?? null
+
+onMounted(async () => {
+  if (!allowed.value) return
+  await editor.load()
+  const pageId = routePageId()
+  if (pageId) await editor.select(pageId)
+})
+
+// Ein Wechsel der Adresse (Deep-Link, Zurueck-Taste) waehlt die Seite aus, ohne
+// den Baum erneut zu laden.
+watch(routePageId, async (pageId, previous) => {
+  if (!allowed.value || pageId === previous) return
+  await editor.select(pageId)
+})
 </script>
 
 <template>
@@ -47,6 +85,19 @@ const applied = ref(null)
         {{ $t('visuEditor.intro') }}
       </p>
     </header>
+
+    <div class="grid gap-4 lg:grid-cols-3">
+      <VisuPageTree />
+
+      <!-- Einhaengepunkt fuer Teil C2 (WYSIWYG-Canvas, Issue #169). -->
+      <div
+        class="editor-canvas min-h-40 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-4 text-sm text-slate-500 dark:text-slate-400"
+      >
+        {{ $t('visuEditor.canvasHint') }}
+      </div>
+
+      <VisuPageProperties />
+    </div>
 
     <VisuPreviewFrame
       :draft="draft"

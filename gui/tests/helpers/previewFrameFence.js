@@ -83,6 +83,10 @@ export const zeile = (el) =>
  */
 export const GEPINNTE_KLASSEN = [
   // der Rahmen selbst
+  // `editor-preview` ist die Marke, an der der Playwright-Harness die Vorschau
+  // sucht (`iframe.editor-preview`, Messlatte E3/E19). Sie traegt bewusst KEINE
+  // Regel in einem Blatt der GUI - der Blattscan unten wuerde sie sonst melden.
+  'editor-preview',
   'w-full',
   'h-[70vh]',
   'rounded-lg',
