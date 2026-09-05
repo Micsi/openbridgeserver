@@ -80,7 +80,8 @@
  * Und was er NICHT leistet - DREI Grenzen, die AN TEIL E (Szenario E3,
  * Pixel-Diff im echten Browser) UEBERGEBEN sind statt wegdefiniert. Keine davon
  * kann ein jsdom- oder happy-dom-Lauf entscheiden: keiner hat einen Viewport,
- * keiner rechnet CSS aus. Teil E misst sie:
+ * keiner rechnet CSS aus, und keiner steht im ausgelieferten Dokument. Teil E
+ * misst sie:
  *
  *   E3-1  der CONTAINER-/VIEWPORT-ANTEIL groessenabhaengiger Regeln (`@media (max-width:…)`,
  *         `@container (width …)`): die Vorschau ist ein schmales `<iframe>`, die
@@ -95,18 +96,26 @@
  *         Browser entscheiden kann. Der `<iframe>` steht in `gui/`; weder diese
  *         Seite noch ihr DOM wissen von ihm. GEMESSEN wird er in
  *         `gui/tests/components/visu/` an ATTRIBUTEN, vom `<iframe>` bis zum
- *         `<html>`: Klassenliste und `style`-Attribut des Rahmens in JEDEM
- *         Zustand der Komponente; JEDES Element seines Vorfahrenpfades - bis
- *         hinauf in die echte Schale aus `App.vue` und `AppLayout`, samt dem
- *         Inline-Stil, den `App.vue` dort durchreicht; und jede Regel eines
- *         handgeschriebenen Blattes unter `gui/src`, die diesen Pfad TREFFEN
- *         KANN (per `matches()` gegen den Pfad, nicht nur nach Klassennamen).
- *         OFFEN bleibt dreierlei, und keines davon ist eine Testluecke: was das
- *         GEBAUTE Utility-Blatt aus `rounded-lg`, `bg-white` oder `p-6`
- *         berechnet (steht in keinem Quelltext dieses Repos); OB eine
- *         erreichende Regel ein Pixel bewegt; und was erst das echte Layout
- *         entscheidet - Viewport, Beschnitt, Stapelung. Der lange Wortlaut steht
- *         im Kopf von `PreviewParity.spec.ts`.
+ *         `<html>` DIESER MONTAGE: Klassenliste und `style`-Attribut des Rahmens
+ *         in JEDEM Zustand der Komponente; JEDES Element seines
+ *         Vorfahrenpfades - bis hinauf in die echte Schale aus `App.vue` und
+ *         `AppLayout`, samt dem Inline-Stil, den `App.vue` dort durchreicht, und
+ *         ebenfalls in jedem Zustand, den die ANSICHT annehmen kann; jede Regel
+ *         eines handgeschriebenen Blattes, das vom ausgelieferten `index.html`
+ *         aus ueber die Importe erreichbar ist oder unter `gui/src` liegt und
+ *         diesen Pfad TREFFEN KANN (per `matches()` gegen den Pfad und
+ *         zusaetzlich ueber den Schluessel-Compound gegen eine Namensliste);
+ *         und `index.html` selbst als DOKUMENT gelesen, also `<html>`, `<body>`
+ *         und `<div id="app">` der Auslieferung.
+ *         OFFEN bleibt VIERERLEI: was das GEBAUTE Utility-Blatt aus
+ *         `rounded-lg`, `bg-white` oder `p-6` berechnet (steht in keinem
+ *         Quelltext dieses Repos); OB eine erreichende Regel ein Pixel bewegt;
+ *         was erst das echte Layout entscheidet - Viewport, Beschnitt,
+ *         Stapelung; und dass der Mount nicht das ausgelieferte Dokument IST -
+ *         `#app`, `.dark` und die echte Sidebar fehlen dort, weshalb
+ *         `#app > div`, `.dark main` und `aside + div main` weder von
+ *         `matches()` noch von der Namensliste gemeldet werden. Der lange
+ *         Wortlaut steht im Kopf von `PreviewParity.spec.ts`.
  *   E3-3  jede AENDERUNG AN DEN DEKLARATIONEN eines ausgelieferten Blattes
  *         (`inset: 0` -> `inset: 40%`): ein jsdom-Lauf rechnet kein CSS aus. Der
  *         Wirkungsvergleich misst, welcher Selektor wo greift - nicht, welcher

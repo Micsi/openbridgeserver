@@ -63,13 +63,14 @@ import { dirname, join, resolve } from 'node:path';
  *                        die nur die VORSCHAU hat (`waiting`, `unknown-skin`)
  *   - der Rand         - der Zustand des DOKUMENTS neben dem Rahmen, an zwei
  *                        Messzeitpunkten aufgenommen: `<html>` und `<body>`
- *                        selbst, jeder Knoten in `<head>` und `<body>`, jede
- *                        Stilquelle im Testdokument - beim Mount UND nach einer
- *                        Interaktion, und in beide Richtungen (dazugekommen,
- *                        geaendert, entfernt); und dazu, weil ein Unterschied
- *                        immer nur gegen eine Aufnahme misst, der BESTAND
- *                        absolut: `<head>` und `<body>` tragen keinen Knoten,
- *                        auch keinen, der schon beim Laden der Module kam
+ *                        selbst, jeder Knoten UNTER `<html>` - in `<head>`, in
+ *                        `<body>` und NEBEN den beiden -, jede Stilquelle im
+ *                        Testdokument - beim Mount UND nach einer Interaktion,
+ *                        und in beide Richtungen (dazugekommen, geaendert,
+ *                        entfernt); und dazu, weil ein Unterschied immer nur
+ *                        gegen eine Aufnahme misst, der BESTAND absolut: unter
+ *                        `<html>` haengt ueberhaupt kein Element - auch keines,
+ *                        das schon beim Laden der Module kam
  *
  * WAS DIESER NACHWEIS NICHT MISST - ausdruecklich, damit ihn niemand fuer eine
  * Pixelgarantie haelt: ein jsdom-Lauf rechnet KEINE Stylesheets aus. Berechnete
@@ -113,7 +114,9 @@ import { dirname, join, resolve } from 'node:path';
  *         liest `gui/` nicht.
  *
  *         GEMESSEN wird er drueben in `gui/tests/components/visu/` - an
- *         ATTRIBUTEN, in happy-dom, vom `<iframe>` bis zum `<html>`:
+ *         ATTRIBUTEN, in happy-dom, vom `<iframe>` bis zum `<html>` DIESER
+ *         MONTAGE (das AUSGELIEFERTE Dokument liegt darueber und wird getrennt
+ *         gelesen, (d); was daran unentscheidbar bleibt, steht als Stueck 4):
  *
  *           (a) Klassenliste und `style`-Attribut des `<iframe>` selbst, und
  *               zwar in JEDEM Zustand, den die Komponente annehmen kann
@@ -121,35 +124,66 @@ import { dirname, join, resolve } from 'node:path';
  *               `:class="{ 'scale-90': unreachable }"` faellt damit auch dann
  *               auf, wenn es beim Mount noch nicht greift (Kritik R9, N-F).
  *           (b) JEDES Element des VORFAHRENPFADES, und der endet erst am
- *               `<html>`: das Eltern-`<div>` der Komponente, das einbettende
- *               `<div>` von `VisuEditorView`, `<main>`, die Spalte, die Wurzel
- *               von `AppLayout` samt dem Inline-Stil, den `App.vue` dort
- *               durchreicht, `div.min-h-screen`, `<body>`, `<html>`. Gemessen
- *               wird `App.vue` mit der ECHTEN `AppLayout`; gestubbt ist nur, was
- *               NEBEN dem Pfad liegt. `transform` und `filter` erben, ein
- *               `scale-90 saturate-50` an irgendeinem dieser Elemente wirkt
- *               Zeichen fuer Zeichen wie dieselbe Klasse am Rahmen
- *               (Kritik R8 D1, Kritik R9 N-A).
- *           (c) JEDE Regel jedes handgeschriebenen Blattes unter `gui/src` und
- *               des ausgelieferten `index.html`, die diesen Pfad TREFFEN KANN -
- *               nicht nur die, die eine bestimmte Klasse nennt. Gefragt wird
- *               per echtem `matches()` gegen jedes Element des Pfades und
- *               zusaetzlich ueber den Schluessel-Compound, fuer Selektoren, deren
+ *               `<html>` der Montage: das Eltern-`<div>` der Komponente, das
+ *               einbettende `<div>` von `VisuEditorView`, `<main>`, die Spalte,
+ *               die Wurzel von `AppLayout` samt dem Inline-Stil, den `App.vue`
+ *               dort durchreicht, `div.min-h-screen`, `<body>`, `<html>`.
+ *               Gemessen wird `App.vue` mit der ECHTEN `AppLayout`; gestubbt ist
+ *               nur, was NEBEN dem Pfad liegt. `transform` und `filter` erben,
+ *               ein `scale-90 saturate-50` an irgendeinem dieser Elemente wirkt
+ *               Zeichen fuer Zeichen wie dieselbe Klasse am Rahmen (Kritik R8
+ *               D1, Kritik R9 N-A). Und ebenfalls in JEDEM Zustand, den die
+ *               ANSICHT annehmen kann (frisch, nach dem ersten uebernommenen
+ *               Entwurf): `:class="{ 'scale-90': applied }"` am
+ *               `<div data-testid="visu-editor">` ging vorher durch, weil der
+ *               Pfad ausserhalb der Rahmenkomponente nur EINMAL gelesen wurde
+ *               (Kritik R10, X7).
+ *           (c) JEDE Regel jedes handgeschriebenen Blattes, das vom
+ *               ausgelieferten `index.html` aus ueber die IMPORTE erreichbar ist
+ *               oder unter `gui/src` liegt - Stylesheets wie `<style>`-Bloecke,
+ *               letztere auch dann, wenn sie nicht am Zeilenanfang stehen
+ *               (Kritik R10, X5/X8). Gelesen wird mit einem Leser, der Klammern,
+ *               Zeichenketten und verschachtelte Bloecke kennt; sein Vorgaenger
+ *               verwarf jeden Selektor mit Klammer STILL, sodass
+ *               `iframe:not([hidden]) { transform: scale(.9) }` gar nicht erst
+ *               im Scan ankam (Kritik R10, X3). Was der Leser nicht als Selektor
+ *               versteht (`@import "tailwindcss"`, `@theme inline { … }`), steht
+ *               namentlich in `sonstiges`, nicht im Papierkorb.
+ *
+ *               Gefragt wird dann zweifach: per echtem `matches()` gegen jedes
+ *               Element des Pfades DIESER Montage und zusaetzlich ueber den
+ *               Schluessel-Compound gegen eine NAMENSLISTE (`iframe`, das
+ *               `data-testid`, die 19 gepinnten Klassen), fuer Selektoren, deren
  *               linker Teil in diesem Mount nicht steht
  *               (`iframe[data-testid="visu-preview-frame"]`, `.p-4 > iframe` -
- *               Kritik R9, N-B). Die erreichende Menge steht namentlich im Test
- *               (heute `:root`, `*`, `body`), und keine von ihnen deklariert
- *               etwas aus der Transform-/Filter-/Zoom-/Opacity-Familie.
+ *               Kritik R9, N-B). Die zweite Frage entscheidet nach Namen, nicht
+ *               nach Wirkung; wo das nicht reicht, steht Stueck 4. Die
+ *               erreichende Menge steht namentlich im Test (heute `:root`, `*`,
+ *               `body`), und keine von ihnen deklariert etwas aus der
+ *               Transform-/Filter-/Zoom-/Opacity-Familie.
+ *           (d) `gui/index.html` als DOKUMENT, nicht nur als `<style>`-Behaelter:
+ *               `<html>`, `<body class="antialiased">` und `<div id="app">` der
+ *               AUSLIEFERUNG, Zeile fuer Zeile ausgeschrieben und mit derselben
+ *               Regel geprueft wie der Mount-Pfad. `<body class="scale-90
+ *               saturate-50" style="filter:hue-rotate(90deg)">` dort macht
+ *               Tailwind zu echten Utilities und skaliert die ganze Anwendung
+ *               samt Rahmen (Kritik R10, X1).
  *
- *         UEBERGEBEN ist, was ein Lauf ohne Browser nicht entscheiden kann -
- *         drei Dinge, und keines davon ist eine Testluecke:
+ *         UEBERGEBEN sind VIER Stuecke. Die ersten drei kann ein Lauf ohne
+ *         Browser nicht entscheiden. Das vierte ist die Grenze der MONTAGE, und
+ *         an seinen Raendern ist es sehr wohl eine Luecke - der Satz, der hier
+ *         frueher stand („drei Dinge, und keines davon ist eine Testluecke"),
+ *         war falsch: die Kritik R10 hat acht Wege daran vorbei gefunden, drei
+ *         davon im gebauten Bundle nachgewiesen. Fuenf sind mit dieser Runde
+ *         geschlossen (X1, X3, X5, X7, X8), drei bleiben und stehen als
+ *         Stueck 4:
  *
  *           1. Was das GEBAUTE Utility-Blatt aus `rounded-lg`, `bg-white`,
  *              `p-6`, `bg-surface-900` oder `min-h-screen` berechnet. Diese
  *              Deklarationen stehen in KEINER Quelldatei dieses Repos; Tailwind
  *              erzeugt sie erst beim Bauen, und happy-dom rechnet kein CSS aus.
- *              Dasselbe gilt fuer alles, was ausserhalb von `gui/src` in dieses
- *              Blatt einfliesst: `tailwind.config`, PostCSS-Plugins, die
+ *              Dasselbe gilt fuer alles, was ausserhalb der gelesenen Blaetter in
+ *              dieses Blatt einfliesst: `tailwind.config`, PostCSS-Plugins, die
  *              `@import "tailwindcss"`-Kette.
  *           2. OB eine erreichende Regel ein Pixel bewegt. Der Scan MELDET
  *              Selektoren; dass ein `:root` mit Farbtokens oder ein `*` mit dem
@@ -160,6 +194,36 @@ import { dirname, join, resolve } from 'node:path';
  *              stimmen, kann vom echten Layout trotzdem beschnitten, gescrollt
  *              oder skaliert werden (`h-[70vh]` gegen `h-screen` und
  *              `overflow-hidden`). Das entscheidet der Pixel-Diff.
+ *           4. DER MOUNT IST NICHT DAS AUSGELIEFERTE DOKUMENT. Im Browser haengt
+ *              der Rahmen unter `div.min-h-screen`, darueber `div#app`, darueber
+ *              `body.antialiased`, darueber `html.dark` - die Klasse setzt das
+ *              Inline-Skript in `index.html` vor dem ersten Bild. Daneben stehen
+ *              die ECHTE Sidebar und die ECHTE Route. Nichts davon steht in der
+ *              Montage: `#app` gibt es nicht (Vue Test Utils haengt einen nackten
+ *              `<div>` an), `.dark` wird nie gesetzt, die Sidebar ist ein
+ *              `<div data-testid="sidebar-stub">`.
+ *
+ *              Deshalb kann `matches()` fuer jede Regel, deren linker Teil aus
+ *              der Auslieferung stammt, nur „trifft nicht" sagen - es fragt ein
+ *              Dokument, in dem die betreffenden Elemente fehlen. Und die
+ *              Ersatzfrage entscheidet nach NAMEN. Ein Selektor, dessen
+ *              rechtestes Glied ein blosser Tag oder eine erst in der
+ *              Auslieferung existierende ID ist, faellt durch beide Fragen:
+ *
+ *                `#app > div { transform: scale(.9) }` trifft `div.min-h-screen`,
+ *                   den obersten Vorfahren des Rahmens;
+ *                `.dark main { filter: invert(1) }` trifft das `<main>`, sobald
+ *                   der Dunkelmodus an ist;
+ *                `aside + div main { transform: scale(.9) }` trifft es ueber die
+ *                   Geschwisterschaft zur echten Sidebar.
+ *
+ *              Die Namensliste laesst sich verlaengern, aber nicht schliessen:
+ *              `div`, `main` und `body` als Schluessel-Compound aufzunehmen
+ *              hiesse, praktisch JEDE Regel der GUI als erreichend zu melden -
+ *              der Scan waere wahr und nutzlos zugleich. Ob eine solche Regel den
+ *              Pfad wirklich trifft, entscheidet erst ein Lauf, in dem dieses
+ *              Dokument WIRKLICH existiert und die Kaskade wirklich gerechnet
+ *              wird: der Pixel-Diff in Teil E. (Kritik R10, X2/X4/X6.)
  */
 
 // Ionic-Webkomponenten sind nicht jsdom-freundlich (gleiches Muster wie
