@@ -237,6 +237,38 @@ OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
 | `PLAYWRIGHT_BASE_URL` | Visu-Dev-Server für die UI-Szenarien | `http://localhost:5175` |
 | `GUI_BASE_URL` | Admin-GUI, in der der V2-Editor liegt (§2.4); nur die E-Szenarien nutzen sie | `http://localhost:5173` |
 
+### Vorschau der Editor-Szenarien (M5 C2, ab Runde 2)
+
+Ein Szenario, das etwas über die **Vorschau** behauptet (E8: „das Element
+verschwindet aus der Vorschau"), braucht eine Vorschau, die überhaupt etwas
+zeigt. Die Vorgabe-Adresse `/visu-v2/preview` liefert heute **niemand** aus — die
+Ausliefer-Route gehört zu Teil D —, im Rahmen stünde also die SPA-Rückfallebene,
+und die Behauptung wäre gegen einen leeren Rahmen gerichtet (vakuum-grün).
+Deshalb bekommen die **beiden Dev-Server je eine Variable** mit:
+
+```bash
+# Visu-Dev-Server: welcher Herkunft die Vorschau überhaupt zuhört (Bauzeit, nie aus der URL)
+VITE_USE_OBS=1 VITE_OBS_PROXY_TARGET=http://127.0.0.1:8080 \
+  VITE_PREVIEW_ALLOWED_ORIGINS=http://localhost:5173 \
+  pnpm --filter @obs/visu-app exec vite --port 5175 --strictPort &
+
+# Admin-GUI: wo die Vorschau liegt (absolut, weil Visu und GUI hier zwei Dev-Server sind)
+cd gui && OBS_PROXY_TARGET=http://127.0.0.1:8080 \
+  VISU_PROXY_TARGET=http://localhost:5175 \
+  VITE_VISU_PREVIEW_URL=http://localhost:5175/preview \
+  npm run dev &
+```
+
+| Variable | Wo | Zweck |
+|---|---|---|
+| `VITE_VISU_PREVIEW_URL` | Admin-GUI (`gui/`) | Adresse der eingebetteten Vorschau; absolut, wenn Visu und GUI getrennte Dev-Server sind |
+| `VITE_PREVIEW_ALLOWED_ORIGINS` | Visu (`apps/visu`) | Herkünfte, denen die Vorschau antwortet — ohne die GUI-Herkunft schweigt sie (Bauzeit, C4) |
+| `VISU_PROXY_TARGET` | Admin-GUI (`gui/`) | Ziel des `/visu`- und `/visu-v2`-Proxys, wenn die Visu nicht auf 5174 liegt |
+
+Ohne diese Variablen läuft der Harness weiter, **E8 wird dann aber rot**: seine
+Vorschau-Hälfte verlangt seit Runde 2 ausdrücklich, dass das Element vor dem
+Ausblenden in der Vorschau **steht**. Die Fehlermeldung nennt die Variablen.
+
 `POST /api/v1/auth/login` ist auf **5 Anmeldungen pro Minute** begrenzt
 (`@limiter.limit("5/minute")`, `obs/api/auth.py:471`; bis Runde 1 stand hier
 irrtümlich 10, die Bremse ist doppelt so eng wie dokumentiert). Deshalb zwei

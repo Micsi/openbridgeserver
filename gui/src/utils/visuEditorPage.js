@@ -243,6 +243,28 @@ export function sameSettings(a, b) {
 }
 
 /**
+ * Der Entwurf als REINE DATEN - kein reaktiver Proxy, keine Vue-Innereien.
+ *
+ * Das ist keine Kosmetik, sondern die Bedingung dafuer, dass er ueberhaupt
+ * ankommt: die Bruecke schickt ihn per `postMessage`, und der Structured-Clone-
+ * Algorithmus lehnt einen Proxy ab (`DataCloneError: #<Object> could not be
+ * cloned`). Alles, was aus dem Canvas kommt, haengt an `ref()`/`reactive()` - die
+ * `config` eines Widgets ebenso wie die geladene `page_config` eines Layers.
+ *
+ * Gemessen mit der Vorschau auf der ECHTEN Visu (`VITE_VISU_PREVIEW_URL` auf
+ * `http://…/preview`): ohne diese Zeile blieb im Rahmen „Warte auf einen Entwurf
+ * aus dem Editor" stehen, und in der Konsole stand genau dieser Fehler. Solange
+ * die Vorschau-Adresse nichts auslieferte (Teil D ist offen), kam es nie so weit -
+ * ohne Handshake wird gar keine Nachricht geschickt.
+ *
+ * Der Vertrag nennt den Entwurf ohnehin als Daten (`PreviewDraft`, Protokoll 1.1);
+ * der JSON-Umweg ist damit seine Form und keine Notloesung.
+ */
+function plain(value) {
+  return JSON.parse(JSON.stringify(value))
+}
+
+/**
  * Ein Knoten des Entwurfs in der BACKEND-Form. Ein Layer ist derselbe Knoten wie
  * die Seite selbst - die Vorschau komponiert ihn mit denselben Funktionen wie die
  * echte Visu (`composeLayers`), es gibt hier keine zweite Kompositionsregel.
@@ -316,7 +338,7 @@ export function toPreviewDraft({
     includes: showIncludeLayer ? (pageConfig.includes ?? []) : [],
     ignore_global_includes: showGlobalLayer ? (pageConfig.ignore_global_includes ?? false) : true,
   }
-  return {
+  return plain({
     skin: settings.skin || DEFAULT_SKIN,
     pageId,
     nodes: [
@@ -331,5 +353,5 @@ export function toPreviewDraft({
         }),
       ),
     ],
-  }
+  })
 }

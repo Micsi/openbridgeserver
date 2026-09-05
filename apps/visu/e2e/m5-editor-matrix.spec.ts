@@ -74,13 +74,30 @@ async function differingPixels(page: Page, a: Buffer, b: Buffer): Promise<number
 }
 
 test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-C6)', () => {
+  /**
+   * Diese Zeilen fahren ZWEI Anwendungen zugleich: die Admin-GUI mit dem Editor
+   * und, im Vorschaurahmen, die echte Visu (Ionic + SkinHost + WebSocket). Beide
+   * werden geladen, beide wieder abgebaut, und beides zählt in dasselbe Budget.
+   * Gemessen auf der Maschine dieses Laufs: 11 bis 23 s je Zeile ruhig, mit den
+   * drei parallel arbeitenden Worktrees riss regelmäßig EINE Zeile die
+   * 30-Sekunden-Decke — und zwar im ABBAU des Browser-Kontexts („Tearing down
+   * context exceeded the test timeout"), nicht in einer Aussage.
+   *
+   * Das Budget wird deshalb hier angehoben, nicht die Erwartungen: jede einzelne
+   * `expect`-Zusicherung behält ihre eigene, kurze Frist aus `playwright.config.ts`
+   * (7 s). Eine Zeile, die inhaltlich falsch ist, scheitert also weiterhin
+   * schnell; nur die Summe aus Aufbau, zwei Anwendungen und Abbau darf länger
+   * dauern.
+   */
+  test.describe.configure({ timeout: 90_000 });
+
   test(
     'E1 Element per Drag auf Pixel-Koordinate x/y setzen, Snap rastet bei einstellbarer Rasterweite ein',
     C2,
     async ({ page }) => {
       const fx = seeded();
       await openEditor(page, fx.m5.node_ids.home);
-      await page.getByLabel('Rasterweite').fill('20');
+      await page.getByLabel('Rasterweite', { exact: true }).fill('20');
 
       const target = el(page, fx.m5.widgets.home);
       const before = await box(page, fx.m5.widgets.home);
@@ -118,8 +135,8 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
         await openEditor(page, fx.m5.node_ids.home);
         // Der responsive Modus: die Seite trägt Reihenfolge statt Koordinaten
         // (Design-Invariante §1.1 — Pixel-Autorenschaft ist ein Angebot).
-        await page.getByLabel('Layout-Modus').selectOption('responsive');
-        await expect(page.getByLabel('X')).toHaveCount(0);
+        await page.getByLabel('Layout-Modus', { exact: true }).selectOption('responsive');
+        await expect(page.getByLabel('X', { exact: true })).toHaveCount(0);
 
         const order = () => page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => e.getAttribute('data-el')));
         const vorher = await order();
@@ -139,12 +156,12 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
         // wird beides — was der Editor SCHICKT (die PUT-Nutzlast) und was der
         // Server danach HÄLT. Ein Wegfall auf nur einer der beiden Seiten bleibt
         // damit nicht unbemerkt.
-        await page.getByLabel('Layout-Modus').selectOption('responsive');
+        await page.getByLabel('Layout-Modus', { exact: true }).selectOption('responsive');
         const gesendet = page.waitForRequest(
           (req) => req.method() === 'PUT' && req.url().includes(`/visu/pages/${fx.m5.node_ids.home}`),
         );
         await page.getByRole('button', { name: 'Speichern' }).click();
-        await expect(page.getByText('Gespeichert')).toBeVisible();
+        await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
         const nutzlast = JSON.parse((await gesendet).postData() ?? '{}');
         expect(nutzlast.layout_mode).toBe('responsive');
         for (const w of nutzlast.widgets ?? []) {
@@ -354,8 +371,18 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     // per Tastatur. Beide Wege stehen hier, weil sie im Editor zwei verschiedene
     // Pfade sind: ein gesperrtes Element, das sich ziehen lässt, wäre ungesperrt,
     // auch wenn die Pfeiltaste nichts tut.
-    await page.getByLabel('Gesperrt').check();
+    //
+    // Davor noch einmal „Nach vorne": das Element liegt nach der Prüfung oben
+    // GANZ UNTEN, und ein Zeiger trifft dort das Element DARÜBER statt seiner.
+    // Der Drag ginge dann ins Leere und die Sperre bliebe unbelegt (gemessen:
+    // mit der Sperre im Drag-Pfad ausgebaut blieb dieses Szenario grün).
+    await page.getByRole('button', { name: 'Nach vorne' }).click();
+    await page.getByLabel('Gesperrt', { exact: true }).check();
     const locked = await box(page, fx.m5.widgets.home);
+    // Und in den sichtbaren Bereich rollen: das Ankreuzfeld „Gesperrt" steht
+    // unter dem Canvas, auf dem 393x851-Gerät des Harness rollt das Fenster dafür
+    // — ein Zeiger auf eine Koordinate außerhalb des Fensters trifft nichts.
+    await target.scrollIntoViewIfNeeded();
     const griff = (await target.boundingBox())!;
     await page.mouse.move(griff.x + griff.width / 2, griff.y + griff.height / 2);
     await page.mouse.down();
@@ -366,8 +393,21 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     expect(await box(page, fx.m5.widgets.home)).toMatchObject({ x: locked.x });
 
     // Ausblenden: das Element verschwindet aus der Vorschau, bleibt aber im Baum.
-    await page.getByLabel('Ausgeblendet').check();
-    await expect(page.frameLocator('iframe.editor-preview').locator(`[data-id="${await target.getAttribute('data-el')}"]`)).toHaveCount(0);
+    //
+    // ZUERST muss es dort STEHEN. Ohne diese Zeile ist „verschwindet" eine
+    // Behauptung über einen Rahmen, in dem ohnehin nichts von der Visu steht —
+    // sie wäre auch dann grün, wenn die Vorschau gar nichts rendert. Sie setzt
+    // voraus, dass unter `VITE_VISU_PREVIEW_URL` wirklich die Visu liegt (siehe
+    // README, „Vorschau der Editor-Szenarien"); genau dafür ist sie da.
+    const inPreview = page
+      .frameLocator('iframe.editor-preview')
+      .locator(`[data-id="${await target.getAttribute('data-el')}"]`);
+    await expect(
+      inPreview.first(),
+      'die Vorschau muss den Entwurf rendern — VITE_VISU_PREVIEW_URL/VITE_PREVIEW_ALLOWED_ORIGINS setzen (e2e/README.md)',
+    ).toBeVisible();
+    await page.getByLabel('Ausgeblendet', { exact: true }).check();
+    await expect(inPreview).toHaveCount(0);
     await expect(target).toBeVisible();
   });
 
@@ -401,7 +441,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       await el(page, fx.m5.widgets.include_ind).click();
       await page.getByLabel('Name').fill('M5 Gamma Umbenannt');
       await page.getByRole('button', { name: 'Speichern' }).click();
-      await expect(page.getByText('Gespeichert')).toBeVisible();
+      await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
 
       await page.goto(`${EDITOR_BASE}/visu-editor/${fx.m5.node_ids.home}`);
       await expect(page.frameLocator('iframe.editor-preview').getByText('M5 Gamma Umbenannt')).toBeVisible();
@@ -439,7 +479,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await el(page, fx.m5.widgets.solo).click();
     await page.keyboard.press('ArrowRight');
     await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Gespeichert')).toBeVisible();
+    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
 
     // Der Verlauf listet die Versionen …
     await page.getByRole('button', { name: 'Verlauf' }).click();
@@ -534,13 +574,13 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     // Genau daran hing der Beweis: mit den Vorgabewerten blieb dieses Szenario
     // auch dann grün, wenn das Speichern der Seiteneigenschaften vollständig
     // abgeschaltet war — der Reload las dieselben Zahlen aus der Vorgabe zurück.
-    await page.getByLabel('Breakpoints').fill('360, 900');
-    await page.getByLabel('Rasterweite').fill('24');
+    await page.getByLabel('Breakpoints', { exact: true }).fill('360, 900');
+    await page.getByLabel('Rasterweite', { exact: true }).fill('24');
     await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Gespeichert')).toBeVisible();
+    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
 
     // Die Vorschau folgt dem gewählten Breakpoint …
-    await page.getByLabel('Vorschau-Breite').selectOption('360');
+    await page.getByLabel('Vorschau-Breite', { exact: true }).selectOption('360');
     await expect(page.locator('iframe.editor-preview')).toHaveJSProperty('clientWidth', 360);
 
     // … die Werte stehen in den SEITENEIGENSCHAFTEN (nicht in den Widgets) …
@@ -550,8 +590,8 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
 
     // … und überleben den Reload, nicht bloß den flüchtigen Editor-Zustand.
     await page.reload();
-    await expect(page.getByLabel('Breakpoints')).toHaveValue('360, 900');
-    await expect(page.getByLabel('Rasterweite')).toHaveValue('24');
+    await expect(page.getByLabel('Breakpoints', { exact: true })).toHaveValue('360, 900');
+    await expect(page.getByLabel('Rasterweite', { exact: true })).toHaveValue('24');
   });
 
   test.fixme('E18 Seite/Vorlage als Datei export-/importierbar', C6, async ({ page }) => {
