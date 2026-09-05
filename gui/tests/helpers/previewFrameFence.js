@@ -85,8 +85,8 @@ export const GEPINNTE_KLASSEN = [
   // der Rahmen selbst. `editor-preview` ist eine reine MARKE ohne eigenes Blatt:
   // an ihr sucht der Playwright-Harness die Vorschau (`iframe.editor-preview`,
   // `apps/visu/e2e/m5-editor-matrix.spec.ts` - Messlatten E3/E19 aus Teil C1,
-  // E10/E11/E16 aus Teil C3). Dass sie stilfrei bleibt, haelt der Blattscan
-  // weiter unten: eine Regel darauf faellt dort.
+  // E10/E11/E16 aus Teil C3, E3/E8/E17 aus Teil C2). Dass sie stilfrei bleibt,
+  // haelt der Blattscan weiter unten: eine Regel darauf faellt dort.
   'editor-preview',
   'w-full',
   'h-[70vh]',

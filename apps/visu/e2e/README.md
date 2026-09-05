@@ -292,6 +292,38 @@ OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
 | `VITE_PREVIEW_ALLOWED_ORIGINS` | **am Visu-Dev-Server**: welche Herkunft der Vorschau einen Entwurf schicken darf (Bauzeit-Liste). Ohne sie gilt nur der eigene Origin, und die Bruecke schweigt | der eigene Origin |
 | `VITE_VISU_PROXY_TARGET` | **am GUI-Dev-Server**: wohin `/visu` und `/visu/*` proxiert werden | `http://localhost:5174` |
 
+### Vorschau der Editor-Szenarien (M5 C2, ab Runde 2)
+
+Ein Szenario, das etwas über die **Vorschau** behauptet (E8: „das Element
+verschwindet aus der Vorschau"), braucht eine Vorschau, die überhaupt etwas
+zeigt. Die Vorgabe-Adresse `/visu-v2/preview` liefert heute **niemand** aus — die
+Ausliefer-Route gehört zu Teil D —, im Rahmen stünde also die SPA-Rückfallebene,
+und die Behauptung wäre gegen einen leeren Rahmen gerichtet (vakuum-grün).
+Deshalb bekommen die **beiden Dev-Server je eine Variable** mit:
+
+```bash
+# Visu-Dev-Server: welcher Herkunft die Vorschau überhaupt zuhört (Bauzeit, nie aus der URL)
+VITE_USE_OBS=1 VITE_OBS_PROXY_TARGET=http://127.0.0.1:8080 \
+  VITE_PREVIEW_ALLOWED_ORIGINS=http://localhost:5173 \
+  pnpm --filter @obs/visu-app exec vite --port 5175 --strictPort &
+
+# Admin-GUI: wo die Vorschau liegt (absolut, weil Visu und GUI hier zwei Dev-Server sind)
+cd gui && OBS_PROXY_TARGET=http://127.0.0.1:8080 \
+  VISU_PROXY_TARGET=http://localhost:5175 \
+  VITE_VISU_PREVIEW_URL=http://localhost:5175/preview \
+  npm run dev &
+```
+
+| Variable | Wo | Zweck |
+|---|---|---|
+| `VITE_VISU_PREVIEW_URL` | Admin-GUI (`gui/`) | Adresse der eingebetteten Vorschau; absolut, wenn Visu und GUI getrennte Dev-Server sind |
+| `VITE_PREVIEW_ALLOWED_ORIGINS` | Visu (`apps/visu`) | Herkünfte, denen die Vorschau antwortet — ohne die GUI-Herkunft schweigt sie (Bauzeit, C4) |
+| `VISU_PROXY_TARGET` | Admin-GUI (`gui/`) | Ziel des `/visu`- und `/visu-v2`-Proxys, wenn die Visu nicht auf 5174 liegt |
+
+Ohne diese Variablen läuft der Harness weiter, **E8 wird dann aber rot**: seine
+Vorschau-Hälfte verlangt seit Runde 2 ausdrücklich, dass das Element vor dem
+Ausblenden in der Vorschau **steht**. Die Fehlermeldung nennt die Variablen.
+
 `POST /api/v1/auth/login` ist auf **5 Anmeldungen pro Minute** begrenzt
 (`@limiter.limit("5/minute")`, `obs/api/auth.py:471`; bis Runde 1 stand hier
 irrtümlich 10, die Bremse ist doppelt so eng wie dokumentiert). Deshalb zwei
@@ -359,6 +391,35 @@ Sprach-Pin der Admin-GUI geht als Init-Skript hinaus statt als
 entfällt, weil der Store sie nach dem Speichern ohnehin frisch vom Server liest
 (`save()` schließt mit `load()` + `select()` ab). Fünf Ladevorgänge sind so zu
 drei geworden.
+
+### Zwei Umgebungsnamen für dieselben Proxy-Ziele (Integration C1/C2)
+
+Die beiden Rezepte oben nennen die Ziele des GUI-Dev-Servers unterschiedlich:
+Schritt 4b schreibt `VITE_OBS_PROXY_TARGET` / `VITE_VISU_PROXY_TARGET`, der
+Vorschau-Kasten weiter unten `OBS_PROXY_TARGET` / `VISU_PROXY_TARGET`. Beide
+Teile haben ihre Anleitung unabhängig geschrieben, und **beide stimmen**:
+`gui/vite.config.js` liest seit der Integration jeweils die `VITE_`-Variante und
+fällt auf die unpräfigierte zurück. Wer nur eine setzt, bekommt sie; wer beide
+setzt, bekommt die `VITE_`-Variante. Der Port bleibt `GUI_DEV_PORT`.
+
+### Anmelde-Kontingent: neun Masken-Anmeldungen statt zwei
+
+Die Rechnung „Seed 1 + vorgeholt 2 + UI 2 = 5" stammt aus der Zeit, in der nur
+`authz-roles.spec.ts` durch die echte Anmeldemaske ging. Seit der Integration
+von Teil C2 melden sich **neun** Szenarien so an: E1, E2, E4, E8, E9, E15, E17
+und E19 — letzteres **zweimal**, weil es einen zweiten Browser-Kontext öffnet,
+um zu zeigen, dass der Skin der Seite gehört und nicht dem Browser des Autors.
+Gemessen (Integrationslauf C2, vor der Vorkehrung): je ein `429 Too Many
+Requests` in zwei aufeinanderfolgenden Pflichtläufen, einmal an E8, einmal an
+E19 — an der Maske sichtbar als „Login fehlgeschlagen", also als vermeintlich
+kaputter Editor.
+
+Deshalb zwei Ergänzungen, beide in der bestehenden Buchführung:
+`loginToEditor` **bucht** seine Anmeldung (`noteBrowserLogin`, wie
+`authz-roles.spec.ts` es längst tut) und **wartet** ein volles Fenster vorher aus
+(`waitForLoginSlot`, dieselbe Vorkehrung wie in `global-setup.ts`). Die Decke der
+Editor-Matrix trägt dafür 150 s statt 90 s (E9/E15: 180 s statt 120 s) — das ist
+das Warten, nicht die Arbeit; jede `expect`-Zusicherung behält ihre 7 s.
 
 ## Zwei Pflichtläufe
 

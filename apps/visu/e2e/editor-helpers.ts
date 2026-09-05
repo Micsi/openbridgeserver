@@ -10,7 +10,7 @@
  */
 
 import { expect, type Page } from '@playwright/test';
-import { ADMIN, EDITOR_BASE } from './fixtures';
+import { ADMIN, EDITOR_BASE, noteBrowserLogin, waitForLoginSlot } from './fixtures';
 
 /** Die `blocked-by`-Annotation: welcher Teil und welches Issue diese Zeile aufhält. */
 export const blockedBy = (part: string, issue: number) =>
@@ -100,10 +100,18 @@ export async function loginToEditor(page: Page) {
       /* Ein Rahmen ohne Speicherzugriff ist keiner, der die Admin-GUI zeigt. */
     }
   }, GUI_LOCALE);
+  // Das Anmelde-Kontingent (5/Minute) VOR der Maske pruefen und notfalls
+  // aussitzen - und die Anmeldung danach buchen, so wie `authz-roles.spec.ts`
+  // es fuer seine beiden Masken-Anmeldungen tut. Ohne die Buchung haelt der
+  // Speicher das Fenster fuer freier, als es ist, und das naechste Szenario
+  // laeuft in ein 429, das dann wie ein kaputter Editor aussieht
+  // („Login fehlgeschlagen", gemessen im Integrationslauf von Teil C2).
+  await waitForLoginSlot();
   await page.goto(`${EDITOR_BASE}/login`);
   await page.getByLabel('Benutzername').fill(ADMIN.username);
   await page.getByLabel('Passwort').fill(ADMIN.password);
   await page.getByRole('button', { name: 'Anmelden' }).click();
+  noteBrowserLogin();
   // Auf die abgeschlossene Anmeldung warten, BEVOR die naechste Adresse geladen
   // wird: `click()` kehrt zurueck, sobald der Klick zugestellt ist, und ein
   // sofortiges `goto` startet die SPA neu, waehrend das Token noch unterwegs ist
@@ -150,3 +158,35 @@ export async function box(page: Page, name: string) {
     h: Number(node.getAttribute('data-h')),
   }));
 }
+
+/**
+ * ZWEI „SPEICHERN" IN EINER ANSICHT - und je eines gehört einer anderen Hälfte.
+ *
+ * Seit C2 neben C1 steht, trägt der Editor beides gleichzeitig: die
+ * Seiteneigenschaften (C1: Name, Seitentyp, Zugriff, Includes, Skin) mit ihrem
+ * „Speichern", und die Werkzeugleiste des Canvas (C2: Modus, Rasterweite,
+ * Breakpoints, Lage) mit ihrem eigenen. Beide Knöpfe heißen für den Autor
+ * dasselbe, weil beide dasselbe tun - nur an verschiedenen Eigenschaften
+ * derselben Seite.
+ *
+ * Ein blosses `getByRole('button', { name: 'Speichern' })` trifft deshalb zwei
+ * Elemente, und Playwright bricht mit „strict mode violation" ab - eine Aussage
+ * über die Ansicht, nicht über das Kriterium der Zeile. Jede Zeile sagt hier
+ * darum AUSDRÜCKLICH, welche Hälfte sie meint. Die Beschriftung bleibt Teil der
+ * Erwartung (`getByRole` über den zugänglichen Namen), nur der Suchbereich ist
+ * eingegrenzt; keine Behauptung ist gesenkt.
+ */
+export const savePageProps = (page: Page) =>
+  page.locator('.visu-page-properties').getByRole('button', { name: 'Speichern' });
+
+/** Die Quittung der Seiteneigenschaften - dieselbe Eingrenzung wie oben. */
+export const pagePropsSaved = (page: Page) =>
+  page.locator('.visu-page-properties').getByText('Gespeichert', { exact: true });
+
+/** „Speichern" der Canvas-Werkzeugleiste (C2: Modus, Raster, Breakpoints, Lage). */
+export const saveCanvas = (page: Page) =>
+  page.getByTestId('visu-editor-canvas').getByRole('button', { name: 'Speichern' });
+
+/** Die Quittung des Canvas - dieselbe Eingrenzung wie oben. */
+export const canvasSaved = (page: Page) =>
+  page.getByTestId('visu-editor-canvas').getByText('Gespeichert', { exact: true });

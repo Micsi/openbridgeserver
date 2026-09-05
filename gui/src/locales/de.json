@@ -3386,7 +3386,7 @@
     "unreachable": "In diesem Rahmen antwortet keine Visu-Vorschau. Angezeigt wird deshalb nicht der Entwurf, sondern was unter der Vorschau-Adresse liegt. Bitte die Vorschau-Auslieferung prüfen (VITE_VISU_PREVIEW_URL).",
     "applied": "Entwurf in der Vorschau gerendert ({count} Widgets).",
     "editorTitle": "Visu-Editor",
-    "canvasHint": "Hier entsteht die WYSIWYG-Fläche des Editors (Teil C2).",
+    "canvasHint": "Der Canvas erscheint, sobald eine Seite ausgewählt ist.",
     "loadError": "Der Seitenbaum konnte nicht geladen werden.",
     "tree": {
       "title": "Seitenbaum",
@@ -3576,6 +3576,34 @@
     },
     "pageMissing": "Für den Editor fehlt die Seiten-Auswahl. Bitte eine Seite über die Adresse /visu-editor/<Seiten-Id> öffnen.",
     "selectWidget": "Kein Element ausgewählt.",
-    "widgetsOnPage": "Elemente dieser Seite"
+    "widgetsOnPage": "Elemente dieser Seite",
+    "canvas": {
+      "mode": "Layout-Modus",
+      "modePixel": "Pixel",
+      "modeResponsive": "Responsiv",
+      "grid": "Rasterweite",
+      "breakpoints": "Breakpoints",
+      "previewWidth": "Vorschau-Breite",
+      "previewWidthAuto": "Automatisch",
+      "distribute": "Verteilen",
+      "sameSize": "Gleiche Größe",
+      "toFront": "Nach vorne",
+      "toBack": "Nach hinten",
+      "locked": "Gesperrt",
+      "hidden": "Ausgeblendet",
+      "width": "B",
+      "height": "H",
+      "save": "Speichern",
+      "saved": "Gespeichert",
+      "loadError": "Die Seite konnte nicht geladen werden.",
+      "saveError": "Die Seite konnte nicht gespeichert werden.",
+      "empty": "Diese Seite trägt noch keine Elemente.",
+      "renderedAs": "Gerendert wird: {mode} über den Skin „{skin}“.",
+      "globalLayer": "Globale Layer ({count})",
+      "includeLayer": "Include-Layer ({count})",
+      "layersError": "Die Layer dieser Seite konnten nicht geladen werden; der Canvas zeigt nur die eigenen Elemente.",
+      "coordinatesInactive": "Im responsiven Modus wirken die Koordinaten dieser Seite nicht; sie bleiben erhalten und gelten wieder im Pixel-Modus.",
+      "placedByDefault": "{count} Element(e) trugen keine Lage und stehen auf der Vorgabe 0/0/2/2; ein Speichern schreibt sie fest."
+    }
   }
 }

@@ -1,14 +1,16 @@
 <script setup>
 /**
- * Admin-Bereich „Visu-Editor" (M5 C4 Issue #171, erweitert um C1 Issue #168 und
- * C3 Issue #170).
+ * Admin-Bereich „Visu-Editor" (M5 C4 Issue #171, erweitert um C1 Issue #168,
+ * C2 Issue #169 und C3 Issue #170).
  *
  * Owner-Entscheid §2.4: der V2-Editor lebt in der Admin-GUI, weil hier die
  * Berechtigungen ausgewertet werden. Teil C4 lieferte die **Vorschau-Bruecke**
  * und das **Gate**; Teil C1 haengt **Seitenbaum** und **Seiteneigenschaften**
  * daneben; Teil C3 den **Autorenteil** (Palette, Elemente der Seite,
- * Datenpunkt-Bindung, Sichtbarkeitsregel). Beide fuellen zusammen den `draft`,
- * den C4 transportiert - siehe die Zusammenfuehrung weiter unten.
+ * Datenpunkt-Bindung, Sichtbarkeitsregel); Teil C2 (Issue #169) den
+ * **WYSIWYG-Canvas** (Lage, Layout-Modus, Layer, Ausblenden). Alle fuellen
+ * zusammen den `draft`, den C4 transportiert - siehe die Zusammenfuehrung
+ * weiter unten.
  *
  * Das Gate liegt doppelt: die Route wird vom Router weggeleitet (siehe
  * `visuEditorGuard`), und diese Ansicht rendert fuer einen Nicht-Admin gar
@@ -18,14 +20,25 @@
  * ZWEI EINHAENGEPUNKTE, bewusst so gelassen:
  *
  *  - `.editor-canvas` ist die Flaeche, auf der **Teil C2** den WYSIWYG-Canvas
- *    baut (Drag/Resize, Raster, Layer). C1 legt nur den Kasten an, weil der
- *    Playwright-Harness ihn als „der Editor steht" liest
- *    (`apps/visu/e2e/editor-helpers.ts` → `openEditor`).
+ *    baut (Drag/Resize, Raster, Layer). Seit dem Merge von C2 haengt der Canvas
+ *    in genau diesem Gitterfeld und bringt die Marke selbst mit. OHNE
+ *    ausgewaehlte Seite bleibt der Platzhalter von C1 stehen - er traegt dann
+ *    die Marke, und der Playwright-Harness liest sie als „der Editor steht"
+ *    (`apps/visu/e2e/editor-helpers.ts` → `openEditor` ohne Seite, der Zustand
+ *    von E9/E15). Genau EINE der beiden Flaechen ist da, damit die Marke
+ *    eindeutig bleibt.
  *  - Die Vorschau bleibt DIREKTES Kind des `visu-editor`-Kastens. Ihr
  *    Vorfahrenpfad ist in `tests/components/visu/VisuEditorView.spec.js`
  *    gepinnt (Paritaetsnachweis E3); ein neuer Kasten dazwischen waere ein
- *    stiller Eingriff in fremdes Beweismaterial. Der Autorenteil von C3 haengt
- *    deshalb als GESCHWISTER daneben, nicht darum herum.
+ *    stiller Eingriff in fremdes Beweismaterial. Der Autorenteil von C3 und der
+ *    Canvas von C2 haengen deshalb als GESCHWISTER daneben, nicht darum herum.
+ *
+ * ZWEI ENTWUERFE, EINE VORSCHAU: der Autorenteil (C1+C3) und der Canvas (C2)
+ * beschreiben dieselbe Seite aus verschiedenen Haenden. Zusammengelegt werden
+ * sie in `utils/visuEditorDraftMerge.js`; die Zustaendigkeiten stehen dort.
+ *
+ * `pageId` kommt zusaetzlich als PROP aus der Route (`props: true`), damit diese
+ * Ansicht ohne Router montierbar bleibt (M5 C2).
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -40,6 +53,13 @@ import VisuWidgetPalette from '@/components/visu/VisuWidgetPalette.vue'
 import VisuWidgetBindingForm from '@/components/visu/VisuWidgetBindingForm.vue'
 import { useVisuEditorDraft } from '@/composables/useVisuEditorDraft'
 import { createWidget } from '@/utils/visuWidgetTypes'
+import VisuEditorCanvas from '@/components/visu/VisuEditorCanvas.vue'
+import { mergePreviewDrafts } from '@/utils/visuEditorDraftMerge'
+
+const props = defineProps({
+  /** Die Seite aus der Route (`/visu-editor/:pageId`, `props: true`). */
+  pageId: { type: String, default: null },
+})
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -56,9 +76,11 @@ const allowed = computed(() => canUseVisuEditor(auth))
  * damit der Autorenteil auch dann nichts am Backend liest, wenn jemand die Wache
  * umgeht und die Ansicht direkt montiert.
  */
-const pageId = computed(() =>
-  allowed.value ? ((route && route.params ? route.params.pageId : null) ?? null) : null,
-)
+const pageId = computed(() => {
+  if (!allowed.value) return null
+  const ausRoute = route && route.params ? route.params.pageId : null
+  return props.pageId ?? ausRoute ?? null
+})
 
 /**
  * DER BAUM WIRD GENAU EINMAL GELADEN.
@@ -108,7 +130,11 @@ const {
  * Am Ende ein Klon aus reinen Daten: ein Vue-Proxy scheitert im `postMessage`
  * der Bruecke mit „could not be cloned".
  */
-const draft = computed(() => {
+/**
+ * Der Entwurf des AUTORENTEILS (C1 + C3) - die eine Haelfte. Die andere kommt
+ * aus dem Canvas (C2); zusammengelegt werden sie weiter unten in `draft`.
+ */
+const autorenUndEigenschaften = computed(() => {
   const autoren = autorenEntwurf.value
   const eigenschaften = editor.previewDraft
   if (!autoren) return eigenschaften
@@ -145,6 +171,23 @@ const draft = computed(() => {
 })
 
 const applied = ref(null)
+
+/** Die Vorschau-Breite, die der Autor am Canvas gewaehlt hat (E17), oder `null`. */
+const previewWidth = ref(null)
+/** Der Entwurf des Canvas (C2): Lage, Layout-Modus, Layer-Schalter. */
+const canvasDraft = ref(null)
+/** Die Kacheln, die der Canvas gerade ausblendet (E8) - siehe den Zusammenleger. */
+const canvasHiddenIds = ref([])
+
+/**
+ * DER ENTWURF, DEN DIE VORSCHAU BEKOMMT: beide Haelften zusammengelegt.
+ * Wer welchen Belang entscheidet, steht in `utils/visuEditorDraftMerge.js`.
+ */
+const draft = computed(() =>
+  mergePreviewDrafts(autorenUndEigenschaften.value, canvasDraft.value, {
+    hiddenIds: canvasHiddenIds.value,
+  }),
+)
 
 /** Das Element, dessen Bindungsformular offen steht. */
 const selectedId = ref(null)
@@ -197,8 +240,31 @@ function platzieren(type) {
     <div class="grid gap-4 lg:grid-cols-3">
       <VisuPageTree />
 
-      <!-- Einhaengepunkt fuer Teil C2 (WYSIWYG-Canvas, Issue #169). -->
+      <!-- Teil C2 (WYSIWYG-Canvas, Issue #169). OHNE ausgewaehlte Seite bleibt
+           der Platzhalter stehen: er traegt `.editor-canvas`, und der
+           Playwright-Harness liest die Marke als „der Editor steht"
+           (`apps/visu/e2e/editor-helpers.ts` -> `openEditor` ohne Seite, der
+           Zustand von E9/E15). Genau EINE der beiden Flaechen ist da, damit die
+           Marke eindeutig bleibt. -->
+      <!--
+        `order-first` auf schmalen Geraeten: das Gitter faellt unter `lg` auf
+        EINE Spalte zusammen, und in DOM-Reihenfolge stuende der Canvas dann
+        unter dem Seitenbaum - bei 393x851 (der Viewport des M5-Harness) ausser
+        Sicht. Ein Zeiger-Drag rechnet aber mit `boundingBox()` und scrollt
+        nicht mit; E1 landete damit auf x=0 statt x=40, E4 fand keine
+        Ausrichtlinie. Gemessen im ersten Integrationslauf. Ab `lg` gilt wieder
+        die Anordnung aus Teil C1: Baum | Canvas | Eigenschaften.
+      -->
+      <VisuEditorCanvas
+        v-if="pageId"
+        class="order-first lg:order-none"
+        :page-id="pageId"
+        @draft="canvasDraft = $event"
+        @preview-width="previewWidth = $event"
+        @hidden-ids="canvasHiddenIds = $event"
+      />
       <div
+        v-else
         class="editor-canvas min-h-40 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-4 text-sm text-slate-500 dark:text-slate-400"
       >
         {{ $t('visuEditor.canvasHint') }}
@@ -209,6 +275,7 @@ function platzieren(type) {
 
     <VisuPreviewFrame
       :draft="draft"
+      :width="previewWidth"
       @applied="applied = $event"
     />
 

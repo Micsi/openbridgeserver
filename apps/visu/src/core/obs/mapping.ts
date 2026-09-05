@@ -71,9 +71,27 @@ export interface ObsPopupConfig {
   readonly dim_backdrop?: boolean; // R6
 }
 
+/**
+ * The layout paradigm of a page (obs/models/visu.py → LayoutMode, M5 §1.1).
+ * `pixel` lets the author box take effect, `responsive` says order/group alone
+ * carry the page. Absent on a pre-M5 page → `pixel`, the backend default.
+ */
+export type ObsLayoutMode = 'pixel' | 'responsive';
+
 /** A page's render config (obs/models/visu.py → PageConfig). */
 export interface ObsPageConfig {
   readonly widgets?: readonly ObsWidget[];
+  /**
+   * Which paradigm this page is authored in (M5 §1.1, design invariant).
+   *
+   * THIS field decides whether the author box takes effect — not the absence of
+   * the numbers. The backend keeps `x/y/w/h` on a responsive page as four
+   * integers, because V1 (`frontend/`) reads the very same row and declares
+   * `x: number` (R17); nulling them there collapsed every V1 tile to
+   * `left:0px; width:0px`. So the host reads the mode and emits no `position`
+   * for a responsive page — see {@link pageHonoursPosition}.
+   */
+  readonly layout_mode?: ObsLayoutMode;
   /**
    * The individual include pages of this page, in author order (M5 R14). The
    * backend model drops duplicates on every path (read included), so the host
@@ -577,6 +595,21 @@ export function visibilityReads(
 }
 
 /**
+ * Does this page let the author box take effect (M5 §1.1)?
+ *
+ * The design invariant — "a page is authored either in coordinates (pixel mode)
+ * or in order/group alone (responsive mode)" — is enforced HERE, in the one
+ * place that turns stored rows into what a skin sees. Deliberately not in the
+ * rows themselves: deleting the coordinates would enforce the same rule at the
+ * cost of R17, because V1 reads those very rows and expects four numbers. A
+ * page without the field is `pixel`, exactly the backend default, so every page
+ * written before M5 renders as it always did. Pure.
+ */
+export function pageHonoursPosition(config: ObsPageConfig | null | undefined): boolean {
+  return (config?.layout_mode ?? 'pixel') !== 'responsive';
+}
+
+/**
  * Map one server widget to a contract device + binding + write targets, applying
  * any already-known datapoint values. Returns null for widgets without a core
  * mapping (issue #124: ValueDisplay/Chart/Wetter/Kamera/IFrame/… are skipped).
@@ -626,6 +659,21 @@ export interface MapOptions {
    * dagegen immer der Durchlauf ohne diese Option.
    */
   readonly ignoreVisibility?: boolean;
+  /**
+   * Ob eine gespeicherte Koordinate WIRKEN darf - das Paradigma der Seite, vom
+   * Aufrufer heruntergereicht ({@link pageHonoursPosition}).
+   *
+   * Auf einer responsiven Seite entsteht keine `position`, obwohl die vier
+   * Zahlen in der Zeile stehen bleiben: geloescht wuerden sie V1 beschaedigen,
+   * das genau diese Zeilen liest (R17). Vorgabe `true` - wer nichts ueber
+   * Seiten weiss, bekommt exakt das bisherige Verhalten.
+   *
+   * Steht bewusst NEBEN {@link ignoreVisibility}: die Sichtbarkeit entscheidet,
+   * OB ein Element ueberhaupt entsteht (E16), die Positionshonorierung nur, ob
+   * es eine Koordinate mitbringt. Beide Belange sind unabhaengig, beide duerfen
+   * am selben Aufruf gesetzt sein.
+   */
+  readonly honourPosition?: boolean;
 }
 
 export function mapWidget(
@@ -660,7 +708,12 @@ export function mapWidget(
   if (!opts.ignoreVisibility && !isWidgetVisible(w, values)) return null;
   // Fold in the additive author position (CONTRACT-v1.9) and page link (v1.11);
   // both stay absent when the widget declares none.
-  const position = readPosition(w);
+  // `opts.honourPosition` is the page's paradigm, handed down by the caller
+  // ({@link pageHonoursPosition}): on a responsive page no author box takes
+  // effect, so none is produced. Default true — a caller that knows nothing
+  // about pages behaves exactly as before. Ein eigener Belang neben dem
+  // Sichtbarkeits-Gate darueber: das entscheidet OB, dieser nur WOMIT.
+  const position = (opts.honourPosition ?? true) ? readPosition(w) : undefined;
   const link = readLink(w);
   return {
     ...mapped,
@@ -683,8 +736,18 @@ export function mapTree(
   const out: MappedWidget[] = [];
   for (const node of nodes) {
     if (node.type !== 'PAGE' || !node.page_config?.widgets) continue;
+    // The page's paradigm, read once per page: on a responsive page no
+    // coordinate takes effect, so the host emits no `position` at all (§1.1).
+    const honoursPosition = pageHonoursPosition(node.page_config);
     for (const w of node.page_config.widgets) {
-      const mapped = mapWidget(w, node.name, values, opts);
+      // Beide Belange am selben Aufruf: die Optionen des Aufrufers (E16) und
+      // das je Seite gelesene Paradigma (§1.1). Ein Aufrufer, der selbst
+      // `honourPosition` setzt, wird von der Seite ueberstimmt - die Seite
+      // weiss es besser als der Baumdurchlauf.
+      const mapped = mapWidget(w, node.name, values, {
+        ...opts,
+        honourPosition: honoursPosition,
+      });
       // Stamp the owning PAGE id so the transport can address this device's
       // datapoint ops with the right X-Page-Id / session token / access.
       if (mapped) out.push({ ...mapped, pageId: node.id });

@@ -1,6 +1,20 @@
 import { test, expect, type Page } from '@playwright/test';
 import { EDITOR_BASE, VISU_BASE, adminHeaders, api, seeded } from './fixtures';
-import { C1, C2, C2_PAGE_SKIN, C3, C4, C5, C6, box, el, openEditor } from './editor-helpers';
+import {
+  C1,
+  C2,
+  C3,
+  C4,
+  C5,
+  C6,
+  box,
+  canvasSaved,
+  el,
+  openEditor,
+  pagePropsSaved,
+  savePageProps,
+  saveCanvas,
+} from './editor-helpers';
 
 /**
  * M5 Messlatte — Editor-Matrix E1-E19 (CONTRIBUTING-visu-m5.md §1.1).
@@ -74,13 +88,39 @@ async function differingPixels(page: Page, a: Buffer, b: Buffer): Promise<number
 }
 
 test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-C6)', () => {
-  test.fixme(
+  /**
+   * Diese Zeilen fahren ZWEI Anwendungen zugleich: die Admin-GUI mit dem Editor
+   * und, im Vorschaurahmen, die echte Visu (Ionic + SkinHost + WebSocket). Beide
+   * werden geladen, beide wieder abgebaut, und beides zählt in dasselbe Budget.
+   * Gemessen auf der Maschine dieses Laufs: 11 bis 23 s je Zeile ruhig, mit den
+   * drei parallel arbeitenden Worktrees riss regelmäßig EINE Zeile die
+   * 30-Sekunden-Decke — und zwar im ABBAU des Browser-Kontexts („Tearing down
+   * context exceeded the test timeout"), nicht in einer Aussage.
+   *
+   * Das Budget wird deshalb hier angehoben, nicht die Erwartungen: jede einzelne
+   * `expect`-Zusicherung behält ihre eigene, kurze Frist aus `playwright.config.ts`
+   * (7 s). Eine Zeile, die inhaltlich falsch ist, scheitert also weiterhin
+   * schnell; nur die Summe aus Aufbau, zwei Anwendungen und Abbau darf länger
+   * dauern.
+   *
+   * SEIT DER INTEGRATION VON TEIL C2 kommt ein zweiter Posten dazu, der kein
+   * Test ist: das Warten auf das Anmelde-Kontingent (5/Minute,
+   * `waitForLoginSlot` in `fixtures.ts`). Neun Szenarien melden sich hier durch
+   * die echte Maske an - E19 gleich zweimal, weil es einen ZWEITEN
+   * Browser-Kontext oeffnet -, und ein volles Fenster kostet bis zu einer
+   * Minute Warten. Die Decke traegt deshalb 150 s: 90 s Arbeit wie bisher, plus
+   * hoechstens ein Fenster. Wieder ist nur das BUDGET angehoben; jede
+   * `expect`-Zusicherung behaelt ihre 7 s.
+   */
+  test.describe.configure({ timeout: 150_000 });
+
+  test(
     'E1 Element per Drag auf Pixel-Koordinate x/y setzen, Snap rastet bei einstellbarer Rasterweite ein',
     C2,
     async ({ page }) => {
       const fx = seeded();
       await openEditor(page, fx.m5.node_ids.home);
-      await page.getByLabel('Rasterweite').fill('20');
+      await page.getByLabel('Rasterweite', { exact: true }).fill('20');
 
       const target = el(page, fx.m5.widgets.home);
       const before = await box(page, fx.m5.widgets.home);
@@ -100,28 +140,88 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test.fixme(
+  test(
     'E2 Reihenfolge/Gruppe eines Elements per Drag setzbar (kein x/y-Feld), Order-Array vor/nach Reload identisch',
     C2,
-    async ({ page }) => {
+    async ({ page, request }) => {
       const fx = seeded();
-      await openEditor(page, fx.m5.node_ids.home);
-      // Der responsive Modus: die Seite trägt Reihenfolge statt Koordinaten
-      // (Design-Invariante §1.1 — Pixel-Autorenschaft ist ein Angebot).
-      await page.getByLabel('Layout-Modus').selectOption('responsive');
-      await expect(page.getByLabel('X')).toHaveCount(0);
+      const headers = await adminHeaders(request);
+      const pageUrl = api(`/visu/pages/${fx.m5.node_ids.home}`);
+      // Der Layout-Modus ist eine SEITEN-Eigenschaft: dieses Szenario stellt die
+      // Beispielseite dauerhaft um. Der Ausgangsstand wird deshalb vorher
+      // GELESEN und am Ende zurückgeschrieben — nicht geraten —, damit E4 und E8
+      // dieselbe Welt vorfinden wie E1. Das ist Aufbau, keine Zusicherung: keine
+      // Aussage dieses Szenarios hängt daran.
+      const before = await request.get(pageUrl, { headers }).then((r) => r.json());
+      try {
+        await openEditor(page, fx.m5.node_ids.home);
+        // Der responsive Modus: die Seite trägt Reihenfolge statt Koordinaten
+        // (Design-Invariante §1.1 — Pixel-Autorenschaft ist ein Angebot).
+        await page.getByLabel('Layout-Modus', { exact: true }).selectOption('responsive');
+        await expect(page.getByLabel('X', { exact: true })).toHaveCount(0);
 
-      const order = () => page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => e.getAttribute('data-el')));
-      const before = await order();
-      // Das letzte Element an die erste Stelle ziehen.
-      await page.locator('.editor-canvas [data-el]').last().dragTo(page.locator('.editor-canvas [data-el]').first());
-      const after = await order();
-      expect(after).not.toEqual(before);
-      expect([...after].sort()).toEqual([...before].sort());
+        const order = () => page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => e.getAttribute('data-el')));
+        const vorher = await order();
+        // Das letzte Element an die erste Stelle ziehen.
+        await page.locator('.editor-canvas [data-el]').last().dragTo(page.locator('.editor-canvas [data-el]').first());
+        const nachher = await order();
+        expect(nachher).not.toEqual(vorher);
+        expect([...nachher].sort()).toEqual([...vorher].sort());
 
-      await page.reload();
-      await expect(page.locator('.editor-canvas')).toBeVisible();
-      expect(await order()).toEqual(after);
+        // Ohne „Speichern": die Reihenfolge überlebt den Reload.
+        await page.reload();
+        await expect(page.locator('.editor-canvas')).toBeVisible();
+        expect(await order()).toEqual(nachher);
+
+        // Und die Invariante selbst, am GESPEICHERTEN Zustand statt am
+        // Eingabefeld. Sie lautet seit Runde 3: im responsiven Modus WIRKT keine
+        // Koordinate — durchgesetzt im Host über `layout_mode`, nicht dadurch,
+        // dass jemand die Zahlen aus der Spalte nimmt. Denn V1 (`frontend/`)
+        // liest dieselbe Seite und rechnet `w.x * CELL_W`; aus `null` wird dort
+        // `0`, und jede Kachel kollabiert auf `left:0px; width:0px` (R17).
+        // Geprüft wird beides — was der Editor SCHICKT und was der Server HÄLT.
+        // Die Lage jeder Kachel, nach Id — die Reihenfolge hat sich oben durch
+        // das Umsortieren geaendert, die LAGE darf sich davon nicht ruehren.
+        const boxesById = (widgets: Record<string, unknown>[]) =>
+          Object.fromEntries(widgets.map((w) => [String(w.id), [w.x, w.y, w.w, w.h]]));
+        const lageVorher = boxesById(before.widgets);
+        expect(Object.keys(lageVorher).length).toBeGreaterThan(1);
+        await page.getByLabel('Layout-Modus', { exact: true }).selectOption('responsive');
+        const gesendet = page.waitForRequest(
+          (req) => req.method() === 'PUT' && req.url().includes(`/visu/pages/${fx.m5.node_ids.home}`),
+        );
+        await saveCanvas(page).click();
+        await expect(canvasSaved(page)).toBeVisible();
+        const nutzlast = JSON.parse((await gesendet).postData() ?? '{}');
+        expect(nutzlast.layout_mode).toBe('responsive');
+        for (const w of nutzlast.widgets ?? []) {
+          expect(typeof w.x, 'der Editor nimmt der Seite keine Koordinate mehr ab').toBe('number');
+          expect(typeof w.y).toBe('number');
+          expect(typeof w.w).toBe('number');
+          expect(typeof w.h).toBe('number');
+        }
+        const gespeichert = await request.get(pageUrl, { headers }).then((r) => r.json());
+        expect(gespeichert.layout_mode).toBe('responsive');
+        expect(gespeichert.widgets.length).toBeGreaterThan(0);
+        for (const w of gespeichert.widgets) {
+          for (const [name, wert] of Object.entries({ x: w.x, y: w.y, w: w.w, h: w.h })) {
+            expect(typeof wert, `R17: V1 liest ${name} als number, nie als null`).toBe('number');
+          }
+        }
+        // Der Rückweg erfindet nichts: dieselbe Seite auf `pixel` gestellt trägt
+        // wieder genau die Lage, die vor dem Wechsel in der Spalte stand. Bis
+        // Runde 2 stand hier `0/0/2/2` für JEDE Kachel, übereinander.
+        await page.reload();
+        await expect(page.locator('.editor-canvas')).toBeVisible();
+        await page.getByLabel('Layout-Modus', { exact: true }).selectOption('pixel');
+        await saveCanvas(page).click();
+        await expect(canvasSaved(page)).toBeVisible();
+        const zurueck = await request.get(pageUrl, { headers }).then((r) => r.json());
+        expect(zurueck.layout_mode).toBe('pixel');
+        expect(boxesById(zurueck.widgets)).toEqual(lageVorher);
+      } finally {
+        await request.put(pageUrl, { headers, data: before });
+      }
     },
   );
 
@@ -178,7 +278,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test.fixme(
+  test(
     'E4 Ausrichtlinie bei Kantendeckung ≤4px, "Verteilen" bei ≥3 Elementen, "gleiche Größe" übernimmt Maße',
     C2,
     async ({ page }) => {
@@ -194,12 +294,30 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       await expect(page.locator('.editor-guide')).toBeVisible();
       await page.mouse.up();
 
-      // (b) „Verteilen" braucht mindestens drei Elemente und macht die Abstände gleich.
+      const xs = () =>
+        page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => Number(e.getAttribute('data-x'))));
+
+      // (b) Der ZWEIER-Fall: „Verteilen" ist bei zwei Elementen keine Aussage
+      // (es gibt nur einen Abstand) und wird deshalb gar nicht erst angeboten.
+      // Er steht hier ausdrücklich, weil Ctrl+A ihn nie erreicht — und ohne ihn
+      // bliebe „ab drei" eine Behauptung des Codes statt einer geprüften Regel.
+      const alle = page.locator('.editor-canvas [data-el]');
+      await alle.nth(0).click();
+      await alle.nth(1).click({ modifiers: ['Shift'] });
+      await expect(page.locator('.editor-canvas [data-el].is-selected')).toHaveCount(2);
+      const verteilen = page.getByRole('button', { name: 'Verteilen' });
+      await expect(verteilen).toBeDisabled();
+      const vorZwei = await xs();
+      await verteilen.click({ force: true });
+      expect(await xs()).toEqual(vorZwei);
+
+      // (c) „Verteilen" braucht mindestens drei Elemente und macht die Abstände gleich.
       await page.keyboard.press('Control+a');
-      await page.getByRole('button', { name: 'Verteilen' }).click();
-      const xs = await page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => Number(e.getAttribute('data-x'))));
-      const gaps = xs.slice(1).map((x, i) => x - xs[i]);
-      expect(new Set(gaps).size).toBe(1);
+      await verteilen.click();
+      const nachher = await xs();
+      const abstaende = nachher.slice(1).map((x, i) => x - nachher[i]);
+      expect(abstaende.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(abstaende).size).toBe(1);
 
       // (c) „Gleiche Größe" überträgt die Maße des zuerst gewählten Elements.
       await page.getByRole('button', { name: 'Gleiche Größe' }).click();
@@ -277,7 +395,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     expect(await box(page, fx.m5.widgets.home)).toMatchObject({ x: before.x + 1, y: before.y });
   });
 
-  test.fixme('E8 Z-Ordnung änderbar (nach vorne/hinten), Element sperr-/ausblendbar', C2, async ({ page }) => {
+  test('E8 Z-Ordnung änderbar (nach vorne/hinten), Element sperr-/ausblendbar', C2, async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.home);
     const target = el(page, fx.m5.widgets.home);
@@ -289,15 +407,47 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await page.getByRole('button', { name: 'Nach hinten' }).click();
     await expect(page.locator('.editor-canvas [data-el]').first()).toHaveAttribute('data-el', await target.getAttribute('data-el') ?? '');
 
-    // Sperren: das Element nimmt keine Drag-Änderung mehr an.
-    await page.getByLabel('Gesperrt').check();
+    // Sperren: das Element nimmt keine Änderung mehr an — weder per DRAG noch
+    // per Tastatur. Beide Wege stehen hier, weil sie im Editor zwei verschiedene
+    // Pfade sind: ein gesperrtes Element, das sich ziehen lässt, wäre ungesperrt,
+    // auch wenn die Pfeiltaste nichts tut.
+    //
+    // Davor noch einmal „Nach vorne": das Element liegt nach der Prüfung oben
+    // GANZ UNTEN, und ein Zeiger trifft dort das Element DARÜBER statt seiner.
+    // Der Drag ginge dann ins Leere und die Sperre bliebe unbelegt (gemessen:
+    // mit der Sperre im Drag-Pfad ausgebaut blieb dieses Szenario grün).
+    await page.getByRole('button', { name: 'Nach vorne' }).click();
+    await page.getByLabel('Gesperrt', { exact: true }).check();
     const locked = await box(page, fx.m5.widgets.home);
+    // Und in den sichtbaren Bereich rollen: das Ankreuzfeld „Gesperrt" steht
+    // unter dem Canvas, auf dem 393x851-Gerät des Harness rollt das Fenster dafür
+    // — ein Zeiger auf eine Koordinate außerhalb des Fensters trifft nichts.
+    await target.scrollIntoViewIfNeeded();
+    const griff = (await target.boundingBox())!;
+    await page.mouse.move(griff.x + griff.width / 2, griff.y + griff.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(griff.x + griff.width / 2 + 40, griff.y + griff.height / 2 + 40, { steps: 5 });
+    await page.mouse.up();
+    expect(await box(page, fx.m5.widgets.home)).toMatchObject({ x: locked.x, y: locked.y });
     await page.keyboard.press('ArrowRight');
     expect(await box(page, fx.m5.widgets.home)).toMatchObject({ x: locked.x });
 
     // Ausblenden: das Element verschwindet aus der Vorschau, bleibt aber im Baum.
-    await page.getByLabel('Ausgeblendet').check();
-    await expect(page.frameLocator('iframe.editor-preview').locator(`[data-id="${await target.getAttribute('data-el')}"]`)).toHaveCount(0);
+    //
+    // ZUERST muss es dort STEHEN. Ohne diese Zeile ist „verschwindet" eine
+    // Behauptung über einen Rahmen, in dem ohnehin nichts von der Visu steht —
+    // sie wäre auch dann grün, wenn die Vorschau gar nichts rendert. Sie setzt
+    // voraus, dass unter `VITE_VISU_PREVIEW_URL` wirklich die Visu liegt (siehe
+    // README, „Vorschau der Editor-Szenarien"); genau dafür ist sie da.
+    const inPreview = page
+      .frameLocator('iframe.editor-preview')
+      .locator(`[data-id="${await target.getAttribute('data-el')}"]`);
+    await expect(
+      inPreview.first(),
+      'die Vorschau muss den Entwurf rendern — VITE_VISU_PREVIEW_URL/VITE_PREVIEW_ALLOWED_ORIGINS setzen (e2e/README.md)',
+    ).toBeVisible();
+    await page.getByLabel('Ausgeblendet', { exact: true }).check();
+    await expect(inPreview).toHaveCount(0);
     await expect(target).toBeVisible();
   });
 
@@ -334,7 +484,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     // Zeit, mit Rand, und immer noch weit unter dem, was ein echter Stillstand
     // braeuchte. Sie gilt NUR fuer diese beiden Zeilen; jede andere bleibt bei
     // 30 s. KEINE Erwartung ist dafuer gesenkt worden.
-    test.setTimeout(120_000);
+    // 120 s Arbeit (gemessen, s. oben) plus hoechstens ein Anmelde-Fenster:
+    // dieselbe Rechnung wie an der Decke des `describe` seit dem Merge von C2.
+    test.setTimeout(180_000);
 
     const fx = seeded();
     const headers = await adminHeaders(request);
@@ -352,7 +504,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(page.getByLabel('Automatisch schließen (ms)')).toHaveCount(0);
     await page.getByRole('button', { name: 'Seite inkludieren' }).click();
     await expect(page.getByText('Eine globale Inkludeseite kann selbst keine Seiten inkludieren')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Speichern' })).toBeDisabled();
+    await expect(savePageProps(page)).toBeDisabled();
 
     // … UND WIRKSAM heißt: gespeichert und im `GET` wiederzufinden. Ohne diesen
     // zweiten Teil überlebte die Mutation „`kind` fällt aus dem PATCH-Rumpf"
@@ -372,7 +524,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     // vollen Ladevorgang der Admin-SPA.
     await page.getByRole('button', { name: 'Seite anlegen' }).click();
     await page.getByLabel('Name').fill(NAME);
-    await page.getByRole('button', { name: 'Speichern' }).click();
+    await savePageProps(page).click();
     // `exact: true`, und zwar aus einem gemessenen Grund: die Einleitung des
     // Editors enthält den Satz „Gespeichert wird dabei nichts", und ein
     // Teilstring-Treffer darauf war schon erfüllt, BEVOR gespeichert wurde.
@@ -380,7 +532,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     // „Gespeichert" lautet — nur er ist die Schranke, hinter der der Server
     // wirklich geschrieben hat (Runde 2 am Trace nachgewiesen: der Lesevorgang
     // lief zwischen zwei Schreib-Anfragen).
-    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+    await expect(pagePropsSaved(page)).toBeVisible();
 
     const created = await nodeOf();
     expect(created, 'die im Editor angelegte Seite steht im Baum').toBeTruthy();
@@ -395,8 +547,8 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       await expect(page.getByLabel('Seitentyp')).toHaveValue('normal');
       await page.getByLabel('Seitentyp').selectOption('popup');
       await page.getByLabel('Automatisch schließen (ms)').fill('2000');
-      await page.getByRole('button', { name: 'Speichern' }).click();
-      await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+      await savePageProps(page).click();
+      await expect(pagePropsSaved(page)).toBeVisible();
 
       // … und steht danach am Server, nicht nur im Formular (§3: „jede
       // Eigenschaft setzen → `GET` zeigt sie").
@@ -417,7 +569,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       // (gemessen); jetzt sagt er es vorher und speichert nichts.
       await page.getByLabel('Seitentyp').selectOption('include');
       await expect(page.getByText('sobald eine andere Seite sie inkludiert')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Speichern' })).toBeDisabled();
+      await expect(savePageProps(page)).toBeDisabled();
     } finally {
       // Aufräumen: das Szenario hinterlässt die Welt, wie es sie fand.
       if (created) await request.delete(api(`/visu/nodes/${created.id}`), { headers });
@@ -472,8 +624,8 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
 
     await el(page, fx.m5.widgets.solo).click();
     await page.keyboard.press('ArrowRight');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+    await saveCanvas(page).click();
+    await expect(canvasSaved(page)).toBeVisible();
 
     // Der Verlauf listet die Versionen …
     await page.getByRole('button', { name: 'Verlauf' }).click();
@@ -513,7 +665,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       // stehen bei E9 (oben): dieselbe Bauart, dieselben drei Ladevorgaenge der
       // Admin-SPA, dieselbe Fehlerform unter Parallellast. Keine Erwartung ist
       // dafuer gesenkt.
-      test.setTimeout(120_000);
+      // 120 s Arbeit (gemessen, s. oben) plus hoechstens ein Anmelde-Fenster:
+      // dieselbe Rechnung wie an der Decke des `describe` seit dem Merge von C2.
+      test.setTimeout(180_000);
 
       const fx = seeded();
       const headers = await adminHeaders(request);
@@ -553,8 +707,8 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       // „Seite anlegen" steht im Seitenbaum derselben Ansicht (s. E9).
       await page.getByRole('button', { name: 'Seite anlegen' }).click();
       await page.getByLabel('Name').fill(NAME);
-      await page.getByRole('button', { name: 'Speichern' }).click();
-      await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+      await savePageProps(page).click();
+      await expect(pagePropsSaved(page)).toBeVisible();
 
       const created = await nodeOf();
       expect(created, 'die im Editor angelegte Seite steht im Baum').toBeTruthy();
@@ -566,8 +720,8 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
         await page.getByLabel('Vom Elternknoten erben').uncheck();
         await page.getByLabel('Zugriff').selectOption('user');
         await page.getByLabel('Nutzer hinzufügen').selectOption(fx.resident.username);
-        await page.getByRole('button', { name: 'Speichern' }).click();
-        await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+        await savePageProps(page).click();
+        await expect(pagePropsSaved(page)).toBeVisible();
 
         // Der Server trägt beide Hälften: die Stufe am Knoten …
         expect((await nodeOf())!.access).toBe('user');
@@ -609,22 +763,42 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(preview.locator(`[data-id]`, { hasText: fx.m5.widgets.solo })).toBeVisible();
   });
 
-  test.fixme('E17 Responsive-Breakpoints in Seiteneigenschaften konfigurierbar', C2, async ({ page }) => {
+  test('E17 Responsive-Breakpoints in Seiteneigenschaften konfigurierbar', C2, async ({ page, request }) => {
     const fx = seeded();
+    const headers = await adminHeaders(request);
+    const pageUrl = api(`/visu/pages/${fx.m5.node_ids.solo}`);
+
+    // AUSGANGSSTAND: die Vorgaben. Das ist Aufbau, keine Zusicherung, und es ist
+    // nötig, weil derselbe Lauf zweimal gegen dieselbe Instanz fährt: ohne
+    // Rücksetzen stünden die gleich getippten Werte beim zweiten Mal schon da,
+    // und das Szenario könnte „gespeichert" nicht von „stand schon so" trennen.
+    const stand = await request.get(pageUrl, { headers }).then((r) => r.json());
+    await request.put(pageUrl, { headers, data: { ...stand, breakpoints: [480, 768, 1024], grid: 8 } });
+
     await openEditor(page, fx.m5.node_ids.solo);
 
-    await page.getByLabel('Breakpoints').fill('480, 768, 1024');
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+    // Die Werte liegen ABSEITS der Vorgabe (die ist `480, 768, 1024` bzw. `8`).
+    // Genau daran hing der Beweis: mit den Vorgabewerten blieb dieses Szenario
+    // auch dann grün, wenn das Speichern der Seiteneigenschaften vollständig
+    // abgeschaltet war — der Reload las dieselben Zahlen aus der Vorgabe zurück.
+    await page.getByLabel('Breakpoints', { exact: true }).fill('360, 900');
+    await page.getByLabel('Rasterweite', { exact: true }).fill('24');
+    await saveCanvas(page).click();
+    await expect(canvasSaved(page)).toBeVisible();
 
     // Die Vorschau folgt dem gewählten Breakpoint …
-    await page.getByLabel('Vorschau-Breite').selectOption('480');
-    await expect(page.locator('iframe.editor-preview')).toHaveJSProperty('clientWidth', 480);
+    await page.getByLabel('Vorschau-Breite', { exact: true }).selectOption('360');
+    await expect(page.locator('iframe.editor-preview')).toHaveJSProperty('clientWidth', 360);
 
-    // … und der Wert überlebt den Reload (er steht in den Seiteneigenschaften,
-    // nicht im flüchtigen Editor-Zustand).
+    // … die Werte stehen in den SEITENEIGENSCHAFTEN (nicht in den Widgets) …
+    const gespeichert = await request.get(pageUrl, { headers }).then((r) => r.json());
+    expect(gespeichert.breakpoints).toEqual([360, 900]);
+    expect(gespeichert.grid).toBe(24);
+
+    // … und überleben den Reload, nicht bloß den flüchtigen Editor-Zustand.
     await page.reload();
-    await expect(page.getByLabel('Breakpoints')).toHaveValue('480, 768, 1024');
+    await expect(page.getByLabel('Breakpoints', { exact: true })).toHaveValue('360, 900');
+    await expect(page.getByLabel('Rasterweite', { exact: true })).toHaveValue('24');
   });
 
   test.fixme('E18 Seite/Vorlage als Datei export-/importierbar', C6, async ({ page }) => {
@@ -649,7 +823,11 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(page.getByText(fx.m5.names.include_ind)).toHaveCount(2);
   });
 
-  test.fixme('E19 Skin/Theme pro Seite oder global wählbar', C2_PAGE_SKIN, async ({ page, browser }) => {
+  // Seit dem Merge von Teil C2 traegt `PageConfig` das Feld `skin`
+  // (`obs/models/visu.py`) - genau die Vorbedingung, auf die {@link C2_PAGE_SKIN}
+  // wartete. Die Annotation faellt damit weg, keine Zeile des Szenarios ist
+  // angefasst.
+  test('E19 Skin/Theme pro Seite oder global wählbar', C2, async ({ page, browser }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.solo);
 
@@ -679,8 +857,8 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     // einem ZWEITEN Kontext öffnet, sieht sie ebenso. `page.reload()` allein
     // bewiese das NICHT — ein Browser-Speicher überlebt den Reload per
     // Definition, und genau daran hat sich Runde 1 vorbeigemogelt.
-    await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+    await savePageProps(page).click();
+    await expect(pagePropsSaved(page)).toBeVisible();
     await page.reload();
     await expect(page.getByLabel('Skin')).toHaveValue('terminal');
 

@@ -95,12 +95,37 @@ export function createVisuPreviewBridge({
     timer = null
   }
 
+  /**
+   * Gesendet wird REINE DATEN.
+   *
+   * `postMessage` klont strukturiert, und der Algorithmus lehnt einen Proxy ab
+   * (`DataCloneError: #<Object> could not be cloned`). Der Entwurf kommt aus dem
+   * Canvas und liegt oben in einem `ref()` - jede Ebene davon ist also ein
+   * reaktiver Proxy, auch wenn der Erzeuger reine Daten geliefert hat.
+   *
+   * Belegt in Runde 2 von Teil C2, als die Vorschau zum ersten Mal auf die ECHTE
+   * Visu zeigte (`VITE_VISU_PREVIEW_URL=http://…/preview` statt der Adresse, die
+   * heute niemand ausliefert): der Handshake stand, im Rahmen blieb trotzdem
+   * „Warte auf einen Entwurf aus dem Editor" stehen, und in der Konsole des
+   * Editors stand genau dieser Fehler. Solange im Rahmen keine Vorschau
+   * antwortete, kam es nie so weit - ohne Handshake wird nichts gesendet, und
+   * der Fehler konnte gar nicht auftreten.
+   *
+   * Der Vertrag nennt beide Nachrichtenformen ohnehin als Daten (Protokoll 1.1);
+   * der JSON-Umweg ist ihre Form und keine Notloesung.
+   */
   function post(message) {
     if (!previewOrigin) return
     const target = getFrameWindow ? getFrameWindow() : null
     if (!target) return
     target.postMessage(
-      { channel: VISU_PREVIEW_CHANNEL, protocol: VISU_PREVIEW_PROTOCOL, ...message },
+      JSON.parse(
+        JSON.stringify({
+          channel: VISU_PREVIEW_CHANNEL,
+          protocol: VISU_PREVIEW_PROTOCOL,
+          ...message,
+        }),
+      ),
       previewOrigin,
     )
   }

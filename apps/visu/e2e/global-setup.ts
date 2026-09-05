@@ -51,10 +51,15 @@ const WARM_ROUTES = ['/', '/edomi', '/preview'];
  * Deshalb dieselbe Vorkehrung wie fuer die Visu, nur fuer die Anmeldemaske:
  * `/login` zieht die App-Schale samt Abhaengigkeiten herein und kostet KEINE
  * Anmeldung (das Kontingent von 5/Minute bleibt unberuehrt).
+ *
+ * `/visu-editor` steht seit Teil C2 daneben: der Editor selbst (Canvas,
+ * Ausrichtwerkzeuge, eingebettete Vorschau) ist ein eigener Chunk. Gemessen
+ * (C2, Runde 2): ohne diesen Warmlauf riss das erste Editor-Szenario die
+ * 30-Sekunden-Decke (E1: 30,9 s), mit ihm braucht dieselbe Zeile 2 bis 6 s.
  */
-const WARM_EDITOR_ROUTES = ['/login'];
+const WARM_EDITOR_ROUTES = ['/login', '/visu-editor'];
 
-async function warmDevServer(baseURL: string, routes: string[]): Promise<void> {
+async function warmDevServer(baseURL: string, routes: readonly string[]): Promise<void> {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ baseURL });
@@ -87,7 +92,7 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
     console.warn(
       `[global-setup] Warmlauf gegen ${EDITOR_BASE} fehlgeschlagen: ${(err as Error).message}\n` +
         '  Läuft der Admin-GUI-Dev-Server (e2e/README.md Schritt 4b)? Der Lauf startet trotzdem; ' +
-        'die Editor-Szenarien (E9, E15) tragen dann die Vite-Transpilierung der Admin-GUI.',
+        'die Editor-Szenarien (E1, E2, E4, E8, E9, E15, E17) tragen dann die Vite-Transpilierung der Admin-GUI.',
     );
   }
 

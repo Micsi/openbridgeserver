@@ -111,7 +111,7 @@ import type {
   WidgetPosition,
 } from '@obs/visu-contract';
 import type { DataSource } from '../datasource';
-import { mapWidget, type ObsPageConfig, type ObsVisuNode } from './mapping';
+import { mapWidget, pageHonoursPosition, type ObsPageConfig, type ObsVisuNode } from './mapping';
 
 // Re-export the contract nav node so an importer can take the skin-facing type
 // from the same module as {@link HostNavNode} (the host node it will become in
@@ -215,8 +215,12 @@ function itemsOf(
   values: ReadonlyMap<string, unknown>,
 ): LayerItem[] {
   const items: LayerItem[] = [];
+  // §1.1 per LAYER: a layer authored responsively contributes no `position`,
+  // even when it sits under a pixel page (and vice versa). The mode is a
+  // property of the page the widgets live on, so it is read per layer.
+  const honoursPosition = pageHonoursPosition(config);
   for (const w of config?.widgets ?? []) {
-    const mapped = mapWidget(w, room, values);
+    const mapped = mapWidget(w, room, values, { honourPosition: honoursPosition });
     if (!mapped) continue; // an undeclared type contributes nothing to the layer
     const id = mapped.device.id;
     if (!id) continue;

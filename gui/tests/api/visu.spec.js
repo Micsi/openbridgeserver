@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * Die Backend-Naht des V2-Editors (M5 C1 Issue #168, C3 Issue #170).
+ * Die Backend-Naht des V2-Editors (M5 C1 Issue #168, C2 Issue #169, C3 Issue #170).
  *
  * Kein neuer Endpunkt: der Editor benutzt genau die Wege, die
  * `obs/api/v1/visu.py` seit jeher anbietet. Gepinnt werden die PFADE und die
@@ -104,5 +104,27 @@ describe('visuApi', () => {
       expect(String(call[0])).not.toMatch(/token|bearer|\?/i)
       expect(JSON.stringify(call)).not.toContain('token')
     }
+  })
+
+  /**
+   * Die Aufrufe, die der WYSIWYG-Canvas aus Teil C2 braucht (Issue #169), unter
+   * SEINEN Namen: `getNode` fuer Name und Seitentyp, `getTree` fuer die Layer
+   * der Seite. Sie sind Zweitnamen von `node`/`tree` - genau die Konstruktion,
+   * die `page`/`getPage` oben schon traegt. Driften sie auseinander, liest der
+   * Canvas den Baum unter einer anderen Adresse als der Editor-Store.
+   */
+  it('liest Knoten und Baum auch unter den Namen des Canvas (C2)', async () => {
+    const { visuApi } = await import('@/api/visu')
+    await visuApi.getNode('n1')
+    await visuApi.getTree()
+    expect(api.get.mock.calls.map((call) => call[0])).toEqual(['/visu/nodes/n1', '/visu/tree'])
+    expect(visuApi.getNode).toBe(visuApi.node)
+    expect(visuApi.getTree).toBe(visuApi.tree)
+  })
+
+  /** Der Canvas importiert die Vorgabe-Ausfuhr; sie muss dasselbe Objekt sein. */
+  it('liegt auch als Vorgabe-Ausfuhr bereit', async () => {
+    const mod = await import('@/api/visu')
+    expect(mod.default).toBe(mod.visuApi)
   })
 })

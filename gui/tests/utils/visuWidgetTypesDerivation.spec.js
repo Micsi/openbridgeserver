@@ -72,12 +72,37 @@ function repoRoot() {
  * Feld-DEKLARATION, kein Verhalten: die Namen links vom Doppelpunkt. Ein
  * Formularfeld, das an die Wurzel schreibt, muss eines davon treffen - alles
  * andere waere ein Schluessel, den der Server beim Speichern gar nicht kennt.
+ *
+ * GELESEN WIRD DER KLASSENRUMPF, NICHT „BIS ZUR ERSTEN LEERZEILE" (Integration
+ * M5 C2): der Docstring der Klasse hat seit C2 mehrere Absaetze, und die alte
+ * Abkuerzung endete an der ersten Leerzeile DARIN - die Feldliste kam leer
+ * zurueck, und die Probe waere still wertlos geworden. Deshalb ausdruecklich:
+ * Docstring ueberspringen, dann die Felder bis zum ersten Validator sammeln.
  */
 function widgetInstanceFields() {
   const src = readFileSync(join(repoRoot(), MODEL_REL), 'utf8')
-  const block = src.match(/class WidgetInstance\(BaseModel\):\n([\s\S]*?)\n\n/)
+  const block = src.match(/^class WidgetInstance\(BaseModel\):\n([\s\S]*?)(?=\n\S)/m)
   if (!block) throw new Error('class WidgetInstance nicht gefunden - Backend-Modell umgebaut?')
-  return [...block[1].matchAll(/^ {4}(\w+):/gm)].map((m) => m[1])
+  const zeilen = block[1].split('\n')
+  const felder = []
+  let imDocstring = false
+  for (const zeile of zeilen) {
+    const zeichen = zeile.trim()
+    if (imDocstring) {
+      if (zeichen.endsWith('"""')) imDocstring = false
+      continue
+    }
+    if (zeichen.startsWith('"""')) {
+      // Einzeiliger Docstring (`"""..."""`) endet sofort wieder.
+      imDocstring = !(zeichen.length > 3 && zeichen.endsWith('"""'))
+      continue
+    }
+    // Ab dem ersten Validator/Methodenkopf stehen keine Felder mehr.
+    if (/^ {4}(@|def |class )/.test(zeile)) break
+    const treffer = zeile.match(/^ {4}(\w+)\s*:/)
+    if (treffer) felder.push(treffer[1])
+  }
+  return felder
 }
 
 /**

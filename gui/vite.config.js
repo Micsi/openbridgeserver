@@ -17,14 +17,21 @@ export default defineConfig({
 
   // Dev server: proxy /api and /help to backend, /visu to the Visu frontend dev server (port 5174).
   //
-  // Die Ziele sind ueber Umgebungsvariablen umlegbar (Vorgabe unveraendert): der
+  // Ziele und Port sind ueber die Umgebung umlegbar (Vorgabe unveraendert): der
   // Browser-E2E des Messlatten-Harness faehrt einen eigenen Portstapel, damit
   // parallele Laeufe sich nicht die Instanz wegnehmen (apps/visu/e2e/README.md).
+  //
+  // BEIDE Schreibweisen der Ziel-Variablen werden gelesen, `VITE_`-praefigiert
+  // (C1/C4-Rezept) und unpraefigiert (C2-Rezept): die beiden Teile haben ihre
+  // Harness-Anleitungen unabhaengig geschrieben, und `apps/visu/e2e/README.md`
+  // fuehrt seither beide auf. Wer nur eine setzt, bekommt sie; wer beide setzt,
+  // bekommt die `VITE_`-Variante.
   server: {
-    port: Number(process.env.GUI_DEV_PORT || 5173),
+    port: Number(process.env.GUI_DEV_PORT) || 5173,
     proxy: {
       '/api': {
-        target: process.env.VITE_OBS_PROXY_TARGET || 'http://localhost:8080',
+        target:
+          process.env.VITE_OBS_PROXY_TARGET || process.env.OBS_PROXY_TARGET || 'http://localhost:8080',
         changeOrigin: true,
         ws: true,            // WebSocket proxy
       },
@@ -33,12 +40,22 @@ export default defineConfig({
       // Admin-Bereich landete im Dev-Server bei der V1-Visu statt in der SPA -
       // gemessen: 502 Bad Gateway, leere Seite. Nur '/visu' selbst und alles
       // UNTER '/visu/' gehoert der Visu.
-      '^/visu(/|$)': {
-        target: process.env.VITE_VISU_PROXY_TARGET || 'http://localhost:5174',
+      //
+      // '/visu-v2' steht mit dabei (M5 C2, Issue #169), weil dort die
+      // eingebettete VORSCHAU liegt: `VISU_PREVIEW_URL` in
+      // `utils/visuEditorAccess.js` faellt auf `/visu-v2/preview` zurueck. Ohne
+      // diesen Zweig faellt die Vorschau im Dev-Server in den SPA-Rueckfall und
+      // zeigt die Admin-GUI in sich selbst statt der Visu (E3/E19 rot). Wer die
+      // Vorschau woanders ausliefert, setzt `VITE_VISU_PREVIEW_URL` und braucht
+      // den Zweig nicht.
+      '^/visu(-v2)?(/|$)': {
+        target:
+          process.env.VITE_VISU_PROXY_TARGET || process.env.VISU_PROXY_TARGET || 'http://localhost:5174',
         changeOrigin: true,
       },
       '/help': {
-        target: process.env.VITE_OBS_PROXY_TARGET || 'http://localhost:8080',
+        target:
+          process.env.VITE_OBS_PROXY_TARGET || process.env.OBS_PROXY_TARGET || 'http://localhost:8080',
         changeOrigin: true,
       },
     }

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { EDITOR_BASE, adminHeaders, api, seeded } from './fixtures';
-import { loginToEditor } from './editor-helpers';
+import { loginToEditor, pagePropsSaved, savePageProps } from './editor-helpers';
 
 /**
  * M5 Messlatte — Regeltabelle R16 (CONTRIBUTING-visu-m5.md §1): der
@@ -84,8 +84,8 @@ test.describe('M5 Regeltabelle R16 · Editor-Round-Trip (Editor steht; wartet au
       await page.getByLabel('Automatisch schließen (ms)').fill('2000');
       await page.getByLabel('Exklusiv öffnen').check();
       await page.getByLabel('Schlagschatten').check();
-      await page.getByRole('button', { name: 'Speichern' }).click();
-      await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+      await savePageProps(page).click();
+      await expect(pagePropsSaved(page)).toBeVisible();
 
       // ---- 2) gespeichert: der Server trägt exakt die gesetzten Werte ------
       const treeRes = await request.get(api('/visu/tree'), { headers });

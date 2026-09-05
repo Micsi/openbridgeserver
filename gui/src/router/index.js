@@ -25,7 +25,11 @@ const routes = [
   // Wache, aber der Name sagt, ob eine Seite gemeint ist. Der Bereich bleibt
   // damit auch OHNE Seite erreichbar - die Ansicht sagt dann, was fehlt
   // (`visu-editor-no-page`).
-  { path: `${VISU_EDITOR_ROUTE}/:pageId`, name: 'VisuEditorPage', component: () => import('@/views/VisuEditorView.vue'), meta: { admin: true } },
+  //
+  // `props: true` (M5 C2, Issue #169) reicht `pageId` als Prop hinein, damit die
+  // Ansicht auch OHNE Router montierbar bleibt - die Komponententests von C2
+  // haengen daran.
+  { path: `${VISU_EDITOR_ROUTE}/:pageId`, name: 'VisuEditorPage', component: () => import('@/views/VisuEditorView.vue'), props: true, meta: { admin: true } },
   { path: '/:pathMatch(.*)*',      redirect: '/' },
 ]
 

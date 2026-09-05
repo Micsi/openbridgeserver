@@ -1,5 +1,5 @@
 /**
- * Die Backend-Naht des V2-Editors (M5 C1 Issue #168, C3 Issue #170).
+ * Die Backend-Naht des V2-Editors (M5 C1 Issue #168, C2 Issue #169, C3 Issue #170).
  *
  * KEIN neuer Endpunkt: der Editor benutzt genau die Wege, die
  * `obs/api/v1/visu.py` seit jeher anbietet — Baum, Knoten-CRUD, Verschieben,
@@ -30,16 +30,29 @@ const id = (value) => encodeURIComponent(value)
  */
 const getPage = (nodeId) => api.get(`/visu/pages/${id(nodeId)}`)
 
-export const visuApi = {
-  /** Der ganze sichtbare Baum (`VisuNodeSummary[]`, inkl. `kind` und `order`). */
-  tree: () => api.get('/visu/tree'),
+/** Der ganze sichtbare Baum. `tree` und `getTree` sind DASSELBE (C1/C3 nennen
+ *  ihn `tree`, C2 `getTree`) - dieselbe Begruendung wie bei `getPage`/`page`. */
+const getTree = () => api.get('/visu/tree')
 
+/** Ein einzelner Knoten (Name, Typ, `kind`, Zugriff). `node` und `getNode` sind
+ *  DASSELBE - C1/C3 nennen ihn `node`, der Canvas aus C2 `getNode`. */
+const getNode = (nodeId) => api.get(`/visu/nodes/${id(nodeId)}`)
+
+export const visuApi = {
+  /** Der ganze sichtbare Baum (`VisuNodeSummary[]`, inkl. `kind` und `order`).
+   *  Der Canvas aus C2 liest ihn fuer die LAYER einer Seite: welche Seiten
+   *  globale Inkludeseiten sind, steht nur hier (`kind`), und der Baum ist
+   *  bereits authz-gefiltert. */
+  tree: getTree,
+  getTree,
+
+  /** Die Seiten-Konfiguration EINER Seite. `PUT` antwortet mit 204 ohne Koerper. */
   getPage,
   page: getPage,
   savePage: (nodeId, config) => api.put(`/visu/pages/${id(nodeId)}`, config),
 
-  /** Ein einzelner Knoten (Name, Typ, `kind`, Zugriff). */
-  node: (nodeId) => api.get(`/visu/nodes/${id(nodeId)}`),
+  node: getNode,
+  getNode,
 
   createNode: (body) => api.post('/visu/nodes', body),
   updateNode: (nodeId, body) => api.patch(`/visu/nodes/${id(nodeId)}`, body),

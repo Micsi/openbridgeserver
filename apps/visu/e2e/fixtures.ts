@@ -232,6 +232,37 @@ export function noteBrowserLogin(): void {
 }
 
 /**
+ * Wartet, bis im Minutenfenster wieder eine Anmeldung frei ist - und meldet, wie
+ * lange gewartet wurde.
+ *
+ * DIESELBE VORKEHRUNG WIE IN `global-setup.ts`, nur mitten im Lauf. Sie ist mit
+ * der Integration von Teil C2 noetig geworden: seither laufen NEUN Anmeldungen
+ * durch die Maske (E1, E2, E4, E8, E9, E15, E17 und E19 mit ZWEI Kontexten)
+ * statt der zwei, mit denen die Rechnung „Seed 1 + vorgeholt 2 + UI 2 = 5"
+ * aufgestellt wurde. Gemessen (Integrationslauf C2): je ein `429 Too Many
+ * Requests` in zwei aufeinanderfolgenden Pflichtlaeufen, einmal an E8, einmal an
+ * E19 - beide Male mit „Login fehlgeschlagen" an der Maske, also einer Aussage
+ * ueber die Bremse und nicht ueber den Editor.
+ *
+ * Gewartet wird nur so lange, bis die AELTESTE Anmeldung aus dem Fenster
+ * gefallen ist, hoechstens ein Fenster; Aufbau ist kein Test, hier ist Warten
+ * billig. Keine Erwartung ist gesenkt.
+ */
+export async function waitForLoginSlot(): Promise<number> {
+  const used = loginsInWindow();
+  if (used.length < LOGIN_LIMIT) return 0;
+  const freeAt = used[used.length - LOGIN_LIMIT]! + LOGIN_WINDOW_MS + 1_000;
+  const waitMs = Math.min(Math.max(freeAt - Date.now(), 0), LOGIN_WINDOW_MS + 1_000);
+  if (waitMs <= 0) return 0;
+  console.log(
+    `[login-budget] ${used.length} von ${LOGIN_LIMIT} Anmeldungen im laufenden Minutenfenster ` +
+      `verbraucht; warte ${(waitMs / 1000).toFixed(0)} s statt in ein 429 zu laufen.`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
+  return waitMs;
+}
+
+/**
  * Ein abgelegter Token wird nur benutzt, solange er noch mindestens eine Minute
  * gilt; sonst tauschte man das 429 gegen ein 401 ein.
  */

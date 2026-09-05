@@ -3386,7 +3386,7 @@
     "unreachable": "No visu preview answers in this frame. What you see is whatever the preview address serves, not your draft. Please check how the preview is served (VITE_VISU_PREVIEW_URL).",
     "applied": "Draft rendered in the preview ({count} widgets).",
     "editorTitle": "Visu editor",
-    "canvasHint": "The WYSIWYG canvas of the editor goes here (part C2).",
+    "canvasHint": "The canvas appears as soon as a page is selected.",
     "loadError": "The page tree could not be loaded.",
     "tree": {
       "title": "Page tree",
@@ -3576,6 +3576,34 @@
     },
     "pageMissing": "The editor needs a page. Open it via /visu-editor/<page-id>.",
     "selectWidget": "No element selected.",
-    "widgetsOnPage": "Elements on this page"
+    "widgetsOnPage": "Elements on this page",
+    "canvas": {
+      "mode": "Layout mode",
+      "modePixel": "Pixel",
+      "modeResponsive": "Responsive",
+      "grid": "Grid size",
+      "breakpoints": "Breakpoints",
+      "previewWidth": "Preview width",
+      "previewWidthAuto": "Automatic",
+      "distribute": "Distribute",
+      "sameSize": "Same size",
+      "toFront": "Bring to front",
+      "toBack": "Send to back",
+      "locked": "Locked",
+      "hidden": "Hidden",
+      "width": "W",
+      "height": "H",
+      "save": "Save",
+      "saved": "Saved",
+      "loadError": "The page could not be loaded.",
+      "saveError": "The page could not be saved.",
+      "empty": "This page carries no elements yet.",
+      "renderedAs": "Rendered as: {mode} through the “{skin}” skin.",
+      "globalLayer": "Global layers ({count})",
+      "includeLayer": "Include layers ({count})",
+      "layersError": "The layers of this page could not be loaded; the canvas shows only its own elements.",
+      "coordinatesInactive": "In responsive mode this page's coordinates have no effect; they are kept and apply again in pixel mode.",
+      "placedByDefault": "{count} element(s) carried no position and sit on the default 0/0/2/2; saving makes that permanent."
+    }
   }
 }
