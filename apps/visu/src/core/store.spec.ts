@@ -724,6 +724,9 @@ class SichtbarkeitsQuelle implements DataSource {
   private ids: string[] = ['a'];
   private readonly hoerer = new Set<() => void>();
   listCount = 0;
+  /** Wie oft abonniert und wie oft wieder abgemeldet wurde (echte Buchfuehrung). */
+  subscribeCount = 0;
+  unsubscribeCount = 0;
 
   async list(): Promise<Device[]> {
     this.listCount += 1;
@@ -732,7 +735,16 @@ class SichtbarkeitsQuelle implements DataSource {
     );
   }
   subscribe(): () => void {
-    return () => {};
+    this.subscribeCount += 1;
+    // Eine LEERE Abmeldung waere freundlicher als die Wirklichkeit: sie kann
+    // weder einen vergessenen noch einen doppelten Hoerer verraten.
+    return () => {
+      this.unsubscribeCount += 1;
+    };
+  }
+  /** Wie viele Sichtbarkeits-Hoerer gerade wirklich registriert sind. */
+  get hoererZahl(): number {
+    return this.hoerer.size;
   }
   async dispatch(): Promise<void> {}
   onVisibilityChange(cb: () => void): () => void {
@@ -743,6 +755,25 @@ class SichtbarkeitsQuelle implements DataSource {
   umschwung(ids: string[]): void {
     this.ids = ids;
     for (const cb of this.hoerer) cb();
+  }
+}
+
+/**
+ * Dieselbe Quelle, nur mit einer Naht wie in der Wirklichkeit: das Abonnieren
+ * WIRFT. Genau das tat der angemeldete Weg (`send()` in eine Verbindung im
+ * Aufbau) - und kein Doppel im Haus konnte es nachstellen, weil alle
+ * reibungsfrei abonnierten.
+ */
+class SproedeQuelle extends SichtbarkeitsQuelle {
+  /** Genau der erste Aufbau stolpert - danach steht die Verbindung. */
+  override subscribe(): () => void {
+    const ab = super.subscribe();
+    if (this.subscribeCount === 1) {
+      const err = new Error("Failed to execute 'send' on 'WebSocket': Still in CONNECTING state.");
+      err.name = 'InvalidStateError';
+      throw err;
+    }
+    return ab;
   }
 }
 
@@ -787,5 +818,47 @@ describe('core/store - E16: ein Wertwechsel blendet ohne Neuladen ein und aus', 
   it('laesst eine Quelle ohne diese Meldung genau wie bisher laufen', async () => {
     const store = await makeStore(new SpyDataSource());
     expect(store.devices.length).toBeGreaterThan(0);
+  });
+
+  it('haelt bei jedem Neuaufbau genau EINEN Hoerer - kein zweiter, kein vergessener', async () => {
+    const ds = new SichtbarkeitsQuelle();
+    const store = await makeStore(ds);
+    expect(ds.hoererZahl).toBe(1);
+    expect(ds.subscribeCount).toBe(1);
+
+    // Jeder Umschwung laeuft ueber `refresh` -> `init`: abmelden, neu anmelden.
+    ds.umschwung(['a', 'b']);
+    await ruhe();
+    ds.umschwung(['a']);
+    await ruhe();
+    expect(ds.hoererZahl).toBe(1);
+    expect(ds.subscribeCount - ds.unsubscribeCount).toBe(1);
+
+    // Und der Wechsel auf eine andere Quelle laesst keinen Hoerer stehen.
+    await store.init(new SichtbarkeitsQuelle());
+    expect(ds.hoererZahl).toBe(0);
+    expect(ds.subscribeCount).toBe(ds.unsubscribeCount);
+  });
+
+  it('registriert die Meldung, bevor sie sich am Abonnieren der Quelle verheben kann', async () => {
+    // Der gemessene Ausfall: beim ANGEMELDETEN Benutzer warf `source.subscribe`
+    // (WS-Abo in eine Verbindung, die noch im Aufbau steht), und die
+    // Registrierung dahinter wurde nie erreicht - „UMSCHWUNG gemeldet an 0
+    // Hoerer". Die Wurzel ist repariert (der Sender wartet aufs Oeffnen), aber
+    // die Reihenfolge im Wirt darf sich nicht darauf verlassen: eine Quelle,
+    // die beim Abonnieren stolpert, darf E16 nicht taub machen.
+    const ds = new SproedeQuelle();
+    let gestolpert = false;
+    const store = await makeStore(ds).catch(() => {
+      gestolpert = true;
+      return useDeviceStore();
+    });
+    expect(gestolpert).toBe(true);
+    // Der Hoerer steht trotzdem - vorher stand hier gar keiner mehr.
+    expect(ds.hoererZahl).toBe(1);
+
+    ds.umschwung(['a', 'b']);
+    await ruhe();
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['a', 'b']);
   });
 });

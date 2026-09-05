@@ -185,7 +185,12 @@ export const useDeviceStore = defineStore('devices', () => {
    * a second call swaps the source and re-subscribes.
    */
   async function init(ds: DataSource = new MockDataSource()): Promise<void> {
-    if (unsubscribe) unsubscribe();
+    if (unsubscribe) {
+      unsubscribe();
+      // Erst loesen, dann neu binden: wirft der Aufbau dazwischen, darf hier
+      // keine Abmeldung einer bereits abgehaengten Quelle stehenbleiben.
+      unsubscribe = null;
+    }
     if (unsubscribeVisibility) {
       unsubscribeVisibility();
       unsubscribeVisibility = null;
@@ -201,10 +206,6 @@ export const useDeviceStore = defineStore('devices', () => {
     }
     state.value = map;
     syncList();
-    // subscribe trägt echte Rückmeldungen ein (CONTRACT-v1 §6 / MIGRATION §4).
-    unsubscribe = source.subscribe((patch: DevicePatch) => {
-      merge(patch.id, patch.changes as Partial<Device>);
-    });
     // E16: die sichtbare MENGE der Quelle ist selbst live - eine
     // `visible_when`-Regel kann mitten im Betrieb umschlagen. Ein `DevicePatch`
     // kann das nicht ausdruecken (er traegt Felder, nicht die Zugehoerigkeit),
@@ -212,11 +213,21 @@ export const useDeviceStore = defineStore('devices', () => {
     // Login/Logout/PIN, ohne Navigation und ohne Neuladen der Seite. Die
     // gezeigte Seite und die offenen Popups bleiben dabei stehen: `refresh`
     // tauscht den Geraetebestand, nicht den Ort.
+    //
+    // Die Registrierung steht VOR dem Abonnieren, und zwar aus Erfahrung: das
+    // Abonnieren greift auf den Verbindungsaufbau der Quelle zu und kann
+    // stolpern (gemessen beim angemeldeten Benutzer: `send()` in einen Socket
+    // im Aufbau). Stuende sie dahinter, waere E16 nach so einem Stolpern taub -
+    // der alte Hoerer abgemeldet, kein neuer gesetzt.
     unsubscribeVisibility = supportsVisibilityLive(source)
       ? source.onVisibilityChange(() => {
           void refresh();
         })
       : null;
+    // subscribe trägt echte Rückmeldungen ein (CONTRACT-v1 §6 / MIGRATION §4).
+    unsubscribe = source.subscribe((patch: DevicePatch) => {
+      merge(patch.id, patch.changes as Partial<Device>);
+    });
     // Reflect the source's auth state (a restored session shows as logged in;
     // a guest/mock source is never authenticated). Never clears a name we hold
     // while still authenticated.

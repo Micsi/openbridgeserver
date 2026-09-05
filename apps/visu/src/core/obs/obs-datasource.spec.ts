@@ -1,19 +1,47 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { setActivePinia, createPinia } from 'pinia';
 import type { BlindDevice, Device, JalousieDevice, LightDevice, SwitchDevice } from '@obs/visu-contract';
 import { ObsClient, WsHandle, type WsLike } from './client';
 import { ObsDataSource, obsDataSourceFromEnv } from './obs-datasource';
-import type { DevicePatch } from '../datasource';
+import { MockDataSource, type DevicePatch } from '../datasource';
+import { useDeviceStore } from '../store';
 import type { ObsVisuNode } from './mapping';
+
+/** Eine Runde Ereignisschleife: der Wirt laedt auf die Meldung hin async neu. */
+const ruheR4 = async (): Promise<void> => {
+  for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0));
+};
 
 /* ------------------------------------------------------------ test doubles */
 
-/** A controllable fake WebSocket matching the WsLike surface. */
+/**
+ * A controllable fake WebSocket matching the WsLike surface - und zwar mit dem
+ * ZUSTAND einer echten Verbindung: `CONNECTING` -> `OPEN` -> `CLOSED`.
+ *
+ * Das ist kein Beiwerk. Ein Doppel, das sofort offen ist und beim Senden nie
+ * wirft, ist genau an der Naht reibungsfrei, an der die Wirklichkeit bricht:
+ * der Browser wirft bei `send()` vor dem Oeffnen
+ * `InvalidStateError: Failed to execute 'send' on 'WebSocket': Still in
+ * CONNECTING state.` (WHATWG-WebSocket, `send`, Schritt 1) - und dieser Wurf
+ * riss bis M5 C3 R4 den ganzen `init`-Weg des Wirts mit sich, sodass fuer jeden
+ * ANGEMELDETEN Benutzer keine Sichtbarkeitsmeldung mehr ankam. Nach demselben
+ * Absatz ist `send()` auf `CLOSING`/`CLOSED` dagegen still - kein Wurf, die
+ * Daten fallen weg. Beides wird hier nachgebildet, sonst waere das Doppel
+ * freundlicher als die Wirklichkeit.
+ */
 class FakeWs implements WsLike {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+
   onopen: (() => void) | null = null;
   onclose: ((ev: { code?: number }) => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
   readonly sent: string[] = [];
+  /** Was in den Aufbau hinein gesendet WERDEN sollte (nur zur Diagnose). */
+  readonly refused: string[] = [];
+  readyState: number = FakeWs.CONNECTING;
   static last: FakeWs | null = null;
   static instances: FakeWs[] = [];
 
@@ -26,13 +54,27 @@ class FakeWs implements WsLike {
   }
 
   send(data: string): void {
+    if (this.readyState === FakeWs.CONNECTING) {
+      this.refused.push(data);
+      const err = new Error("Failed to execute 'send' on 'WebSocket': Still in CONNECTING state.");
+      err.name = 'InvalidStateError';
+      throw err;
+    }
+    // CLOSING/CLOSED: die Norm schweigt hier, sie wirft nicht.
+    if (this.readyState !== FakeWs.OPEN) {
+      this.refused.push(data);
+      return;
+    }
     this.sent.push(data);
   }
   close(): void {
+    if (this.readyState === FakeWs.CLOSED) return;
+    this.readyState = FakeWs.CLOSED;
     this.onclose?.({ code: 1000 });
   }
   /** Drive an open so the subscribe-on-open path runs. */
   open(): void {
+    this.readyState = FakeWs.OPEN;
     this.onopen?.();
   }
   /** Deliver a server value-event. */
@@ -41,6 +83,8 @@ class FakeWs implements WsLike {
   }
   /** Close with a specific code (e.g. 4001 = auth rejected). */
   closeWith(code: number): void {
+    if (this.readyState === FakeWs.CLOSED) return;
+    this.readyState = FakeWs.CLOSED;
     this.onclose?.({ code });
   }
 }
@@ -1268,5 +1312,97 @@ describe('ObsDataSource - E16 wirkt live: erscheinen UND verschwinden ohne Neula
     unsub();
     unsubV();
     vi.useRealTimers();
+  });
+});
+
+/* ------------------------- R4: der angemeldete Weg ueberlebt den Aufbau ---- */
+
+/**
+ * Die Naht, an der E16 fuer jeden ANGEMELDETEN Benutzer starb: der Wirt meldet
+ * in `store.init` erst den alten Hoerer ab, ruft dann `source.subscribe(...)`
+ * und registriert DANACH die Sichtbarkeitsmeldung. Beim Angemeldeten oeffnete
+ * `subscribe` den WebSocket und sendete das Abo SOFORT hinterher - in eine
+ * Verbindung, die noch im Aufbau steht. Der Browser wirft dort
+ * `InvalidStateError`, `init` brach ab, und die Registrierung wurde nie
+ * erreicht: „UMSCHWUNG gemeldet an 0 Hoerer".
+ *
+ * Gemessen wird das hier mit einem Doppel, das den Zustand einer echten
+ * Verbindung fuehrt (siehe {@link FakeWs}) - vorher konnte keine Probe das
+ * sehen, weil das alte Doppel beim Senden nie warf.
+ */
+describe('ObsDataSource - abonnieren, ohne in den Verbindungsaufbau zu senden (R4)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sendet das Abo erst, wenn die Verbindung offen ist - und dann vollstaendig', async () => {
+    stubStorage('jwt-abc');
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    const umschwung: string[] = [];
+    const unsubV = ds.onVisibilityChange(() => umschwung.push('!'));
+
+    // Der Socket steht hier auf CONNECTING. Bis R4 warf dieser Aufruf.
+    let unsub: () => void = () => {};
+    expect(() => {
+      unsub = ds.subscribe(() => {});
+    }).not.toThrow();
+
+    const ws = FakeWs.last!;
+    expect(ws.readyState).toBe(FakeWs.CONNECTING);
+    expect(ws.sent).toEqual([]); // nichts in den Aufbau hinein
+
+    // Offen: jetzt geht das GESAMTE gepufferte Abo raus, samt Regel-Datenpunkt.
+    ws.open();
+    const sub = ws.sent.map((s) => JSON.parse(s)).find((m) => m.action === 'subscribe');
+    // `tg2` fehlt hier zu Recht: `hidden-1` ist bei 21.5 verborgen, sein
+    // Datenpunkt bindet also gerade kein Geraet. Der REGEL-Datenpunkt muss
+    // trotzdem drin sein - sonst faellt sein Umschwung nie auf.
+    expect(sub.ids).toEqual(expect.arrayContaining(['dp-regel', 'tg']));
+
+    // Und der Umschwung kommt an, statt an 0 Hoerer zu gehen.
+    ws.emit({ id: 'dp-regel', v: 42, u: null, t: null, q: 'good' });
+    expect(umschwung.length).toBe(1);
+
+    unsub();
+    unsubV();
+  });
+
+  it('der angemeldete WIRT blendet auf den Wertwechsel hin ein - ohne Neuladen', async () => {
+    setActivePinia(createPinia());
+    stubStorage('jwt-abc');
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+
+    const store = useDeviceStore();
+    // Genau der Weg, den die Anmeldung nimmt: `init` mit der obs-Quelle.
+    await store.init(ds);
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['always-1']);
+    expect(store.authenticated).toBe(true);
+
+    const ws = FakeWs.last!;
+    ws.open();
+    werte['dp-regel'] = 42;
+    ws.emit({ id: 'dp-regel', v: 42, u: null, t: null, q: 'good' });
+    await ruheR4();
+
+    // ERSCHEINEN, allein auf den Live-Wert hin - kein zweites `list()` von
+    // aussen, keine Navigation, kein Neuladen.
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['always-1', 'hidden-1']);
+
+    // VERSCHWINDEN: derselbe Weg zurueck, ueber den neu geoeffneten Socket.
+    const ws2 = FakeWs.last!;
+    expect(ws2).not.toBe(ws);
+    ws2.open();
+    werte['dp-regel'] = 21.5;
+    ws2.emit({ id: 'dp-regel', v: 21.5, u: null, t: null, q: 'good' });
+    await ruheR4();
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['always-1']);
+
+    await store.init(new MockDataSource()); // Quelle abhaengen, Socket schliessen
   });
 });
