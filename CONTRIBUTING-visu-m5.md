@@ -323,7 +323,7 @@ Tracking: GitHub-Issues im Fork, Milestone M5 (Authoring + V2-Editor, Nr. 6), Su
 | C1 Editor Baum+Eigenschaften (Micsi/openbridgeserver#168) | 0 | - | offen |
 | C2 Editor WYSIWYG-Canvas (Micsi/openbridgeserver#169) | 0 | - | offen |
 | C3 Editor Palette+Bindung (Micsi/openbridgeserver#170) | 0 | - | offen |
-| C4 Editor Gate+Serving (Micsi/openbridgeserver#171) | 0 | - | offen |
+| C4 Vorschau-Brücke (Micsi/openbridgeserver#171) | 11 + Nachzug | Kritiker: **Messlatte erreicht**. Die Vorschau rendert über dieselbe Kette wie die echte Visu; Parität wird flächendeckend geprüft (Elementbaum, Stilblöcke, Selektorwirkung aller ausgelieferten Blätter, Rand ausserhalb des Rahmens, mehrere Zustände, drei Skins). Sicherheit über sechs Angriffsabläufe belegt, Session nur als Header. Gast-Bundle +1 829 B (+0,14 %), CSS unverändert. Der Weg dahin: R1 E3 strukturell unerreichbar (Protokoll ohne Theme/Tweaks), R3 Nachweis prüfte vier Punkte und war dazwischen blind, R5 Stilblock dicht aber alles daneben nicht, R6-R11 je 4 bis 8 Umgehungen im gebauten Bundle nachgewiesen und geschlossen. An Teil E übergeben, ehrlich begründet: was das gebaute Utility-Blatt berechnet, ob eine erreichende Regel ein Pixel bewegt, Viewport/Layout/Stapelung, das ausgelieferte Dokument, der Leseumfang | **durch** |
 | C5 Editor Ergonomie (Micsi/openbridgeserver#172) | 0 | - | offen |
 | C6 Editor Dualität+Verlauf (Micsi/openbridgeserver#173) | 0 | - | offen |
 | D Admin+Doku+i18n (Micsi/openbridgeserver#174) | 0 | - | offen |
