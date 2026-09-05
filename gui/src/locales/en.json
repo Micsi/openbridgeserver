@@ -3436,7 +3436,8 @@
       "removeUser": "Remove user: {name}",
       "skinSection": "Appearance",
       "skin": "Skin",
-      "skinHint": "The choice belongs to this page and is remembered in the browser.",
+      "skinHint": "The choice is remembered per page in this machine's browser, not in the page itself: another browser sees the default.",
+      "audienceDatapointHint": "On saving, the server checks whether every user in the target audience may read all datapoints of this page. If a grant is missing, it refuses (403).",
       "save": "Save",
       "saved": "Saved",
       "saveFailed": "Saving failed."
@@ -3472,8 +3473,16 @@
       "includeTargetIsPopup": "A popup page cannot be included: {target}",
       "includeCycle": "Include cycle: the page indirectly includes itself",
       "includedPageCannotBecomePopup": "An included page cannot become a popup",
+      "includeKindNeedsReference": "“Include page” is not a setting but a role: a page becomes one as soon as another page includes it. So far none does.",
+      "normalKindWhileIncluded": "This page is included by another page and is therefore an include page. It counts as “normal page” again only once no include points at it.",
       "pinRequiresProtected": "A PIN is only allowed on protected nodes",
-      "audienceRequiresUserAccess": "A target audience exists only with the access level “user”"
+      "audienceRequiresUserAccess": "A target audience exists only with the access level “user”",
+      "audienceUserUnknown": "This user does not (or no longer) exist, or is an admin: {user}"
+    },
+    "rejections": {
+      "visu_target_audience_invalid_users": "The server does not (or no longer) know these users, or they are admins: {user}",
+      "visu_target_audience_datapoints_denied": "The target audience may not read all datapoints of this page. Affected: {user}; missing datapoints: {datapoints}.",
+      "visu_target_audience_requires_user_access": "A target audience exists only with the access level “user”."
     }
   }
 }

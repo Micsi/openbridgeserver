@@ -11,14 +11,23 @@
  *    auseinander, faellt der Test, nicht die Vorschau (`resolveSkin` wirft dort
  *    hart, es gibt bewusst keinen stillen Ersatz-Skin).
  *
- * 2. DIE WAHL LIEGT HEUTE IM BROWSER, NICHT IM BACKEND. `PageConfig`
- *    (`obs/models/visu.py`) hat kein Feld fuer den Skin, und `save_page`
- *    schreibt `config.model_dump_json()` — ein zusaetzliches Feld faellt still
- *    weg. Teil C1 darf `obs/` nicht anfassen (Teil A ist durch), also merkt sich
- *    der Editor die Wahl je SEITE lokal. Das erfuellt E19 („die Wahl ueberlebt
- *    den Reload") und ist per Seite getrennt — es ist aber NICHT dasselbe wie
- *    „steht im GET": ein anderer Browser sieht die Vorgabe. Der dauerhafte Platz
- *    waere `PageConfig.skin` und gehoert Teil A.
+ * 2. DIE WAHL LIEGT HEUTE IM BROWSER DES AUTORS — SIE GEHOERT DER SEITE NOCH
+ *    NICHT. `PageConfig` (`obs/models/visu.py`) hat kein Feld fuer den Skin, und
+ *    `save_page` schreibt `config.model_dump_json()`; ein zusaetzliches Feld
+ *    faellt still weg. Gemessen heisst das: `GET /visu/pages/{id}` traegt keinen
+ *    Skin, und ein ZWEITER Browser (oder ein anderer Autor) sieht die Vorgabe.
+ *    Der Editor merkt sich die Wahl deshalb je SEITEN-ID im `localStorage` —
+ *    getrennt je Seite, aber eben nur hier. Das ist NICHT das Kriterium aus §3
+ *    („jede Eigenschaft setzen → `GET` zeigt sie"), und E19 steht solange auf
+ *    `test.fixme` (`apps/visu/e2e/m5-editor-matrix.spec.ts`).
+ *
+ *    DIE NAHT STEHT SCHON: Teil C2 ergaenzt `PageConfig` additiv um ein Feld
+ *    fuer den Skin je Seite (Issue #169). Sobald das im Baum ist, traegt jede
+ *    geladene Konfiguration den Schluessel {@link PAGE_SKIN_FIELD} — und genau
+ *    daran schalten sich {@link skinFromPageConfig} (Lesen) und
+ *    {@link withPageSkin} (Schreiben) VON SELBST ein: der Editor schreibt das
+ *    Feld erst, wenn das Backend es fuehrt, und liest es, sobald es da ist.
+ *    Heisst das Feld am Ende anders, ist genau eine Konstante zu aendern.
  */
 
 /** Die Schluessel der Skin-Registry der Visu, in ihrer Reihenfolge. */
@@ -30,18 +39,57 @@ export const VISU_SKIN_KEYS = Object.freeze(['ionic', 'terminal', 'edomi'])
  */
 export const DEFAULT_VISU_SKIN = 'edomi'
 
+/**
+ * Der Feldname, unter dem eine `PageConfig` ihren Skin traegt, sobald Teil C2
+ * ihn ergaenzt hat. EINE Stelle — Lesen, Schreiben und die Erkennung, ob das
+ * Backend das Feld ueberhaupt fuehrt, haengen daran.
+ */
+export const PAGE_SKIN_FIELD = 'skin'
+
 /** Kennt die Vorschau diesen Skin? */
 export function isKnownSkin(key) {
   return typeof key === 'string' && VISU_SKIN_KEYS.includes(key)
 }
 
-/** Der Speicherschluessel EINER Seite — die Wahl gehoert der Seite, nicht der Sitzung. */
+/**
+ * Fuehrt diese GESPEICHERTE Konfiguration das Skin-Feld?
+ *
+ * Gefragt ist die Anwesenheit des Schluessels, nicht sein Wert: eine Seite, die
+ * heute `null` traegt, wird trotzdem geschrieben — eine Seite eines Backends
+ * ohne das Feld nicht.
+ */
+export function pageConfigCarriesSkin(config) {
+  return Boolean(config) && typeof config === 'object' && Object.hasOwn(config, PAGE_SKIN_FIELD)
+}
+
+/** Der Skin aus einer gespeicherten `page_config` — `null`, wenn es keinen gibt. */
+export function skinFromPageConfig(config) {
+  const value = config?.[PAGE_SKIN_FIELD]
+  return isKnownSkin(value) ? value : null
+}
+
+/**
+ * Legt den Skin in einen Seiten-Rumpf — aber nur, wenn das Backend das Feld
+ * fuehrt (`supported`). Ohne diese Bedingung schickte der Editor ein Feld, das
+ * `PageConfig` still verwirft: eine Zusage, die niemand einloest.
+ */
+export function withPageSkin(body, skin, supported) {
+  if (supported !== true || !isKnownSkin(skin)) return body
+  return { ...body, [PAGE_SKIN_FIELD]: skin }
+}
+
+/**
+ * Der Speicherschluessel EINER Seite.
+ *
+ * Je Seite getrennt — aber im Browser des Autors, nicht in der Seite (siehe
+ * Grenze 2 im Kopf). Ein zweiter Browser kennt diesen Schluessel nicht.
+ */
 export function skinStorageKey(pageId) {
   return `obs-visu-editor-skin:${pageId}`
 }
 
 /**
- * Der gemerkte Skin dieser Seite, oder die Vorgabe.
+ * Der im Browser gemerkte Skin dieser Seite, oder die Vorgabe.
  *
  * Jeder Zugriff ist gekapselt: ein privater Modus oder gesperrte Site-Daten
  * lassen `getItem` werfen, und daran darf der Editor nicht scheitern.
@@ -56,7 +104,7 @@ export function readPageSkin(pageId, storage = globalThis.localStorage) {
   }
 }
 
-/** Merkt sich den Skin dieser Seite. Ein unbekannter Schluessel wird nie abgelegt. */
+/** Merkt sich den Skin dieser Seite im Browser. Ein unbekannter Schluessel wird nie abgelegt. */
 export function writePageSkin(pageId, skin, storage = globalThis.localStorage) {
   if (!pageId || !isKnownSkin(skin)) return
   try {

@@ -225,3 +225,39 @@ describe('planPageSave - was gar nichts zu tun gibt', () => {
     }
   })
 })
+
+describe('planPageSave - was der Knoten-Rumpf tragen MUSS', () => {
+  /*
+   * Gegen die stille Auslassung: faellt eine dieser Angaben aus dem Rumpf, wird
+   * „Gespeichert" gemeldet und der Wert ist weg. Genau diese zwei Mutationen
+   * haben in Runde 1 die komplette Suite ueberlebt (`access`) bzw. beide
+   * E2E-Szenarien (`kind`). Sie sterben jetzt hier UND an E9/E15.
+   */
+  const patchBody = (d, s) => planPageSave(d, s).find((step) => step.op === 'patchNode').body
+
+  it('schickt den Zugriff mit - auch wenn er sich nicht geaendert hat', () => {
+    expect(patchBody(draft({ access: 'user' }), stored())).toMatchObject({ access: 'user' })
+    expect(patchBody(draft({ access: null }), stored())).toMatchObject({ access: null })
+  })
+
+  it('schickt den Seitentyp mit, sobald er sich aendert', () => {
+    expect(patchBody(draft({ editorKind: 'popup' }), stored())).toMatchObject({ kind: 'popup' })
+  })
+
+  it('laesst den Seitentyp weg, wenn er gleich bleibt - der Rumpf soll nichts behaupten', () => {
+    expect(patchBody(draft(), stored())).not.toHaveProperty('kind')
+  })
+
+  it('schickt Name und Reihenfolge mit', () => {
+    expect(patchBody(draft({ name: 'M5 Home Neu', order: 7 }), stored())).toMatchObject({
+      name: 'M5 Home Neu',
+      order: 7,
+    })
+  })
+
+  it('legt eine neue Seite mit Zugriff UND Seitentyp an', () => {
+    const [create] = planPageSave(draft({ id: null, access: 'user', editorKind: 'popup' }), {})
+    expect(create.op).toBe('createNode')
+    expect(create.body).toMatchObject({ access: 'user', kind: 'popup', type: 'PAGE' })
+  })
+})

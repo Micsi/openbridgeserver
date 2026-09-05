@@ -250,6 +250,126 @@ describe('validatePage - mehrere Verstoesse auf einmal', () => {
   })
 })
 
+describe('validatePage - gespeicherte Include-Eintraege bleiben speicherbar (R17)', () => {
+  /*
+   * Die BEWUSSTE ASYMMETRIE des Backends (§2.1): `_validate_page_kind_config`
+   * (`obs/api/v1/visu.py:415,419-420`) prueft einen bereits gespeicherten,
+   * unveraenderten Include-Eintrag NICHT erneut gegen die Datenbank - sonst
+   * waere eine Bestandsseite mit einem verwaisten Eintrag dauerhaft
+   * unspeicherbar. Der Editor muss dieselbe Ausnahme kennen, sonst verbietet er,
+   * was das Backend annimmt.
+   */
+  const withStored = (stored) => context({ storedIncludes: stored })
+
+  it('duldet ein verwaistes Ziel, das schon gespeichert ist', () => {
+    expect(codes(draft({ includes: ['weg'] }), withStored(['weg']))).toEqual([])
+  })
+
+  it('duldet einen gespeicherten Eintrag auf einen Ordner', () => {
+    expect(codes(draft({ includes: ['folder'] }), withStored(['folder']))).toEqual([])
+  })
+
+  it('duldet einen gespeicherten Eintrag auf ein Popup', () => {
+    expect(codes(draft({ includes: ['popupA'] }), withStored(['popupA']))).toEqual([])
+  })
+
+  it('bleibt streng, sobald derselbe kaputte Eintrag NEU dazukommt', () => {
+    expect(codes(draft({ includes: ['weg'] }), withStored([]))).toEqual([
+      PAGE_PROBLEM.includeTargetMissing,
+    ])
+    expect(codes(draft({ includes: ['weg-a', 'weg-b'] }), withStored(['weg-a']))).toEqual([
+      PAGE_PROBLEM.includeTargetMissing,
+    ])
+  })
+
+  it('duldet den Selbst-Include auch dann nicht, wenn er gespeichert ist', () => {
+    // Das Backend prueft `target_id == node_id` VOR der Ausnahme (`visu.py:417`).
+    expect(codes(draft({ includes: ['home'] }), withStored(['home']))).toContain(
+      PAGE_PROBLEM.selfInclude,
+    )
+  })
+
+  it('prueft den Zyklus weiterhin ueber ALLE Eintraege', () => {
+    const cyclic = context({ includesById: { gamma: ['home'] }, storedIncludes: ['gamma'] })
+    expect(codes(draft({ includes: ['gamma'] }), cyclic)).toContain(PAGE_PROBLEM.includeCycle)
+  })
+})
+
+describe('validatePage - „Inkludeseite" ist eine abgeleitete Rolle, keine Einstellung', () => {
+  /*
+   * Der A0-Entscheid: das Backend kennt fuer die individuelle Inkludeseite
+   * keinen Spaltenwert. `toBackendKind('include')` schickt deshalb `normal`, und
+   * nach dem Reload steht wieder „normal" da - ein Klick ohne Wirkung, quittiert
+   * mit „Gespeichert". Der Editor sagt es jetzt vorher, statt still zurueckzufallen.
+   */
+  it('meldet „Inkludeseite" an einer Seite, die niemand inkludiert', () => {
+    expect(codes(draft({ id: 'solo', editorKind: 'include' }))).toEqual([
+      PAGE_PROBLEM.includeKindNeedsReference,
+    ])
+  })
+
+  it('laesst „Inkludeseite" an einer inkludierten Seite durch', () => {
+    expect(codes(draft({ id: 'gamma', editorKind: 'include' }))).toEqual([])
+  })
+
+  it('meldet „normal" an einer Seite, die inkludiert wird', () => {
+    expect(codes(draft({ id: 'gamma', editorKind: 'normal' }))).toEqual([
+      PAGE_PROBLEM.normalKindWhileIncluded,
+    ])
+  })
+
+  it('laesst „normal" an einer nicht inkludierten Seite durch', () => {
+    expect(codes(draft({ id: 'solo', editorKind: 'normal' }))).toEqual([])
+  })
+
+  it('haelt einen frischen Entwurf (noch ohne ID) fuer nicht inkludiert', () => {
+    expect(codes(draft({ id: null, editorKind: 'include' }))).toEqual([
+      PAGE_PROBLEM.includeKindNeedsReference,
+    ])
+    expect(codes(draft({ id: null, editorKind: 'normal' }))).toEqual([])
+  })
+
+  it('redet an einem Ordner nicht ueber die Rolle - dort gilt kindOnlyForPages', () => {
+    expect(codes(draft({ id: 'folder', type: 'LOCATION', editorKind: 'include' }))).toEqual([
+      PAGE_PROBLEM.kindOnlyForPages,
+    ])
+  })
+})
+
+describe('validatePage - eine Zielgruppe aus echten Nutzern (422 vorweggenommen)', () => {
+  /*
+   * `_validate_target_usernames` (`visu.py:635-650`) lehnt einen Nutzernamen ab,
+   * den es nicht (mehr) gibt oder der Admin ist - 422
+   * `visu_target_audience_invalid_users`. Der Editor kennt die Nutzerliste und
+   * sagt es vorher.
+   */
+  const known = (list) => context({ knownUsernames: list })
+
+  it('meldet einen Namen, den die Nutzerliste nicht kennt', () => {
+    const problems = validatePage(
+      draft({ access: 'user', usernames: ['e2e_resident', 'weg'] }),
+      known(['e2e_resident']),
+    )
+    expect(problems).toEqual([{ code: PAGE_PROBLEM.audienceUserUnknown, params: { user: 'weg' } }])
+  })
+
+  it('laesst eine Zielgruppe aus bekannten Nutzern durch', () => {
+    expect(codes(draft({ access: 'user', usernames: ['e2e_resident'] }), known(['e2e_resident']))).toEqual([])
+  })
+
+  it('schweigt, solange die Nutzerliste gar nicht geladen ist', () => {
+    // Sonst waere eine Bestandsseite unspeicherbar, nur weil `GET /auth/users`
+    // einmal gescheitert ist - genau die Strenge, die R17 verbietet.
+    expect(codes(draft({ access: 'user', usernames: ['e2e_resident'] }), known(null))).toEqual([])
+  })
+
+  it('redet nicht ueber Namen, wenn der Zugriff gar nicht „user" ist', () => {
+    expect(codes(draft({ access: 'public', usernames: ['weg'] }), known([]))).toEqual([
+      PAGE_PROBLEM.audienceRequiresUserAccess,
+    ])
+  })
+})
+
 describe('PAGE_PROBLEM - jeder Code hat einen Text in beiden Sprachen', () => {
   it('deckt de und en vollstaendig ab', async () => {
     const de = (await import('@/locales/de.json')).default

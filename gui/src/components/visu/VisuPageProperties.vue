@@ -57,6 +57,36 @@ const addableUsers = computed(() =>
 
 const problemText = (problem) => `visuEditor.problems.${problem.code}`
 
+/**
+ * Die Ablehnungen, die das Backend als CODE meldet und der Editor als SATZ zeigt.
+ *
+ * Zwei davon kann der Editor nicht vorwegnehmen, ohne Rechte zu kennen, die ihm
+ * kein Endpunkt liefert (`visu_target_audience_datapoints_denied`), oder ohne
+ * eine Nutzerliste, die auch fehlen kann (`visu_target_audience_invalid_users`
+ * bei nicht geladener Liste). Dann soll der Autor wenigstens lesen, was der
+ * Server meint - samt Namen und Datenpunkten, die der Server mitschickt.
+ */
+const REJECTION_CODES = Object.freeze([
+  'visu_target_audience_invalid_users',
+  'visu_target_audience_datapoints_denied',
+  'visu_target_audience_requires_user_access',
+])
+
+const rejectionKey = computed(() =>
+  REJECTION_CODES.includes(store.saveError) ? `visuEditor.rejections.${store.saveError}` : null,
+)
+
+/** Was der Satz einer Ablehnung einsetzt - genau die Angaben aus dem `detail`. */
+const rejectionParams = computed(() => {
+  const detail = store.saveErrorDetail ?? {}
+  const users = Array.isArray(detail.usernames) ? detail.usernames : []
+  const datapoints = Array.isArray(detail.datapoint_ids) ? detail.datapoint_ids : []
+  return {
+    user: detail.username ?? users.join(', '),
+    datapoints: datapoints.join(', '),
+  }
+})
+
 /* ------------------------------------------------------------- Bedienung */
 
 function onKind(event) {
@@ -442,6 +472,13 @@ async function onSubmit() {
             :value="name"
           >{{ name }}</option>
         </select>
+        <p
+          v-if="draft.access === 'user' && store.draftBindsDatapoints"
+          data-testid="visu-props-audience-datapoint-hint"
+          class="text-xs text-slate-500 dark:text-slate-400"
+        >
+          {{ $t('visuEditor.props.audienceDatapointHint') }}
+        </p>
         <ul
           v-if="draft.usernames.length > 0"
           class="flex flex-wrap gap-1"
@@ -527,7 +564,8 @@ async function onSubmit() {
       data-testid="visu-props-error"
       class="text-sm text-rose-600 dark:text-rose-400"
     >
-      {{ $t('visuEditor.props.saveFailed') }} {{ store.saveError }}
+      {{ $t('visuEditor.props.saveFailed') }}
+      {{ rejectionKey ? $t(rejectionKey, rejectionParams) : store.saveError }}
     </p>
 
     <div class="flex items-center gap-2">

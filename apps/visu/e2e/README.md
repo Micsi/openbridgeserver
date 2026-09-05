@@ -14,7 +14,8 @@ obs-Server:
 
 Beide Suiten teilen `seed.py`, `fixtures.ts` und die Playwright-Konfiguration.
 Die Schritte 1-6 unten bringen den Stapel hoch (Mosquitto, Backend, Seed,
-Visu-Dev-Server) und gelten für beide.
+Visu-Dev-Server und — für die Editor-Szenarien — der Admin-GUI-Dev-Server aus
+Schritt 4b) und gelten für beide.
 
 ## Suite 1 — Visu × authz role E2E (Welle 4)
 
@@ -122,16 +123,56 @@ OBS_BASE=http://127.0.0.1:8080 OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin
 The Visu only wires up the real `ObsDataSource` when opted in via `VITE_USE_OBS=1`
 (or `VITE_OBS_API`); `/api` REST + WebSocket are proxied to `VITE_OBS_PROXY_TARGET`.
 
+`VITE_PREVIEW_ALLOWED_ORIGINS` ist neu und **für die Editor-Szenarien Pflicht**:
+die Vorschau (`/preview`) nimmt einen Entwurf nur von einer Herkunft an, die zur
+**Bauzeit** feststeht (`apps/visu/src/preview/origins.ts`) — ohne die Variable
+gilt allein der eigene Origin, und der Editor sendet aus der Admin-GUI, also von
+einem anderen Port. Der Empfänger schweigt dann, und die Konsole meldet
+`Failed to execute 'postMessage': The target origin provided … does not match`.
+Der Wert ist der Origin der **Admin-GUI** aus Schritt 4b.
+
 ```bash
 VITE_USE_OBS=1 VITE_OBS_PROXY_TARGET=http://127.0.0.1:8080 \
+  VITE_PREVIEW_ALLOWED_ORIGINS=http://localhost:5173 \
   pnpm --filter @obs/visu-app dev &          # serves http://localhost:5175
 VISU_PID=$!
 ```
 
+## Step 4b — Admin-GUI dev server (nur für die Editor-Szenarien E1-E19, R16)
+
+Der V2-Editor lebt in der **Admin-GUI** (`gui/`), nicht in `apps/visu` (§2.4).
+Die Editor-Szenarien öffnen `GUI_BASE_URL/visu-editor/…`, melden sich dort an
+und lesen die Vorschau in einem `iframe`. Ohne diesen Server sind **alle**
+E-Szenarien und R16 rot; die Schritte 1-4 allein genügen ihnen nicht.
+
+Zwei Dinge müssen dabei stimmen:
+
+- `VITE_VISU_PREVIEW_URL` zeigt auf die `/preview`-Route des Visu-Dev-Servers.
+  Die eingebaute Vorgabe ist `/visu-v2/preview` (same-origin, der Normalfall im
+  ausgelieferten Server) — **diese Route liefert im Dev-Betrieb niemand aus**
+  (sie gehört Teil D), im Vorschaukasten stünde sonst die Admin-GUI selbst.
+- Der Wert ist zugleich die Herkunft, die der Visu-Dev-Server erlauben muss
+  (Schritt 4, `VITE_PREVIEW_ALLOWED_ORIGINS`) — beide Angaben gehören zusammen.
+
+```bash
+GUI_DEV_PORT=5173 \
+  VITE_OBS_PROXY_TARGET=http://127.0.0.1:8080 \
+  VITE_VISU_PROXY_TARGET=http://localhost:5175 \
+  VITE_VISU_PREVIEW_URL=http://localhost:5175/preview \
+  npm --prefix gui run dev &                 # serves http://localhost:5173
+GUI_PID=$!
+```
+
+> Eigener Portstapel (parallele Läufe): jeder Port ist umlegbar — `GUI_DEV_PORT`
+> für die Admin-GUI, `--port` bzw. `PLAYWRIGHT_BASE_URL` für die Visu. Werden sie
+> verschoben, wandern `VITE_VISU_PREVIEW_URL`, `VITE_PREVIEW_ALLOWED_ORIGINS`,
+> `VITE_VISU_PROXY_TARGET` und `GUI_BASE_URL` **mit**; sie zeigen aufeinander.
+
 ## Step 5 — Run the E2E
 
 ```bash
-PLAYWRIGHT_BASE_URL=http://localhost:5175 pnpm --filter @obs/visu-app e2e
+PLAYWRIGHT_BASE_URL=http://localhost:5175 GUI_BASE_URL=http://localhost:5173 \
+  pnpm --filter @obs/visu-app e2e
 # report:
 pnpm --filter @obs/visu-app e2e:report
 ```
@@ -147,7 +188,7 @@ PLAYWRIGHT_MANAGE_WEBSERVER=1 VITE_OBS_PROXY_TARGET=http://127.0.0.1:8080 \
 ## Step 6 — Teardown (no zombies)
 
 ```bash
-kill $VISU_PID $OBS_PID 2>/dev/null || true
+kill $GUI_PID $VISU_PID $OBS_PID 2>/dev/null || true
 docker stop "$MQTT_CID" && docker rm "$MQTT_CID"
 rm -rf "$E2E_STATE" "$TMPDIR/e2e_mosq.conf" apps/visu/e2e/.seeded.json
 rm -rf apps/visu/.auth apps/visu/test-results apps/visu/playwright-report
@@ -198,9 +239,10 @@ grün, sobald der genannte Teil liefert.
 
 ## Harness starten
 
-Voraussetzungen und Schritte 1-4 oben (Mosquitto, Backend, Seed, Visu-Dev-Server)
-gelten unverändert; der Harness braucht zusätzlich nur die Umgebungsvariablen,
-die auf **dasselbe** Backend zeigen wie der Seed:
+Voraussetzungen und Schritte 1-4b oben (Mosquitto, Backend, Seed,
+Visu-Dev-Server, Admin-GUI-Dev-Server) gelten unverändert; der Harness braucht
+zusätzlich nur die Umgebungsvariablen, die auf **dasselbe** Backend zeigen wie
+der Seed:
 
 ```bash
 # 0) Health-Check VOR dem Start — der Harness prüft das Backend, nicht sich selbst
@@ -223,10 +265,12 @@ rm -f apps/visu/e2e/.seeded.json
 OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
   .venv/bin/python apps/visu/e2e/seed.py
 
-# 3) Harness
+# 3) Harness — die Editor-Szenarien brauchen ZUSAETZLICH die Admin-GUI aus
+#    Schritt 4b; ohne `GUI_BASE_URL` laufen sie gegen die Vorgabe 5173.
 cd apps/visu
 OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
   PLAYWRIGHT_BASE_URL=http://localhost:5175 \
+  GUI_BASE_URL=http://localhost:5173 \
   ./node_modules/.bin/playwright test
 ```
 
@@ -235,7 +279,11 @@ OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
 | `OBS_BASE` | Backend, gegen das die Regeltabelle direkt prüft (nicht über den Vite-Proxy) | `http://127.0.0.1:8080` |
 | `OBS_ADMIN_USER` / `OBS_ADMIN_PASSWORD` | Wegwerf-Owner der ephemeren Instanz | `admin` / `e2e-admin-pw` |
 | `PLAYWRIGHT_BASE_URL` | Visu-Dev-Server für die UI-Szenarien | `http://localhost:5175` |
-| `GUI_BASE_URL` | Admin-GUI, in der der V2-Editor liegt (§2.4); nur die E-Szenarien nutzen sie | `http://localhost:5173` |
+| `GUI_BASE_URL` | Admin-GUI, in der der V2-Editor liegt (§2.4); nur die E-Szenarien und R16 nutzen sie | `http://localhost:5173` |
+| `GUI_DEV_PORT` | Port des Admin-GUI-Dev-Servers (Schritt 4b) — muss zu `GUI_BASE_URL` passen | `5173` |
+| `VITE_VISU_PREVIEW_URL` | **am GUI-Dev-Server**: wo die eingebettete Vorschau liegt. Vorgabe ist eine Route, die im Dev-Betrieb niemand ausliefert — ohne diese Angabe zeigt der Vorschaukasten die Admin-GUI selbst, und E3/E19 sind rot | `/visu-v2/preview` |
+| `VITE_PREVIEW_ALLOWED_ORIGINS` | **am Visu-Dev-Server**: welche Herkunft der Vorschau einen Entwurf schicken darf (Bauzeit-Liste). Ohne sie gilt nur der eigene Origin, und die Bruecke schweigt | der eigene Origin |
+| `VITE_VISU_PROXY_TARGET` | **am GUI-Dev-Server**: wohin `/visu` und `/visu/*` proxiert werden | `http://localhost:5174` |
 
 `POST /api/v1/auth/login` ist auf **5 Anmeldungen pro Minute** begrenzt
 (`@limiter.limit("5/minute")`, `obs/api/auth.py:471`; bis Runde 1 stand hier
@@ -367,6 +415,63 @@ bleibt) wird R15 rot: `Expected: 403 / Received: 200` im Schritt „403 Zugriff
 verweigert". Ohne das Leserecht des operators auf `dp-m5-guard-user` hätte die
 Policy denselben 403 nachgeliefert und die Mutation überlebt.
 
+### Ergebnis der Pflichtläufe (Teil C1 Runde 2, 2026-09-05, mit dem V2-Editor)
+
+Eigener Portstapel: Mosquitto anonym auf `127.0.0.1:1893` (Colima), Backend
+`http://127.0.0.1:8093` (venv/uvicorn), Visu-Dev-Server `http://localhost:5193`,
+**Admin-GUI-Dev-Server `http://localhost:5183`** (Schritt 4b). Beide Dev-Server
+vor Lauf 1 frisch gestartet, Health-Check vor beiden Läufen grün. Gefahren
+**exakt nach den Schritten 1-4b und „Harness starten" oben** — die dort neu
+dokumentierten Variablen `VITE_VISU_PREVIEW_URL` und
+`VITE_PREVIEW_ALLOWED_ORIGINS` sind genau die, ohne die der Lauf vorher nur auf
+dem Rechner des Bauers reproduzierbar war.
+
+| Lauf | Instanz | pass | fixme | flaky | fail | Dauer |
+|---|---|---|---|---|---|---|
+| 1 | frisch + leer, Dev-Server **kalt**, Seed **einmal** | **21** | **18** | **0** | **0** | 2,5 min |
+| 2 | dieselbe Instanz, Seed **erneut** | **21** | **18** | **0** | **0** | 1,9 min |
+
+Der Unterschied zu den 22/17 der Vorrunde ist **E19**: die Zeile ist wieder
+`fixme`, weil ihre Zusage („die Wahl gehört der Seite") erst mit dem Skin-Feld in
+`PageConfig` (Teil C2 #169) zu halten ist — das Szenario prüft sie jetzt in einem
+**zweiten Browser-Kontext** und würde die Browser-Ablage nicht mehr durchwinken.
+E9 und E15 prüfen dafür jetzt beide Hälften ihrer Zeile: Form **und** Wirkung
+(speichern, am `GET` nachlesen, im Editor zurücklesen, aufräumen).
+
+Zeiten der beiden Editor-Szenarien: E9 **17,3 s / 2,1 s**, E15 **20,6 s / 17,8 s**
+(Lauf 1 / Lauf 2) — unter der 30-s-Decke, aber deutlich über den übrigen
+Szenarien: sie laden die Admin-SPA mehrfach. Der Warmlauf des GUI-Dev-Servers
+(Schritt 4b, `/login`) und der neu mitgewärmte `/preview` der Visu nehmen die
+Vite-Transpilierung aus dieser Messung heraus; ohne sie lag E9 bei 32,6 s und
+damit über der Decke (gemessen).
+
+**Anmeldungen.** Die Rechnung der Vorrunde (Seed 1 + vorgeholt 2 + UI 2 = 5)
+gilt so nicht mehr: E9 und E15 melden sich je EINMAL durch die echte Maske der
+Admin-GUI an (das ist die Aussage „der Editor liegt hinter dem Admin-Login"),
+und `global-setup.ts` holt drei Tokens vor. In beiden Läufen kein einziges
+`429`: die Editor-Szenarien liegen in der Reihenfolge hinten und fallen nicht in
+dasselbe Minutenfenster wie Seed und Vorabholung. Wer den Harness stark kürzt
+(`-g`), sollte das im Blick behalten.
+
+**Belegte Schärfe der beiden aktivierten Zeilen** (Mutation im Editor, Szenario
+gegen die laufende Instanz, danach exakt zurückgenommen):
+
+| Mutation | Datei | E2E |
+|---|---|---|
+| `kind` fällt aus dem `PATCH`-Rumpf | `gui/src/utils/visuPageSavePlan.js` | **E9 rot** |
+| `access` fällt aus dem `PATCH`-Rumpf | `gui/src/utils/visuPageSavePlan.js` | **E15 rot** |
+
+Beide überlebten in der Vorrunde beide Szenarien; `access` überlebte zusätzlich
+die komplette Unit-Suite und stirbt jetzt auch dort
+(`gui/tests/utils/visuPageSavePlan.spec.js`).
+
+**Eine Falle im Harness, am Trace nachgewiesen.** `getByText('Gespeichert')`
+matcht als Teilstring — und die Einleitung des Editors enthält den Satz
+„Gespeichert wird dabei nichts". Die Erfolgsmeldung war damit erfüllt, **bevor**
+gespeichert wurde: im Trace liegt der Lesevorgang des Szenarios zwischen zwei
+Schreib-Anfragen des Editors. Alle „Gespeichert"-Erwartungen der Editor-Zeilen
+(auch die noch `fixme`-en und R16) stehen deshalb jetzt auf `{ exact: true }`.
+
 ## Abdeckung — welche Zeile prüft welches Szenario
 
 **Regeltabelle R1-R16** (`CONTRIBUTING-visu-m5.md` §1)
@@ -388,17 +493,18 @@ Policy denselben 403 nachgeliefert und die Mutation überlebt.
 | R13 normale Seite kann globale Includes ignorieren | `m5-composition.spec.ts` | **läuft** | beide Hälften wie bei R2-R6: `ignore_global_includes` am Backend (true **und** false) und kein globaler Layer im Bild |
 | R14 individuelle Inkludeseite wird eingebettet | `m5-composition.spec.ts` | **läuft** | `include`-Ebene unter der eigenen; die eingebetteten Elemente tragen dieselben `data-id` wie beim Direktaufruf (kein Datenfork) |
 | R15 Include quer über eine Zugriffsgrenze | `m5-authz-include.spec.ts` | **läuft** | die ganze Signalliste aus §2.1 + `X-Source-Page-Readonly` + Verdeckung im Baum |
-| R16 Editor-Round-Trip | `m5-editor-roundtrip.spec.ts` | `fixme` | Teil C1 #168 (Teil B #167 ist geliefert, siehe „Was bewusst offen bleibt") |
+| R16 Editor-Round-Trip | `m5-editor-roundtrip.spec.ts` | `fixme` | **Editor-Hälfte steht** (Teil C1 #168): Schritt 1+2 sind gegen die laufende Instanz grün gemessen. Offen ist Schritt 3 — der Host öffnet kein per `?popup=<id>` verlangtes Popup (Teil B #167); Einzelheiten im Kopf der Spec |
 
 R17 („V1 bleibt unberührt und grün") ist kein E2E-Szenario: das belegt der
 V1-Vitest-Lauf des Backend-Teils.
 
 **Editor-Matrix E1-E19** (`CONTRIBUTING-visu-m5.md` §1.1) in
 `m5-editor-matrix.spec.ts`, **E14 in `m5-editor-touch.spec.ts`** (eigenes
-Playwright-Projekt, s. u.); alle `fixme`, denn der V2-Editor liegt in `gui/` und ist
-noch nicht gebaut (§6: C1-C6 auf „offen"). Die geteilten Bedien-Affordanzen
-stehen in `editor-helpers.ts`, damit beide Dateien gegen dieselbe Anforderung
-bauen:
+Playwright-Projekt, s. u.). **E9 und E15 laufen** seit Teil C1 (#168) — sie
+brauchen dafür den Admin-GUI-Dev-Server aus Schritt 4b. Alle übrigen Zeilen
+bleiben `fixme`, weil der zuständige Editor-Teil noch nicht geliefert hat (§6).
+Die geteilten Bedien-Affordanzen stehen in `editor-helpers.ts`, damit beide
+Dateien gegen dieselbe Anforderung bauen:
 
 | Zeile | zuständig | Zeile | zuständig |
 |---|---|---|---|
@@ -406,11 +512,11 @@ bauen:
 | E2 Reihenfolge per Drag, Order stabil | C2 #169 | E12 Seitenversionen + Wiederherstellen | C6 #173 |
 | E3 Vorschau = Live-Renderer (Pixel-Diff 0) | C4 #171 | E13 JSON- und visuelle Ansicht synchron | C6 #173 |
 | E4 Ausrichtlinie/Verteilen/gleiche Größe | C2 #169 | E14 Touch-Drag wie Maus-Drag | C5 #172 |
-| E5 Mehrfachauswahl + Gruppieren | C5 #172 | E15 Zugriff/Zielgruppe in Seiteneigenschaften | C1 #168 |
+| E5 Mehrfachauswahl + Gruppieren | C5 #172 | E15 Zugriff/Zielgruppe in Seiteneigenschaften | **läuft** (C1 #168) |
 | E6 Copy/Paste/Duplizieren, seitenübergreifend | C5 #172 | E16 bedingte Sichtbarkeit je Datenpunktwert | C3 #170 |
 | E7 Undo/Redo + Pfeiltasten-Nudging | C5 #172 | E17 Responsive-Breakpoints | C2 #169 |
 | E8 Z-Ordnung, sperren/ausblenden | C2 #169 | E18 Export/Import als Datei | C6 #173 |
-| E9 Seitentypen wählbar und wirksam | C1 #168 | E19 Skin/Theme pro Seite oder global | C1 #168 |
+| E9 Seitentypen wählbar und wirksam | **läuft** (C1 #168) | E19 Skin/Theme pro Seite oder global | C2 #169 (Feld in `PageConfig`) |
 | E10 zentrale Vorlage propagiert automatisch | C3 #170 | | |
 
 Die Bedien-Affordanzen der E-Szenarien (Rollen, Beschriftungen, die

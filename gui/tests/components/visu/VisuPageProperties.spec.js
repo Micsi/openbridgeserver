@@ -445,3 +445,107 @@ describe('VisuPageProperties - speichern', () => {
     )
   })
 })
+
+describe('VisuPageProperties - die Ablehnungen, die der Editor NICHT vorwegnehmen kann', () => {
+  /*
+   * Zwei Ablehnungen treffen einen echten Autor beim Setzen von E15, und beide
+   * kann der Editor nicht sicher vorwegnehmen: die Nutzerliste kann fehlen
+   * (422 `visu_target_audience_invalid_users`), und die Datenpunkt-Rechte der
+   * Zielgruppe kennt er gar nicht (403 `visu_target_audience_datapoints_denied`
+   * - dafuer gibt es keinen Endpunkt). Dann soll der Autor wenigstens einen Satz
+   * lesen, nicht einen Code.
+   */
+  it('schreibt den 422 zur Zielgruppe als Satz aus, samt der beanstandeten Namen', async () => {
+    const { wrapper } = await mountProperties('guard')
+    visuApi.updateNode.mockRejectedValue({
+      response: {
+        status: 422,
+        data: { detail: { code: 'visu_target_audience_invalid_users', usernames: ['weg', 'admin'] } },
+      },
+    })
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    const text = wrapper.find('[data-testid="visu-props-error"]').text()
+    expect(text).toContain('kennt diese Nutzer nicht')
+    expect(text).toContain('weg, admin')
+    expect(text).not.toContain('visu_target_audience_invalid_users')
+  })
+
+  it('schreibt den 403 zu den Datenpunkten als Satz aus, samt Nutzer und Datenpunkten', async () => {
+    const { wrapper } = await mountProperties('guard')
+    visuApi.updateNode.mockRejectedValue({
+      response: {
+        status: 403,
+        data: {
+          detail: {
+            code: 'visu_target_audience_datapoints_denied',
+            username: 'e2e_resident',
+            datapoint_ids: ['dp-1', 'dp-2'],
+          },
+        },
+      },
+    })
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    const text = wrapper.find('[data-testid="visu-props-error"]').text()
+    expect(text).toContain('darf nicht alle Datenpunkte dieser Seite lesen')
+    expect(text).toContain('e2e_resident')
+    expect(text).toContain('dp-1, dp-2')
+  })
+
+  it('reicht eine unbekannte Ablehnung unveraendert durch, statt sie zu erfinden', async () => {
+    const { wrapper } = await mountProperties('guard')
+    visuApi.updateNode.mockRejectedValue({
+      response: { status: 409, data: { detail: { code: 'visu_irgendwas_neues' } } },
+    })
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="visu-props-error"]').text()).toContain('visu_irgendwas_neues')
+  })
+
+  it('sagt bei Zugriff „user" vorher, dass die Datenpunkte der Zielgruppe geprueft werden', async () => {
+    visuApi.getPage.mockImplementation((id) =>
+      Promise.resolve({
+        data:
+          id === 'guard'
+            ? { widgets: [{ id: 'w1', datapoint_id: 'dp-1' }], includes: [], ignore_global_includes: false, popup: null }
+            : JSON.parse(JSON.stringify(CONFIGS[id])),
+      }),
+    )
+    const { wrapper } = await mountProperties('guard')
+    expect(wrapper.find('[data-testid="visu-props-audience-datapoint-hint"]').exists()).toBe(true)
+  })
+
+  it('schweigt, wo die Seite gar keine Datenpunkte bindet', async () => {
+    const { wrapper } = await mountProperties('guard')
+    expect(wrapper.find('[data-testid="visu-props-audience-datapoint-hint"]').exists()).toBe(false)
+  })
+})
+
+describe('VisuPageProperties - „Inkludeseite" ist eine Rolle, keine Einstellung (E9)', () => {
+  it('meldet die Wahl „Inkludeseite" an einer Seite, die niemand inkludiert', async () => {
+    const { wrapper, store } = await mountProperties('home')
+    await byLabel(wrapper, 'Seitentyp').setValue('include')
+    await flushPromises()
+    expect(wrapper.find('[data-problem="includeKindNeedsReference"]').text()).toContain(
+      'sobald eine andere Seite sie inkludiert',
+    )
+    expect(store.canSave).toBe(false)
+    expect(wrapper.find('[data-testid="visu-props-save"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('laesst dieselbe Wahl an einer inkludierten Seite zu', async () => {
+    const { wrapper, store } = await mountProperties('gamma')
+    expect(byLabel(wrapper, 'Seitentyp').element.value).toBe('include')
+    expect(wrapper.find('[data-problem="includeKindNeedsReference"]').exists()).toBe(false)
+    expect(store.canSave).toBe(true)
+  })
+
+  it('meldet die Wahl „normal" an einer inkludierten Seite', async () => {
+    const { wrapper, store } = await mountProperties('gamma')
+    await byLabel(wrapper, 'Seitentyp').setValue('normal')
+    await flushPromises()
+    expect(wrapper.find('[data-problem="normalKindWhileIncluded"]').exists()).toBe(true)
+    expect(store.canSave).toBe(false)
+  })
+})

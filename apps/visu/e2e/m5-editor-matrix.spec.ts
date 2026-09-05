@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { EDITOR_BASE, VISU_BASE, adminHeaders, api, seeded } from './fixtures';
-import { C1, C2, C3, C4, C5, C6, box, el, openEditor } from './editor-helpers';
+import { C1, C2, C2_PAGE_SKIN, C3, C4, C5, C6, box, el, openEditor } from './editor-helpers';
 
 /**
  * M5 Messlatte — Editor-Matrix E1-E19 (CONTRIBUTING-visu-m5.md §1.1).
@@ -301,8 +301,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(target).toBeVisible();
   });
 
-  test('E9 Seitentypen normal/Include/globalInclude/Popup wählbar und wirksam', C1, async ({ page }) => {
+  test('E9 Seitentypen normal/Include/globalInclude/Popup wählbar und wirksam', C1, async ({ page, request }) => {
     const fx = seeded();
+    const headers = await adminHeaders(request);
     await openEditor(page, fx.m5.node_ids.popup_positioned);
 
     // Wählbar: alle vier Seitentypen stehen zur Auswahl …
@@ -310,7 +311,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(kind.locator('option')).toHaveText([/normal/i, /Inkludeseite/i, /globale Inkludeseite/i, /Popup/i]);
     await expect(kind).toHaveValue('popup');
 
-    // … und wirksam: die Popup-Eigenschaften erscheinen nur beim Typ „Popup",
+    // … die Popup-Eigenschaften erscheinen nur beim Typ „Popup",
     // und verbotene Kombinationen werden VOR dem Speichern abgefangen (C1-Gate).
     await expect(page.getByLabel('Automatisch schließen (ms)')).toBeVisible();
     await kind.selectOption('globalInclude');
@@ -318,6 +319,71 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await page.getByRole('button', { name: 'Seite inkludieren' }).click();
     await expect(page.getByText('Eine globale Inkludeseite kann selbst keine Seiten inkludieren')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Speichern' })).toBeDisabled();
+
+    // … UND WIRKSAM heißt: gespeichert und im `GET` wiederzufinden. Ohne diesen
+    // zweiten Teil überlebte die Mutation „`kind` fällt aus dem PATCH-Rumpf"
+    // dieses Szenario (gemessen, Runde 1). Der Beweis läuft auf einer EIGENEN
+    // Seite außerhalb des Seed-Namensraums: ein Typwechsel an der Beispielwelt
+    // wäre ein Eingriff in fremdes Beweismaterial.
+    const NAME = 'E9 Seitentyp wirksam';
+    const nodeOf = async () =>
+      ((await (await request.get(api('/visu/tree'), { headers })).json()) as Array<{
+        id: string;
+        name: string;
+        kind: string;
+      }>).find((n) => n.name === NAME);
+
+    // „Seite anlegen" steht im Seitenbaum derselben Ansicht: der Entwurf wird
+    // dabei verworfen (gespeichert wurde nichts), und der Lauf spart einen
+    // vollen Ladevorgang der Admin-SPA.
+    await page.getByRole('button', { name: 'Seite anlegen' }).click();
+    await page.getByLabel('Name').fill(NAME);
+    await page.getByRole('button', { name: 'Speichern' }).click();
+    // `exact: true`, und zwar aus einem gemessenen Grund: die Einleitung des
+    // Editors enthält den Satz „Gespeichert wird dabei nichts", und ein
+    // Teilstring-Treffer darauf war schon erfüllt, BEVOR gespeichert wurde.
+    // Die Erfolgsmeldung ist der einzige Knoten, dessen ganzer Text
+    // „Gespeichert" lautet — nur er ist die Schranke, hinter der der Server
+    // wirklich geschrieben hat (Runde 2 am Trace nachgewiesen: der Lesevorgang
+    // lief zwischen zwei Schreib-Anfragen).
+    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+
+    const created = await nodeOf();
+    expect(created, 'die im Editor angelegte Seite steht im Baum').toBeTruthy();
+    try {
+      expect(created!.kind).toBe('normal');
+
+      // Der Typwechsel an einer BESTEHENDEN Seite geht als `PATCH` hinaus …
+      await page.goto(`${EDITOR_BASE}/visu-editor/${created!.id}`);
+      await expect(page.getByLabel('Seitentyp')).toHaveValue('normal');
+      await page.getByLabel('Seitentyp').selectOption('popup');
+      await page.getByLabel('Automatisch schließen (ms)').fill('2000');
+      await page.getByRole('button', { name: 'Speichern' }).click();
+      await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+
+      // … und steht danach am Server, nicht nur im Formular (§3: „jede
+      // Eigenschaft setzen → `GET` zeigt sie").
+      expect((await nodeOf())!.kind).toBe('popup');
+      const cfg = await (await request.get(api(`/visu/pages/${created!.id}`), { headers })).json();
+      expect(cfg.popup).toMatchObject({ auto_close_ms: 2000 });
+
+      // Und der Editor liest den gespeicherten Stand zurück, nicht seinen eigenen.
+      await page.reload();
+      await expect(page.getByLabel('Seitentyp')).toHaveValue('popup');
+      await expect(page.getByLabel('Automatisch schließen (ms)')).toHaveValue('2000');
+
+      // Der vierte Typ ist eine ROLLE, keine Einstellung: „Inkludeseite" entsteht
+      // dort, wo inkludiert wird (A0-Entscheid — das Backend kennt dafür keinen
+      // Spaltenwert). Bis Runde 1 quittierte der Editor die Wahl mit
+      // „Gespeichert" und fiel nach dem Reload still auf „normal" zurück
+      // (gemessen); jetzt sagt er es vorher und speichert nichts.
+      await page.getByLabel('Seitentyp').selectOption('include');
+      await expect(page.getByText('sobald eine andere Seite sie inkludiert')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Speichern' })).toBeDisabled();
+    } finally {
+      // Aufräumen: das Szenario hinterlässt die Welt, wie es sie fand.
+      if (created) await request.delete(api(`/visu/nodes/${created.id}`), { headers });
+    }
   });
 
   test.fixme(
@@ -331,7 +397,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       await el(page, fx.m5.widgets.include_ind).click();
       await page.getByLabel('Name').fill('M5 Gamma Umbenannt');
       await page.getByRole('button', { name: 'Speichern' }).click();
-      await expect(page.getByText('Gespeichert')).toBeVisible();
+      await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
 
       await page.goto(`${EDITOR_BASE}/visu-editor/${fx.m5.node_ids.home}`);
       await expect(page.frameLocator('iframe.editor-preview').getByText('M5 Gamma Umbenannt')).toBeVisible();
@@ -369,7 +435,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await el(page, fx.m5.widgets.solo).click();
     await page.keyboard.press('ArrowRight');
     await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Gespeichert')).toBeVisible();
+    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
 
     // Der Verlauf listet die Versionen …
     await page.getByRole('button', { name: 'Verlauf' }).click();
@@ -404,8 +470,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
   test(
     'E15 Zugriff/Zielgruppe direkt in Seiteneigenschaften setzbar (mind. Admin-only/Nutzer-Sichtbarkeit)',
     C1,
-    async ({ page }) => {
+    async ({ page, request }) => {
       const fx = seeded();
+      const headers = await adminHeaders(request);
       await openEditor(page, fx.m5.node_ids.guard_user);
 
       // Das OBS-eigene 4-Stufen-Modell steht vollständig zur Wahl (Owner-Latte
@@ -422,6 +489,56 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       await expect(page.getByLabel('Zielgruppe')).toBeDisabled();
       await access.selectOption('protected');
       await expect(page.getByLabel('PIN')).toBeVisible();
+      // Und NUR dort: bei jeder anderen Stufe ist das Feld gar nicht erst da,
+      // statt einen Wert zu tragen, den `update_node` mit 400 ablehnt.
+      await access.selectOption('readonly');
+      await expect(page.getByLabel('PIN')).toHaveCount(0);
+
+      // SETZBAR heißt: gespeichert und im `GET` wiederzufinden. Ohne diesen Teil
+      // überlebte die Mutation „`access` fällt aus dem PATCH-Rumpf" dieses
+      // Szenario (gemessen, Runde 1). Gearbeitet wird auf einer EIGENEN Seite:
+      // die geseedete Zugriffs-Welt gehört den authz-Szenarien.
+      const NAME = 'E15 Zugriff wirksam';
+      const nodeOf = async () =>
+        ((await (await request.get(api('/visu/tree'), { headers })).json()) as Array<{
+          id: string;
+          name: string;
+          access: string | null;
+        }>).find((n) => n.name === NAME);
+
+      // „Seite anlegen" steht im Seitenbaum derselben Ansicht (s. E9).
+      await page.getByRole('button', { name: 'Seite anlegen' }).click();
+      await page.getByLabel('Name').fill(NAME);
+      await page.getByRole('button', { name: 'Speichern' }).click();
+      await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+
+      const created = await nodeOf();
+      expect(created, 'die im Editor angelegte Seite steht im Baum').toBeTruthy();
+      try {
+        // Der Zugriffswechsel an einer BESTEHENDEN Seite: erben ab, `user` an,
+        // Zielgruppe dazu — und gespeichert.
+        await page.goto(`${EDITOR_BASE}/visu-editor/${created!.id}`);
+        await page.getByLabel('Vom Elternknoten erben').uncheck();
+        await page.getByLabel('Zugriff').selectOption('user');
+        await page.getByLabel('Nutzer hinzufügen').selectOption(fx.resident.username);
+        await page.getByRole('button', { name: 'Speichern' }).click();
+        await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+
+        // Der Server trägt beide Hälften: die Stufe am Knoten …
+        expect((await nodeOf())!.access).toBe('user');
+        // … und die Zielgruppe an der Seite.
+        const audience = await (
+          await request.get(api(`/visu/nodes/${created!.id}/users`), { headers })
+        ).json();
+        expect(audience).toEqual([fx.resident.username]);
+
+        // Und der Editor liest den gespeicherten Stand zurück, nicht seinen eigenen.
+        await page.reload();
+        await expect(page.getByLabel('Zugriff')).toHaveValue('user');
+        await expect(page.getByLabel('Zielgruppe')).toContainText(fx.resident.username);
+      } finally {
+        if (created) await request.delete(api(`/visu/nodes/${created.id}`), { headers });
+      }
     },
   );
 
@@ -452,7 +569,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
 
     await page.getByLabel('Breakpoints').fill('480, 768, 1024');
     await page.getByRole('button', { name: 'Speichern' }).click();
-    await expect(page.getByText('Gespeichert')).toBeVisible();
+    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
 
     // Die Vorschau folgt dem gewählten Breakpoint …
     await page.getByLabel('Vorschau-Breite').selectOption('480');
@@ -486,29 +603,49 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(page.getByText(fx.m5.names.include_ind)).toHaveCount(2);
   });
 
-  test('E19 Skin/Theme pro Seite oder global wählbar', C1, async ({ page }) => {
+  test.fixme('E19 Skin/Theme pro Seite oder global wählbar', C2_PAGE_SKIN, async ({ page, browser }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.solo);
 
     // Pro Seite: die Vorschau wechselt den Renderer, ohne die Seite zu ändern.
+    const preview = page.frameLocator('iframe.editor-preview');
     const skin = page.getByLabel('Skin');
     await skin.selectOption('edomi');
-    await expect(page.frameLocator('iframe.editor-preview').locator('.edomi-root')).toBeVisible();
-    await skin.selectOption('terminal');
-    // `.first()`, und zwar aus einem gemessenen Grund: der terminal-Skin traegt
-    // seinen `rootClass` ZWEIMAL - einmal an der Schale (`app-shell-page`) und
-    // einmal am Seiten-Wurzelknoten. Das ist keine Eigenheit der Vorschau,
-    // sondern der echten Visu: `http://<visu>/terminal` liefert dieselben zwei
-    // Treffer (nachgemessen, Teil C1 #168). Ohne `.first()` faellt das Szenario
-    // an Playwrights Strict-Mode statt an seiner Behauptung. Der edomi-Skin
-    // bringt seinen eigenen Seiten-Renderer mit und traegt `.edomi-root` genau
-    // einmal - die Zeile darueber bleibt deshalb, wie sie war.
-    await expect(page.frameLocator('iframe.editor-preview').locator('.t-root').first()).toBeVisible();
+    // `.edomi-root` ist einmalig, weil es GAR NICHT edomis `rootClass` ist:
+    // der ist `visu-root` (`apps/visu/src/skin-host/skins.ts`), und `.edomi-root`
+    // kommt aus edomis eigenem Seiten-Renderer.
+    await expect(preview.locator('.edomi-root')).toBeVisible();
 
-    // Und die Wahl überlebt den Reload (sie gehört der Seite, nicht der Sitzung).
+    await skin.selectOption('terminal');
+    // Der `rootClass` des aktiven Skins steht ZWEIMAL im Baum, und zwar bei
+    // JEDEM Skin: einmal an der Schale (`AppShell.vue` haengt ihn per
+    // `classList.add` an `.app-shell-page`) und einmal am Seiten-Wurzelknoten
+    // (`SkinPage.vue` → `.overview-root`). Das ist die festgeschriebene
+    // Zwei-Knoten-Bauart der Schale, keine Eigenheit des terminal-Skins - auf
+    // einer edomi-Seite trifft `.visu-root` sogar dreimal. Gewählt wird deshalb
+    // der AUSSAGEKRÄFTIGE Knoten, der Seiten-Wurzelknoten, und nicht der
+    // erstbeste: dass die Schale ihre Klasse trägt, sagt über den Renderer der
+    // Seite nichts.
+    await expect(preview.locator('.overview-root.t-root')).toBeVisible();
+
+    // Und die Wahl gehört der SEITE, nicht dem Browser des Autors: sie steht
+    // nach dem Speichern in der Seiten-Konfiguration, und wer dieselbe Seite in
+    // einem ZWEITEN Kontext öffnet, sieht sie ebenso. `page.reload()` allein
+    // bewiese das NICHT — ein Browser-Speicher überlebt den Reload per
+    // Definition, und genau daran hat sich Runde 1 vorbeigemogelt.
     await page.getByRole('button', { name: 'Speichern' }).click();
+    await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
     await page.reload();
     await expect(page.getByLabel('Skin')).toHaveValue('terminal');
+
+    const zweiterKontext = await browser.newContext({ locale: 'en-US' });
+    try {
+      const zweiterBrowser = await zweiterKontext.newPage();
+      await openEditor(zweiterBrowser, fx.m5.node_ids.solo);
+      await expect(zweiterBrowser.getByLabel('Skin')).toHaveValue('terminal');
+    } finally {
+      await zweiterKontext.close();
+    }
   });
 });
 

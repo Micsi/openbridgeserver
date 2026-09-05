@@ -3436,7 +3436,8 @@
       "removeUser": "Nutzer entfernen: {name}",
       "skinSection": "Darstellung",
       "skin": "Skin",
-      "skinHint": "Die Wahl gilt für diese Seite und wird im Browser gemerkt.",
+      "skinHint": "Die Wahl wird je Seite im Browser dieses Rechners gemerkt, nicht in der Seite selbst: ein anderer Browser sieht die Vorgabe.",
+      "audienceDatapointHint": "Beim Speichern prüft der Server, ob jeder Nutzer der Zielgruppe alle Datenpunkte dieser Seite lesen darf. Fehlt eine Freigabe, lehnt er ab (403).",
       "save": "Speichern",
       "saved": "Gespeichert",
       "saveFailed": "Das Speichern ist fehlgeschlagen."
@@ -3472,8 +3473,16 @@
       "includeTargetIsPopup": "Eine Popup-Seite kann nicht inkludiert werden: {target}",
       "includeCycle": "Include-Zyklus: die Seite inkludiert sich mittelbar selbst",
       "includedPageCannotBecomePopup": "Eine inkludierte Seite kann kein Popup werden",
+      "includeKindNeedsReference": "„Inkludeseite“ ist keine Einstellung, sondern eine Rolle: eine Seite wird dazu, sobald eine andere Seite sie inkludiert. Bisher tut das keine.",
+      "normalKindWhileIncluded": "Diese Seite wird von einer anderen Seite inkludiert und ist damit eine Inkludeseite. „Normale Seite“ gilt erst wieder, wenn kein Include mehr auf sie zeigt.",
       "pinRequiresProtected": "PIN ist nur für geschützte Knoten zulässig",
-      "audienceRequiresUserAccess": "Eine Zielgruppe gibt es nur beim Zugriff „user“"
+      "audienceRequiresUserAccess": "Eine Zielgruppe gibt es nur beim Zugriff „user“",
+      "audienceUserUnknown": "Diesen Nutzer gibt es nicht (mehr), oder er ist Admin: {user}"
+    },
+    "rejections": {
+      "visu_target_audience_invalid_users": "Der Server kennt diese Nutzer nicht (mehr) oder sie sind Admins: {user}",
+      "visu_target_audience_datapoints_denied": "Die Zielgruppe darf nicht alle Datenpunkte dieser Seite lesen. Betroffen: {user}; fehlende Datenpunkte: {datapoints}.",
+      "visu_target_audience_requires_user_access": "Eine Zielgruppe gibt es nur beim Zugriff „user“."
     }
   }
 }

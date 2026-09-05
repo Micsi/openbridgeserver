@@ -44,7 +44,11 @@ function apiMock() {
       Promise.resolve({ data: id === 'guard' ? ['e2e_resident'] : [] }),
     ),
     usernames: vi.fn().mockResolvedValue({
-      data: [{ username: 'admin' }, { username: 'e2e_resident' }, { username: 'e2e_operator' }],
+      data: [
+        { username: 'admin', is_admin: true },
+        { username: 'e2e_resident', is_admin: false },
+        { username: 'e2e_operator', is_admin: false },
+      ],
     }),
   }
 }
@@ -102,9 +106,12 @@ describe('visuEditor - laden', () => {
     expect(store.nodes).toEqual([])
   })
 
-  it('holt die Nutzerliste fuer die Zielgruppen-Auswahl', async () => {
+  it('holt die Nutzerliste fuer die Zielgruppen-Auswahl - ohne Admins', async () => {
+    // Ein Admin ist als Zielgruppen-Mitglied ungueltig: `_validate_target_usernames`
+    // (`obs/api/v1/visu.py:635-650`) antwortet mit 422. Wer ihn gar nicht erst
+    // anbietet, produziert die Ablehnung nicht.
     const store = await loadedStore()
-    expect(store.allUsernames).toEqual(['admin', 'e2e_resident', 'e2e_operator'])
+    expect(store.allUsernames).toEqual(['e2e_resident', 'e2e_operator'])
   })
 
   it('bleibt ohne Nutzerliste bedienbar', async () => {
@@ -448,6 +455,116 @@ describe('visuEditor - umbenennen, verschieben, loeschen', () => {
   })
 })
 
+describe('visuEditor - „Inkludeseite" ist abgeleitet, nicht gesetzt (E9)', () => {
+  /*
+   * Gemessen an der laufenden Instanz: Seitentyp „Inkludeseite" waehlen,
+   * „Gespeichert" erscheint - nach dem Reload steht wieder `normal` da, weil das
+   * Backend fuer die Rolle keinen Spaltenwert kennt (A0-Entscheid). Ein Klick
+   * ohne Wirkung, quittiert mit einer Erfolgsmeldung. Der Editor sagt es jetzt
+   * vorher, statt still zurueckzufallen.
+   */
+  it('zeigt eine inkludierte Seite als Inkludeseite und laesst sie speichern', async () => {
+    const store = await loadedStore()
+    await store.select('gamma')
+    expect(store.draft.editorKind).toBe('include')
+    expect(store.problems).toEqual([])
+    expect(store.canSave).toBe(true)
+  })
+
+  it('sperrt „Inkludeseite" an einer Seite, die niemand inkludiert', async () => {
+    const store = await loadedStore()
+    await store.select('home')
+    store.setEditorKind('include')
+    expect(store.problems.map((p) => p.code)).toEqual(['includeKindNeedsReference'])
+    expect(store.canSave).toBe(false)
+  })
+
+  it('sperrt „normal" an einer inkludierten Seite', async () => {
+    const store = await loadedStore()
+    await store.select('gamma')
+    store.setEditorKind('normal')
+    expect(store.problems.map((p) => p.code)).toEqual(['normalKindWhileIncluded'])
+    expect(store.canSave).toBe(false)
+  })
+
+  it('schickt in diesem Zustand nichts los - „Gespeichert" waere gelogen', async () => {
+    const store = await loadedStore()
+    await store.select('home')
+    store.setEditorKind('include')
+    await store.save()
+    expect(visuApi.updateNode).not.toHaveBeenCalled()
+    expect(visuApi.savePage).not.toHaveBeenCalled()
+    expect(store.savedAt).toBe(0)
+  })
+})
+
+describe('visuEditor - eine Bestandsseite bleibt speicherbar (R17)', () => {
+  /*
+   * `_validate_page_kind_config` ueberspringt bereits gespeicherte Include-
+   * Eintraege (`obs/api/v1/visu.py:415,419-420`) - ausdruecklich, damit eine
+   * Seite nie dauerhaft unspeicherbar wird. Der Editor darf nicht strenger sein
+   * als das Backend, sonst sperrt er genau den Bestandsfall aus, fuer den die
+   * Ausnahme gebaut wurde.
+   */
+  async function storeWithOrphanInclude() {
+    visuApi.getPage.mockImplementation((id) =>
+      Promise.resolve({
+        data:
+          id === 'home'
+            ? { grid_cols: 12, widgets: [], includes: ['gamma', 'weg'], ignore_global_includes: false, popup: null }
+            : JSON.parse(JSON.stringify(CONFIGS[id] ?? { widgets: [], includes: [] })),
+      }),
+    )
+    const store = await loadedStore()
+    await store.select('home')
+    return store
+  }
+
+  it('laesst die Seite mit dem verwaisten Eintrag speichern', async () => {
+    const store = await storeWithOrphanInclude()
+    expect(store.storedIncludes).toEqual(['gamma', 'weg'])
+    expect(store.problems).toEqual([])
+    expect(store.canSave).toBe(true)
+  })
+
+  it('bleibt streng, sobald ein NEUER kaputter Eintrag dazukommt', async () => {
+    const store = await storeWithOrphanInclude()
+    store.draft.includes = [...store.draft.includes, 'auch-weg']
+    expect(store.problems).toEqual([
+      { code: 'includeTargetMissing', params: { target: 'auch-weg' } },
+    ])
+    expect(store.canSave).toBe(false)
+  })
+})
+
+describe('visuEditor - die Zielgruppe aus echten Nutzern (E15)', () => {
+  it('bietet keinen Admin als Zielgruppen-Mitglied an', async () => {
+    const store = await loadedStore()
+    expect(store.allUsernames).toEqual(['e2e_resident', 'e2e_operator'])
+    expect(store.usernamesLoaded).toBe(true)
+  })
+
+  it('meldet einen Namen, den die Nutzerliste nicht kennt (422 vorweggenommen)', async () => {
+    const store = await loadedStore()
+    await store.select('guard')
+    store.draft.access = 'user'
+    store.draft.usernames = ['e2e_resident', 'weg']
+    expect(store.problems).toEqual([{ code: 'audienceUserUnknown', params: { user: 'weg' } }])
+    expect(store.canSave).toBe(false)
+  })
+
+  it('schweigt, wenn die Nutzerliste gar nicht geladen werden konnte', async () => {
+    visuApi.usernames.mockRejectedValue(new Error('500'))
+    const store = await loadedStore()
+    await store.select('guard')
+    store.draft.access = 'user'
+    store.draft.usernames = ['e2e_resident']
+    expect(store.usernamesLoaded).toBe(false)
+    expect(store.problems).toEqual([])
+    expect(store.canSave).toBe(true)
+  })
+})
+
 describe('visuEditor - der Skin je Seite (E19)', () => {
   it('faellt ohne Wahl auf die Vorgabe zurueck', async () => {
     const store = await loadedStore()
@@ -470,6 +587,50 @@ describe('visuEditor - der Skin je Seite (E19)', () => {
     await store.select('home')
     store.setSkin('gibt-es-nicht')
     expect(store.skin).toBe('edomi')
+  })
+
+  /*
+   * Die Naht zu Teil C2 (#169): sobald `PageConfig` das Feld fuehrt, liest und
+   * schreibt der Editor es - und vorher schickt er es NICHT mit, weil das
+   * Backend ein unbekanntes Feld still verwirft.
+   */
+  it('schickt heute kein Skin-Feld mit - das Backend wuerde es still verwerfen', async () => {
+    const store = await loadedStore()
+    await store.select('home')
+    store.setSkin('terminal')
+    expect(store.skinSupported).toBe(false)
+    await store.save()
+    const [, body] = visuApi.savePage.mock.calls.at(-1)
+    expect(body).not.toHaveProperty('skin')
+  })
+
+  it('liest den Skin aus der Seite, sobald das Backend ihn fuehrt', async () => {
+    visuApi.getPage.mockImplementation((id) =>
+      Promise.resolve({
+        data: { ...JSON.parse(JSON.stringify(CONFIGS[id] ?? { widgets: [] })), skin: id === 'home' ? 'terminal' : null },
+      }),
+    )
+    const store = await loadedStore()
+    await store.select('home')
+    expect(store.skinSupported).toBe(true)
+    expect(store.skin).toBe('terminal')
+    // Und die Seite schlaegt den Browser-Speicher: er ist nur der Notbehelf.
+    await store.select('gamma')
+    expect(store.skin).toBe('edomi')
+  })
+
+  it('schreibt den Skin mit, sobald das Backend das Feld fuehrt', async () => {
+    visuApi.getPage.mockImplementation((id) =>
+      Promise.resolve({
+        data: { ...JSON.parse(JSON.stringify(CONFIGS[id] ?? { widgets: [] })), skin: null },
+      }),
+    )
+    const store = await loadedStore()
+    await store.select('home')
+    store.setSkin('terminal')
+    await store.save()
+    const [, body] = visuApi.savePage.mock.calls.at(-1)
+    expect(body.skin).toBe('terminal')
   })
 })
 

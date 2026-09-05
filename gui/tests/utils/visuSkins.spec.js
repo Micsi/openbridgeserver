@@ -4,10 +4,14 @@ import { dirname, join, resolve } from 'node:path'
 
 import {
   DEFAULT_VISU_SKIN,
+  PAGE_SKIN_FIELD,
   VISU_SKIN_KEYS,
   isKnownSkin,
+  pageConfigCarriesSkin,
   readPageSkin,
+  skinFromPageConfig,
   skinStorageKey,
+  withPageSkin,
   writePageSkin,
 } from '@/utils/visuSkins'
 
@@ -23,13 +27,15 @@ import {
  *    Schluessel. Ein Import ginge hier nicht - die Registry zieht die
  *    Skin-Pakete selbst herein.
  *
- * 2. DIE WAHL LIEGT HEUTE IM BROWSER. `PageConfig` (obs/models/visu.py) hat kein
- *    Feld fuer den Skin, und `save_page` schreibt `config.model_dump_json()` -
- *    ein zusaetzliches Feld faellt still weg. Der Editor darf `obs/` nicht
- *    anfassen (Teil A ist durch), also merkt er sich die Wahl je SEITE lokal.
- *    Das erfuellt E19 („die Wahl ueberlebt den Reload"), ist aber nicht dasselbe
- *    wie „steht im GET": der dauerhafte Platz waere `PageConfig.skin` und
- *    gehoert Teil A. Genau so steht es im Bericht.
+ * 2. DIE WAHL LIEGT HEUTE IM BROWSER DES AUTORS. `PageConfig`
+ *    (obs/models/visu.py) hat kein Feld fuer den Skin, und `save_page` schreibt
+ *    `config.model_dump_json()` - ein zusaetzliches Feld faellt still weg. Der
+ *    Editor darf `obs/` nicht anfassen, also merkt er sich die Wahl je SEITE im
+ *    `localStorage`. Das ist NICHT „steht im GET": ein zweiter Browser sieht die
+ *    Vorgabe (gemessen). Der dauerhafte Platz ist das Skin-Feld, das Teil C2
+ *    additiv an `PageConfig` haengt (#169); die Naht dafuer steht hier und
+ *    schaltet sich selbst ein, sobald eine geladene Konfiguration den Schluessel
+ *    traegt. Genau so steht es im Bericht, und E19 bleibt bis dahin `fixme`.
  */
 
 /** Ein Speicher, der sich wie `localStorage` verhaelt - ohne globalen Zustand. */
@@ -114,6 +120,51 @@ describe('visuSkins - die Wahl je Seite', () => {
   it('bleibt bedienbar, wenn der Speicher wirft', () => {
     expect(readPageSkin('seite-1', brokenStorage)).toBe(DEFAULT_VISU_SKIN)
     expect(() => writePageSkin('seite-1', 'terminal', brokenStorage)).not.toThrow()
+  })
+})
+
+describe('visuSkins - die Naht zum Seiten-Feld (Teil C2 #169)', () => {
+  /*
+   * Der Editor darf `obs/` nicht anfassen. Er kann sich aber so vorbereiten,
+   * dass nach dem Merge von Teil C2 NICHTS mehr einzuhaengen ist: gelesen wird
+   * das Feld, sobald es da ist, geschrieben nur dann. Solange das Backend es
+   * nicht fuehrt, schickt der Editor es auch nicht - ein Feld, das
+   * `PageConfig` still verwirft, waere eine Zusage, die niemand einloest.
+   */
+  it('nennt genau einen Feldnamen - eine Konstante, falls C2 anders benennt', () => {
+    expect(PAGE_SKIN_FIELD).toBe('skin')
+  })
+
+  it('erkennt eine Konfiguration MIT dem Feld an der Anwesenheit, nicht am Wert', () => {
+    expect(pageConfigCarriesSkin({ widgets: [], skin: null })).toBe(true)
+    expect(pageConfigCarriesSkin({ widgets: [], skin: 'terminal' })).toBe(true)
+    expect(pageConfigCarriesSkin({ widgets: [] })).toBe(false)
+    expect(pageConfigCarriesSkin(null)).toBe(false)
+  })
+
+  it('liest den Skin aus der Konfiguration, sobald er dort steht', () => {
+    expect(skinFromPageConfig({ skin: 'terminal' })).toBe('terminal')
+  })
+
+  it('liest nichts, wo nichts (oder Unbrauchbares) steht', () => {
+    expect(skinFromPageConfig({ widgets: [] })).toBeNull()
+    expect(skinFromPageConfig({ skin: 'gibt-es-nicht' })).toBeNull()
+    expect(skinFromPageConfig(null)).toBeNull()
+  })
+
+  it('schreibt das Feld erst, wenn das Backend es fuehrt', () => {
+    expect(withPageSkin({ widgets: [] }, 'terminal', false)).toEqual({ widgets: [] })
+    expect(withPageSkin({ widgets: [] }, 'terminal', true)).toEqual({ widgets: [], skin: 'terminal' })
+  })
+
+  it('schreibt keinen unbekannten Skin, auch wenn das Feld gefuehrt wird', () => {
+    expect(withPageSkin({ widgets: [] }, 'gibt-es-nicht', true)).toEqual({ widgets: [] })
+  })
+
+  it('laesst den uebergebenen Rumpf unangetastet (reine Daten)', () => {
+    const body = { widgets: [] }
+    expect(withPageSkin(body, 'terminal', true)).not.toBe(body)
+    expect(body).toEqual({ widgets: [] })
   })
 })
 

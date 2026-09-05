@@ -22,7 +22,7 @@
  */
 
 import { chromium, request as apiRequest, type FullConfig } from '@playwright/test';
-import { LOGIN_LIMIT, LOGIN_WINDOW_MS, OBS_BASE, VISU_BASE, loginsInWindow, primeTokens } from './fixtures';
+import { EDITOR_BASE, LOGIN_LIMIT, LOGIN_WINDOW_MS, OBS_BASE, VISU_BASE, loginsInWindow, primeTokens } from './fixtures';
 
 /**
  * Anmeldungen, die der Lauf noch braucht und die KEIN Zwischenspeicher abfangen
@@ -32,14 +32,33 @@ import { LOGIN_LIMIT, LOGIN_WINDOW_MS, OBS_BASE, VISU_BASE, loginsInWindow, prim
  */
 const UI_LOGINS_RESERVED = 2;
 
-/** Die Routen, die die UI-Szenarien anfassen: nur was warm sein muss. */
-const WARM_ROUTES = ['/', '/edomi'];
+/**
+ * Die Routen, die die UI-Szenarien anfassen: nur was warm sein muss.
+ *
+ * `/preview` steht hier seit Runde 2 (Teil C1): der Editor der Admin-GUI laedt
+ * diese Route in seinem `iframe` (E3/E9/E15/E19), sie wird also von einem
+ * Szenario angefasst - nur eben aus einem anderen Ursprung heraus, weshalb sie
+ * bis dahin uebersehen wurde. Ohne den Warmlauf zahlt das erste Editor-Szenario
+ * ihre Transpilierung mit.
+ */
+const WARM_ROUTES = ['/', '/edomi', '/preview'];
 
-async function warmDevServer(baseURL: string): Promise<void> {
+/**
+ * Die Admin-GUI hat ihren EIGENEN Dev-Server (§2.4: der V2-Editor lebt in
+ * `gui/`) und damit ihre eigene Vite-Transpilierung. Gemessen (Runde 2, Teil
+ * C1): das erste Editor-Szenario zahlte sie mit ~25 s und lag damit knapp unter
+ * der 30-s-Decke - eine Zahl ueber den Dev-Server, nicht ueber den Editor.
+ * Deshalb dieselbe Vorkehrung wie fuer die Visu, nur fuer die Anmeldemaske:
+ * `/login` zieht die App-Schale samt Abhaengigkeiten herein und kostet KEINE
+ * Anmeldung (das Kontingent von 5/Minute bleibt unberuehrt).
+ */
+const WARM_EDITOR_ROUTES = ['/login'];
+
+async function warmDevServer(baseURL: string, routes: string[]): Promise<void> {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ baseURL });
-    for (const route of WARM_ROUTES) {
+    for (const route of routes) {
       const started = Date.now();
       await page.goto(route, { waitUntil: 'networkidle', timeout: 120_000 });
       console.log(`[global-setup] Warmlauf ${baseURL}${route}: ${((Date.now() - started) / 1000).toFixed(1)} s`);
@@ -53,12 +72,22 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
   const baseURL = config.projects[0]?.use?.baseURL ?? VISU_BASE;
 
   try {
-    await warmDevServer(baseURL);
+    await warmDevServer(baseURL, WARM_ROUTES);
   } catch (err) {
     console.warn(
       `[global-setup] Warmlauf gegen ${baseURL} fehlgeschlagen: ${(err as Error).message}\n` +
         '  Läuft der Visu-Dev-Server (e2e/README.md Schritt 4)? Der Lauf startet trotzdem, ' +
         'die ersten Browser-Szenarien tragen dann wieder die Vite-Transpilierung.',
+    );
+  }
+
+  try {
+    await warmDevServer(EDITOR_BASE, WARM_EDITOR_ROUTES);
+  } catch (err) {
+    console.warn(
+      `[global-setup] Warmlauf gegen ${EDITOR_BASE} fehlgeschlagen: ${(err as Error).message}\n` +
+        '  Läuft der Admin-GUI-Dev-Server (e2e/README.md Schritt 4b)? Der Lauf startet trotzdem; ' +
+        'die Editor-Szenarien (E9, E15) tragen dann die Vite-Transpilierung der Admin-GUI.',
     );
   }
 

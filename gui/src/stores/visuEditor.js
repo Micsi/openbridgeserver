@@ -22,7 +22,14 @@ import { collectReferencedPageIds, toBackendKind, toEditorKind } from '@/utils/v
 import { canMoveInto, neighbourSwap, siblingsOf } from '@/utils/visuPageTree'
 import { planPageSave } from '@/utils/visuPageSavePlan'
 import { validatePage } from '@/utils/visuPageValidation'
-import { DEFAULT_VISU_SKIN, isKnownSkin, readPageSkin, writePageSkin } from '@/utils/visuSkins'
+import {
+  DEFAULT_VISU_SKIN,
+  isKnownSkin,
+  pageConfigCarriesSkin,
+  readPageSkin,
+  skinFromPageConfig,
+  writePageSkin,
+} from '@/utils/visuSkins'
 
 /** Ein frischer Popup-Deskriptor - alle Felder, damit `PopupConfig` nichts raten muss. */
 export function emptyPopup() {
@@ -47,6 +54,18 @@ function rejectionText(error, fallback) {
   return fallback
 }
 
+/**
+ * Die Einzelheiten einer Ablehnung (`{ code, usernames | username, datapoint_ids }`).
+ *
+ * Das Backend nennt bei 422/403 genau, WER oder WAS beanstandet wird. Ohne diese
+ * Angaben bliebe dem Autor nur ein Code - mit ihnen kann der Editor den Satz
+ * ausschreiben, den der Server meint.
+ */
+function rejectionDetail(error) {
+  const detail = error?.response?.data?.detail
+  return detail && typeof detail === 'object' ? detail : null
+}
+
 export const useVisuEditorStore = defineStore('visuEditor', () => {
   const nodes = ref([])
   const pageConfigs = ref({})
@@ -57,8 +76,12 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
   const loading = ref(false)
   const loadError = ref(false)
   const saveError = ref(null)
+  const saveErrorDetail = ref(null)
   const savedAt = ref(0)
-  const skin = ref(DEFAULT_VISU_SKIN)
+  // Ob die Nutzerliste ueberhaupt geladen ist. Ohne sie SCHWEIGT die
+  // Zielgruppen-Pruefung: eine Bestandsseite darf nicht unspeicherbar werden,
+  // nur weil `GET /auth/users` einmal gescheitert ist.
+  const usernamesLoaded = ref(false)
 
   const nodeById = computed(() => new Map(nodes.value.map((node) => [node.id, node])))
   const selectedNode = computed(() => nodeById.value.get(selectedId.value) ?? null)
@@ -79,8 +102,52 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     return map
   })
 
+  /**
+   * Der Skin der bearbeiteten Seite. Er steht IM ENTWURF, nicht daneben - sonst
+   * gaebe es fuer denselben Wert zwei Quellen, und der Speicherplan saehe die
+   * Wahl gar nicht (siehe `visuSkins.js`, Naht zu Teil C2).
+   */
+  const skin = computed(() => (isKnownSkin(draft.value?.skin) ? draft.value.skin : DEFAULT_VISU_SKIN))
+
+  /** Fuehrt das Backend das Skin-Feld schon? Sichtbar an jeder geladenen Konfiguration. */
+  const skinSupported = computed(() => Object.values(pageConfigs.value).some(pageConfigCarriesSkin))
+
+  /**
+   * Die GESPEICHERTEN Includes der bearbeiteten Seite.
+   *
+   * `validatePage` braucht sie, weil das Backend einen bereits gespeicherten
+   * Eintrag bewusst nicht erneut gegen die Datenbank prueft
+   * (`obs/api/v1/visu.py:415,419-420`, §2.1). Ohne diese Menge waere der Editor
+   * strenger als das Backend und machte eine Bestandsseite mit verwaistem
+   * Eintrag unspeicherbar (R17).
+   */
+  const storedIncludes = computed(() => {
+    const config = draft.value?.id ? pageConfigs.value[draft.value.id] : null
+    return Array.isArray(config?.includes) ? config.includes : []
+  })
+
+  /**
+   * Bindet die bearbeitete Seite ueberhaupt Datenpunkte?
+   *
+   * Nur dann kann `_check_user_page_target_datapoint_policy` (`visu.py:560-580`)
+   * beim Wechsel auf Zugriff „user" mit 403 ablehnen. Der Editor kann diese
+   * Ablehnung NICHT vorwegnehmen - dafuer muesste er die Datenpunkt-Rechte jedes
+   * Zielgruppen-Mitglieds kennen, und dafuer gibt es keinen Endpunkt. Er sagt
+   * dem Autor deshalb, dass geprueft wird, statt hinterher einen Code zu zeigen.
+   */
+  const draftBindsDatapoints = computed(() => {
+    const config = draft.value?.id ? pageConfigs.value[draft.value.id] : null
+    const widgets = Array.isArray(config?.widgets) ? config.widgets : []
+    return widgets.some((widget) => widget?.datapoint_id || widget?.status_datapoint_id)
+  })
+
   const problems = computed(() =>
-    validatePage(draft.value, { nodes: nodes.value, includesById: includesById.value }),
+    validatePage(draft.value, {
+      nodes: nodes.value,
+      includesById: includesById.value,
+      storedIncludes: storedIncludes.value,
+      knownUsernames: usernamesLoaded.value ? allUsernames.value : null,
+    }),
   )
   const canSave = computed(() => draft.value !== null && problems.value.length === 0)
 
@@ -156,12 +223,18 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     }
     try {
       const { data } = await visuApi.usernames()
-      allUsernames.value = (Array.isArray(data) ? data : []).map((user) =>
-        typeof user === 'string' ? user : user.username,
-      )
+      // OHNE ADMINS: `_validate_target_usernames` (`visu.py:635-650`) lehnt einen
+      // Admin als Zielgruppen-Mitglied mit 422 ab. Wer ihn gar nicht erst
+      // anbietet, produziert die Ablehnung nicht.
+      allUsernames.value = (Array.isArray(data) ? data : [])
+        .filter((user) => typeof user === 'string' || user?.is_admin !== true)
+        .map((user) => (typeof user === 'string' ? user : user.username))
+      usernamesLoaded.value = true
     } catch {
-      // Ohne Nutzerliste bleibt die Zielgruppe lesbar, nur nicht erweiterbar.
+      // Ohne Nutzerliste bleibt die Zielgruppe lesbar, nur nicht erweiterbar -
+      // und die Pruefung gegen sie schweigt (siehe `usernamesLoaded`).
       allUsernames.value = []
+      usernamesLoaded.value = false
     }
   }
 
@@ -181,13 +254,13 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
   async function select(nodeId) {
     selectedId.value = nodeId ?? null
     saveError.value = null
+    saveErrorDetail.value = null
     savedAt.value = 0
     const node = nodeId ? nodeById.value.get(nodeId) : null
     if (!node) {
       draft.value = null
       return
     }
-    skin.value = readPageSkin(node.id)
     let usernames = []
     if (node.type === 'PAGE') {
       if (!pageConfigs.value[node.id]) await loadPageConfig(node.id)
@@ -196,6 +269,9 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     const config = pageConfigs.value[node.id] ?? null
     draft.value = {
       id: node.id,
+      // Zuerst die Seite selbst (sobald Teil C2 das Feld liefert), dann der
+      // Browser-Speicher als Notbehelf - nie umgekehrt.
+      skin: skinFromPageConfig(config) ?? readPageSkin(node.id),
       parentId: node.parent_id ?? null,
       name: node.name,
       type: node.type,
@@ -233,10 +309,11 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     const parent = parentId === undefined ? defaultParent() : (parentId ?? null)
     selectedId.value = null
     saveError.value = null
+    saveErrorDetail.value = null
     savedAt.value = 0
-    skin.value = DEFAULT_VISU_SKIN
     draft.value = {
       id: null,
+      skin: DEFAULT_VISU_SKIN,
       parentId: parent,
       name: '',
       type,
@@ -279,10 +356,15 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     }
   }
 
+  /**
+   * Die Skin-Wahl. Sie landet im Entwurf (und damit im Speicherplan, sobald das
+   * Backend das Feld fuehrt) UND im Browser-Speicher - solange es das Feld nicht
+   * gibt, ist der Browser die einzige Ablage, die den Reload ueberlebt.
+   */
   function setSkin(value) {
-    if (!isKnownSkin(value)) return
-    skin.value = value
-    if (draft.value?.id) writePageSkin(draft.value.id, value)
+    if (!isKnownSkin(value) || !draft.value) return
+    draft.value.skin = value
+    if (draft.value.id) writePageSkin(draft.value.id, value)
   }
 
   /* ---------------------------------------------------------- Speichern */
@@ -305,8 +387,10 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     const stored = {
       node: draft.value.id ? (nodeById.value.get(draft.value.id) ?? null) : null,
       config: draft.value.id ? (pageConfigs.value[draft.value.id] ?? null) : null,
+      skinSupported: skinSupported.value,
     }
     saveError.value = null
+    saveErrorDetail.value = null
     let nodeId = draft.value.id
     try {
       for (const step of planPageSave(draft.value, stored)) {
@@ -314,6 +398,7 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
       }
     } catch (error) {
       saveError.value = rejectionText(error, 'save-failed')
+      saveErrorDetail.value = rejectionDetail(error)
       return
     }
     audience.value = {}
@@ -332,6 +417,7 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
       await visuApi.moveNode(nodeId, { new_parent_id: target, order: node?.order ?? 0 })
     } catch (error) {
       saveError.value = rejectionText(error, 'save-failed')
+      saveErrorDetail.value = rejectionDetail(error)
       return
     }
     await load()
@@ -345,6 +431,7 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
       for (const entry of swap) await visuApi.updateNode(entry.id, { order: entry.order })
     } catch (error) {
       saveError.value = rejectionText(error, 'save-failed')
+      saveErrorDetail.value = rejectionDetail(error)
       return
     }
     await load()
@@ -356,6 +443,7 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
       await visuApi.deleteNode(nodeId)
     } catch (error) {
       saveError.value = rejectionText(error, 'save-failed')
+      saveErrorDetail.value = rejectionDetail(error)
       return
     }
     audience.value = {}
@@ -370,14 +458,19 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     nodes,
     pageConfigs,
     allUsernames,
+    usernamesLoaded,
     selectedId,
     selectedNode,
     draft,
     loading,
     loadError,
     saveError,
+    saveErrorDetail,
     savedAt,
     skin,
+    skinSupported,
+    storedIncludes,
+    draftBindsDatapoints,
     referencedIds,
     includesById,
     problems,

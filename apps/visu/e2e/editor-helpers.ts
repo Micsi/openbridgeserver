@@ -29,6 +29,27 @@ export const C5 = blockedBy('C5 Editor Ergonomie', 172);
 export const C6 = blockedBy('C6 Editor Dualität + Verlauf', 173);
 
 /**
+ * E19 wartet NICHT auf einen Editor-Teil, sondern auf ein FELD.
+ *
+ * Der Skin je Seite gehoert in die Seite: `PageConfig` (`obs/models/visu.py`)
+ * hat heute kein Feld dafuer, `save_page` schreibt `config.model_dump_json()`,
+ * und ein zusaetzliches Feld faellt still weg. Gemessen (Runde 1): nach dem
+ * Speichern traegt `GET /visu/pages/{id}` keinen Skin, und ein zweiter
+ * Browser-Kontext sieht die Vorgabe. Der Editor merkt sich die Wahl deshalb
+ * einstweilen je Seite im `localStorage` (`gui/src/utils/visuSkins.js`) - das
+ * ist ein Vorschau-Umschalter, keine Seiteneigenschaft, und faerbt diese Zeile
+ * nicht gruen. Teil C2 ergaenzt `PageConfig` additiv um das Feld; die Naht im
+ * Editor steht und schaltet sich selbst ein, sobald es da ist.
+ */
+export const C2_PAGE_SKIN = {
+  annotation: {
+    type: 'blocked-by',
+    description:
+      'Teil C2 — Micsi/openbridgeserver#169 (PageConfig bekommt das Feld fuer den Skin je Seite; bis dahin lebt die Wahl nur im Browser des Autors)',
+  },
+} as const;
+
+/**
  * Die Sprache der Admin-GUI, in der die Editor-Szenarien ihre Affordanzen
  * suchen.
  *
@@ -45,8 +66,15 @@ export const C6 = blockedBy('C6 Editor Dualität + Verlauf', 173);
  */
 const GUI_LOCALE = 'de';
 
-/** Admin-Login + Visu-Editor auf einer geseedeten Seite oeffnen. */
-export async function openEditor(page: Page, pageId: string) {
+/**
+ * Die Anmeldung an der Admin-GUI - EINE Stelle fuer JEDES Editor-Szenario.
+ *
+ * Auch der Round-Trip R16 (`m5-editor-roundtrip.spec.ts`) meldet sich hierueber
+ * an: dieselbe Maske, derselbe Sprach-Pin, dieselbe Wartebedingung. Zwei
+ * Beschreibungen derselben Anmeldung laufen unweigerlich auseinander - genau das
+ * war sie bis Runde 2 (dort ohne Sprach-Pin und ohne Warten).
+ */
+export async function loginToEditor(page: Page) {
   await page.goto(`${EDITOR_BASE}/login`);
   await page.evaluate((code) => localStorage.setItem('obs-locale', code), GUI_LOCALE);
   await page.reload();
@@ -59,7 +87,16 @@ export async function openEditor(page: Page, pageId: string) {
   // - die Wache der Admin-Routen leitet dann korrekt zur Anmeldung zurueck
   // (gemessen). Das ist eine Wartebedingung des Harness, keine Erwartung.
   await page.waitForURL((url) => !url.pathname.endsWith('/login'));
-  await page.goto(`${EDITOR_BASE}/visu-editor/${pageId}`);
+}
+
+/**
+ * Admin-Login + Visu-Editor oeffnen. OHNE `pageId` steht der Editor ohne
+ * ausgewaehlte Seite da - der Zustand, in dem eine neue Seite angelegt wird
+ * (R16, und die Wirkungshaelfte von E9/E15).
+ */
+export async function openEditor(page: Page, pageId?: string) {
+  await loginToEditor(page);
+  await page.goto(`${EDITOR_BASE}/visu-editor${pageId ? `/${pageId}` : ''}`);
   await expect(page.locator('.editor-canvas')).toBeVisible();
 }
 

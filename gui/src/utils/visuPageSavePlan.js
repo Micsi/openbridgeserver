@@ -24,6 +24,7 @@
  */
 
 import { toBackendKind } from '@/utils/visuPageKind'
+import { DEFAULT_VISU_SKIN, withPageSkin } from '@/utils/visuSkins'
 
 /** Die Vorgabe-Konfiguration einer frisch angelegten Seite (`PageConfig()`). */
 const DEFAULT_PAGE_CONFIG = Object.freeze({
@@ -37,15 +38,27 @@ const DEFAULT_PAGE_CONFIG = Object.freeze({
   popup: null,
 })
 
-/** Die Konfiguration, die geschrieben werden soll — Bestand plus die C1-Felder. */
-function pageBody(draft, storedConfig, { includes, popup }) {
+/**
+ * Die Konfiguration, die geschrieben werden soll — Bestand plus die C1-Felder.
+ *
+ * Der Skin geht nur mit, wenn das Backend das Feld ueberhaupt fuehrt
+ * (`skinSupported`, siehe `visuSkins.js`): heute faellt ein unbekanntes Feld in
+ * `PageConfig` still weg, und ein still weggeworfener Wert waere schlimmer als
+ * gar keiner. Sobald Teil C2 das Feld ergaenzt hat, schreibt derselbe Pfad ihn
+ * mit — ohne eine Zeile Aenderung hier.
+ */
+function pageBody(draft, storedConfig, { includes, popup, skinSupported }) {
   const base = storedConfig ? { ...storedConfig } : { ...DEFAULT_PAGE_CONFIG, widgets: [] }
-  return {
-    ...base,
-    includes,
-    ignore_global_includes: draft.ignoreGlobalIncludes === true,
-    popup: popup ?? null,
-  }
+  return withPageSkin(
+    {
+      ...base,
+      includes,
+      ignore_global_includes: draft.ignoreGlobalIncludes === true,
+      popup: popup ?? null,
+    },
+    draft.skin,
+    skinSupported === true,
+  )
 }
 
 /** Weicht die Konfiguration ueberhaupt von der Vorgabe ab? */
@@ -53,7 +66,8 @@ function differsFromDefault(body) {
   return (
     (body.includes ?? []).length > 0 ||
     body.ignore_global_includes === true ||
-    body.popup !== null
+    body.popup !== null ||
+    (body.skin !== undefined && body.skin !== DEFAULT_VISU_SKIN)
   )
 }
 
@@ -76,7 +90,8 @@ function nodeBody(draft, { kind }) {
 
 /**
  * @param {object|null} draft   Der Entwurf aus dem Editor.
- * @param {object} [stored]     `{ node: VisuNodeSummary|null, config: PageConfig|null }`
+ * @param {object} [stored]     `{ node: VisuNodeSummary|null, config: PageConfig|null,
+ *                                skinSupported?: boolean }`
  * @returns {Array<{op: 'createNode'|'patchNode'|'savePage', nodeId: string|null, body: object}>}
  */
 export function planPageSave(draft, stored = {}) {
@@ -87,6 +102,7 @@ export function planPageSave(draft, stored = {}) {
   const kind = toBackendKind(draft.editorKind)
   const includes = isPage ? [...(draft.includes ?? [])] : []
   const popup = isPage ? (draft.popup ?? null) : null
+  const skinSupported = stored.skinSupported === true
 
   if (!draft.id) {
     const steps = [
@@ -106,7 +122,7 @@ export function planPageSave(draft, stored = {}) {
       },
     ]
     if (isPage) {
-      const body = pageBody(draft, null, { includes, popup })
+      const body = pageBody(draft, null, { includes, popup, skinSupported })
       if (differsFromDefault(body)) steps.push({ op: 'savePage', nodeId: null, body })
     }
     // `POST /visu/nodes` kennt keine Zielgruppe — sie kommt als eigener Schritt
@@ -119,7 +135,7 @@ export function planPageSave(draft, stored = {}) {
 
   const storedKind = node?.kind ?? 'normal'
   const kindChanges = kind !== storedKind
-  const final = isPage ? pageBody(draft, storedConfig, { includes, popup }) : null
+  const final = isPage ? pageBody(draft, storedConfig, { includes, popup, skinSupported }) : null
 
   if (!kindChanges) {
     const steps = [{ op: 'patchNode', nodeId: draft.id, body: nodeBody(draft, {}) }]
@@ -135,7 +151,7 @@ export function planPageSave(draft, stored = {}) {
     steps.push({
       op: 'savePage',
       nodeId: draft.id,
-      body: pageBody(draft, storedConfig, { includes: [], popup: null }),
+      body: pageBody(draft, storedConfig, { includes: [], popup: null, skinSupported }),
     })
   }
   steps.push({ op: 'patchNode', nodeId: draft.id, body: nodeBody(draft, { kind }) })
