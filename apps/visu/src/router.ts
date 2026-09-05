@@ -40,6 +40,17 @@ const routes: RouteRecordRaw[] = [
     component: SkinPage,
     props: { pageId: 'camera-full' },
   },
+  {
+    // Vorschau-Modus (M5 C4, Issue #171): der Endpunkt, den der V2-Editor in der
+    // Admin-GUI als iframe einbettet und per postMessage mit einem Entwurf
+    // fuettert. Bewusst ein DYNAMISCHER Import: Empfaenger, PreviewDataSource und
+    // deren HTTP-Backend landen in einem eigenen Chunk und werden nur in diesem
+    // Modus geladen - das Gast-Bundle waechst nur um diesen Routeneintrag
+    // (gemessen; §2.4 „Gast-Bundle waechst nur um den Preview-Empfaenger").
+    path: '/preview',
+    name: 'preview',
+    component: () => import('./preview/PreviewPage.vue'),
+  },
 ];
 
 export const router = createRouter({

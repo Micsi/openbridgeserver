@@ -121,5 +121,9 @@
     "goToPage": "Zur Seite {page} springen",
     "goToPageGated": "Zur Seite {page} springen (PIN nötig)",
     "goToLinkedPage": "Zur verknüpften Seite springen"
+  },
+  "preview": {
+    "waiting": "Warte auf einen Entwurf aus dem Editor.",
+    "unknownSkin": "Dieser Skin wird von dieser Visu nicht ausgeliefert."
   }
 }

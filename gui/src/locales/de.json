@@ -17,7 +17,8 @@
     "logs": "Logs",
     "logic": "Logikmodul",
     "settings": "Einstellungen",
-    "visu": "Visu"
+    "visu": "Visu",
+    "visuEditor": "Visu-Editor"
   },
   "sidebar": {
     "productName": "open bridge server",
@@ -3376,5 +3377,13 @@
     "openLabel": "Hilfe zu diesem Bereich öffnen",
     "unavailable": "Für diesen Bereich ist noch keine Hilfe verfügbar.",
     "openInNewTab": "In neuem Tab öffnen"
+  },
+  "visuEditor": {
+    "title": "Visu-Editor",
+    "intro": "Die Vorschau zeigt den Entwurf in der echten Visu. Gespeichert wird dabei nichts.",
+    "previewTitle": "Vorschau der Visu",
+    "rejected": "Die Vorschau hat den Entwurf abgelehnt. Bitte Editor und Visu auf denselben Stand bringen.",
+    "unreachable": "In diesem Rahmen antwortet keine Visu-Vorschau. Angezeigt wird deshalb nicht der Entwurf, sondern was unter der Vorschau-Adresse liegt. Bitte die Vorschau-Auslieferung prüfen (VITE_VISU_PREVIEW_URL).",
+    "applied": "Entwurf in der Vorschau gerendert ({count} Widgets)."
   }
 }

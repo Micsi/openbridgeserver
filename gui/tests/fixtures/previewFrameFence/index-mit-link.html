@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<!--
+  Pruefstueck fuer den Blattscan (M5 C4, Issue #171, Kritik R11 Y1).
+
+  Ein ausgeliefertes Dokument bindet ein Blatt auf ZWEI Wegen ein: ueber ein
+  Modul (`<script src>`) und direkt (`<link rel="stylesheet">`). Der zweite Weg
+  wurde bis Kritik R11 gar nicht gelesen - ein Blatt, das nur so haengt, ging
+  woertlich ins Bundle und durch alle GUI-Tests.
+
+  Diese Datei wird nie gebaut und nie ausgeliefert.
+-->
+<html lang="de">
+<head>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="./nebenblatt.css" />
+  <link rel="stylesheet" href="https://fonts.example/css2?family=Inter" />
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="./zwischenmodul.js"></script>
+</body>
+</html>

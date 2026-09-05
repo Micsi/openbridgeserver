@@ -121,5 +121,9 @@
     "goToPage": "Go to page {page}",
     "goToPageGated": "Go to page {page} (PIN required)",
     "goToLinkedPage": "Go to the linked page"
+  },
+  "preview": {
+    "waiting": "Waiting for a draft from the editor.",
+    "unknownSkin": "This visu does not ship the selected skin."
   }
 }

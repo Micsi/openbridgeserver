@@ -111,6 +111,7 @@ import { useNavLinksStore } from '@/stores/navLinks'
 import { useAuthStore } from '@/stores/auth'
 import { useAdapterStore } from '@/stores/adapters'
 import VisuIcon from '@/components/ui/VisuIcon.vue'
+import { canUseVisuEditor, VISU_EDITOR_ROUTE } from '@/utils/visuEditorAccess'
 
 defineProps({ collapsed: Boolean })
 defineEmits(['toggle'])
@@ -144,6 +145,11 @@ const navItems = computed(() => [
   { to: '/logs',       label: t('nav.logs'),       icon: '&#9783;' },
   { to: '/logic',      label: t('nav.logic'),      icon: '<svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18" style="display:inline-block;vertical-align:middle"><circle cx="4" cy="7" r="2"/><circle cx="4" cy="13" r="2"/><circle cx="16" cy="10" r="2.5"/><line x1="6" y1="7.5" x2="13.5" y2="9.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="6" y1="12.5" x2="13.5" y2="10.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' },
   { to: '/settings',   label: t('nav.settings'),   icon: '&#9881;' },
+  // Visu-Editor (M5 C4, Issue #171): hinter dem Admin-Login. Ein Nicht-Admin
+  // sieht den Menuepunkt gar nicht; die Route weist ihn zusaetzlich ab.
+  ...(canUseVisuEditor(auth)
+    ? [{ to: VISU_EDITOR_ROUTE, label: t('nav.visuEditor'), icon: '&#9998;' }]
+    : []),
 ])
 
 // Nur laden wenn bereits eingeloggt — sonst triggert der 401 den Interceptor-Redirect

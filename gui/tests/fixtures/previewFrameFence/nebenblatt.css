@@ -1,0 +1,3 @@
+/* Der Angriff aus Kritik R10, X8 - ein handgeschriebenes Blatt neben dem
+   Quellverzeichnis, das den Vorschaurahmen selbst verkleinert. */
+iframe[data-testid="visu-preview-frame"] { transform: scale(.9); filter: saturate(.5) }
