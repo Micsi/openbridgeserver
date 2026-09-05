@@ -13,13 +13,13 @@
       <div class="card-body">
         <form @submit.prevent="submit" class="flex flex-col gap-4">
           <div class="form-group">
-            <label class="label">{{ $t('login.username') }}</label>
-            <input v-model="form.username" type="text" class="input" placeholder="admin" autocomplete="username" required autofocus data-testid="input-username" />
+            <label class="label" for="login-username">{{ $t('login.username') }}</label>
+            <input id="login-username" v-model="form.username" type="text" class="input" placeholder="admin" autocomplete="username" required autofocus data-testid="input-username" />
           </div>
 
           <div class="form-group">
-            <label class="label">{{ $t('login.password') }}</label>
-            <input v-model="form.password" type="password" class="input" placeholder="••••••••" autocomplete="current-password" required data-testid="input-password" />
+            <label class="label" for="login-password">{{ $t('login.password') }}</label>
+            <input id="login-password" v-model="form.password" type="password" class="input" placeholder="••••••••" autocomplete="current-password" required data-testid="input-password" />
           </div>
 
           <div v-if="auth.error" class="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">

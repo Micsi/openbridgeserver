@@ -48,6 +48,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.doUnmock('@/api/visu')
   vi.doUnmock('@/stores/auth')
   vi.doUnmock('vue-router')
   vi.doUnmock('@/components/ui/VisuIcon.vue')
@@ -56,7 +57,32 @@ afterEach(() => {
   vi.doUnmock('@/stores/adapters')
 })
 
+/**
+ * Die Backend-Naht des Editors, gestubbt (M5 C1, Issue #168).
+ *
+ * Seit C1 laedt die Ansicht beim Montieren den Seitenbaum. Diese Spec misst das
+ * Admin-Gate und den Vorfahrenpfad des Vorschaurahmens - nicht das Netz; ohne
+ * den Stub liefe jede Montage in den `axios`-Timeout. Es ist ein STUB, keine
+ * abgeschwaechte Zusicherung: keine Erwartung dieser Datei ist angefasst.
+ */
+function stubVisuApi() {
+  vi.doMock('@/api/visu', () => ({
+    visuApi: {
+      tree: vi.fn().mockResolvedValue({ data: [] }),
+      getPage: vi.fn().mockResolvedValue({ data: null }),
+      savePage: vi.fn().mockResolvedValue({ status: 204 }),
+      createNode: vi.fn().mockResolvedValue({ data: { id: 'neu' } }),
+      updateNode: vi.fn().mockResolvedValue({ data: {} }),
+      deleteNode: vi.fn().mockResolvedValue({ status: 204 }),
+      moveNode: vi.fn().mockResolvedValue({ data: {} }),
+      nodeUsers: vi.fn().mockResolvedValue({ data: [] }),
+      usernames: vi.fn().mockResolvedValue({ data: [] }),
+    },
+  }))
+}
+
 async function mountEditor({ isLoggedIn = true, isAdmin = true, attachTo } = {}) {
+  stubVisuApi()
   vi.doMock('@/stores/auth', () => ({
     useAuthStore: () => ({ isLoggedIn, isAdmin, username: 'admin', loadMe: vi.fn() }),
   }))
@@ -275,6 +301,7 @@ describe('Sidebar — Menuepunkt Visu-Editor', () => {
  */
 describe('VisuEditorView - der Vorfahrenpfad in der echten Schale', () => {
   async function mountShell() {
+    stubVisuApi()
     vi.doMock('vue-router', () => ({ useRoute: () => ({ meta: {}, name: 'VisuEditor' }) }))
     vi.doMock('@/stores/auth', () => ({
       useAuthStore: () => ({ isLoggedIn: true, isAdmin: true, username: 'admin', loadMe: vi.fn() }),

@@ -75,7 +75,7 @@ watch(() => props.draft, () => bridge.sendDraft(), { deep: true })
       data-testid="visu-preview-frame"
       :src="previewUrl"
       :title="$t('visuEditor.previewTitle')"
-      class="w-full h-[70vh] rounded-lg border border-slate-200 dark:border-slate-700/60 bg-white"
+      class="editor-preview w-full h-[70vh] rounded-lg border border-slate-200 dark:border-slate-700/60 bg-white"
     />
     <p
       v-if="rejected"
