@@ -1,21 +1,45 @@
 /**
- * Bedingte Sichtbarkeit (Messlatte **E16**, M5 C3, Issue #170).
+ * Bedingte Sichtbarkeit (Messlatte **E16**, M5 C3, Issue #170) - die Seite des
+ * EDITORS.
  *
  * Ein Element ist je nach Datenpunktwert sichtbar oder unsichtbar. Die Regel ist
  * DATEN am Widget (`config.visible_when`, also Teil der `PageConfig`, die das
- * Backend als JSON durchreicht), die Auswertung ist CODE - diese reinen
- * Funktionen. Damit gilt dieselbe Trennung wie ueberall in der Visu, und die
- * gespeicherte Seite traegt die Regel auch dann, wenn sie ausser dem Editor
- * niemand auswertet.
+ * Backend als JSON durchreicht); AUSGEWERTET wird sie im HOST
+ * (`apps/visu/src/core/obs/mapping.ts` - `readVisibilityRule` /
+ * `evaluateVisibility` / `isWidgetVisible`), also in derselben Uebersetzung, aus
+ * der die ausgelieferte Visu UND die Vorschau ihre Geraete und Ebenen beziehen.
  *
- * GRENZE, ausdruecklich: ausgewertet wird die Regel HEUTE im Editor, der die
- * Knoten fuer die Vorschau zusammenstellt (siehe `useVisuEditorDraft.js`). Der
- * Live-Host (`apps/visu/`) liest `visible_when` noch nicht; das ist der
- * Renderer-Teil und liegt ausserhalb von C3 (Teil C3 aendert `apps/visu/src`
- * nicht). Die Regel steht als Daten in der Seite und wartet dort auf ihn.
+ * WARUM NICHT HIER: Messlatte **E3** sagt, die Vorschau IST die Visu. Filterte
+ * der Editor die geregelten Elemente aus seinem Entwurf heraus, zeigte die
+ * Vorschau fuer genau diese Elemente eine andere Seite als die spaeter
+ * ausgelieferte - ein eingebauter Auseinanderlauf, kein bloss fehlendes Stueck.
+ * Der Editor reicht deshalb JEDES Element durch.
+ *
+ * Was dieser Datei bleibt, ist alles, was der Editor selbst tut:
+ *
+ *  - **schreiben**: das Formular baut die Regel und legt sie ans Widget
+ *    ({@link normalizeRule}, {@link writeVisibilityRule}); halb ausgefuellt wird
+ *    nichts gespeichert.
+ *  - **lesen**: das Formular zeigt eine vorhandene Regel wieder an
+ *    ({@link readVisibilityRule}).
+ *  - **beobachten**: der Editor abonniert die Datenpunkte, an denen Regeln
+ *    haengen ({@link visibilityDatapointIds}) - nicht um selbst zu entscheiden,
+ *    sondern damit ein Wertwechsel Anlass ist, dem Host einen neuen Entwurf zu
+ *    schicken, den er neu auswertet.
+ *
+ * Der Zaun dazu: `gui/tests/utils/visuVisibilityHost.spec.js`. Er laedt die
+ * Abbildung der Visu als MODUL und haelt beide Haelften gegeneinander - die
+ * Vergleichsliste, die Normalform und die Sicht, die Host und Editor auf
+ * dieselbe Seite liefern.
  */
 
-/** Die Vergleiche, die das Formular anbietet. */
+/**
+ * Die Vergleiche, die das Formular anbietet.
+ *
+ * KOPIE der Liste im Host (`VISIBILITY_OPS` in `mapping.ts`); die GUI liegt
+ * nicht im pnpm-Workspace der Visu und kann sie nicht importieren. Der Zaun
+ * bindet sie an ihre Quelle.
+ */
 export const VISIBILITY_OPS = ['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'truthy', 'falsy']
 
 /** Vergleiche, die ohne Schwelle unvollstaendig sind. */
@@ -31,23 +55,13 @@ function toNum(value) {
   return null
 }
 
-/** Wahrheitswert oder null - dieselbe Lesart wie `toBool` in der Abbildung. */
-function toBool(value) {
-  if (value === null || value === undefined) return null
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'number') return value !== 0
-  if (typeof value === 'string') {
-    const s = value.trim().toLowerCase()
-    if (s === 'true' || s === '1' || s === 'on') return true
-    if (s === 'false' || s === '0' || s === 'off' || s === '') return false
-  }
-  return null
-}
-
 /**
  * Eine vollstaendige Regel oder null. Halb ausgefuellt wird nichts gespeichert:
  * eine Regel ohne Datenpunkt oder ohne Schwelle waere im gespeicherten Zustand
  * nicht auswertbar und verstuende sich stumm als „immer sichtbar".
+ *
+ * Die Normalform ist die, die der Host wieder einliest (`readVisibilityRule`):
+ * die Schwelle als Zahl, wo sie eine ist, sonst als Text.
  */
 export function normalizeRule(raw) {
   if (!raw || typeof raw !== 'object') return null
@@ -74,69 +88,6 @@ export function writeVisibilityRule(widget, rule) {
   if (normalisiert) config.visible_when = normalisiert
   else delete config.visible_when
   return { ...widget, config }
-}
-
-/**
- * Ist die Bedingung erfuellt?
- *
- * Ohne Regel: sichtbar. Mit Regel, aber ohne Wert: NICHT sichtbar - eine
- * Bedingung, die niemand pruefen konnte, ist nicht erfuellt. Sonst blitzte beim
- * Laden genau das Element auf, das die Regel verbergen soll.
- */
-export function evaluateVisibility(rule, value) {
-  const regel = normalizeRule(rule)
-  if (!regel) return true
-  if (value === null || value === undefined) return false
-
-  if (regel.op === 'truthy') return toBool(value) === true
-  if (regel.op === 'falsy') return toBool(value) === false
-
-  const links = toNum(value)
-  const rechts = toNum(regel.value)
-  if (links === null || rechts === null) {
-    // Nicht-numerisch: nur Gleichheit ist sinnvoll, und die als Text.
-    if (regel.op === 'eq') return String(value) === String(regel.value)
-    if (regel.op === 'ne') return String(value) !== String(regel.value)
-    return false
-  }
-  switch (regel.op) {
-    case 'eq':
-      return links === rechts
-    case 'ne':
-      return links !== rechts
-    case 'lt':
-      return links < rechts
-    case 'lte':
-      return links <= rechts
-    case 'gt':
-      return links > rechts
-    case 'gte':
-      return links >= rechts
-    default:
-      return true
-  }
-}
-
-/** Ist dieses Widget bei diesem Wertestand sichtbar? */
-export function isWidgetVisible(widget, values = {}) {
-  const regel = readVisibilityRule(widget)
-  if (!regel) return true
-  return evaluateVisibility(regel, values[regel.datapoint_id])
-}
-
-/**
- * Die Knoten ohne die Elemente, deren Bedingung nicht erfuellt ist. Neue
- * Objekte; die Knoten des Aufrufers bleiben, wie sie sind.
- */
-export function applyVisibility(nodes, values = {}) {
-  return (nodes || []).map((node) => {
-    const widgets = node && node.page_config ? node.page_config.widgets : null
-    if (!Array.isArray(widgets)) return node
-    return {
-      ...node,
-      page_config: { ...node.page_config, widgets: widgets.filter((w) => isWidgetVisible(w, values)) },
-    }
-  })
 }
 
 /** Die Datenpunkte, an denen eine Sichtbarkeitsregel haengt (die Abo-Liste). */

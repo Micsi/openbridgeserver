@@ -2,20 +2,22 @@ import { describe, it, expect } from 'vitest'
 
 import {
   VISIBILITY_OPS,
-  applyVisibility,
-  evaluateVisibility,
-  isWidgetVisible,
   normalizeRule,
   readVisibilityRule,
+  visibilityDatapointIds,
   writeVisibilityRule,
 } from '@/utils/visuVisibility'
 
 /**
- * Bedingte Sichtbarkeit (Messlatte **E16**, M5 C3, Issue #170).
+ * Bedingte Sichtbarkeit (Messlatte **E16**, M5 C3, Issue #170) - die Seite des
+ * EDITORS.
  *
- * Die Regel ist DATEN (`config.visible_when` am Widget), die Auswertung ist
- * CODE (diese reine Funktion). Beide Zweige werden gemessen: erfuellt und nicht
- * erfuellt - eine Regel, die immer dasselbe sagt, nimmt nichts ab.
+ * Der Editor SCHREIBT die Regel (Formular), LIEST sie wieder an (damit sie im
+ * Formular steht) und ABONNIERT ihre Datenpunkte. Er wertet sie NICHT aus: das
+ * tut der Host (`apps/visu/src/core/obs/mapping.ts`), damit Vorschau und
+ * ausgelieferte Visu dieselbe Seite zeigen (E3). Die Auswertung selbst hat ihre
+ * Probe drueben (`apps/visu/src/core/obs/visibility.spec.ts`), die Naht zwischen
+ * beiden Haelften der Zaun `visuVisibilityHost.spec.js`.
  */
 
 const REGEL = { datapoint_id: 'dp-m5-solo', op: 'gt', value: 30 }
@@ -67,68 +69,7 @@ describe('Sichtbarkeitsregel — die Form', () => {
   })
 })
 
-describe('Sichtbarkeitsregel — die Auswertung, beide Zweige', () => {
-  it('haelt ein Element ohne Regel immer sichtbar', () => {
-    expect(evaluateVisibility(null, 21.5)).toBe(true)
-  })
-
-  it('entscheidet den Fall aus E16 in beide Richtungen', () => {
-    // Seed-Wert 21.5, Schwelle 30 -> nicht erfuellt -> unsichtbar.
-    expect(evaluateVisibility(REGEL, 21.5)).toBe(false)
-    // Wert ueber die Schwelle -> sichtbar.
-    expect(evaluateVisibility(REGEL, 42)).toBe(true)
-  })
-
-  it('rechnet jeden angebotenen Vergleich, und zwar in beiden Zweigen', () => {
-    const faelle = [
-      ['eq', 5, 5, true],
-      ['eq', 5, 6, false],
-      ['ne', 5, 6, true],
-      ['ne', 5, 5, false],
-      ['lt', 5, 4, true],
-      ['lt', 5, 5, false],
-      ['lte', 5, 5, true],
-      ['lte', 5, 6, false],
-      ['gt', 5, 6, true],
-      ['gt', 5, 5, false],
-      ['gte', 5, 5, true],
-      ['gte', 5, 4, false],
-    ]
-    for (const [op, schwelle, wert, erwartet] of faelle) {
-      expect([op, wert, evaluateVisibility({ datapoint_id: 'dp', op, value: schwelle }, wert)]).toEqual(
-        [op, wert, erwartet],
-      )
-    }
-    for (const [op, wert, erwartet] of [
-      ['truthy', true, true],
-      ['truthy', false, false],
-      ['truthy', 1, true],
-      ['truthy', 0, false],
-      ['falsy', false, true],
-      ['falsy', true, false],
-    ]) {
-      expect([op, wert, evaluateVisibility({ datapoint_id: 'dp', op }, wert)]).toEqual([
-        op,
-        wert,
-        erwartet,
-      ])
-    }
-  })
-
-  it('haelt ein Element verborgen, solange der Wert unbekannt ist', () => {
-    // Eine Bedingung, die niemand pruefen konnte, ist nicht erfuellt. Sonst
-    // blitzte beim Laden genau das Element auf, das die Regel verstecken soll.
-    expect(evaluateVisibility(REGEL, undefined)).toBe(false)
-    expect(evaluateVisibility(REGEL, null)).toBe(false)
-  })
-
-  it('vergleicht Zahl und Zahlentext gleich (der Bus liefert beides)', () => {
-    expect(evaluateVisibility(REGEL, '42')).toBe(true)
-    expect(evaluateVisibility(REGEL, '21.5')).toBe(false)
-  })
-})
-
-describe('Sichtbarkeitsregel — im Entwurf', () => {
+describe('Sichtbarkeitsregel - was der Editor beobachtet', () => {
   const widget = (id, rule) => ({
     id,
     name: id,
@@ -147,29 +88,32 @@ describe('Sichtbarkeitsregel — im Entwurf', () => {
     },
   ]
 
-  it('sagt je Wert, ob ein Widget sichtbar ist', () => {
-    expect(isWidgetVisible(widget('a', REGEL), { 'dp-m5-solo': 21.5 })).toBe(false)
-    expect(isWidgetVisible(widget('a', REGEL), { 'dp-m5-solo': 42 })).toBe(true)
-    expect(isWidgetVisible(widget('a', null), {})).toBe(true)
-  })
-
-  it('nimmt das verborgene Element aus dem Entwurf und laesst die anderen stehen', () => {
-    const verborgen = applyVisibility(nodes(), { 'dp-m5-solo': 21.5 })
-    expect(verborgen[0].page_config.widgets.map((w) => w.id)).toEqual(['ohne-regel'])
-
-    const sichtbar = applyVisibility(nodes(), { 'dp-m5-solo': 42 })
-    expect(sichtbar[0].page_config.widgets.map((w) => w.id)).toEqual(['mit-regel', 'ohne-regel'])
-  })
-
-  it('laesst die Knoten des Aufrufers unberuehrt', () => {
-    const original = nodes()
-    applyVisibility(original, { 'dp-m5-solo': 21.5 })
-    expect(original[0].page_config.widgets).toHaveLength(2)
-  })
-
-  it('nennt die Datenpunkte, die eine Regel beobachtet (Abo-Liste)', async () => {
-    const { visibilityDatapointIds } = await import('@/utils/visuVisibility')
+  it('nennt die Datenpunkte, an denen eine Regel haengt (Abo-Liste)', () => {
+    // Der Editor abonniert sie nicht, um selbst zu entscheiden, sondern damit
+    // ein Wertwechsel Anlass ist, dem Host einen neuen Entwurf zu schicken.
     expect(visibilityDatapointIds(nodes())).toEqual(['dp-m5-solo'])
     expect(visibilityDatapointIds([])).toEqual([])
+  })
+
+  it('nennt keinen Datenpunkt, wo gar keine Regel steht', () => {
+    const ohne = [
+      { id: 'page-1', type: 'PAGE', name: 'M5 Solo', page_config: { widgets: [widget('a', null)] } },
+      { id: 'page-2', type: 'LOCATION', name: 'Ordner', page_config: null },
+    ]
+    expect(visibilityDatapointIds(ohne)).toEqual([])
+  })
+
+  it('nennt jeden Datenpunkt nur einmal, auch bei mehreren Regeln darauf', () => {
+    const doppelt = [
+      {
+        id: 'page-1',
+        type: 'PAGE',
+        name: 'M5 Solo',
+        page_config: {
+          widgets: [widget('a', REGEL), widget('b', { ...REGEL, op: 'lt' })],
+        },
+      },
+    ]
+    expect(visibilityDatapointIds(doppelt)).toEqual(['dp-m5-solo'])
   })
 })

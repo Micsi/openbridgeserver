@@ -27,10 +27,13 @@ import {
  *  1. `packages/contract/contract.schema.json` — die neun Kern-Typen sind die
  *     nicht-reservierten Widget-Schluessel des Vertrags, und jedes Formularfeld
  *     zielt auf ein `data`- oder `actions`-Feld GENAU DIESES Typs.
- *  2. `apps/visu/src/core/obs/mapping.ts`, geladen als MODUL und mit einer
- *     mitschreibenden `config` BEFRAGT: welche Konfig-Schluessel die Abbildung
- *     fuer ein voll gebundenes Widget wirklich liest. Genau diese Schluessel
- *     muss das Formular schreiben — keinen mehr, keinen weniger.
+ *  2. `apps/visu/src/core/obs/mapping.ts`, geladen als MODUL und mit einem
+ *     mitschreibenden WIDGET befragt: welche Schluessel die Abbildung fuer ein
+ *     voll gebundenes Widget wirklich liest - in der `config` UND an der
+ *     Wurzel (`datapoint_id`, `status_datapoint_id`). Genau diese Schluessel
+ *     muss das Formular schreiben, keinen mehr, keinen weniger. Beide Ebenen,
+ *     weil das Formular auf beide schreibt: eine Falle nur um `config` liesse
+ *     ein erfundenes Wurzelfeld unbemerkt durch.
  *  3. `frontend/src/widgets/` — die V1-Taxonomie. Ein Servertyp ist entweder
  *     einer von dort, oder er steht in {@link NEUE_SERVERTYPEN} und ist damit
  *     als NEU deklariert statt still erfunden.
@@ -86,11 +89,17 @@ function v1WidgetTypes() {
 
 /**
  * Ein Widget des Typs, in dem JEDE deklarierte Datenpunkt-Bindung gesetzt ist -
- * und eine `config`, die jeden Lesezugriff mitschreibt.
+ * und das jeden Lesezugriff mitschreibt, an der Konfig UND an der Wurzel.
  *
  * Voll gebunden, weil die Abbildung Folge-Schluessel nur dann liest, wenn der
  * erste gesetzt ist (`dp_status_i` -> `label_status_i`). Eine Probe mit leerer
  * Konfig saehe die Haelfte der Formularfelder nie.
+ *
+ * BEIDE Ebenen, nicht nur `config`: das Formular schreibt auch an die WURZEL
+ * (`datapoint_id`, `status_datapoint_id`), und die Abbildung liest sie dort
+ * typ-abhaengig (`mapSwitch` ja, `mapLight` nein). Eine Falle nur um `config`
+ * liesse ein erfundenes Wurzelfeld - ein `status_datapoint_id` am Licht etwa -
+ * unbemerkt durch: deklariert, aber nirgends gelesen.
  */
 function probe(type) {
   let widget = createWidget(type, { id: `probe-${type}`, name: `Probe ${type}` })
@@ -98,13 +107,23 @@ function probe(type) {
     if (field.kind === 'datapoint') widget = writeField(widget, field, `dp-${field.key}`)
   }
   const gelesen = new Set()
+  const wurzel = new Set()
   const config = new Proxy(widget.config, {
     get(target, key) {
       if (typeof key === 'string') gelesen.add(key)
       return target[key]
     },
   })
-  return { widget: { ...widget, config }, gelesen }
+  const beobachtet = new Proxy(
+    { ...widget, config },
+    {
+      get(target, key) {
+        if (typeof key === 'string') wurzel.add(key)
+        return target[key]
+      },
+    },
+  )
+  return { widget: beobachtet, gelesen, wurzel }
 }
 
 describe('Widget-Formulare — die neun Typen kommen aus dem Vertrag', () => {
@@ -123,15 +142,14 @@ describe('Widget-Formulare — die neun Typen kommen aus dem Vertrag', () => {
     const widgets = contractSchema().widgets
     for (const type of CORE_WIDGET_TYPES) {
       const spec = widgets[type]
-      // Erlaubt ist, was der Vertrag fuer DIESEN Typ kennt: seine Datenfelder,
-      // seine Aktionen und die Eigenschaften seines Schemas. Letztere tragen
-      // `type` - und genau darauf zielt die Bauart-Auswahl von Rollladen und
-      // Jalousie, die zwischen zwei Vertragstypen entscheidet.
-      const ziele = new Set([
-        ...Object.keys(spec.data ?? {}),
-        ...Object.keys(spec.actions ?? {}),
-        ...Object.keys(spec.dataSchema?.properties ?? {}),
-      ])
+      // Erlaubt ist, was der Vertrag fuer DIESEN Typ kennt: seine Datenfelder
+      // und seine Aktionen. Dazu genau EINE Ausnahme, ausdruecklich benannt:
+      // `type`, der Diskriminator zwischen den Vertragstypen - darauf zielt die
+      // Bauart-Auswahl von Rollladen und Jalousie. Das ganze
+      // `dataSchema.properties` zuzulassen waere zu viel: es traegt `id`,
+      // `floor`, `writable` und `presets` mit, die keine Bindungsziele sind.
+      const ziele = new Set([...Object.keys(spec.data ?? {}), ...Object.keys(spec.actions ?? {})])
+      if (spec.dataSchema?.properties?.type) ziele.add('type')
       // Praesentation gehoert dem Host/Skin, nicht dem Bindungsformular.
       for (const praesentation of ['room', 'label', 'accent']) ziele.delete(praesentation)
       for (const field of widgetFormFields(type)) {
@@ -172,22 +190,35 @@ describe('Widget-Formulare — die Konfig-Schluessel kommen aus der Abbildung', 
     const mapping = await loadMapping()
     const mapWidget = exported(mapping, 'mapWidget')
 
-    // Was JEDER Typ liest, ist nicht typ-eigen (Etikett + Link-Kachel) und
-    // gehoert deshalb nicht ins Bindungsformular. Abgeleitet statt behauptet:
-    // die Schnittmenge ueber alle abgebildeten Typen.
+    // Was JEDER Typ liest, ist nicht typ-eigen (Etikett + Link-Kachel + die
+    // Sichtbarkeitsregel) und gehoert deshalb nicht ins Bindungsformular.
+    // Abgeleitet statt behauptet: die Schnittmenge ueber alle abgebildeten Typen.
     const gelesenJeTyp = new Map()
+    const wurzelJeTyp = new Map()
     for (const type of CORE_WIDGET_TYPES) {
       if (!WIDGET_FORMS[type].previewMapped) continue
       const p = probe(type)
       expect(mapWidget(p.widget, 'Raum'), type).not.toBeNull()
       gelesenJeTyp.set(type, p.gelesen)
+      wurzelJeTyp.set(type, p.wurzel)
     }
-    const alle = [...gelesenJeTyp.values()]
-    const generisch = [...alle[0]].filter((key) => alle.every((set) => set.has(key)))
+    const schnittmenge = (jeTyp) => {
+      const alle = [...jeTyp.values()]
+      return [...alle[0]].filter((key) => alle.every((set) => set.has(key)))
+    }
+
+    const generisch = schnittmenge(gelesenJeTyp)
     // Etikett und Link-Ziel liest die Abbildung an JEDEM Typ; `active_indicator`
     // liest sie nur, wenn ein Link-Ziel gesetzt ist, und Link-Kacheln gehoeren
-    // nicht ins Bindungsformular (C1/C2).
-    expect([...generisch].sort()).toEqual(['label', 'target_node_id'])
+    // nicht ins Bindungsformular (C1/C2). `visible_when` liest sie ebenfalls an
+    // jedem Typ - die Sichtbarkeitsregel (E16) steht im Formular in ihrem
+    // eigenen Abschnitt, nicht als Bindungsfeld.
+    expect([...generisch].sort()).toEqual(['label', 'target_node_id', 'visible_when'])
+
+    const wurzelGenerisch = schnittmenge(wurzelJeTyp)
+    // An der Wurzel liest die Abbildung fuer jeden Typ dasselbe: die Identitaet,
+    // den Servertyp, den Namen (Etikett), die Konfig und den Autorenkasten.
+    expect([...wurzelGenerisch].sort()).toEqual(['config', 'h', 'id', 'name', 'type', 'w', 'x', 'y'])
 
     for (const [type, gelesen] of gelesenJeTyp) {
       const typEigen = [...gelesen].filter((key) => !generisch.includes(key)).sort()
@@ -196,7 +227,26 @@ describe('Widget-Formulare — die Konfig-Schluessel kommen aus der Abbildung', 
         .map((f) => f.path.slice('config.'.length))
         .sort()
       expect([type, deklariert]).toEqual([type, typEigen])
+
+      // Und dieselbe Gleichung an der WURZEL: was das Formular dorthin schreibt,
+      // muss die Abbildung fuer DIESEN Typ auch dort lesen. Ohne diese Haelfte
+      // bliebe ein erfundenes Wurzelfeld unbemerkt.
+      const wurzelEigen = [...wurzelJeTyp.get(type)]
+        .filter((key) => !wurzelGenerisch.includes(key))
+        .sort()
+      const wurzelDeklariert = widgetFormFields(type)
+        .filter((f) => !f.path.startsWith('config.'))
+        .map((f) => f.path)
+        .sort()
+      expect([type, wurzelDeklariert]).toEqual([type, wurzelEigen])
     }
+
+    // Beide Seiten der Wurzel-Gleichung sind besetzt: `switch` bindet dort, die
+    // anderen drei nicht - sonst pruefte der Lauf nur den leeren Fall.
+    expect(
+      [...wurzelJeTyp.get('switch')].filter((key) => !wurzelGenerisch.includes(key)).sort(),
+    ).toEqual(['datapoint_id', 'status_datapoint_id'])
+    expect([...wurzelJeTyp.get('light')].filter((key) => !wurzelGenerisch.includes(key))).toEqual([])
   })
 
   it('bindet den Namen so, dass die Abbildung ihn als Geraete-Etikett zeigt (E10)', async () => {
@@ -224,6 +274,9 @@ describe('Widget-Formulare — die Konfig-Schluessel kommen aus der Abbildung', 
       // diese fuenf keine Abbildung behaupten, die es nicht gibt.
       expect([type, mapWidget(p.widget, 'Raum')]).toEqual([type, null])
       expect([type, [...p.gelesen]]).toEqual([type, []])
+      // Auch an der Wurzel bleibt es bei der einen Frage „welcher Servertyp?" -
+      // die Abbildung faellt vor jeder Bindung aus.
+      expect([type, [...p.wurzel]]).toEqual([type, ['type']])
       expect([type, WIDGET_FORMS[type].previewMapped]).toEqual([type, false])
     }
   })

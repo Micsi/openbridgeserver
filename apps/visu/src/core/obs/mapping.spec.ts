@@ -448,3 +448,44 @@ describe('mapWidget — page links from the backend widget config (#1194)', () =
     expect(m?.link).toEqual({ targetNodeId: 'n' });
   });
 });
+
+/**
+ * Die Kachel, an der ein MESSWERT sichtbar wird (Szenario E11, Teil E).
+ *
+ * E11 erwartet den Seed-Wert 21.5 in der Editor-Vorschau. An einem `Toggle`
+ * ist das unerfuellbar - sein einziges Wertfeld ist `on`, und `toBool(21.5)`
+ * ist schlicht `true`. Der Seed setzt auf dieser Seite deshalb einen
+ * `Rolladen`: seine Position IST der gelesene Zahlenwert, ungerundet, und die
+ * Kachel schreibt sie aus. Diese Probe haelt die Zusage am Mechanismus fest,
+ * damit sie nicht erst im Browser auffliegt.
+ */
+describe('mapping - ein gelesener Zahlenwert wird als Zahl sichtbar (E11)', () => {
+  const wieDerSeed = (): ObsWidget => ({
+    id: 'w-solo',
+    name: 'M5 Solo Epsilon',
+    type: 'Rolladen',
+    datapoint_id: null,
+    status_datapoint_id: null,
+    config: { dp_position_status: 'dp-m5-solo' },
+  });
+
+  it('traegt 21.5 unveraendert in die Position der Kachel', () => {
+    const m = mapWidget(wieDerSeed(), 'M5 Solo', new Map([['dp-m5-solo', 21.5]]));
+    expect(m?.device.type).toBe('blind');
+    expect((m?.device as BlindDevice).position).toBe(21.5);
+    // Und der Datenpunkt steht in der Lesemenge, also abonniert ihn die Quelle.
+    expect(m?.binding.reads).toEqual([
+      { dp: 'dp-m5-solo', field: { kind: 'position', invert: false } },
+    ]);
+  });
+
+  it('zeigt dieselbe Zahl auch, wenn der Bus sie als Text liefert', () => {
+    const m = mapWidget(wieDerSeed(), 'M5 Solo', new Map([['dp-m5-solo', '21.5']]));
+    expect((m?.device as BlindDevice).position).toBe(21.5);
+  });
+
+  it('behaelt das Etikett, an dem die Szenarien die Kachel finden', () => {
+    const m = mapWidget(wieDerSeed(), 'M5 Solo', new Map());
+    expect(m?.device.label).toBe('M5 Solo Epsilon');
+  });
+});

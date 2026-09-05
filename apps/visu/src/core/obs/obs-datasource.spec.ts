@@ -1053,3 +1053,92 @@ describe('ObsDataSource — summary tree: per-page page_config fetch (GET /visu/
     expect(ds.layersFor('p-prot')).toEqual([]);
   });
 });
+
+/* ------------------------------------------------- bedingte Sichtbarkeit E16 */
+
+/**
+ * Ein Baum mit einer Sichtbarkeitsregel: die Kachel `hidden-1` haengt an
+ * `dp-regel`, den sie SELBST NICHT bindet. Genau dieser Fall ist die Probe aufs
+ * Exempel - die Datenquelle muss den Regel-Datenpunkt trotzdem lesen, sonst
+ * bliebe die Kachel fuer immer verborgen.
+ */
+const REGEL_TREE: ObsVisuNode[] = [
+  {
+    id: 'pv',
+    parent_id: null,
+    name: 'Regelseite',
+    type: 'PAGE',
+    access: null,
+    page_config: {
+      widgets: [
+        {
+          id: 'always-1',
+          name: 'Immer da',
+          type: 'Toggle',
+          datapoint_id: 'tg',
+          status_datapoint_id: null,
+          config: {},
+        },
+        {
+          id: 'hidden-1',
+          name: 'Nur ueber 30',
+          type: 'Toggle',
+          datapoint_id: 'tg2',
+          status_datapoint_id: null,
+          config: { visible_when: { datapoint_id: 'dp-regel', op: 'gt', value: 30 } },
+        },
+      ],
+    },
+  },
+];
+
+describe('ObsDataSource - die Sichtbarkeitsregel wirkt in der ausgelieferten Visu (E16)', () => {
+  it('laesst ein Element mit unerfuellter Regel aus Geraeten UND Ebenen heraus', async () => {
+    const { fetchImpl, valueReads } = makeFetch({}, REGEL_TREE, { tg: true, tg2: true, 'dp-regel': 21.5 });
+    const { ds } = makeSource(fetchImpl);
+    const devices = await ds.list();
+
+    expect(devices.map((d) => d.id)).toEqual(['always-1']);
+    expect(ds.layersFor('pv').flatMap((l) => l.items.map((i) => i.id))).toEqual(['always-1']);
+
+    // Der Regel-Datenpunkt wurde gelesen, seitenbezogen wie jeder andere - auch
+    // wenn ihn kein Geraet bindet. Ohne das koennte die Regel nie umschlagen.
+    expect(valueReads.find((r) => r.id === 'dp-regel')).toEqual({
+      id: 'dp-regel',
+      pageId: 'pv',
+      token: undefined,
+    });
+  });
+
+  it('zeigt dasselbe Element, sobald der Wert die Bedingung erfuellt', async () => {
+    const { fetchImpl, valueReads } = makeFetch({}, REGEL_TREE, { tg: true, tg2: true, 'dp-regel': 42 });
+    const { ds } = makeSource(fetchImpl);
+    const devices = await ds.list();
+
+    expect(devices.map((d) => d.id)).toEqual(['always-1', 'hidden-1']);
+    expect(ds.layersFor('pv').flatMap((l) => l.items.map((i) => i.id))).toEqual([
+      'always-1',
+      'hidden-1',
+    ]);
+    // Und es kommt MIT seinem Wert zurueck, nicht als leere Huelse: der
+    // Lesesatz wurde sichtbarkeitsblind gesammelt, also stand `tg2` darin,
+    // bevor irgendeine Regel etwas ausgeblendet hat.
+    expect(valueReads.map((r) => r.id).sort()).toEqual(['dp-regel', 'tg', 'tg2']);
+    expect((byId(devices, 'hidden-1') as SwitchDevice).on).toBe(true);
+  });
+
+  it('liest die Datenpunkte des verborgenen Elements trotzdem mit', async () => {
+    // Sonst kaeme es beim Umschlagen der Regel zwar wieder, aber ohne Wert -
+    // eine Kachel, die faelschlich AUS zeigt, bis der naechste Aufbau laeuft.
+    const { fetchImpl, valueReads } = makeFetch({}, REGEL_TREE, { tg: true, tg2: true, 'dp-regel': 21.5 });
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+    expect(valueReads.map((r) => r.id).sort()).toEqual(['dp-regel', 'tg', 'tg2']);
+  });
+
+  it('haelt es verborgen, solange der Wert unbekannt ist (kein Aufblitzen)', async () => {
+    const { fetchImpl } = makeFetch({ concealRead: ['dp-regel'] }, REGEL_TREE, { tg: true, tg2: true });
+    const { ds } = makeSource(fetchImpl);
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1']);
+  });
+});

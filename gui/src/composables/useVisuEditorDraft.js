@@ -10,21 +10,30 @@
  * gar keinen Weg, Widgets einer Vorlage in eine andere Seite zu kopieren - und
  * deshalb auch nichts, was ein Autor je „neu importieren" muesste.
  *
- * **E16 - bedingte Sichtbarkeit.** Ein Element, dessen Regel nicht erfuellt ist,
- * steht nicht im Entwurf. Die Werte dafuer kommen vom echten Backend (REST fuer
- * den Anfangswert, WebSocket fuer die Aenderung) - dieselbe Quelle wie im Rest
- * der Admin-GUI, keine zweite.
+ * **E16 - bedingte Sichtbarkeit.** Der Entwurf traegt JEDES Element, auch das
+ * geregelte. Ausgewertet wird `config.visible_when` im HOST
+ * (`apps/visu/src/core/obs/mapping.ts`) - dort, wo auch die ausgelieferte Visu
+ * ihre Geraete und Ebenen herbekommt. Ein Filter an dieser Stelle waere eine
+ * zweite Auswertung neben der echten und liesse die Vorschau fuer geregelte
+ * Elemente von der Visu abweichen; genau das schliesst **E3** aus.
+ *
+ * Der Editor beobachtet die Regel-Datenpunkte trotzdem - aber als ANLASS, nicht
+ * als Entscheidung: bewegt sich ein Wert, an dem eine Regel haengt, bekommt die
+ * Bruecke einen neuen Entwurf, und der Host wertet die Seite frisch aus. Die
+ * Werte kommen vom echten Backend (REST fuer den Anfangswert, WebSocket fuer die
+ * Aenderung) - dieselbe Quelle wie im Rest der Admin-GUI, keine zweite.
  *
  * Was der Entwurf NICHT traegt: Werte. Die Vorschau liest sie selbst und
  * seitenbezogen am Server (`PreviewDataSource`, Teil C4) - der Entwurf ist
- * Struktur, nicht Zustand.
+ * Struktur, nicht Zustand. Deshalb reist hier auch kein Wert mit, sondern nur
+ * der Anlass, neu zu lesen.
  */
 import { computed, ref, shallowRef, watch, onBeforeUnmount } from 'vue'
 
 import { visuApi } from '@/api/visu'
 import { dpApi } from '@/api/client'
 import { useWebSocketStore } from '@/stores/websocket'
-import { applyVisibility, visibilityDatapointIds } from '@/utils/visuVisibility'
+import { visibilityDatapointIds } from '@/utils/visuVisibility'
 import { CORE_WIDGET_TYPES, WIDGET_FORMS } from '@/utils/visuWidgetTypes'
 
 /**
@@ -138,9 +147,15 @@ export async function loadDraftNodes(pageId) {
  * Vorgaben wie die echte Seite ohne eigene Werte (`applyTweaks({})`) - ein
  * ERFUNDENER Wert waere hier schlimmer als keiner, denn er zeigte dem Autor
  * eine Flaeche, die die Visu nie so rendert.
+ *
+ * Die Knoten gehen UNVERAENDERT hinueber - kein Filter, keine Auswahl, auch
+ * nicht fuer `config.visible_when` (E16). Was der Host aus ihnen macht, macht er
+ * fuer die Vorschau und fuer die ausgelieferte Seite gleich; jede Vorentscheidung
+ * hier waere eine zweite Auswertung und damit genau die Abweichung, die E3
+ * ausschliesst.
  */
-export function buildDraft({ pageId, nodes, skin = EDITOR_SKIN, values = {} }) {
-  return { skin, pageId, nodes: applyVisibility(nodes, values) }
+export function buildDraft({ pageId, nodes, skin = EDITOR_SKIN }) {
+  return { skin, pageId, nodes }
 }
 
 /** Jede Datenpunkt-Id, die in diesen Knoten steht (die Abo-Liste des Editors). */
@@ -239,11 +254,32 @@ export function useVisuEditorDraft(pageId) {
     )
   }
 
-  const draft = computed(() =>
-    pageId.value && nodes.value.length > 0
-      ? buildDraft({ pageId: pageId.value, nodes: nodes.value, values: values.value })
-      : null,
+  /**
+   * Der Stand der Datenpunkte, an denen SICHTBARKEITSREGELN haengen.
+   *
+   * Er geht NICHT mit hinueber - die Vorschau liest ihre Werte selbst und
+   * seitenbezogen (C4), und der Host wertet die Regel aus (E16). Gebraucht wird
+   * er als ANLASS: bewegt sich einer dieser Werte, muss der Host die Seite neu
+   * auswerten, und dafuer braucht die Bruecke einen neuen Entwurf. Ohne diese
+   * Abhaengigkeit blieben geregelte Elemente stehen, bis der Autor zufaellig
+   * etwas anderes anfasst.
+   */
+  const regelStand = computed(() =>
+    visibilityDatapointIds(nodes.value)
+      .map((id) => `${id}=${JSON.stringify(values.value[id] ?? null)}`)
+      .join('|'),
   )
+
+  const draft = computed(() => {
+    // Abhaengigkeit ohne Inhalt, mit Absicht: `regelStand` gehoert NICHT in den
+    // Entwurf (die Vorschau liest ihre Werte selbst), aber seine Aenderung MUSS
+    // einen neuen Entwurf ergeben - sonst bekaeme der Host nie den Anlass, die
+    // Regel mit dem frischen Wert neu auszuwerten.
+    void regelStand.value
+    return pageId.value && nodes.value.length > 0
+      ? buildDraft({ pageId: pageId.value, nodes: nodes.value })
+      : null
+  })
 
   const pageWidgets = computed(() => {
     const seite = nodes.value.find((node) => node.id === pageId.value)

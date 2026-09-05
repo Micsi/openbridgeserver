@@ -36,8 +36,9 @@ const pageId = computed(() => (route && route.params ? route.params.pageId || nu
 
 /**
  * Der Entwurf, den die Vorschau zeigt. C4 transportiert ihn, C3 fuellt ihn:
- * Knoten der Seite samt ihrer Vorlagen (E10), Elemente ohne erfuellte
- * Sichtbarkeitsregel bereits ausgelassen (E16).
+ * Knoten der Seite samt ihrer Vorlagen (E10), jedes Element mit seiner
+ * Sichtbarkeitsregel als DATEN (E16). Ausgewertet wird die Regel drueben im
+ * Host, damit die Vorschau dieselbe Seite zeigt wie die ausgelieferte Visu.
  *
  * Form (Protokoll 1.1): `{ skin, pageId, nodes, tweaks?, theme? }`. `tweaks` und
  * `theme` sind nicht schmueckendes Beiwerk: an ihnen haengen die Wurzel-Attribute

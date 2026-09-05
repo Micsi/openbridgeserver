@@ -51,6 +51,7 @@ import {
   planWrite,
   resolveAccessNodes,
   deviceWriteDps,
+  visibilityReads,
   type ObsVisuNode,
   type MappedWidget,
   type PageAccess,
@@ -313,7 +314,11 @@ export class ObsDataSource
     // accessible PAGE's widgets so the mapper can see them. Concealed/locked
     // pages (404/403) contribute nothing until unlocked / logged in.
     const enriched = await this.loadPageConfigs(list);
-    const mappedWidgets = mapTree(enriched);
+    // Der Lesesatz muss JEDES Element sehen, auch das, dessen Sichtbarkeitsregel
+    // gerade nicht erfüllt ist (E16) - sonst läse niemand seine Datenpunkte und
+    // es käme nie wieder zum Vorschein. Gerendert wird weiter unten aus dem
+    // Durchlauf MIT Werten und MIT Regel.
+    const mappedWidgets = mapTree(enriched, new Map(), { ignoreVisibility: true });
 
     // Collect the read datapoints and remember each one's page so the initial
     // GET …/value carries the right X-Page-Id / session token.
@@ -325,6 +330,13 @@ export class ObsDataSource
         dpIds.add(r.dp);
         if (!dpPage.has(r.dp)) dpPage.set(r.dp, pageId);
       }
+    }
+    // E16: die Datenpunkte der Sichtbarkeitsregeln gehören in denselben
+    // Lesesatz. Sie hängen an der SEITE, nicht an einem Gerät - ein geregeltes
+    // Element muss seinen Datenpunkt nicht selbst gebunden haben.
+    for (const { pageId, dp } of visibilityReads(enriched)) {
+      dpIds.add(dp);
+      if (!dpPage.has(dp)) dpPage.set(dp, pageId);
     }
     const values = await this.fetchValues([...dpIds], dpPage);
 
