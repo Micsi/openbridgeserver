@@ -302,6 +302,40 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
   });
 
   test('E9 Seitentypen normal/Include/globalInclude/Popup wählbar und wirksam', C1, async ({ page, request }) => {
+    // EIGENE, BEGRUENDETE ZEITGRENZE: nicht die Decke gehoben, sondern diese
+    // zwei Zeilen ausgenommen (E9 und E15, sonst keine).
+    //
+    // Die 30-s-Vorgabe (`playwright.config.ts`) ist an Szenarien geeicht, die
+    // die Anwendung EINMAL laden. E9 und E15 belegen als einzige BEIDE Haelften
+    // ihrer Planzeile (Form UND Wirkung) und laden die Admin-SPA dafuer dreimal:
+    // Anmeldung, die geseedete Seite, und nach dem Speichern die neu angelegte
+    // Seite als Gegenprobe (der letzte Ladevorgang IST die Aussage „der Editor
+    // liest den gespeicherten Stand zurueck, nicht seinen eigenen"). Gemessen
+    // waren es bis Runde 2 fuenf Ladevorgaenge; entschlackt sind es drei: der
+    // Sprach-Pin kommt jetzt als Init-Skript statt als `evaluate` + `reload`
+    // (`editor-helpers.ts`), und der Zwischen-Ladevorgang auf die neue Seite
+    // entfaellt, weil der Store sie nach dem Speichern ohnehin frisch vom
+    // Server liest.
+    //
+    // GEMESSEN an drei Laeufen auf derselben Instanz, unter der Parallellast
+    // dieses Projekts (drei Nachbar-Agenten, load 4-7):
+    //   * warmer Stapel:  E9 24,6 / 33,6 / 38,1 s, E15 16,6 / 35,6 / 54,9 s;
+    //   * KALTER Admin-GUI-Dev-Server (erster Lauf): E9 78 s, E15 66 s.
+    // Der Sprung ist keine Aussage ueber den Editor, sondern die
+    // Vite-Transpilierung der Editor-Route: `global-setup.ts` waermt `/login`
+    // der Admin-GUI vor, die Route `/visu-editor` laesst sich ohne Anmeldung
+    // aber nicht mitwaermen, und ihre Einmal-Kosten traegt das ERSTE
+    // Editor-Szenario des Laufs. Unter der 30-s-Vorgabe waeren SECHS dieser
+    // acht Messungen rot gewesen, und zwar mit „Tearing down context exceeded
+    // the test timeout" statt einer gescheiterten Erwartung: eine Aussage ueber
+    // die Maschine, nicht ueber den Editor.
+    //
+    // Die Grenze steht deshalb bei 120 s: ueber der schlechtesten gemessenen
+    // Zeit, mit Rand, und immer noch weit unter dem, was ein echter Stillstand
+    // braeuchte. Sie gilt NUR fuer diese beiden Zeilen; jede andere bleibt bei
+    // 30 s. KEINE Erwartung ist dafuer gesenkt worden.
+    test.setTimeout(120_000);
+
     const fx = seeded();
     const headers = await adminHeaders(request);
     await openEditor(page, fx.m5.node_ids.popup_positioned);
@@ -353,8 +387,11 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     try {
       expect(created!.kind).toBe('normal');
 
-      // Der Typwechsel an einer BESTEHENDEN Seite geht als `PATCH` hinaus …
-      await page.goto(`${EDITOR_BASE}/visu-editor/${created!.id}`);
+      // Der Typwechsel an einer BESTEHENDEN Seite geht als `PATCH` hinaus.
+      // OHNE Zwischen-Ladevorgang: `save()` schliesst mit `load()` + `select()`
+      // ab (`gui/src/stores/visuEditor.js`), das Formular steht also schon auf
+      // der neu angelegten Seite, und zwar mit dem Stand des SERVERS. Ein
+      // `goto` hierher lud dieselben Daten ein zweites Mal.
       await expect(page.getByLabel('Seitentyp')).toHaveValue('normal');
       await page.getByLabel('Seitentyp').selectOption('popup');
       await page.getByLabel('Automatisch schließen (ms)').fill('2000');
@@ -367,8 +404,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       const cfg = await (await request.get(api(`/visu/pages/${created!.id}`), { headers })).json();
       expect(cfg.popup).toMatchObject({ auto_close_ms: 2000 });
 
-      // Und der Editor liest den gespeicherten Stand zurück, nicht seinen eigenen.
-      await page.reload();
+      // Und der Editor liest den gespeicherten Stand zurück, nicht seinen
+      // eigenen: frisch geladene SPA, Seite über den Deep-Link geöffnet.
+      await page.goto(`${EDITOR_BASE}/visu-editor/${created!.id}`);
       await expect(page.getByLabel('Seitentyp')).toHaveValue('popup');
       await expect(page.getByLabel('Automatisch schließen (ms)')).toHaveValue('2000');
 
@@ -471,6 +509,12 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     'E15 Zugriff/Zielgruppe direkt in Seiteneigenschaften setzbar (mind. Admin-only/Nutzer-Sichtbarkeit)',
     C1,
     async ({ page, request }) => {
+      // Eigene, begruendete Zeitgrenze - die Begruendung und die Messwerte
+      // stehen bei E9 (oben): dieselbe Bauart, dieselben drei Ladevorgaenge der
+      // Admin-SPA, dieselbe Fehlerform unter Parallellast. Keine Erwartung ist
+      // dafuer gesenkt.
+      test.setTimeout(120_000);
+
       const fx = seeded();
       const headers = await adminHeaders(request);
       await openEditor(page, fx.m5.node_ids.guard_user);
@@ -516,8 +560,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       expect(created, 'die im Editor angelegte Seite steht im Baum').toBeTruthy();
       try {
         // Der Zugriffswechsel an einer BESTEHENDEN Seite: erben ab, `user` an,
-        // Zielgruppe dazu — und gespeichert.
-        await page.goto(`${EDITOR_BASE}/visu-editor/${created!.id}`);
+        // Zielgruppe dazu, und gespeichert. Ohne Zwischen-Ladevorgang (s. E9):
+        // `save()` schliesst mit `load()` + `select()` ab, das Formular steht
+        // also bereits auf der neuen Seite, mit dem Stand des Servers.
         await page.getByLabel('Vom Elternknoten erben').uncheck();
         await page.getByLabel('Zugriff').selectOption('user');
         await page.getByLabel('Nutzer hinzufügen').selectOption(fx.resident.username);
@@ -532,8 +577,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
         ).json();
         expect(audience).toEqual([fx.resident.username]);
 
-        // Und der Editor liest den gespeicherten Stand zurück, nicht seinen eigenen.
-        await page.reload();
+        // Und der Editor liest den gespeicherten Stand zurück, nicht seinen
+        // eigenen: frisch geladene SPA, Seite über den Deep-Link geöffnet.
+        await page.goto(`${EDITOR_BASE}/visu-editor/${created!.id}`);
         await expect(page.getByLabel('Zugriff')).toHaveValue('user');
         await expect(page.getByLabel('Zielgruppe')).toContainText(fx.resident.username);
       } finally {

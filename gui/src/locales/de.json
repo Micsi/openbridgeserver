@@ -3436,8 +3436,9 @@
       "removeUser": "Nutzer entfernen: {name}",
       "skinSection": "Darstellung",
       "skin": "Skin",
-      "skinHint": "Die Wahl wird je Seite im Browser dieses Rechners gemerkt, nicht in der Seite selbst: ein anderer Browser sieht die Vorgabe.",
-      "audienceDatapointHint": "Beim Speichern prüft der Server, ob jeder Nutzer der Zielgruppe alle Datenpunkte dieser Seite lesen darf. Fehlt eine Freigabe, lehnt er ab (403).",
+      "skinHintBrowser": "Die Wahl wird je Seite im Browser dieses Rechners gemerkt, nicht in der Seite selbst: ein anderer Browser sieht die Vorgabe.",
+      "skinHintPage": "Die Wahl gehört der Seite: sie wird mitgespeichert und gilt in jedem Browser.",
+      "audienceDatapointHint": "Beim Speichern prüft der Server, ob jeder Nutzer der Zielgruppe alle Datenpunkte dieser Seite lesen darf, und ebenso die der Seiten, die ihren Zugriff von dieser erben. Fehlt eine Freigabe, lehnt er ab (403).",
       "save": "Speichern",
       "saved": "Gespeichert",
       "saveFailed": "Das Speichern ist fehlgeschlagen."

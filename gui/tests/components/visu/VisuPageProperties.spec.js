@@ -380,6 +380,36 @@ describe('VisuPageProperties - Skin je Seite (E19)', () => {
     expect(store.skin).toBe('terminal')
     expect(store.previewDraft.skin).toBe('terminal')
   })
+
+  /**
+   * Der Hinweis unter dem Feld muss VOR und NACH dem Merge von Teil C2 stimmen.
+   *
+   * Solange `PageConfig` kein Skin-Feld fuehrt, lebt die Wahl im Browser des
+   * Autors - und genau das sagt der Satz. Sobald das Feld da ist, gehoert die
+   * Wahl der Seite, und derselbe Satz waere eine Falschaussage. Er haengt
+   * deshalb an derselben Erkennung wie die Naht selbst
+   * (`store.skinSupported`) und nicht an einem Zettel, den nach dem Merge
+   * jemand lesen muesste.
+   */
+  it('sagt heute, dass die Wahl nur im Browser dieses Rechners lebt', async () => {
+    const { wrapper, store } = await mountProperties('home')
+    expect(store.skinSupported).toBe(false)
+    const hint = wrapper.find('[data-testid="visu-props-skin-hint"]')
+    expect(hint.attributes('data-skin-storage')).toBe('browser')
+    expect(hint.text()).toContain('Browser dieses Rechners')
+  })
+
+  it('zieht den Hinweis von selbst nach, sobald das Backend das Feld fuehrt', async () => {
+    visuApi.getPage.mockImplementation((id) =>
+      Promise.resolve({ data: { ...JSON.parse(JSON.stringify(CONFIGS[id])), skin: null } }),
+    )
+    const { wrapper, store } = await mountProperties('home')
+    expect(store.skinSupported).toBe(true)
+    const hint = wrapper.find('[data-testid="visu-props-skin-hint"]')
+    expect(hint.attributes('data-skin-storage')).toBe('page')
+    expect(hint.text()).toContain('gehört der Seite')
+    expect(hint.text()).not.toContain('Browser dieses Rechners')
+  })
 })
 
 describe('VisuPageProperties - speichern', () => {

@@ -40,6 +40,16 @@ export const C6 = blockedBy('C6 Editor Dualität + Verlauf', 173);
  * ist ein Vorschau-Umschalter, keine Seiteneigenschaft, und faerbt diese Zeile
  * nicht gruen. Teil C2 ergaenzt `PageConfig` additiv um das Feld; die Naht im
  * Editor steht und schaltet sich selbst ein, sobald es da ist.
+ *
+ * NACH DEM MERGE VON C2 faellt an dieser Zeile GENAU EINE Handarbeit an:
+ * `test.fixme` → `test` (und diese Annotation weg). Sonst nichts - gemessen
+ * (Runde 2: `skin: str | None = None` probeweise in `PageConfig`, Backend neu
+ * gestartet, E19 gruen ohne eine Zeile `gui/`). Auch der Hinweistext unter dem
+ * Skin-Feld zieht sich selbst nach: er haengt an `store.skinSupported`, also an
+ * derselben Erkennung wie die Naht (`gui/src/components/visu/
+ * VisuPageProperties.vue`, gepinnt in `VisuPageProperties.spec.js` fuer BEIDE
+ * Zustaende). Das Feld existiert bereits auf `integ/visu-m5-c2` (`cdbfe3e7`,
+ * `obs/models/visu.py`) unter genau diesem Namen.
  */
 export const C2_PAGE_SKIN = {
   annotation: {
@@ -75,9 +85,22 @@ const GUI_LOCALE = 'de';
  * war sie bis Runde 2 (dort ohne Sprach-Pin und ohne Warten).
  */
 export async function loginToEditor(page: Page) {
+  // Der Sprach-Pin geht als INIT-SKRIPT hinaus, nicht als `evaluate` + `reload`.
+  // Grund, gemessen: die Admin-GUI liest `obs-locale` beim Hochfahren
+  // (`gui/src/i18n.js`), ein spaeter gesetzter Wert braucht also einen zweiten
+  // vollen Ladevorgang der SPA - und der ist in dieser Suite der teuerste
+  // Einzelposten. `addInitScript` laeuft VOR jedem Seitenskript und spart ihn.
+  // Es gilt fuer alle Rahmen der Seite, also auch fuer den Vorschau-iframe der
+  // Visu; die hat einen eigenen Schluessel (`obs-visu-locale`) und bleibt davon
+  // unberuehrt - keine Erwartung eines Szenarios ist angefasst.
+  await page.addInitScript((code) => {
+    try {
+      localStorage.setItem('obs-locale', code as string);
+    } catch {
+      /* Ein Rahmen ohne Speicherzugriff ist keiner, der die Admin-GUI zeigt. */
+    }
+  }, GUI_LOCALE);
   await page.goto(`${EDITOR_BASE}/login`);
-  await page.evaluate((code) => localStorage.setItem('obs-locale', code), GUI_LOCALE);
-  await page.reload();
   await page.getByLabel('Benutzername').fill(ADMIN.username);
   await page.getByLabel('Passwort').fill(ADMIN.password);
   await page.getByRole('button', { name: 'Anmelden' }).click();

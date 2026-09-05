@@ -62,8 +62,15 @@ MQTT_CID=$(docker run -d -p 127.0.0.1:1884:1883 \
 ## Step 2 — Backend (venv/uvicorn, NOT a Docker image) + owner seed
 
 Run the server from the repo root with a fresh SQLite DB pointed at that broker.
-Do **not** build the Docker image (slow); use the venv (`.venv` symlinks the main
-worktree's env).
+Do **not** build the Docker image (slow); use the venv.
+
+> **Welches `.venv`?** Im Hauptworktree ist `.venv` da (bzw. ein Symlink auf die
+> Umgebung); **im M5-Worktree gibt es keins**. Dort wird ueberall unten
+> `.venv/bin/python` durch den Interpreter des Hauptworktrees ersetzt:
+> `../openbridgeserver/.venv/bin/python`. Das gilt fuer **beide** Aufrufe in
+> diesem Schritt (Owner-Seed und uvicorn) und ebenso fuer Schritt 3 und
+> „Harness starten"; am einfachsten einmal `PY=../openbridgeserver/.venv/bin/python`
+> setzen und `$PY` schreiben.
 
 ```bash
 export TMPDIR=/Volumes/Daten/tmp                        # nur fuer den Colima-Mount
@@ -106,8 +113,8 @@ Seitentypen-Beispielwelt (`M5 …`, siehe
 — the specs read the generated node ids from there.
 
 Der Seed ist **idempotent**: ein zweiter Lauf legt nichts doppelt an und liest am
-Ende alles zurück. `.venv` ist im M5-Worktree kein Symlink — dort den Interpreter
-des Hauptworktrees nehmen (`../openbridgeserver/.venv/bin/python`).
+Ende alles zurück. Zum `.venv` im M5-Worktree siehe den Kasten in Schritt 2: es
+gibt dort keins, gemeint ist der Interpreter des Hauptworktrees.
 
 ```bash
 OBS_BASE=http://127.0.0.1:8080 OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
@@ -336,6 +343,23 @@ deshalb liegen sie außerhalb jedes Test-Timeouts und der Test-Timeout bleibt be
 echtes Problem und soll rot werden). Beide Schritte sind nachsichtig: schlägt
 einer fehl, meldet das Setup es sichtbar und der Lauf beginnt trotzdem.
 
+**Zwei Ausnahmen von der Decke, im Szenario begründet.** E9 und E15 setzen sich
+per `test.setTimeout(120_000)` eine eigene Grenze (gemessene Zeiten und
+Begründung: siehe die Pflichtläufe des Nachzugs weiter unten). Grund: die 30 s sind an
+Szenarien geeicht, die die Anwendung **einmal** laden; diese beiden belegen als
+einzige **beide Hälften** ihrer Planzeile (Form **und** Wirkung) und laden die
+Admin-SPA dafür **dreimal**: Anmeldung, geseedete Seite, und nach dem Speichern
+die neu angelegte Seite als Gegenprobe. Unter Parallellast rissen sie damit als
+erste, und zwar mit „Tearing down context exceeded the test timeout" statt einer
+gescheiterten Erwartung: eine Aussage über die Maschine, nicht über den Editor.
+Die Grenze ist **nicht** allgemein gehoben (jede andere Zeile bleibt bei 30 s)
+und **keine** Erwartung ist gesenkt. Entschlackt wurden sie zusätzlich: der
+Sprach-Pin der Admin-GUI geht als Init-Skript hinaus statt als
+`evaluate` + `reload`, und der Zwischen-Ladevorgang auf die neu angelegte Seite
+entfällt, weil der Store sie nach dem Speichern ohnehin frisch vom Server liest
+(`save()` schließt mit `load()` + `select()` ab). Fünf Ladevorgänge sind so zu
+drei geworden.
+
 ## Zwei Pflichtläufe
 
 Der Harness wird **zweimal** gefahren und jeder Lauf klassifiziert als
@@ -472,6 +496,42 @@ gespeichert wurde: im Trace liegt der Lesevorgang des Szenarios zwischen zwei
 Schreib-Anfragen des Editors. Alle „Gespeichert"-Erwartungen der Editor-Zeilen
 (auch die noch `fixme`-en und R16) stehen deshalb jetzt auf `{ exact: true }`.
 
+### Ergebnis der Pflichtläufe (Teil C1 Runde 2 · Nachzug, 2026-09-05)
+
+Eigener Portstapel: Mosquitto anonym auf `127.0.0.1:1897` (Colima), Backend
+`http://127.0.0.1:8097`, Visu-Dev-Server `http://localhost:5197`,
+Admin-GUI-Dev-Server `http://localhost:5187`. Gefahren nach denselben Schritten
+1-4b, auf einem Rechner unter **hoher Parallellast** (drei Nachbar-Agenten, load
+4-7, also dieselbe Lage, in der die Vorrunde ihren dritten Lauf verlor).
+
+| Lauf | Instanz | pass | fixme | flaky | fail | Dauer | E9 | E15 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | frisch + leer, beide Dev-Server **kalt**, Seed **einmal** | **21** | **18** | **0** | **0** | 4,8 min | 78 s | 66 s |
+| 2 | dieselbe Instanz, Seed **erneut** | **21** | **18** | **0** | **0** | 3,4 min | 33,6 s | 35,6 s |
+| 3 | dieselbe Instanz, gleicher Befehl, **warmer Stapel** | **21** | **18** | **0** | **0** | 4,4 min | 38,1 s | 54,9 s |
+
+Der dritte Lauf ist der Punkt: **er ist der, an dem die Vorrunde riss.** E9 und
+E15 liegen unter dieser Last bei 34-55 s und lägen damit in jedem der drei Läufe
+über der 30-s-Decke. Mit ihrer eigenen, begründeten Grenze (oben) sind sie
+dreimal grün, und zwar an ihren Erwartungen gemessen, nicht an der Uhr. Die
+Beispielwelt steht danach unverändert bei **20 Knoten**, nur Seed-Namen: E9 und
+E15 räumen ihre eigene Seite im `finally` weg, R16 seit diesem Nachzug ebenso.
+
+**Ein echter Fund aus dem Entschlacken.** Ohne den Zwischen-Ladevorgang war die
+Erfolgsmeldung „Gespeichert" keine Schranke mehr: sie stand aus dem VORIGEN
+Speichern noch da, während das nächste unterwegs war, und E9 las den Baum zu
+früh (`kind` noch `normal`, gemessen). Bis dahin hatte der volle Ladevorgang die
+Meldung beiläufig mitgelöscht. Der Editor löscht sie jetzt selbst, sobald ein
+Speichern beginnt (`gui/src/stores/visuEditor.js`, gepinnt in
+`gui/tests/stores/visuEditor.spec.js`). Der Autor sieht damit keine
+Bestätigung mehr für eine Änderung, die noch unterwegs ist.
+
+**Bekannte Fremdursache, getrennt ausgewiesen.** In einem verworfenen Anlauf des
+zweiten Laufs fiel eine Zeile der **Bestandsdatei** `authz-roles.spec.ts`
+(Welle 4, von C1 unberührt) mit „Tearing down context exceeded the test timeout
+of 30000ms", also dieselbe Fehlerform und dieselbe Ursache: Maschinenlast. Die
+wiederholte Fahrt derselben Instanz war grün. Nichts davon liegt an C1.
+
 ## Abdeckung — welche Zeile prüft welches Szenario
 
 **Regeltabelle R1-R16** (`CONTRIBUTING-visu-m5.md` §1)
@@ -516,7 +576,7 @@ Dateien gegen dieselbe Anforderung bauen:
 | E6 Copy/Paste/Duplizieren, seitenübergreifend | C5 #172 | E16 bedingte Sichtbarkeit je Datenpunktwert | C3 #170 |
 | E7 Undo/Redo + Pfeiltasten-Nudging | C5 #172 | E17 Responsive-Breakpoints | C2 #169 |
 | E8 Z-Ordnung, sperren/ausblenden | C2 #169 | E18 Export/Import als Datei | C6 #173 |
-| E9 Seitentypen wählbar und wirksam | **läuft** (C1 #168) | E19 Skin/Theme pro Seite oder global | C2 #169 (Feld in `PageConfig`) |
+| E9 Seitentypen wählbar und wirksam | **läuft** (C1 #168) | E19 Skin/Theme pro Seite oder global | C2 #169 (Feld `skin` in `PageConfig`); danach ist die einzige Handarbeit `test.fixme` → `test` |
 | E10 zentrale Vorlage propagiert automatisch | C3 #170 | | |
 
 Die Bedien-Affordanzen der E-Szenarien (Rollen, Beschriftungen, die

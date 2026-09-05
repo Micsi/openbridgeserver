@@ -129,11 +129,26 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
   /**
    * Bindet die bearbeitete Seite ueberhaupt Datenpunkte?
    *
-   * Nur dann kann `_check_user_page_target_datapoint_policy` (`visu.py:560-580`)
-   * beim Wechsel auf Zugriff „user" mit 403 ablehnen. Der Editor kann diese
-   * Ablehnung NICHT vorwegnehmen - dafuer muesste er die Datenpunkt-Rechte jedes
-   * Zielgruppen-Mitglieds kennen, und dafuer gibt es keinen Endpunkt. Er sagt
-   * dem Autor deshalb, dass geprueft wird, statt hinterher einen Code zu zeigen.
+   * Nur dann kann `_check_user_page_target_datapoint_policy` (`visu.py:555-580`)
+   * beim Wechsel auf Zugriff „user" mit 403 ablehnen.
+   *
+   * Der Editor nimmt diese Ablehnung bewusst NICHT vorweg. Nicht, weil es keinen
+   * Endpunkt gaebe - `POST /api/v1/authz/preview` (`obs/api/v1/authz.py:544`)
+   * beantwortet genau diese Frage und kennt `node_type: "datapoint"`. Sondern
+   * weil eine echte Vorwegnahme je Zielgruppen-Mitglied MAL Datenpunkt eine
+   * Vorschau-Abfrage braeuchte, und zwar bei JEDEM Zugriffswechsel - und dem
+   * Stand des Servers trotzdem hinterherliefe. Der Editor sagt dem Autor
+   * deshalb, DASS geprueft wird, statt ihm hinterher einen Code zu zeigen; den
+   * Ablehnungssatz samt Nutzer und Datenpunkt-IDs schreibt er ohnehin aus.
+   *
+   * Was diese Bedingung NICHT sieht: das Backend laeuft ueber JEDE Seite, deren
+   * Zugriff sich auf den geaenderten Knoten aufloest
+   * (`_check_user_target_pages_datapoint_policy_after_access_change`,
+   * `visu.py:602-628`) - also auch ueber erbende Kindseiten. Deren
+   * `page_config` ist hier nicht geladen (sie kaeme je Kindseite als eigene
+   * Anfrage), der Hinweis ist deshalb eine UNTERGRENZE: er nennt die Pruefung
+   * in ihrem vollen Umfang, kann aber schweigen, wo erst eine Kindseite den 403
+   * ausloest. Diesen Rest faengt der ausgeschriebene Ablehnungssatz.
    */
   const draftBindsDatapoints = computed(() => {
     const config = draft.value?.id ? pageConfigs.value[draft.value.id] : null
@@ -391,6 +406,13 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     }
     saveError.value = null
     saveErrorDetail.value = null
+    // Die Erfolgsmeldung des VORIGEN Speicherns verschwindet, solange dieses
+    // laeuft. Sonst bestaetigt der Editor eine Aenderung, die noch unterwegs
+    // ist - und der Playwright-Harness liest die stehengebliebene Meldung als
+    // Schranke („speichern, dann am Server nachlesen", E9/E15). Gemessen: genau
+    // daran ist E9 gerissen, als der Zwischen-Ladevorgang wegfiel, der die
+    // Meldung bis dahin beilaeufig mitgeloescht hatte.
+    savedAt.value = 0
     let nodeId = draft.value.id
     try {
       for (const step of planPageSave(draft.value, stored)) {

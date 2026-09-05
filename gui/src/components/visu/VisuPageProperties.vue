@@ -60,10 +60,12 @@ const problemText = (problem) => `visuEditor.problems.${problem.code}`
 /**
  * Die Ablehnungen, die das Backend als CODE meldet und der Editor als SATZ zeigt.
  *
- * Zwei davon kann der Editor nicht vorwegnehmen, ohne Rechte zu kennen, die ihm
- * kein Endpunkt liefert (`visu_target_audience_datapoints_denied`), oder ohne
- * eine Nutzerliste, die auch fehlen kann (`visu_target_audience_invalid_users`
- * bei nicht geladener Liste). Dann soll der Autor wenigstens lesen, was der
+ * Zwei davon nimmt der Editor bewusst nicht vorweg: die Datenpunkt-Rechte der
+ * Zielgruppe (`visu_target_audience_datapoints_denied`) waeren zwar abfragbar
+ * (`POST /api/v1/authz/preview`), aber nur je Mitglied MAL Datenpunkt und bei
+ * jedem Zugriffswechsel - siehe `draftBindsDatapoints` in `stores/visuEditor.js`;
+ * und die Nutzerliste kann fehlen (`visu_target_audience_invalid_users` bei
+ * nicht geladener Liste). Dann soll der Autor wenigstens lesen, was der
  * Server meint - samt Namen und Datenpunkten, die der Server mitschickt.
  */
 const REJECTION_CODES = Object.freeze([
@@ -540,8 +542,20 @@ async function onSubmit() {
           :value="key"
         >{{ key }}</option>
       </select>
-      <p class="text-xs text-slate-500 dark:text-slate-400">
-        {{ $t('visuEditor.props.skinHint') }}
+      <!-- Der Hinweis MUSS vor und nach dem Merge von Teil C2 stimmen, deshalb
+           haengt er an derselben Erkennung wie die Naht selbst: solange
+           `PageConfig` kein Skin-Feld fuehrt, lebt die Wahl im Browser des
+           Autors; sobald das Feld da ist, gehoert sie der Seite. Ohne diese
+           Fallunterscheidung waere ein fester Satz nach dem Merge eine
+           Falschaussage, und
+           niemand haette einen Anlass, ihn nachzuziehen (gepinnt in
+           `tests/components/visu/VisuPageProperties.spec.js`, E19). -->
+      <p
+        data-testid="visu-props-skin-hint"
+        :data-skin-storage="store.skinSupported ? 'page' : 'browser'"
+        class="text-xs text-slate-500 dark:text-slate-400"
+      >
+        {{ store.skinSupported ? $t('visuEditor.props.skinHintPage') : $t('visuEditor.props.skinHintBrowser') }}
       </p>
     </div>
 

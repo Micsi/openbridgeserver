@@ -40,7 +40,10 @@ const BLOCKED_BY_EDITOR = {
     description:
       'Teil B Host-Komposition — Micsi/openbridgeserver#167: der Host oeffnet kein per ?popup=<id> ' +
       'verlangtes Popup (Schritt 3). Die Editor-Haelfte (Teil C1 #168) ist geliefert; Schritt 1 und 2 ' +
-      'sind gegen die laufende Instanz gruen gemessen.',
+      'sind gegen die laufende Instanz gruen gemessen. ZWEI Wege fuehren hier heraus, und nur der ' +
+      'erste ist #167: entweder liefert der Host den Deep-Link nach, oder dieses Szenario oeffnet die ' +
+      'neue Seite ueber eine Link-Kachel wie R7/R8 - die Kachel dorthin zu setzen verlangt aber den ' +
+      'Canvas (Teil C2 #169 / C3 #170), denn auf eine frisch angelegte Seite verlinkt noch niemand.',
   },
 } as const;
 
@@ -90,43 +93,49 @@ test.describe('M5 Regeltabelle R16 · Editor-Round-Trip (Editor steht; wartet au
         (n) => n.name === RT_POPUP,
       );
       expect(created, 'die im Editor angelegte Seite steht im Baum').toBeTruthy();
-      expect(created!.kind).toBe('popup');
 
-      const cfg = await (await request.get(api(`/visu/pages/${created!.id}`), { headers })).json();
-      expect(cfg.popup).toMatchObject({
-        x: 140,
-        y: 90,
-        w: 260,
-        h: 180,
-        auto_close_ms: 2000,
-        modal: true,
-        shadow: true,
-        animate: false,
-        dim_backdrop: false,
-      });
+      try {
+        expect(created!.kind).toBe('popup');
 
-      // ---- 3) Edomi rendert die Seite nach R1-R15 --------------------------
-      // Die Vorschau des Editors ist derselbe Renderer (E3); hier wird der
-      // Beweis bewusst in der ECHTEN Visu geführt, nicht im Editor-iframe.
-      await page.goto('/edomi');
-      await page.locator('.edomi-nav-link', { hasText: fx.m5.names.home }).first().click();
-      await page.locator('.edomi-item', { hasText: 'M5 Open Positioned' }).first().click();
-      await expect(page.locator(`.edomi-popup[data-popup="${fx.m5.node_ids.popup_positioned}"]`)).toBeVisible();
+        const cfg = await (await request.get(api(`/visu/pages/${created!.id}`), { headers })).json();
+        expect(cfg.popup).toMatchObject({
+          x: 140,
+          y: 90,
+          w: 260,
+          h: 180,
+          auto_close_ms: 2000,
+          modal: true,
+          shadow: true,
+          animate: false,
+          dim_backdrop: false,
+        });
 
-      // Das neue Popup rendert mit den im Editor gesetzten Eigenschaften:
-      // modal (R5, exklusiv → dialog + der Rest inert) und Schlagschatten (R6).
-      await page.goto(`/edomi?popup=${created!.id}`);
-      const rendered = page.locator(`.edomi-popup[data-popup="${created!.id}"]`);
-      await expect(rendered).toBeVisible();
-      await expect(rendered).toHaveClass(/has-shadow/);
-      await expect(rendered).toHaveAttribute('aria-modal', 'true');
-      await expect(page.locator('.edomi-canvas')).toHaveAttribute('inert', '');
-      // R9: ein Popup bekommt keine globalen Inkludeseiten.
-      await expect(rendered.locator('.edomi-layer-global')).toHaveCount(0);
+        // ---- 3) Edomi rendert die Seite nach R1-R15 ------------------------
+        // Die Vorschau des Editors ist derselbe Renderer (E3); hier wird der
+        // Beweis bewusst in der ECHTEN Visu geführt, nicht im Editor-iframe.
+        await page.goto('/edomi');
+        await page.locator('.edomi-nav-link', { hasText: fx.m5.names.home }).first().click();
+        await page.locator('.edomi-item', { hasText: 'M5 Open Positioned' }).first().click();
+        await expect(page.locator(`.edomi-popup[data-popup="${fx.m5.node_ids.popup_positioned}"]`)).toBeVisible();
 
-      // ---- 4) aufräumen: der Round-Trip hinterlässt die Welt wie er sie fand
-      const del = await request.delete(api(`/visu/nodes/${created!.id}`), { headers });
-      expect(del.status()).toBe(204);
+        // Das neue Popup rendert mit den im Editor gesetzten Eigenschaften:
+        // modal (R5, exklusiv → dialog + der Rest inert) und Schlagschatten (R6).
+        await page.goto(`/edomi?popup=${created!.id}`);
+        const rendered = page.locator(`.edomi-popup[data-popup="${created!.id}"]`);
+        await expect(rendered).toBeVisible();
+        await expect(rendered).toHaveClass(/has-shadow/);
+        await expect(rendered).toHaveAttribute('aria-modal', 'true');
+        await expect(page.locator('.edomi-canvas')).toHaveAttribute('inert', '');
+        // R9: ein Popup bekommt keine globalen Inkludeseiten.
+        await expect(rendered.locator('.edomi-layer-global')).toHaveCount(0);
+      } finally {
+        // ---- 4) aufräumen: der Round-Trip hinterlässt die Welt wie er sie fand
+        // Im `finally`, wie E9 und E15, also AUCH nach einem Fehlschlag. Bis
+        // Runde 2 stand das Löschen im geraden Weg: eine probeweise aktivierte,
+        // an Schritt 3 gescheiterte Zeile ließ „RT Popup Round-Trip" in der
+        // Beispielwelt liegen (gemessen, von Hand nachgeräumt).
+        if (created) await request.delete(api(`/visu/nodes/${created.id}`), { headers });
+      }
     },
   );
 });

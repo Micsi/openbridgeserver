@@ -3436,8 +3436,9 @@
       "removeUser": "Remove user: {name}",
       "skinSection": "Appearance",
       "skin": "Skin",
-      "skinHint": "The choice is remembered per page in this machine's browser, not in the page itself: another browser sees the default.",
-      "audienceDatapointHint": "On saving, the server checks whether every user in the target audience may read all datapoints of this page. If a grant is missing, it refuses (403).",
+      "skinHintBrowser": "The choice is remembered per page in this machine's browser, not in the page itself: another browser sees the default.",
+      "skinHintPage": "The choice belongs to the page: it is saved with it and applies in every browser.",
+      "audienceDatapointHint": "On saving, the server checks whether every user in the target audience may read all datapoints of this page, and likewise those of the pages that inherit their access from it. If a grant is missing, it refuses (403).",
       "save": "Save",
       "saved": "Saved",
       "saveFailed": "Saving failed."

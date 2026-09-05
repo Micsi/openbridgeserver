@@ -318,6 +318,36 @@ describe('visuEditor - speichern', () => {
     expect(store.selectedId).toBe('neu')
   })
 
+  /**
+   * Die Erfolgsmeldung gehoert dem LAUFENDEN Speichervorgang, nicht dem vorigen.
+   *
+   * Ohne diese Zusage stuende „Gespeichert" waehrend des zweiten Speicherns
+   * unveraendert da - der Autor saehe eine Bestaetigung fuer eine Aenderung, die
+   * noch unterwegs ist, und der Playwright-Harness liest sie als Schranke
+   * (E9/E15: speichern, dann am Server nachlesen). Gemessen: genau daran ist E9
+   * gerissen, sobald der Zwischen-Ladevorgang wegfiel, der die Meldung bis dahin
+   * beilaeufig mitgeloescht hatte (`nodeOf().kind` war noch `normal`).
+   */
+  it('loescht die Erfolgsmeldung, solange der naechste Speichervorgang laeuft', async () => {
+    const store = await loadedStore()
+    await store.select('home')
+    await store.save()
+    expect(store.savedAt).toBeGreaterThan(0)
+
+    let quittieren
+    visuApi.updateNode.mockImplementationOnce(
+      () => new Promise((resolve) => { quittieren = () => resolve({ data: {} }) }),
+    )
+    store.draft.name = 'M5 Home Neu'
+    const laeuft = store.save()
+    await Promise.resolve()
+    expect(store.savedAt).toBe(0)
+
+    quittieren()
+    await laeuft
+    expect(store.savedAt).toBeGreaterThan(0)
+  })
+
   it('wechselt den Seitentyp in drei Schritten, damit keiner am anderen scheitert', async () => {
     const store = await loadedStore()
     await store.select('popupA')
