@@ -6,31 +6,46 @@
  * Design-Invariante aus CONTRIBUTING-visu-m5.md §1.1 steht genau dafuer:
  * Pixel-Autorenschaft ist ein ANGEBOT, kein Zwang.
  *
- *  - **Pixel-Modus** (E1/E4/E8): Elemente liegen auf Koordinaten, das Ziehen
- *    rastet an einer einstellbaren Rasterweite ein, Ausrichtlinien erscheinen
- *    bei Kantendeckung, „Verteilen" und „Gleiche Groesse" raeumen auf, die
- *    Z-Ordnung ist die Reihenfolge der Widget-Liste, und ein Element laesst sich
- *    sperren oder ausblenden.
- *  - **Responsiver Modus** (E2/E17): dieselbe Seite ohne jede Koordinate. Nur
- *    die REIHENFOLGE zaehlt, sie wird per Drag gesetzt und sofort gespeichert;
+ *  - **Pixel-Modus** (E1/E4/E8): Elemente liegen auf Koordinaten, Ziehen und
+ *    Groesserziehen rasten an einer einstellbaren Rasterweite ein, Ausrichtlinien
+ *    erscheinen bei Kantendeckung, „Verteilen" und „Gleiche Groesse" raeumen auf,
+ *    die Z-Ordnung ist die Reihenfolge der Widget-Liste, und ein Element laesst
+ *    sich sperren oder ausblenden.
+ *  - **Responsiver Modus** (E2/E17): dieselbe Seite ohne jede Koordinate. Nur die
+ *    REIHENFOLGE zaehlt, sie wird per Drag gesetzt und sofort gespeichert;
  *    Koordinatenfelder gibt es dann gar nicht. Die Breakpoints stehen in den
  *    Seiteneigenschaften.
  *
- * WANN GESPEICHERT WIRD - und warum unterschiedlich:
- *  - Im RESPONSIVEN Modus sichert das Fallenlassen sofort. Die Reihenfolge ist
- *    der Boden des Modells (§2.1), sie hat kein zweites Zuhause, und der
- *    belegte Champion dieser Zeile (Home Assistant, §1.1 E2) speichert eine
- *    umsortierte Karte ebenfalls beim Loslassen. E2 verlangt genau das: das
- *    Order-Array ist vor und nach einem Neuladen identisch, ohne dass jemand
- *    „Speichern" gedrueckt haette.
- *  - Im PIXEL-Modus ist das Verschieben Teil einer Bearbeitung und wird mit
- *    „Speichern" uebernommen - so wie bei den Champions dieser Zeilen (Grafana,
- *    ioBroker vis-2, §1.1 E1/E4/E8). Jeder Zug einzeln auf den Server zu
- *    schreiben waere nicht nur geschwaetzig, es naehme dem spaeteren Undo-Stapel
- *    (Teil C5, E7) den Boden.
- *  - Die SEITENEIGENSCHAFTEN (Modus, Rasterweite, Breakpoints) gehoeren
- *    ebenfalls dem „Speichern": ein Blick in den anderen Modus soll die Seite
- *    nicht umschreiben.
+ * DER MODUS UND DER SKIN SIND ZWEI DINGE. Der Modus sagt, was die Seite TRAEGT
+ * (Koordinaten oder nur Reihenfolge), der Skin, was davon HONORIERT wird. Der
+ * Editor leitet deshalb nicht mehr den Skin aus dem Modus ab (so stand es in
+ * Runde 1 und kollidierte mit E19/C1), sondern zeigt umgekehrt JE SKIN, welcher
+ * Modus gerendert wird - `renderedMode()` in `utils/visuEditorPage.js`. Gewaehlt
+ * wird der Skin in den Seiteneigenschaften (Teil C1); dieser Canvas liest ihn.
+ *
+ * WANN GESPEICHERT WIRD - die ganze Regel, ohne Rest:
+ *  - SOFORT gesichert wird genau EINE Groesse: die REIHENFOLGE, wenn sie im
+ *    responsiven Modus per Drag gesetzt wird. Sie ist der Boden des Modells
+ *    (§2.1), hat kein zweites Zuhause, und der belegte Champion dieser Zeile
+ *    (Home Assistant, §1.1 E2) speichert eine umsortierte Karte ebenfalls beim
+ *    Loslassen. E2 verlangt genau das: das Order-Array ist vor und nach einem
+ *    Neuladen identisch, ohne dass jemand „Speichern" gedrueckt haette.
+ *  - Dieses Sofort-Sichern schreibt AUSSCHLIESSLICH die Reihenfolge, und zwar auf
+ *    den GESPEICHERTEN Stand. Kein ungespeicherter Nudge, keine ungespeicherte
+ *    Marke, keine ungespeicherte Seiteneigenschaft faehrt mit. In Runde 1 tat es
+ *    das: fuenf Pfeiltasten und ein Umsortieren spaeter stand `x=9` auf dem
+ *    Server, obwohl niemand gespeichert hatte. Ein halb gespeicherter Zustand
+ *    entsteht damit nicht mehr - was der Server nach einem Umsortieren haelt, ist
+ *    exakt der zuletzt gespeicherte Stand mit neuer Reihenfolge.
+ *  - ALLES ANDERE gehoert „Speichern": Lage, Groesse, Z-Ordnung ueber die
+ *    Schaltflaechen, die Marken „gesperrt"/„ausgeblendet", Modus, Rasterweite und
+ *    Breakpoints. Im Pixel-Modus ist das Verschieben Teil einer Bearbeitung (so
+ *    wie bei Grafana und ioBroker vis-2, §1.1 E1/E4/E8); jeden Zug einzeln auf den
+ *    Server zu schreiben naehme dem spaeteren Undo-Stapel (Teil C5, E7) den Boden.
+ *  - „Gespeichert" wird erst gemeldet, wenn die Seite vom Server ZURUECKGELESEN
+ *    wurde und traegt, was sie tragen sollte. Ein 204 allein ist kein Beleg - in
+ *    Runde 1 meldete der Editor Erfolg fuer eine Einstellung, die gar keinen
+ *    Traeger gefunden hatte.
  *
  * WAS DIESER CANVAS NICHT IST: ein Renderer. Gezeichnet wird hier nur das
  * Autoren-Gitter (Kasten, Name, Anfasser); wie die Seite AUSSIEHT, zeigt
@@ -53,20 +68,24 @@ import {
   GUIDE_TOLERANCE,
   bringToFront,
   distributeHorizontally,
+  ensureBoxes,
   guidesFor,
   matchSize,
   moveItem,
   sendToBack,
   snapBox,
+  snapSize,
 } from '@/utils/visuEditorLayout'
 import {
   LAYOUT_MODES,
   LAYOUT_PIXEL,
   LAYOUT_RESPONSIVE,
   formatBreakpoints,
+  hasBox,
   parseBreakpoints,
   readPageSettings,
-  skinForMode,
+  renderedMode,
+  sameSettings,
   toPreviewDraft,
   widgetFlags,
   withWidgetFlags,
@@ -81,24 +100,28 @@ const emit = defineEmits(['draft', 'preview-width'])
 
 /** Die Widget-Liste IST das Modell: ihre Reihenfolge ist Z-Ordnung und Fluss. */
 const widgets = ref([])
+/** Dieselbe Liste, wie sie GESPEICHERT ist - der Boden jeder Sofort-Sicherung. */
+const storedWidgets = ref([])
 /** Der Rest der `PageConfig` (grid_cols, includes, popup ...) - unveraendert durchgereicht. */
 const base = ref(null)
 const nodeName = ref('')
 const nodeKind = ref('normal')
 /** Die Seiteneigenschaften, wie der Autor sie gerade eingestellt hat. */
-const settings = reactive({ mode: LAYOUT_PIXEL, grid: DEFAULT_GRID })
+const settings = reactive({ mode: LAYOUT_PIXEL, grid: DEFAULT_GRID, skin: null })
 /**
  * Dieselben Eigenschaften, wie sie GESPEICHERT sind.
  *
- * Der Unterschied ist Absicht: eine Struktur-Aenderung am Canvas (Reihenfolge,
- * Lage, Z-Ordnung, Marken) wird sofort gesichert - sie muss ein Neuladen
- * ueberleben (E2). Die SEITENEIGENSCHAFTEN (Modus, Rasterweite, Breakpoints)
- * gehoeren dagegen dem „Speichern": ein Blick in den anderen Modus soll die
- * Seite nicht umschreiben. Ohne diese Trennung wuerde jede Ansichts-Entscheidung
+ * Der Unterschied ist Absicht: ein Blick in den anderen Modus soll die Seite
+ * nicht umschreiben. Ohne diese Trennung wuerde jede Ansichts-Entscheidung
  * heimlich mitgespeichert, und eine Seite haette nach einem Ausprobieren einen
  * anderen Modus, als der Autor je gewaehlt hat.
  */
-const storedSettings = reactive({ mode: LAYOUT_PIXEL, grid: DEFAULT_GRID, breakpoints: [] })
+const storedSettings = reactive({
+  mode: LAYOUT_PIXEL,
+  grid: DEFAULT_GRID,
+  breakpoints: [],
+  skin: null,
+})
 const breakpointText = ref('')
 const previewWidth = ref('')
 const selectedIds = ref([])
@@ -107,28 +130,108 @@ const loaded = ref(false)
 const errorKey = ref(null)
 const saved = ref(false)
 
+/**
+ * Die LAYER dieser Seite: die globalen Inkludeseiten und die individuellen
+ * Inkludeseiten, die unter ihr liegen (§3, C2-Zeile „Layer-Sichtbarkeit").
+ *
+ * Sie sind ANSICHT, nicht Inhalt: der Autor blendet sie ein und aus, um zu
+ * sehen, was ihm unter der eigenen Seite liegt. Gespeichert wird dabei nichts -
+ * ob eine Seite den globalen Boden ueberhaupt bekommt (`ignore_global_includes`,
+ * R13) und welche Seiten sie inkludiert (R14), sind Seiteneigenschaften und
+ * gehoeren Teil C1. Diese beiden Schalter aendern nur, was Canvas und Vorschau
+ * ZEIGEN.
+ */
+const layers = ref([])
+const showGlobalLayer = ref(true)
+const showIncludeLayer = ref(true)
+const layersFailed = ref(false)
+
 const isPixel = computed(() => settings.mode !== LAYOUT_RESPONSIVE)
 const breakpointList = computed(() => parseBreakpoints(breakpointText.value))
 const selected = computed(() => widgets.value.find((w) => w.id === selectedIds.value[0]) ?? null)
 const selectedFlags = computed(() => widgetFlags(selected.value))
-const activeSkin = computed(() => skinForMode(settings.mode))
+/** Der Skin der Seite (Teil C1 waehlt ihn) - hier nur gelesen und angezeigt. */
+const activeSkin = computed(() => settings.skin || 'edomi')
+/** Was der Skin aus dem gewaehlten Modus tatsaechlich macht. */
+const shownMode = computed(() => renderedMode(settings.mode, settings.skin))
+
+/** Die Layer, die der Autor gerade sehen will. */
+const visibleLayers = computed(() =>
+  layers.value.filter((layer) =>
+    layer.kind === 'globalInclude' ? showGlobalLayer.value : showIncludeLayer.value,
+  ),
+)
+/** Die Kacheln der sichtbaren Layer - Umrisse, die man nicht anfassen kann. */
+const layerBoxes = computed(() => {
+  if (!isPixel.value) return []
+  const boxes = []
+  for (const layer of visibleLayers.value) {
+    for (const w of layer.page_config?.widgets ?? []) {
+      if (hasBox(w) && !widgetFlags(w).hidden) boxes.push({ ...w, layerId: layer.id })
+    }
+  }
+  return boxes
+})
+const globalLayerCount = computed(
+  () => layers.value.filter((l) => l.kind === 'globalInclude').length,
+)
+const includeLayerCount = computed(
+  () => layers.value.filter((l) => l.kind !== 'globalInclude').length,
+)
+
+/**
+ * Verliert diese Seite beim naechsten „Speichern" ihre Koordinaten?
+ *
+ * Der responsive Modus ist eine Ansage, keine Ansicht: eine gespeicherte
+ * responsive Seite traegt KEINE Koordinaten (Design-Invariante §1.1, im Backend
+ * durchgesetzt). Das darf den Autor nicht ueberraschen - deshalb steht es da,
+ * bevor er speichert, und nicht als Ueberraschung danach.
+ */
+const losesCoordinates = computed(
+  () =>
+    loaded.value &&
+    settings.mode === LAYOUT_RESPONSIVE &&
+    widgets.value.some((w) => hasBox(w)),
+)
 
 /** Die eingestellten (noch nicht zwingend gespeicherten) Seiteneigenschaften. */
 function pendingSettings() {
-  return { mode: settings.mode, grid: settings.grid, breakpoints: breakpointList.value }
+  return {
+    mode: settings.mode,
+    grid: settings.grid,
+    breakpoints: breakpointList.value,
+    skin: settings.skin,
+  }
 }
 
-/** Die Seite mit einem bestimmten Satz Seiteneigenschaften. */
-function configWith(pageSettings) {
-  return writePageSettings({ ...(base.value || {}), widgets: widgets.value }, pageSettings)
+/** Die Seite mit einem bestimmten Satz Seiteneigenschaften und einer Widget-Liste. */
+function configWith(pageSettings, widgetList) {
+  return writePageSettings({ ...(base.value || {}), widgets: widgetList }, pageSettings)
 }
 
 /** Was die VORSCHAU zeigt: immer der eingestellte Stand, nie der gespeicherte. */
 function currentConfig() {
-  return configWith(pendingSettings())
+  return configWith(pendingSettings(), widgets.value)
 }
 
 /* ------------------------------------------------------------------ laden */
+
+/** Den Server-Stand als den eigenen uebernehmen (nach Laden und nach Speichern). */
+function adopt(config) {
+  base.value = config
+  const stored = readPageSettings(config)
+  Object.assign(storedSettings, stored)
+  settings.mode = stored.mode
+  settings.grid = stored.grid
+  settings.skin = stored.skin
+  breakpointText.value = formatBreakpoints(stored.breakpoints)
+  const list = (config.widgets ?? []).map((w) => ({ ...w }))
+  storedWidgets.value = list.map((w) => ({ ...w }))
+  // Im Pixel-Modus braucht jede Kachel eine Box: eine Seite, die aus dem
+  // responsiven Modus kommt, traegt keine mehr (§1.1), und der Canvas erfindet
+  // dafuer dieselbe Vorgabe wie das Backend-Modell statt einer dritten Zahl.
+  widgets.value = stored.mode === LAYOUT_PIXEL ? ensureBoxes(list) : list
+}
 
 async function load() {
   if (!props.pageId) return
@@ -140,38 +243,90 @@ async function load() {
     ])
     nodeName.value = node?.data?.name ?? ''
     nodeKind.value = node?.data?.kind ?? 'normal'
-    const config = page?.data ?? {}
-    base.value = config
-    widgets.value = (config.widgets ?? []).map((w) => ({ ...w }))
-    const stored = readPageSettings(config)
-    settings.mode = stored.mode
-    settings.grid = stored.grid
-    Object.assign(storedSettings, stored)
-    breakpointText.value = formatBreakpoints(stored.breakpoints)
+    adopt(page?.data ?? {})
     selectedIds.value = []
     loaded.value = true
   } catch {
     errorKey.value = 'load'
+    return
+  }
+  await loadLayers()
+}
+
+/**
+ * Die Layer laden: globale Inkludeseiten aus dem Baum, individuelle aus den
+ * `includes` DIESER Seite - beides nach denselben Regeln, nach denen die Visu
+ * komponiert (R9/R11/R13/R14). Ein Popup und eine globale Inkludeseite bekommen
+ * keinen globalen Boden.
+ *
+ * Ein Fehlschlag ist hier KEIN Ladefehler der Seite: der Canvas steht auch ohne
+ * Layer. Er wird trotzdem gemeldet, statt als „diese Seite hat keine Layer"
+ * durchzugehen.
+ */
+async function loadLayers() {
+  layers.value = []
+  layersFailed.value = false
+  const config = base.value || {}
+  try {
+    const tree = (await visuApi.getTree())?.data ?? []
+    const wanted = []
+    if (nodeKind.value === 'normal' && config.ignore_global_includes !== true) {
+      for (const node of tree) {
+        if (node.kind === 'globalInclude' && node.id !== props.pageId) wanted.push(node)
+      }
+    }
+    for (const id of config.includes ?? []) {
+      const node = tree.find((n) => n.id === id)
+      if (node && node.id !== props.pageId) wanted.push(node)
+    }
+    const loadedLayers = []
+    for (const node of wanted) {
+      const page = await visuApi.getPage(node.id)
+      loadedLayers.push({
+        id: node.id,
+        name: node.name ?? '',
+        kind: node.kind ?? 'normal',
+        page_config: page?.data ?? { widgets: [] },
+      })
+    }
+    layers.value = loadedLayers
+  } catch {
+    layers.value = []
+    layersFailed.value = true
   }
 }
 
 /* --------------------------------------------------------------- speichern */
 
+/** Traegt der Server danach, was er tragen sollte? */
+function confirmed(server, wanted) {
+  if (!server || typeof server !== 'object') return false
+  if (!sameSettings(readPageSettings(server), readPageSettings(wanted))) return false
+  const there = (server.widgets ?? []).map((w) => w.id).join('|')
+  const here = (wanted.widgets ?? []).map((w) => w.id).join('|')
+  return there === here
+}
+
 /**
- * Speichern.
+ * „Speichern": die ganze Seite - Widgets, Marken UND Seiteneigenschaften.
  *
- * `withSettings` unterscheidet die beiden Anlaesse: die Schaltflaeche
- * „Speichern" uebernimmt AUCH die Seiteneigenschaften, jede Struktur-Aenderung
- * am Canvas nur die Widgets - und laesst Modus, Rasterweite und Breakpoints so,
- * wie sie gespeichert sind.
+ * Danach wird zurueckgelesen. Erst wenn die Seite auf dem Server traegt, was sie
+ * tragen sollte, erscheint „Gespeichert"; sonst steht da der Speicherfehler. Das
+ * kostet einen GET und schliesst dafuer die Luecke aus Runde 1, in der der Editor
+ * Erfolg meldete, waehrend die Eingabe verloren ging.
  */
-async function persist(withSettings = false) {
+async function save() {
   if (!props.pageId) return
-  const pageSettings = withSettings ? pendingSettings() : { ...storedSettings }
+  const wanted = configWith(pendingSettings(), widgets.value)
   saved.value = false
   try {
-    await visuApi.savePage(props.pageId, configWith(pageSettings))
-    if (withSettings) Object.assign(storedSettings, pageSettings)
+    await visuApi.savePage(props.pageId, wanted)
+    const server = (await visuApi.getPage(props.pageId))?.data ?? null
+    if (!confirmed(server, wanted)) {
+      errorKey.value = 'save'
+      return
+    }
+    adopt(server)
     errorKey.value = null
     saved.value = true
   } catch {
@@ -180,12 +335,76 @@ async function persist(withSettings = false) {
   }
 }
 
+/** Die gespeicherten Widgets in der Reihenfolge, die der Canvas gerade zeigt. */
+function orderedStored() {
+  const remaining = new Map(storedWidgets.value.map((w) => [w.id, w]))
+  const ordered = []
+  for (const w of widgets.value) {
+    const stored = remaining.get(w.id)
+    if (!stored) continue
+    remaining.delete(w.id)
+    ordered.push(stored)
+  }
+  // Was der Server haelt, der Canvas aber nicht kennt, bleibt erhalten statt
+  // still zu verschwinden (heute kann das nicht vorkommen; sobald C3 Widgets
+  // anlegt und C5 sie einfuegt, kostet diese Zeile nichts und rettet Daten).
+  for (const rest of remaining.values()) ordered.push(rest)
+  return ordered
+}
+
+/**
+ * Die REIHENFOLGE sichern - und sonst nichts.
+ *
+ * Serialisiert und zusammengefasst: waehrend eine Anfrage laeuft, wird die
+ * naechste nur vorgemerkt und danach EINMAL mit dem dann aktuellen Stand
+ * gefahren. Ein Drag ueber drei Nachbarn setzt damit hoechstens eine Anfrage
+ * gleichzeitig ab, und eine verspaetete Antwort kann keine veraltete Reihenfolge
+ * gewinnen lassen (in Runde 1 lief jeder Zwischenschritt ungebremst hinaus).
+ */
+let orderSaving = null
+let orderPending = false
+
+function persistOrder() {
+  if (!props.pageId) return Promise.resolve()
+  if (orderSaving) {
+    orderPending = true
+    return orderSaving
+  }
+  orderSaving = (async () => {
+    try {
+      do {
+        orderPending = false
+        const payload = configWith({ ...storedSettings }, orderedStored())
+        await visuApi.savePage(props.pageId, payload)
+        storedWidgets.value = payload.widgets.map((w) => ({ ...w }))
+      } while (orderPending)
+      errorKey.value = null
+    } catch {
+      errorKey.value = 'save'
+    } finally {
+      orderSaving = null
+    }
+  })()
+  return orderSaving
+}
+
 /* ---------------------------------------------------------------- auswahl */
 
 function isSelected(id) {
   return selectedIds.value.includes(id)
 }
 
+/**
+ * Gewaehlt wird beim DRUECKEN, nicht beim Klick - und nur dort.
+ *
+ * Beides zu behandeln (`@mousedown` UND `@click`) sieht harmlos aus und ist es
+ * bei einem einfachen Klick auch, weil `select` dann zweimal dasselbe tut. Mit
+ * gedrueckter Umschalttaste ist es das Gegenteil: die additive Wahl SCHALTET UM,
+ * ein echter Browser-Klick loest beide Ereignisse aus, und die Auswahl war nach
+ * dem Loslassen wieder leer. Eine Mehrfachauswahl per Umschalt war damit im
+ * Browser gar nicht moeglich - im Vitest schon, weil dort nur `click`
+ * ausgeloest wurde. Deshalb steht die Wahl jetzt an genau einer Stelle.
+ */
 function select(id, additive = false) {
   if (additive) {
     selectedIds.value = isSelected(id)
@@ -221,12 +440,13 @@ function setFlag(key, value) {
 
 /**
  * Der Modus ist JE SEITE waehlbar (Owner-Vorgabe). Er wird hier nur eingestellt,
- * nicht gespeichert - dafuer ist „Speichern" da (s. {@link persist}).
+ * nicht gespeichert - dafuer ist „Speichern" da (s. Kopf).
  */
 function setMode(mode) {
   if (!LAYOUT_MODES.includes(mode)) return
   settings.mode = mode
   guides.value = []
+  if (mode === LAYOUT_PIXEL) widgets.value = ensureBoxes(widgets.value)
 }
 
 function toFront() {
@@ -274,10 +494,45 @@ function onElementMouseDown(widget, ev) {
   }
 }
 
+/**
+ * Der Anfasser unten rechts (E14, `data-resize="se"`): er zieht die MASSE, nicht
+ * die Lage. Bis Runde 1 hatte er keinen Handler - ein Zug daran blubberte an das
+ * `mousedown` des Elternelements und VERSCHOB das Element. Eine Affordanz, die
+ * etwas anderes tut, als sie zeigt; deshalb faengt `stopPropagation` das Ereignis
+ * hier ab, und an einem gesperrten Element wird der Anfasser gar nicht erst
+ * gezeigt.
+ */
+function onResizeMouseDown(widget, ev) {
+  if (ev.button !== undefined && ev.button !== 0) return
+  ev.stopPropagation()
+  drag = null
+  select(widget.id)
+  if (!isPixel.value || widgetFlags(widget).locked) return
+  drag = {
+    kind: 'resize',
+    id: widget.id,
+    startX: ev.clientX,
+    startY: ev.clientY,
+    origin: { w: widget.w, h: widget.h },
+  }
+}
+
 function onWindowMouseMove(ev) {
   if (!drag) return
   if (drag.kind === 'move') {
-    patchWidget(drag.id, snapBox(drag.origin, ev.clientX - drag.startX, ev.clientY - drag.startY, settings.grid))
+    patchWidget(
+      drag.id,
+      snapBox(drag.origin, ev.clientX - drag.startX, ev.clientY - drag.startY, settings.grid),
+    )
+    guides.value = guidesFor(widgets.value, drag.id, GUIDE_TOLERANCE)
+    drag.moved = true
+    return
+  }
+  if (drag.kind === 'resize') {
+    patchWidget(
+      drag.id,
+      snapSize(drag.origin, ev.clientX - drag.startX, ev.clientY - drag.startY, settings.grid),
+    )
     guides.value = guidesFor(widgets.value, drag.id, GUIDE_TOLERANCE)
     drag.moved = true
     return
@@ -293,8 +548,9 @@ function onWindowMouseMove(ev) {
   widgets.value = moveItem(widgets.value, from, to)
   // SOFORT speichern, nicht erst beim Loslassen: die neue Reihenfolge muss ein
   // Neuladen ueberleben (E2), und ein Reload direkt nach dem Loslassen wuerde
-  // eine noch laufende Anfrage abbrechen.
-  persist()
+  // eine noch laufende Anfrage abbrechen. Geschrieben wird dabei NUR die
+  // Reihenfolge, auf dem gespeicherten Stand (s. Kopf).
+  persistOrder()
 }
 
 function onWindowMouseUp() {
@@ -351,12 +607,32 @@ watch(
             name: nodeName.value,
             kind: nodeKind.value,
             pageConfig: config,
+            layers: layers.value,
+            showGlobalLayer: showGlobalLayer.value,
+            showIncludeLayer: showIncludeLayer.value,
           })
         : null,
     )
   },
   { deep: true },
 )
+
+/** Die Layer-Schalter aendern das Bild, nicht das Modell - der Entwurf zieht mit. */
+watch([layers, showGlobalLayer, showIncludeLayer], () => {
+  if (!props.pageId || !base.value) return
+  emit(
+    'draft',
+    toPreviewDraft({
+      pageId: props.pageId,
+      name: nodeName.value,
+      kind: nodeKind.value,
+      pageConfig: currentConfig(),
+      layers: layers.value,
+      showGlobalLayer: showGlobalLayer.value,
+      showIncludeLayer: showIncludeLayer.value,
+    }),
+  )
+})
 
 watch(() => props.pageId, load)
 
@@ -505,11 +781,44 @@ function guideStyle(guide) {
         <button
           type="button"
           class="shrink-0 rounded bg-sky-600 px-2 py-1 text-sm whitespace-nowrap text-white"
-          @click="persist(true)"
+          @click="save"
         >
           {{ $t('visuEditor.canvas.save') }}
         </button>
       </div>
+    </div>
+
+    <!-- Layer-Sichtbarkeit: was unter dieser Seite liegt, ein- und ausblendbar. -->
+    <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
+      <div class="flex items-center gap-2">
+        <input
+          id="editor-canvas-layer-global"
+          type="checkbox"
+          :checked="showGlobalLayer"
+          @change="showGlobalLayer = $event.target.checked"
+        >
+        <label for="editor-canvas-layer-global">
+          {{ $t('visuEditor.canvas.globalLayer', { count: globalLayerCount }) }}
+        </label>
+      </div>
+      <div class="flex items-center gap-2">
+        <input
+          id="editor-canvas-layer-include"
+          type="checkbox"
+          :checked="showIncludeLayer"
+          @change="showIncludeLayer = $event.target.checked"
+        >
+        <label for="editor-canvas-layer-include">
+          {{ $t('visuEditor.canvas.includeLayer', { count: includeLayerCount }) }}
+        </label>
+      </div>
+      <span
+        v-if="layersFailed"
+        data-testid="editor-canvas-layers-error"
+        class="text-amber-600 dark:text-amber-400"
+      >
+        {{ $t('visuEditor.canvas.layersError') }}
+      </span>
     </div>
 
     <div class="flex flex-wrap items-center gap-x-4 text-xs">
@@ -519,10 +828,20 @@ function guideStyle(guide) {
       >
         {{
           $t('visuEditor.canvas.renderedAs', {
-            mode: isPixel ? $t('visuEditor.canvas.modePixel') : $t('visuEditor.canvas.modeResponsive'),
+            mode:
+              shownMode === LAYOUT_PIXEL
+                ? $t('visuEditor.canvas.modePixel')
+                : $t('visuEditor.canvas.modeResponsive'),
             skin: activeSkin,
           })
         }}
+      </span>
+      <span
+        v-if="losesCoordinates"
+        data-testid="editor-canvas-mode-hint"
+        class="text-amber-600 dark:text-amber-400"
+      >
+        {{ $t('visuEditor.canvas.coordinateLoss') }}
       </span>
       <span
         v-if="saved"
@@ -545,6 +864,24 @@ function guideStyle(guide) {
         class="editor-canvas relative min-h-[280px] min-w-[240px] flex-1 rounded-lg border border-slate-200 bg-white dark:border-slate-700/60 dark:bg-slate-900"
         :class="isPixel ? 'overflow-auto' : 'flex flex-col gap-2 p-2'"
       >
+        <!--
+          Die Kacheln der Layer: Umrisse dessen, was UNTER dieser Seite liegt.
+          Sie tragen bewusst NICHT `data-el` - der Harness und die Auswahl
+          sprechen damit die eigenen Elemente an, und ein fremdes Element soll
+          man hier weder waehlen noch verschieben koennen (es gehoert einer
+          anderen Seite).
+        -->
+        <div
+          v-for="ghost in layerBoxes"
+          :key="`${ghost.layerId}-${ghost.id}`"
+          :data-layer-el="ghost.id"
+          :data-layer="ghost.layerId"
+          class="pointer-events-none overflow-hidden border border-dashed border-slate-400/70 text-[10px] leading-none opacity-40"
+          :style="elementStyle(ghost)"
+        >
+          <span class="block truncate">{{ ghost.name }}</span>
+        </div>
+
         <div
           v-for="widget in widgets"
           :key="widget.id"
@@ -563,13 +900,13 @@ function guideStyle(guide) {
           ]"
           :style="elementStyle(widget)"
           @mousedown="onElementMouseDown(widget, $event)"
-          @click="select(widget.id, $event.shiftKey === true)"
         >
           <span class="pointer-events-none block truncate">{{ widget.name }}</span>
           <span
-            v-if="isSelected(widget.id) && isPixel"
+            v-if="isSelected(widget.id) && isPixel && !widgetFlags(widget).locked"
             data-resize="se"
-            class="absolute right-0 bottom-0 h-2 w-2 bg-sky-500"
+            class="absolute right-0 bottom-0 h-2 w-2 cursor-se-resize bg-sky-500"
+            @mousedown="onResizeMouseDown(widget, $event)"
           />
         </div>
 

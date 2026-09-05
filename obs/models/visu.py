@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -20,21 +20,38 @@ AccessLevel = Literal["readonly", "public", "protected", "user"]
 # Individuelle Inkludeseiten sind gewöhnliche Seiten, die woanders in
 # ``PageConfig.includes`` referenziert werden, sie brauchen keinen eigenen Typ.
 PageKind = Literal["normal", "popup", "globalInclude"]
+# Layout-Paradigma einer Seite (M5 §1.1, Design-Invariante): eine Seite trägt
+# **entweder** Koordinaten (``pixel``) **oder** nur Reihenfolge/Gruppe
+# (``responsive``). Je Seite wählbar — Pixel-Autorenschaft ist ein Angebot.
+LayoutMode = Literal["pixel", "responsive"]
 
 
 # ── WidgetInstance ────────────────────────────────────────────────────────────
 
 
 class WidgetInstance(BaseModel):
+    """Ein platziertes Widget.
+
+    ``x``/``y``/``w``/``h`` sind die Autoren-Box. Sie sind **optional mit
+    Vorgabe**: wer sie nicht nennt, bekommt wie bisher ``0/0/2/2`` (R17 — V1
+    schickt sie immer und merkt von dieser Zeile nichts). ``None`` ist die
+    ausdrückliche Aussage „diese Seite trägt keine Koordinaten"; sie entsteht auf
+    einer Seite im responsiven Modus (siehe
+    ``PageConfig._responsive_pages_carry_no_coordinates``). Der Host liest die Box
+    genau dann als Position, wenn alle vier Zahlen da sind (``readPosition`` in
+    ``apps/visu/src/core/obs/mapping.ts``) — eine unvollständige Box ist keine Box,
+    und für eine responsive Seite emittiert er deshalb gar kein ``position``.
+    """
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = ""  # frei wählbarer Widget-Name
     type: str
     datapoint_id: str | None = None
     status_datapoint_id: str | None = None  # optionaler Rückmelde-DP
-    x: int = 0
-    y: int = 0
-    w: int = 2
-    h: int = 2
+    x: int | None = 0
+    y: int | None = 0
+    w: int | None = 2
+    h: int | None = 2
     config: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -67,6 +84,15 @@ class PopupConfig(BaseModel):
 
 
 class PageConfig(BaseModel):
+    """Die Konfiguration einer Seite.
+
+    Die Layout-Felder unten (``layout_mode``, ``grid``, ``breakpoints``, ``skin``)
+    sind der Nachtrag aus M5 C2 (Issue #169): **Seiten**-Eigenschaften gehören der
+    Seite. Sie sind additiv in derselben JSON-Spalte wie ``includes``/``popup``,
+    brauchen also keine Migration; eine Zeile aus der Zeit davor liest sie als
+    ihre Vorgaben.
+    """
+
     grid_cols: int = 12
     grid_row_height: int = 80
     grid_cell_width: int = 80  # feste Zellbreite in Pixeln (WYSIWYG)
@@ -75,6 +101,71 @@ class PageConfig(BaseModel):
     includes: list[str] = Field(default_factory=list)  # individuelle Inkludeseiten, geordnet (R14)
     ignore_global_includes: bool = False  # R13
     popup: PopupConfig | None = None
+
+    # ── Layout der Seite (M5 C2, §1.1) ────────────────────────────────────────
+    #
+    # Bewusst NICHT ``grid_cell_width`` mitbenutzt: das ist V1s Zellbreite und
+    # bestimmt dort die Kachelgröße. Sie als „Rasterweite" des V2-Editors zu
+    # überschreiben würde die V1-Darstellung derselben Seite ändern (R17).
+    layout_mode: LayoutMode = "pixel"
+    grid: int = 8  # Rasterweite des V2-Editors in Autoreneinheiten
+    breakpoints: list[int] = Field(default_factory=lambda: [480, 768, 1024])  # E17
+    # Der Skin, gegen den diese Seite gebaut wird (E19, Teil C1). ``None`` heißt
+    # „keine Wahl getroffen" — der Ausliefernde entscheidet dann. Ein leerer
+    # String wäre ein Registry-Schlüssel, den es nicht gibt, und wird zu ``None``.
+    skin: str | None = None
+
+    @field_validator("grid")
+    @classmethod
+    def _clamp_grid(cls, value: int) -> int:
+        """Mindestens 1: ein Raster der Weite 0 ist kein Raster, sondern eine Division durch nichts."""
+        return max(1, value)
+
+    @field_validator("breakpoints")
+    @classmethod
+    def _normalize_breakpoints(cls, value: list[int]) -> list[int]:
+        """Positiv, dublettenfrei, aufsteigend.
+
+        Dieselbe Duldung wie bei ``includes``: eine unbrauchbare Zahl aus einem
+        Restore macht die Seite nicht dauerhaft unspeicherbar, sie fällt weg. Die
+        Ordnung ist keine Kosmetik — die Vorschau-Auswahl des Editors bietet die
+        Breakpoints in genau dieser Reihenfolge an.
+        """
+        return sorted({width for width in value if width > 0})
+
+    @field_validator("skin")
+    @classmethod
+    def _blank_skin_is_no_skin(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @model_validator(mode="after")
+    def _responsive_pages_carry_no_coordinates(self) -> PageConfig:
+        """Die Design-Invariante §1.1, durchgesetzt auf der **gespeicherten** Seite.
+
+        „Eine Seite trägt entweder Koordinaten (Pixel-Modus) oder nur
+        Reihenfolge/Gruppe (responsiver Modus)." Solange das nur eine Regel des
+        Editor-Entwurfs war, stand in der Datenbank weiterhin ``x:0,y:0,w:3,h:2``,
+        ``readPosition`` fand also immer eine Box und der Host emittierte für jedes
+        Widget ein ``position`` — die Invariante war damit nicht umgesetzt, sondern
+        nur behauptet.
+
+        Die Verwerfung ist **nicht** heimlich: der Modus ist eine ausdrückliche
+        Wahl des Autors, der Editor sagt vor dem Speichern an, dass die Seite ihre
+        Koordinaten dabei ablegt, und der Rückweg (zurück auf ``pixel``) gibt sie
+        nicht wieder — er lässt sie leer, statt eine Lage zu erfinden, die nie
+        jemand gesetzt hat.
+        """
+        if self.layout_mode != "responsive":
+            return self
+        for widget in self.widgets:
+            widget.x = None
+            widget.y = None
+            widget.w = None
+            widget.h = None
+        return self
 
     @field_validator("includes")
     @classmethod

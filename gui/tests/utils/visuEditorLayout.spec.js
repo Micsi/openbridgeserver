@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import {
+  DEFAULT_BOX,
   DEFAULT_GRID,
   bringToFront,
   distributeHorizontally,
+  ensureBoxes,
   guidesFor,
   matchSize,
   moveItem,
   snapBox,
+  snapSize,
   snapValue,
   sendToBack,
 } from '@/utils/visuEditorLayout'
@@ -205,5 +208,52 @@ describe('Z-Ordnung und Reihenfolge (E2, E8)', () => {
   it('moveItem laesst unmoegliche Indizes in Ruhe', () => {
     expect(moveItem(list, -1, 0).map((w) => w.id)).toEqual(['a', 'b', 'c'])
     expect(moveItem(list, 0, 9).map((w) => w.id)).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('snapSize - Groesserziehen am Anfasser (E14, C2-Zeile „Drag/Resize")', () => {
+  it('rastet die Masse auf die Rasterweite ein', () => {
+    expect(snapSize({ w: 40, h: 40 }, 47, 33, 20)).toEqual({ w: 80, h: 80 })
+  })
+
+  it('laesst die Lage in Ruhe - der Anfasser zieht die Ecke, nicht die Kachel', () => {
+    expect(snapSize({ x: 100, y: 100, w: 40, h: 40 }, 20, 20, 20)).toEqual({ w: 60, h: 60 })
+  })
+
+  it('geht nie unter eine Einheit, auch nicht bei grobem Raster', () => {
+    expect(snapSize({ w: 40, h: 40 }, -400, -400, 20)).toEqual({ w: 1, h: 1 })
+    expect(snapSize({ w: 4, h: 4 }, -4, -4, 20)).toEqual({ w: 1, h: 1 })
+  })
+
+  it('rundet ohne Raster nur', () => {
+    expect(snapSize({ w: 10, h: 10 }, 7, 3, 1)).toEqual({ w: 17, h: 13 })
+  })
+
+  it('vertraegt eine Kachel ohne Masse', () => {
+    expect(snapSize(null, 20, 20, 1)).toEqual({ w: 20, h: 20 })
+  })
+})
+
+describe('ensureBoxes - eine Seite, die aus dem responsiven Modus kommt', () => {
+  it('gibt jeder Kachel ohne Box die Vorgabe des Backend-Modells', () => {
+    expect(ensureBoxes([{ id: 'a' }])).toEqual([{ id: 'a', ...DEFAULT_BOX }])
+  })
+
+  it('fuellt auch eine halbe Box auf, ohne die vorhandene Zahl zu verlieren', () => {
+    expect(ensureBoxes([{ id: 'a', x: 40, y: null }])).toEqual([
+      { id: 'a', x: 40, y: 0, w: 2, h: 2 },
+    ])
+  })
+
+  it('laesst eine vollstaendige Box unangetastet', () => {
+    expect(ensureBoxes([{ id: 'a', x: 4, y: 5, w: 6, h: 7 }])).toEqual([
+      { id: 'a', x: 4, y: 5, w: 6, h: 7 },
+    ])
+  })
+
+  it('gibt eine neue Liste zurueck und vertraegt Unsinn', () => {
+    const list = [{ id: 'a', x: 1, y: 1, w: 1, h: 1 }]
+    expect(ensureBoxes(list)).not.toBe(list)
+    expect(ensureBoxes(null)).toEqual([])
   })
 })

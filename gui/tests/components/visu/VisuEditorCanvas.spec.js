@@ -13,6 +13,14 @@ import { LAYOUT_PIXEL, LAYOUT_RESPONSIVE, readPageSettings } from '@/utils/visuE
  * Groesse (E4), Z-Ordnung, Sperren, Ausblenden (E8), Breakpoints in den
  * Seiteneigenschaften (E17).
  *
+ * DER SERVER IST HIER EIN STAND, KEIN STUMPF. `getPage` liefert, was `savePage`
+ * zuletzt abgelegt hat, und legt es mit denselben Regeln ab wie das echte
+ * Backend (`PageConfig`: Rasterweite mindestens 1, Breakpoints positiv und
+ * sortiert, und eine responsive Seite traegt KEINE Koordinaten). Nur so sind die
+ * zwei Aussagen pruefbar, an denen Runde 1 gescheitert ist: dass „Gespeichert"
+ * erst nach einem erfolgreichen Ruecklesen erscheint, und dass ein Neuladen
+ * wirklich den gespeicherten Stand zeigt statt den, den der Test sich wuenscht.
+ *
  * Die BEDIEN-AFFORDANZEN sind mitgeprueft (Beschriftung + Zuordnung
  * Label→Bedienelement), weil der Playwright-Harness genau sie anspricht
  * (`getByLabel('Rasterweite')`, `getByRole('button', { name: 'Verteilen' })`).
@@ -22,12 +30,14 @@ import { LAYOUT_PIXEL, LAYOUT_RESPONSIVE, readPageSettings } from '@/utils/visuE
 const getPage = vi.fn()
 const getNode = vi.fn()
 const savePage = vi.fn()
+const getTree = vi.fn()
 
 vi.mock('@/api/visu', () => ({
   visuApi: {
     getPage: (...args) => getPage(...args),
     getNode: (...args) => getNode(...args),
     savePage: (...args) => savePage(...args),
+    getTree: (...args) => getTree(...args),
   },
 }))
 
@@ -58,14 +68,71 @@ function pageConfig(widgets) {
   }
 }
 
-async function mountCanvas(widgets = [widget('a', 0, 0), widget('b', 4, 0), widget('c', 4, 4)]) {
-  getPage.mockResolvedValue({ data: pageConfig(widgets) })
-  getNode.mockResolvedValue({ data: { id: 'p1', name: 'M5 Home', kind: 'normal' } })
-  savePage.mockResolvedValue({ status: 204 })
+const BOX_DEFAULTS = { x: 0, y: 0, w: 2, h: 2 }
+
+/**
+ * Die Normalisierung des Backends (`obs/models/visu.py` → `PageConfig`),
+ * nachgezogen. Sie steht hier, damit der Stand, den der Canvas zurueckliest,
+ * derselbe ist wie der aus der echten Spalte - insbesondere die
+ * Design-Invariante: eine responsive Seite traegt keine Koordinaten.
+ */
+function normalizeOnServer(config) {
+  const next = JSON.parse(JSON.stringify(config ?? {}))
+  next.layout_mode = [LAYOUT_PIXEL, LAYOUT_RESPONSIVE].includes(next.layout_mode)
+    ? next.layout_mode
+    : LAYOUT_PIXEL
+  next.grid = Math.max(1, Math.round(Number(next.grid ?? 8)) || 1)
+  next.breakpoints = [...new Set((next.breakpoints ?? [480, 768, 1024]).filter((n) => n > 0))].sort(
+    (a, b) => a - b,
+  )
+  next.skin = (typeof next.skin === 'string' ? next.skin.trim() : '') || null
+  next.widgets = (next.widgets ?? []).map((w) => {
+    const copy = { ...w }
+    for (const key of ['x', 'y', 'w', 'h']) {
+      copy[key] =
+        next.layout_mode === LAYOUT_RESPONSIVE
+          ? null
+          : typeof copy[key] === 'number'
+            ? copy[key]
+            : BOX_DEFAULTS[key]
+    }
+    return copy
+  })
+  return next
+}
+
+/** Der Stand des Servers waehrend eines Tests. */
+const server = { config: null, tree: [], pages: {} }
+
+function wireServer() {
+  getNode.mockImplementation(async (id) => ({
+    data: { id, name: 'M5 Home', kind: server.kind ?? 'normal' },
+  }))
+  getPage.mockImplementation(async (id) =>
+    id === 'p1'
+      ? { data: JSON.parse(JSON.stringify(server.config)) }
+      : { data: JSON.parse(JSON.stringify(server.pages[id] ?? pageConfig([]))) },
+  )
+  savePage.mockImplementation(async (id, config) => {
+    server.config = normalizeOnServer(config)
+    return { status: 204 }
+  })
+  getTree.mockImplementation(async () => ({ data: server.tree }))
+}
+
+/** Den Canvas gegen den aktuellen Serverstand montieren (auch als „Neuladen"). */
+async function mountAgainstServer() {
   const { default: VisuEditorCanvas } = await import('@/components/visu/VisuEditorCanvas.vue')
   const wrapper = mount(VisuEditorCanvas, { props: { pageId: 'p1' }, attachTo: document.body })
   await flushPromises()
+  await flushPromises()
   return wrapper
+}
+
+async function mountCanvas(widgets = [widget('a', 0, 0), widget('b', 4, 0), widget('c', 4, 4)]) {
+  server.config = normalizeOnServer(pageConfig(widgets))
+  wireServer()
+  return mountAgainstServer()
 }
 
 /** Die Marke, an der der Harness ein platziertes Element findet. */
@@ -101,12 +168,63 @@ function byButton(wrapper, text) {
   return wrapper.findAll('button').find((b) => b.text().includes(text)) ?? null
 }
 
+/**
+ * Ein Element waehlen - so, wie es ein echter Klick tut: die Wahl haengt am
+ * `mousedown`. (Am `click` haengt sie bewusst NICHT mehr: mit Umschalttaste
+ * haetten beide Ereignisse die additive Wahl zweimal umgeschaltet, und im
+ * Browser waere die Mehrfachauswahl damit nach dem Loslassen wieder leer.)
+ */
+async function pick(el, shiftKey = false) {
+  el.element.dispatchEvent(
+    new window.MouseEvent('mousedown', { bubbles: true, shiftKey, clientX: 0, clientY: 0 }),
+  )
+  window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }))
+  await flushPromises()
+}
+
 /** Maus-Drag ohne Layout: die Verschiebung steckt in den Zeigerkoordinaten. */
 async function drag(wrapper, id, dx, dy) {
   const el = els(wrapper).find((e) => e.attributes('data-el') === id)
-  el.element.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, clientX: 100, clientY: 100 }))
-  window.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX: 100 + dx, clientY: 100 + dy }))
-  window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 100 + dx, clientY: 100 + dy }))
+  el.element.dispatchEvent(
+    new window.MouseEvent('mousedown', { bubbles: true, clientX: 100, clientY: 100 }),
+  )
+  window.dispatchEvent(
+    new window.MouseEvent('mousemove', { bubbles: true, clientX: 100 + dx, clientY: 100 + dy }),
+  )
+  window.dispatchEvent(
+    new window.MouseEvent('mouseup', { bubbles: true, clientX: 100 + dx, clientY: 100 + dy }),
+  )
+  await flushPromises()
+}
+
+/** Ein Zug am Anfasser unten rechts des ausgewaehlten Elements. */
+async function dragHandle(wrapper, id, dx, dy) {
+  const el = els(wrapper).find((e) => e.attributes('data-el') === id)
+  const handle = el.find('[data-resize="se"]')
+  handle.element.dispatchEvent(
+    new window.MouseEvent('mousedown', { bubbles: true, clientX: 100, clientY: 100 }),
+  )
+  window.dispatchEvent(
+    new window.MouseEvent('mousemove', { bubbles: true, clientX: 100 + dx, clientY: 100 + dy }),
+  )
+  window.dispatchEvent(
+    new window.MouseEvent('mouseup', { bubbles: true, clientX: 100 + dx, clientY: 100 + dy }),
+  )
+  await flushPromises()
+}
+
+/** Das Umsortieren des responsiven Modus: `from` faellt auf `to`. */
+async function reorder(wrapper, fromId, toId) {
+  const from = els(wrapper).find((e) => e.attributes('data-el') === fromId)
+  const to = els(wrapper).find((e) => e.attributes('data-el') === toId)
+  from.element.dispatchEvent(
+    new window.MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }),
+  )
+  to.element.dispatchEvent(
+    new window.MouseEvent('mousemove', { bubbles: true, clientX: 0, clientY: 0 }),
+  )
+  window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }))
+  await flushPromises()
   await flushPromises()
 }
 
@@ -115,6 +233,11 @@ beforeEach(() => {
   getPage.mockReset()
   getNode.mockReset()
   savePage.mockReset()
+  getTree.mockReset()
+  server.config = null
+  server.tree = []
+  server.pages = {}
+  server.kind = 'normal'
 })
 
 afterEach(() => {
@@ -171,15 +294,58 @@ describe('E1 - Drag auf eine Pixel-Koordinate, Snap an einstellbarer Rasterweite
     await byLabel(w, 'Rasterweite').setValue('20')
     await byButton(w, 'Speichern').trigger('click')
     await flushPromises()
-    expect(readPageSettings(savePage.mock.calls.at(-1)[1]).grid).toBe(20)
+    expect(readPageSettings(server.config).grid).toBe(20)
   })
 
   it('zeigt die Koordinaten des gewaehlten Elements als X/Y-Felder', async () => {
     const w = await mountCanvas()
-    await els(w)[1].trigger('click')
+    await pick(els(w)[1])
     expect(byLabel(w, 'X').element.value).toBe('4')
     await byLabel(w, 'X').setValue('60')
     expect(boxOf(w, 'b').x).toBe(60)
+  })
+})
+
+describe('Resize - der Anfasser zieht die Masse, nicht die Lage', () => {
+  it('zeigt den Anfasser am ausgewaehlten Element', async () => {
+    const w = await mountCanvas()
+    expect(w.findAll('[data-resize="se"]')).toHaveLength(0)
+    await pick(els(w)[0])
+    expect(w.findAll('[data-resize="se"]')).toHaveLength(1)
+  })
+
+  it('macht die Kachel groesser und rastet dabei ein', async () => {
+    const w = await mountCanvas()
+    await byLabel(w, 'Rasterweite').setValue('20')
+    await pick(els(w)[0])
+    await dragHandle(w, 'a', 47, 33)
+    expect(boxOf(w, 'a')).toMatchObject({ w: 60, h: 40 })
+  })
+
+  it('verschiebt die Kachel dabei NICHT', async () => {
+    // Bis Runde 1 hatte der Anfasser keinen Handler: der Zug blubberte an das
+    // Elternelement und verschob das Widget - eine Affordanz, die etwas anderes
+    // tut, als sie zeigt.
+    const w = await mountCanvas([widget('a', 40, 40)])
+    await pick(els(w)[0])
+    await dragHandle(w, 'a', 47, 33)
+    expect(boxOf(w, 'a')).toMatchObject({ x: 40, y: 40 })
+  })
+
+  it('bietet an einem gesperrten Element gar keinen Anfasser an', async () => {
+    const w = await mountCanvas()
+    await pick(els(w)[0])
+    await byLabel(w, 'Gesperrt').setValue(true)
+    await flushPromises()
+    expect(w.findAll('[data-resize="se"]')).toHaveLength(0)
+  })
+
+  it('bietet im responsiven Modus keinen Anfasser an - dort gibt es keine Masse', async () => {
+    const w = await mountCanvas()
+    await pick(els(w)[0])
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
+    await flushPromises()
+    expect(w.findAll('[data-resize="se"]')).toHaveLength(0)
   })
 })
 
@@ -187,11 +353,17 @@ describe('E4 - Ausrichtlinie, Verteilen, gleiche Groesse', () => {
   it('zeigt waehrend des Ziehens eine Ausrichtlinie bei Kantendeckung', async () => {
     const w = await mountCanvas()
     const el = els(w).find((e) => e.attributes('data-el') === 'c')
-    el.element.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, clientX: 100, clientY: 100 }))
-    window.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX: 100, clientY: 102 }))
+    el.element.dispatchEvent(
+      new window.MouseEvent('mousedown', { bubbles: true, clientX: 100, clientY: 100 }),
+    )
+    window.dispatchEvent(
+      new window.MouseEvent('mousemove', { bubbles: true, clientX: 100, clientY: 102 }),
+    )
     await flushPromises()
     expect(w.findAll('.editor-guide').length).toBeGreaterThan(0)
-    window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 100, clientY: 102 }))
+    window.dispatchEvent(
+      new window.MouseEvent('mouseup', { bubbles: true, clientX: 100, clientY: 102 }),
+    )
     await flushPromises()
     expect(w.findAll('.editor-guide')).toHaveLength(0)
   })
@@ -207,6 +379,16 @@ describe('E4 - Ausrichtlinie, Verteilen, gleiche Groesse', () => {
     expect(new Set(gaps).size).toBe(1)
   })
 
+  it('verteilt bei GENAU ZWEI Elementen nicht - da gibt es nur einen Abstand', async () => {
+    const w = await mountCanvas()
+    await pick(els(w)[0])
+    await pick(els(w)[1], true)
+    expect(byButton(w, 'Verteilen').attributes('disabled')).toBeDefined()
+    const vorher = order(w).map((id) => boxOf(w, id).x)
+    await byButton(w, 'Verteilen').trigger('click')
+    expect(order(w).map((id) => boxOf(w, id).x)).toEqual(vorher)
+  })
+
   it('uebernimmt bei „Gleiche Groesse" die Masse des zuerst gewaehlten Elements', async () => {
     const w = await mountCanvas([widget('a', 0, 0, { w: 5, h: 7 }), widget('b', 4, 0), widget('c', 4, 4)])
     await w.find('.editor-canvas').trigger('keydown', { key: 'a', ctrlKey: true })
@@ -219,16 +401,16 @@ describe('E4 - Ausrichtlinie, Verteilen, gleiche Groesse', () => {
 describe('E8 - Z-Ordnung, sperren, ausblenden', () => {
   it('bringt das gewaehlte Element nach vorne und nach hinten', async () => {
     const w = await mountCanvas()
-    await els(w)[0].trigger('click')
+    await pick(els(w)[0])
     await byButton(w, 'Nach vorne').trigger('click')
     expect(order(w).at(-1)).toBe('a')
     await byButton(w, 'Nach hinten').trigger('click')
     expect(order(w)[0]).toBe('a')
   })
 
-  it('bewegt ein gesperrtes Element nicht mehr', async () => {
+  it('bewegt ein gesperrtes Element weder per Drag noch per Pfeiltaste', async () => {
     const w = await mountCanvas()
-    await els(w)[0].trigger('click')
+    await pick(els(w)[0])
     await byLabel(w, 'Gesperrt').setValue(true)
     const before = boxOf(w, 'a')
     await drag(w, 'a', 47, 33)
@@ -240,7 +422,7 @@ describe('E8 - Z-Ordnung, sperren, ausblenden', () => {
 
   it('nudgt ein nicht gesperrtes Element pixelweise', async () => {
     const w = await mountCanvas()
-    await els(w)[0].trigger('click')
+    await pick(els(w)[0])
     window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
     await flushPromises()
     expect(boxOf(w, 'a').x).toBe(1)
@@ -248,7 +430,7 @@ describe('E8 - Z-Ordnung, sperren, ausblenden', () => {
 
   it('nimmt ein ausgeblendetes Element aus dem Entwurf, laesst es aber im Canvas', async () => {
     const w = await mountCanvas()
-    await els(w)[0].trigger('click')
+    await pick(els(w)[0])
     await byLabel(w, 'Ausgeblendet').setValue(true)
     await flushPromises()
     expect(order(w)).toContain('a')
@@ -267,12 +449,23 @@ describe('E2 - responsiver Modus: Reihenfolge statt Koordinaten', () => {
     expect(byLabel(w, 'Layout-Modus').element.value).toBe(LAYOUT_RESPONSIVE)
   })
 
-  it('sagt, welcher Modus gerendert wird', async () => {
+  it('sagt, welcher Modus JE SKIN gerendert wird', async () => {
     const w = await mountCanvas()
     expect(w.find('[data-testid="editor-canvas-mode"]').text()).toContain('edomi')
+    expect(w.find('[data-testid="editor-canvas-mode"]').text()).toContain('Pixel')
     await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
     await flushPromises()
+    expect(w.find('[data-testid="editor-canvas-mode"]').text()).toContain('Responsiv')
+    // Der Skin bleibt der der SEITE - er wird nicht aus dem Modus abgeleitet.
+    expect(w.find('[data-testid="editor-canvas-mode"]').text()).toContain('edomi')
+  })
+
+  it('rendert eine Pixel-Seite unter einem responsiven Skin als responsiv', async () => {
+    server.config = normalizeOnServer({ ...pageConfig([widget('a', 0, 0)]), skin: 'ionic' })
+    wireServer()
+    const w = await mountAgainstServer()
     expect(w.find('[data-testid="editor-canvas-mode"]').text()).toContain('ionic')
+    expect(w.find('[data-testid="editor-canvas-mode"]').text()).toContain('Responsiv')
   })
 
   it('setzt die Reihenfolge per Drag und speichert sie sofort', async () => {
@@ -281,34 +474,23 @@ describe('E2 - responsiver Modus: Reihenfolge statt Koordinaten', () => {
     await flushPromises()
     savePage.mockClear()
 
-    const from = els(w).find((e) => e.attributes('data-el') === 'c')
-    const to = els(w).find((e) => e.attributes('data-el') === 'a')
-    from.element.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }))
-    to.element.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX: 0, clientY: 0 }))
-    window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }))
-    await flushPromises()
+    await reorder(w, 'c', 'a')
 
     expect(order(w)).toEqual(['c', 'a', 'b'])
     expect(savePage).toHaveBeenCalled()
-    expect(savePage.mock.calls.at(-1)[1].widgets.map((x) => x.id)).toEqual(['c', 'a', 'b'])
+    expect(server.config.widgets.map((x) => x.id)).toEqual(['c', 'a', 'b'])
   })
 
   it('haelt das Order-Array ueber ein Neuladen hinweg identisch', async () => {
     const first = await mountCanvas()
     await byLabel(first, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
     await flushPromises()
-    const from = els(first).find((e) => e.attributes('data-el') === 'c')
-    const to = els(first).find((e) => e.attributes('data-el') === 'a')
-    from.element.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }))
-    to.element.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX: 0, clientY: 0 }))
-    window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }))
-    await flushPromises()
+    await reorder(first, 'c', 'a')
     const after = order(first)
-    const gespeichert = savePage.mock.calls.at(-1)[1]
     first.unmount()
 
     // „Neuladen" heisst: dieselbe Seite noch einmal vom Server holen.
-    const second = await mountCanvas(gespeichert.widgets)
+    const second = await mountAgainstServer()
     expect(order(second)).toEqual(after)
   })
 
@@ -322,20 +504,53 @@ describe('E2 - responsiver Modus: Reihenfolge statt Koordinaten', () => {
     await flushPromises()
     savePage.mockClear()
 
-    const from = els(w).find((e) => e.attributes('data-el') === 'c')
-    const to = els(w).find((e) => e.attributes('data-el') === 'a')
-    from.element.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }))
-    to.element.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX: 0, clientY: 0 }))
-    window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }))
-    await flushPromises()
+    await reorder(w, 'c', 'a')
 
-    const strukturell = savePage.mock.calls.at(-1)[1]
-    expect(strukturell.widgets.map((x) => x.id)).toEqual(['c', 'a', 'b'])
-    expect(readPageSettings(strukturell).mode).toBe(LAYOUT_PIXEL)
+    expect(server.config.widgets.map((x) => x.id)).toEqual(['c', 'a', 'b'])
+    expect(readPageSettings(server.config).mode).toBe(LAYOUT_PIXEL)
 
     await byButton(w, 'Speichern').trigger('click')
     await flushPromises()
-    expect(readPageSettings(savePage.mock.calls.at(-1)[1]).mode).toBe(LAYOUT_RESPONSIVE)
+    expect(readPageSettings(server.config).mode).toBe(LAYOUT_RESPONSIVE)
+  })
+
+  it('nimmt der gespeicherten Seite im responsiven Modus JEDE Koordinate', async () => {
+    // Die Design-Invariante §1.1 gilt der SEITE, nicht nur dem Vorschau-Entwurf.
+    const w = await mountCanvas()
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
+    await flushPromises()
+    await byButton(w, 'Speichern').trigger('click')
+    await flushPromises()
+    for (const stored of server.config.widgets) {
+      expect(stored.x).toBeNull()
+      expect(stored.y).toBeNull()
+      expect(stored.w).toBeNull()
+      expect(stored.h).toBeNull()
+    }
+  })
+
+  it('sagt vor dem Speichern an, dass die Seite ihre Koordinaten ablegt', async () => {
+    const w = await mountCanvas()
+    expect(w.find('[data-testid="editor-canvas-mode-hint"]').exists()).toBe(false)
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
+    await flushPromises()
+    expect(w.find('[data-testid="editor-canvas-mode-hint"]').exists()).toBe(true)
+    await byButton(w, 'Speichern').trigger('click')
+    await flushPromises()
+    // Danach ist nichts mehr abzulegen - der Hinweis verschwindet.
+    expect(w.find('[data-testid="editor-canvas-mode-hint"]').exists()).toBe(false)
+  })
+
+  it('gibt einer Seite ohne Koordinaten beim Wechsel auf Pixel wieder eine Box', async () => {
+    server.config = normalizeOnServer({
+      ...pageConfig([widget('a', 0, 0), widget('b', 4, 0)]),
+      layout_mode: LAYOUT_RESPONSIVE,
+    })
+    wireServer()
+    const w = await mountAgainstServer()
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_PIXEL)
+    await flushPromises()
+    expect(boxOf(w, 'a')).toEqual({ x: 0, y: 0, w: 2, h: 2 })
   })
 
   it('schickt der Vorschau im responsiven Modus keine Koordinaten', async () => {
@@ -343,7 +558,7 @@ describe('E2 - responsiver Modus: Reihenfolge statt Koordinaten', () => {
     await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
     await flushPromises()
     const draft = w.emitted('draft').at(-1)[0]
-    expect(draft.skin).toBe('ionic')
+    expect(draft.skin).toBe('edomi')
     for (const item of draft.nodes[0].page_config.widgets) {
       expect(item.x).toBeUndefined()
       expect(item.y).toBeUndefined()
@@ -354,11 +569,29 @@ describe('E2 - responsiver Modus: Reihenfolge statt Koordinaten', () => {
 describe('E17 - Breakpoints in den Seiteneigenschaften', () => {
   it('nimmt eine Breakpoint-Liste an und speichert sie', async () => {
     const w = await mountCanvas()
-    await byLabel(w, 'Breakpoints').setValue('480, 768, 1024')
+    await byLabel(w, 'Breakpoints').setValue('360, 900')
     await byButton(w, 'Speichern').trigger('click')
     await flushPromises()
-    expect(readPageSettings(savePage.mock.calls.at(-1)[1]).breakpoints).toEqual([480, 768, 1024])
+    expect(readPageSettings(server.config).breakpoints).toEqual([360, 900])
     expect(w.find('[data-testid="editor-canvas-saved"]').text()).toContain('Gespeichert')
+  })
+
+  it('haelt die Seiteneigenschaften auch auf einer Seite OHNE Widgets', async () => {
+    // Genau der Fall, den das alte Modell nicht konnte: es gab keinen Traeger,
+    // und der Editor meldete trotzdem „Gespeichert".
+    const w = await mountCanvas([])
+    await byLabel(w, 'Breakpoints').setValue('333, 666')
+    await byLabel(w, 'Rasterweite').setValue('37')
+    await byButton(w, 'Speichern').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="editor-canvas-saved"]').exists()).toBe(true)
+    expect(readPageSettings(server.config).breakpoints).toEqual([333, 666])
+    expect(readPageSettings(server.config).grid).toBe(37)
+
+    w.unmount()
+    const second = await mountAgainstServer()
+    expect(byLabel(second, 'Breakpoints').element.value).toBe('333, 666')
+    expect(byLabel(second, 'Rasterweite').element.value).toBe('37')
   })
 
   it('bietet jeden Breakpoint als Vorschau-Breite an', async () => {
@@ -383,14 +616,13 @@ describe('E17 - Breakpoints in den Seiteneigenschaften', () => {
 
   it('liest die gespeicherten Breakpoints beim naechsten Laden wieder', async () => {
     const w = await mountCanvas()
-    await byLabel(w, 'Breakpoints').setValue('480, 768, 1024')
+    await byLabel(w, 'Breakpoints').setValue('360, 900')
     await byButton(w, 'Speichern').trigger('click')
     await flushPromises()
-    const gespeichert = savePage.mock.calls.at(-1)[1]
     w.unmount()
 
-    const second = await mountCanvas(gespeichert.widgets)
-    expect(byLabel(second, 'Breakpoints').element.value).toBe('480, 768, 1024')
+    const second = await mountAgainstServer()
+    expect(byLabel(second, 'Breakpoints').element.value).toBe('360, 900')
   })
 
   it('meldet einen Speicherfehler sichtbar, statt „Gespeichert" zu behaupten', async () => {
@@ -400,6 +632,90 @@ describe('E17 - Breakpoints in den Seiteneigenschaften', () => {
     await flushPromises()
     expect(w.find('[data-testid="editor-canvas-saved"]').exists()).toBe(false)
     expect(w.find('[data-testid="editor-canvas-error"]').exists()).toBe(true)
+  })
+
+  it('meldet KEIN „Gespeichert", wenn die Seite danach etwas anderes traegt', async () => {
+    // Der Kern des Fundes aus Runde 1: ein 204 ist kein Beleg. Hier nimmt der
+    // „Server" die Einstellung stillschweigend nicht an - der Editor muss das
+    // merken, statt Erfolg zu melden.
+    const w = await mountCanvas()
+    savePage.mockImplementation(async () => ({ status: 204 }))
+    await byLabel(w, 'Breakpoints').setValue('360, 900')
+    await byButton(w, 'Speichern').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="editor-canvas-saved"]').exists()).toBe(false)
+    expect(w.find('[data-testid="editor-canvas-error"]').exists()).toBe(true)
+  })
+})
+
+describe('Layer-Sichtbarkeit - was unter dieser Seite liegt', () => {
+  async function mountWithLayers() {
+    server.config = normalizeOnServer({ ...pageConfig([widget('a', 0, 0)]), includes: ['i1'] })
+    server.tree = [
+      { id: 'p1', name: 'M5 Home', kind: 'normal' },
+      { id: 'g1', name: 'Kopfzeile', kind: 'globalInclude' },
+      { id: 'i1', name: 'Fusszeile', kind: 'normal' },
+    ]
+    server.pages = {
+      g1: normalizeOnServer(pageConfig([widget('gw', 10, 10)])),
+      i1: normalizeOnServer(pageConfig([widget('iw', 20, 20)])),
+    }
+    wireServer()
+    return mountAgainstServer()
+  }
+
+  it('bietet beide Layer als beschriftete Schalter an', async () => {
+    const w = await mountWithLayers()
+    expect(byLabel(w, 'Globale Layer')).not.toBeNull()
+    expect(byLabel(w, 'Include-Layer')).not.toBeNull()
+  })
+
+  it('stellt die Layer-Knoten in den Entwurf, damit die Vorschau sie stapelt', async () => {
+    const w = await mountWithLayers()
+    const draft = w.emitted('draft').at(-1)[0]
+    expect(draft.nodes.map((n) => n.id)).toEqual(['p1', 'g1', 'i1'])
+  })
+
+  it('zeichnet die fremden Kacheln als nicht anfassbare Umrisse, nicht als eigene', async () => {
+    const w = await mountWithLayers()
+    expect(order(w)).toEqual(['a'])
+    expect(w.findAll('.editor-canvas [data-layer-el]')).toHaveLength(2)
+  })
+
+  it('blendet den globalen Layer aus - Canvas und Entwurf zugleich', async () => {
+    const w = await mountWithLayers()
+    await byLabel(w, 'Globale Layer').setValue(false)
+    await flushPromises()
+    const draft = w.emitted('draft').at(-1)[0]
+    expect(draft.nodes.map((n) => n.id)).toEqual(['p1', 'i1'])
+    expect(draft.nodes[0].page_config.ignore_global_includes).toBe(true)
+    expect(w.findAll('.editor-canvas [data-layer-el]')).toHaveLength(1)
+  })
+
+  it('blendet den Include-Layer aus', async () => {
+    const w = await mountWithLayers()
+    await byLabel(w, 'Include-Layer').setValue(false)
+    await flushPromises()
+    const draft = w.emitted('draft').at(-1)[0]
+    expect(draft.nodes.map((n) => n.id)).toEqual(['p1', 'g1'])
+    expect(draft.nodes[0].page_config.includes).toEqual([])
+  })
+
+  it('holt fuer ein Popup keinen globalen Boden (R9)', async () => {
+    server.kind = 'popup'
+    const w = await mountWithLayers()
+    const draft = w.emitted('draft').at(-1)[0]
+    expect(draft.nodes.map((n) => n.id)).toEqual(['p1', 'i1'])
+  })
+
+  it('meldet einen Fehlschlag, statt „diese Seite hat keine Layer" vorzutaeuschen', async () => {
+    server.config = normalizeOnServer(pageConfig([widget('a', 0, 0)]))
+    wireServer()
+    getTree.mockRejectedValue(new Error('kaputt'))
+    const w = await mountAgainstServer()
+    expect(w.find('[data-testid="editor-canvas-layers-error"]').exists()).toBe(true)
+    // Der Canvas steht trotzdem - die Layer sind eine Zugabe, keine Vorbedingung.
+    expect(order(w)).toEqual(['a'])
   })
 })
 
@@ -448,7 +764,7 @@ describe('Wann gespeichert wird - und wann nicht', () => {
 
   it('speichert Z-Ordnung und Marken ebenfalls erst mit „Speichern"', async () => {
     const w = await mountCanvas()
-    await els(w)[0].trigger('click')
+    await pick(els(w)[0])
     savePage.mockClear()
     await byButton(w, 'Nach vorne').trigger('click')
     await byLabel(w, 'Gesperrt').setValue(true)
@@ -457,9 +773,8 @@ describe('Wann gespeichert wird - und wann nicht', () => {
 
     await byButton(w, 'Speichern').trigger('click')
     await flushPromises()
-    const gespeichert = savePage.mock.calls.at(-1)[1]
-    expect(gespeichert.widgets.at(-1).id).toBe('a')
-    expect(gespeichert.widgets.at(-1).config.editor.locked).toBe(true)
+    expect(server.config.widgets.at(-1).id).toBe('a')
+    expect(server.config.widgets.at(-1).config.editor.locked).toBe(true)
   })
 
   it('sichert das Umsortieren im responsiven Modus dagegen sofort', async () => {
@@ -467,12 +782,69 @@ describe('Wann gespeichert wird - und wann nicht', () => {
     await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
     await flushPromises()
     savePage.mockClear()
-    const from = els(w).find((e) => e.attributes('data-el') === 'c')
-    const to = els(w).find((e) => e.attributes('data-el') === 'a')
-    from.element.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }))
-    to.element.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX: 0, clientY: 0 }))
-    window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }))
-    await flushPromises()
+    await reorder(w, 'c', 'a')
     expect(savePage).toHaveBeenCalledTimes(1)
+  })
+
+  it('nimmt beim Umsortieren KEINE ungespeicherte Aenderung mit', async () => {
+    // Der Fund aus Runde 1: fuenf Pfeiltasten und ein Umsortieren spaeter stand
+    // `x=9` auf dem Server, obwohl niemand gespeichert hatte. Gesichert wird
+    // ausschliesslich die Reihenfolge, und zwar auf dem GESPEICHERTEN Stand.
+    const w = await mountCanvas()
+    await pick(els(w)[0])
+    for (let i = 0; i < 5; i += 1) {
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    }
+    await flushPromises()
+    expect(boxOf(w, 'a').x).toBe(5)
+
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
+    await flushPromises()
+    await reorder(w, 'c', 'a')
+
+    expect(server.config.widgets.map((x) => x.id)).toEqual(['c', 'a', 'b'])
+    expect(server.config.widgets.find((x) => x.id === 'a').x).toBe(0)
+  })
+
+  it('faehrt waehrend eines Zuges hoechstens eine Anfrage zugleich', async () => {
+    // Ohne Serialisierung setzte ein Drag ueber drei Nachbarn drei Anfragen ab;
+    // eine verspaetete Antwort liess dann eine veraltete Reihenfolge gewinnen.
+    const w = await mountCanvas()
+    await byLabel(w, 'Layout-Modus').setValue(LAYOUT_RESPONSIVE)
+    await flushPromises()
+
+    let laufend = 0
+    let hoechstens = 0
+    let freigeben = null
+    savePage.mockImplementation(async (id, config) => {
+      laufend += 1
+      hoechstens = Math.max(hoechstens, laufend)
+      await new Promise((resolve) => {
+        freigeben = resolve
+      })
+      server.config = normalizeOnServer(config)
+      laufend -= 1
+      return { status: 204 }
+    })
+
+    const from = els(w).find((e) => e.attributes('data-el') === 'c')
+    from.element.dispatchEvent(
+      new window.MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }),
+    )
+    for (const overId of ['b', 'a']) {
+      const over = els(w).find((e) => e.attributes('data-el') === overId)
+      over.element.dispatchEvent(
+        new window.MouseEvent('mousemove', { bubbles: true, clientX: 0, clientY: 0 }),
+      )
+      await flushPromises()
+    }
+    window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }))
+    freigeben()
+    await flushPromises()
+    freigeben()
+    await flushPromises()
+
+    expect(hoechstens).toBe(1)
+    expect(server.config.widgets.map((x) => x.id)).toEqual(order(w))
   })
 })

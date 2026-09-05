@@ -3406,7 +3406,11 @@
       "loadError": "Die Seite konnte nicht geladen werden.",
       "saveError": "Die Seite konnte nicht gespeichert werden.",
       "empty": "Diese Seite trägt noch keine Elemente.",
-      "renderedAs": "Gerendert wird: {mode} über den Skin „{skin}“."
+      "renderedAs": "Gerendert wird: {mode} über den Skin „{skin}“.",
+      "globalLayer": "Globale Layer ({count})",
+      "includeLayer": "Include-Layer ({count})",
+      "layersError": "Die Layer dieser Seite konnten nicht geladen werden; der Canvas zeigt nur die eigenen Elemente.",
+      "coordinateLoss": "Im responsiven Modus legt diese Seite beim Speichern ihre Koordinaten ab."
     }
   }
 }

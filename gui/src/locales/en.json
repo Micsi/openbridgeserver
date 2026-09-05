@@ -3406,7 +3406,11 @@
       "loadError": "The page could not be loaded.",
       "saveError": "The page could not be saved.",
       "empty": "This page carries no elements yet.",
-      "renderedAs": "Rendered as: {mode} through the “{skin}” skin."
+      "renderedAs": "Rendered as: {mode} through the “{skin}” skin.",
+      "globalLayer": "Global layers ({count})",
+      "includeLayer": "Include layers ({count})",
+      "layersError": "The layers of this page could not be loaded; the canvas shows only its own elements.",
+      "coordinateLoss": "In responsive mode this page drops its coordinates when you save."
     }
   }
 }

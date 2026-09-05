@@ -8,7 +8,7 @@ vi.mock('@/api/client', () => ({ default: { get, put } }))
 /**
  * Der Zugang des V2-Editors zum Visu-Backend (M5 C2, Issue #169).
  *
- * Drei Aufrufe, drei Adressen - und genau die werden hier festgehalten. Ein
+ * Vier Aufrufe, vier Adressen - und genau die werden hier festgehalten. Ein
  * verrutschter Pfad faellt sonst erst im Browser auf, und dort sieht er aus wie
  * ein leerer Canvas.
  */
@@ -45,6 +45,16 @@ describe('visuApi', () => {
     await visuApi.savePage('n1', config)
 
     expect(put).toHaveBeenCalledWith('/visu/pages/n1', config)
+  })
+
+  it('liest den Baum unter /visu/tree - dort stehen die Layer der Seite', async () => {
+    get.mockResolvedValue({ data: [{ id: 'g1', kind: 'globalInclude' }] })
+    const { visuApi } = await import('@/api/visu')
+
+    const res = await visuApi.getTree()
+
+    expect(get).toHaveBeenCalledWith('/visu/tree')
+    expect(res.data[0].kind).toBe('globalInclude')
   })
 
   it('liegt auch als Vorgabe-Ausfuhr bereit', async () => {

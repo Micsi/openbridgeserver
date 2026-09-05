@@ -103,25 +103,68 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
   test(
     'E2 Reihenfolge/Gruppe eines Elements per Drag setzbar (kein x/y-Feld), Order-Array vor/nach Reload identisch',
     C2,
-    async ({ page }) => {
+    async ({ page, request }) => {
       const fx = seeded();
-      await openEditor(page, fx.m5.node_ids.home);
-      // Der responsive Modus: die Seite trägt Reihenfolge statt Koordinaten
-      // (Design-Invariante §1.1 — Pixel-Autorenschaft ist ein Angebot).
-      await page.getByLabel('Layout-Modus').selectOption('responsive');
-      await expect(page.getByLabel('X')).toHaveCount(0);
+      const headers = await adminHeaders(request);
+      const pageUrl = api(`/visu/pages/${fx.m5.node_ids.home}`);
+      // Der Layout-Modus ist eine SEITEN-Eigenschaft: dieses Szenario stellt die
+      // Beispielseite dauerhaft um und nimmt ihr dabei die Koordinaten ab
+      // (Design-Invariante §1.1). Der Ausgangsstand wird deshalb vorher GELESEN
+      // und am Ende zurückgeschrieben — nicht geraten —, damit E4 und E8 dieselbe
+      // Welt vorfinden wie E1. Das ist Aufbau, keine Zusicherung: keine Aussage
+      // dieses Szenarios hängt daran.
+      const before = await request.get(pageUrl, { headers }).then((r) => r.json());
+      try {
+        await openEditor(page, fx.m5.node_ids.home);
+        // Der responsive Modus: die Seite trägt Reihenfolge statt Koordinaten
+        // (Design-Invariante §1.1 — Pixel-Autorenschaft ist ein Angebot).
+        await page.getByLabel('Layout-Modus').selectOption('responsive');
+        await expect(page.getByLabel('X')).toHaveCount(0);
 
-      const order = () => page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => e.getAttribute('data-el')));
-      const before = await order();
-      // Das letzte Element an die erste Stelle ziehen.
-      await page.locator('.editor-canvas [data-el]').last().dragTo(page.locator('.editor-canvas [data-el]').first());
-      const after = await order();
-      expect(after).not.toEqual(before);
-      expect([...after].sort()).toEqual([...before].sort());
+        const order = () => page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => e.getAttribute('data-el')));
+        const vorher = await order();
+        // Das letzte Element an die erste Stelle ziehen.
+        await page.locator('.editor-canvas [data-el]').last().dragTo(page.locator('.editor-canvas [data-el]').first());
+        const nachher = await order();
+        expect(nachher).not.toEqual(vorher);
+        expect([...nachher].sort()).toEqual([...vorher].sort());
 
-      await page.reload();
-      await expect(page.locator('.editor-canvas')).toBeVisible();
-      expect(await order()).toEqual(after);
+        // Ohne „Speichern": die Reihenfolge überlebt den Reload.
+        await page.reload();
+        await expect(page.locator('.editor-canvas')).toBeVisible();
+        expect(await order()).toEqual(nachher);
+
+        // Und die Invariante selbst, am GESPEICHERTEN Zustand statt am
+        // Eingabefeld: eine responsive Seite trägt keine Koordinate. Geprüft
+        // wird beides — was der Editor SCHICKT (die PUT-Nutzlast) und was der
+        // Server danach HÄLT. Ein Wegfall auf nur einer der beiden Seiten bleibt
+        // damit nicht unbemerkt.
+        await page.getByLabel('Layout-Modus').selectOption('responsive');
+        const gesendet = page.waitForRequest(
+          (req) => req.method() === 'PUT' && req.url().includes(`/visu/pages/${fx.m5.node_ids.home}`),
+        );
+        await page.getByRole('button', { name: 'Speichern' }).click();
+        await expect(page.getByText('Gespeichert')).toBeVisible();
+        const nutzlast = JSON.parse((await gesendet).postData() ?? '{}');
+        expect(nutzlast.layout_mode).toBe('responsive');
+        for (const w of nutzlast.widgets ?? []) {
+          expect(w.x, 'der Editor schickt im responsiven Modus keine Koordinate').toBeUndefined();
+          expect(w.y).toBeUndefined();
+          expect(w.w).toBeUndefined();
+          expect(w.h).toBeUndefined();
+        }
+        const gespeichert = await request.get(pageUrl, { headers }).then((r) => r.json());
+        expect(gespeichert.layout_mode).toBe('responsive');
+        expect(gespeichert.widgets.length).toBeGreaterThan(0);
+        for (const w of gespeichert.widgets) {
+          expect(w.x, 'die gespeicherte responsive Seite trägt keine Koordinate').toBeNull();
+          expect(w.y).toBeNull();
+          expect(w.w).toBeNull();
+          expect(w.h).toBeNull();
+        }
+      } finally {
+        await request.put(pageUrl, { headers, data: before });
+      }
     },
   );
 
@@ -194,12 +237,30 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       await expect(page.locator('.editor-guide')).toBeVisible();
       await page.mouse.up();
 
-      // (b) „Verteilen" braucht mindestens drei Elemente und macht die Abstände gleich.
+      const xs = () =>
+        page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => Number(e.getAttribute('data-x'))));
+
+      // (b) Der ZWEIER-Fall: „Verteilen" ist bei zwei Elementen keine Aussage
+      // (es gibt nur einen Abstand) und wird deshalb gar nicht erst angeboten.
+      // Er steht hier ausdrücklich, weil Ctrl+A ihn nie erreicht — und ohne ihn
+      // bliebe „ab drei" eine Behauptung des Codes statt einer geprüften Regel.
+      const alle = page.locator('.editor-canvas [data-el]');
+      await alle.nth(0).click();
+      await alle.nth(1).click({ modifiers: ['Shift'] });
+      await expect(page.locator('.editor-canvas [data-el].is-selected')).toHaveCount(2);
+      const verteilen = page.getByRole('button', { name: 'Verteilen' });
+      await expect(verteilen).toBeDisabled();
+      const vorZwei = await xs();
+      await verteilen.click({ force: true });
+      expect(await xs()).toEqual(vorZwei);
+
+      // (c) „Verteilen" braucht mindestens drei Elemente und macht die Abstände gleich.
       await page.keyboard.press('Control+a');
-      await page.getByRole('button', { name: 'Verteilen' }).click();
-      const xs = await page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => Number(e.getAttribute('data-x'))));
-      const gaps = xs.slice(1).map((x, i) => x - xs[i]);
-      expect(new Set(gaps).size).toBe(1);
+      await verteilen.click();
+      const nachher = await xs();
+      const abstaende = nachher.slice(1).map((x, i) => x - nachher[i]);
+      expect(abstaende.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(abstaende).size).toBe(1);
 
       // (c) „Gleiche Größe" überträgt die Maße des zuerst gewählten Elements.
       await page.getByRole('button', { name: 'Gleiche Größe' }).click();
@@ -289,9 +350,18 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await page.getByRole('button', { name: 'Nach hinten' }).click();
     await expect(page.locator('.editor-canvas [data-el]').first()).toHaveAttribute('data-el', await target.getAttribute('data-el') ?? '');
 
-    // Sperren: das Element nimmt keine Drag-Änderung mehr an.
+    // Sperren: das Element nimmt keine Änderung mehr an — weder per DRAG noch
+    // per Tastatur. Beide Wege stehen hier, weil sie im Editor zwei verschiedene
+    // Pfade sind: ein gesperrtes Element, das sich ziehen lässt, wäre ungesperrt,
+    // auch wenn die Pfeiltaste nichts tut.
     await page.getByLabel('Gesperrt').check();
     const locked = await box(page, fx.m5.widgets.home);
+    const griff = (await target.boundingBox())!;
+    await page.mouse.move(griff.x + griff.width / 2, griff.y + griff.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(griff.x + griff.width / 2 + 40, griff.y + griff.height / 2 + 40, { steps: 5 });
+    await page.mouse.up();
+    expect(await box(page, fx.m5.widgets.home)).toMatchObject({ x: locked.x, y: locked.y });
     await page.keyboard.press('ArrowRight');
     expect(await box(page, fx.m5.widgets.home)).toMatchObject({ x: locked.x });
 
@@ -446,22 +516,42 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(preview.locator(`[data-id]`, { hasText: fx.m5.widgets.solo })).toBeVisible();
   });
 
-  test('E17 Responsive-Breakpoints in Seiteneigenschaften konfigurierbar', C2, async ({ page }) => {
+  test('E17 Responsive-Breakpoints in Seiteneigenschaften konfigurierbar', C2, async ({ page, request }) => {
     const fx = seeded();
+    const headers = await adminHeaders(request);
+    const pageUrl = api(`/visu/pages/${fx.m5.node_ids.solo}`);
+
+    // AUSGANGSSTAND: die Vorgaben. Das ist Aufbau, keine Zusicherung, und es ist
+    // nötig, weil derselbe Lauf zweimal gegen dieselbe Instanz fährt: ohne
+    // Rücksetzen stünden die gleich getippten Werte beim zweiten Mal schon da,
+    // und das Szenario könnte „gespeichert" nicht von „stand schon so" trennen.
+    const stand = await request.get(pageUrl, { headers }).then((r) => r.json());
+    await request.put(pageUrl, { headers, data: { ...stand, breakpoints: [480, 768, 1024], grid: 8 } });
+
     await openEditor(page, fx.m5.node_ids.solo);
 
-    await page.getByLabel('Breakpoints').fill('480, 768, 1024');
+    // Die Werte liegen ABSEITS der Vorgabe (die ist `480, 768, 1024` bzw. `8`).
+    // Genau daran hing der Beweis: mit den Vorgabewerten blieb dieses Szenario
+    // auch dann grün, wenn das Speichern der Seiteneigenschaften vollständig
+    // abgeschaltet war — der Reload las dieselben Zahlen aus der Vorgabe zurück.
+    await page.getByLabel('Breakpoints').fill('360, 900');
+    await page.getByLabel('Rasterweite').fill('24');
     await page.getByRole('button', { name: 'Speichern' }).click();
     await expect(page.getByText('Gespeichert')).toBeVisible();
 
     // Die Vorschau folgt dem gewählten Breakpoint …
-    await page.getByLabel('Vorschau-Breite').selectOption('480');
-    await expect(page.locator('iframe.editor-preview')).toHaveJSProperty('clientWidth', 480);
+    await page.getByLabel('Vorschau-Breite').selectOption('360');
+    await expect(page.locator('iframe.editor-preview')).toHaveJSProperty('clientWidth', 360);
 
-    // … und der Wert überlebt den Reload (er steht in den Seiteneigenschaften,
-    // nicht im flüchtigen Editor-Zustand).
+    // … die Werte stehen in den SEITENEIGENSCHAFTEN (nicht in den Widgets) …
+    const gespeichert = await request.get(pageUrl, { headers }).then((r) => r.json());
+    expect(gespeichert.breakpoints).toEqual([360, 900]);
+    expect(gespeichert.grid).toBe(24);
+
+    // … und überleben den Reload, nicht bloß den flüchtigen Editor-Zustand.
     await page.reload();
-    await expect(page.getByLabel('Breakpoints')).toHaveValue('480, 768, 1024');
+    await expect(page.getByLabel('Breakpoints')).toHaveValue('360, 900');
+    await expect(page.getByLabel('Rasterweite')).toHaveValue('24');
   });
 
   test.fixme('E18 Seite/Vorlage als Datei export-/importierbar', C6, async ({ page }) => {

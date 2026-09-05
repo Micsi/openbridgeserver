@@ -33,10 +33,21 @@ export default defineConfig({
       // Zeichenketten-Schluessel trifft in Vite JEDEN Pfad, der so ANFAENGT -
       // `/visu-editor/<id>` landete damit im Proxy zur Visu (Port 5174) und kam
       // als 502 zurueck, der Admin-Bereich war im Dev-Server also gar nicht
-      // erreichbar. `^/visu(/|$)` trifft `/visu` und `/visu/...`, aber nicht
-      // `/visu-editor`.
-      '^/visu(/|$)': {
-        target: 'http://localhost:5174',
+      // erreichbar. `^/visu(-v2)?(/|$)` trifft `/visu`, `/visu/...` und
+      // `/visu-v2/...`, aber nicht `/visu-editor`.
+      //
+      // `/visu-v2` steht mit dabei, weil dort die eingebettete VORSCHAU liegt
+      // (`VISU_PREVIEW_URL` in `utils/visuEditorAccess.js`). Ohne diesen Zweig
+      // faellt sie im Dev-Server in den SPA-Rueckfall und zeigt die Admin-GUI in
+      // sich selbst statt der Visu. Wer die Vorschau woanders ausliefert, setzt
+      // `VITE_VISU_PREVIEW_URL` und braucht diesen Zweig nicht.
+      //
+      // Das Ziel ist wie `/api` und `/help` ueber die Umgebung setzbar
+      // (`VISU_PROXY_TARGET`): der E2E-Harness faehrt einen eigenen Portstapel,
+      // und ein fest verdrahtetes 5174 haette genau diesen einen Zweig davon
+      // ausgenommen.
+      '^/visu(-v2)?(/|$)': {
+        target: process.env.VISU_PROXY_TARGET || 'http://localhost:5174',
         changeOrigin: true,
       },
       '/help': {

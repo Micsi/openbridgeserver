@@ -53,6 +53,44 @@ export function snapBox(box, dx, dy, step) {
   }
 }
 
+/**
+ * Die neuen MASSE einer Kachel nach einem Zug am Anfasser um `dx`/`dy`,
+ * eingerastet. Das Gegenstueck zu {@link snapBox}: gibt nur `w`/`h` zurueck, die
+ * Lage bleibt, wo sie ist (die Ecke unten rechts zieht, die oben links haelt).
+ *
+ * Die Untergrenze ist 1 und nicht 0: eine Kachel ohne Ausdehnung waere im Canvas
+ * unauffindbar und im Modell eine Kachel, die es nicht gibt. Sie wird VOR dem
+ * Einrasten geprueft, damit auch ein grobes Raster nie auf 0 rastet.
+ */
+export function snapSize(box, dx, dy, step) {
+  return {
+    w: Math.max(1, snapValue(int(box?.w) + int(dx), step)),
+    h: Math.max(1, snapValue(int(box?.h) + int(dy), step)),
+  }
+}
+
+/** Die Vorgabe-Box, die eine Kachel im Pixel-Modus bekommt, wenn sie keine traegt. */
+export const DEFAULT_BOX = { x: 0, y: 0, w: 2, h: 2 }
+
+/**
+ * Dieselbe Liste, aber jede Kachel mit einer vollstaendigen Box.
+ *
+ * Gebraucht wird das genau einmal: eine Seite im responsiven Modus traegt KEINE
+ * Koordinaten (Design-Invariante §1.1), und wer sie danach auf „Pixel" stellt,
+ * muss irgendwo anfangen. Die Vorgabe ist dieselbe wie im Backend-Modell
+ * (`WidgetInstance`), damit der Editor keine dritte Zahl erfindet. Kachel, die
+ * schon eine Box hat, wird nicht angefasst.
+ */
+export function ensureBoxes(list) {
+  return (Array.isArray(list) ? list : []).map((item) => {
+    const filled = { ...item }
+    for (const key of ['x', 'y', 'w', 'h']) {
+      if (typeof filled[key] !== 'number') filled[key] = DEFAULT_BOX[key]
+    }
+    return filled
+  })
+}
+
 /** Die sechs Kanten/Mitten einer Box, nach Achse getrennt. */
 function edges(box) {
   const x = int(box.x)

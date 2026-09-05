@@ -1,34 +1,31 @@
 /**
  * Das Seitenmodell des V2-Editors (M5 C2, Issue #169): wo der Layout-Modus, die
- * Rasterweite, die Breakpoints und die Marken „gesperrt"/„ausgeblendet" wohnen -
- * und wie daraus der Entwurf fuer die Vorschau wird.
+ * Rasterweite, die Breakpoints, der Skin und die Marken „gesperrt"/„ausgeblendet"
+ * wohnen - und wie daraus der Entwurf fuer die Vorschau wird.
  *
  * DIE NAHT, und warum sie so aussieht:
  *
- * Das Backend-Modell (`obs/models/visu.py` → `PageConfig`) kennt weder einen
- * Layout-Modus noch Breakpoints, und pydantic wirft unbekannte Felder beim
- * Speichern still weg (nachgemessen gegen `PageConfig.model_validate` +
- * `model_dump_json`). `obs/` gehoert nicht zu Teil C2, ein neues Feld ist also
- * nicht drin. Der EINZIGE frei formbare, dauerhafte Platz einer Seite ist
- * `WidgetInstance.config` - ein offener Dict, den das Backend unveraendert
- * durchreicht und den V1 (`frontend/`) ignoriert.
+ *  - `PageConfig.layout_mode` / `.grid` / `.breakpoints` / `.skin` → die
+ *    Eigenschaften DER SEITE. Sie liegen im Backend-Modell (`obs/models/visu.py`),
+ *    additiv in derselben JSON-Spalte wie `includes`/`popup`, ohne Migration.
+ *  - `WidgetInstance.config.editor` → die Marken DIESES Widgets (`locked`,
+ *    `hidden`, E8). Sie gehoeren dem Widget und bleiben dort.
  *
- * Deshalb:
- *  - `config.editor`      → die Marken DIESES Widgets (`locked`, `hidden`, E8).
- *  - `config.editor_page` → die Einstellungen DER SEITE (`mode`, `breakpoints`,
- *    `grid`), auf JEDEM Widget gespiegelt. Die Spiegelung ist kein Geschmack,
- *    sondern Haltbarkeit: wer ein einzelnes Widget loescht, nimmt die
- *    Seiteneinstellungen sonst mit. Gelesen wird der erste Eintrag, der eine
- *    Spiegelung traegt.
+ * VORGESCHICHTE (Runde 1, bewusst hier festgehalten): bis Runde 2 spiegelte
+ * dieser Editor die Seiteneigenschaften in `WidgetInstance.config.editor_page`
+ * auf JEDES Widget. Das war ein Datenfork: n Kopien derselben Wahrheit, kein
+ * Besitzer, gelesen wurde die erste Kopie der LISTENREIHENFOLGE - also genau der
+ * Groesse, die E2 (Umsortieren) und E8 (Z-Ordnung) veraendern. Eine Seite ohne
+ * Widgets konnte die Werte gar nicht halten und bekam trotzdem „Gespeichert"
+ * gemeldet. Ausserhalb von `gui/` kannte das Feld niemand. Deshalb ist der
+ * Traeger jetzt die Seite selbst, und es gibt keinen Rueckfallpfad auf
+ * `editor_page`: ein zweiter Leseort waere derselbe Fehler mit einer Ausrede.
  *
- * Bewusst NICHT benutzt wird `PageConfig.grid_cell_width`: das ist V1s
- * Zellbreite und bestimmt dort die Kachelgroesse. Sie als „Rasterweite" des V2-
- * Editors zu ueberschreiben wuerde die V1-Darstellung derselben Seite aendern -
- * R17 („V1 bleibt unberuehrt") gilt fuer die Daten so wie fuer den Code.
- *
- * OFFEN, ausdruecklich: eine Seite ganz OHNE Widgets kann heute keine
- * Seiteneinstellungen halten. Das ist die Grenze der Naht, nicht ihre Absicht;
- * sie faellt, sobald `PageConfig` ein eigenes Feld traegt (Teil A).
+ * DIE DESIGN-INVARIANTE (§1.1) gilt hier wie im Backend: eine Seite im
+ * responsiven Modus traegt KEINE Koordinaten. `writePageSettings` legt sie beim
+ * Wechsel ab, `PageConfig` im Backend tut dasselbe noch einmal - der Editor ist
+ * damit ehrlich zu dem, was gleich in der Datenbank steht, und die Regel haengt
+ * nicht an ihm allein.
  */
 
 import { DEFAULT_GRID } from '@/utils/visuEditorLayout'
@@ -43,19 +40,45 @@ export const DEFAULT_BREAKPOINTS = [480, 768, 1024]
 
 /** Der Schluessel der Widget-Marken in `WidgetInstance.config`. */
 export const WIDGET_FLAGS_KEY = 'editor'
-/** Der Schluessel der Seiteneinstellungen in `WidgetInstance.config`. */
-export const PAGE_SETTINGS_KEY = 'editor_page'
+
+/** Die vier Zahlen der Autoren-Box. */
+export const BOX_KEYS = ['x', 'y', 'w', 'h']
 
 /**
- * Der Skin, gegen den der gewaehlte Modus gerendert wird.
+ * Der Skin, gegen den gerendert wird, wenn die Seite keinen nennt.
  *
- * Der Editor soll ZEIGEN, welcher Modus rendert (Owner-Vorgabe): `edomi` besitzt
- * die Seite und honoriert `position` (Pixel), `ionic` legt seinen responsiven
- * Boden und ignoriert Koordinaten. Die Schluessel sind die der Host-Registry
- * (`apps/visu/src/skin-host/skins.ts`).
+ * `edomi` ist die Vorgabe, weil es der Skin ist, der die Autoren-Box honoriert -
+ * eine Seite ohne Skin-Wahl ist eine Bestandsseite, und die ist im Pixel-Modus.
  */
-export function skinForMode(mode) {
-  return mode === LAYOUT_RESPONSIVE ? 'ionic' : 'edomi'
+export const DEFAULT_SKIN = 'edomi'
+
+/**
+ * Die Skins, die `position` honorieren (Host-Registry:
+ * `apps/visu/src/skin-host/skins.ts`). `edomi` besitzt die Seite und zeichnet die
+ * Autoren-Box; `ionic` und `terminal` legen ihren eigenen Boden und ignorieren
+ * Koordinaten.
+ */
+export const POSITION_SKINS = ['edomi']
+
+/** Honoriert dieser Skin die Autoren-Box? */
+export function skinHonorsPosition(skin) {
+  return POSITION_SKINS.includes(skin || DEFAULT_SKIN)
+}
+
+/**
+ * Welcher Modus wird tatsaechlich gerendert - JE SKIN (Design-Invariante §1.1:
+ * „Der Editor zeigt je Skin, welcher Modus gerendert wird").
+ *
+ * Die Richtung ist wichtig und war in Runde 1 verdreht: dort leitete
+ * `skinForMode()` den SKIN aus dem MODUS ab (`pixel → edomi`,
+ * `responsive → ionic`). Damit war der Skin nicht mehr waehlbar und kollidierte
+ * mit E19 (Skin je Seite, Teil C1). Modus und Skin sind ZWEI Seiteneigenschaften:
+ * der Modus sagt, was die Seite TRAEGT, der Skin, was davon HONORIERT wird. Eine
+ * Pixel-Seite unter `ionic` wird responsiv gerendert - der Autor soll das sehen,
+ * statt sich zu wundern.
+ */
+export function renderedMode(mode, skin) {
+  return mode === LAYOUT_PIXEL && skinHonorsPosition(skin) ? LAYOUT_PIXEL : LAYOUT_RESPONSIVE
 }
 
 /** Die Marken eines Widgets - fehlt etwas, ist es aus. */
@@ -79,6 +102,24 @@ export function withWidgetFlags(widget, patch) {
   }
 }
 
+/**
+ * Eine Kopie des Widgets OHNE Autoren-Box. Die Schluessel fallen ganz weg statt
+ * auf `null` zu gehen: eine unvollstaendige Box ist fuer den Host keine Box
+ * (`readPosition`), und ein fehlender Schluessel sagt dasselbe, ohne der Seite
+ * eine Zahl anzudichten. Das Backend legt dafuer `null` ab - beides liest
+ * `readPosition` gleich.
+ */
+export function withoutBox(widget) {
+  const copy = { ...widget }
+  for (const key of BOX_KEYS) delete copy[key]
+  return copy
+}
+
+/** Traegt dieses Widget eine vollstaendige Autoren-Box? */
+export function hasBox(widget) {
+  return BOX_KEYS.every((key) => typeof (widget || {})[key] === 'number')
+}
+
 /** Eine positive ganze Zahl oder `null`. */
 function positiveInt(value) {
   const n = Number(value)
@@ -89,9 +130,9 @@ function positiveInt(value) {
 
 /**
  * Die Rasterweite: eine Zahl wird auf mindestens 1 geklemmt, KEINE Zahl faellt
- * auf die Vorgabe zurueck. Der Unterschied ist Absicht - „0" ist die Ansage
- * „ohne Raster" (`snapValue` rundet dann nur), und die darf nicht heimlich als
- * 8er-Raster wieder auftauchen.
+ * auf die Vorgabe zurueck. Der Unterschied ist Absicht - eine Seite, die eine
+ * Rasterweite traegt, soll sie behalten, und eine, die keine traegt, bekommt die
+ * Vorgabe statt einer 0.
  */
 function gridValue(value, fallback) {
   if (value === null || value === undefined || value === '') return fallback
@@ -103,7 +144,8 @@ function gridValue(value, fallback) {
 /**
  * Die Breakpoints einer Eingabe (E17). Komma oder Semikolon trennen, alles, was
  * keine positive Zahl ist, faellt weg; Dubletten fallen weg; sortiert wird
- * aufsteigend, damit die Vorschau-Auswahl eine Ordnung hat.
+ * aufsteigend - dieselbe Normalisierung wie `PageConfig._normalize_breakpoints`
+ * im Backend, damit der Editor keine Liste anzeigt, die die Seite nicht traegt.
  */
 export function parseBreakpoints(text) {
   if (typeof text !== 'string') return []
@@ -122,36 +164,55 @@ export function formatBreakpoints(list) {
 
 /** Die Vorgaben, wenn eine Seite noch nichts traegt. */
 function defaultSettings() {
-  return { mode: LAYOUT_PIXEL, breakpoints: [...DEFAULT_BREAKPOINTS], grid: DEFAULT_GRID }
+  return {
+    mode: LAYOUT_PIXEL,
+    breakpoints: [...DEFAULT_BREAKPOINTS],
+    grid: DEFAULT_GRID,
+    skin: null,
+  }
 }
 
 /** Aus rohen Werten geprueft gemachte Einstellungen. */
 function normalizeSettings(raw) {
   const base = defaultSettings()
   if (!raw || typeof raw !== 'object') return base
+  const skin = typeof raw.skin === 'string' ? raw.skin.trim() : ''
   return {
     mode: LAYOUT_MODES.includes(raw.mode) ? raw.mode : base.mode,
     breakpoints: Array.isArray(raw.breakpoints)
-      ? raw.breakpoints.map(positiveInt).filter((n) => n !== null)
+      ? raw.breakpoints
+          .map(positiveInt)
+          .filter((n, i, all) => n !== null && all.indexOf(n) === i)
+          .sort((a, b) => a - b)
       : base.breakpoints,
     grid: gridValue(raw.grid, base.grid),
+    skin: skin || null,
   }
 }
 
 /**
- * Die Seiteneinstellungen einer `PageConfig` - gelesen vom ersten Widget, das
- * die Spiegelung traegt. Eine Seite ohne Spiegelung liefert die Vorgaben.
+ * Die Seiteneigenschaften einer `PageConfig` - aus der Seite, nicht aus ihren
+ * Widgets. Eine Seite ohne diese Felder (jede Bestandsseite) liefert die
+ * Vorgaben, und eine Seite ohne Widgets traegt sie genauso wie jede andere.
  */
 export function readPageSettings(pageConfig) {
-  const widgets = pageConfig && Array.isArray(pageConfig.widgets) ? pageConfig.widgets : []
-  const carrier = widgets.find((w) => w && w.config && w.config[PAGE_SETTINGS_KEY])
-  return normalizeSettings(carrier ? carrier.config[PAGE_SETTINGS_KEY] : null)
+  const raw = pageConfig && typeof pageConfig === 'object' ? pageConfig : {}
+  return normalizeSettings({
+    mode: raw.layout_mode,
+    grid: raw.grid,
+    breakpoints: raw.breakpoints,
+    skin: raw.skin,
+  })
 }
 
 /**
- * Eine neue `PageConfig` mit den gewuenschten Einstellungen, auf jedes Widget
- * gespiegelt. Teil-Aenderungen sind erlaubt: was der Aufruf nicht nennt, bleibt
- * so, wie die Seite es heute traegt.
+ * Eine neue `PageConfig` mit den gewuenschten Einstellungen. Teil-Aenderungen
+ * sind erlaubt: was der Aufruf nicht nennt, bleibt so, wie die Seite es heute
+ * traegt.
+ *
+ * Im responsiven Modus verlassen die Koordinaten die Seite schon hier - der
+ * Editor schickt damit genau das, was gleich in der Spalte steht, und die
+ * Vorschau zeigt kein Bild, das der gespeicherte Stand nicht haette.
  */
 export function writePageSettings(pageConfig, patch) {
   const current = readPageSettings(pageConfig)
@@ -159,10 +220,43 @@ export function writePageSettings(pageConfig, patch) {
   const widgets = pageConfig && Array.isArray(pageConfig.widgets) ? pageConfig.widgets : []
   return {
     ...(pageConfig || {}),
-    widgets: widgets.map((w) => ({
-      ...w,
-      config: { ...(w && w.config ? w.config : {}), [PAGE_SETTINGS_KEY]: { ...next } },
-    })),
+    layout_mode: next.mode,
+    grid: next.grid,
+    breakpoints: [...next.breakpoints],
+    skin: next.skin,
+    widgets:
+      next.mode === LAYOUT_RESPONSIVE ? widgets.map(withoutBox) : widgets.map((w) => ({ ...w })),
+  }
+}
+
+/** Sind zwei Saetze Seiteneigenschaften derselbe Satz? */
+export function sameSettings(a, b) {
+  const left = normalizeSettings(a)
+  const right = normalizeSettings(b)
+  return (
+    left.mode === right.mode &&
+    left.grid === right.grid &&
+    left.skin === right.skin &&
+    left.breakpoints.length === right.breakpoints.length &&
+    left.breakpoints.every((n, i) => n === right.breakpoints[i])
+  )
+}
+
+/**
+ * Ein Knoten des Entwurfs in der BACKEND-Form. Ein Layer ist derselbe Knoten wie
+ * die Seite selbst - die Vorschau komponiert ihn mit denselben Funktionen wie die
+ * echte Visu (`composeLayers`), es gibt hier keine zweite Kompositionsregel.
+ */
+function draftNode({ id, name, kind, order = 0, pageConfig }) {
+  return {
+    id,
+    parent_id: null,
+    name: name ?? '',
+    type: 'PAGE',
+    kind: kind ?? 'normal',
+    order,
+    access: null,
+    page_config: pageConfig,
   }
 }
 
@@ -171,15 +265,30 @@ export function writePageSettings(pageConfig, patch) {
  * `apps/visu/src/preview/protocol.ts`). Er traegt die BACKEND-Form, damit die
  * Vorschau ihn mit denselben Funktionen abbildet wie die echte Visu.
  *
- * Zwei Regeln stecken darin:
+ * Vier Regeln stecken darin:
  *  1. Ein AUSGEBLENDETES Widget ist nicht im Entwurf (E8). Es bleibt im Canvas
  *     und im Baum - ausgeblendet heisst „nicht im Bild", nicht „geloescht".
  *  2. Im RESPONSIVEN Modus traegt der Entwurf keine Koordinaten (E2,
- *     Design-Invariante §1.1). Der Host emittiert dann auch kein `position`
- *     (`readPosition` in `core/obs/mapping.ts`: eine unvollstaendige Box ist
- *     keine Box), und der Skin legt seinen eigenen Boden.
+ *     Design-Invariante §1.1). Der Host emittiert dann auch kein `position`.
+ *  3. Der SKIN ist die Wahl der Seite, keine Ableitung aus dem Modus (E19/C1).
+ *     Ohne Wahl gilt {@link DEFAULT_SKIN}.
+ *  4. Die LAYER (globale Inkludeseiten, individuelle Inkludeseiten) stehen als
+ *     eigene Knoten im Entwurf, damit die Vorschau sie mit `composeLayers` genau
+ *     so stapelt wie die echte Visu. Ein ausgeblendeter Layer verschwindet nicht
+ *     durch eine Sonderregel, sondern ueber die BESTEHENDEN: der globale Boden
+ *     ueber `ignore_global_includes` (R13), die individuellen ueber eine leere
+ *     `includes`-Liste (R14). Der Autor sieht damit genau das Bild, das eine
+ *     Seite haette, die es so gespeichert haette.
  */
-export function toPreviewDraft({ pageId, name, kind, pageConfig }) {
+export function toPreviewDraft({
+  pageId,
+  name,
+  kind,
+  pageConfig,
+  layers = [],
+  showGlobalLayer = true,
+  showIncludeLayer = true,
+}) {
   if (!pageId || !pageConfig) return null
   const settings = readPageSettings(pageConfig)
   const widgets = (Array.isArray(pageConfig.widgets) ? pageConfig.widgets : [])
@@ -194,27 +303,33 @@ export function toPreviewDraft({ pageId, name, kind, pageConfig }) {
         config: w.config ?? {},
       }
       if (settings.mode !== LAYOUT_RESPONSIVE) {
-        item.x = w.x
-        item.y = w.y
-        item.w = w.w
-        item.h = w.h
+        for (const key of BOX_KEYS) item[key] = w[key]
       }
       return item
     })
+  const visible = (Array.isArray(layers) ? layers : []).filter((layer) =>
+    layer && layer.kind === 'globalInclude' ? showGlobalLayer : showIncludeLayer,
+  )
+  const ownConfig = {
+    ...pageConfig,
+    widgets,
+    includes: showIncludeLayer ? (pageConfig.includes ?? []) : [],
+    ignore_global_includes: showGlobalLayer ? (pageConfig.ignore_global_includes ?? false) : true,
+  }
   return {
-    skin: skinForMode(settings.mode),
+    skin: settings.skin || DEFAULT_SKIN,
     pageId,
     nodes: [
-      {
-        id: pageId,
-        parent_id: null,
-        name: name ?? '',
-        type: 'PAGE',
-        kind: kind ?? 'normal',
-        order: 0,
-        access: null,
-        page_config: { ...pageConfig, widgets },
-      },
+      draftNode({ id: pageId, name, kind, pageConfig: ownConfig }),
+      ...visible.map((layer, index) =>
+        draftNode({
+          id: layer.id,
+          name: layer.name,
+          kind: layer.kind,
+          order: index + 1,
+          pageConfig: layer.page_config ?? { widgets: [] },
+        }),
+      ),
     ],
   }
 }
