@@ -1142,3 +1142,131 @@ describe('ObsDataSource - die Sichtbarkeitsregel wirkt in der ausgelieferten Vis
     expect((await ds.list()).map((d) => d.id)).toEqual(['always-1']);
   });
 });
+
+/* ------------------------------------------- E16 LIVE: ohne Neuladen (R3) */
+
+/**
+ * Die Zeile **E16** verlangt „Element bedingt sichtbar oder unsichtbar JE NACH
+ * DATENPUNKTWERT" - ein laufender Zustand, kein Ladezustand. Bis Runde 2 wertete
+ * die ausgelieferte Visu die Regel nur beim Aufbau aus: ein verborgenes Element
+ * kam nie zurueck, ein sichtbares verschwand nie. Diese Proben halten beide
+ * Richtungen fest, und zwar OHNE ein zweites `list()` von aussen.
+ *
+ * Der Kern: ein Geraete-Patch kann eine Sichtbarkeit nicht ausdruecken. Er traegt
+ * FELDER eines Geraets; hier aendert sich die ZUGEHOERIGKEIT - ein verborgenes
+ * Element ist gar kein Geraet. Die Quelle meldet deshalb den Umschwung
+ * ({@link ObsDataSource.onVisibilityChange}), der Wirt laedt neu.
+ */
+describe('ObsDataSource - E16 wirkt live: erscheinen UND verschwinden ohne Neuladen', () => {
+  it('meldet den Umschwung, sobald der Regel-Datenpunkt die Bedingung kreuzt', async () => {
+    vi.useFakeTimers();
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl, valueReads } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1']);
+
+    const umschwung: string[] = [];
+    const unsubV = ds.onVisibilityChange(() => umschwung.push('!'));
+    const unsub = ds.subscribe(() => {});
+
+    // Erste Runde: nichts hat sich bewegt, also auch kein Umschwung.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(umschwung).toEqual([]);
+    valueReads.length = 0;
+
+    // ERSCHEINEN: 21.5 -> 42 erfuellt `gt 30`. Ohne Neuladen. Und der
+    // Regel-Datenpunkt steht im LAUFENDEN Lesesatz - kein Geraet bindet ihn,
+    // stuende er nur im Aufbau-Lesesatz, faellt sein Umschwung nie auf.
+    werte['dp-regel'] = 42;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(valueReads.some((r) => r.id === 'dp-regel')).toBe(true);
+    expect(umschwung.length).toBe(1);
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1', 'hidden-1']);
+
+    // VERSCHWINDEN: 42 -> 21.5. Ebenfalls ohne Neuladen, und die Gegenrichtung
+    // ist die Haelfte, die Runde 2 gefehlt hat.
+    werte['dp-regel'] = 21.5;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(umschwung.length).toBe(2);
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1']);
+
+    unsub();
+    unsubV();
+    vi.useRealTimers();
+  });
+
+  it('schweigt, wenn der Wert sich bewegt, die Regel aber gleich urteilt', async () => {
+    vi.useFakeTimers();
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 42 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1', 'hidden-1']);
+
+    const umschwung: string[] = [];
+    const unsubV = ds.onVisibilityChange(() => umschwung.push('!'));
+    const unsub = ds.subscribe(() => {});
+
+    // 42 -> 50: beide erfuellen `gt 30`. Ein Neuaufbau waere hier reine Unruhe.
+    werte['dp-regel'] = 50;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(umschwung).toEqual([]);
+
+    unsub();
+    unsubV();
+    vi.useRealTimers();
+  });
+
+  it('haelt den Regel-Datenpunkt auch im angemeldeten Live-Feed (WS) abonniert', async () => {
+    vi.useFakeTimers();
+    stubStorage('jwt-abc');
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    const umschwung: string[] = [];
+    ds.onVisibilityChange(() => umschwung.push('!'));
+    ds.subscribe(() => {});
+    const ws = FakeWs.last!;
+    ws.open();
+    const sub = ws.sent.map((s) => JSON.parse(s)).find((m) => m.action === 'subscribe');
+    // Beide Live-Wege muessen den Regel-Datenpunkt sehen, nicht nur der Gast-Takt.
+    expect(sub.ids).toEqual(expect.arrayContaining(['dp-regel']));
+
+    ws.emit({ id: 'dp-regel', v: 42, u: null, t: null, q: 'good' });
+    expect(umschwung.length).toBe(1);
+
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('meldet den Umschwung genau einmal, bis der Wirt neu geladen hat', async () => {
+    vi.useFakeTimers();
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    const umschwung: string[] = [];
+    const unsubV = ds.onVisibilityChange(() => umschwung.push('!'));
+    const unsub = ds.subscribe(() => {});
+
+    werte['dp-regel'] = 42;
+    await vi.advanceTimersByTimeAsync(4000);
+    werte['dp-regel'] = 43;
+    await vi.advanceTimersByTimeAsync(4000);
+    // Zwei Runden, ein Umschwung: sonst startete jede Runde einen neuen
+    // Neuaufbau, waehrend der vorige noch laeuft.
+    expect(umschwung.length).toBe(1);
+
+    await ds.list();
+    werte['dp-regel'] = 10;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(umschwung.length).toBe(2);
+
+    unsub();
+    unsubV();
+    vi.useRealTimers();
+  });
+});

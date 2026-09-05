@@ -225,6 +225,69 @@ describe('preview/PreviewPage - der ganze Weg vom Editor bis ins DOM', () => {
     }
   });
 
+  it('meldet dem Editor die GERENDERTEN Widgets, nicht die des Entwurfs (E16)', async () => {
+    // Der Editor schreibt die Zahl als „N Widgets gerendert" aus. Zaehlte sie
+    // ueber den Entwurf, meldete sie ein Element mit, dessen
+    // Sichtbarkeitsregel es gerade ausblendet - eine Zahl, die luegt.
+    const verborgen = {
+      id: 'w-regel',
+      type: 'Licht',
+      datapoint_id: null,
+      status_datapoint_id: null,
+      // Jeder Wert ist hier `true` (der fetch-Doppelgaenger), also nie > 30.
+      config: { dp_switch: 'dp-regel-lampe', visible_when: { datapoint_id: 'dp-regel', op: 'gt', value: 30 } },
+      x: 1,
+      y: 8,
+      w: 3,
+      h: 4,
+    };
+    const mitRegel = {
+      ...DRAFT,
+      nodes: [
+        {
+          ...DRAFT.nodes[0],
+          page_config: { widgets: [...DRAFT.nodes[0].page_config.widgets, verborgen] },
+        },
+      ],
+    };
+
+    const wrapper = await mountPreview();
+    emit(message(PREVIEW_MESSAGE.init, { session: { accessToken: TOKEN } }), ADMIN_ORIGIN, parent);
+    emit(message(PREVIEW_MESSAGE.draft, { draft: mitRegel }), ADMIN_ORIGIN, parent);
+    await flushPromises();
+
+    // Zwei Widgets im Entwurf, eines gerendert - gemeldet wird das eine.
+    expect(mitRegel.nodes[0].page_config.widgets.length).toBe(2);
+    expect(wrapper.findAll('.skin-host-cell').length).toBe(1);
+    expect(parent.sent.at(-1)!.message).toMatchObject({
+      type: PREVIEW_MESSAGE.draftApplied,
+      widgetCount: 1,
+    });
+
+    // Gegenprobe, damit die Zahl nicht einfach immer 1 ist: ohne Regel sind es zwei.
+    const ohneRegel = {
+      ...DRAFT,
+      nodes: [
+        {
+          ...DRAFT.nodes[0],
+          page_config: {
+            widgets: [
+              ...DRAFT.nodes[0].page_config.widgets,
+              { ...verborgen, config: { dp_switch: 'dp-regel-lampe' } },
+            ],
+          },
+        },
+      ],
+    };
+    emit(message(PREVIEW_MESSAGE.draft, { draft: ohneRegel }), ADMIN_ORIGIN, parent);
+    await flushPromises();
+    expect(wrapper.findAll('.skin-host-cell').length).toBe(2);
+    expect(parent.sent.at(-1)!.message).toMatchObject({
+      type: PREVIEW_MESSAGE.draftApplied,
+      widgetCount: 2,
+    });
+  });
+
   it('liest die Werte seitenbezogen mit der Session im Header, nie in der URL', async () => {
     await mountPreview();
     emit(message(PREVIEW_MESSAGE.init, { session: { accessToken: TOKEN } }), ADMIN_ORIGIN, parent);

@@ -3398,7 +3398,7 @@
     },
     "palette": {
       "title": "Widgets",
-      "notRendered": "Not rendered in the preview yet"
+      "notRendered": "Not rendered anywhere yet - neither in the preview nor in the visu"
     },
     "binding": {
       "name": "Name",

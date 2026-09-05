@@ -106,8 +106,29 @@ export class ObsDataSource
   /** The enriched (page-config loaded) tree of the last list(), for layering W3c:
    *  navTree()/layersFor() compose over it. Empty before the first list(). */
   private tree: readonly ObsVisuNode[] = [];
-  /** The datapoint values of the last list(), so composed layers carry live state. */
-  private treeValues: ReadonlyMap<string, unknown> = new Map();
+  /** The datapoint values of the last list(), so composed layers carry live state.
+   *  Live-Werte werden hier NACHGETRAGEN ({@link onValueEvent}), damit eine
+   *  spaeter komponierte Ebene den aktuellen Stand sieht und nicht den des
+   *  letzten `list()`. */
+  private treeValues: Map<string, unknown> = new Map();
+  /**
+   * E16: Datenpunkt -> Seite, fuer jeden Datenpunkt, an dem eine
+   * Sichtbarkeitsregel haengt. Er gehoert zur SEITE, nicht zu einem Geraet - ein
+   * geregeltes Element muss ihn nicht selbst gebunden haben, und ein gerade
+   * verborgenes Element ist ueberhaupt kein Geraet. Deshalb steht er hier und
+   * nicht in {@link dpToDevices}, und deshalb muss ihn {@link liveDpIds}
+   * ausdruecklich in den laufenden Lesesatz nehmen.
+   */
+  private readonly visibilityDps = new Map<string, string>();
+  /** Wer auf den Sichtbarkeits-Umschwung hoert (der Wirt, genau einer). */
+  private readonly visibilityListeners = new Set<() => void>();
+  /**
+   * Ein Umschwung ist gemeldet und der Neuaufbau laeuft noch. Ohne diese Sperre
+   * meldete jede weitere Runde denselben Umschwung erneut, weil {@link mapped}
+   * bis zum Ende des naechsten {@link list} auf dem alten Stand steht - und der
+   * Wirt startete Neuaufbau auf Neuaufbau.
+   */
+  private visibilitySignalled = false;
   /**
    * The pages the server declared readonly when their config was loaded
    * (`X-Source-Page-Readonly`, M5 R15). Their widgets are locked regardless of
@@ -334,9 +355,11 @@ export class ObsDataSource
     // E16: die Datenpunkte der Sichtbarkeitsregeln gehören in denselben
     // Lesesatz. Sie hängen an der SEITE, nicht an einem Gerät - ein geregeltes
     // Element muss seinen Datenpunkt nicht selbst gebunden haben.
+    this.visibilityDps.clear();
     for (const { pageId, dp } of visibilityReads(enriched)) {
       dpIds.add(dp);
       if (!dpPage.has(dp)) dpPage.set(dp, pageId);
+      this.visibilityDps.set(dp, pageId);
     }
     const values = await this.fetchValues([...dpIds], dpPage);
 
@@ -379,6 +402,14 @@ export class ObsDataSource
       }
       out.push(device);
     }
+    // Die Regel-Datenpunkte gehoeren in denselben seitenbezogenen Lesesatz wie
+    // die Geraetebindungen - der laufende Takt liest sie ueber {@link liveDpIds}
+    // und braucht dafuer ihre Seite (X-Page-Id / Sitzungsschluessel).
+    for (const [dp, pageId] of this.visibilityDps) {
+      if (!this.dpPage.has(dp)) this.dpPage.set(dp, pageId);
+    }
+    // Der Neuaufbau ist durch: ab jetzt darf ein neuer Umschwung wieder melden.
+    this.visibilitySignalled = false;
     return out;
   }
 
@@ -503,7 +534,7 @@ export class ObsDataSource
       }
     }
     if (this.ws) {
-      const ids = [...this.dpToDevices.keys()];
+      const ids = this.liveDpIds();
       if (ids.length > 0) this.ws.subscribe(ids);
     }
 
@@ -545,7 +576,7 @@ export class ObsDataSource
    */
   private async pollOnce(): Promise<void> {
     if (this.polling) return;
-    const ids = [...this.dpToDevices.keys()];
+    const ids = this.liveDpIds();
     if (ids.length === 0) return;
     this.polling = true;
     try {
@@ -562,8 +593,69 @@ export class ObsDataSource
     }
   }
 
+  /* ------------------------------------------------- E16: Sichtbarkeit live */
+
+  /**
+   * Jeder Datenpunkt, den der laufende Betrieb beobachten muss: die Bindungen
+   * der sichtbaren Geraete UND die Datenpunkte der Sichtbarkeitsregeln.
+   *
+   * Die zweite Haelfte ist der Punkt: einen Regel-Datenpunkt bindet oft kein
+   * Geraet, und wenn die Regel gerade ausblendet, existiert das zugehoerige
+   * Geraet nicht einmal. Stuende er nur im Aufbau-Lesesatz, faellt sein
+   * Umschwung nie auf und das Element kaeme erst beim naechsten Neuladen zurueck.
+   */
+  private liveDpIds(): string[] {
+    const ids = new Set<string>(this.dpToDevices.keys());
+    for (const dp of this.visibilityDps.keys()) ids.add(dp);
+    return [...ids];
+  }
+
+  /**
+   * Auf den Sichtbarkeits-Umschwung hoeren (E16). Der Wirt laedt darauf neu; die
+   * Quelle selbst laedt NICHT von sich aus nach - wer den Zustand besitzt,
+   * entscheidet, wann er ihn austauscht (goldene Regel: state lives in core).
+   */
+  onVisibilityChange(cb: () => void): () => void {
+    this.visibilityListeners.add(cb);
+    return () => {
+      this.visibilityListeners.delete(cb);
+    };
+  }
+
+  /**
+   * Hat der neue Wert die sichtbare MENGE veraendert? Dann ist das Ergebnis des
+   * letzten {@link list} veraltet - nicht in einem Feld, sondern in seinem
+   * Bestand, und kein {@link DevicePatch} kann das ausdruecken. Gemeldet wird
+   * genau einmal je Umschwung; der naechste {@link list} loest die Sperre.
+   *
+   * Ausgewertet wird mit derselben Uebersetzung wie beim Aufbau
+   * ({@link mapTree} ueber den gemerkten Baum), damit hier keine zweite,
+   * abweichende Fassung der Regel entsteht.
+   */
+  private checkVisibility(): void {
+    if (this.visibilitySignalled) return;
+    const sichtbar = mapTree(this.tree, this.treeValues).map((m) => m.device.id as string);
+    if (sichtbar.length === this.mapped.size && sichtbar.every((id) => this.mapped.has(id))) return;
+    this.visibilitySignalled = true;
+    for (const cb of this.visibilityListeners) {
+      try {
+        cb();
+      } catch {
+        /* a subscriber's failure is its own concern — keep delivering */
+      }
+    }
+  }
+
   /** Apply one incoming value-event to every device that reads its datapoint. */
   private onValueEvent(ev: ObsValueEvent): void {
+    // Der gemerkte Wertestand traegt die Ebenen-Komposition (`layersFor`); er
+    // muss dem Live-Wert folgen, statt auf dem Stand des letzten `list()` zu
+    // stehen - sonst wertete die Regel gleich zweimal verschieden.
+    this.treeValues.set(ev.id, ev.v);
+    // E16: haengt an diesem Datenpunkt eine Sichtbarkeitsregel, kann sich die
+    // sichtbare MENGE geaendert haben. Das geht vor der Geraete-Schleife, weil
+    // ein verborgenes Element dort gar nicht auftaucht.
+    if (this.visibilityDps.has(ev.id)) this.checkVisibility();
     const deviceIds = this.dpToDevices.get(ev.id);
     // A value-event for a datapoint no longer in scope (live right-revocation) or
     // never mapped is simply ignored — no crash, no stray patch.

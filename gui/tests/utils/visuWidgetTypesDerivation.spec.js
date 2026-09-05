@@ -43,8 +43,9 @@ const MAPPING_REL = join('apps', 'visu', 'src', 'core', 'obs', 'mapping.ts')
 const CONTRACT_REL = join('packages', 'contract', 'contract.schema.json')
 const V1_WIDGETS_REL = join('frontend', 'src', 'widgets')
 const GUI_REL = join('gui', 'src', 'utils', 'visuWidgetTypes.js')
+const MODEL_REL = join('obs', 'models', 'visu.py')
 
-/** Die Repo-Wurzel ist der Ordner, der alle vier Haelften traegt. */
+/** Die Repo-Wurzel ist der Ordner, der alle fuenf Haelften traegt. */
 function repoRoot() {
   let dir = resolve(process.cwd())
   for (;;) {
@@ -52,13 +53,50 @@ function repoRoot() {
       existsSync(join(dir, MAPPING_REL)) &&
       existsSync(join(dir, CONTRACT_REL)) &&
       existsSync(join(dir, V1_WIDGETS_REL)) &&
-      existsSync(join(dir, GUI_REL))
+      existsSync(join(dir, GUI_REL)) &&
+      existsSync(join(dir, MODEL_REL))
     ) {
       return dir
     }
     const up = dirname(dir)
-    if (up === dir) throw new Error('Abbildung/Vertrag/V1-Palette nicht gefunden - Repo umgebaut?')
+    if (up === dir) {
+      throw new Error('Abbildung/Vertrag/V1-Palette/Backend-Modell nicht gefunden - Repo umgebaut?')
+    }
     dir = up
+  }
+}
+
+/**
+ * Die WURZELFELDER eines gespeicherten Widgets - aus dem Backend-Modell
+ * (`obs/models/visu.py`, `class WidgetInstance`). Gelesen wird eine
+ * Feld-DEKLARATION, kein Verhalten: die Namen links vom Doppelpunkt. Ein
+ * Formularfeld, das an die Wurzel schreibt, muss eines davon treffen - alles
+ * andere waere ein Schluessel, den der Server beim Speichern gar nicht kennt.
+ */
+function widgetInstanceFields() {
+  const src = readFileSync(join(repoRoot(), MODEL_REL), 'utf8')
+  const block = src.match(/class WidgetInstance\(BaseModel\):\n([\s\S]*?)\n\n/)
+  if (!block) throw new Error('class WidgetInstance nicht gefunden - Backend-Modell umgebaut?')
+  return [...block[1].matchAll(/^ {4}(\w+):/gm)].map((m) => m[1])
+}
+
+/**
+ * Was die V1-Palette fuer diesen Servertyp ueber seine WURZEL-Datenpunkte
+ * deklariert (`frontend/src/widgets/<Typ>/index.ts`, der `WidgetRegistry.register`-
+ * Eintrag): `noDatapoint` = das Widget hat gar keinen Wurzel-Datenpunkt,
+ * `supportsStatusDatapoint` = es hat zusaetzlich einen Rueckmelde-Datenpunkt.
+ * `null` fuer einen Typ, den V1 nicht kennt (s. {@link NEUE_SERVERTYPEN}).
+ *
+ * Zwei Flaggen einer Deklarationstabelle, kein Codeverhalten - deshalb genuegt
+ * hier das Lesen der Datei; die drei Quellen oben bleiben Modul und JSON.
+ */
+function v1DatapointFlags(serverType) {
+  const datei = join(repoRoot(), V1_WIDGETS_REL, serverType, 'index.ts')
+  if (!existsSync(datei)) return null
+  const src = readFileSync(datei, 'utf8')
+  return {
+    noDatapoint: /\bnoDatapoint:\s*true\b/.test(src),
+    supportsStatusDatapoint: /\bsupportsStatusDatapoint:\s*true\b/.test(src),
   }
 }
 
@@ -309,5 +347,93 @@ describe('Widget-Formulare — die Servertypen kommen aus der V1-Taxonomie', () 
     for (const serverType of NEUE_SERVERTYPEN) {
       expect([serverType, benutzt.has(serverType)]).toEqual([serverType, true])
     }
+  })
+})
+
+/**
+ * DIE WURZELFELDER - AUCH DER FUENF NICHT ABGEBILDETEN TYPEN.
+ *
+ * Die Gleichung „deklariert == gelesen" oben laeuft ueber die Abbildung der Visu
+ * und deckt deshalb nur die vier Typen ab, die sie heute uebersetzt. Fuer die
+ * anderen fuenf (issue #124) liest die Abbildung gar nichts - ein erfundenes
+ * WURZELFELD an einem `sensor` blieb dort unbemerkt.
+ *
+ * Diese Proben schliessen die Luecke ueber zwei Quellen, die fuer ALLE Typen
+ * gelten:
+ *
+ *  - das Backend-MODELL (`obs/models/visu.py`): welche Wurzelfelder ein
+ *    gespeichertes Widget ueberhaupt hat. Ein Formularfeld auf einen anderen
+ *    Wurzelschluessel schreibt an eine Stelle, die der Server nicht kennt.
+ *  - die V1-PALETTE (`frontend/src/widgets/<Typ>/index.ts`): ob dieser Servertyp
+ *    einen Wurzel-Datenpunkt hat (`noDatapoint`) und ob er zusaetzlich einen
+ *    Rueckmelde-Datenpunkt kennt (`supportsStatusDatapoint`). Das ist dieselbe
+ *    Taxonomie, aus der die Palette schon ihren `serverType` bezieht.
+ *
+ * WAS SIE NICHT SCHLIESSEN, ausdruecklich: `scene` und `media` tragen einen
+ * Servertyp, den V1 NICHT kennt ({@link NEUE_SERVERTYPEN}) und den die Visu
+ * nicht abbildet. Fuer diese beiden gibt es im ganzen Repo keine zweite Stelle,
+ * die ihre Wurzel-Datenpunkte deklariert - dort haelt nur noch das Modell (kein
+ * erfundener Schluessel), nicht die Zuordnung. Das ist der Rest, und er ist auf
+ * zwei Typen und zwei Modellfelder eingegrenzt.
+ */
+describe('Widget-Formulare — die Wurzelfelder kommen aus Modell und V1-Palette', () => {
+  it('schreibt an die Wurzel nur Felder, die das gespeicherte Widget wirklich hat', () => {
+    const felder = new Set(widgetInstanceFields())
+    // Der Vergleich waere wertlos, wenn das Modell leer gelesen wuerde.
+    expect(felder.has('datapoint_id') && felder.has('config') && felder.has('type')).toBe(true)
+
+    for (const type of CORE_WIDGET_TYPES) {
+      for (const field of widgetFormFields(type)) {
+        if (field.path.startsWith('config.')) continue
+        expect([type, field.path, felder.has(field.path)]).toEqual([type, field.path, true])
+      }
+    }
+  })
+
+  it('bindet die beiden Wurzel-Datenpunkte an die Deklaration der V1-Palette', () => {
+    let mitDp = 0
+    let ohneDp = 0
+    let mitStatus = 0
+    let ohneStatus = 0
+
+    for (const type of CORE_WIDGET_TYPES) {
+      const serverType = WIDGET_FORMS[type].serverType
+      const flags = v1DatapointFlags(serverType)
+      if (!flags) {
+        // Kein V1-Widget - dann MUSS der Typ als neu deklariert sein, sonst
+        // faende die Probe hier still gar nichts mehr vor.
+        expect([type, serverType, NEUE_SERVERTYPEN.includes(serverType)]).toEqual([
+          type,
+          serverType,
+          true,
+        ])
+        continue
+      }
+      const wurzel = widgetFormFields(type)
+        .filter((f) => !f.path.startsWith('config.'))
+        .map((f) => f.path)
+
+      // Ein Widget ohne Wurzel-Datenpunkt darf im Formular auch keinen haben -
+      // genau der Fall, an dem die Sonde aus Runde 1 haengt (`status_datapoint_id`
+      // am Licht), und derselbe Satz gilt jetzt auch fuer Kamera und Sensor.
+      expect([type, 'datapoint_id', wurzel.includes('datapoint_id')]).toEqual([
+        type,
+        'datapoint_id',
+        !flags.noDatapoint,
+      ])
+      expect([type, 'status_datapoint_id', wurzel.includes('status_datapoint_id')]).toEqual([
+        type,
+        'status_datapoint_id',
+        flags.supportsStatusDatapoint,
+      ])
+
+      if (flags.noDatapoint) ohneDp += 1
+      else mitDp += 1
+      if (flags.supportsStatusDatapoint) mitStatus += 1
+      else ohneStatus += 1
+    }
+
+    // Alle vier Faelle sind besetzt, sonst pruefte der Lauf nur einen davon.
+    expect([mitDp > 0, ohneDp > 0, mitStatus > 0, ohneStatus > 0]).toEqual([true, true, true, true])
   })
 })

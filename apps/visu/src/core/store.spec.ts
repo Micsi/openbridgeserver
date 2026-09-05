@@ -709,3 +709,83 @@ describe('core/store — shownPageId: die gezeigte Seite steht von Anfang an fes
     expect(store.shownPageId).toBe('home2');
   });
 });
+
+/* --------------------------------------- E16: die Sichtbarkeit ist live (R3) */
+
+/**
+ * Die andere Haelfte von E16, im WIRT: eine Quelle kann melden, dass sich ihre
+ * SICHTBARE MENGE geaendert hat (`onVisibilityChange`). Ein `DevicePatch` kann
+ * das nicht ausdruecken - er traegt Felder eines Geraets, hier aendert sich, WER
+ * ueberhaupt ein Geraet ist. Der Wirt laedt darauf neu, ueber dieselbe
+ * `init`-Naht wie nach Login/Logout/PIN, und OHNE dass jemand navigiert oder die
+ * Seite neu laedt.
+ */
+class SichtbarkeitsQuelle implements DataSource {
+  private ids: string[] = ['a'];
+  private readonly hoerer = new Set<() => void>();
+  listCount = 0;
+
+  async list(): Promise<Device[]> {
+    this.listCount += 1;
+    return this.ids.map(
+      (id) => ({ id, type: 'switch', label: id, room: 'R', on: false }) as SwitchDevice,
+    );
+  }
+  subscribe(): () => void {
+    return () => {};
+  }
+  async dispatch(): Promise<void> {}
+  onVisibilityChange(cb: () => void): () => void {
+    this.hoerer.add(cb);
+    return () => void this.hoerer.delete(cb);
+  }
+  /** Die Regel schlaegt um: andere Menge, dann die Meldung an den Wirt. */
+  umschwung(ids: string[]): void {
+    this.ids = ids;
+    for (const cb of this.hoerer) cb();
+  }
+}
+
+const ruhe = () => new Promise((r) => setTimeout(r, 0));
+
+describe('core/store - E16: ein Wertwechsel blendet ohne Neuladen ein und aus', () => {
+  it('nimmt ein Element auf und wirft es wieder heraus, allein auf die Meldung hin', async () => {
+    const ds = new SichtbarkeitsQuelle();
+    const store = await makeStore(ds);
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['a']);
+    const seiteVorher = store.currentPageId;
+
+    // ERSCHEINEN.
+    ds.umschwung(['a', 'b']);
+    await ruhe();
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['a', 'b']);
+
+    // VERSCHWINDEN.
+    ds.umschwung(['a']);
+    await ruhe();
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['a']);
+    expect(store.byId('b')).toBeUndefined();
+
+    // Und niemand ist dabei navigiert oder abgemeldet worden.
+    expect(store.currentPageId).toBe(seiteVorher);
+    expect(store.authenticated).toBe(false);
+  });
+
+  it('haengt die Meldung beim Quellenwechsel ab (kein Neuladen fuer eine alte Quelle)', async () => {
+    const alt = new SichtbarkeitsQuelle();
+    const store = await makeStore(alt);
+    const neu = new SichtbarkeitsQuelle();
+    await store.init(neu);
+    const vorher = neu.listCount;
+
+    alt.umschwung(['a', 'b']);
+    await ruhe();
+    expect(neu.listCount).toBe(vorher);
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['a']);
+  });
+
+  it('laesst eine Quelle ohne diese Meldung genau wie bisher laufen', async () => {
+    const store = await makeStore(new SpyDataSource());
+    expect(store.devices.length).toBeGreaterThan(0);
+  });
+});

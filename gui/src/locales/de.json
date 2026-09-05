@@ -3398,7 +3398,7 @@
     },
     "palette": {
       "title": "Widgets",
-      "notRendered": "Wird in der Vorschau noch nicht gerendert"
+      "notRendered": "Wird noch nirgends gerendert - weder in der Vorschau noch in der Visu"
     },
     "binding": {
       "name": "Name",

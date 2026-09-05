@@ -45,6 +45,7 @@ import {
   supportsLinks,
   supportsPageAuth,
   supportsPositions,
+  supportsVisibilityLive,
 } from './datasource';
 import { firstNormalPageId, supportsLayering, type HostNavNode } from './obs/compose';
 import { resolveLink, type LinkOutcome } from './links';
@@ -69,6 +70,8 @@ export const useDeviceStore = defineStore('devices', () => {
   /** Active data source + its unsubscribe handle. */
   let source: DataSource = new MockDataSource();
   let unsubscribe: (() => void) | null = null;
+  /** Abmelder der Sichtbarkeits-Meldung (E16), oder null fuer eine Quelle ohne sie. */
+  let unsubscribeVisibility: (() => void) | null = null;
 
   /** Devices in source order (read-only view). */
   const devices = ref<Device[]>([]);
@@ -183,6 +186,10 @@ export const useDeviceStore = defineStore('devices', () => {
    */
   async function init(ds: DataSource = new MockDataSource()): Promise<void> {
     if (unsubscribe) unsubscribe();
+    if (unsubscribeVisibility) {
+      unsubscribeVisibility();
+      unsubscribeVisibility = null;
+    }
     source = ds;
     // The mock's floor is the static demo model; any other source brings its own
     // device set (a real tree) → derive the overview floor from those devices.
@@ -198,6 +205,18 @@ export const useDeviceStore = defineStore('devices', () => {
     unsubscribe = source.subscribe((patch: DevicePatch) => {
       merge(patch.id, patch.changes as Partial<Device>);
     });
+    // E16: die sichtbare MENGE der Quelle ist selbst live - eine
+    // `visible_when`-Regel kann mitten im Betrieb umschlagen. Ein `DevicePatch`
+    // kann das nicht ausdruecken (er traegt Felder, nicht die Zugehoerigkeit),
+    // also laedt der Wirt hier neu - ueber dieselbe `init`-Naht wie nach
+    // Login/Logout/PIN, ohne Navigation und ohne Neuladen der Seite. Die
+    // gezeigte Seite und die offenen Popups bleiben dabei stehen: `refresh`
+    // tauscht den Geraetebestand, nicht den Ort.
+    unsubscribeVisibility = supportsVisibilityLive(source)
+      ? source.onVisibilityChange(() => {
+          void refresh();
+        })
+      : null;
     // Reflect the source's auth state (a restored session shows as logged in;
     // a guest/mock source is never authenticated). Never clears a name we hold
     // while still authenticated.

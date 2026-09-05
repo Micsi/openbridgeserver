@@ -427,13 +427,27 @@ function deviceLabel(w: ObsWidget): string {
  * Auseinanderlauf. Der Editor reicht deshalb JEDES Element durch; wer es zu
  * sehen bekommt, entscheidet diese Datei - für beide Seiten gleich.
  *
- * GRENZE, ausdrücklich: die ausgelieferte Visu wertet die Regel bei jedem
- * `mapTree`/`composeLayers`-Durchlauf aus, also beim Aufbau einer
- * Seite. Ein Wertwechsel MITTEN im Betrieb schlägt dort erst mit dem nächsten
- * `list()` durch (Navigation, An-/Abmeldung, Neuladen) - die Kachelwerte sind
- * live, die Ein-/Ausblendung ist es noch nicht. In der Vorschau ist sie live:
- * der Editor schickt bei jedem Wertwechsel eines Regel-Datenpunkts einen neuen
- * Entwurf, und jeder Entwurf läuft durch diese Auswertung.
+ * LIVE, in beiden Hälften: die Regel wird bei jedem
+ * `mapTree`/`composeLayers`-Durchlauf ausgewertet, und ein Wertwechsel MITTEN im
+ * Betrieb löst einen solchen Durchlauf aus - ein geregeltes Element erscheint und
+ * verschwindet ohne Neuladen.
+ *
+ *  - **Ausgelieferte Visu**: `ObsDataSource` hält die Datenpunkte der Regeln im
+ *    laufenden Lesesatz (`liveDpIds`, Gast-Takt wie WS-Feed), prüft bei jedem
+ *    Wert, ob sich die sichtbare MENGE geändert hat, und meldet den Umschwung
+ *    (`onVisibilityChange`). Der Wirt lädt darauf neu (`store.refresh`) - ein
+ *    `DevicePatch` könnte das nicht ausdrücken, denn er trägt Felder eines
+ *    Geräts, während hier die Zugehörigkeit wechselt: ein verborgenes Element
+ *    ist überhaupt kein Gerät.
+ *  - **Vorschau**: der Editor schickt bei jedem Wertwechsel eines
+ *    Regel-Datenpunkts einen neuen Entwurf, und jeder Entwurf läuft durch diese
+ *    Auswertung.
+ *
+ * GRENZE, ausdrücklich: die Visu sieht den Wechsel so schnell, wie sie den Wert
+ * sieht - beim angemeldeten Benutzer sofort (WS), als Gast im Takt von
+ * `POLL_INTERVAL_MS` (4 s). Navigation löst KEINEN Neuaufbau aus (`store.navigate`
+ * setzt nur die gezeigte Seite, `refresh()` kommt aus Login, Logout, PIN, dem
+ * Start - und jetzt aus dieser Meldung); das ist auch nicht mehr nötig.
  */
 
 /** Die Vergleiche, die eine Sichtbarkeitsregel kennt (das Formular bietet genau sie an). */

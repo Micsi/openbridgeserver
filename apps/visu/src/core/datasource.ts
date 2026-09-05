@@ -152,6 +152,29 @@ export function supportsLinks(ds: DataSource): ds is LinkCapableDataSource {
 }
 
 /**
+ * Eine Quelle, deren SICHTBARE MENGE sich im Betrieb aendert (E16, #170).
+ *
+ * {@link DevicePatch} kann das nicht ausdruecken: ein Patch traegt FELDER eines
+ * Geraets, hier aendert sich die ZUGEHOERIGKEIT - ein Element, dessen
+ * `visible_when`-Regel gerade nicht erfuellt ist, ist ueberhaupt kein Geraet.
+ * Eine Quelle, die eine solche Regel kennt, meldet den Umschwung hier; der Wirt
+ * laedt daraufhin neu (`store.refresh`), und das geregelte Element erscheint
+ * oder verschwindet OHNE Neuladen der Seite.
+ *
+ * Additiv: eine Quelle ohne diese Meldung (der Mock) verhaelt sich Zeile fuer
+ * Zeile wie bisher - sie hat keine Regeln, also auch keinen Umschwung.
+ */
+export interface VisibilityLiveDataSource extends DataSource {
+  /** Melden, dass die sichtbare Menge sich geaendert hat; gibt den Abmelder zurueck. */
+  onVisibilityChange(cb: () => void): () => void;
+}
+
+/** Meldet die Quelle einen Sichtbarkeits-Umschwung (E16)? Mock-sicher. */
+export function supportsVisibilityLive(ds: DataSource): ds is VisibilityLiveDataSource {
+  return typeof (ds as Partial<VisibilityLiveDataSource>).onVisibilityChange === 'function';
+}
+
+/**
  * The austauschbare data source. Mock today, KNX/MQTT/obs-REST later — same
  * shape, UI unchanged (MIGRATION §4).
  */
