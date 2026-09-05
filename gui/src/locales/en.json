@@ -3384,6 +3384,29 @@
     "previewTitle": "Visu preview",
     "rejected": "The preview rejected the draft. Please bring editor and visu to the same version.",
     "unreachable": "No visu preview answers in this frame. What you see is whatever the preview address serves, not your draft. Please check how the preview is served (VITE_VISU_PREVIEW_URL).",
-    "applied": "Draft rendered in the preview ({count} widgets)."
+    "applied": "Draft rendered in the preview ({count} widgets).",
+    "canvas": {
+      "mode": "Layout mode",
+      "modePixel": "Pixel",
+      "modeResponsive": "Responsive",
+      "grid": "Grid size",
+      "breakpoints": "Breakpoints",
+      "previewWidth": "Preview width",
+      "previewWidthAuto": "Automatic",
+      "distribute": "Distribute",
+      "sameSize": "Same size",
+      "toFront": "Bring to front",
+      "toBack": "Send to back",
+      "locked": "Locked",
+      "hidden": "Hidden",
+      "width": "W",
+      "height": "H",
+      "save": "Save",
+      "saved": "Saved",
+      "loadError": "The page could not be loaded.",
+      "saveError": "The page could not be saved.",
+      "empty": "This page carries no elements yet.",
+      "renderedAs": "Rendered as: {mode} through the “{skin}” skin."
+    }
   }
 }

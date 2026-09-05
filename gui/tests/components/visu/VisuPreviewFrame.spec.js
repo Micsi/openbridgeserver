@@ -192,7 +192,7 @@ describe('VisuPreviewFrame — die Bruecke an der echten Komponente', () => {
         //     auf diesem Weg an, ohne die Klassenliste zu beruehren).
         expect([name, zeile(frameEl)]).toEqual([
           name,
-          'iframe | w-full h-[70vh] rounded-lg border border-slate-200 dark:border-slate-700/60 bg-white | ',
+          'iframe | editor-preview w-full h-[70vh] rounded-lg border border-slate-200 dark:border-slate-700/60 bg-white | ',
         ])
 
         // 2 - der Pfad INNERHALB der Komponente, Zeile fuer Zeile.

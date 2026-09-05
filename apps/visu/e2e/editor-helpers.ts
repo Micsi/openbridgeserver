@@ -28,12 +28,39 @@ export const C4 = blockedBy('C4 Editor Vorschau-Brücke + Admin-Einbettung', 171
 export const C5 = blockedBy('C5 Editor Ergonomie', 172);
 export const C6 = blockedBy('C6 Editor Dualität + Verlauf', 173);
 
-/** Admin-Login + Visu-Editor auf einer geseedeten Seite öffnen. */
+/**
+ * Admin-Login + Visu-Editor auf einer geseedeten Seite öffnen.
+ *
+ * VORBEDINGUNG SPRACHE (M5 C2, Issue #169): die Editor-Szenarien sprechen ihre
+ * Bedienelemente auf DEUTSCH an (`getByLabel('Rasterweite')`, `getByRole(…,
+ * { name: 'Verteilen' })`) — die Admin-GUI wählt ihre Sprache aber aus
+ * `navigator.language`, und `playwright.config.ts` pinnt den Kontext bewusst auf
+ * `en-US`, damit die ENGLISCHEN Zusicherungen der Visu-Szenarien (auth-Texte, access-Texte)
+ * deterministisch bleiben. Ohne Vorgabe stünde in der GUI also Englisch, und
+ * jedes Editor-Szenario scheiterte an der Anmeldemaske statt an seiner Aussage.
+ * Deshalb wird die Sprachwahl der GUI (`localStorage`-Schlüssel `obs-locale`,
+ * siehe `gui/src/i18n.js`) hier gesetzt, bevor die erste Seite lädt. Das ist eine
+ * VORBEDINGUNG, keine Erwartung: keine Behauptung eines Szenarios ändert sich.
+ */
 export async function openEditor(page: Page, pageId: string) {
+  await page.addInitScript(() => {
+    try {
+      window.localStorage.setItem('obs-locale', 'de');
+    } catch {
+      // Ein Kontext ohne Storage ist kein Grund, das Szenario hier abzubrechen.
+    }
+  });
   await page.goto(`${EDITOR_BASE}/login`);
   await page.getByLabel('Benutzername').fill(ADMIN.username);
   await page.getByLabel('Passwort').fill(ADMIN.password);
   await page.getByRole('button', { name: 'Anmelden' }).click();
+  // Erst wenn die Anmeldung GELANDET ist, darf navigiert werden: `click()` kehrt
+  // zurück, sobald der Klick zugestellt ist, nicht wenn die Antwort da ist — ein
+  // sofortiges `goto` bricht die laufende Anfrage ab, das Token liegt dann nie im
+  // Speicher, und die Wache der admin-pflichtigen Route leitet auf die
+  // Anmeldemaske zurück. Gemessen: ohne dieses Warten scheitert JEDES
+  // Editor-Szenario an `.editor-canvas`, obwohl der Editor steht.
+  await page.waitForURL((url) => !url.pathname.endsWith('/login'));
   await page.goto(`${EDITOR_BASE}/visu-editor/${pageId}`);
   await expect(page.locator('.editor-canvas')).toBeVisible();
 }

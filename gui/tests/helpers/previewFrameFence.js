@@ -83,6 +83,11 @@ export const zeile = (el) =>
  */
 export const GEPINNTE_KLASSEN = [
   // der Rahmen selbst
+  // `editor-preview` ist die Marke, an der der M5-Harness den Vorschaurahmen
+  // anspricht (`iframe.editor-preview`, Szenarien E3/E8/E17). Sie kam mit Teil
+  // C2 dazu und steht hier BEWUSST nachgetragen - genau der Weg, den der Kopf
+  // dieser Liste beschreibt: erst faellt der Pin, dann wird nachgezogen.
+  'editor-preview',
   'w-full',
   'h-[70vh]',
   'rounded-lg',

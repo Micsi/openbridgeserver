@@ -74,7 +74,7 @@ async function differingPixels(page: Page, a: Buffer, b: Buffer): Promise<number
 }
 
 test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-C6)', () => {
-  test.fixme(
+  test(
     'E1 Element per Drag auf Pixel-Koordinate x/y setzen, Snap rastet bei einstellbarer Rasterweite ein',
     C2,
     async ({ page }) => {
@@ -100,7 +100,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test.fixme(
+  test(
     'E2 Reihenfolge/Gruppe eines Elements per Drag setzbar (kein x/y-Feld), Order-Array vor/nach Reload identisch',
     C2,
     async ({ page }) => {
@@ -178,7 +178,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test.fixme(
+  test(
     'E4 Ausrichtlinie bei Kantendeckung ≤4px, "Verteilen" bei ≥3 Elementen, "gleiche Größe" übernimmt Maße',
     C2,
     async ({ page }) => {
@@ -277,7 +277,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     expect(await box(page, fx.m5.widgets.home)).toMatchObject({ x: before.x + 1, y: before.y });
   });
 
-  test.fixme('E8 Z-Ordnung änderbar (nach vorne/hinten), Element sperr-/ausblendbar', C2, async ({ page }) => {
+  test('E8 Z-Ordnung änderbar (nach vorne/hinten), Element sperr-/ausblendbar', C2, async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.home);
     const target = el(page, fx.m5.widgets.home);
@@ -446,7 +446,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(preview.locator(`[data-id]`, { hasText: fx.m5.widgets.solo })).toBeVisible();
   });
 
-  test.fixme('E17 Responsive-Breakpoints in Seiteneigenschaften konfigurierbar', C2, async ({ page }) => {
+  test('E17 Responsive-Breakpoints in Seiteneigenschaften konfigurierbar', C2, async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.solo);
 

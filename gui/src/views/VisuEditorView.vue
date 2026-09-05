@@ -11,11 +11,27 @@
  * `visuEditorGuard`), und diese Ansicht rendert fuer einen Nicht-Admin gar
  * nichts. Ein direkt gemountetes View darf keine Vorschau zeigen, nur weil die
  * Wache umgangen wurde.
+ *
+ * C2 (Issue #169) haengt den WYSIWYG-Canvas als GESCHWISTER des Vorschaurahmens
+ * daneben - nicht darum herum. Das ist Absicht: der Vorfahrenpfad des Rahmens
+ * ist gepinnt (`tests/helpers/previewFrameFence.js`), weil `transform`/`filter`/
+ * `zoom` an JEDEM Vorfahren dem Autor ein anderes Bild zeigen wuerden als dem
+ * Nutzer (E3). Ein zusaetzlicher Wrapper um den Rahmen waere genau der Weg
+ * dorthin; ein Geschwister ist keiner.
+ *
+ * `pageId` kommt als PROP aus der Route (`props: true`), nicht aus `useRoute()`:
+ * diese Ansicht laesst sich damit ohne Router montieren.
  */
 import { computed, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { canUseVisuEditor } from '@/utils/visuEditorAccess'
 import VisuPreviewFrame from '@/components/visu/VisuPreviewFrame.vue'
+import VisuEditorCanvas from '@/components/visu/VisuEditorCanvas.vue'
+
+defineProps({
+  /** Die Seite, die der Canvas bearbeitet (Route `/visu-editor/:pageId`). */
+  pageId: { type: String, default: null },
+})
 
 const auth = useAuthStore()
 const allowed = computed(() => canUseVisuEditor(auth))
@@ -31,6 +47,8 @@ const allowed = computed(() => canUseVisuEditor(auth))
  */
 const draft = ref(null)
 const applied = ref(null)
+/** Die Vorschau-Breite, die der Autor gewaehlt hat (E17), oder `null`. */
+const previewWidth = ref(null)
 </script>
 
 <template>
@@ -48,8 +66,15 @@ const applied = ref(null)
       </p>
     </header>
 
+    <VisuEditorCanvas
+      :page-id="pageId"
+      @draft="draft = $event"
+      @preview-width="previewWidth = $event"
+    />
+
     <VisuPreviewFrame
       :draft="draft"
+      :width="previewWidth"
       @applied="applied = $event"
     />
 
