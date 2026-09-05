@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 /**
  * Der Zaun um den VORSCHAURAHMEN des Visu-Editors (M5 C4, Issue #171).
@@ -31,7 +31,7 @@ import { dirname, join, relative, resolve } from 'node:path'
  *     gelesen - `<html>`, `<body>` und `<div id="app">` der AUSLIEFERUNG, die
  *     in keiner Montage vorkommen (Kritik R10, X1).
  *
- * ZWEI GRENZEN, ausdruecklich, weil beide frueher hier ueberdehnt standen:
+ * DREI GRENZEN, ausdruecklich, weil alle drei frueher hier ueberdehnt standen:
  *
  *   1. WAS DIESE WERKZEUGE NICHT LESEN: das GEBAUTE Utility-Blatt. Was Tailwind
  *      aus `rounded-lg` oder `bg-white` erzeugt, steht in keiner Quelldatei
@@ -42,10 +42,19 @@ import { dirname, join, relative, resolve } from 'node:path'
  *      gepinnten Klassen) - ein Selektor, dessen rechtestes Glied ein blosser
  *      Tag (`main`, `div`) oder eine erst in der Auslieferung existierende ID
  *      (`#app > div`) ist, wird deshalb als „erreicht nicht" gemeldet, obwohl er
- *      erreicht.
+ *      erreicht. Das ist die Grenze DIESER MONTAGE, nicht die des Verfahrens:
+ *      in einem nachgebauten Abbild der Auslieferung treffen alle drei auch
+ *      ohne Browser.
+ *   3. DER LESEUMFANG. Gelesen wird `gui/src` und alles, was vom ausgelieferten
+ *      `index.html` aus UNTER `gui/` erreichbar ist; ein Blatt ausserhalb von
+ *      `gui/`, ein entferntes Blatt und ein nur mit NAMEN genanntes Paket
+ *      werden nicht gelesen. Sie fallen aber nicht mehr still weg, sondern
+ *      stehen in `ungelesen` bzw. `fremd` ({@link guiRules}), beide im Test
+ *      gepinnt (Kritik R11, Y1/Y2).
  *
- * Beide gehen an Teil E (Szenario E3); sie stehen im Kopf von
- * `apps/visu/src/preview/PreviewParity.spec.ts` als Stueck 1 und Stueck 4.
+ * Alle drei gehen an Teil E (Szenario E3); sie stehen im Kopf von
+ * `apps/visu/src/preview/PreviewParity.spec.ts` als Stueck 1, Stueck 4 und
+ * Stueck 5.
  */
 
 /** Die Wurzel von `gui/`. Vitest laeuft mit `gui/` als Arbeitsverzeichnis. */
@@ -341,40 +350,102 @@ function spezifizierer(src) {
   return out
 }
 
+/** Ein Pfad als Name im Bericht: relativ zu `gui/`, immer mit Schraegstrichen. */
+const dateiname = (pfad) => relative(GUI_ROOT, pfad).replace(/\\/g, '/')
+
 /**
- * Einen Spezifizierer zu einer Datei DIESES Repos aufloesen - oder zu `null`.
+ * Liegt dieser Pfad wirklich UNTER `gui/`? Ein PFADvergleich, kein
+ * Namensvergleich.
  *
- * Ein blosser Name (`vue`, `tailwindcss`) ist fremder Code und wird nicht
- * verfolgt: die `@import "tailwindcss"`-Kette ist genau der an Teil E
- * uebergebene Anteil.
+ * Der Vorgaenger fragte `kandidat.startsWith(GUI_ROOT)`. Das ist ein reiner
+ * Zeichenkettenvergleich: eine Datei NEBEN `gui/`, deren Name mit `gui`
+ * anfaengt (`…/gui-extra-probe.css`), kam damit durch, obwohl sie ausserhalb
+ * liegt (Kritik R11). Die Wurzel selbst ist keine Datei unter der Wurzel.
  */
-function aufloesen(spec, dir) {
+export function unterWurzel(pfad) {
+  const rel = relative(GUI_ROOT, pfad)
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+}
+
+/**
+ * Ein leerer Bericht: was der Scan NICHT liest, benannt statt verworfen.
+ *
+ * `ungelesen` sind PFADspezifizierer, die zu keiner gelesenen Datei fuehren -
+ * jeder mit seiner Datei und seinem Grund. `fremd` sind blosse NAMEN
+ * (`vue`, `tailwindcss`), die gar kein Pfad in dieses Repo sein koennen.
+ */
+export function neuerBericht() {
+  return { ungelesen: [], fremd: new Set() }
+}
+
+/**
+ * Einen Spezifizierer zu einer Datei UNTER `gui/` aufloesen - oder zu `null`.
+ *
+ * Die Grenze ist `gui/`, NICHT das Repo: `gui/` ist der Baum, den Vite baut,
+ * und nur er kann ein Blatt in das ausgelieferte Bundle bringen. Sie ist ein
+ * Pfadvergleich ({@link unterWurzel}), kein Namensvergleich.
+ *
+ * Was hier nicht aufgeht, faellt NICHT still weg: ein blosser Name (`vue`,
+ * `tailwindcss`) geht nach `bericht.fremd` - fremder Code, die
+ * `@import "tailwindcss"`-Kette ist genau der an Teil E uebergebene Anteil -,
+ * jeder andere Spezifizierer mit seinem Grund nach `bericht.ungelesen`. Ein
+ * `import '../../theme-probe.css'` aus `gui/src/main.js` heraus verschwand
+ * vorher kommentarlos, obwohl Vite das Blatt woertlich ins Bundle nahm
+ * (Kritik R11, Y2).
+ */
+function aufloesen(spec, von, bericht = null) {
   let basis
   if (spec.startsWith('@/')) basis = join(GUI_ROOT, 'src', spec.slice(2))
-  else if (spec.startsWith('./') || spec.startsWith('../')) basis = resolve(dir, spec)
+  else if (spec.startsWith('./') || spec.startsWith('../')) basis = resolve(dirname(von), spec)
   else if (spec.startsWith('/')) basis = join(GUI_ROOT, spec)
-  else return null
+  else {
+    if (bericht !== null) bericht.fremd.add(spec)
+    return null
+  }
   const kandidaten = [
     basis,
     ...['.js', '.mjs', '.ts', '.vue', '.css'].map((e) => basis + e),
     ...['index.js', 'index.ts', 'index.vue'].map((n) => join(basis, n)),
   ]
+  let grund = 'nicht gefunden'
   for (const kandidat of kandidaten) {
-    if (!kandidat.startsWith(GUI_ROOT)) continue
-    if (kandidat.includes('node_modules')) continue
-    if (!MODUL.test(kandidat)) continue
-    if (existsSync(kandidat) && statSync(kandidat).isFile()) return kandidat
+    if (!existsSync(kandidat) || !statSync(kandidat).isFile()) continue
+    if (!unterWurzel(kandidat)) grund = 'liegt ausserhalb von gui/'
+    else if (kandidat.includes('node_modules')) grund = 'fremder Code in node_modules'
+    else if (!MODUL.test(kandidat)) grund = 'keine Datei, in der CSS stehen kann'
+    else return kandidat
   }
+  if (bericht !== null) bericht.ungelesen.push(`${dateiname(von)}: ${spec} (${grund})`)
   return null
 }
 
-/** Die Einstiegspunkte der AUSGELIEFERTEN Anwendung: `index.html` und seine Module. */
-export function guiEinstiege() {
-  const index = join(GUI_ROOT, 'index.html')
+/**
+ * Die Einstiegspunkte des AUSGELIEFERTEN Dokuments: `index.html`, seine Module
+ * (`<script src>`) UND seine Blaetter (`<link rel="stylesheet" href>`).
+ *
+ * Der zweite Weg fehlte. Ein Blatt, das nur als `<link>` am Dokument haengt,
+ * wurde nie gelesen, landete aber woertlich in `gui_dist/assets/index-*.css`
+ * (Kritik R11, Y1) - und `index.html` traegt heute schon ein solches `<link>`.
+ * Ein ENTFERNTES Blatt kann dieser Lauf nicht laden; es wird gemeldet, nicht
+ * uebergangen.
+ */
+export function guiEinstiege(bericht = null, index = join(GUI_ROOT, 'index.html')) {
+  const src = readFileSync(index, 'utf8')
   const einstiege = [index]
-  for (const m of readFileSync(index, 'utf8').matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
-    const ziel = aufloesen(m[1], GUI_ROOT)
+  const folge = (spec) => {
+    const ziel = aufloesen(spec, index, bericht)
     if (ziel !== null) einstiege.push(ziel)
+  }
+  for (const m of src.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) folge(m[1])
+  for (const m of src.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = m[0]
+    if (!/\brel\s*=\s*["']?[^"'>]*\bstylesheet\b/i.test(tag)) continue
+    const href = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i)
+    if (href === null) continue
+    if (/^(?:@\/|\.{1,2}\/|\/)/.test(href[1])) folge(href[1])
+    else if (bericht !== null) {
+      bericht.ungelesen.push(`${dateiname(index)}: ${href[1]} (entferntes Blatt, wird nicht geladen)`)
+    }
   }
   return einstiege
 }
@@ -387,12 +458,15 @@ export function guiEinstiege() {
  * (`gui/theme-extra.css`), von `main.js` importiert, landete woertlich im
  * gebauten Blatt und wurde nie gelesen (Kritik R10, X8). Verfolgt werden
  * statische und dynamische `import`-Spezifizierer und `@import`-Pfade; ein
- * blosser Name endet die Kette.
+ * blosser Name endet die Kette - und wird gemeldet, nicht verworfen. Wer einen
+ * `bericht` mitgibt ({@link neuerBericht}), bekommt jeden Spezifizierer, an dem
+ * die Kette endet, mit Grund zurueck.
  */
-export function blattkette(einstiege = guiEinstiege()) {
+export function blattkette(einstiege = null, bericht = null) {
+  const start = einstiege ?? guiEinstiege(bericht)
   const gesehen = new Set()
   const blaetter = new Set()
-  const offen = [...einstiege]
+  const offen = [...start]
   while (offen.length > 0) {
     const pfad = offen.pop()
     if (gesehen.has(pfad)) continue
@@ -405,7 +479,7 @@ export function blattkette(einstiege = guiEinstiege()) {
       continue
     }
     for (const spec of spezifizierer(src)) {
-      const ziel = aufloesen(spec, dirname(pfad))
+      const ziel = aufloesen(spec, pfad, bericht)
       if (ziel !== null && !gesehen.has(ziel)) offen.push(ziel)
     }
   }
@@ -457,18 +531,24 @@ export function dokumentPfad() {
 
 /**
  * Jede Regel jedes HANDGESCHRIEBENEN Blattes der GUI: Stylesheets und
- * `<style>`-Bloecke unter `gui/src`, dazu alles, was vom ausgelieferten
- * `index.html` aus ueber die Importe erreichbar ist - auch ausserhalb von
- * `gui/src`.
+ * `<style>`-Bloecke unter `gui/src`, dazu jede Datei UNTER `gui/`, die vom
+ * ausgelieferten `index.html` aus erreichbar ist - ueber `<script src>`, ueber
+ * `<link rel="stylesheet">` und ueber die Importketten dahinter.
  *
  * Was das NICHT liest, ausdruecklich: das gebaute Utility-Blatt. Was Tailwind
  * aus `rounded-lg` macht, steht in keiner dieser Dateien, und `@import
  * "tailwindcss"` wird nicht verfolgt - genau das ist der an Teil E uebergebene
- * Anteil. Alles andere, was der Leser nicht als Regel versteht, steht in
- * `sonstiges` und wird nicht still verworfen.
+ * Anteil.
+ *
+ * Nichts davon faellt still weg, und das gilt auf DREI Ebenen: was der Leser
+ * nicht als Regel versteht, steht in `sonstiges`; welcher PFADspezifizierer zu
+ * keiner gelesenen Datei fuehrt, steht mit Grund in `ungelesen`; welches Paket
+ * nur mit NAMEN genannt ist, steht in `fremd`. Alle drei Listen sind im Test
+ * gepinnt (Kritik R10 X3; Kritik R11 Y1/Y2).
  */
 export function guiRules() {
-  const files = [...new Set([...quellverzeichnis(), ...blattkette()])].sort()
+  const bericht = neuerBericht()
+  const files = [...new Set([...quellverzeichnis(), ...blattkette(null, bericht)])].sort()
 
   const rules = []
   const sonstiges = []
@@ -476,11 +556,17 @@ export function guiRules() {
     const src = readFileSync(path, 'utf8')
     const css = /\.(css|scss|sass|less)$/.test(path) ? src : styleBloecke(src).join('\n')
     const gelesen = cssRegeln(css)
-    const datei = relative(GUI_ROOT, path).replace(/\\/g, '/')
+    const datei = dateiname(path)
     for (const rule of gelesen.rules) rules.push({ file: datei, ...rule })
     for (const glied of gelesen.sonstiges) sonstiges.push(`${datei}: ${glied}`)
   }
-  return { files: files.length, rules, sonstiges }
+  return {
+    files: files.length,
+    rules,
+    sonstiges,
+    ungelesen: [...new Set(bericht.ungelesen)].sort(),
+    fremd: [...bericht.fremd].sort(),
+  }
 }
 
 /** Nennt dieser Selektor diese Klasse? Die CSS-Escapes fallen dafuer weg. */
@@ -562,8 +648,9 @@ export function keyCompound(selector) {
  * Selektor, dessen rechtestes Glied ein blosser Tag (`.dark main`,
  * `aside + div main`) oder eine erst in der Auslieferung existierende ID
  * (`#app > div`) ist, wird als „erreicht nicht" gemeldet, obwohl er in der
- * ausgelieferten Seite erreicht (Kritik R10, X2/X4/X6). Das ist Stueck 4 der
- * Uebergabe an Teil E.
+ * ausgelieferten Seite erreicht (Kritik R10, X2/X4/X6). Das ist die Grenze
+ * DIESER MONTAGE - in einem nachgebauten Abbild der Auslieferung treffen alle
+ * drei auch ohne Browser - und steht als Stueck 4 der Uebergabe an Teil E.
  */
 export function zieltAufRahmen(glied) {
   const key = keyCompound(glied)
@@ -602,8 +689,11 @@ export function zieltAufRahmen(glied) {
  * WAS BEIDE WEGE NICHT KOENNEN: entscheiden, ob ein Selektor in der
  * AUSGELIEFERTEN Seite trifft. Weg 1 kennt nur diese Montage, Weg 2 nur eine
  * Namensliste - `#app > div`, `.dark main` und `aside + div main` treffen dort
- * und werden hier nicht gemeldet (Kritik R10, X2/X4/X6). Das entscheidet der
- * Pixel-Diff in Teil E.
+ * und werden hier nicht gemeldet (Kritik R10, X2/X4/X6). Das ist eine Grenze
+ * DIESER MONTAGE, keine des Verfahrens: haengt man den Mount in ein Abbild der
+ * Auslieferung, entscheidet Weg 1 auch diese drei. Was danach noch offen
+ * bleibt, ist die KASKADE - ob die Regel am Ende gewinnt und ein Pixel bewegt;
+ * das entscheidet der Pixel-Diff in Teil E.
  */
 export function erreichendeRegeln(elemente, rules) {
   const treffer = []

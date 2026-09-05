@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -12,8 +12,10 @@ import {
   cssRegeln,
   dokumentPfad,
   erreichendeRegeln,
+  guiEinstiege,
   guiRules,
   styleBloecke,
+  unterWurzel,
   vorfahrenpfad,
   zeile,
   zieltAufRahmen,
@@ -399,7 +401,7 @@ describe('VisuEditorView - der Vorfahrenpfad in der echten Schale', () => {
       expect(existsSync(join(GUI_ROOT, 'src', 'components', 'visu', 'VisuPreviewFrame.vue'))).toBe(
         true,
       )
-      const { files, rules, sonstiges } = guiRules()
+      const { files, rules, sonstiges, ungelesen, fremd } = guiRules()
       // Gegenprobe 0c: der Scanner liest ueberhaupt etwas - ein Scanner, der
       // nichts findet, weil er nichts liest, faellt an diesen zwei Zahlen auf.
       expect(files).toBeGreaterThan(20)
@@ -417,6 +419,61 @@ describe('VisuEditorView - der Vorfahrenpfad in der echten Schale', () => {
         'src/style.css: @theme inline { … }',
         'src/style.css: @theme { … }',
       ])
+
+      // Und eine Ebene tiefer dieselbe Linie: nicht nur was in einem gelesenen
+      // Text steht, sondern WELCHE DATEIEN ueberhaupt gelesen werden. Ein
+      // Spezifizierer, der zu keiner gelesenen Datei fuehrt, verschwand vorher
+      // kommentarlos - ein `import '../../theme-probe.css'` aus `main.js`
+      // heraus landete im Bundle und skalierte den Rahmen (Kritik R11, Y2).
+      // Heute stehen alle namentlich da: das entfernte Blatt des Dokuments und
+      // zwoelf Sprachdateien, in denen kein CSS stehen kann. Wer einen
+      // dreizehnten Weg aufmacht, traegt ihn hier bewusst nach.
+      expect(ungelesen).toEqual([
+        'index.html: https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap (entferntes Blatt, wird nicht geladen)',
+        'src/composables/useTz.js: @/locales/de.json (keine Datei, in der CSS stehen kann)',
+        'src/composables/useTz.js: @/locales/en.json (keine Datei, in der CSS stehen kann)',
+        'src/composables/useTz.js: @/locales/es.json (keine Datei, in der CSS stehen kann)',
+        'src/composables/useTz.js: @/locales/fr.json (keine Datei, in der CSS stehen kann)',
+        'src/composables/useTz.js: @/locales/gsw.json (keine Datei, in der CSS stehen kann)',
+        'src/composables/useTz.js: @/locales/it.json (keine Datei, in der CSS stehen kann)',
+        'src/i18n.js: ./locales/de.json (keine Datei, in der CSS stehen kann)',
+        'src/i18n.js: ./locales/en.json (keine Datei, in der CSS stehen kann)',
+        'src/i18n.js: ./locales/es.json (keine Datei, in der CSS stehen kann)',
+        'src/i18n.js: ./locales/fr.json (keine Datei, in der CSS stehen kann)',
+        'src/i18n.js: ./locales/gsw.json (keine Datei, in der CSS stehen kann)',
+        'src/i18n.js: ./locales/it.json (keine Datei, in der CSS stehen kann)',
+      ])
+
+      // Die zweite Liste: blosse NAMEN, an denen die Kette endet. Sie sind
+      // fremder Code und stehen ausdruecklich in der Uebergabe an Teil E - vier
+      // von ihnen sind BLAETTER, die mitausgeliefert und hier nicht gelesen
+      // werden. Der Scan verschweigt das nicht, er schreibt es aus.
+      expect(fremd).toEqual([
+        '@floating-ui/vue',
+        '@vue-flow/background',
+        '@vue-flow/controls',
+        '@vue-flow/controls/dist/style.css',
+        '@vue-flow/core',
+        '@vue-flow/core/dist/style.css',
+        '@vue-flow/core/dist/theme-default.css',
+        '@vue-flow/minimap',
+        '@vue-flow/minimap/dist/style.css',
+        '@vue-flow/node-resizer',
+        '@vue-flow/node-resizer/dist/style.css',
+        'axios',
+        'chart.js',
+        'chart.js/auto',
+        'chroma-js',
+        'pinia',
+        'tailwindcss',
+        'vue',
+        'vue-draggable-plus',
+        'vue-i18n',
+        'vue-router',
+      ])
+      // Und die Grenze zwischen beiden Listen ist scharf: in `fremd` steht nie
+      // etwas, das ein Pfad in dieses Repo sein koennte.
+      expect(fremd.filter((spec) => /^(?:@\/|\.{1,2}\/|\/)/.test(spec))).toEqual([])
 
       const { treffer, unlesbar } = erreichendeRegeln(pfad, rules)
 
@@ -635,5 +692,68 @@ describe('Der Blattscan des Vorschaurahmens - was er liest', () => {
     ])
     // Die naechste Lesung parst frisch - die Probe bleibt nicht haengen.
     expect(bildaendernd([dokumentPfad().app, ...dokumentPfad().pfad])).toEqual([])
+  })
+
+  it('folgt auch einem <link rel="stylesheet"> des Einstiegs (R11, Y1)', () => {
+    // Ein Blatt kann auf ZWEI Wegen am ausgelieferten Dokument haengen: hinter
+    // einem Modul (`<script src>`) und direkt (`<link rel="stylesheet">`). Der
+    // Scan folgte nur dem ersten; ein Blatt am zweiten ging woertlich ins
+    // Bundle und durch alle GUI-Tests (Kritik R11, Y1).
+    const bericht = { ungelesen: [], fremd: new Set() }
+    const index = join(GUI_ROOT, 'tests', 'fixtures', 'previewFrameFence', 'index-mit-link.html')
+    const einstiege = guiEinstiege(bericht, index).map((p) =>
+      relative(GUI_ROOT, p).replace(/\\/g, '/'),
+    )
+
+    expect(einstiege).toContain('tests/fixtures/previewFrameFence/index-mit-link.html')
+    expect(einstiege).toContain('tests/fixtures/previewFrameFence/nebenblatt.css')
+    expect(einstiege).toContain('tests/fixtures/previewFrameFence/zwischenmodul.js')
+    // Ein `<link>`, das kein Stilblatt ist, wird nicht verfolgt.
+    expect(einstiege.some((p) => p.endsWith('favicon.svg'))).toBe(false)
+    // Und das ENTFERNTE Blatt kann dieser Lauf nicht lesen - es faellt deshalb
+    // nicht weg, sondern steht namentlich da.
+    expect(bericht.ungelesen).toEqual([
+      'tests/fixtures/previewFrameFence/index-mit-link.html: https://fonts.example/css2?family=Inter (entferntes Blatt, wird nicht geladen)',
+    ])
+
+    // Und am ECHTEN Einstieg: `gui/index.html` traegt heute ein entferntes
+    // Blatt (Google Fonts). Auch das steht jetzt in der Liste statt still zu
+    // verschwinden.
+    const echt = { ungelesen: [], fremd: new Set() }
+    guiEinstiege(echt)
+    expect(echt.ungelesen.filter((z) => z.includes('fonts.googleapis.com'))).toHaveLength(1)
+  })
+
+  it('meldet jeden Spezifizierer, den es nicht liest, statt ihn still zu verwerfen (R11, Y2)', () => {
+    // Dieselbe Linie wie bei `sonstiges` und `unlesbar`, eine Ebene tiefer: bei
+    // der Frage, WELCHE DATEIEN der Scan ueberhaupt zu Gesicht bekommt. Ein
+    // `import '../../theme-probe.css'` aus `gui/src/main.js` heraus wurde von
+    // `aufloesen` kommentarlos verworfen - das Blatt landete im Bundle und
+    // skalierte den Rahmen (Kritik R11, Y2).
+    const bericht = { ungelesen: [], fremd: new Set() }
+    const fixture = join(GUI_ROOT, 'tests', 'fixtures', 'previewFrameFence', 'aussen-eintrag.js')
+    blattkette([fixture], bericht)
+
+    expect(bericht.ungelesen).toEqual([
+      'tests/fixtures/previewFrameFence/aussen-eintrag.js: ../../../../eslint.config.js (liegt ausserhalb von gui/)',
+      'tests/fixtures/previewFrameFence/aussen-eintrag.js: ./gibt-es-nicht.css (nicht gefunden)',
+    ])
+    // Ein blosser Name ist kein Pfad und kann kein Blatt dieses Repos sein; er
+    // steht in der zweiten Liste, nicht im Papierkorb.
+    expect([...bericht.fremd]).toEqual(['tailwindcss'])
+  })
+
+  it('zieht die Wurzelgrenze als Pfadvergleich, nicht als Namensvergleich (R11)', () => {
+    // `startsWith(GUI_ROOT)` ist ein Zeichenkettenvergleich. Eine Datei NEBEN
+    // `gui/`, deren Name mit `gui` anfaengt, kam damit versehentlich durch.
+    const nachbar = `${GUI_ROOT}-extra-probe.css`
+    expect(nachbar.startsWith(GUI_ROOT)).toBe(true)
+    expect(unterWurzel(nachbar)).toBe(false)
+
+    expect(unterWurzel(join(GUI_ROOT, 'index.html'))).toBe(true)
+    expect(unterWurzel(join(GUI_ROOT, 'src', 'style.css'))).toBe(true)
+    expect(unterWurzel(resolve(GUI_ROOT, '..', 'theme-probe.css'))).toBe(false)
+    // Die Wurzel selbst ist keine Datei UNTER der Wurzel.
+    expect(unterWurzel(GUI_ROOT)).toBe(false)
   })
 })

@@ -84,10 +84,14 @@ import { dirname, join, resolve } from 'node:path';
  *
  * ══ AN TEIL E (Szenario E3) UEBERGEBEN ══════════════════════════════════════
  *
- * DREI Abweichungen bleiben hier ungemessen, weil weder ein jsdom- noch ein
- * happy-dom-Lauf sie entscheiden KANN - keiner hat einen Viewport, keiner
- * rechnet CSS aus. Sie sind nicht vergessen und nicht wegdefiniert, sondern
- * uebergeben; Teil E misst sie im Pixel-Diff im echten Browser:
+ * DREI Abweichungen bleiben hier ungemessen. Bei ZWEIEN kann kein jsdom- und
+ * kein happy-dom-Lauf sie entscheiden (E3-1, E3-3): keiner hat einen Viewport,
+ * keiner rechnet CSS aus. Die dritte (E3-2) ist drueben in `gui/` sehr wohl
+ * gemessen, aber nicht vollstaendig - an ihren Raendern ist sie eine Luecke,
+ * und welche, steht unten Zeile fuer Zeile als Stueck 4 (die Grenze DIESER
+ * MONTAGE) und Stueck 5 (der LESEUMFANG). Nichts davon ist vergessen oder
+ * wegdefiniert, sondern uebergeben; Teil E misst es im Pixel-Diff im echten
+ * Browser:
  *
  *   E3-1  DER CONTAINER-/VIEWPORT-ANTEIL groessenabhaengiger Regeln. Ob eine Regel unter
  *         `@media (max-width:…)` oder `@container (width …)` greift, haengt an
@@ -138,9 +142,13 @@ import { dirname, join, resolve } from 'node:path';
  *               `<div data-testid="visu-editor">` ging vorher durch, weil der
  *               Pfad ausserhalb der Rahmenkomponente nur EINMAL gelesen wurde
  *               (Kritik R10, X7).
- *           (c) JEDE Regel jedes handgeschriebenen Blattes, das vom
- *               ausgelieferten `index.html` aus ueber die IMPORTE erreichbar ist
- *               oder unter `gui/src` liegt - Stylesheets wie `<style>`-Bloecke,
+ *           (c) JEDE Regel jedes Blattes, DAS DER SCAN LIEST: alles unter
+ *               `gui/src`, dazu jede Datei UNTER `gui/`, die vom ausgelieferten
+ *               `index.html` aus erreichbar ist - ueber `<script src>`, ueber
+ *               `<link rel="stylesheet">` und ueber die `import`-/`@import`-
+ *               Ketten dahinter. Was er NICHT liest, steht als Stueck 5 und
+ *               faellt nicht mehr still weg (Kritik R11, Y1/Y2) -
+ *               Stylesheets wie `<style>`-Bloecke,
  *               letztere auch dann, wenn sie nicht am Zeilenanfang stehen
  *               (Kritik R10, X5/X8). Gelesen wird mit einem Leser, der Klammern,
  *               Zeichenketten und verschachtelte Bloecke kennt; sein Vorgaenger
@@ -169,14 +177,15 @@ import { dirname, join, resolve } from 'node:path';
  *               Tailwind zu echten Utilities und skaliert die ganze Anwendung
  *               samt Rahmen (Kritik R10, X1).
  *
- *         UEBERGEBEN sind VIER Stuecke. Die ersten drei kann ein Lauf ohne
- *         Browser nicht entscheiden. Das vierte ist die Grenze der MONTAGE, und
- *         an seinen Raendern ist es sehr wohl eine Luecke - der Satz, der hier
- *         frueher stand („drei Dinge, und keines davon ist eine Testluecke"),
- *         war falsch: die Kritik R10 hat acht Wege daran vorbei gefunden, drei
- *         davon im gebauten Bundle nachgewiesen. Fuenf sind mit dieser Runde
- *         geschlossen (X1, X3, X5, X7, X8), drei bleiben und stehen als
- *         Stueck 4:
+ *         UEBERGEBEN sind FUENF Stuecke. Die ersten drei kann ein Lauf ohne
+ *         Browser nicht entscheiden. Das vierte ist die Grenze DIESER MONTAGE,
+ *         das fuenfte der LESEUMFANG; an ihren Raendern sind beide sehr wohl
+ *         Luecken - der Satz, der hier frueher stand („drei Dinge, und keines
+ *         davon ist eine Testluecke"), war falsch: die Kritik R10 hat acht Wege
+ *         daran vorbei gefunden, drei davon im gebauten Bundle nachgewiesen,
+ *         die Kritik R11 zwei weitere (Y1/Y2), beide ebenfalls im gebauten
+ *         Bundle. Sieben sind geschlossen (X1, X3, X5, X7, X8, Y1 und die
+ *         Wurzelgrenze als Pfadvergleich), der Rest steht ausgeschrieben:
  *
  *           1. Was das GEBAUTE Utility-Blatt aus `rounded-lg`, `bg-white`,
  *              `p-6`, `bg-surface-900` oder `min-h-screen` berechnet. Diese
@@ -220,10 +229,58 @@ import { dirname, join, resolve } from 'node:path';
  *              Die Namensliste laesst sich verlaengern, aber nicht schliessen:
  *              `div`, `main` und `body` als Schluessel-Compound aufzunehmen
  *              hiesse, praktisch JEDE Regel der GUI als erreichend zu melden -
- *              der Scan waere wahr und nutzlos zugleich. Ob eine solche Regel den
- *              Pfad wirklich trifft, entscheidet erst ein Lauf, in dem dieses
- *              Dokument WIRKLICH existiert und die Kaskade wirklich gerechnet
- *              wird: der Pixel-Diff in Teil E. (Kritik R10, X2/X4/X6.)
+ *              der Scan waere wahr und nutzlos zugleich.
+ *
+ *              Zwei Fragen sind hier zu TRENNEN; frueher stand an dieser Stelle
+ *              nur eine, und die war zu gross. OB EIN SELEKTOR TRIFFT,
+ *              entscheidet nicht der Browser, sondern das DOKUMENT: baut man
+ *              die Auslieferung in happy-dom nach, treffen alle drei Beispiele
+ *              oben - gemessen (Kritik R11). Der Weg dorthin sind zwei Schritte
+ *              der MONTAGE, keine Grenzen des Verfahrens: (1) statt an den
+ *              nackten `<div>` von Vue Test Utils in ein uebernommenes Geruest
+ *              montieren (`html.dark > body.antialiased > div#app`) - damit
+ *              fallen X2 und X4; (2) `Sidebar` nicht stubben, ihre Wurzel IST
+ *              das `<aside>` (`gui/src/components/layout/Sidebar.vue:2`) -
+ *              damit faellt X6. Solange die Montage steht, wie sie steht,
+ *              bleiben die drei ungemeldet - das ist die Grenze DIESER
+ *              MONTAGE, nicht die des Verfahrens.
+ *
+ *              OB DIE KASKADE EIN PIXEL BEWEGT, ist die andere Frage, und die
+ *              bleibt bei Teil E (Stueck 2 und E3-3): welche Deklaration am
+ *              Ende gewinnt und wie sie aussieht, rechnet kein happy-dom aus.
+ *              (Kritik R10, X2/X4/X6; Kritik R11.)
+ *
+ *           5. DER LESEUMFANG - WELCHE DATEIEN der Scan ueberhaupt zu Gesicht
+ *              bekommt. GELESEN wird: jede Datei unter `gui/src`, in der CSS
+ *              stehen kann, und dazu jede Datei UNTER `gui/`, die vom
+ *              ausgelieferten `index.html` aus erreichbar ist - ueber
+ *              `<script src>`, ueber `<link rel="stylesheet">` und ueber die
+ *              `import`-/`@import`-Ketten dahinter, beliebig tief. NICHT
+ *              gelesen wird: was ausserhalb von `gui/` liegt; ein ENTFERNTES
+ *              Blatt (`index.html` traegt eines, Google Fonts); eine Datei, in
+ *              der kein CSS stehen kann; und jedes Paket, das nur mit NAMEN
+ *              genannt ist - darunter `tailwindcss` und vier mitausgelieferte
+ *              Blaetter von `@vue-flow/*`.
+ *
+ *              Bis Kritik R11 fiel das STILL weg, auf zwei Wegen, beide im
+ *              gebauten Bundle nachgewiesen: ein `<link rel="stylesheet">` in
+ *              `index.html` wurde gar nicht verfolgt (Y1), und ein per `import`
+ *              erreichbares Blatt neben `gui/` wurde kommentarlos verworfen
+ *              (Y2). Beide brachten `iframe[data-testid="visu-preview-frame"]
+ *              { transform: scale(.9); filter: saturate(.5) }` woertlich nach
+ *              `gui_dist/assets/index-*.css`, an allen GUI-Tests vorbei. Y1 ist
+ *              GESCHLOSSEN: der `<link>` wird verfolgt. Y2 ist BENANNT: das
+ *              Blatt wird weiterhin nicht gelesen, aber der Spezifizierer steht
+ *              mit seinem Grund in `ungelesen`, und diese Liste ist im Test
+ *              gepinnt - genauso wie `fremd` fuer die blossen Namen. Die
+ *              Wurzelgrenze ist dabei jetzt ein PFADvergleich; das fruehere
+ *              `startsWith` liess `…/gui-extra-probe.css` NEBEN `gui/` durch.
+ *
+ *              WAS UEBRIG BLEIBT und an Teil E geht: der INHALT der Blaetter,
+ *              die gemeldet, aber nicht gelesen werden - das entfernte Blatt,
+ *              die vier `@vue-flow`-Blaetter, alles ausserhalb von `gui/`. Sie
+ *              werden ausgeliefert und koennen den Rahmen treffen; hier steht
+ *              nur ihr NAME, nicht ihre Regel. Still ist daran nichts mehr.
  */
 
 // Ionic-Webkomponenten sind nicht jsdom-freundlich (gleiches Muster wie

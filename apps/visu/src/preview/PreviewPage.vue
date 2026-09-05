@@ -78,9 +78,11 @@
  * echten Seite stehen oder in dieser Liste - sonst faellt der Nachweis.
  *
  * Und was er NICHT leistet - DREI Grenzen, die AN TEIL E (Szenario E3,
- * Pixel-Diff im echten Browser) UEBERGEBEN sind statt wegdefiniert. Keine davon
- * kann ein jsdom- oder happy-dom-Lauf entscheiden: keiner hat einen Viewport,
- * keiner rechnet CSS aus, und keiner steht im ausgelieferten Dokument. Teil E
+ * Pixel-Diff im echten Browser) UEBERGEBEN sind statt wegdefiniert. Zwei davon
+ * (E3-1, E3-3) kann ein jsdom- oder happy-dom-Lauf grundsaetzlich nicht
+ * entscheiden: keiner hat einen Viewport, keiner rechnet CSS aus. Die dritte
+ * (E3-2) ist drueben in `gui/` gemessen, aber nicht vollstaendig - an ihren
+ * Raendern ist sie eine Luecke, und welche, steht dort ausgeschrieben. Teil E
  * misst sie:
  *
  *   E3-1  der CONTAINER-/VIEWPORT-ANTEIL groessenabhaengiger Regeln (`@media (max-width:…)`,
@@ -101,21 +103,29 @@
  *         Vorfahrenpfades - bis hinauf in die echte Schale aus `App.vue` und
  *         `AppLayout`, samt dem Inline-Stil, den `App.vue` dort durchreicht, und
  *         ebenfalls in jedem Zustand, den die ANSICHT annehmen kann; jede Regel
- *         eines handgeschriebenen Blattes, das vom ausgelieferten `index.html`
- *         aus ueber die Importe erreichbar ist oder unter `gui/src` liegt und
- *         diesen Pfad TREFFEN KANN (per `matches()` gegen den Pfad und
- *         zusaetzlich ueber den Schluessel-Compound gegen eine Namensliste);
- *         und `index.html` selbst als DOKUMENT gelesen, also `<html>`, `<body>`
- *         und `<div id="app">` der Auslieferung.
- *         OFFEN bleibt VIERERLEI: was das GEBAUTE Utility-Blatt aus
+ *         jedes Blattes, DAS DER SCAN LIEST - alles unter `gui/src`, dazu jede
+ *         Datei UNTER `gui/`, die vom ausgelieferten `index.html` aus ueber
+ *         `<script src>`, `<link rel="stylesheet">` oder die Importketten
+ *         erreichbar ist -, soweit sie diesen Pfad TREFFEN KANN (per
+ *         `matches()` gegen den Pfad und zusaetzlich ueber den
+ *         Schluessel-Compound gegen eine Namensliste); und `index.html` selbst
+ *         als DOKUMENT gelesen, also `<html>`, `<body>` und `<div id="app">`
+ *         der Auslieferung.
+ *         OFFEN bleibt FUENFERLEI: was das GEBAUTE Utility-Blatt aus
  *         `rounded-lg`, `bg-white` oder `p-6` berechnet (steht in keinem
  *         Quelltext dieses Repos); OB eine erreichende Regel ein Pixel bewegt;
  *         was erst das echte Layout entscheidet - Viewport, Beschnitt,
- *         Stapelung; und dass der Mount nicht das ausgelieferte Dokument IST -
+ *         Stapelung; dass der Mount nicht das ausgelieferte Dokument IST -
  *         `#app`, `.dark` und die echte Sidebar fehlen dort, weshalb
  *         `#app > div`, `.dark main` und `aside + div main` weder von
- *         `matches()` noch von der Namensliste gemeldet werden. Der lange
- *         Wortlaut steht im Kopf von `PreviewParity.spec.ts`.
+ *         `matches()` noch von der Namensliste gemeldet werden (das ist die
+ *         Grenze DIESER MONTAGE: in einem nachgebauten Abbild der Auslieferung
+ *         treffen alle drei auch ohne Browser); und der LESEUMFANG - was
+ *         ausserhalb von `gui/` liegt, ein entferntes Blatt oder ein nur mit
+ *         NAMEN genanntes Paket (`tailwindcss`, vier Blaetter von
+ *         `@vue-flow/*`) wird nicht gelesen, faellt aber seit Kritik R11 nicht
+ *         mehr still weg, sondern steht namentlich in zwei gepinnten Listen.
+ *         Der lange Wortlaut steht im Kopf von `PreviewParity.spec.ts`.
  *   E3-3  jede AENDERUNG AN DEN DEKLARATIONEN eines ausgelieferten Blattes
  *         (`inset: 0` -> `inset: 40%`): ein jsdom-Lauf rechnet kein CSS aus. Der
  *         Wirkungsvergleich misst, welcher Selektor wo greift - nicht, welcher
