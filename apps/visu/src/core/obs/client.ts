@@ -408,6 +408,17 @@ export class ObsClient {
  */
 export class WsHandle {
   private socket: WsLike | null = null;
+  /**
+   * Ist der Socket OFFEN? Ein `send()` VOR dem Oeffnen wirft im Browser
+   * (`InvalidStateError: Failed to execute 'send' on 'WebSocket': Still in
+   * CONNECTING state.`) und riss so den ganzen Aufrufweg mit - beim
+   * angemeldeten Benutzer den `init`-Weg des Wirts, samt allem, was dahinter
+   * noch zu tun war. Der Zustand wird deshalb hier gefuehrt: `WsLike` ist
+   * absichtlich die kleinste Flaeche, die wir brauchen, und traegt kein
+   * `readyState`. Was im Aufbau anfaellt, steht ohnehin schon in {@link ids}
+   * und geht in `onopen` vollstaendig raus.
+   */
+  private open = false;
   private readonly ids = new Set<string>();
   private closed = false;
   /** Set once the server rejects auth (close 4001) — reconnect stays disabled. */
@@ -447,8 +458,10 @@ export class WsHandle {
 
     const ws = this.makeWs(url, protocols);
     this.socket = ws;
+    this.open = false;
 
     ws.onopen = () => {
+      this.open = true;
       this.reconnectDelay = 1000;
       // Subscribe the full id set; the server delivers only the allowed scope
       // (subscribe-intersection) — events for revoked DPs simply stop arriving.
@@ -456,6 +469,7 @@ export class WsHandle {
     };
     ws.onclose = (ev) => {
       this.socket = null;
+      this.open = false;
       if (this.closed) return;
       // 4001 = auth rejected by the server; reconnecting would loop, so stop.
       if (ev?.code === 4001) {
@@ -489,8 +503,14 @@ export class WsHandle {
     }, this.reconnectDelay);
   }
 
+  /**
+   * Das Abo hinausgeben - aber NUR in eine offene Verbindung. Steht sie noch im
+   * Aufbau, faellt hier nichts weg: die ids sind gepuffert, und `onopen` sendet
+   * den vollstaendigen Satz nach. Ist sie schon zu, uebernimmt der
+   * Wiederaufbau. So kann `subscribe()` seinen Aufrufer nicht mehr mitreissen.
+   */
   private sendSubscribe(ids: string[]): void {
-    if (this.socket) this.socket.send(JSON.stringify({ action: 'subscribe', ids }));
+    if (this.socket && this.open) this.socket.send(JSON.stringify({ action: 'subscribe', ids }));
   }
 
   /** Add datapoint ids to the subscription (buffered + sent if connected). */
@@ -503,6 +523,7 @@ export class WsHandle {
   /** Close the socket and stop reconnecting. */
   close(): void {
     this.closed = true;
+    this.open = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

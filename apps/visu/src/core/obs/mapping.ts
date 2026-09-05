@@ -409,6 +409,173 @@ function deviceLabel(w: ObsWidget): string {
   return cfgStr(w.config, 'label') ?? (w.name && w.name.length > 0 ? w.name : w.type);
 }
 
+/* ------------------------------------------------- bedingte Sichtbarkeit */
+/**
+ * **E16 - ein Element ist je nach Datenpunktwert sichtbar oder unsichtbar.**
+ *
+ * Die Regel ist DATEN am Widget (`config.visible_when`, Teil der `PageConfig`,
+ * die das Backend als JSON durchreicht); die Auswertung ist CODE, und sie steht
+ * HIER, im Host - in derselben Übersetzung, aus der die ausgelieferte Visu UND
+ * die Editor-Vorschau ihre Geräte und Ebenen beziehen (goldene Regel:
+ * Daten = JSON, Verhalten = Code).
+ *
+ * Warum genau hier und nicht im Editor: Messlatte **E3** sagt, die Vorschau IST
+ * die Visu („0 abweichende Pixel ausserhalb des Editor-Chromes"). Filterte der
+ * Editor die geregelten Elemente aus seinem Entwurf, während der Host die Regel
+ * nicht kennt, zeigte die Vorschau für genau diese Elemente eine andere Seite
+ * als die später ausgelieferte - kein fehlendes Stück, sondern ein eingebauter
+ * Auseinanderlauf. Der Editor reicht deshalb JEDES Element durch; wer es zu
+ * sehen bekommt, entscheidet diese Datei - für beide Seiten gleich.
+ *
+ * LIVE, in beiden Hälften: die Regel wird bei jedem
+ * `mapTree`/`composeLayers`-Durchlauf ausgewertet, und ein Wertwechsel MITTEN im
+ * Betrieb löst einen solchen Durchlauf aus - ein geregeltes Element erscheint und
+ * verschwindet ohne Neuladen.
+ *
+ *  - **Ausgelieferte Visu**: `ObsDataSource` hält die Datenpunkte der Regeln im
+ *    laufenden Lesesatz (`liveDpIds`, Gast-Takt wie WS-Feed), prüft bei jedem
+ *    Wert, ob sich die sichtbare MENGE geändert hat, und meldet den Umschwung
+ *    (`onVisibilityChange`). Der Wirt lädt darauf neu (`store.refresh`) - ein
+ *    `DevicePatch` könnte das nicht ausdrücken, denn er trägt Felder eines
+ *    Geräts, während hier die Zugehörigkeit wechselt: ein verborgenes Element
+ *    ist überhaupt kein Gerät.
+ *  - **Vorschau**: der Editor schickt bei jedem Wertwechsel eines
+ *    Regel-Datenpunkts einen neuen Entwurf, und jeder Entwurf läuft durch diese
+ *    Auswertung.
+ *
+ * GRENZE, ausdrücklich: die Visu sieht den Wechsel so schnell, wie sie den Wert
+ * sieht - beim angemeldeten Benutzer sofort (WS), als Gast im Takt von
+ * `POLL_INTERVAL_MS` (4 s). Navigation löst KEINEN Neuaufbau aus (`store.navigate`
+ * setzt nur die gezeigte Seite, `refresh()` kommt aus Login, Logout, PIN, dem
+ * Start - und jetzt aus dieser Meldung); das ist auch nicht mehr nötig.
+ */
+
+/** Die Vergleiche, die eine Sichtbarkeitsregel kennt (das Formular bietet genau sie an). */
+export const VISIBILITY_OPS = ['eq', 'ne', 'lt', 'lte', 'gt', 'gte', 'truthy', 'falsy'] as const;
+
+/** Ein Vergleich einer Sichtbarkeitsregel. */
+export type VisibilityOp = (typeof VISIBILITY_OPS)[number];
+
+/** Vergleiche, die ohne Schwelle unvollständig sind. */
+const NEEDS_THRESHOLD: ReadonlySet<string> = new Set(['eq', 'ne', 'lt', 'lte', 'gt', 'gte']);
+
+/** Eine vollständige, auswertbare Sichtbarkeitsregel. */
+export interface VisibilityRule {
+  /** Der Datenpunkt, an dem die Regel hängt. */
+  readonly datapoint_id: string;
+  /** Der Vergleich. */
+  readonly op: VisibilityOp;
+  /** Die Schwelle; fehlt bei `truthy`/`falsy`. */
+  readonly value?: number | string;
+}
+
+/**
+ * Die Regel eines Widgets, oder null.
+ *
+ * HALB ausgefüllt ist keine Regel: eine ohne Datenpunkt oder ohne Schwelle ist
+ * im gespeicherten Zustand nicht auswertbar und verstünde sich stumm als „immer
+ * sichtbar". Die Schwelle wird mit derselben Lesart wie jeder Datenpunktwert
+ * gelesen ({@link toNum}), damit `"30"` und `30` dieselbe Regel sind.
+ */
+export function readVisibilityRule(w: ObsWidget): VisibilityRule | null {
+  const raw = (w.config ?? {})['visible_when'];
+  if (typeof raw !== 'object' || raw === null) return null;
+  const rule = raw as Record<string, unknown>;
+
+  const dp = typeof rule.datapoint_id === 'string' ? rule.datapoint_id.trim() : '';
+  if (!dp) return null;
+  const op = rule.op;
+  if (typeof op !== 'string' || !(VISIBILITY_OPS as readonly string[]).includes(op)) return null;
+  if (!NEEDS_THRESHOLD.has(op)) return { datapoint_id: dp, op: op as VisibilityOp };
+
+  const value = rule.value;
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const num = toNum(value);
+  return { datapoint_id: dp, op: op as VisibilityOp, value: num === null ? value : num };
+}
+
+/**
+ * Ist die Bedingung erfüllt?
+ *
+ * Ohne Regel: sichtbar. Mit Regel, aber ohne Wert: NICHT sichtbar - eine
+ * Bedingung, die niemand prüfen konnte, ist nicht erfüllt. Sonst blitzte beim
+ * Seitenaufbau genau das Element auf, das die Regel verbergen soll.
+ */
+export function evaluateVisibility(rule: VisibilityRule | null, value: unknown): boolean {
+  if (!rule) return true;
+  if (value === null || value === undefined) return false;
+
+  if (rule.op === 'truthy') return toBool(value) === true;
+  if (rule.op === 'falsy') return toBool(value) === false;
+
+  const links = toNum(value);
+  const rechts = toNum(rule.value);
+  if (links === null || rechts === null) {
+    // Nicht-numerisch: nur Gleichheit ist sinnvoll, und die als Text.
+    if (rule.op === 'eq') return String(value) === String(rule.value);
+    if (rule.op === 'ne') return String(value) !== String(rule.value);
+    return false;
+  }
+  switch (rule.op) {
+    case 'eq':
+      return links === rechts;
+    case 'ne':
+      return links !== rechts;
+    case 'lt':
+      return links < rechts;
+    case 'lte':
+      return links <= rechts;
+    case 'gt':
+      return links > rechts;
+    case 'gte':
+      return links >= rechts;
+    default:
+      return true;
+  }
+}
+
+/** Ist dieses Widget bei diesem Wertestand sichtbar? */
+export function isWidgetVisible(
+  w: ObsWidget,
+  values: ReadonlyMap<string, unknown> = new Map(),
+): boolean {
+  const rule = readVisibilityRule(w);
+  if (!rule) return true;
+  return evaluateVisibility(rule, values.get(rule.datapoint_id));
+}
+
+/**
+ * Jeder Regel-Datenpunkt mit der Seite, auf der er gelesen wird - der Lesesatz,
+ * den eine Datenquelle ZUSÄTZLICH zu den Gerätebindungen braucht.
+ *
+ * Ohne ihn wäre die Regel eine Falle: das verborgene Element ist kein Gerät,
+ * also liest niemand seinen Datenpunkt, also bleibt der Wert unbekannt, also
+ * bleibt das Element verborgen. Der Datenpunkt gehört zur SEITE, nicht zum
+ * Gerät - deshalb reist die Seiten-Id mit (`X-Page-Id`, seitenbezogene
+ * Autorisierung). Reihenfolge: Baum-, dann Widget-Reihenfolge; jede Paarung
+ * genau einmal.
+ */
+export function visibilityReads(
+  nodes: readonly ObsVisuNode[],
+): Array<{ pageId: string; dp: string }> {
+  const out: Array<{ pageId: string; dp: string }> = [];
+  const gesehen = new Set<string>();
+  for (const node of nodes) {
+    if (node.type !== 'PAGE') continue;
+    for (const w of node.page_config?.widgets ?? []) {
+      const rule = readVisibilityRule(w);
+      if (!rule) continue;
+      const key = `${node.id} ${rule.datapoint_id}`;
+      if (gesehen.has(key)) continue;
+      gesehen.add(key);
+      out.push({ pageId: node.id, dp: rule.datapoint_id });
+    }
+  }
+  return out;
+}
+
 /**
  * Map one server widget to a contract device + binding + write targets, applying
  * any already-known datapoint values. Returns null for widgets without a core
@@ -446,10 +613,26 @@ function readLink(w: ObsWidget): PageLink | undefined {
   return indicator ? { targetNodeId: target, activeIndicator: indicator } : { targetNodeId: target };
 }
 
+/** Steuerung der Übersetzung; additiv, alle Vorgaben = das bisherige Verhalten. */
+export interface MapOptions {
+  /**
+   * Die Sichtbarkeitsregel (E16) NICHT anwenden - jedes Element wird übersetzt,
+   * auch das gerade verborgene.
+   *
+   * Genau EIN Aufrufer braucht das, und zwar zwingend: die Datenquelle, wenn sie
+   * ihren LESESATZ zusammenstellt. Sähe sie nur die sichtbaren Elemente, fehlten
+   * ihr die Datenpunkte der verborgenen, und ein Element, das die Regel einmal
+   * ausgeblendet hat, käme nie wieder zurück. Was GERENDERT wird, entscheidet
+   * dagegen immer der Durchlauf ohne diese Option.
+   */
+  readonly ignoreVisibility?: boolean;
+}
+
 export function mapWidget(
   w: ObsWidget,
   room: string,
   values: ReadonlyMap<string, unknown> = new Map(),
+  opts: MapOptions = {},
 ): MappedWidget | null {
   const kind = obsKind(w);
   let mapped: MappedWidget | null;
@@ -469,6 +652,12 @@ export function mapWidget(
     default:
       return null;
   }
+  // E16: ein Element, dessen Regel nicht erfüllt ist, ist kein Gerät und keine
+  // Ebenen-Position - für die ausgelieferte Visu wie für die Vorschau, weil
+  // beide durch genau diese Funktion gehen. Die Prüfung steht NACH der
+  // Typentscheidung, damit ein Typ ohne Kern-Abbildung (issue #124) weiterhin
+  // keinen einzigen Konfig-Schlüssel liest.
+  if (!opts.ignoreVisibility && !isWidgetVisible(w, values)) return null;
   // Fold in the additive author position (CONTRACT-v1.9) and page link (v1.11);
   // both stay absent when the widget declares none.
   const position = readPosition(w);
@@ -489,12 +678,13 @@ export function mapWidget(
 export function mapTree(
   nodes: readonly ObsVisuNode[],
   values: ReadonlyMap<string, unknown> = new Map(),
+  opts: MapOptions = {},
 ): MappedWidget[] {
   const out: MappedWidget[] = [];
   for (const node of nodes) {
     if (node.type !== 'PAGE' || !node.page_config?.widgets) continue;
     for (const w of node.page_config.widgets) {
-      const mapped = mapWidget(w, node.name, values);
+      const mapped = mapWidget(w, node.name, values, opts);
       // Stamp the owning PAGE id so the transport can address this device's
       // datapoint ops with the right X-Page-Id / session token / access.
       if (mapped) out.push({ ...mapped, pageId: node.id });

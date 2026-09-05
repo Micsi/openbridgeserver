@@ -30,6 +30,7 @@ import {
   applyDp,
   mapTree,
   planWrite,
+  visibilityReads,
   type MappedWidget,
   type ObsVisuNode,
 } from '../core/obs/mapping';
@@ -106,16 +107,24 @@ export class PreviewDataSource
     // Die zu lesenden Datenpunkte je SEITE sammeln: der Server autorisiert
     // seitenbezogen, also wird auch seitenbezogen gelesen - wie in der Visu.
     const byPage = new Map<string, Set<string>>();
-    for (const m of mapTree(this.nodes())) {
-      const pageId = m.pageId;
-      if (!pageId) continue;
+    const dpsOf = (pageId: string): Set<string> => {
       let dps = byPage.get(pageId);
       if (!dps) {
         dps = new Set<string>();
         byPage.set(pageId, dps);
       }
-      for (const read of m.binding.reads) dps.add(read.dp);
+      return dps;
+    };
+    // `ignoreVisibility`: der Lesesatz muss auch die gerade VERBORGENEN Elemente
+    // sehen (E16), sonst läse niemand die Werte, mit denen sie wiederkommen.
+    for (const m of mapTree(this.nodes(), new Map(), { ignoreVisibility: true })) {
+      const pageId = m.pageId;
+      if (!pageId) continue;
+      for (const read of m.binding.reads) dpsOf(pageId).add(read.dp);
     }
+    // Und die Datenpunkte der Sichtbarkeitsregeln, die an der Seite hängen statt
+    // an einem Gerät - ohne sie wäre die Regel im Host gar nicht auswertbar.
+    for (const { pageId, dp } of visibilityReads(this.nodes())) dpsOf(pageId).add(dp);
 
     const values = new Map<string, unknown>();
     for (const [pageId, dps] of byPage) {

@@ -288,3 +288,88 @@ describe('preview/PreviewDataSource - der seitenbesitzende Skin bekommt einen Ba
     expect(captured!.currentPageId).toBe('page-wohnen');
   });
 });
+
+/* ------------------------------------------------- bedingte Sichtbarkeit E16 */
+
+/**
+ * Ein Entwurf mit einer Sichtbarkeitsregel. Das geregelte Element haengt an
+ * `dp-regel`, den es SELBST NICHT bindet - der Fall, an dem sich zeigt, ob die
+ * Vorschau den Regel-Datenpunkt ueberhaupt liest.
+ */
+const REGEL_DRAFT: PreviewDraft = {
+  skin: 'edomi',
+  pageId: 'page-regel',
+  nodes: [
+    {
+      id: 'page-regel',
+      parent_id: null,
+      name: 'Regelseite',
+      type: 'PAGE',
+      kind: 'normal',
+      page_config: {
+        widgets: [
+          {
+            id: 'w-frei',
+            name: 'Immer da',
+            type: 'Toggle',
+            datapoint_id: 'dp-frei',
+            status_datapoint_id: null,
+            config: {},
+          },
+          {
+            id: 'w-regel',
+            name: 'Nur ueber 30',
+            type: 'Toggle',
+            datapoint_id: 'dp-geregelt',
+            status_datapoint_id: null,
+            config: { visible_when: { datapoint_id: 'dp-regel', op: 'gt', value: 30 } },
+          },
+        ],
+      },
+    },
+  ],
+};
+
+describe('preview/PreviewDataSource - die Regel wird im Host ausgewertet (E16)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it('liest den Regel-Datenpunkt seitenbezogen mit, auch wenn ihn kein Element bindet', async () => {
+    const backend = makeBackend({ 'dp-frei': true, 'dp-geregelt': true, 'dp-regel': 21.5 });
+    const src = new PreviewDataSource(backend);
+    src.setDraft(REGEL_DRAFT);
+    await src.list();
+
+    expect(backend.reads).toHaveLength(1);
+    expect([...backend.reads[0].ids].sort()).toEqual(['dp-frei', 'dp-geregelt', 'dp-regel']);
+    expect(backend.reads[0].pageId).toBe('page-regel');
+  });
+
+  it('zeigt das geregelte Element erst, wenn sein Wert die Bedingung erfuellt', async () => {
+    const verborgen = new PreviewDataSource(
+      makeBackend({ 'dp-frei': true, 'dp-geregelt': true, 'dp-regel': 21.5 }),
+    );
+    verborgen.setDraft(REGEL_DRAFT);
+    expect((await verborgen.list()).map((d) => d.id)).toEqual(['w-frei']);
+    expect(verborgen.layersFor('page-regel').flatMap((l) => l.items.map((i) => i.id))).toEqual([
+      'w-frei',
+    ]);
+
+    const sichtbar = new PreviewDataSource(
+      makeBackend({ 'dp-frei': true, 'dp-geregelt': true, 'dp-regel': 42 }),
+    );
+    sichtbar.setDraft(REGEL_DRAFT);
+    expect((await sichtbar.list()).map((d) => d.id)).toEqual(['w-frei', 'w-regel']);
+    expect(sichtbar.layersFor('page-regel').flatMap((l) => l.items.map((i) => i.id))).toEqual([
+      'w-frei',
+      'w-regel',
+    ]);
+  });
+
+  it('haelt es verborgen, solange das Backend den Wert nicht hergibt', async () => {
+    const src = new PreviewDataSource(makeBackend({ 'dp-frei': true, 'dp-geregelt': true }));
+    src.setDraft(REGEL_DRAFT);
+    expect((await src.list()).map((d) => d.id)).toEqual(['w-frei']);
+  });
+});

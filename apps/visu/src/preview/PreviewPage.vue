@@ -178,9 +178,18 @@ const receiver = createPreviewReceiver({
   },
 });
 
-/** Wie viele Widgets der Entwurf traegt - reine Rueckmeldung an den Editor. */
-function widgetCount(d: PreviewDraft): number {
-  return d.nodes.reduce((sum, n) => sum + (n.page_config?.widgets?.length ?? 0), 0);
+/**
+ * Wie viele Widgets der Host aus dem Entwurf WIRKLICH gerendert hat - reine
+ * Rueckmeldung an den Editor („N Widgets gerendert").
+ *
+ * Gezaehlt wird die Antwort des Hosts (die Geraete im Store), nicht der Entwurf:
+ * ein Element, dessen Sichtbarkeitsregel gerade nicht erfuellt ist (E16), steht
+ * im Entwurf, wird aber nicht gerendert - und ein Typ ohne Kern-Abbildung
+ * (issue #124) ebenso wenig. Die Zahl ueber den Entwurf zu bilden hiesse, dem
+ * Autor eine Kachel zu melden, die er nicht sieht.
+ */
+function widgetCount(): number {
+  return devices.value.length;
 }
 
 /**
@@ -202,7 +211,7 @@ async function applyDraft(d: PreviewDraft): Promise<void> {
   draft.value = d;
   state.value = 'ready';
   await nextTick();
-  receiver.applied({ pageId: d.pageId, widgetCount: widgetCount(d) });
+  receiver.applied({ pageId: d.pageId, widgetCount: widgetCount() });
 }
 
 /** Der Boden: die Geraete des Entwurfs, nach Seite gruppiert (wie im Live-Fall). */

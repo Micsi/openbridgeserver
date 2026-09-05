@@ -17,11 +17,16 @@ const routes = [
   { path: '/logic',                name: 'Logic',      component: () => import('@/views/LogicView.vue')      },
   // Visu-Editor (M5 C4, Issue #171) — admin-pflichtig, siehe visuEditorGuard.
   { path: VISU_EDITOR_ROUTE,       name: 'VisuEditor', component: () => import('@/views/VisuEditorView.vue'), meta: { admin: true } },
-  // Deep-Link auf EINE Seite (M5 C1, Issue #168). Eigener Eintrag statt eines
-  // optionalen Parameters: derselbe Bereich, dieselbe Wache, aber die Adresse
-  // sagt, welche Seite der Editor zeigt (`apps/visu/e2e` faehrt genau so hin).
+  // Deep-Link auf EINE Seite (M5 C1 Issue #168, C3 Issue #170): der Editor
+  // bearbeitet genau EINE Seite, und die Adresse darauf soll teilbar sein
+  // (`apps/visu/e2e/m5-editor-matrix.spec.ts` faehrt genau so hin).
+  //
+  // ZWEI EINTRAEGE statt eines optionalen Parameters: derselbe Bereich, dieselbe
+  // Wache, aber der Name sagt, ob eine Seite gemeint ist. Der Bereich bleibt
+  // damit auch OHNE Seite erreichbar - die Ansicht sagt dann, was fehlt
+  // (`visu-editor-no-page`).
   { path: `${VISU_EDITOR_ROUTE}/:pageId`, name: 'VisuEditorPage', component: () => import('@/views/VisuEditorView.vue'), meta: { admin: true } },
-{ path: '/:pathMatch(.*)*',      redirect: '/' },
+  { path: '/:pathMatch(.*)*',      redirect: '/' },
 ]
 
 const router = createRouter({

@@ -1,19 +1,47 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { setActivePinia, createPinia } from 'pinia';
 import type { BlindDevice, Device, JalousieDevice, LightDevice, SwitchDevice } from '@obs/visu-contract';
 import { ObsClient, WsHandle, type WsLike } from './client';
 import { ObsDataSource, obsDataSourceFromEnv } from './obs-datasource';
-import type { DevicePatch } from '../datasource';
+import { MockDataSource, type DevicePatch } from '../datasource';
+import { useDeviceStore } from '../store';
 import type { ObsVisuNode } from './mapping';
+
+/** Eine Runde Ereignisschleife: der Wirt laedt auf die Meldung hin async neu. */
+const ruheR4 = async (): Promise<void> => {
+  for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0));
+};
 
 /* ------------------------------------------------------------ test doubles */
 
-/** A controllable fake WebSocket matching the WsLike surface. */
+/**
+ * A controllable fake WebSocket matching the WsLike surface - und zwar mit dem
+ * ZUSTAND einer echten Verbindung: `CONNECTING` -> `OPEN` -> `CLOSED`.
+ *
+ * Das ist kein Beiwerk. Ein Doppel, das sofort offen ist und beim Senden nie
+ * wirft, ist genau an der Naht reibungsfrei, an der die Wirklichkeit bricht:
+ * der Browser wirft bei `send()` vor dem Oeffnen
+ * `InvalidStateError: Failed to execute 'send' on 'WebSocket': Still in
+ * CONNECTING state.` (WHATWG-WebSocket, `send`, Schritt 1) - und dieser Wurf
+ * riss bis M5 C3 R4 den ganzen `init`-Weg des Wirts mit sich, sodass fuer jeden
+ * ANGEMELDETEN Benutzer keine Sichtbarkeitsmeldung mehr ankam. Nach demselben
+ * Absatz ist `send()` auf `CLOSING`/`CLOSED` dagegen still - kein Wurf, die
+ * Daten fallen weg. Beides wird hier nachgebildet, sonst waere das Doppel
+ * freundlicher als die Wirklichkeit.
+ */
 class FakeWs implements WsLike {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+
   onopen: (() => void) | null = null;
   onclose: ((ev: { code?: number }) => void) | null = null;
   onerror: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
   readonly sent: string[] = [];
+  /** Was in den Aufbau hinein gesendet WERDEN sollte (nur zur Diagnose). */
+  readonly refused: string[] = [];
+  readyState: number = FakeWs.CONNECTING;
   static last: FakeWs | null = null;
   static instances: FakeWs[] = [];
 
@@ -26,13 +54,27 @@ class FakeWs implements WsLike {
   }
 
   send(data: string): void {
+    if (this.readyState === FakeWs.CONNECTING) {
+      this.refused.push(data);
+      const err = new Error("Failed to execute 'send' on 'WebSocket': Still in CONNECTING state.");
+      err.name = 'InvalidStateError';
+      throw err;
+    }
+    // CLOSING/CLOSED: die Norm schweigt hier, sie wirft nicht.
+    if (this.readyState !== FakeWs.OPEN) {
+      this.refused.push(data);
+      return;
+    }
     this.sent.push(data);
   }
   close(): void {
+    if (this.readyState === FakeWs.CLOSED) return;
+    this.readyState = FakeWs.CLOSED;
     this.onclose?.({ code: 1000 });
   }
   /** Drive an open so the subscribe-on-open path runs. */
   open(): void {
+    this.readyState = FakeWs.OPEN;
     this.onopen?.();
   }
   /** Deliver a server value-event. */
@@ -41,6 +83,8 @@ class FakeWs implements WsLike {
   }
   /** Close with a specific code (e.g. 4001 = auth rejected). */
   closeWith(code: number): void {
+    if (this.readyState === FakeWs.CLOSED) return;
+    this.readyState = FakeWs.CLOSED;
     this.onclose?.({ code });
   }
 }
@@ -1051,5 +1095,314 @@ describe('ObsDataSource — summary tree: per-page page_config fetch (GET /visu/
 
     // The concealed page (404, no page_config) contributes no layer.
     expect(ds.layersFor('p-prot')).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------- bedingte Sichtbarkeit E16 */
+
+/**
+ * Ein Baum mit einer Sichtbarkeitsregel: die Kachel `hidden-1` haengt an
+ * `dp-regel`, den sie SELBST NICHT bindet. Genau dieser Fall ist die Probe aufs
+ * Exempel - die Datenquelle muss den Regel-Datenpunkt trotzdem lesen, sonst
+ * bliebe die Kachel fuer immer verborgen.
+ */
+const REGEL_TREE: ObsVisuNode[] = [
+  {
+    id: 'pv',
+    parent_id: null,
+    name: 'Regelseite',
+    type: 'PAGE',
+    access: null,
+    page_config: {
+      widgets: [
+        {
+          id: 'always-1',
+          name: 'Immer da',
+          type: 'Toggle',
+          datapoint_id: 'tg',
+          status_datapoint_id: null,
+          config: {},
+        },
+        {
+          id: 'hidden-1',
+          name: 'Nur ueber 30',
+          type: 'Toggle',
+          datapoint_id: 'tg2',
+          status_datapoint_id: null,
+          config: { visible_when: { datapoint_id: 'dp-regel', op: 'gt', value: 30 } },
+        },
+      ],
+    },
+  },
+];
+
+describe('ObsDataSource - die Sichtbarkeitsregel wirkt in der ausgelieferten Visu (E16)', () => {
+  it('laesst ein Element mit unerfuellter Regel aus Geraeten UND Ebenen heraus', async () => {
+    const { fetchImpl, valueReads } = makeFetch({}, REGEL_TREE, { tg: true, tg2: true, 'dp-regel': 21.5 });
+    const { ds } = makeSource(fetchImpl);
+    const devices = await ds.list();
+
+    expect(devices.map((d) => d.id)).toEqual(['always-1']);
+    expect(ds.layersFor('pv').flatMap((l) => l.items.map((i) => i.id))).toEqual(['always-1']);
+
+    // Der Regel-Datenpunkt wurde gelesen, seitenbezogen wie jeder andere - auch
+    // wenn ihn kein Geraet bindet. Ohne das koennte die Regel nie umschlagen.
+    expect(valueReads.find((r) => r.id === 'dp-regel')).toEqual({
+      id: 'dp-regel',
+      pageId: 'pv',
+      token: undefined,
+    });
+  });
+
+  it('zeigt dasselbe Element, sobald der Wert die Bedingung erfuellt', async () => {
+    const { fetchImpl, valueReads } = makeFetch({}, REGEL_TREE, { tg: true, tg2: true, 'dp-regel': 42 });
+    const { ds } = makeSource(fetchImpl);
+    const devices = await ds.list();
+
+    expect(devices.map((d) => d.id)).toEqual(['always-1', 'hidden-1']);
+    expect(ds.layersFor('pv').flatMap((l) => l.items.map((i) => i.id))).toEqual([
+      'always-1',
+      'hidden-1',
+    ]);
+    // Und es kommt MIT seinem Wert zurueck, nicht als leere Huelse: der
+    // Lesesatz wurde sichtbarkeitsblind gesammelt, also stand `tg2` darin,
+    // bevor irgendeine Regel etwas ausgeblendet hat.
+    expect(valueReads.map((r) => r.id).sort()).toEqual(['dp-regel', 'tg', 'tg2']);
+    expect((byId(devices, 'hidden-1') as SwitchDevice).on).toBe(true);
+  });
+
+  it('liest die Datenpunkte des verborgenen Elements trotzdem mit', async () => {
+    // Sonst kaeme es beim Umschlagen der Regel zwar wieder, aber ohne Wert -
+    // eine Kachel, die faelschlich AUS zeigt, bis der naechste Aufbau laeuft.
+    const { fetchImpl, valueReads } = makeFetch({}, REGEL_TREE, { tg: true, tg2: true, 'dp-regel': 21.5 });
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+    expect(valueReads.map((r) => r.id).sort()).toEqual(['dp-regel', 'tg', 'tg2']);
+  });
+
+  it('haelt es verborgen, solange der Wert unbekannt ist (kein Aufblitzen)', async () => {
+    const { fetchImpl } = makeFetch({ concealRead: ['dp-regel'] }, REGEL_TREE, { tg: true, tg2: true });
+    const { ds } = makeSource(fetchImpl);
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1']);
+  });
+});
+
+/* ------------------------------------------- E16 LIVE: ohne Neuladen (R3) */
+
+/**
+ * Die Zeile **E16** verlangt „Element bedingt sichtbar oder unsichtbar JE NACH
+ * DATENPUNKTWERT" - ein laufender Zustand, kein Ladezustand. Bis Runde 2 wertete
+ * die ausgelieferte Visu die Regel nur beim Aufbau aus: ein verborgenes Element
+ * kam nie zurueck, ein sichtbares verschwand nie. Diese Proben halten beide
+ * Richtungen fest, und zwar OHNE ein zweites `list()` von aussen.
+ *
+ * Der Kern: ein Geraete-Patch kann eine Sichtbarkeit nicht ausdruecken. Er traegt
+ * FELDER eines Geraets; hier aendert sich die ZUGEHOERIGKEIT - ein verborgenes
+ * Element ist gar kein Geraet. Die Quelle meldet deshalb den Umschwung
+ * ({@link ObsDataSource.onVisibilityChange}), der Wirt laedt neu.
+ */
+describe('ObsDataSource - E16 wirkt live: erscheinen UND verschwinden ohne Neuladen', () => {
+  it('meldet den Umschwung, sobald der Regel-Datenpunkt die Bedingung kreuzt', async () => {
+    vi.useFakeTimers();
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl, valueReads } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1']);
+
+    const umschwung: string[] = [];
+    const unsubV = ds.onVisibilityChange(() => umschwung.push('!'));
+    const unsub = ds.subscribe(() => {});
+
+    // Erste Runde: nichts hat sich bewegt, also auch kein Umschwung.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(umschwung).toEqual([]);
+    valueReads.length = 0;
+
+    // ERSCHEINEN: 21.5 -> 42 erfuellt `gt 30`. Ohne Neuladen. Und der
+    // Regel-Datenpunkt steht im LAUFENDEN Lesesatz - kein Geraet bindet ihn,
+    // stuende er nur im Aufbau-Lesesatz, faellt sein Umschwung nie auf.
+    werte['dp-regel'] = 42;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(valueReads.some((r) => r.id === 'dp-regel')).toBe(true);
+    expect(umschwung.length).toBe(1);
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1', 'hidden-1']);
+
+    // VERSCHWINDEN: 42 -> 21.5. Ebenfalls ohne Neuladen, und die Gegenrichtung
+    // ist die Haelfte, die Runde 2 gefehlt hat.
+    werte['dp-regel'] = 21.5;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(umschwung.length).toBe(2);
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1']);
+
+    unsub();
+    unsubV();
+    vi.useRealTimers();
+  });
+
+  it('schweigt, wenn der Wert sich bewegt, die Regel aber gleich urteilt', async () => {
+    vi.useFakeTimers();
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 42 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+    expect((await ds.list()).map((d) => d.id)).toEqual(['always-1', 'hidden-1']);
+
+    const umschwung: string[] = [];
+    const unsubV = ds.onVisibilityChange(() => umschwung.push('!'));
+    const unsub = ds.subscribe(() => {});
+
+    // 42 -> 50: beide erfuellen `gt 30`. Ein Neuaufbau waere hier reine Unruhe.
+    werte['dp-regel'] = 50;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(umschwung).toEqual([]);
+
+    unsub();
+    unsubV();
+    vi.useRealTimers();
+  });
+
+  it('haelt den Regel-Datenpunkt auch im angemeldeten Live-Feed (WS) abonniert', async () => {
+    vi.useFakeTimers();
+    stubStorage('jwt-abc');
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    const umschwung: string[] = [];
+    ds.onVisibilityChange(() => umschwung.push('!'));
+    ds.subscribe(() => {});
+    const ws = FakeWs.last!;
+    ws.open();
+    const sub = ws.sent.map((s) => JSON.parse(s)).find((m) => m.action === 'subscribe');
+    // Beide Live-Wege muessen den Regel-Datenpunkt sehen, nicht nur der Gast-Takt.
+    expect(sub.ids).toEqual(expect.arrayContaining(['dp-regel']));
+
+    ws.emit({ id: 'dp-regel', v: 42, u: null, t: null, q: 'good' });
+    expect(umschwung.length).toBe(1);
+
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('meldet den Umschwung genau einmal, bis der Wirt neu geladen hat', async () => {
+    vi.useFakeTimers();
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    const umschwung: string[] = [];
+    const unsubV = ds.onVisibilityChange(() => umschwung.push('!'));
+    const unsub = ds.subscribe(() => {});
+
+    werte['dp-regel'] = 42;
+    await vi.advanceTimersByTimeAsync(4000);
+    werte['dp-regel'] = 43;
+    await vi.advanceTimersByTimeAsync(4000);
+    // Zwei Runden, ein Umschwung: sonst startete jede Runde einen neuen
+    // Neuaufbau, waehrend der vorige noch laeuft.
+    expect(umschwung.length).toBe(1);
+
+    await ds.list();
+    werte['dp-regel'] = 10;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(umschwung.length).toBe(2);
+
+    unsub();
+    unsubV();
+    vi.useRealTimers();
+  });
+});
+
+/* ------------------------- R4: der angemeldete Weg ueberlebt den Aufbau ---- */
+
+/**
+ * Die Naht, an der E16 fuer jeden ANGEMELDETEN Benutzer starb: der Wirt meldet
+ * in `store.init` erst den alten Hoerer ab, ruft dann `source.subscribe(...)`
+ * und registriert DANACH die Sichtbarkeitsmeldung. Beim Angemeldeten oeffnete
+ * `subscribe` den WebSocket und sendete das Abo SOFORT hinterher - in eine
+ * Verbindung, die noch im Aufbau steht. Der Browser wirft dort
+ * `InvalidStateError`, `init` brach ab, und die Registrierung wurde nie
+ * erreicht: „UMSCHWUNG gemeldet an 0 Hoerer".
+ *
+ * Gemessen wird das hier mit einem Doppel, das den Zustand einer echten
+ * Verbindung fuehrt (siehe {@link FakeWs}) - vorher konnte keine Probe das
+ * sehen, weil das alte Doppel beim Senden nie warf.
+ */
+describe('ObsDataSource - abonnieren, ohne in den Verbindungsaufbau zu senden (R4)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sendet das Abo erst, wenn die Verbindung offen ist - und dann vollstaendig', async () => {
+    stubStorage('jwt-abc');
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+    await ds.list();
+
+    const umschwung: string[] = [];
+    const unsubV = ds.onVisibilityChange(() => umschwung.push('!'));
+
+    // Der Socket steht hier auf CONNECTING. Bis R4 warf dieser Aufruf.
+    let unsub: () => void = () => {};
+    expect(() => {
+      unsub = ds.subscribe(() => {});
+    }).not.toThrow();
+
+    const ws = FakeWs.last!;
+    expect(ws.readyState).toBe(FakeWs.CONNECTING);
+    expect(ws.sent).toEqual([]); // nichts in den Aufbau hinein
+
+    // Offen: jetzt geht das GESAMTE gepufferte Abo raus, samt Regel-Datenpunkt.
+    ws.open();
+    const sub = ws.sent.map((s) => JSON.parse(s)).find((m) => m.action === 'subscribe');
+    // `tg2` fehlt hier zu Recht: `hidden-1` ist bei 21.5 verborgen, sein
+    // Datenpunkt bindet also gerade kein Geraet. Der REGEL-Datenpunkt muss
+    // trotzdem drin sein - sonst faellt sein Umschwung nie auf.
+    expect(sub.ids).toEqual(expect.arrayContaining(['dp-regel', 'tg']));
+
+    // Und der Umschwung kommt an, statt an 0 Hoerer zu gehen.
+    ws.emit({ id: 'dp-regel', v: 42, u: null, t: null, q: 'good' });
+    expect(umschwung.length).toBe(1);
+
+    unsub();
+    unsubV();
+  });
+
+  it('der angemeldete WIRT blendet auf den Wertwechsel hin ein - ohne Neuladen', async () => {
+    setActivePinia(createPinia());
+    stubStorage('jwt-abc');
+    const werte: Record<string, unknown> = { tg: true, tg2: true, 'dp-regel': 21.5 };
+    const { fetchImpl } = makeFetch({}, REGEL_TREE, werte);
+    const { ds } = makeSource(fetchImpl);
+
+    const store = useDeviceStore();
+    // Genau der Weg, den die Anmeldung nimmt: `init` mit der obs-Quelle.
+    await store.init(ds);
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['always-1']);
+    expect(store.authenticated).toBe(true);
+
+    const ws = FakeWs.last!;
+    ws.open();
+    werte['dp-regel'] = 42;
+    ws.emit({ id: 'dp-regel', v: 42, u: null, t: null, q: 'good' });
+    await ruheR4();
+
+    // ERSCHEINEN, allein auf den Live-Wert hin - kein zweites `list()` von
+    // aussen, keine Navigation, kein Neuladen.
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['always-1', 'hidden-1']);
+
+    // VERSCHWINDEN: derselbe Weg zurueck, ueber den neu geoeffneten Socket.
+    const ws2 = FakeWs.last!;
+    expect(ws2).not.toBe(ws);
+    ws2.open();
+    werte['dp-regel'] = 21.5;
+    ws2.emit({ id: 'dp-regel', v: 21.5, u: null, t: null, q: 'good' });
+    await ruheR4();
+    expect(store.devices.map((d: Device) => d.id)).toEqual(['always-1']);
+
+    await store.init(new MockDataSource()); // Quelle abhaengen, Socket schliessen
   });
 });

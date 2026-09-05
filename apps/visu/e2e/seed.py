@@ -112,6 +112,28 @@ M5_PAGES: dict[str, dict[str, Any]] = {
 # Ein Ordner (LOCATION) — Signal „400 Knoten ist keine Seite" (§2.1).
 M5_LOCATION_NAME = "M5 Ordner"
 
+# WO die Datenpunkt-Id einer Kachel steht - genau dort, wo die Abbildung der Visu
+# sie liest (`apps/visu/src/core/obs/mapping.ts`).
+WIDGET_DP_SLOT: dict[str, str] = {
+    # Toggle: `datapoint_id` schreibt, `status_datapoint_id` liest (mapSwitch).
+    "Toggle": "datapoint_id",
+    # Rolladen ohne `mode: jalousie` = Vertragstyp `blind`; gelesen wird
+    # `config.dp_position_status ?? config.dp_position` (mapBlind).
+    "Rolladen": "config.dp_position_status",
+}
+
+# Abweichungen vom Standardtyp „Toggle". Vorgabe bleibt der Schalter: sein
+# einziger Wert ist EIN/AUS, und das reicht für R9-R15 und die Popup-Szenarien.
+#
+# `M5 Solo` trägt bewusst einen ROLLADEN, weil Szenario **E11** verlangt, dass
+# der Live-Wert des Seeds (21.5) in der Editor-Vorschau ERSCHEINT. An einem
+# Toggle ist das unerfüllbar: `mapSwitch` kennt nur `on` (boolean), `toBool(21.5)`
+# ist schlicht `true`, und kein Servertyp bildet auf `sensor` ab (#124) - die
+# Zeile wäre eine Erwartung ohne Kachel, die sie zeigen könnte. Die
+# Rollladen-Kachel zeigt ihre Position als Zahl samt Einheit, also genau die 21.5
+# des Seeds; die Erwartung des Szenarios bleibt damit unverändert stehen.
+M5_WIDGET_TYPES: dict[str, str] = {"solo": "Rolladen"}
+
 # Wer inkludiert wen (R13/R14/R15). Zielseiten müssen vorher existieren.
 M5_INCLUDES: dict[str, list[str]] = {
     "home": ["include_ind"],
@@ -359,27 +381,32 @@ def main() -> int:
             page_id: str,
             dps: list[tuple[str, str]],
             *,
+            widget_type: str = "Toggle",
             links: list[tuple[str, str, str]] | None = None,
             includes: list[str] | None = None,
             ignore_global_includes: bool = False,
             popup: dict[str, Any] | None = None,
         ) -> None:
-            # "Toggle" so the Visu's obs mapper (obsKind) actually renders the
-            # widget as a switch tile — ValueDisplay/Chart/... are deliberately
-            # skipped by the mapper (issue #124). Its read+write datapoint is
-            # `datapoint_id`, which the mapper reads.
+            # Ein Servertyp, den der Mapper der Visu (obsKind) wirklich
+            # übersetzt - ValueDisplay/Chart/... überspringt er bewusst
+            # (issue #124). WO die Datenpunkt-Id steht, hängt am Typ: der Toggle
+            # liest sie an der Wurzel, der Rolladen aus der Konfig
+            # (siehe WIDGET_DP_SLOT), und der Seed schreibt sie genau dorthin.
+            slot = WIDGET_DP_SLOT[widget_type]
             widgets = [
                 {
                     "id": str(uuid.uuid4()),
                     "name": wname,
-                    "type": "Toggle",
-                    "datapoint_id": dp_id,
+                    "type": widget_type,
+                    "datapoint_id": dp_id if slot == "datapoint_id" else None,
                     "status_datapoint_id": None,
                     "x": 0,
                     "y": i * 2,
                     "w": 3,
                     "h": 2,
-                    "config": {},
+                    "config": (
+                        {} if slot == "datapoint_id" else {slot[len("config.") :]: dp_id}
+                    ),
                 }
                 for i, (wname, dp_id) in enumerate(dps)
             ]
@@ -525,6 +552,7 @@ def main() -> int:
             put_page(
                 m5_node[key],
                 [(spec["widget"], m5_dp[key])],
+                widget_type=M5_WIDGET_TYPES.get(key, "Toggle"),
                 links=[(wname, m5_dp[target], m5_node[target]) for wname, target in M5_LINKS.get(key, [])],
                 includes=[m5_node[target] for target in M5_INCLUDES.get(key, [])],
                 ignore_global_includes=key in M5_IGNORE_GLOBAL,
@@ -560,6 +588,23 @@ def main() -> int:
                 for field, value in want_popup.items():
                     if got_popup[field] != value:
                         die(f"verify page {spec['name']}: popup.{field} {got_popup[field]!r} != {value!r}")
+            # Die Kachel der Seite trägt ihren Datenpunkt DORT, wo die Abbildung
+            # der Visu ihn liest. Ohne diese Zeile fiele erst in Szenario E11
+            # auf, dass eine Kachel zwar existiert, aber nichts anzeigt.
+            want_type = M5_WIDGET_TYPES.get(key, "Toggle")
+            slot = WIDGET_DP_SLOT[want_type]
+            eigen = next((w for w in body["widgets"] if w["name"] == spec["widget"]), None)
+            if eigen is None:
+                die(f"verify page {spec['name']}: widget {spec['widget']!r} fehlt")
+            if eigen["type"] != want_type:
+                die(f"verify page {spec['name']}: type {eigen['type']!r} != {want_type!r}")
+            gebunden = (
+                eigen["datapoint_id"]
+                if slot == "datapoint_id"
+                else eigen["config"].get(slot[len("config.") :])
+            )
+            if gebunden != m5_dp[key]:
+                die(f"verify page {spec['name']}: {slot} {gebunden!r} != {m5_dp[key]!r}")
 
     fixture = {
         "base": BASE,

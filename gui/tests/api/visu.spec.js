@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+/**
+ * Die Backend-Naht des V2-Editors (M5 C1 Issue #168, C3 Issue #170).
+ *
+ * Kein neuer Endpunkt: der Editor benutzt genau die Wege, die
+ * `obs/api/v1/visu.py` seit jeher anbietet. Gepinnt werden die PFADE und die
+ * Nutzlasten, weil sie die Naht zum Backend sind: sie stehen so in
+ * `obs/api/v1/visu.py` (`@router.get("/tree")`, `/nodes/{node_id}`,
+ * `/pages/{node_id}`, `@router.put("/pages/{node_id}")`) und haengen unter dem
+ * `/api/v1`-Praefix des gemeinsamen Clients. Ein Tippfehler hier waere im Editor
+ * ein leerer Baum, im Test aber sonst unsichtbar - und eine verrutschte URL
+ * faellt hier auf, nicht erst im E2E gegen den echten Server.
+ */
+
 let api
 
 beforeEach(() => {
@@ -18,13 +31,6 @@ afterEach(() => {
   vi.doUnmock('@/api/client')
 })
 
-/**
- * Die Backend-Naht des V2-Editors (M5 C1, Issue #168).
- *
- * Kein neuer Endpunkt: der Editor benutzt genau die Wege, die `obs/api/v1/visu.py`
- * seit jeher anbietet. Diese Spec haelt die Adressen und die Nutzlasten fest -
- * eine verrutschte URL faellt hier auf, nicht erst im E2E gegen den echten Server.
- */
 describe('visuApi', () => {
   it('bindet Baum, Knoten und Seiten an ihre Adressen', async () => {
     const { visuApi } = await import('@/api/visu')
@@ -53,12 +59,50 @@ describe('visuApi', () => {
     expect(api.get).toHaveBeenNthCalledWith(4, '/auth/users')
   })
 
+  it('liest Baum, Knoten und Seiten unter den Pfaden des Backends', async () => {
+    const { visuApi } = await import('@/api/visu')
+    await visuApi.tree()
+    await visuApi.node('n1')
+    await visuApi.page('n1')
+    expect(api.get.mock.calls.map((call) => call[0])).toEqual([
+      '/visu/tree',
+      '/visu/nodes/n1',
+      '/visu/pages/n1',
+    ])
+  })
+
+  it('schreibt die Seiten-Konfiguration per PUT auf dieselbe Seiten-Adresse', async () => {
+    const { visuApi } = await import('@/api/visu')
+    const config = { widgets: [], includes: [], ignore_global_includes: false, popup: null }
+    await visuApi.savePage('n1', config)
+    expect(api.put).toHaveBeenCalledWith('/visu/pages/n1', config)
+  })
+
+  /**
+   * `page` und `getPage` sind ZWEI NAMEN FUER EINEN AUFRUF (C1 nennt ihn
+   * `getPage`, C3 `page`). Driften sie auseinander, laesen Editor-Store und
+   * Entwurfs-Composable die Seite unter verschiedenen Adressen - und die
+   * Vorschau zeigte etwas anderes als das Eigenschaftsformular.
+   */
+  it('liest die Seite unter beiden Namen an derselben Adresse', async () => {
+    const { visuApi } = await import('@/api/visu')
+    await visuApi.getPage('seite/1')
+    await visuApi.page('seite/1')
+    expect(api.get.mock.calls.map((call) => call[0])).toEqual([
+      '/visu/pages/seite%2F1',
+      '/visu/pages/seite%2F1',
+    ])
+  })
+
   it('haelt kein Token in einer URL oder einer Query', async () => {
     const { visuApi } = await import('@/api/visu')
     await visuApi.tree()
     await visuApi.getPage('seite-1')
+    await visuApi.page('seite-1')
+    await visuApi.node('seite-1')
     for (const call of [...api.get.mock.calls, ...api.put.mock.calls, ...api.post.mock.calls]) {
       expect(String(call[0])).not.toMatch(/token|bearer|\?/i)
+      expect(JSON.stringify(call)).not.toContain('token')
     }
   })
 })

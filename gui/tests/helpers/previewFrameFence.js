@@ -82,10 +82,11 @@ export const zeile = (el) =>
  * und diese Liste wird bewusst nachgezogen.
  */
 export const GEPINNTE_KLASSEN = [
-  // der Rahmen selbst
-  // `editor-preview` ist die Marke, an der der Playwright-Harness die Vorschau
-  // sucht (`iframe.editor-preview`, Messlatte E3/E19). Sie traegt bewusst KEINE
-  // Regel in einem Blatt der GUI - der Blattscan unten wuerde sie sonst melden.
+  // der Rahmen selbst. `editor-preview` ist eine reine MARKE ohne eigenes Blatt:
+  // an ihr sucht der Playwright-Harness die Vorschau (`iframe.editor-preview`,
+  // `apps/visu/e2e/m5-editor-matrix.spec.ts` - Messlatten E3/E19 aus Teil C1,
+  // E10/E11/E16 aus Teil C3). Dass sie stilfrei bleibt, haelt der Blattscan
+  // weiter unten: eine Regel darauf faellt dort.
   'editor-preview',
   'w-full',
   'h-[70vh]',

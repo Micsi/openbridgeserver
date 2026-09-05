@@ -45,6 +45,7 @@ import {
   supportsLinks,
   supportsPageAuth,
   supportsPositions,
+  supportsVisibilityLive,
 } from './datasource';
 import { firstNormalPageId, supportsLayering, type HostNavNode } from './obs/compose';
 import { resolveLink, type LinkOutcome } from './links';
@@ -69,6 +70,8 @@ export const useDeviceStore = defineStore('devices', () => {
   /** Active data source + its unsubscribe handle. */
   let source: DataSource = new MockDataSource();
   let unsubscribe: (() => void) | null = null;
+  /** Abmelder der Sichtbarkeits-Meldung (E16), oder null fuer eine Quelle ohne sie. */
+  let unsubscribeVisibility: (() => void) | null = null;
 
   /** Devices in source order (read-only view). */
   const devices = ref<Device[]>([]);
@@ -182,7 +185,16 @@ export const useDeviceStore = defineStore('devices', () => {
    * a second call swaps the source and re-subscribes.
    */
   async function init(ds: DataSource = new MockDataSource()): Promise<void> {
-    if (unsubscribe) unsubscribe();
+    if (unsubscribe) {
+      unsubscribe();
+      // Erst loesen, dann neu binden: wirft der Aufbau dazwischen, darf hier
+      // keine Abmeldung einer bereits abgehaengten Quelle stehenbleiben.
+      unsubscribe = null;
+    }
+    if (unsubscribeVisibility) {
+      unsubscribeVisibility();
+      unsubscribeVisibility = null;
+    }
     source = ds;
     // The mock's floor is the static demo model; any other source brings its own
     // device set (a real tree) → derive the overview floor from those devices.
@@ -194,6 +206,24 @@ export const useDeviceStore = defineStore('devices', () => {
     }
     state.value = map;
     syncList();
+    // E16: die sichtbare MENGE der Quelle ist selbst live - eine
+    // `visible_when`-Regel kann mitten im Betrieb umschlagen. Ein `DevicePatch`
+    // kann das nicht ausdruecken (er traegt Felder, nicht die Zugehoerigkeit),
+    // also laedt der Wirt hier neu - ueber dieselbe `init`-Naht wie nach
+    // Login/Logout/PIN, ohne Navigation und ohne Neuladen der Seite. Die
+    // gezeigte Seite und die offenen Popups bleiben dabei stehen: `refresh`
+    // tauscht den Geraetebestand, nicht den Ort.
+    //
+    // Die Registrierung steht VOR dem Abonnieren, und zwar aus Erfahrung: das
+    // Abonnieren greift auf den Verbindungsaufbau der Quelle zu und kann
+    // stolpern (gemessen beim angemeldeten Benutzer: `send()` in einen Socket
+    // im Aufbau). Stuende sie dahinter, waere E16 nach so einem Stolpern taub -
+    // der alte Hoerer abgemeldet, kein neuer gesetzt.
+    unsubscribeVisibility = supportsVisibilityLive(source)
+      ? source.onVisibilityChange(() => {
+          void refresh();
+        })
+      : null;
     // subscribe trägt echte Rückmeldungen ein (CONTRACT-v1 §6 / MIGRATION §4).
     unsubscribe = source.subscribe((patch: DevicePatch) => {
       merge(patch.id, patch.changes as Partial<Device>);

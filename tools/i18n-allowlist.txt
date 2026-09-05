@@ -60,3 +60,10 @@ Français
 # SchemaForm.vue — defaultPlaceholder() returns a schema default value (e.g. "502", "3.0")
 # from the backend JSON schema, not a hardcoded user-facing string.
 re:^defaultPlaceholder\(
+
+# visuWidgetTypes.js — Programmierfehler-Code, kein Text fuer Nutzer. Ein
+# Widget-Typ ausserhalb der neun Kern-Typen ist ein Aufruffehler im Editor-Code
+# (Goldene Regel 3: laut scheitern statt still ersetzen); die Meldung ist ein
+# maschinenlesbarer Code im Haus-Stil von `clipboard_copy_failed` und erreicht
+# keine Oberflaeche.
+re:^unknown_core_widget_type
