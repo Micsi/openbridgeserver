@@ -3,3 +3,9 @@
 **/coverage/**
 **/.tmp/**
 pnpm-lock.yaml
+
+# Capacitor-generierte native Projekte (M4, Issue #103): Xcode-/Gradle-Gerüst
+# plus die bei jedem `cap sync` aus dist/ gespiegelten Web-Assets. Nichts davon
+# schreiben wir von Hand.
+apps/visu/ios/**
+apps/visu/android/**

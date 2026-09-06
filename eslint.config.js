@@ -17,6 +17,14 @@ export default tseslint.config(
       // CI never runs the browser E2E). Their minified vendor JS is not our code.
       '**/playwright-report/**',
       '**/test-results/**',
+      // Capacitor-generierte native Projekte (M4, Issue #103). Dort steht kein
+      // von uns geschriebener JS/TS-Code — nur das Xcode-/Gradle-Gerüst und die
+      // bei jedem `cap sync` aus `dist/` gespiegelten Web-Assets
+      // (`ios/App/App/public/**`, `android/app/src/main/assets/public/**`).
+      // Git hält die Spiegel schon über Capacitors eigene .gitignore-Dateien
+      // draussen; die flat config liest .gitignore aber nicht — daher hier.
+      'apps/visu/ios/**',
+      'apps/visu/android/**',
     ],
   },
   js.configs.recommended,

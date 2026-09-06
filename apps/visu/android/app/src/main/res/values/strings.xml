@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">obs Visu</string>
+    <string name="title_activity_main">obs Visu</string>
+    <string name="package_name">com.obs.visu</string>
+    <string name="custom_url_scheme">com.obs.visu</string>
+</resources>

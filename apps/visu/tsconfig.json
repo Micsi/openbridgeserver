@@ -17,7 +17,8 @@
     "src/**/*.vue",
     "src/**/*.json",
     "tests/**/*.ts",
-    "scripts/**/*.ts"
+    "scripts/**/*.ts",
+    "capacitor.config.ts"
   ],
   "references": [{ "path": "../../packages/contract" }]
 }
