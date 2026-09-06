@@ -144,6 +144,8 @@ ROUTE_CLASSIFICATIONS: Final[dict[RouteSignature, RouteCategory]] = {
     ("GET", "/api/v1/visu/nodes/{node_id}/children"): "read_live",
     ("GET", "/api/v1/visu/nodes/{node_id}/export"): "read_live",
     ("GET", "/api/v1/visu/nodes/{node_id}/users"): "read_live",
+    ("GET", "/api/v1/visu/nodes/{node_id}/versions"): "read_live",
+    ("GET", "/api/v1/visu/nodes/{node_id}/versions/{revision}"): "read_live",
     ("GET", "/api/v1/visu/pages/{node_id}"): "read_live",
     ("GET", "/api/v1/visu/tree"): "read_live",
     ("GET", "/api/v1/visu/widget-ref/{page_id}"): "read_live",

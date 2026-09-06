@@ -3603,7 +3603,40 @@
       "includeLayer": "Include layers ({count})",
       "layersError": "The layers of this page could not be loaded; the canvas shows only its own elements.",
       "coordinatesInactive": "In responsive mode this page's coordinates have no effect; they are kept and apply again in pixel mode.",
-      "placedByDefault": "{count} element(s) carried no position and sit on the default 0/0/2/2; saving makes that permanent."
-    }
+      "placedByDefault": "{count} element(s) carried no position and sit on the default 0/0/2/2; saving makes that permanent.",
+      "views": "Page views",
+      "tabVisual": "Visual",
+      "tabJson": "JSON",
+      "jsonLabel": "Page JSON",
+      "jsonHint": "The text view shows the same page as the canvas; a change here appears there and vice versa. Saving happens through \"Save\".",
+      "jsonSyntaxError": "Not valid JSON. The change was not applied.",
+      "jsonShapeError": "The document does not describe a page: it needs a \"widgets\" list, and every entry in it an \"id\". The change was not applied."
+    },
+    "history": {
+      "toggle": "History",
+      "loading": "Loading the history …",
+      "empty": "No earlier state has been recorded for this page yet.",
+      "entry": "Version {revision}",
+      "newest": "Last saved",
+      "restore": "Restore",
+      "restoring": "Restoring …",
+      "loadError": "The history could not be loaded.",
+      "restoreError": "The earlier state could not be restored."
+    },
+    "transfer": {
+      "export": "Export",
+      "import": "Import",
+      "file": "File",
+      "start": "Start import",
+      "cancel": "Cancel",
+      "imported": "Import finished.",
+      "hint": "An export contains the page and everything below it. Importing creates a separate, new page at the top level.",
+      "exportError": "The page could not be exported.",
+      "importError": "The import was rejected.",
+      "invalidError": "The file is not a Visu export.",
+      "noFileError": "No file selected.",
+      "copyName": "{name} (copy {index})"
+    },
+    "restoring": "The page is being restored. The canvas comes back with the earlier state."
   }
 }

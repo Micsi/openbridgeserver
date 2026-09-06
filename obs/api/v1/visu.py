@@ -16,6 +16,16 @@ Endpoints:
 
   GET    /visu/pages/{id}                → page_config lesen
   PUT    /visu/pages/{id}                → page_config speichern
+
+  GET    /visu/nodes/{id}/versions       → Verlauf einer Seite (M5 C6, E12)
+  GET    /visu/nodes/{id}/versions/{rev} → ein früherer Stand als PageConfig
+
+Zum Verlauf gibt es bewusst **keinen** Schreib-Endpunkt: Wiederherstellen ist das
+Lesen eines alten Standes und ein gewöhnliches ``PUT /visu/pages/{id}`` damit.
+Auf ``page_config`` schreiben im Editor bereits zwei Stellen unabhängig
+voneinander (Micsi/openbridgeserver#187); ein eigener Restore-Pfad wäre die
+nächste Stelle, an der „der letzte gewinnt" entsteht - und er käme an
+``_validate_page_kind_config`` und der Zugriffsprüfung vorbei.
 """
 
 from __future__ import annotations
@@ -58,6 +68,7 @@ from obs.models.visu import (
     VisuNodeSummary,
     VisuNodeUpdate,
     VisuNodeUsersUpdate,
+    VisuPageVersion,
     WidgetRefInstance,
 )
 
@@ -715,6 +726,87 @@ async def _check_page_write_access(db: Database, node_id: str, principal: Princi
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Zugriff verweigert")
 
 
+# ── Seitenversionen (M5 C6, E12) ──────────────────────────────────────────────
+
+#: Wie viele Stände eine Seite behält. Der Verlauf ist eine Bedienhilfe, kein
+#: Archiv: ohne Deckel wüchse die Tabelle mit jedem Speichern, und der V1-Editor
+#: speichert eine Seite bei jeder Änderung. Fällt eine Zeile heraus, dann die
+#: älteste - der Weg zurück reicht damit immer über die letzten
+#: ``PAGE_VERSION_CAP`` Stände.
+PAGE_VERSION_CAP = 50
+
+
+async def _record_page_version(
+    db: Database,
+    node_id: str,
+    page_config_json: str,
+    principal: Principal | None,
+) -> int | None:
+    """Hält den gerade geschriebenen Stand einer Seite fest (E12).
+
+    Aufgerufen von JEDEM Weg, der ``visu_nodes.page_config`` schreibt (anlegen,
+    speichern, importieren, kopieren) - und ausschließlich innerhalb der
+    Transaktion des Aufrufers, damit Stand und Version zusammen gelten oder
+    zusammen zurückgerollt werden. Eine Version, die einen Schreibvorgang
+    überlebt, der selbst gescheitert ist, wäre schlimmer als keine.
+
+    **Gleich bleibt gleich.** Ist der Stand mit dem obersten identisch, entsteht
+    keine Zeile: der Canvas sichert die Reihenfolge sofort (E2) und V1 schickt
+    eine geladene Konfiguration unverändert zurück - ohne diese Regel füllte sich
+    der Verlauf mit Zwillingen, und der Autor fände den gesuchten Stand nicht
+    mehr. Rückgabe ``None`` heißt genau das: nichts festzuhalten.
+    """
+    newest = await db.fetchone(
+        "SELECT revision, page_config FROM visu_page_versions WHERE node_id = ? ORDER BY revision DESC LIMIT 1",
+        (node_id,),
+    )
+    if newest is not None and newest["page_config"] == page_config_json:
+        return None
+    revision = (newest["revision"] + 1) if newest is not None else 1
+    await db.conn.execute(
+        """INSERT INTO visu_page_versions (node_id, revision, page_config, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?)""",
+        (node_id, revision, page_config_json, _now_iso(), principal.subject if principal is not None else None),
+    )
+    if revision > PAGE_VERSION_CAP:
+        await db.conn.execute(
+            "DELETE FROM visu_page_versions WHERE node_id = ? AND revision <= ?",
+            (node_id, revision - PAGE_VERSION_CAP),
+        )
+    return revision
+
+
+async def _require_page_history_access(
+    db: Database,
+    node_id: str,
+    user: Principal | str | None,
+) -> Principal:
+    """Wer den Verlauf sehen darf, und wer nicht einmal von der Seite erfährt.
+
+    Drei Stufen, in dieser Reihenfolge:
+
+    1. **Kein Principal → 401.** Der Verlauf gehört dem Autorenwerkzeug, nicht der
+       ausgelieferten Visu; anonym gibt es ihn nicht.
+    2. **Nicht auffindbar → 404.** Dieselbe Verdeckung wie überall auf der
+       Navigationsebene (§2.1): eine ``user``-geschützte Seite, die dieser
+       Principal nicht lesen darf, existiert für ihn nicht - auch nicht als
+       Verlauf.
+    3. **Kein Schreibrecht → 403.** Der Verlauf ist Autoren-Material und zeigt
+       Stände, die heute nicht mehr ausgeliefert werden. Er hängt deshalb an
+       ``GENERATE``, also an demselben Recht wie ``PUT /visu/pages/{id}`` - wer
+       eine Seite nicht schreiben darf, hat auch für ihre Vorgeschichte keinen
+       Grund.
+    """
+    principal = _principal_from_dependency(user)
+    if principal is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Anmeldung erforderlich")
+    node = await _require_discoverable_node(db, node_id, principal)
+    if node.type != "PAGE":
+        raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
+    await _require_visu_generate(db, principal, [node_id])
+    return principal
+
+
 # ── Tree ──────────────────────────────────────────────────────────────────────
 
 
@@ -842,10 +934,14 @@ async def import_nodes(
                     "INSERT INTO authz_visu_page_policies (node_id, access_mode) VALUES (?, ?)",
                     (new_id, node.access),
                 )
-        for node, new_id, _new_parent_id, _pc_json, page_config in prepared_nodes:
+        for node, new_id, _new_parent_id, pc_json, page_config in prepared_nodes:
             if node.type == "PAGE":
                 # Erst nach allen INSERTs: Include-Ziele im Import sind jetzt auflösbar.
                 await _validate_page_kind_config(db, new_id, node.kind, page_config)
+                # E12/E18: die importierte Seite ist eine eigene Seite. Sie erbt
+                # nicht den Verlauf ihrer Vorlage (den kennt diese Instanz gar
+                # nicht), sondern beginnt mit dem eingelesenen Stand.
+                await _record_page_version(db, new_id, pc_json, principal)
         await write_application_success(
             db,
             None,
@@ -940,6 +1036,11 @@ async def create_node(
                 "INSERT INTO authz_visu_page_credentials (node_id, pin_hash) VALUES (?, ?)",
                 (node_id, pin_hash),
             )
+        if body.type == "PAGE":
+            # Der Anfangsstand ist der erste Punkt, auf den ein „Wiederherstellen"
+            # zurückführen kann (E12). Ein Ordner hat keine Konfiguration und
+            # deshalb auch keine Geschichte.
+            await _record_page_version(db, node_id, default_page_config.model_dump_json(), principal)
         await write_application_success(db, None, principal, "POST", "/api/v1/visu/nodes", resource_id=node_id, commit=False)
     return await _get_node_or_404(db, node_id)
 
@@ -1189,6 +1290,10 @@ async def copy_node(
                 "INSERT INTO authz_visu_page_policies (node_id, access_mode) VALUES (?, ?)",
                 (new_id, source.access),
             )
+        if source.type == "PAGE":
+            # Die Kopie ist eine eigene Seite und beginnt ihre eigene Geschichte
+            # beim Stand, mit dem sie entstanden ist (E12).
+            await _record_page_version(db, new_id, new_pc.model_dump_json(), principal)
         await write_application_success(
             db,
             None,
@@ -1538,11 +1643,17 @@ async def save_page(
     if access == "user" and defining_node_id is not None:
         await _check_user_page_target_datapoint_policy(db, defining_node_id, config)
 
+    stored_json = config.model_dump_json()
     async with db.transaction():
         await db.conn.execute(
             "UPDATE visu_nodes SET page_config = ?, updated_at = ? WHERE id = ?",
-            (config.model_dump_json(), _now_iso(), node_id),
+            (stored_json, _now_iso(), node_id),
         )
+        # E12: derselbe Stand, der eben in die Spalte ging, wird festgehalten -
+        # in derselben Transaktion, damit es keinen Verlaufseintrag zu einem
+        # Schreibvorgang gibt, der zurückgerollt wurde. Ein Wiederherstellen
+        # läuft ebenfalls hier durch: es ist ein gewöhnliches Speichern.
+        await _record_page_version(db, node_id, stored_json, principal)
         await write_application_success(db, request, principal, "PUT", "/api/v1/visu/pages/{node_id}", resource_id=node_id, commit=False)
     from obs.api.v1.websocket import invalidate_datapoint_scopes
 
@@ -1557,6 +1668,57 @@ async def save_page(
             allowed=True,
             request=request,
         )
+
+
+# ── Seitenversionen lesen (M5 C6, E12) ────────────────────────────────────────
+
+
+@router.get("/nodes/{node_id}/versions", response_model=list[VisuPageVersion])
+async def get_page_versions(
+    node_id: str,
+    db: Database = Depends(get_db),
+    _user: Principal | str = Depends(get_current_principal),
+):
+    """Der Verlauf einer Seite, **neueste Version zuerst**.
+
+    Die Ordnung ist Teil der Zusage, nicht Geschmack: der Editor listet von oben,
+    Position 0 ist der ausgelieferte Stand und Position 1 der, auf den ein
+    „Wiederherstellen" zurückführt.
+    """
+    await _require_page_history_access(db, node_id, _user)
+    rows = await db.fetchall(
+        """SELECT revision, created_at, created_by
+           FROM visu_page_versions
+           WHERE node_id = ?
+           ORDER BY revision DESC""",
+        (node_id,),
+    )
+    return [VisuPageVersion(revision=row["revision"], created_at=row["created_at"], created_by=row["created_by"]) for row in rows]
+
+
+@router.get("/nodes/{node_id}/versions/{revision}", response_model=PageConfig)
+async def get_page_version(
+    node_id: str,
+    revision: int,
+    db: Database = Depends(get_db),
+    _user: Principal | str = Depends(get_current_principal),
+):
+    """Ein früherer Stand, in genau der Form, die ``GET /visu/pages/{id}`` liefert.
+
+    Damit ist „Wiederherstellen" ein Zweischritt ohne Umrechnung: diese Antwort
+    an ``PUT /visu/pages/{id}`` zurückschicken. Gelesen wird durch die
+    Modellschicht (``PageConfig.model_validate``), also mit denselben
+    Normalisierungen wie beim Lesen der Seite selbst - sonst könnte der
+    wiederhergestellte ``GET`` vom alten abweichen.
+    """
+    await _require_page_history_access(db, node_id, _user)
+    row = await db.fetchone(
+        "SELECT page_config FROM visu_page_versions WHERE node_id = ? AND revision = ?",
+        (node_id, revision),
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Version nicht gefunden")
+    return PageConfig.model_validate(json.loads(row["page_config"]))
 
 
 # ── Benutzer-Zugang (user-Access) ─────────────────────────────────────────────

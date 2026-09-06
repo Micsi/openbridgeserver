@@ -54,6 +54,8 @@ import VisuWidgetBindingForm from '@/components/visu/VisuWidgetBindingForm.vue'
 import { useVisuEditorDraft } from '@/composables/useVisuEditorDraft'
 import { createWidget } from '@/utils/visuWidgetTypes'
 import VisuEditorCanvas from '@/components/visu/VisuEditorCanvas.vue'
+import VisuPageHistory from '@/components/visu/VisuPageHistory.vue'
+import VisuPageTransfer from '@/components/visu/VisuPageTransfer.vue'
 import { mergePreviewDrafts } from '@/utils/visuEditorDraftMerge'
 
 const props = defineProps({
@@ -207,6 +209,65 @@ watch(pageId, async (neu, vorher) => {
   await editor.select(neu)
 })
 
+/* ------------------------------------------------ Verlauf und Datei (C6) */
+
+/**
+ * WAEHREND WIEDERHERGESTELLT WIRD, IST DER CANVAS WEG - und das ist keine
+ * Kosmetik (M5 C6, Issue #173, E12).
+ *
+ * Der Canvas haelt einen Entwurf. Vom Augenblick des Klicks an beschreibt der
+ * nicht mehr die Seite: unter ihm wird gerade ein anderer Stand geschrieben.
+ * Ihn stehenzulassen hiesse, dem Autor eine Lage zu zeigen, die es nicht mehr
+ * gibt - und der naechste „Speichern"-Klick schriebe sie zurueck.
+ *
+ * Zurueck kommt er als NEUE Montage (`v-if`), nicht als aufgefrischte: so
+ * durchlaeuft er seinen eigenen Ladeweg und liest den wiederhergestellten Stand
+ * vom Server, statt einen mitgebrachten zu behalten. Das gilt auch nach einem
+ * FEHLSCHLAG: dann steht auf dem Server der alte Stand, und genau den soll der
+ * Autor sehen.
+ */
+const restoring = ref(false)
+/** Der Verlaufs-Kasten - der Canvas zieht ihn nach, bevor er quittiert. */
+const historyRef = ref(null)
+
+/**
+ * Was nach einem Speichern des Canvas noch geschehen muss, BEVOR „Gespeichert"
+ * erscheint: der Verlauf wird nachgezogen (E12). Sonst zeigte ein Blick in den
+ * Verlauf unmittelbar nach dem Speichern die Liste von vor dem Speichern.
+ */
+async function nachSpeichern() {
+  await historyRef.value?.reload?.()
+}
+
+function onRestoreStart() {
+  restoring.value = true
+}
+
+/**
+ * Nach dem Wiederherstellen wird der Store neu geladen.
+ *
+ * Das ist die Antwort auf den DRITTEN SCHREIBER. Formular (C1) und Canvas (C2)
+ * schreiben `page_config` heute unabhaengig voneinander
+ * (Micsi/openbridgeserver#187). Das Formular haelt nach einem Wiederherstellen
+ * noch den Entwurf von vorher - `includes`, Popup-Deskriptor, Zugriff -, und
+ * sein naechstes „Speichern" schriebe ihn zurueck und machte die
+ * Wiederherstellung stillschweigend rueckgaengig. Beide Haelften holen sich
+ * deshalb ihren Stand neu: der Canvas ueber seine Neumontage, das Formular
+ * ueber diesen Ladevorgang.
+ */
+async function onRestored() {
+  restoring.value = false
+  if (!allowed.value) return
+  await editor.load()
+  if (pageId.value) await editor.select(pageId.value)
+}
+
+/** Nach einem Import steht ein neuer Knoten im Baum; ohne Neuladen saehe ihn niemand. */
+async function onImported() {
+  if (!allowed.value) return
+  await editor.load()
+}
+
 /**
  * Ein neues Element aus der Palette. Die Id wird hier vergeben, weil der Entwurf
  * sie sofort braucht - der Server sieht das Element erst beim Speichern.
@@ -256,13 +317,24 @@ function platzieren(type) {
         die Anordnung aus Teil C1: Baum | Canvas | Eigenschaften.
       -->
       <VisuEditorCanvas
-        v-if="pageId"
+        v-if="pageId && !restoring"
         class="order-first lg:order-none"
         :page-id="pageId"
+        :after-save="nachSpeichern"
         @draft="canvasDraft = $event"
         @preview-width="previewWidth = $event"
         @hidden-ids="canvasHiddenIds = $event"
       />
+      <!-- Waehrend eines Wiederherstellens traegt dieser Platzhalter bewusst
+           NICHT die Marke `.editor-canvas`: sie steht fuer „der Editor zeigt die
+           Seite", und genau das tut er in diesem Augenblick nicht. -->
+      <div
+        v-else-if="pageId"
+        data-testid="visu-editor-restoring"
+        class="order-first min-h-40 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500 lg:order-none dark:border-slate-600 dark:text-slate-400"
+      >
+        {{ $t('visuEditor.restoring') }}
+      </div>
       <div
         v-else
         class="editor-canvas min-h-40 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-4 text-sm text-slate-500 dark:text-slate-400"
@@ -271,6 +343,23 @@ function platzieren(type) {
       </div>
 
       <VisuPageProperties />
+    </div>
+
+    <!-- Verlauf und Datei (M5 C6, Issue #173): E12 und E18. Beide stehen NEBEN
+         dem Editor, nicht darin - der Verlauf gehoert der Seite, der Import gar
+         keiner (er legt eine neue an und ist deshalb auch ohne ausgewaehlte
+         Seite da). -->
+    <div class="flex flex-wrap items-start gap-4">
+      <VisuPageHistory
+        ref="historyRef"
+        :page-id="pageId"
+        @restore-start="onRestoreStart"
+        @restored="onRestored"
+      />
+      <VisuPageTransfer
+        :page-id="pageId"
+        @imported="onImported"
+      />
     </div>
 
     <VisuPreviewFrame

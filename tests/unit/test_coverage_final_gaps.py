@@ -1473,7 +1473,19 @@ def _make_visu_db(row=None):
     conn.executemany = AsyncMock()
     db = MagicMock()
     db.conn = conn
-    db.fetchone = AsyncMock(return_value=node_row)
+
+    async def fetchone(query, *args, **kwargs):
+        # Die Attrappe beantwortet JEDE Abfrage mit derselben Knotenzeile. Seit
+        # M5 C6 (Issue #173) fragen die Visu-Schreibwege zusätzlich nach der
+        # obersten Version der Seite (``visu_page_versions``); dort ist die
+        # Knotenzeile die falsche Antwort, und ``None`` – „diese Seite hat noch
+        # keine Version" – die richtige. Nur die ANTWORT der Attrappe ist
+        # ergänzt; keine Zusicherung dieser Datei ist angefasst.
+        if "visu_page_versions" in str(query):
+            return None
+        return node_row
+
+    db.fetchone = AsyncMock(side_effect=fetchone)
     db.fetchall = AsyncMock(return_value=[node_row])
     db.execute = AsyncMock(return_value=None)
     db.execute_and_commit = AsyncMock(return_value=None)
@@ -2044,7 +2056,13 @@ async def test_copy_node_success():
 
     db = _make_visu_db(row=node_row)
     db.conn.execute = MagicMock(side_effect=make_cursor)
-    db.fetchone = AsyncMock(return_value=node_row)
+
+    async def fetchone(query, *args, **kwargs):
+        # Wie in ``_make_visu_db``: die Frage nach der obersten Version einer
+        # Seite (M5 C6) beantwortet die Knotenzeile nicht.
+        return None if "visu_page_versions" in str(query) else node_row
+
+    db.fetchone = AsyncMock(side_effect=fetchone)
 
     body = CopyNodeRequest(new_name="Copy", target_parent_id=None)
     result = await copy_node(node_id="orig", body=body, db=db, _user="admin")

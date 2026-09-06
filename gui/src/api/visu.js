@@ -63,6 +63,24 @@ export const visuApi = {
   nodeUsers: (nodeId) => api.get(`/visu/nodes/${id(nodeId)}/users`),
 
   /**
+   * Der Verlauf einer Seite (M5 C6 Issue #173, E12) - neueste Version zuerst,
+   * und ein einzelner frueherer Stand als `PageConfig`.
+   *
+   * NUR LESEN. Einen Schreibweg fuer den Verlauf gibt es bewusst nicht:
+   * „Wiederherstellen" ist `pageVersion(...)` gefolgt von `savePage(...)`, also
+   * genau der Weg, den auch der Canvas geht. Ein eigener Restore-Aufruf waere
+   * der dritte unabhaengige Schreiber auf `page_config`
+   * (Micsi/openbridgeserver#187) - und er kaeme an der Validierung des
+   * Seitentyp-Modells vorbei, die im `PUT` sitzt.
+   */
+  pageVersions: (nodeId) => api.get(`/visu/nodes/${id(nodeId)}/versions`),
+  pageVersion: (nodeId, revision) => api.get(`/visu/nodes/${id(nodeId)}/versions/${id(revision)}`),
+
+  /** Einen Teilbaum als Datei ausgeben bzw. wieder einlesen (M5 C6, E18). */
+  exportNode: (nodeId) => api.get(`/visu/nodes/${id(nodeId)}/export`),
+  importNodes: (body) => api.post('/visu/nodes/import', body),
+
+  /**
    * Die Nutzer, aus denen eine Zielgruppe zusammengestellt wird (E15).
    *
    * Kein Visu-Endpunkt, sondern der bestehende Nutzer-Endpunkt der Admin-API -

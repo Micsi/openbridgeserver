@@ -6,7 +6,6 @@ import {
   C3,
   C4,
   C5,
-  C6,
   box,
   canvasSaved,
   el,
@@ -617,7 +616,10 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(page.frameLocator('iframe.editor-preview').getByText('21.5')).toBeVisible();
   });
 
-  test.fixme('E12 Seitenversionen einsehbar, frühere Version wiederherstellbar', C6, async ({ page }) => {
+  // Teil C6 (Micsi/openbridgeserver#173) hat Verlauf und Wiederherstellen
+  // geliefert; die `blocked-by`-Annotation faellt damit weg, keine Zeile des
+  // Szenarios ist angefasst.
+  test('E12 Seitenversionen einsehbar, frühere Version wiederherstellbar', async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.solo);
     const before = await box(page, fx.m5.widgets.solo);
@@ -637,7 +639,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     expect(await box(page, fx.m5.widgets.solo)).toMatchObject({ x: before.x, y: before.y });
   });
 
-  test.fixme('E13 Seite als JSON/Text UND visuell editierbar, beide Ansichten synchron', C6, async ({ page }) => {
+  // Ebenfalls aus Teil C6: die Textansicht steht als zweiter Reiter neben dem
+  // Canvas. Annotation weg, Szenario unveraendert.
+  test('E13 Seite als JSON/Text UND visuell editierbar, beide Ansichten synchron', async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.solo);
 
@@ -801,7 +805,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(page.getByLabel('Rasterweite', { exact: true })).toHaveValue('24');
   });
 
-  test.fixme('E18 Seite/Vorlage als Datei export-/importierbar', C6, async ({ page }) => {
+  // Ebenfalls aus Teil C6: Export und Import liegen als Knoepfe neben dem
+  // Seitenbaum. Annotation weg, Szenario unveraendert.
+  test('E18 Seite/Vorlage als Datei export-/importierbar', async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.include_ind);
 

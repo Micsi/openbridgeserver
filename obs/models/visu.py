@@ -208,6 +208,25 @@ class VisuNode(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class VisuPageVersion(BaseModel):
+    """Ein festgehaltener Stand einer Seiten-Konfiguration (M5 C6, E12).
+
+    Nur der Steckbrief, nicht der Inhalt: der Verlauf im Editor soll lesbar sein,
+    ohne n Konfigurationen im Rumpf mitzuschleppen. Der Stand selbst kommt
+    einzeln über ``GET /visu/nodes/{id}/versions/{revision}`` und ist eine
+    gewöhnliche ``PageConfig`` - dieselbe Form, die ``GET /visu/pages/{id}``
+    liefert. Wiederherstellen muss deshalb nichts umrechnen, es schickt genau
+    diese Antwort an ``PUT /visu/pages/{id}`` zurück.
+
+    ``created_by`` ist der Principal, der den Stand geschrieben hat; ``None``,
+    wo die Zeile keinen Urheber trägt.
+    """
+
+    revision: int
+    created_at: datetime
+    created_by: str | None = None
+
+
 class VisuNodeSummary(BaseModel):
     """Navigation metadata without page configuration or credentials."""
 

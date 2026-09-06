@@ -75,8 +75,9 @@
  * verlangt genau ein Element. Die einzelnen Linien darin tragen
  * `.editor-guide-line`.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { visuApi } from '@/api/visu'
+import { parseEditorJson, toEditorJson } from '@/utils/visuPageJson'
 import {
   DEFAULT_GRID,
   GUIDE_TOLERANCE,
@@ -110,6 +111,18 @@ import {
 const props = defineProps({
   /** Die Seite, die bearbeitet wird. Ohne sie gibt es keinen Canvas. */
   pageId: { type: String, default: null },
+  /**
+   * Was nach einem erfolgreichen Speichern noch geschehen muss, BEVOR
+   * „Gespeichert" erscheint (M5 C6, Issue #173).
+   *
+   * Heute haengt genau eines daran: der Verlauf (E12). Ein Speichern legt einen
+   * neuen Stand ab; ein Blick in den Verlauf unmittelbar danach zeigte ohne
+   * dieses Nachziehen die Liste von VOR dem Speichern. Die Quittung waere dann
+   * eine halbe Wahrheit - sie besagt seit Runde 1 ausdruecklich, dass der
+   * Server traegt, was er tragen soll, und sie soll ebenso besagen, dass der
+   * Editor zeigt, was der Server traegt.
+   */
+  afterSave: { type: Function, default: null },
 })
 const emit = defineEmits(['draft', 'preview-width', 'hidden-ids'])
 
@@ -240,6 +253,78 @@ function currentConfig() {
   return configWith(pendingSettings(), widgets.value)
 }
 
+/* ------------------------------------------------- JSON-Dualitaet (C6, E13) */
+
+/**
+ * ZWEI ANSICHTEN, EIN ENTWURF - und ausdruecklich KEIN dritter Schreiber.
+ *
+ * Die Textansicht zeigt dieselbe Seite wie der Canvas und schreibt in denselben
+ * Entwurf; sie hat kein eigenes „Speichern" und setzt keine Anfrage ab.
+ * Gespeichert wird weiterhin ueber genau einen Knopf, mit derselben
+ * Rueckleseprobe wie zuvor. Auf `page_config` schreiben im Editor bereits zwei
+ * Stellen unabhaengig voneinander (Formular und Canvas,
+ * Micsi/openbridgeserver#187); eine dritte mit eigenem Schreibweg waere die
+ * naechste Stelle, an der „der letzte gewinnt" entsteht.
+ *
+ * Richtung Canvas → Text: ein Beobachter auf demselben `currentConfig()`, den
+ * auch die Vorschau bekommt. Eine Verschiebung steht damit sofort im Text, ohne
+ * dass irgendwo gespeichert wuerde.
+ *
+ * Richtung Text → Canvas: ueber {@link parseEditorJson}. Was dort abgelehnt
+ * wird, aendert NICHTS - der Canvas haelt seinen letzten guten Stand, und die
+ * Meldung sagt, warum. Ein halb getipptes Dokument darf keine Kacheln kosten.
+ *
+ * `jsonIsSource` verhindert das Zurueckschreiben unmittelbar nach einer
+ * Uebernahme: sonst formatierte der Beobachter dem Autor den Text unter den
+ * Fingern um. Beobachter laufen im Vue-Scheduler VOR den `nextTick`-Rueckrufen,
+ * die Marke steht also noch, wenn er an der Reihe ist.
+ */
+const VIEW_VISUAL = 'visual'
+const VIEW_JSON = 'json'
+const view = ref(VIEW_VISUAL)
+const jsonText = ref('')
+const jsonError = ref(null)
+let jsonIsSource = false
+
+watch(
+  () => (props.pageId ? currentConfig() : null),
+  (config) => {
+    if (jsonIsSource) return
+    jsonText.value = toEditorJson(config)
+  },
+  { deep: true, immediate: true },
+)
+
+/** Einen aus dem Text gelesenen Stand als den eigenen uebernehmen. */
+function adoptEdited(config) {
+  const stored = readPageSettings(config)
+  settings.mode = stored.mode
+  settings.grid = stored.grid
+  settings.skin = stored.skin
+  breakpointText.value = formatBreakpoints(stored.breakpoints)
+  base.value = config
+  widgets.value = (config.widgets ?? []).map((w) => ({ ...w }))
+  guides.value = []
+  // Eine Auswahl auf einer Kachel, die es im neuen Text nicht mehr gibt, waere
+  // eine Auswahl auf nichts - und das Koordinatenfeld zeigte fremde Zahlen.
+  selectedIds.value = selectedIds.value.filter((id) => widgets.value.some((w) => w.id === id))
+}
+
+function onJsonInput(text) {
+  jsonText.value = text
+  const gelesen = parseEditorJson(text)
+  if (!gelesen.ok) {
+    jsonError.value = gelesen.reason
+    return
+  }
+  jsonError.value = null
+  jsonIsSource = true
+  adoptEdited(gelesen.config)
+  nextTick(() => {
+    jsonIsSource = false
+  })
+}
+
 /* ------------------------------------------------------------------ laden */
 
 /** Den Server-Stand als den eigenen uebernehmen (nach Laden und nach Speichern). */
@@ -357,6 +442,10 @@ function confirmed(server, wanted) {
  */
 async function save() {
   if (!props.pageId) return
+  // Solange die Textansicht ein unlesbares Dokument haelt, wird NICHT
+  // gespeichert. Sonst schriebe „Speichern" klaglos den Stand VOR der
+  // Bearbeitung weg - eine Erfolgsmeldung, die stimmt und etwas anderes meint.
+  if (jsonError.value) return
   const wanted = configWith(pendingSettings(), widgets.value)
   saved.value = false
   try {
@@ -368,6 +457,8 @@ async function save() {
     }
     adopt(server)
     errorKey.value = null
+    // Erst nachziehen, dann quittieren (siehe `afterSave` oben).
+    if (props.afterSave) await props.afterSave()
     saved.value = true
   } catch {
     saved.value = false
@@ -853,7 +944,8 @@ function guideStyle(guide) {
         </button>
         <button
           type="button"
-          class="shrink-0 rounded bg-sky-600 px-2 py-1 text-sm whitespace-nowrap text-white"
+          class="shrink-0 rounded bg-sky-600 px-2 py-1 text-sm whitespace-nowrap text-white disabled:opacity-40"
+          :disabled="jsonError !== null"
           @click="save"
         >
           {{ $t('visuEditor.canvas.save') }}
@@ -937,9 +1029,84 @@ function guideStyle(guide) {
       >
         {{ errorKey === 'load' ? $t('visuEditor.canvas.loadError') : $t('visuEditor.canvas.saveError') }}
       </span>
+      <!--
+        Die Beschwerde ueber den Text steht in der IMMER sichtbaren Zeile, nicht
+        im JSON-Kasten: sonst verschwaende sie beim Wechsel auf „Visuell", und
+        der Autor saehe dort den alten Stand in dem Glauben, seine Eingabe sei
+        angekommen. Solange sie steht, ist auch „Speichern" gesperrt.
+      -->
+      <span
+        v-if="jsonError"
+        data-testid="editor-json-error"
+        class="text-amber-600 dark:text-amber-400"
+      >
+        {{
+          jsonError === 'syntax'
+            ? $t('visuEditor.canvas.jsonSyntaxError')
+            : $t('visuEditor.canvas.jsonShapeError')
+        }}
+      </span>
     </div>
 
-    <div class="flex flex-wrap gap-3">
+    <!--
+      DIE ZWEITE ANSICHT DERSELBEN SEITE (M5 C6, Issue #173, E13). Die Reiter
+      schalten nur um, WAS gezeigt wird; der Entwurf darunter ist EINER, und
+      gespeichert wird weiterhin ueber den einen Knopf oben. Der visuelle
+      Bereich wird mit `v-show` versteckt und nicht ausgehaengt: `.editor-canvas`
+      ist die Marke, an der der Harness „der Editor steht" liest, und sie soll
+      nicht davon abhaengen, welcher Reiter gerade offen ist.
+    -->
+    <div
+      role="tablist"
+      class="flex items-center gap-1 text-sm"
+      :aria-label="$t('visuEditor.canvas.views')"
+    >
+      <button
+        v-for="entry in [
+          { id: VIEW_VISUAL, label: $t('visuEditor.canvas.tabVisual') },
+          { id: VIEW_JSON, label: $t('visuEditor.canvas.tabJson') },
+        ]"
+        :key="entry.id"
+        type="button"
+        role="tab"
+        :aria-selected="view === entry.id ? 'true' : 'false'"
+        :data-view="entry.id"
+        class="rounded-t border-b-2 px-2 py-1"
+        :class="
+          view === entry.id
+            ? 'border-sky-500 text-slate-800 dark:text-slate-100'
+            : 'border-transparent text-slate-500 dark:text-slate-400'
+        "
+        @click="view = entry.id"
+      >
+        {{ entry.label }}
+      </button>
+    </div>
+
+    <div
+      v-if="view === VIEW_JSON"
+      class="flex flex-col gap-1"
+    >
+      <label
+        for="editor-canvas-json"
+        class="text-xs text-slate-500 dark:text-slate-400"
+      >{{ $t('visuEditor.canvas.jsonLabel') }}</label>
+      <textarea
+        id="editor-canvas-json"
+        class="editor-json min-h-[280px] w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs text-slate-800 dark:border-slate-700/60 dark:bg-slate-900 dark:text-slate-100"
+        spellcheck="false"
+        :value="jsonText"
+        @input="onJsonInput($event.target.value)"
+      />
+      <p class="text-xs text-slate-500 dark:text-slate-400">
+        {{ $t('visuEditor.canvas.jsonHint') }}
+      </p>
+    </div>
+
+    <div
+      v-show="view === VIEW_VISUAL"
+      class="flex flex-wrap gap-3"
+    >
       <div
         class="editor-canvas relative min-h-[280px] min-w-[240px] flex-1 rounded-lg border border-slate-200 bg-white dark:border-slate-700/60 dark:bg-slate-900"
         :class="isPixel ? 'overflow-auto' : 'flex flex-col gap-2 p-2'"

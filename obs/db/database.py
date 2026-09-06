@@ -715,6 +715,33 @@ async def _migration_v53_visu_page_kind(conn: aiosqlite.Connection) -> None:
         )
 
 
+# M5 C6 (Micsi/openbridgeserver#173): the page history behind E12.
+#
+# A NEW TABLE, not a new column and above all not a copy-rename of
+# ``visu_nodes``: the V18/V19 copy pattern is off limits here for the reason
+# spelled out in ``_migration_v53_visu_page_kind`` above (its ``DROP TABLE``
+# cascades away every page access policy and PIN).  Nothing existing is touched,
+# so every stock page simply starts without a history and gains its first
+# version the next time its configuration is written.
+#
+# The cascade points the other way round on purpose: a deleted page must not
+# leave an orphaned history behind.  That also means a future copy-rename of
+# ``visu_nodes`` would take the versions with it - which is one more reason why
+# that pattern stays forbidden on this table.
+_MIGRATION_V54_VISU_PAGE_VERSIONS = """
+CREATE TABLE IF NOT EXISTS visu_page_versions (
+    node_id     TEXT NOT NULL REFERENCES visu_nodes(id) ON DELETE CASCADE,
+    revision    INTEGER NOT NULL,
+    page_config TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    created_by  TEXT,
+    PRIMARY KEY (node_id, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_visu_page_versions_node
+    ON visu_page_versions(node_id, revision DESC);
+"""
+
+
 _MIGRATION_V38 = """
 CREATE TABLE IF NOT EXISTS hierarchy_device_links (
     id         TEXT PRIMARY KEY,
@@ -1236,6 +1263,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (51, _MIGRATION_V51_REGIONAL_SETTINGS),
     (52, _migration_v52_external_write),
     (53, _migration_v53_visu_page_kind),
+    (54, _MIGRATION_V54_VISU_PAGE_VERSIONS),
 ]
 
 

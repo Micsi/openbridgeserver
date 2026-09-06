@@ -115,11 +115,25 @@ function onMove(event) {
         @change="onMove"
       >
         <option value="">{{ $t('visuEditor.tree.root') }}</option>
+        <!--
+          DER NAME STEHT IM `label`-ATTRIBUT, nicht im Textinhalt (M5 C6,
+          Issue #173). Jeder Knoten traegt diese Auswahl, und jede Auswahl
+          traegt jedes moegliche Ziel: der Name einer Seite stand damit bis zu
+          n-mal im Dokument. Eine Suche nach einem Seitennamen im Baum - die
+          des Autors ebenso wie die eines Abnahme-Szenarios - traf dann nicht
+          die eine Zeile der Seite, sondern zusaetzlich n Eintraege in
+          Aufklappmenues. `label` ist laut HTML-Spezifikation genau die
+          Beschriftung einer Option: der Browser zeigt sie unveraendert an, der
+          zugaengliche Name bleibt derselbe, nur der TEXTINHALT ist entlastet.
+          Welche Ziele angeboten werden und was ein Wechsel ausloest, ist
+          unveraendert (`VisuPageTree.spec.js`).
+        -->
         <option
           v-for="target in moveTargets"
           :key="target.id"
           :value="target.id"
-        >{{ target.text }}</option>
+          :label="target.text"
+        />
       </select>
 
       <button
