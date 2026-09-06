@@ -579,3 +579,71 @@ describe('VisuPageProperties - „Inkludeseite" ist eine Rolle, keine Einstellun
     expect(store.canSave).toBe(false)
   })
 })
+
+/**
+ * Das Restrisiko aus der Kritik zu Teil C6 (Issue #173), geschlossen.
+ *
+ * Waehrend eines Wiederherstellens nimmt die Ansicht den CANVAS vom Schirm - er
+ * haelt einen Entwurf, der die Seite nicht mehr beschreibt. Das
+ * EIGENSCHAFTSFORMULAR blieb bis dahin bedienbar, und es haelt genau denselben
+ * veralteten Entwurf: `includes`, Popup-Deskriptor, Zugriff. Ein Klick auf sein
+ * „Speichern" im Sekundenbruchteil zwischen `restore-start` und `restored`
+ * konnte sich mit dem `PUT` des Wiederherstellens ueberholen und den alten Stand
+ * zurueckschreiben - der dritte Schreiber, durch die Hintertuer.
+ *
+ * Gesperrt wird mit einem `<fieldset disabled>`, nicht mit einem `disabled` je
+ * Feld: das ist die HTML-Antwort auf „diese Gruppe ist gerade nicht bedienbar",
+ * sie gilt fuer JEDES Bedienelement darin (auch fuer kuenftige) und sie reicht
+ * bis in die Tastaturbedienung. Der Wachposten in `onSubmit` steht trotzdem
+ * daneben: ein Formular laesst sich auch ohne seinen Knopf abschicken.
+ */
+describe('VisuPageProperties - waehrend eines Wiederherstellens gesperrt', () => {
+  async function mountRestoring(restoring) {
+    const { useVisuEditorStore } = await import('@/stores/visuEditor')
+    const store = useVisuEditorStore()
+    await store.load()
+    await store.select('gamma')
+    const { default: VisuPageProperties } = await import('@/components/visu/VisuPageProperties.vue')
+    const wrapper = mount(VisuPageProperties, { props: { restoring }, global: { plugins: [pinia] } })
+    await flushPromises()
+    return { wrapper, store }
+  }
+
+  it('sperrt die ganze Feldgruppe, solange wiederhergestellt wird', async () => {
+    const { wrapper } = await mountRestoring(true)
+
+    expect(wrapper.find('[data-testid="visu-props-fields"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('laesst sie frei, wenn nicht wiederhergestellt wird', async () => {
+    const { wrapper } = await mountRestoring(false)
+
+    expect(wrapper.find('[data-testid="visu-props-fields"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('ist ohne die Angabe frei - kein Aufrufer wird zur Sperre gezwungen', async () => {
+    const { wrapper } = await mountProperties('gamma')
+
+    expect(wrapper.find('[data-testid="visu-props-fields"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('schreibt nicht, wenn das Formular waehrenddessen abgeschickt wird', async () => {
+    const { wrapper, store } = await mountRestoring(true)
+    const save = vi.spyOn(store, 'save')
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('schreibt danach wieder - die Sperre gilt nur fuer die Dauer', async () => {
+    const { wrapper, store } = await mountRestoring(false)
+    const save = vi.spyOn(store, 'save')
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(save).toHaveBeenCalled()
+  })
+})

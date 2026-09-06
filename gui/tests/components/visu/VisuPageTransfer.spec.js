@@ -226,6 +226,107 @@ describe('VisuPageTransfer (E18)', () => {
     expect(wrapper.text()).not.toContain('M5 Include Gamma')
   })
 
+  /**
+   * WAS BEIM IMPORT NICHT MITKOMMT, ERFAEHRT DER AUTOR (M5 C6 R2, E18).
+   *
+   * Zwei Verluste sind pre-existent und bleiben es - aber sie sind nicht mehr
+   * still. Das Backend nennt sie in zwei Antwort-Headern (dieselbe Bauart wie
+   * `X-Source-Page-Readonly`, §2.1), dieser Kasten stellt sie neben die
+   * Erfolgsmeldung:
+   *
+   *  - **PIN-Schutz ohne PIN.** Der Export laesst `access_pin` bewusst weg; die
+   *    Policy wird trotzdem angelegt (sie wegzulassen waere eine stille
+   *    HERABSTUFUNG). Die Seite ist damit fehlerschliessend zu - `POST
+   *    /nodes/{id}/auth` antwortet 403 -, und genau das muss der Autor wissen:
+   *    eine fuer alle verschlossene Seite sieht im Baum aus wie jede andere.
+   *  - **Felder einer neueren Version.** Der Export liest roh und traegt sie,
+   *    der Import geht durch `PageConfig` und verwirft sie. Am `GET` faellt das
+   *    nie auf, erst am naechsten Export.
+   *
+   * Die Meldungen nennen KEINE Seitennamen - aus demselben Grund, aus dem die
+   * Erfolgsmeldung es nicht tut (siehe oben).
+   */
+  it('meldet eine geschuetzte Seite, die ohne ihren PIN angekommen ist', async () => {
+    importNodes.mockResolvedValue({
+      data: { id: 'neu' },
+      headers: { 'x-visu-import-protected-without-pin': '2' },
+    })
+    const wrapper = await mountTransfer()
+    await byButton(wrapper, 'Importieren').trigger('click')
+    await chooseFile(wrapper, JSON.stringify(dokument))
+
+    await byButton(wrapper, 'Import starten').trigger('click')
+    await flushPromises()
+
+    const hinweis = wrapper.find('[data-testid="editor-transfer-protected-notice"]')
+    expect(hinweis.exists()).toBe(true)
+    expect(hinweis.text()).toContain('2')
+  })
+
+  it('nennt die Felder, die diese Version nicht kennt', async () => {
+    importNodes.mockResolvedValue({
+      data: { id: 'neu' },
+      headers: { 'x-visu-import-dropped-fields': 'zukunftsfeld,widgets[].neu_im_widget' },
+    })
+    const wrapper = await mountTransfer()
+    await byButton(wrapper, 'Importieren').trigger('click')
+    await chooseFile(wrapper, JSON.stringify(dokument))
+
+    await byButton(wrapper, 'Import starten').trigger('click')
+    await flushPromises()
+
+    const hinweis = wrapper.find('[data-testid="editor-transfer-dropped-notice"]')
+    expect(hinweis.exists()).toBe(true)
+    expect(hinweis.text()).toContain('zukunftsfeld')
+    expect(hinweis.text()).toContain('widgets[].neu_im_widget')
+  })
+
+  it('meldet nichts, wenn nichts verloren ging - der haeufige Fall bleibt ruhig', async () => {
+    const wrapper = await mountTransfer()
+    await byButton(wrapper, 'Importieren').trigger('click')
+    await chooseFile(wrapper, JSON.stringify(dokument))
+
+    await byButton(wrapper, 'Import starten').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="editor-transfer-protected-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="editor-transfer-dropped-notice"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="editor-transfer-done"]').exists()).toBe(true)
+  })
+
+  it('raeumt die Hinweise weg, bevor der naechste Import laeuft', async () => {
+    importNodes.mockResolvedValue({
+      data: { id: 'neu' },
+      headers: { 'x-visu-import-protected-without-pin': '1' },
+    })
+    const wrapper = await mountTransfer()
+    await byButton(wrapper, 'Importieren').trigger('click')
+    await chooseFile(wrapper, JSON.stringify(dokument))
+    await byButton(wrapper, 'Import starten').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="editor-transfer-protected-notice"]').exists()).toBe(true)
+
+    importNodes.mockResolvedValue({ data: { id: 'neu2' } })
+    await byButton(wrapper, 'Importieren').trigger('click')
+    await chooseFile(wrapper, JSON.stringify(dokument))
+    await byButton(wrapper, 'Import starten').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="editor-transfer-protected-notice"]').exists()).toBe(false)
+  })
+
+  it('kommt ohne Header aus - eine Antwort ohne sie ist kein Fehler', async () => {
+    importNodes.mockResolvedValue({ data: { id: 'neu' } })
+    const wrapper = await mountTransfer()
+    await byButton(wrapper, 'Importieren').trigger('click')
+    await chooseFile(wrapper, JSON.stringify(dokument))
+
+    await byButton(wrapper, 'Import starten').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('imported')).toHaveLength(1)
+  })
+
   it('startet ohne gewaehlte Datei gar nichts', async () => {
     const wrapper = await mountTransfer()
     await byButton(wrapper, 'Importieren').trigger('click')

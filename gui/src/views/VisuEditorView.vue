@@ -342,7 +342,15 @@ function platzieren(type) {
         {{ $t('visuEditor.canvasHint') }}
       </div>
 
-      <VisuPageProperties />
+      <!-- Waehrend eines Wiederherstellens ist dieses Formular GESPERRT. Der
+           Canvas verschwindet dabei; das Formular bleibt stehen (es zeigt Name
+           und Zugriff, nicht nur die Flaeche) - und ein Klick auf sein
+           „Speichern" im Sekundenbruchteil zwischen `restore-start` und
+           `restored` schriebe den Entwurf von vorher ueber den gerade
+           wiederhergestellten Stand. Dieselbe Begruendung wie das Aushaengen
+           des Canvas, nur mit dem Mittel, das zu einem stehenbleibenden
+           Formular passt. -->
+      <VisuPageProperties :restoring="restoring" />
     </div>
 
     <!-- Verlauf und Datei (M5 C6, Issue #173): E12 und E18. Beide stehen NEBEN

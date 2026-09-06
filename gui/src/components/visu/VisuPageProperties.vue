@@ -23,6 +23,25 @@ import { EDITOR_PAGE_KINDS, supportsIncludes, supportsPopup } from '@/utils/visu
 import { sortNodes } from '@/utils/visuPageTree'
 import { VISU_SKIN_KEYS } from '@/utils/visuSkins'
 
+const props = defineProps({
+  /**
+   * Laeuft gerade ein Wiederherstellen aus dem Verlauf? (M5 C6, Issue #173)
+   *
+   * Dann ist dieses Formular NICHT bedienbar. Der Grund ist derselbe, aus dem
+   * die Ansicht waehrenddessen den Canvas vom Schirm nimmt: beide halten einen
+   * Entwurf, der von der Sekunde des Klicks an nicht mehr die Seite beschreibt.
+   * Der Canvas kann verschwinden, weil er neu aufgebaut wird; dieses Formular
+   * bleibt stehen (es zeigt Name und Zugriff, nicht nur die Flaeche) - und
+   * muesste ohne Sperre nur EINEN Klick abbekommen, um den Stand von vorher
+   * ueber den wiederhergestellten zu schreiben. Genau das ist der dritte
+   * Schreiber (Micsi/openbridgeserver#187), nur durch die Hintertuer.
+   *
+   * Vorgabe `false`: kein Aufrufer wird zur Sperre gezwungen, und die
+   * C1-Montagen dieses Formulars bleiben unveraendert bedienbar.
+   */
+  restoring: { type: Boolean, default: false },
+})
+
 /** Die vier Stufen des OBS-Zugriffsmodells, in der Reihenfolge der Messlatte E15. */
 const ACCESS_LEVELS = ['public', 'readonly', 'protected', 'user']
 
@@ -143,6 +162,10 @@ const removeUser = (name) => {
 }
 
 async function onSubmit() {
+  // Der zweite Riegel neben dem `<fieldset disabled>`: ein Formular laesst sich
+  // auch ohne seinen Knopf abschicken (Eingabetaste in einem Textfeld), und ein
+  // gesperrtes Feld verhindert das Absenden nicht.
+  if (props.restoring) return
   await store.save()
 }
 </script>
@@ -161,441 +184,453 @@ async function onSubmit() {
     class="visu-page-properties flex flex-col gap-3 text-sm"
     @submit.prevent="onSubmit"
   >
-    <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
-      {{ $t('visuEditor.props.title') }}
-    </h2>
-
-    <div class="flex flex-col gap-1">
-      <label
-        for="visu-prop-name"
-        class="label"
-      >{{ $t('visuEditor.props.name') }}</label>
-      <input
-        id="visu-prop-name"
-        v-model="draft.name"
-        class="input"
-        type="text"
-      >
-    </div>
-
-    <div class="flex flex-col gap-1">
-      <label
-        for="visu-prop-order"
-        class="label"
-      >{{ $t('visuEditor.props.order') }}</label>
-      <input
-        id="visu-prop-order"
-        class="input"
-        type="number"
-        :value="draft.order"
-        @input="draft.order = Number($event.target.value || 0)"
-      >
-    </div>
-
-    <div
-      v-if="draft.type === 'PAGE'"
-      class="flex flex-col gap-1"
-    >
-      <label
-        for="visu-prop-kind"
-        class="label"
-      >{{ $t('visuEditor.props.kind') }}</label>
-      <select
-        id="visu-prop-kind"
-        class="input"
-        :value="draft.editorKind"
-        @change="onKind"
-      >
-        <option
-          v-for="kind in EDITOR_PAGE_KINDS"
-          :key="kind"
-          :value="kind"
-        >{{ $t(`visuEditor.kind.${kind}`) }}</option>
-      </select>
-    </div>
-
-    <!-- Popup-Eigenschaften (R2-R6) - nur beim Seitentyp Popup, und zwar aus dem
-         DOM heraus, nicht nur verborgen: ein verstecktes Feld waere ein Wert,
-         den das Backend an einem Nicht-Popup mit 400 ablehnt. -->
+    <!-- EIN `<fieldset disabled>` statt eines `disabled` je Feld: das ist die
+         HTML-Antwort auf „diese Gruppe ist gerade nicht bedienbar", sie gilt
+         fuer jedes Bedienelement darin (auch fuer jedes kuenftige) und sie
+         reicht bis in die Tastaturbedienung. `contents` haelt das Gitter des
+         Formulars unveraendert - das Feldgruppen-Element selbst nimmt keinen
+         Platz ein und aendert keine Anordnung. -->
     <fieldset
-      v-if="supportsPopup(draft.editorKind)"
-      data-testid="visu-props-popup"
-      class="flex flex-col gap-2 rounded border border-slate-200 dark:border-slate-700 p-2"
+      data-testid="visu-props-fields"
+      class="contents"
+      :disabled="restoring"
     >
-      <p class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
-        {{ $t('visuEditor.props.popupSection') }}
-      </p>
-      <div class="grid grid-cols-2 gap-2">
-        <div class="flex flex-col gap-1">
-          <label
-            for="visu-prop-popup-x"
-            class="label"
-          >{{ $t('visuEditor.props.x') }}</label>
-          <input
-            id="visu-prop-popup-x"
-            class="input"
-            type="number"
-            :value="draft.popup.x ?? ''"
-            @input="setPopupNumber('x', $event.target.value)"
-          >
-        </div>
-        <div class="flex flex-col gap-1">
-          <label
-            for="visu-prop-popup-y"
-            class="label"
-          >{{ $t('visuEditor.props.y') }}</label>
-          <input
-            id="visu-prop-popup-y"
-            class="input"
-            type="number"
-            :value="draft.popup.y ?? ''"
-            @input="setPopupNumber('y', $event.target.value)"
-          >
-        </div>
-        <div class="flex flex-col gap-1">
-          <label
-            for="visu-prop-popup-w"
-            class="label"
-          >{{ $t('visuEditor.props.width') }}</label>
-          <input
-            id="visu-prop-popup-w"
-            class="input"
-            type="number"
-            :value="draft.popup.w ?? ''"
-            @input="setPopupNumber('w', $event.target.value)"
-          >
-        </div>
-        <div class="flex flex-col gap-1">
-          <label
-            for="visu-prop-popup-h"
-            class="label"
-          >{{ $t('visuEditor.props.height') }}</label>
-          <input
-            id="visu-prop-popup-h"
-            class="input"
-            type="number"
-            :value="draft.popup.h ?? ''"
-            @input="setPopupNumber('h', $event.target.value)"
-          >
-        </div>
-      </div>
-      <p class="text-xs text-slate-500 dark:text-slate-400">
-        {{ $t('visuEditor.props.centerHint') }}
-      </p>
+      <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {{ $t('visuEditor.props.title') }}
+      </h2>
 
       <div class="flex flex-col gap-1">
         <label
-          for="visu-prop-popup-autoclose"
+          for="visu-prop-name"
           class="label"
-        >{{ $t('visuEditor.props.autoClose') }}</label>
+        >{{ $t('visuEditor.props.name') }}</label>
         <input
-          id="visu-prop-popup-autoclose"
+          id="visu-prop-name"
+          v-model="draft.name"
+          class="input"
+          type="text"
+        >
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <label
+          for="visu-prop-order"
+          class="label"
+        >{{ $t('visuEditor.props.order') }}</label>
+        <input
+          id="visu-prop-order"
           class="input"
           type="number"
-          :value="draft.popup.auto_close_ms ?? ''"
-          @input="setPopupNumber('auto_close_ms', $event.target.value)"
+          :value="draft.order"
+          @input="draft.order = Number($event.target.value || 0)"
         >
-      </div>
-
-      <div class="flex items-center gap-2">
-        <input
-          id="visu-prop-popup-modal"
-          v-model="draft.popup.modal"
-          type="checkbox"
-        >
-        <label for="visu-prop-popup-modal">{{ $t('visuEditor.props.modal') }}</label>
-      </div>
-      <div class="flex items-center gap-2">
-        <input
-          id="visu-prop-popup-animate"
-          v-model="draft.popup.animate"
-          type="checkbox"
-        >
-        <label for="visu-prop-popup-animate">{{ $t('visuEditor.props.animate') }}</label>
-      </div>
-      <div class="flex items-center gap-2">
-        <input
-          id="visu-prop-popup-shadow"
-          v-model="draft.popup.shadow"
-          type="checkbox"
-        >
-        <label for="visu-prop-popup-shadow">{{ $t('visuEditor.props.shadow') }}</label>
-      </div>
-      <div class="flex items-center gap-2">
-        <input
-          id="visu-prop-popup-dim"
-          v-model="draft.popup.dim_backdrop"
-          type="checkbox"
-        >
-        <label for="visu-prop-popup-dim">{{ $t('visuEditor.props.dimBackdrop') }}</label>
-      </div>
-    </fieldset>
-
-    <!-- Includes (R13/R14). Der Knopf steht auch bei einem Seitentyp da, der gar
-         nicht inkludieren darf: genau daran zeigt der Editor die verbotene
-         Kombination, statt sie zu verstecken (Messlatte E9). -->
-    <div
-      v-if="draft.type === 'PAGE'"
-      class="flex flex-col gap-2 rounded border border-slate-200 dark:border-slate-700 p-2"
-    >
-      <p class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
-        {{ $t('visuEditor.props.includesSection') }}
-      </p>
-
-      <div
-        v-for="(target, index) in draft.includes"
-        :key="`include-${index}`"
-        data-include-row
-        class="flex items-center gap-2"
-      >
-        <label
-          :for="`visu-prop-include-${index}`"
-          class="sr-only"
-        >{{ $t('visuEditor.props.includeTarget', { index: index + 1 }) }}</label>
-        <select
-          :id="`visu-prop-include-${index}`"
-          class="input"
-          :value="target"
-          @change="setInclude(index, $event.target.value)"
-        >
-          <option
-            v-for="node in includeOptions(index)"
-            :key="node.id"
-            :value="node.id"
-          >{{ node.name }}</option>
-        </select>
-        <button
-          type="button"
-          data-action="remove-include"
-          class="rounded px-1 text-xs text-rose-600 dark:text-rose-400"
-          :aria-label="$t('visuEditor.props.removeInclude', { name: target })"
-          @click="removeInclude(index)"
-        >&#10005;</button>
-      </div>
-
-      <button
-        type="button"
-        data-testid="visu-props-add-include"
-        class="btn-secondary self-start text-xs"
-        @click="addInclude"
-      >
-        {{ $t('visuEditor.props.addInclude') }}
-      </button>
-      <p
-        v-if="includeCandidates.length === 0"
-        class="text-xs text-slate-500 dark:text-slate-400"
-      >
-        {{ $t('visuEditor.props.noIncludeTargets') }}
-      </p>
-
-      <div
-        v-if="supportsIncludes(draft.editorKind)"
-        class="flex items-center gap-2"
-      >
-        <input
-          id="visu-prop-ignore-global"
-          v-model="draft.ignoreGlobalIncludes"
-          type="checkbox"
-        >
-        <label for="visu-prop-ignore-global">{{ $t('visuEditor.props.ignoreGlobal') }}</label>
-      </div>
-    </div>
-
-    <!-- Zugriff, PIN, Zielgruppe (E15). -->
-    <div class="flex flex-col gap-2 rounded border border-slate-200 dark:border-slate-700 p-2">
-      <p class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
-        {{ $t('visuEditor.props.accessSection') }}
-      </p>
-
-      <div class="flex items-center gap-2">
-        <input
-          id="visu-prop-inherit"
-          type="checkbox"
-          :checked="inherits"
-          @change="setInherit($event.target.checked)"
-        >
-        <label for="visu-prop-inherit">{{ $t('visuEditor.props.inherit') }}</label>
-      </div>
-
-      <div class="flex flex-col gap-1">
-        <label
-          for="visu-prop-access"
-          class="label"
-        >{{ $t('visuEditor.props.access') }}</label>
-        <select
-          id="visu-prop-access"
-          class="input"
-          :disabled="inherits"
-          :value="draft.access ?? ''"
-          @change="setAccess($event.target.value)"
-        >
-          <option
-            v-for="level in ACCESS_LEVELS"
-            :key="level"
-            :value="level"
-          >{{ $t(`visuEditor.access.${level}`) }}</option>
-        </select>
       </div>
 
       <div
-        v-if="draft.access === 'protected'"
+        v-if="draft.type === 'PAGE'"
         class="flex flex-col gap-1"
       >
         <label
-          for="visu-prop-pin"
+          for="visu-prop-kind"
           class="label"
-        >{{ $t('visuEditor.props.pin') }}</label>
-        <input
-          id="visu-prop-pin"
-          v-model="draft.pin"
-          class="input"
-          type="password"
-          autocomplete="new-password"
-        >
-      </div>
-
-      <div class="flex flex-col gap-1">
-        <label
-          for="visu-prop-audience"
-          class="label"
-        >{{ $t('visuEditor.props.audience') }}</label>
-        <!-- Die Liste ist das beschriftete Bedienelement (Harness + Screenreader);
-             die Knoepfe darunter tragen die Aktion, die ein <select> nicht kann. -->
+        >{{ $t('visuEditor.props.kind') }}</label>
         <select
-          id="visu-prop-audience"
+          id="visu-prop-kind"
           class="input"
-          multiple
-          size="3"
-          :disabled="draft.access !== 'user'"
+          :value="draft.editorKind"
+          @change="onKind"
         >
           <option
-            v-for="name in draft.usernames"
-            :key="name"
-            :value="name"
-          >{{ name }}</option>
+            v-for="kind in EDITOR_PAGE_KINDS"
+            :key="kind"
+            :value="kind"
+          >{{ $t(`visuEditor.kind.${kind}`) }}</option>
         </select>
+      </div>
+
+      <!-- Popup-Eigenschaften (R2-R6) - nur beim Seitentyp Popup, und zwar aus dem
+           DOM heraus, nicht nur verborgen: ein verstecktes Feld waere ein Wert,
+           den das Backend an einem Nicht-Popup mit 400 ablehnt. -->
+      <fieldset
+        v-if="supportsPopup(draft.editorKind)"
+        data-testid="visu-props-popup"
+        class="flex flex-col gap-2 rounded border border-slate-200 dark:border-slate-700 p-2"
+      >
+        <p class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+          {{ $t('visuEditor.props.popupSection') }}
+        </p>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="flex flex-col gap-1">
+            <label
+              for="visu-prop-popup-x"
+              class="label"
+            >{{ $t('visuEditor.props.x') }}</label>
+            <input
+              id="visu-prop-popup-x"
+              class="input"
+              type="number"
+              :value="draft.popup.x ?? ''"
+              @input="setPopupNumber('x', $event.target.value)"
+            >
+          </div>
+          <div class="flex flex-col gap-1">
+            <label
+              for="visu-prop-popup-y"
+              class="label"
+            >{{ $t('visuEditor.props.y') }}</label>
+            <input
+              id="visu-prop-popup-y"
+              class="input"
+              type="number"
+              :value="draft.popup.y ?? ''"
+              @input="setPopupNumber('y', $event.target.value)"
+            >
+          </div>
+          <div class="flex flex-col gap-1">
+            <label
+              for="visu-prop-popup-w"
+              class="label"
+            >{{ $t('visuEditor.props.width') }}</label>
+            <input
+              id="visu-prop-popup-w"
+              class="input"
+              type="number"
+              :value="draft.popup.w ?? ''"
+              @input="setPopupNumber('w', $event.target.value)"
+            >
+          </div>
+          <div class="flex flex-col gap-1">
+            <label
+              for="visu-prop-popup-h"
+              class="label"
+            >{{ $t('visuEditor.props.height') }}</label>
+            <input
+              id="visu-prop-popup-h"
+              class="input"
+              type="number"
+              :value="draft.popup.h ?? ''"
+              @input="setPopupNumber('h', $event.target.value)"
+            >
+          </div>
+        </div>
+        <p class="text-xs text-slate-500 dark:text-slate-400">
+          {{ $t('visuEditor.props.centerHint') }}
+        </p>
+
+        <div class="flex flex-col gap-1">
+          <label
+            for="visu-prop-popup-autoclose"
+            class="label"
+          >{{ $t('visuEditor.props.autoClose') }}</label>
+          <input
+            id="visu-prop-popup-autoclose"
+            class="input"
+            type="number"
+            :value="draft.popup.auto_close_ms ?? ''"
+            @input="setPopupNumber('auto_close_ms', $event.target.value)"
+          >
+        </div>
+
+        <div class="flex items-center gap-2">
+          <input
+            id="visu-prop-popup-modal"
+            v-model="draft.popup.modal"
+            type="checkbox"
+          >
+          <label for="visu-prop-popup-modal">{{ $t('visuEditor.props.modal') }}</label>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            id="visu-prop-popup-animate"
+            v-model="draft.popup.animate"
+            type="checkbox"
+          >
+          <label for="visu-prop-popup-animate">{{ $t('visuEditor.props.animate') }}</label>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            id="visu-prop-popup-shadow"
+            v-model="draft.popup.shadow"
+            type="checkbox"
+          >
+          <label for="visu-prop-popup-shadow">{{ $t('visuEditor.props.shadow') }}</label>
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            id="visu-prop-popup-dim"
+            v-model="draft.popup.dim_backdrop"
+            type="checkbox"
+          >
+          <label for="visu-prop-popup-dim">{{ $t('visuEditor.props.dimBackdrop') }}</label>
+        </div>
+      </fieldset>
+
+      <!-- Includes (R13/R14). Der Knopf steht auch bei einem Seitentyp da, der gar
+           nicht inkludieren darf: genau daran zeigt der Editor die verbotene
+           Kombination, statt sie zu verstecken (Messlatte E9). -->
+      <div
+        v-if="draft.type === 'PAGE'"
+        class="flex flex-col gap-2 rounded border border-slate-200 dark:border-slate-700 p-2"
+      >
+        <p class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+          {{ $t('visuEditor.props.includesSection') }}
+        </p>
+
+        <div
+          v-for="(target, index) in draft.includes"
+          :key="`include-${index}`"
+          data-include-row
+          class="flex items-center gap-2"
+        >
+          <label
+            :for="`visu-prop-include-${index}`"
+            class="sr-only"
+          >{{ $t('visuEditor.props.includeTarget', { index: index + 1 }) }}</label>
+          <select
+            :id="`visu-prop-include-${index}`"
+            class="input"
+            :value="target"
+            @change="setInclude(index, $event.target.value)"
+          >
+            <option
+              v-for="node in includeOptions(index)"
+              :key="node.id"
+              :value="node.id"
+            >{{ node.name }}</option>
+          </select>
+          <button
+            type="button"
+            data-action="remove-include"
+            class="rounded px-1 text-xs text-rose-600 dark:text-rose-400"
+            :aria-label="$t('visuEditor.props.removeInclude', { name: target })"
+            @click="removeInclude(index)"
+          >&#10005;</button>
+        </div>
+
+        <button
+          type="button"
+          data-testid="visu-props-add-include"
+          class="btn-secondary self-start text-xs"
+          @click="addInclude"
+        >
+          {{ $t('visuEditor.props.addInclude') }}
+        </button>
         <p
-          v-if="draft.access === 'user' && store.draftBindsDatapoints"
-          data-testid="visu-props-audience-datapoint-hint"
+          v-if="includeCandidates.length === 0"
           class="text-xs text-slate-500 dark:text-slate-400"
         >
-          {{ $t('visuEditor.props.audienceDatapointHint') }}
+          {{ $t('visuEditor.props.noIncludeTargets') }}
         </p>
-        <ul
-          v-if="draft.usernames.length > 0"
-          class="flex flex-wrap gap-1"
+
+        <div
+          v-if="supportsIncludes(draft.editorKind)"
+          class="flex items-center gap-2"
         >
-          <li
-            v-for="name in draft.usernames"
-            :key="name"
+          <input
+            id="visu-prop-ignore-global"
+            v-model="draft.ignoreGlobalIncludes"
+            type="checkbox"
           >
-            <button
-              type="button"
-              data-action="remove-user"
-              class="rounded bg-slate-100 dark:bg-slate-700/60 px-1.5 py-0.5 text-xs"
-              :aria-label="$t('visuEditor.props.removeUser', { name })"
-              @click="removeUser(name)"
-            >{{ name }} &#10005;</button>
-          </li>
-        </ul>
+          <label for="visu-prop-ignore-global">{{ $t('visuEditor.props.ignoreGlobal') }}</label>
+        </div>
       </div>
 
-      <div class="flex flex-col gap-1">
-        <label
-          for="visu-prop-add-user"
-          class="label"
-        >{{ $t('visuEditor.props.addUser') }}</label>
-        <select
-          id="visu-prop-add-user"
-          class="input"
-          :disabled="draft.access !== 'user'"
-          @change="addUser"
+      <!-- Zugriff, PIN, Zielgruppe (E15). -->
+      <div class="flex flex-col gap-2 rounded border border-slate-200 dark:border-slate-700 p-2">
+        <p class="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">
+          {{ $t('visuEditor.props.accessSection') }}
+        </p>
+
+        <div class="flex items-center gap-2">
+          <input
+            id="visu-prop-inherit"
+            type="checkbox"
+            :checked="inherits"
+            @change="setInherit($event.target.checked)"
+          >
+          <label for="visu-prop-inherit">{{ $t('visuEditor.props.inherit') }}</label>
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label
+            for="visu-prop-access"
+            class="label"
+          >{{ $t('visuEditor.props.access') }}</label>
+          <select
+            id="visu-prop-access"
+            class="input"
+            :disabled="inherits"
+            :value="draft.access ?? ''"
+            @change="setAccess($event.target.value)"
+          >
+            <option
+              v-for="level in ACCESS_LEVELS"
+              :key="level"
+              :value="level"
+            >{{ $t(`visuEditor.access.${level}`) }}</option>
+          </select>
+        </div>
+
+        <div
+          v-if="draft.access === 'protected'"
+          class="flex flex-col gap-1"
         >
-          <option value="" />
-          <option
-            v-for="name in addableUsers"
-            :key="name"
-            :value="name"
-          >{{ name }}</option>
-        </select>
+          <label
+            for="visu-prop-pin"
+            class="label"
+          >{{ $t('visuEditor.props.pin') }}</label>
+          <input
+            id="visu-prop-pin"
+            v-model="draft.pin"
+            class="input"
+            type="password"
+            autocomplete="new-password"
+          >
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label
+            for="visu-prop-audience"
+            class="label"
+          >{{ $t('visuEditor.props.audience') }}</label>
+          <!-- Die Liste ist das beschriftete Bedienelement (Harness + Screenreader);
+               die Knoepfe darunter tragen die Aktion, die ein <select> nicht kann. -->
+          <select
+            id="visu-prop-audience"
+            class="input"
+            multiple
+            size="3"
+            :disabled="draft.access !== 'user'"
+          >
+            <option
+              v-for="name in draft.usernames"
+              :key="name"
+              :value="name"
+            >{{ name }}</option>
+          </select>
+          <p
+            v-if="draft.access === 'user' && store.draftBindsDatapoints"
+            data-testid="visu-props-audience-datapoint-hint"
+            class="text-xs text-slate-500 dark:text-slate-400"
+          >
+            {{ $t('visuEditor.props.audienceDatapointHint') }}
+          </p>
+          <ul
+            v-if="draft.usernames.length > 0"
+            class="flex flex-wrap gap-1"
+          >
+            <li
+              v-for="name in draft.usernames"
+              :key="name"
+            >
+              <button
+                type="button"
+                data-action="remove-user"
+                class="rounded bg-slate-100 dark:bg-slate-700/60 px-1.5 py-0.5 text-xs"
+                :aria-label="$t('visuEditor.props.removeUser', { name })"
+                @click="removeUser(name)"
+              >{{ name }} &#10005;</button>
+            </li>
+          </ul>
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label
+            for="visu-prop-add-user"
+            class="label"
+          >{{ $t('visuEditor.props.addUser') }}</label>
+          <select
+            id="visu-prop-add-user"
+            class="input"
+            :disabled="draft.access !== 'user'"
+            @change="addUser"
+          >
+            <option value="" />
+            <option
+              v-for="name in addableUsers"
+              :key="name"
+              :value="name"
+            >{{ name }}</option>
+          </select>
+        </div>
       </div>
-    </div>
 
-    <!-- Skin je Seite (E19). -->
-    <div
-      v-if="draft.type === 'PAGE'"
-      class="flex flex-col gap-1"
-    >
-      <label
-        for="visu-prop-skin"
-        class="label"
-      >{{ $t('visuEditor.props.skin') }}</label>
-      <select
-        id="visu-prop-skin"
-        class="input"
-        :value="store.skin"
-        @change="store.setSkin($event.target.value)"
+      <!-- Skin je Seite (E19). -->
+      <div
+        v-if="draft.type === 'PAGE'"
+        class="flex flex-col gap-1"
       >
-        <option
-          v-for="key in VISU_SKIN_KEYS"
-          :key="key"
-          :value="key"
-        >{{ key }}</option>
-      </select>
-      <!-- Der Hinweis MUSS vor und nach dem Merge von Teil C2 stimmen, deshalb
-           haengt er an derselben Erkennung wie die Naht selbst: solange
-           `PageConfig` kein Skin-Feld fuehrt, lebt die Wahl im Browser des
-           Autors; sobald das Feld da ist, gehoert sie der Seite. Ohne diese
-           Fallunterscheidung waere ein fester Satz nach dem Merge eine
-           Falschaussage, und
-           niemand haette einen Anlass, ihn nachzuziehen (gepinnt in
-           `tests/components/visu/VisuPageProperties.spec.js`, E19). -->
+        <label
+          for="visu-prop-skin"
+          class="label"
+        >{{ $t('visuEditor.props.skin') }}</label>
+        <select
+          id="visu-prop-skin"
+          class="input"
+          :value="store.skin"
+          @change="store.setSkin($event.target.value)"
+        >
+          <option
+            v-for="key in VISU_SKIN_KEYS"
+            :key="key"
+            :value="key"
+          >{{ key }}</option>
+        </select>
+        <!-- Der Hinweis MUSS vor und nach dem Merge von Teil C2 stimmen, deshalb
+             haengt er an derselben Erkennung wie die Naht selbst: solange
+             `PageConfig` kein Skin-Feld fuehrt, lebt die Wahl im Browser des
+             Autors; sobald das Feld da ist, gehoert sie der Seite. Ohne diese
+             Fallunterscheidung waere ein fester Satz nach dem Merge eine
+             Falschaussage, und
+             niemand haette einen Anlass, ihn nachzuziehen (gepinnt in
+             `tests/components/visu/VisuPageProperties.spec.js`, E19). -->
+        <p
+          data-testid="visu-props-skin-hint"
+          :data-skin-storage="store.skinSupported ? 'page' : 'browser'"
+          class="text-xs text-slate-500 dark:text-slate-400"
+        >
+          {{ store.skinSupported ? $t('visuEditor.props.skinHintPage') : $t('visuEditor.props.skinHintBrowser') }}
+        </p>
+      </div>
+
+      <ul
+        v-if="store.problems.length > 0"
+        class="flex flex-col gap-1"
+      >
+        <li
+          v-for="problem in store.problems"
+          :key="`${problem.code}-${problem.params?.target ?? ''}`"
+          :data-problem="problem.code"
+          class="text-sm text-rose-600 dark:text-rose-400"
+        >
+          {{ $t(problemText(problem), problem.params ?? {}) }}
+        </li>
+      </ul>
+
       <p
-        data-testid="visu-props-skin-hint"
-        :data-skin-storage="store.skinSupported ? 'page' : 'browser'"
-        class="text-xs text-slate-500 dark:text-slate-400"
-      >
-        {{ store.skinSupported ? $t('visuEditor.props.skinHintPage') : $t('visuEditor.props.skinHintBrowser') }}
-      </p>
-    </div>
-
-    <ul
-      v-if="store.problems.length > 0"
-      class="flex flex-col gap-1"
-    >
-      <li
-        v-for="problem in store.problems"
-        :key="`${problem.code}-${problem.params?.target ?? ''}`"
-        :data-problem="problem.code"
+        v-if="store.saveError"
+        data-testid="visu-props-error"
         class="text-sm text-rose-600 dark:text-rose-400"
       >
-        {{ $t(problemText(problem), problem.params ?? {}) }}
-      </li>
-    </ul>
+        {{ $t('visuEditor.props.saveFailed') }}
+        {{ rejectionKey ? $t(rejectionKey, rejectionParams) : store.saveError }}
+      </p>
 
-    <p
-      v-if="store.saveError"
-      data-testid="visu-props-error"
-      class="text-sm text-rose-600 dark:text-rose-400"
-    >
-      {{ $t('visuEditor.props.saveFailed') }}
-      {{ rejectionKey ? $t(rejectionKey, rejectionParams) : store.saveError }}
-    </p>
-
-    <div class="flex items-center gap-2">
-      <button
-        type="submit"
-        data-testid="visu-props-save"
-        class="btn-primary text-xs"
-        :disabled="!store.canSave"
-      >
-        {{ $t('visuEditor.props.save') }}
-      </button>
-      <span
-        v-if="store.savedAt"
-        data-testid="visu-props-saved"
-        class="text-sm text-emerald-600 dark:text-emerald-400"
-      >{{ $t('visuEditor.props.saved') }}</span>
-    </div>
+      <div class="flex items-center gap-2">
+        <button
+          type="submit"
+          data-testid="visu-props-save"
+          class="btn-primary text-xs"
+          :disabled="!store.canSave"
+        >
+          {{ $t('visuEditor.props.save') }}
+        </button>
+        <span
+          v-if="store.savedAt"
+          data-testid="visu-props-saved"
+          class="text-sm text-emerald-600 dark:text-emerald-400"
+        >{{ $t('visuEditor.props.saved') }}</span>
+      </div>
+    </fieldset>
   </form>
 </template>

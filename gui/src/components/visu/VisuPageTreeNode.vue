@@ -123,8 +123,28 @@ function onMove(event) {
           des Autors ebenso wie die eines Abnahme-Szenarios - traf dann nicht
           die eine Zeile der Seite, sondern zusaetzlich n Eintraege in
           Aufklappmenues. `label` ist laut HTML-Spezifikation genau die
-          Beschriftung einer Option: der Browser zeigt sie unveraendert an, der
-          zugaengliche Name bleibt derselbe, nur der TEXTINHALT ist entlastet.
+          Beschriftung einer Option, und der Browser zeigt sie unveraendert an.
+
+          DAS `title` DANEBEN IST NICHT DOPPELT GEMOPPELT. Bis Runde 1 stand
+          hier die Behauptung „der zugaengliche Name bleibt derselbe" - sie war
+          falsch, und zwar messbar: `getByRole('option', { name })` fand auf der
+          Basis 19 Treffer, mit `label` allein NULL. Der Namensrechner des
+          Harness zieht das `label`-Attribut nicht heran; ohne diese Zeile waere
+          ein Verschieben-Ziel ueber Rolle+Name nicht mehr adressierbar - eine
+          Verschlechterung der Zugaenglichkeit als Preis fuer eine aufgeraeumte
+          Textsuche.
+
+          WARUM `title` UND NICHT `aria-label`: aus demselben Grund, aus dem der
+          Knotenname schon bei den Aktionsknoepfen oben im `title` steht (siehe
+          `actionTitle`). `getByLabel` sucht teilstring-genau ueber `aria-label`
+          - eine Seite namens „E9 Seitentyp wirksam" machte damit JEDES
+          `getByLabel('Seitentyp')` mehrdeutig, und zwar n-fach. Gemessen im
+          Pflichtlauf: 21 Treffer, E9 und E15 rot. Der `title` steht dagegen nur
+          in der Namensberechnung (letzte Stufe der accname-Kaskade), nicht in
+          der Label-Suche: `getByRole('option', { name })` findet das Ziel
+          wieder, `getByLabel` bleibt unberuehrt, und der Textinhalt des
+          Dokuments bleibt entlastet. Alle drei Haelften stehen als eigene
+          Zusicherung in `VisuPageTreeNode.moveTargets.spec.js`.
           Welche Ziele angeboten werden und was ein Wechsel ausloest, ist
           unveraendert (`VisuPageTree.spec.js`).
         -->
@@ -133,6 +153,7 @@ function onMove(event) {
           :key="target.id"
           :value="target.id"
           :label="target.text"
+          :title="target.text"
         />
       </select>
 

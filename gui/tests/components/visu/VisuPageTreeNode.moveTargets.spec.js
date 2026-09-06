@@ -19,10 +19,29 @@ import { createPinia, setActivePinia } from 'pinia'
  *     Auswahl ist er eine Beschriftung.
  *
  * DIE LOESUNG, die genau das trennt: die Optionen tragen ihren Namen im
- * `label`-Attribut statt als Textinhalt. Das ist die HTML-Antwort auf genau
- * diese Frage - `label` ist laut Spezifikation die Beschriftung einer Option,
- * der Browser zeigt sie unveraendert an, und der zugaengliche Name bleibt
- * derselbe. Nur der TEXTINHALT des Dokuments ist entlastet.
+ * `label`-Attribut statt als Textinhalt. `label` ist laut HTML-Spezifikation
+ * die Beschriftung einer Option, und der Browser zeigt sie unveraendert an.
+ *
+ * DAZU EIN `title` MIT DEMSELBEN WERT, und das ist keine Doppelung. Gemessen
+ * (Kritik Runde 2, derselbe Browser, dieselbe Instanz):
+ * `getByRole('option', { name })` fand auf der Basis 19 Treffer, nach der
+ * Umstellung auf `label` **null**. Playwrights Berechnung des zugaenglichen
+ * Namens zieht das `label`-Attribut nicht heran; der zugaengliche Name blieb
+ * also NICHT derselbe, wie es hier bis Runde 1 stand - er war weg. Ein
+ * Verschieben-Ziel waere ueber Rolle+Name nicht mehr adressierbar gewesen, und
+ * das ist die Waehrung dieses Projekts.
+ *
+ * WARUM `title` UND NICHT `aria-label`: gemessen im Pflichtlauf mit
+ * `aria-label` - E9 und E15 rot, `getByLabel('Seitentyp')` traf 21 Elemente
+ * statt eines. `getByLabel` sucht teilstring-genau ueber `aria-label`, und eine
+ * Seite namens „E9 Seitentyp wirksam" steht in JEDER Verschieben-Auswahl. Das
+ * ist genau die Falle, die der Knoten oben schon einmal umgangen hat (der
+ * Knotenname steht bei den Aktionsknoepfen im `title`, nicht im `aria-label`).
+ * Der `title` wirkt nur in der letzten Stufe der accname-Kaskade und nicht in
+ * der Label-Suche: Rolle+Name findet wieder, `getByLabel` bleibt unberuehrt.
+ *
+ * Die drei Zusicherungen unten (Beschriftung, zugaenglicher Name, leerer
+ * Textinhalt) stehen deshalb NEBENEINANDER und muessen es bleiben.
  *
  * Was NICHT angetastet ist: welche Ziele angeboten werden, in welcher Ordnung,
  * und was ein Wechsel ausloest. Das steht in `VisuPageTree.spec.js` und gilt
@@ -79,6 +98,38 @@ describe('Verschieben-Auswahl: der Name beschriftet, er steht nicht im Text', ()
       .filter((o) => o.attributes('value'))
 
     expect(optionen.map((o) => o.attributes('label'))).toEqual(['M5 Include Gamma', 'M5 Home'])
+  })
+
+  it('nennt jedes Ziel zusaetzlich im `title` - der zugaengliche Name bleibt', async () => {
+    const { wrapper } = await mountTree()
+    const optionen = wrapper
+      .find('[data-node-id="eg"] [data-action="move"]')
+      .findAll('option')
+      .filter((o) => o.attributes('value'))
+
+    expect(optionen.map((o) => o.attributes('title'))).toEqual(['M5 Include Gamma', 'M5 Home'])
+  })
+
+  it('haelt `label` und `title` auf demselben Wert - eine Beschriftung, zwei Leser', async () => {
+    const { wrapper } = await mountTree()
+    const optionen = wrapper
+      .find('[data-node-id="eg"] [data-action="move"]')
+      .findAll('option')
+      .filter((o) => o.attributes('value'))
+
+    for (const option of optionen) {
+      expect(option.attributes('title')).toBe(option.attributes('label'))
+    }
+  })
+
+  it('setzt KEIN `aria-label` - das machte jedes `getByLabel` n-fach mehrdeutig', async () => {
+    const { wrapper } = await mountTree()
+    const optionen = wrapper
+      .find('[data-node-id="eg"] [data-action="move"]')
+      .findAll('option')
+      .filter((o) => o.attributes('value'))
+
+    expect(optionen.map((o) => o.attributes('aria-label'))).toEqual([undefined, undefined])
   })
 
   it('laesst den Textinhalt der Ziel-Optionen leer', async () => {

@@ -201,6 +201,50 @@ describe('VisuEditorView - Verlauf und Datei (C6)', () => {
     expect(visuApi.pageVersions.mock.calls.length).toBe(vorher + 1)
   })
 
+  /**
+   * Der Canvas verschwindet waehrend eines Wiederherstellens - das
+   * Eigenschaftsformular bleibt stehen und muss deshalb GESPERRT sein. Sonst
+   * traegt es weiter den Entwurf von vorher und sein „Speichern" koennte sich
+   * mit dem `PUT` des Wiederherstellens ueberholen.
+   */
+  it('sperrt das Eigenschaftsformular fuer die Dauer des Wiederherstellens', async () => {
+    const wrapper = await mountEditor({ pageId: 'solo' })
+    const { default: VisuPageProperties } = await import('@/components/visu/VisuPageProperties.vue')
+    expect(wrapper.findComponent(VisuPageProperties).props('restoring')).toBe(false)
+
+    ;(await historyOf(wrapper)).vm.$emit('restore-start')
+    await flushPromises()
+
+    expect(wrapper.findComponent(VisuPageProperties).props('restoring')).toBe(true)
+    expect(wrapper.find('[data-testid="visu-props-fields"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('gibt das Formular wieder frei, sobald das Wiederherstellen vorbei ist', async () => {
+    const wrapper = await mountEditor({ pageId: 'solo' })
+    const verlauf = await historyOf(wrapper)
+    const { default: VisuPageProperties } = await import('@/components/visu/VisuPageProperties.vue')
+
+    verlauf.vm.$emit('restore-start')
+    await flushPromises()
+    verlauf.vm.$emit('restored', { ok: true })
+    await flushPromises()
+
+    expect(wrapper.findComponent(VisuPageProperties).props('restoring')).toBe(false)
+  })
+
+  it('gibt es auch nach einem GESCHEITERTEN Wiederherstellen frei', async () => {
+    const wrapper = await mountEditor({ pageId: 'solo' })
+    const verlauf = await historyOf(wrapper)
+    const { default: VisuPageProperties } = await import('@/components/visu/VisuPageProperties.vue')
+
+    verlauf.vm.$emit('restore-start')
+    await flushPromises()
+    verlauf.vm.$emit('restored', { ok: false })
+    await flushPromises()
+
+    expect(wrapper.findComponent(VisuPageProperties).props('restoring')).toBe(false)
+  })
+
   it('laedt den Baum nach einem Import neu - sonst fehlte die neue Seite', async () => {
     const wrapper = await mountEditor({ pageId: 'solo' })
     const vorher = visuApi.tree.mock.calls.length

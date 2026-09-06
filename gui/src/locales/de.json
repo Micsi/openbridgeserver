@@ -3635,7 +3635,9 @@
       "importError": "Der Import wurde abgelehnt.",
       "invalidError": "Die Datei ist kein Visu-Export.",
       "noFileError": "Es ist keine Datei gewählt.",
-      "copyName": "{name} (Kopie {index})"
+      "copyName": "{name} (Kopie {index})",
+      "protectedWithoutPin": "PIN-Schutz ohne PIN: {count} eingelesene Seite(n) sind geschützt, aber ein Export trägt kein Geheimnis. Bis in den Eigenschaften eine neue PIN gesetzt ist, kommt niemand hinein.",
+      "droppedFields": "Nicht übernommen, weil diese Version sie nicht kennt: {fields}"
     },
     "restoring": "Die Seite wird wiederhergestellt. Der Canvas kommt mit dem alten Stand zurück."
   }

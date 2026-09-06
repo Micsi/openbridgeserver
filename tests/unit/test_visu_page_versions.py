@@ -633,3 +633,309 @@ async def test_the_imported_page_starts_its_own_history(db: Database) -> None:
 
     assert [version.revision for version in await _versions(db, neu.id)] == [1]
     assert [version.revision for version in await _versions(db, "seite")] == [2, 1]
+
+
+# ── Der fuenfte Schreibweg: das Aufraeumen beim Loeschen ──────────────────────
+#
+# `_drop_include_references` schreibt beim Loeschen einer Seite die
+# `page_config` JEDER Seite um, die sie inkludiert hatte - auf fremden Zeilen,
+# ohne dass deren Autor etwas getan haette. Ohne Version daran waere der oberste
+# Verlaufseintrag dieser Seiten weder der ausgelieferte Stand noch ueberhaupt
+# wiederherstellbar: der gestrichene Include-Eintrag gilt beim `PUT` als NEU
+# hinzugefuegt und faellt in die strenge Zielpruefung (§2.1) - 400 „Include-Ziel
+# existiert nicht". Genau das steht unten als eigener Test.
+
+
+async def _delete(db: Database, node_id: str, *, user: typing.Any = "admin") -> None:
+    await visu_api.delete_node(node_id=node_id, db=db, _user=user)
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_include_source_records_a_version_on_every_page_that_referenced_it(db: Database) -> None:
+    await _insert_node(db, "quelle")
+    await _insert_node(db, "wirt")
+    await _save(db, "wirt", PageConfig(includes=["quelle"]))
+
+    await _delete(db, "quelle")
+
+    versions = await _versions(db, "wirt")
+    assert [version.revision for version in versions] == [2, 1]
+    assert (await _version_config(db, "wirt", 2)).includes == []
+    assert (await _version_config(db, "wirt", 1)).includes == ["quelle"]
+
+
+@pytest.mark.asyncio
+async def test_after_that_cleanup_the_top_version_is_the_delivered_state(db: Database) -> None:
+    """Die Ordnungszusage von `get_page_versions`: Position 0 IST der ausgelieferte Stand."""
+    await _insert_node(db, "quelle")
+    await _insert_node(db, "wirt")
+    await _save(db, "wirt", PageConfig(widgets=[_widget(x=3)], includes=["quelle"]))
+
+    await _delete(db, "quelle")
+
+    oberste = (await _versions(db, "wirt"))[0].revision
+    assert (await _version_config(db, "wirt", oberste)).model_dump() == (await _load(db, "wirt")).model_dump()
+
+
+@pytest.mark.asyncio
+async def test_the_top_version_after_that_cleanup_can_be_restored(db: Database) -> None:
+    """Der Bruch, der Runde 1 aufgehalten hat: hier faellt kein 400 mehr."""
+    await _insert_node(db, "quelle")
+    await _insert_node(db, "wirt")
+    await _save(db, "wirt", PageConfig(includes=["quelle"]))
+    await _delete(db, "quelle")
+
+    await _restore(db, "wirt", (await _versions(db, "wirt"))[0].revision)
+
+    assert (await _load(db, "wirt")).includes == []
+
+
+@pytest.mark.asyncio
+async def test_the_cleanup_version_carries_the_principal_that_deleted(db: Database) -> None:
+    await _insert_node(db, "quelle")
+    await _insert_node(db, "wirt")
+    await _save(db, "wirt", PageConfig(includes=["quelle"]))
+
+    await _delete(db, "quelle")
+
+    oberste = (await _versions(db, "wirt"))[0]
+    assert oberste.revision == 2
+    assert oberste.created_by == "admin"
+
+
+@pytest.mark.asyncio
+async def test_the_cleanup_version_is_exactly_what_the_column_now_holds(db: Database) -> None:
+    """Stand und Version entstehen in derselben Transaktion, also aus derselben Zeichenkette."""
+    await _insert_node(db, "quelle")
+    await _insert_node(db, "wirt")
+    await _save(db, "wirt", PageConfig(includes=["quelle"]))
+
+    await _delete(db, "quelle")
+
+    spalte = await db.fetchone("SELECT page_config FROM visu_nodes WHERE id = ?", ("wirt",))
+    zeilen = await _rows(db, "wirt")
+    assert zeilen[-1]["page_config"] == spalte["page_config"]
+
+
+@pytest.mark.asyncio
+async def test_a_page_the_cleanup_does_not_touch_gets_no_version(db: Database) -> None:
+    """Der andere Zweig: wer den Geloeschten nie inkludiert hat, bekommt keine Zeile."""
+    await _insert_node(db, "quelle")
+    await _insert_node(db, "unbeteiligt")
+    await _save(db, "unbeteiligt", PageConfig(widgets=[_widget(x=1)]))
+
+    await _delete(db, "quelle")
+
+    assert [version.revision for version in await _versions(db, "unbeteiligt")] == [1]
+
+
+@pytest.mark.asyncio
+async def test_the_cleanup_keeps_unknown_fields_of_a_foreign_configuration(db: Database) -> None:
+    """R17 bleibt: das Aufraeumen fasst die rohe Struktur an, nicht das Modell."""
+    await _insert_node(db, "quelle")
+    await _insert_node(
+        db,
+        "wirt",
+        raw_page_config=json.dumps({"widgets": [], "includes": ["quelle"], "v1_feld": {"a": 1}}),
+    )
+
+    await _delete(db, "quelle")
+
+    spalte = await db.fetchone("SELECT page_config FROM visu_nodes WHERE id = ?", ("wirt",))
+    gespeichert = json.loads(spalte["page_config"])
+    assert gespeichert["v1_feld"] == {"a": 1}
+    assert json.loads((await _rows(db, "wirt"))[-1]["page_config"])["v1_feld"] == {"a": 1}
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_page_nobody_included_writes_no_version_anywhere(db: Database) -> None:
+    """Der leere Zweig des Aufraeumens: keine betroffene Zeile, keine Version."""
+    await _insert_node(db, "quelle")
+    await _insert_node(db, "wirt")
+    await _save(db, "wirt", PageConfig(widgets=[_widget(x=1)]))
+
+    await _delete(db, "quelle")
+
+    assert len(await _rows(db, "wirt")) == 1
+
+
+# ── E18, Gegenfall 1: ein Emoji im Seitennamen bricht den Export nicht ────────
+
+
+@pytest.mark.asyncio
+async def test_exporting_a_page_with_a_non_latin1_name_succeeds(db: Database) -> None:
+    """Vor der Behebung: HTTP 500, `UnicodeEncodeError: 'latin-1' codec can't encode`."""
+    await db.execute_and_commit(
+        """INSERT INTO visu_nodes (id, parent_id, name, type, kind, node_order, icon, page_config, created_at, updated_at)
+           VALUES (?, NULL, ?, 'PAGE', 'normal', 0, NULL, ?, ?, ?)""",
+        ("emoji", "Krit 😀 Emoji", PageConfig().model_dump_json(), NOW, NOW),
+    )
+
+    antwort = await visu_api.export_node(node_id="emoji", db=db, _user="admin")
+
+    disposition = antwort.headers["content-disposition"]
+    disposition.encode("latin-1")  # genau das ist vorher geplatzt
+    assert "filename*=UTF-8''" in disposition
+    assert "%F0%9F%98%80" in disposition  # das Emoji, prozentkodiert (RFC 5987)
+
+
+@pytest.mark.asyncio
+async def test_the_ascii_fallback_of_that_header_stays_usable(db: Database) -> None:
+    await db.execute_and_commit(
+        """INSERT INTO visu_nodes (id, parent_id, name, type, kind, node_order, icon, page_config, created_at, updated_at)
+           VALUES (?, NULL, ?, 'PAGE', 'normal', 0, NULL, ?, ?, ?)""",
+        ("emoji", "Krit 😀 Emoji", PageConfig().model_dump_json(), NOW, NOW),
+    )
+
+    antwort = await visu_api.export_node(node_id="emoji", db=db, _user="admin")
+
+    assert 'filename="Krit_Emoji_visu.json"' in antwort.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
+async def test_a_name_made_only_of_emoji_still_yields_a_filename(db: Database) -> None:
+    """Der Randfall der Rueckfall-Regel: nichts Druckbares bleibt uebrig."""
+    await db.execute_and_commit(
+        """INSERT INTO visu_nodes (id, parent_id, name, type, kind, node_order, icon, page_config, created_at, updated_at)
+           VALUES (?, NULL, ?, 'PAGE', 'normal', 0, NULL, ?, ?, ?)""",
+        ("emoji", "😀", PageConfig().model_dump_json(), NOW, NOW),
+    )
+
+    antwort = await visu_api.export_node(node_id="emoji", db=db, _user="admin")
+
+    assert 'filename="visu_export.json"' in antwort.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
+async def test_a_plain_name_keeps_the_plain_filename(db: Database) -> None:
+    """Der andere Zweig: an einem gewoehnlichen Namen aendert sich nichts."""
+    await _insert_node(db, "Wohnzimmer")
+
+    antwort = await visu_api.export_node(node_id="Wohnzimmer", db=db, _user="admin")
+
+    assert 'filename="Wohnzimmer_visu.json"' in antwort.headers["content-disposition"]
+
+
+# ── E18, Gegenfaelle 2 und 3: was der Import NICHT mitbringt, sagt er ─────────
+
+
+class _Antwort:
+    """Ein Platzhalter fuer die `Response`, die FastAPI dem Endpunkt sonst stellt."""
+
+    def __init__(self) -> None:
+        self.headers: dict[str, str] = {}
+
+
+async def _import(db: Database, datei: dict[str, typing.Any]) -> tuple[typing.Any, dict[str, str]]:
+    antwort = _Antwort()
+    knoten = await visu_api.import_nodes(
+        body=VisuImportRequest(**datei),
+        response=typing.cast(typing.Any, antwort),
+        db=db,
+        _user="admin",
+    )
+    return knoten, antwort.headers
+
+
+@pytest.mark.asyncio
+async def test_the_import_names_the_fields_it_could_not_keep(db: Database) -> None:
+    """Ein stiller Verlust ist keine Option: der Autor erfaehrt, was liegen blieb."""
+    await _insert_node(
+        db,
+        "seite",
+        raw_page_config=json.dumps(
+            {
+                "widgets": [{"id": "w-1", "name": "Licht", "type": "light", "neu_im_widget": 7}],
+                "includes": [],
+                "zukunftsfeld": {"a": 1},
+            },
+        ),
+    )
+    datei = await _export(db, "seite")
+
+    _neu, headers = await _import(db, datei)
+
+    assert headers["X-Visu-Import-Dropped-Fields"] == "widgets[].neu_im_widget,zukunftsfeld"
+
+
+@pytest.mark.asyncio
+async def test_an_import_without_unknown_fields_reports_none(db: Database) -> None:
+    """Der andere Zweig: eine Datei dieser Version meldet nichts."""
+    await _insert_node(db, "seite")
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=1)]))
+    datei = await _export(db, "seite")
+
+    _neu, headers = await _import(db, datei)
+
+    assert "X-Visu-Import-Dropped-Fields" not in headers
+
+
+@pytest.mark.asyncio
+async def test_the_import_reports_a_protected_page_that_arrives_without_its_pin(db: Database) -> None:
+    """Der Export laesst den PIN bewusst weg - dann muss der Import es sagen."""
+    datei = {
+        "obs_export": "visu_subtree",
+        "version": 1,
+        "nodes": [
+            {"id": "a", "parent_id": None, "name": "Geschuetzt", "type": "PAGE", "access": "protected", "page_config": {}},
+        ],
+    }
+
+    neu, headers = await _import(db, datei)
+
+    assert headers["X-Visu-Import-Protected-Without-Pin"] == "1"
+    policy = await db.fetchone("SELECT access_mode FROM authz_visu_page_policies WHERE node_id = ?", (neu.id,))
+    credential = await db.fetchone("SELECT pin_hash FROM authz_visu_page_credentials WHERE node_id = ?", (neu.id,))
+    assert policy["access_mode"] == "protected"
+    assert credential is None
+
+
+@pytest.mark.asyncio
+async def test_a_page_without_pin_protection_reports_nothing(db: Database) -> None:
+    """Der andere Zweig: eine oeffentliche Seite loest keine Meldung aus."""
+    await _insert_node(db, "seite", access="public")
+    datei = await _export(db, "seite")
+
+    _neu, headers = await _import(db, datei)
+
+    assert "X-Visu-Import-Protected-Without-Pin" not in headers
+
+
+# ── Was der Import als verloren meldet: die Regel selbst, beide Zweige ────────
+
+
+def test_unknown_fields_are_found_on_all_three_levels() -> None:
+    """Seite, Widget und Popup - tiefer traegt ein Export keine benannten Felder."""
+    gefunden = visu_api._unknown_config_fields(
+        {
+            "widgets": [{"id": "w-1", "name": "Licht", "type": "light", "neu_im_widget": 7}],
+            "popup": {"x": 1, "neu_im_popup": True},
+            "zukunftsfeld": {"a": 1},
+        },
+    )
+
+    assert gefunden == ["popup.neu_im_popup", "widgets[].neu_im_widget", "zukunftsfeld"]
+
+
+def test_a_configuration_of_this_version_reports_nothing() -> None:
+    """Der andere Zweig auf allen drei Ebenen zugleich."""
+    voll = PageConfig(widgets=[_widget(x=1)], popup=None).model_dump(mode="json")
+
+    assert visu_api._unknown_config_fields(voll) == []
+
+
+def test_a_known_popup_descriptor_reports_nothing() -> None:
+    """Der Popup-Zweig, wenn dort nichts Fremdes steht."""
+    mit_popup = {"widgets": [], "popup": {"x": 10, "y": 20, "modal": True}}
+
+    assert visu_api._unknown_config_fields(mit_popup) == []
+
+
+def test_entries_that_are_not_objects_are_skipped_instead_of_crashing() -> None:
+    """Die Datei kommt von aussen: ein `widgets: [null]` darf kein 500 werden."""
+    assert visu_api._unknown_config_fields({"widgets": [None, 7], "popup": "keine Struktur"}) == []
+
+
+def test_a_page_config_that_is_not_an_object_reports_nothing() -> None:
+    """Und der aeusserste Zweig: gar keine Konfiguration (ein Ordner im Export)."""
+    assert visu_api._unknown_config_fields(None) == []

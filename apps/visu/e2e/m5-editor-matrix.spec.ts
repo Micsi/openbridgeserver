@@ -806,27 +806,87 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
   });
 
   // Ebenfalls aus Teil C6: Export und Import liegen als Knoepfe neben dem
-  // Seitenbaum. Annotation weg, Szenario unveraendert.
-  test('E18 Seite/Vorlage als Datei export-/importierbar', async ({ page }) => {
+  // Seitenbaum.
+  //
+  // ZWEIMAL GESCHAERFT gegenueber der ersten Fassung, und beide Male, weil die
+  // alte Zusicherung `expect(page.getByText(name)).toHaveCount(2)` zu wenig
+  // behauptete (Kritik Runde 1, §1):
+  //
+  //  1. **Sie prueft jetzt den INHALT, nicht nur den Namen.** Ein Export, der
+  //     `page_config` komplett weglaesst, liess das Szenario gruen - der Baum
+  //     trug den Namen ja zweimal, nur stand nichts in der Seite. „Dieselbe
+  //     Seite" haengt damit nicht mehr allein an den Unit-Tests des Backends.
+  //  2. **Sie ist wiederholbar.** Jeder Lauf liess eine `(Kopie n)` stehen, und
+  //     weil `getByText` per Teilzeichenkette trifft, zaehlte die Kopie mit: ab
+  //     Lauf 2 war die Zusicherung schon VOR dem Import erfuellt. Jetzt wird vor
+  //     und nach dem Lauf aufgeraeumt (auch nach einem Abbruch), und jede
+  //     Zaehlung ist exakt und auf den Baum eingegrenzt.
+  test('E18 Seite/Vorlage als Datei export-/importierbar', async ({ page, request }) => {
     const fx = seeded();
-    await openEditor(page, fx.m5.node_ids.include_ind);
+    const headers = await adminHeaders(request);
+    const name = fx.m5.names.include_ind;
+    const kopie = `${name} (Kopie 1)`;
+    // Die Kachel, die auf dieser Seite steht (`apps/visu/e2e/seed.py`) - der
+    // INHALT, an dem gemessen wird, ob wirklich dieselbe Seite ankam.
+    const inhalt = 'M5 Gamma Item';
 
-    const download = await Promise.all([
-      page.waitForEvent('download'),
-      page.getByRole('button', { name: 'Exportieren' }).click(),
-    ]).then(([d]) => d);
-    const file = await download.path();
-    expect(file).toBeTruthy();
+    const knoten = async () =>
+      (await (await request.get(api('/visu/tree'), { headers })).json()) as Array<{
+        id: string;
+        name: string;
+      }>;
 
-    // Reimport in dieselbe Instanz: der Baum traegt den Namen danach ZWEIMAL:
-    // die Datei ist also eine vollstaendige Seite und kein Verweis auf die
-    // bestehende. (Wie der Editor die Dublette benennt, gehoert Teil C6; die
-    // Behauptung hier ist die Verdopplung, nicht die Benennung.)
-    await page.goto(`${EDITOR_BASE}/visu-editor`);
-    await page.getByRole('button', { name: 'Importieren' }).click();
-    await page.getByLabel('Datei').setInputFiles(file!);
-    await page.getByRole('button', { name: 'Import starten' }).click();
-    await expect(page.getByText(fx.m5.names.include_ind)).toHaveCount(2);
+    /** Jede Import-Kopie dieser Seite wieder aus dem Baum nehmen. */
+    const aufraeumen = async () => {
+      for (const eintrag of (await knoten()).filter((k) => k.name.startsWith(`${name} (Kopie`))) {
+        await request.delete(api(`/visu/nodes/${eintrag.id}`), { headers });
+      }
+    };
+
+    // VOR dem Lauf und nicht nur danach: ein abgebrochener Vorlauf soll den
+    // naechsten nicht faelschen, und `(Kopie 1)` ist nur dann der freie Name.
+    await aufraeumen();
+    try {
+      await openEditor(page, fx.m5.node_ids.include_ind);
+      // Ausgangsbefund: die Quelle traegt ihre Kachel. Ohne ihn saehe der
+      // Vergleich unten auch dann gruen aus, wenn schon das Original leer waere.
+      await expect(el(page, inhalt)).toBeVisible();
+
+      const download = await Promise.all([
+        page.waitForEvent('download'),
+        page.getByRole('button', { name: 'Exportieren' }).click(),
+      ]).then(([d]) => d);
+      const file = await download.path();
+      expect(file).toBeTruthy();
+
+      // Reimport in dieselbe Instanz: die Datei ist eine vollstaendige Seite und
+      // kein Verweis auf die bestehende.
+      await page.goto(`${EDITOR_BASE}/visu-editor`);
+      const baum = page.locator('.visu-page-tree');
+      await expect(baum.getByText(name, { exact: true })).toHaveCount(1);
+      await expect(baum.getByText(kopie, { exact: true })).toHaveCount(0);
+
+      await page.getByRole('button', { name: 'Importieren' }).click();
+      await page.getByLabel('Datei').setInputFiles(file!);
+      await page.getByRole('button', { name: 'Import starten' }).click();
+
+      // (a) Der Baum traegt die Seite ein ZWEITES Mal - exakt einmal je Name,
+      //     nicht „irgendwo zweimal dieselbe Zeichenkette".
+      await expect(baum.getByText(kopie, { exact: true })).toHaveCount(1);
+      await expect(baum.getByText(name, { exact: true })).toHaveCount(1);
+
+      // (b) Und die zweite Zeile ist wirklich DIESELBE SEITE: sie traegt
+      //     dieselbe Kachel, und zwar genau diese eine.
+      const importiert = (await knoten()).find((k) => k.name === kopie);
+      expect(importiert).toBeTruthy();
+      await page.goto(`${EDITOR_BASE}/visu-editor/${importiert!.id}`);
+      await expect(el(page, inhalt)).toBeVisible();
+      await expect(page.locator('.editor-canvas [data-el]')).toHaveCount(1);
+    } finally {
+      // Das Szenario hinterlaesst die Welt, wie es sie fand - sonst belegt der
+      // zweite Pflichtlauf nichts mehr.
+      await aufraeumen();
+    }
   });
 
   // Seit dem Merge von Teil C2 traegt `PageConfig` das Feld `skin`

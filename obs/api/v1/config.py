@@ -1113,6 +1113,24 @@ async def import_config(
                 result.errors.append(f"Icon '{icon.name}': {exc}")
 
     # --- Visu Nodes (topologisch sortiert: Eltern vor Kindern) ---
+    #
+    # DIES IST DER SECHSTE SCHREIBWEG AUF ``visu_nodes.page_config`` - und der
+    # einzige, der bewusst KEINE Seitenversion schreibt (M5 C6, E12; die
+    # Aufzaehlung der uebrigen fuenf steht in ``_record_page_version``,
+    # ``obs/api/v1/visu.py``). Zwei Gruende, beide hier und nicht dort:
+    #
+    #  1. Es ist kein Autorenschritt an EINER Seite, sondern das Einspielen des
+    #     gesamten Bestandes. Ein Verlauf, der davon eine Zeile je Seite
+    #     bekaeme, machte den Verlauf jeder Seite unbrauchbar - der gesuchte
+    #     Stand von gestern stuende dann hinter n Zeilen desselben Zeitpunkts.
+    #  2. Es gibt hier keine gemeinsame Transaktion: jede Zeile geht mit
+    #     ``execute_and_commit`` einzeln hinaus. Eine Version daneben koennte
+    #     also gerade NICHT „zusammen gelten oder zusammen zurueckrollen" -
+    #     genau die Zusage, an der der Verlauf haengt.
+    #
+    # Die Folge ist benannt, nicht still: eine eingespielte Konfiguration setzt
+    # den Verlauf einer Seite nicht fort, sie laesst ihn stehen. Der naechste
+    # Handgriff des Autors schreibt die naechste Version.
     if body.visu_nodes:
         inserted_ids: set[str] = set()
         remaining = list(body.visu_nodes)

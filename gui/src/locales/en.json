@@ -3635,7 +3635,9 @@
       "importError": "The import was rejected.",
       "invalidError": "The file is not a Visu export.",
       "noFileError": "No file selected.",
-      "copyName": "{name} (copy {index})"
+      "copyName": "{name} (copy {index})",
+      "protectedWithoutPin": "PIN protection without a PIN: {count} imported page(s) are protected, but an export carries no secret. Nobody gets in until a new PIN is set in the properties.",
+      "droppedFields": "Not kept, because this version does not know them: {fields}"
     },
     "restoring": "The page is being restored. The canvas comes back with the earlier state."
   }

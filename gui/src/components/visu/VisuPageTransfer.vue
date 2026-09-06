@@ -25,6 +25,25 @@
  * WAS DIE ERFOLGSMELDUNG NICHT SAGT: den Namen der importierten Seite. Er steht
  * nach dem Import im Baum, und eine Meldung daneben waere ein weiterer Fundort
  * desselben Namens - eine Suche nach ihm faende dann mehr als die Seiten.
+ *
+ * WAS SIE SEHR WOHL SAGT: was beim Einlesen NICHT mitgekommen ist. „Export
+ * gefolgt von Import ergibt dieselbe Seite" hat zwei Ausnahmen, beide
+ * pre-existent, beide bewusst - und ein stiller Verlust ist keine davon:
+ *
+ *  - **PIN-Schutz ohne PIN.** Der Export laesst `access_pin` weg (ein Geheimnis
+ *    gehoert nicht in eine Datei, die weitergereicht wird). Die Policy wird
+ *    trotzdem angelegt; sie wegzulassen waere eine stille Herabstufung des
+ *    Zugriffsschutzes. Die importierte Seite ist damit fuer JEDEN verschlossen,
+ *    bis der Autor eine neue PIN setzt - und im Baum sieht sie aus wie jede
+ *    andere. Deshalb steht es hier.
+ *  - **Felder einer neueren OBS-Version.** Der Export liest roh und traegt sie
+ *    mit, der Import geht durch `PageConfig` und verwirft, was er nicht kennt.
+ *    Am `GET` faellt das nie auf (der liest ebenfalls durchs Modell), erst beim
+ *    naechsten Export.
+ *
+ * Beides meldet das Backend in Antwort-Headern - dieselbe Bauart wie
+ * `X-Source-Page-Readonly` (§2.1). Fehlt der Header, gab es nichts zu melden;
+ * eine Antwort ohne Header ist also kein Fehler, sondern der Normalfall.
  */
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -53,6 +72,25 @@ const errorKey = ref(null)
 const done = ref(false)
 const fileInput = ref(null)
 const chosen = ref(null)
+/** Wie viele eingelesene Seiten PIN-geschuetzt sind, aber ohne PIN ankamen. */
+const protectedWithoutPin = ref(0)
+/** Die Feldnamen, die dieser Server nicht kennt und deshalb nicht uebernommen hat. */
+const droppedFields = ref([])
+
+/**
+ * Einen Antwort-Header lesen, egal wie der HTTP-Klient ihn ablegt.
+ *
+ * Axios gibt die Header kleingeschrieben zurueck, ein blanker `fetch` liefert
+ * ein `Headers`-Objekt, und eine Attrappe im Test kann beides sein oder fehlen.
+ * Header sind laut RFC 9110 ohnehin ohne Ruecksicht auf Gross- und
+ * Kleinschreibung zu lesen.
+ */
+function header(headers, name) {
+  if (!headers) return null
+  if (typeof headers.get === 'function') return headers.get(name)
+  const treffer = Object.keys(headers).find((key) => key.toLowerCase() === name.toLowerCase())
+  return treffer ? headers[treffer] : null
+}
 
 async function exportPage() {
   if (!props.pageId || busy.value) return
@@ -95,6 +133,11 @@ async function startImport() {
   if (busy.value) return
   errorKey.value = null
   done.value = false
+  // Die Hinweise gehoeren dem LAUFENDEN Import. Stehengebliebene aus dem
+  // vorigen waeren die gefaehrlichste Sorte Anzeige - richtig aussehend und
+  // ueber die falsche Datei.
+  protectedWithoutPin.value = 0
+  droppedFields.value = []
   const gelesen = await readExportDocument(chosen.value)
   if (!gelesen.ok) {
     errorKey.value = gelesen.reason === 'missing' ? 'noFile' : 'invalid'
@@ -115,11 +158,15 @@ async function startImport() {
       editor.nodes.map((node) => node.name),
       (basis, index) => t('visuEditor.transfer.copyName', { name: basis, index }),
     )
-    await visuApi.importNodes({
+    const antwort = await visuApi.importNodes({
       ...gelesen.document,
       nodes: [{ ...wurzel, name }, ...rest],
       target_parent_id: null,
     })
+    protectedWithoutPin.value = Number(header(antwort?.headers, 'X-Visu-Import-Protected-Without-Pin')) || 0
+    droppedFields.value = String(header(antwort?.headers, 'X-Visu-Import-Dropped-Fields') ?? '')
+      .split(',')
+      .filter(Boolean)
     importing.value = false
     chosen.value = null
     done.value = true
@@ -138,6 +185,8 @@ watch(
   () => {
     errorKey.value = null
     done.value = false
+    protectedWithoutPin.value = 0
+    droppedFields.value = []
   },
 )
 </script>
@@ -180,6 +229,24 @@ watch(
         {{ $t(`visuEditor.transfer.${errorKey}Error`) }}
       </span>
     </div>
+
+    <!-- Die zwei benannten Grenzen von E18. Sie stehen UNTER der
+         Erfolgsmeldung, nicht statt ihrer: der Import ist gelungen, es fehlt
+         nur etwas, das die Datei gar nicht tragen konnte. -->
+    <p
+      v-if="protectedWithoutPin > 0"
+      data-testid="editor-transfer-protected-notice"
+      class="text-xs text-amber-600 dark:text-amber-400"
+    >
+      {{ $t('visuEditor.transfer.protectedWithoutPin', { count: protectedWithoutPin }) }}
+    </p>
+    <p
+      v-if="droppedFields.length > 0"
+      data-testid="editor-transfer-dropped-notice"
+      class="text-xs text-amber-600 dark:text-amber-400"
+    >
+      {{ $t('visuEditor.transfer.droppedFields', { fields: droppedFields.join(', ') }) }}
+    </p>
 
     <div
       v-if="importing"

@@ -31,10 +31,12 @@ nächste Stelle, an der „der letzte gewinnt" entsteht - und er käme an
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -62,6 +64,7 @@ from obs.models.visu import (
     PageKind,
     PinAuthRequest,
     PinAuthResponse,
+    PopupConfig,
     VisuImportRequest,
     VisuNode,
     VisuNodeCreate,
@@ -69,6 +72,7 @@ from obs.models.visu import (
     VisuNodeUpdate,
     VisuNodeUsersUpdate,
     VisuPageVersion,
+    WidgetInstance,
     WidgetRefInstance,
 )
 
@@ -439,7 +443,11 @@ async def _validate_page_kind_config(
     await _assert_no_include_cycle(db, node_id, config.includes)
 
 
-async def _drop_include_references(db: Database, removed_ids: Iterable[str]) -> None:
+async def _drop_include_references(
+    db: Database,
+    removed_ids: Iterable[str],
+    principal: Principal | None = None,
+) -> None:
     """Entfernt Verweise auf gelöschte Seiten aus den ``includes`` anderer Seiten.
 
     Bewusste Wahl: beim Löschen wird **aufgeräumt** statt die toten Verweise stehen
@@ -453,6 +461,22 @@ async def _drop_include_references(db: Database, removed_ids: Iterable[str]) -> 
     Baum, auch auf Seiten ohne Schreibrecht des Löschenden: es ist dieselbe
     Integritäts-Nachsorge wie das kaskadierende Löschen der Nachkommen, kein
     inhaltlicher Eingriff (der Verweis zeigte danach ohnehin ins Leere).
+
+    **DIES IST EIN SCHREIBWEG AUF ``page_config``, und er hält seinen Stand fest**
+    (M5 C6 R2, E12). Er ist der einzige, der eine Seite ändert, ohne dass ihr
+    Autor etwas getan hätte - und genau deshalb muss er mitschreiben: ohne
+    Version wäre der oberste Verlaufseintrag der betroffenen Seiten weder der
+    ausgelieferte Stand (entgegen der Zusage von ``get_page_versions``) noch
+    überhaupt wiederherstellbar. Der gestrichene Include-Eintrag stünde beim
+    ``PUT`` nicht mehr in der gespeicherten Liste, gälte damit als NEU
+    hinzugefügt und fiele in die strenge Zielprüfung (§2.1) - 400
+    „Include-Ziel existiert nicht". Der Aufrufer (``delete_node``) hält die
+    Transaktion; Stand und Version gelten zusammen oder gar nicht.
+
+    Nur wirklich geänderte Zeilen werden geschrieben: die Abfrage unten trifft
+    eine Seite auch dann, wenn ihr Verweis in einem anderen Feld als
+    ``includes`` steht - eine unveränderte Liste bekäme sonst eine Version ohne
+    Änderung.
     """
     # `removed_ids` ist der Teilbaum der gelöschten Seite und enthält sie immer selbst;
     # eine leere Liste ist ausgeschlossen (wie schon beim DELETE der Rollen darüber).
@@ -472,11 +496,16 @@ async def _drop_include_references(db: Database, removed_ids: Iterable[str]) -> 
     for row in rows:
         stored = json.loads(row["page_config"])
         includes = [str(target) for target in stored.get("includes") or []]
-        stored["includes"] = [target for target in includes if target not in dropped]
+        kept = [target for target in includes if target not in dropped]
+        if kept == includes:
+            continue
+        stored["includes"] = kept
+        stored_json = json.dumps(stored)
         await db.conn.execute(
             "UPDATE visu_nodes SET page_config = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(stored), _now_iso(), row["id"]),
+            (stored_json, _now_iso(), row["id"]),
         )
+        await _record_page_version(db, row["id"], stored_json, principal)
 
 
 def _collect_page_datapoint_ids(config: PageConfig) -> list[str]:
@@ -744,11 +773,25 @@ async def _record_page_version(
 ) -> int | None:
     """Hält den gerade geschriebenen Stand einer Seite fest (E12).
 
-    Aufgerufen von JEDEM Weg, der ``visu_nodes.page_config`` schreibt (anlegen,
-    speichern, importieren, kopieren) - und ausschließlich innerhalb der
-    Transaktion des Aufrufers, damit Stand und Version zusammen gelten oder
-    zusammen zurückgerollt werden. Eine Version, die einen Schreibvorgang
-    überlebt, der selbst gescheitert ist, wäre schlimmer als keine.
+    Aufgerufen von JEDEM Weg dieses Moduls, der ``visu_nodes.page_config``
+    schreibt - und ausschließlich innerhalb der Transaktion des Aufrufers, damit
+    Stand und Version zusammen gelten oder zusammen zurückgerollt werden. Eine
+    Version, die einen Schreibvorgang überlebt, der selbst gescheitert ist, wäre
+    schlimmer als keine.
+
+    Die Wege, vollständig aufgezählt (jeder ist unten belegt):
+
+    1. anlegen (``create_node``), 2. speichern (``save_page`` - dort läuft auch
+    jedes Wiederherstellen durch), 3. importieren (``import_nodes``),
+    4. kopieren (``copy_node``), 5. das Aufräumen toter Include-Verweise beim
+    Löschen (``_drop_include_references``).
+
+    **Die eine Ausnahme, ausdrücklich:** das Einspielen einer ganzen
+    Konfiguration (``obs/api/v1/config.py``, ``POST /config/import``) schreibt
+    ``page_config`` ebenfalls, schreibt aber KEINE Version - siehe die
+    Begründung dort. Es ist kein Autorenschritt, sondern das Ersetzen des
+    gesamten Bestandes, und es hält keine gemeinsame Transaktion, in der eine
+    Version mit dem Stand zusammen gelten könnte.
 
     **Gleich bleibt gleich.** Ist der Stand mit dem obersten identisch, entsteht
     keine Zeile: der Canvas sichert die Reihenfolge sofort (E2) und V1 schickt
@@ -838,14 +881,88 @@ async def get_tree(
 # ── Einzelner Knoten ──────────────────────────────────────────────────────────
 
 
+#: Was in einer Header-Aufzaehlung stehen darf. Die Feldnamen kommen aus einer
+#: FREMDEN Datei; ohne diese Enge stuende dort, was der Absender hineinschreibt -
+#: bis hin zu einem Zeilenumbruch, der den Header spaltet.
+_HEADER_TOKEN = re.compile(r"[^A-Za-z0-9_.\[\]-]+")
+
+#: Wie viele Feldnamen der Header hoechstens nennt. Wer mehr verliert, hat kein
+#: Feld-Problem, sondern eine Datei aus einer ganz anderen Welt.
+_DROPPED_FIELDS_CAP = 20
+
+
+def _header_list(values: list[str]) -> str:
+    return ",".join(_HEADER_TOKEN.sub("_", value)[:64] for value in values[:_DROPPED_FIELDS_CAP])
+
+
+def _unknown_config_fields(raw: Any) -> list[str]:
+    """Welche Felder einer eingelesenen ``page_config`` dieses OBS nicht kennt.
+
+    **Warum das ueberhaupt gemeldet wird (E18, Gegenfall 2).** Der Export liest
+    roh und traegt jedes Feld mit, auch eines aus einer neueren OBS-Version. Der
+    Import geht durch ``PageConfig.model_validate``, und Pydantic verwirft
+    Unbekanntes wortlos. Eine Seite aus einer neueren Version verlor beim
+    Einlesen also still Felder - am ``GET`` faellt das nie auf (der liest
+    ebenfalls durchs Modell), erst in der Datei-Kette.
+
+    **Warum gemeldet und nicht aufgehoben.** Das Feld hier durchzureichen waere
+    eine Zusage, die sofort bricht: ``save_page`` schreibt
+    ``config.model_dump_json()``, der erste Handgriff des Autors an dieser Seite
+    loeschte es also doch - nur zu einem Zeitpunkt, den niemand mehr mit dem
+    Import verbindet. Und ein Feld, das diese Instanz weder versteht noch
+    validiert, in ihrer Datenbank zu tragen, ist genau dort gefaehrlich, wo es
+    am ehesten vorkommt: bei einem kuenftigen Zugriffs- oder Bindungsfeld. Der
+    Verlust ist damit eine GRENZE dieses Endpunkts - eine benannte, die der
+    Autor beim Import liest, statt sie beim naechsten Export zu entdecken.
+
+    Gesehen werden die drei Ebenen, auf denen ein Export ueberhaupt Felder
+    traegt: die Seite selbst, jedes Widget und der Popup-Deskriptor. Tiefer
+    (``widget.config``) ist es ein freies Objekt, das das Modell ohnehin
+    unveraendert durchreicht - dort geht nichts verloren.
+    """
+    if not isinstance(raw, dict):
+        return []
+    unknown = {key for key in raw if key not in PageConfig.model_fields}
+    for widget in raw.get("widgets") or []:
+        if isinstance(widget, dict):
+            unknown |= {f"widgets[].{key}" for key in widget if key not in WidgetInstance.model_fields}
+    popup = raw.get("popup")
+    if isinstance(popup, dict):
+        unknown |= {f"popup.{key}" for key in popup if key not in PopupConfig.model_fields}
+    return sorted(unknown)
+
+
 @router.post("/nodes/import", response_model=VisuNode, status_code=status.HTTP_201_CREATED)
 @audit_application_contract("POST", "/api/v1/visu/nodes/import", principal_param="_user")
 async def import_nodes(
     body: VisuImportRequest,
+    response: Response = None,
     db: Database = Depends(get_db),
     _user: Principal | str = Depends(get_current_principal),
 ):
-    """Importiert einen exportierten Visu-Teilbaum und hängt ihn an target_parent_id."""
+    """Importiert einen exportierten Visu-Teilbaum und hängt ihn an target_parent_id.
+
+    **Zwei Dinge kommen nicht mit, und beide sagt der Import laut** (M5 C6,
+    E18). Sie stehen als Antwort-Header da, in derselben Bauart wie
+    ``X-Source-Page-Readonly`` (§2.1) - der Editor liest sie und stellt sie dem
+    Autor neben die Erfolgsmeldung:
+
+    * ``X-Visu-Import-Dropped-Fields`` - Felder, die diese OBS-Version nicht
+      kennt und deshalb nicht uebernimmt (siehe ``_unknown_config_fields``).
+    * ``X-Visu-Import-Protected-Without-Pin`` - wie viele eingelesene Seiten
+      PIN-geschuetzt sind, aber OHNE PIN ankommen. Der Export laesst
+      ``access_pin`` bewusst weg (ein Geheimnis gehoert nicht in eine Datei,
+      die weitergereicht wird); die Policy wird trotzdem angelegt, denn sie
+      wegzulassen waere eine stille HERABSTUFUNG des Zugriffsschutzes. Die
+      importierte Seite ist damit fehlerschliessend zu: ``POST
+      /visu/nodes/{id}/auth`` antwortet ohne Credential-Zeile mit 403, niemand
+      kommt hinein, bis der Autor in den Eigenschaften eine neue PIN setzt.
+      Genau das muss er erfahren - eine Seite, die stillschweigend fuer alle
+      verschlossen ist, sieht im Baum aus wie jede andere.
+
+    Beide Header fehlen, wenn es nichts zu melden gibt; ein leerer Wert waere
+    eine Meldung ueber nichts.
+    """
     if body.obs_export != "visu_subtree":
         raise HTTPException(status_code=400, detail="Ungültiges Export-Format (erwartet 'visu_subtree')")
     if not body.nodes:
@@ -858,8 +975,13 @@ async def import_nodes(
     root_node = body.nodes[0]
     root_new_id = id_map[root_node.id]
 
+    dropped_fields: set[str] = set()
+    protected_without_pin = 0
     prepared_nodes: list[tuple[Any, str, str | None, str, PageConfig]] = []
     for node in body.nodes:
+        dropped_fields.update(_unknown_config_fields(node.page_config))
+        if node.access == "protected":
+            protected_without_pin += 1
         new_id = id_map[node.id]
         if node.id == root_node.id:
             new_parent_id = body.target_parent_id
@@ -952,6 +1074,11 @@ async def import_nodes(
             details={"node_count": len(prepared_nodes), "operation": "import"},
             commit=False,
         )
+    if response is not None:
+        if dropped_fields:
+            response.headers["X-Visu-Import-Dropped-Fields"] = _header_list(sorted(dropped_fields))
+        if protected_without_pin:
+            response.headers["X-Visu-Import-Protected-Without-Pin"] = str(protected_without_pin)
     return await _get_node_or_404(db, root_new_id)
 
 
@@ -1155,7 +1282,7 @@ async def delete_node(
         )
         # ON DELETE CASCADE removes descendants, policies and credentials.
         await db.conn.execute("DELETE FROM visu_nodes WHERE id = ?", (node_id,))
-        await _drop_include_references(db, subtree_ids)
+        await _drop_include_references(db, subtree_ids, principal)
         await write_application_success(db, None, principal, "DELETE", "/api/v1/visu/nodes/{node_id}", resource_id=node_id, commit=False)
 
 
@@ -1309,6 +1436,38 @@ async def copy_node(
 
 # ── Exportieren ──────────────────────────────────────────────────────────────
 
+#: Was in der ASCII-Rueckfallform eines Dateinamens stehen darf. Bewusst eng:
+#: der Rueckfall landet in einem ``filename="…"`` und darf weder das
+#: Anfuehrungszeichen noch ein Semikolon enthalten, sonst zerfaellt der Header.
+_FILENAME_ASCII = re.compile(r"[^A-Za-z0-9._-]+")
+#: Mehrere Ersatzzeichen hintereinander zu einem zusammenziehen - ein
+#: ``Krit___Emoji`` waere ein Dateiname, der die Luecke vorfuehrt statt sie zu
+#: schliessen.
+_FILENAME_RUNS = re.compile(r"_{2,}")
+
+
+def _export_content_disposition(name: str) -> str:
+    """Der Download-Header eines Exports - beide Formen, wie RFC 6266 es vorsieht.
+
+    **Warum ueberhaupt zwei.** Ein HTTP-Header ist nach RFC 7230 auf Zeichen
+    beschraenkt, die sich als latin-1 schreiben lassen; Starlette kodiert genau
+    so. Ein Seitenname wie ``Krit 😀 Emoji`` sprengte deshalb den ganzen
+    Endpunkt (``UnicodeEncodeError``, HTTP 500) - und ein Emoji im Seitennamen
+    ist in einer Visu kein Sonderfall. RFC 5987 loest das seit Langem: der
+    ASCII-Rueckfall steht in ``filename=``, der wahre Name prozentkodiert in
+    ``filename*=UTF-8''…``. Jeder heutige Browser nimmt den zweiten, aeltere
+    Empfaenger den ersten.
+
+    Der Rueckfall wird nicht bloss beschnitten, sondern auf einen brauchbaren
+    Namen zurueckgefuehrt: bleibt nichts Druckbares uebrig (ein Name nur aus
+    Emoji), steht dort ein fester Ersatz statt einer leeren Zeichenkette.
+    """
+    filename = f"{name.replace(' ', '_').replace('/', '_')}_visu.json"
+    fallback = _FILENAME_RUNS.sub("_", _FILENAME_ASCII.sub("_", filename)).strip("._-")
+    if fallback in ("", "visu.json") or not fallback.endswith(".json"):
+        fallback = "visu_export.json"
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
 
 @router.get("/nodes/{node_id}/export")
 async def export_node(
@@ -1358,10 +1517,9 @@ async def export_node(
         "exported_at": datetime.now(UTC).isoformat(),
         "nodes": nodes,
     }
-    safe_name = nodes[0]["name"].replace(" ", "_").replace("/", "_")
     return JSONResponse(
         content=export_data,
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}_visu.json"'},
+        headers={"Content-Disposition": _export_content_disposition(nodes[0]["name"])},
     )
 
 
