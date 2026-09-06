@@ -1115,9 +1115,11 @@ async def import_config(
     # --- Visu Nodes (topologisch sortiert: Eltern vor Kindern) ---
     #
     # DIES IST DER SECHSTE SCHREIBWEG AUF ``visu_nodes.page_config`` - und der
-    # einzige, der bewusst KEINE Seitenversion schreibt (M5 C6, E12; die
-    # Aufzaehlung der uebrigen fuenf steht in ``_record_page_version``,
-    # ``obs/api/v1/visu.py``). Zwei Gruende, beide hier und nicht dort:
+    # einzige, der KEINE Seitenversion schreibt, sondern vorhandene ABRAEUMT
+    # (M5 C6, E12; die Aufzaehlung der uebrigen fuenf steht in
+    # ``_record_page_version``, ``obs/api/v1/visu.py``).
+    #
+    # **Warum keine neue Zeile.** Zwei Gruende, beide hier und nicht dort:
     #
     #  1. Es ist kein Autorenschritt an EINER Seite, sondern das Einspielen des
     #     gesamten Bestandes. Ein Verlauf, der davon eine Zeile je Seite
@@ -1128,17 +1130,49 @@ async def import_config(
     #     also gerade NICHT „zusammen gelten oder zusammen zurueckrollen" -
     #     genau die Zusage, an der der Verlauf haengt.
     #
-    # Die Folge ist benannt, nicht still: eine eingespielte Konfiguration setzt
-    # den Verlauf einer Seite nicht fort, sie laesst ihn stehen. Der naechste
-    # Handgriff des Autors schreibt die naechste Version.
+    # **Warum die vorhandenen trotzdem weg muessen.** Der Weg hier ist ein
+    # UPSERT: eine bestehende Seite behaelt ihre ``id`` und bekommt einen neuen
+    # Stand. Blieben ihre Versionen stehen, waere die oberste danach nicht mehr
+    # der ausgelieferte Stand - entgegen der unbedingten Zusage von
+    # ``get_page_versions`` (``obs/api/v1/visu.py``) und entgegen dem Etikett
+    # „Zuletzt gespeichert", das der Editor genau dieser Zeile gibt
+    # (``gui/src/components/visu/VisuPageHistory.vue``). Ihr Wiederherstellen
+    # waere dann ein gewoehnliches, GELINGENDES ``PUT``: ein Klick, und die
+    # eingespielte Konfiguration dieser Seite ist still wieder weg, mit gruener
+    # Quittung. Das ist kein Randfall - ``POST /config/autobackup/restore/{name}``
+    # (``obs/api/v1/autobackup.py``) laeuft ohne vorheriges Reset genau hier
+    # hindurch, und die Einstellungen der Admin-GUI schicken dieselbe Nutzlast.
+    #
+    # Das Abraeumen ist die ehrliche Aussage: der Verlauf gehoerte zu einem
+    # Stand, den es nicht mehr gibt. Es widerspricht keinem der beiden Gruende
+    # oben - es braucht weder eine neue Version noch eine gemeinsame
+    # Transaktion.
+    #
+    # **Nur wo der Stand sich wirklich aendert.** Verglichen wird die
+    # ``page_config`` von VORHER mit der eingespielten, byteweise. Das ist
+    # genau, nicht ungefaehr: der Export traegt die Spalte roh weiter
+    # (``export_config`` liest ``r["page_config"]``), das Einspielen der
+    # Sicherung von heute laesst also jede Seite zeichengleich, und ihr Verlauf
+    # beschreibt den ausgelieferten Stand weiterhin richtig - ihn abzuraeumen
+    # waere ein Verlust ohne Anlass.
+    #
+    # **Und erst NACH dem Upsert.** Scheitert der (eine Fremdschluessel-Zeile,
+    # ein Constraint), steht in der Spalte weiter der alte Stand - dann ist der
+    # alte Verlauf die richtige Antwort und muss stehen bleiben. Umgekehrt
+    # herum geloescht, verloere eine Seite ihre Vorgeschichte fuer eine
+    # Aenderung, die gar nicht stattgefunden hat.
     if body.visu_nodes:
         inserted_ids: set[str] = set()
         remaining = list(body.visu_nodes)
 
-        # Vorhandene IDs als bereits eingefügt markieren (damit parent_id-Referenzen korrekt aufgelöst werden)
-        existing_rows = await db.fetchall("SELECT id FROM visu_nodes")
+        # Vorhandene IDs als bereits eingefügt markieren (damit parent_id-Referenzen korrekt aufgelöst werden).
+        # Der Stand dazu wird EINMAL vorweg gelesen, vor dem ersten Schreibvorgang: danach steht in der
+        # Spalte schon das Eingespielte, und der Vergleich unten traefe sich selbst.
+        existing_rows = await db.fetchall("SELECT id, page_config FROM visu_nodes")
+        page_config_before: dict[str, str | None] = {}
         for r in existing_rows:
             inserted_ids.add(r["id"])
+            page_config_before[r["id"]] = r["page_config"]
 
         for _pass in range(len(remaining) + 1):
             if not remaining:
@@ -1170,6 +1204,9 @@ async def import_config(
                         )
                         inserted_ids.add(node.id)
                         result.visu_nodes_upserted += 1
+
+                        if page_config_before.get(node.id) != node.page_config:
+                            await db.execute_and_commit("DELETE FROM visu_page_versions WHERE node_id=?", (node.id,))
 
                         await db.execute_and_commit("DELETE FROM authz_visu_page_policies WHERE node_id=?", (node.id,))
                         if node.access is not None:

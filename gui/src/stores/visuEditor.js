@@ -298,6 +298,11 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
       icon: node.icon ?? null,
       access: node.access ?? null,
       pin: '',
+      // Gibt es zu dieser Seite ueberhaupt eine PIN? `null` heisst NICHT „keine",
+      // sondern „diese Antwort weist es nicht aus" (der Baum sagt es nur einem
+      // Admin). Das leere PIN-Feld unten kann die Frage nicht beantworten - der
+      // Hash geht nie an den Browser.
+      hasPin: node.has_pin ?? null,
       usernames: [...usernames],
       includes: Array.isArray(config?.includes) ? [...config.includes] : [],
       ignoreGlobalIncludes: config?.ignore_global_includes === true,
@@ -337,6 +342,7 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
       icon: null,
       access: null,
       pin: '',
+      hasPin: null,
       usernames: [],
       includes: [],
       ignoreGlobalIncludes: false,

@@ -3431,6 +3431,7 @@
       "access": "Access",
       "inherit": "Inherit from the parent node",
       "pin": "PIN",
+      "noPinYet": "This page is protected, but no PIN has been set yet. Until then nobody gets in.",
       "audience": "Target audience",
       "addUser": "Add user",
       "removeUser": "Remove user: {name}",
@@ -3637,7 +3638,8 @@
       "noFileError": "No file selected.",
       "copyName": "{name} (copy {index})",
       "protectedWithoutPin": "PIN protection without a PIN: {count} imported page(s) are protected, but an export carries no secret. Nobody gets in until a new PIN is set in the properties.",
-      "droppedFields": "Not kept, because this version does not know them: {fields}"
+      "droppedFields": "Not kept, because this version does not know them: {fields}",
+      "droppedFieldsTruncated": "Not kept, because this version does not know them: {fields}. Plus {count} more that did not fit here."
     },
     "restoring": "The page is being restored. The canvas comes back with the earlier state."
   }

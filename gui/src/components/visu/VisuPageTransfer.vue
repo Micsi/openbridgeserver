@@ -45,7 +45,7 @@
  * `X-Source-Page-Readonly` (§2.1). Fehlt der Header, gab es nichts zu melden;
  * eine Antwort ohne Header ist also kein Fehler, sondern der Normalfall.
  */
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { visuApi } from '@/api/visu'
@@ -76,6 +76,21 @@ const chosen = ref(null)
 const protectedWithoutPin = ref(0)
 /** Die Feldnamen, die dieser Server nicht kennt und deshalb nicht uebernommen hat. */
 const droppedFields = ref([])
+/**
+ * Wie viele weitere Feldnamen der Header NICHT mehr genannt hat.
+ *
+ * Er deckelt seine Aufzaehlung (`_DROPPED_FIELDS_CAP`, `obs/api/v1/visu.py`).
+ * Ohne diese Zahl saehe eine gekuerzte Liste wie eine vollstaendige aus, und
+ * der Autor suchte die uebrigen Felder nie.
+ */
+const droppedFieldsOmitted = ref(0)
+
+/** Der Satz zur Feldliste - mit oder ohne die Angabe, dass gekuerzt wurde. */
+const droppedFieldsKey = computed(() =>
+  droppedFieldsOmitted.value > 0
+    ? 'visuEditor.transfer.droppedFieldsTruncated'
+    : 'visuEditor.transfer.droppedFields',
+)
 
 /**
  * Einen Antwort-Header lesen, egal wie der HTTP-Klient ihn ablegt.
@@ -138,6 +153,7 @@ async function startImport() {
   // ueber die falsche Datei.
   protectedWithoutPin.value = 0
   droppedFields.value = []
+  droppedFieldsOmitted.value = 0
   const gelesen = await readExportDocument(chosen.value)
   if (!gelesen.ok) {
     errorKey.value = gelesen.reason === 'missing' ? 'noFile' : 'invalid'
@@ -167,6 +183,8 @@ async function startImport() {
     droppedFields.value = String(header(antwort?.headers, 'X-Visu-Import-Dropped-Fields') ?? '')
       .split(',')
       .filter(Boolean)
+    droppedFieldsOmitted.value =
+      Number(header(antwort?.headers, 'X-Visu-Import-Dropped-Fields-Omitted')) || 0
     importing.value = false
     chosen.value = null
     done.value = true
@@ -187,6 +205,7 @@ watch(
     done.value = false
     protectedWithoutPin.value = 0
     droppedFields.value = []
+    droppedFieldsOmitted.value = 0
   },
 )
 </script>
@@ -245,7 +264,7 @@ watch(
       data-testid="editor-transfer-dropped-notice"
       class="text-xs text-amber-600 dark:text-amber-400"
     >
-      {{ $t('visuEditor.transfer.droppedFields', { fields: droppedFields.join(', ') }) }}
+      {{ $t(droppedFieldsKey, { fields: droppedFields.join(', '), count: droppedFieldsOmitted }) }}
     </p>
 
     <div

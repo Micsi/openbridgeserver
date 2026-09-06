@@ -3431,6 +3431,7 @@
       "access": "Zugriff",
       "inherit": "Vom Elternknoten erben",
       "pin": "PIN",
+      "noPinYet": "Diese Seite ist geschützt, aber es ist noch keine PIN gesetzt. Bis dahin kommt niemand hinein.",
       "audience": "Zielgruppe",
       "addUser": "Nutzer hinzufügen",
       "removeUser": "Nutzer entfernen: {name}",
@@ -3637,7 +3638,8 @@
       "noFileError": "Es ist keine Datei gewählt.",
       "copyName": "{name} (Kopie {index})",
       "protectedWithoutPin": "PIN-Schutz ohne PIN: {count} eingelesene Seite(n) sind geschützt, aber ein Export trägt kein Geheimnis. Bis in den Eigenschaften eine neue PIN gesetzt ist, kommt niemand hinein.",
-      "droppedFields": "Nicht übernommen, weil diese Version sie nicht kennt: {fields}"
+      "droppedFields": "Nicht übernommen, weil diese Version sie nicht kennt: {fields}",
+      "droppedFieldsTruncated": "Nicht übernommen, weil diese Version sie nicht kennt: {fields}. Dazu {count} weitere, die hier nicht mehr hineinpassten."
     },
     "restoring": "Die Seite wird wiederhergestellt. Der Canvas kommt mit dem alten Stand zurück."
   }

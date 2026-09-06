@@ -486,6 +486,18 @@ async function onSubmit() {
             type="password"
             autocomplete="new-password"
           >
+          <!-- Der BLEIBENDE Fundort fuer eine geschuetzte Seite ohne PIN (C6,
+               E18). Die Meldung des Imports ist fluechtig - sie verschwindet
+               beim ersten Seitenwechsel; dieser Zustand ist es nicht. Das leere
+               Feld darueber unterscheidet nichts: es steht auch dann leer, wenn
+               eine PIN gesetzt ist, denn der Hash geht nie an den Browser. -->
+          <p
+            v-if="draft.hasPin === false"
+            data-testid="visu-props-no-pin"
+            class="text-xs text-amber-600 dark:text-amber-400"
+          >
+            {{ $t('visuEditor.props.noPinYet') }}
+          </p>
         </div>
 
         <div class="flex flex-col gap-1">

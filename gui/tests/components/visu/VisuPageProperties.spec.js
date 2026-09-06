@@ -331,6 +331,49 @@ describe('VisuPageProperties - Zugriff, PIN und Zielgruppe (E15)', () => {
     expect(byLabel(wrapper, 'PIN').exists()).toBe(true)
   })
 
+  /**
+   * Der BLEIBENDE Fundort (M5 C6, Issue #173). Beim Import meldet der Editor
+   * einmal, dass eine geschuetzte Seite ohne PIN angekommen ist - und beim
+   * ersten Klick auf eine andere Seite ist die Meldung weg. Der Zustand bleibt:
+   * die Seite ist fuer jeden Besucher zu, bis hier eine PIN steht. Das leere
+   * PIN-Feld allein sagt gar nichts, denn der Hash geht nie an den Browser.
+   */
+  it('vermerkt dauerhaft, dass diese geschuetzte Seite noch ohne PIN ist', async () => {
+    visuApi.tree.mockResolvedValue({
+      data: TREE.map((n) => (n.id === 'gamma' ? { ...n, access: 'protected', has_pin: false } : { ...n })),
+    })
+    const { wrapper } = await mountProperties('gamma')
+
+    expect(wrapper.find('[data-testid="visu-props-no-pin"]').exists()).toBe(true)
+  })
+
+  it('schweigt, sobald eine PIN gesetzt ist - sonst stuende der Vermerk immer da', async () => {
+    visuApi.tree.mockResolvedValue({
+      data: TREE.map((n) => (n.id === 'gamma' ? { ...n, access: 'protected', has_pin: true } : { ...n })),
+    })
+    const { wrapper } = await mountProperties('gamma')
+
+    expect(wrapper.find('[data-testid="visu-props-no-pin"]').exists()).toBe(false)
+  })
+
+  it('schweigt, wo die Antwort den Zustand gar nicht ausweist', async () => {
+    visuApi.tree.mockResolvedValue({
+      data: TREE.map((n) => (n.id === 'gamma' ? { ...n, access: 'protected' } : { ...n })),
+    })
+    const { wrapper } = await mountProperties('gamma')
+
+    expect(wrapper.find('[data-testid="visu-props-no-pin"]').exists()).toBe(false)
+  })
+
+  it('nennt es nicht bei einer Seite, die gar keinen PIN-Schutz traegt', async () => {
+    visuApi.tree.mockResolvedValue({
+      data: TREE.map((n) => (n.id === 'gamma' ? { ...n, access: 'public', has_pin: false } : { ...n })),
+    })
+    const { wrapper } = await mountProperties('gamma')
+
+    expect(wrapper.find('[data-testid="visu-props-no-pin"]').exists()).toBe(false)
+  })
+
   it('nimmt einen Nutzer in die Zielgruppe auf', async () => {
     const { wrapper, store } = await mountProperties('guard')
     await byLabel(wrapper, 'Nutzer hinzufügen').setValue('e2e_operator')

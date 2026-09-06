@@ -254,12 +254,24 @@ function onRestoreStart() {
  * Wiederherstellung stillschweigend rueckgaengig. Beide Haelften holen sich
  * deshalb ihren Stand neu: der Canvas ueber seine Neumontage, das Formular
  * ueber diesen Ladevorgang.
+ *
+ * DIE SPERRE FAELLT ZULETZT, nicht zuerst. Zwischen `restored` und dem frischen
+ * Entwurf liegen zwei Runden zum Server; gaebe `restoring` schon davor frei,
+ * waere das Formular in dieser Zeit bedienbar UND haette noch den alten Stand -
+ * genau die Lage, gegen die die Sperre da ist, nur um zwei HTTP-Runden
+ * verschoben. Mit kuenstlich geweitetem Fenster war sie in Runde 2 messbar
+ * (der alte Entwurf gewann). Das `finally` gilt auch fuer den Abbruch oben und
+ * fuer ein gescheitertes Laden: nach einem Wiederherstellen wird dieses
+ * Formular in jedem Fall wieder bedienbar.
  */
 async function onRestored() {
-  restoring.value = false
-  if (!allowed.value) return
-  await editor.load()
-  if (pageId.value) await editor.select(pageId.value)
+  try {
+    if (!allowed.value) return
+    await editor.load()
+    if (pageId.value) await editor.select(pageId.value)
+  } finally {
+    restoring.value = false
+  }
 }
 
 /** Nach einem Import steht ein neuer Knoten im Baum; ohne Neuladen saehe ihn niemand. */

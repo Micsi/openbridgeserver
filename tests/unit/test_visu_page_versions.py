@@ -38,12 +38,13 @@ from __future__ import annotations
 
 import json
 import typing
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
 from obs.api.auth import Principal
+from obs.api.v1 import config as config_api
 from obs.api.v1 import visu as visu_api
 from obs.db.database import Database
 from obs.models.visu import (
@@ -890,6 +891,145 @@ async def test_the_import_reports_a_protected_page_that_arrives_without_its_pin(
     assert credential is None
 
 
+# ── Der BLEIBENDE Fundort: eine geschuetzte Seite ohne PIN ───────────────────
+#
+# Die Meldung beim Import ist fluechtig - sie verschwindet beim ersten Klick auf
+# die neue Seite. Der Zustand ist es nicht: die Seite bleibt zu, bis jemand eine
+# PIN setzt. Ohne einen zweiten Fundort waere sie im Eigenschaftsformular von
+# einer gewoehnlichen geschuetzten Seite nicht zu unterscheiden - das PIN-Feld
+# steht dort immer leer, denn der Hash geht nie an den Browser.
+#
+# ``has_pin`` sagt genau das eine: gibt es zu dieser Seite ueberhaupt eine
+# Credential-Zeile? Es sagt es NUR einem Admin. Fuer alle anderen bleibt das
+# Feld ``None`` - „diese Antwort weist es nicht aus". Der Baum geht auch an
+# Besucher hinaus, und die Ausstattung einer geschuetzten Seite ist keine
+# Navigationsangabe.
+
+
+async def _tree(db: Database, *, user: typing.Any = "admin") -> list[typing.Any]:
+    return await visu_api.get_tree(db=db, user=user)
+
+
+async def _set_pin(db: Database, node_id: str) -> None:
+    await db.execute_and_commit(
+        "INSERT INTO authz_visu_page_credentials (node_id, pin_hash) VALUES (?, ?)",
+        (node_id, "$2b$12$nichtgeprueft"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_tree_tells_an_admin_that_a_protected_page_has_no_pin(db: Database) -> None:
+    """Der bleibende Fundort fuer genau den Zustand, den der Import meldet."""
+    await _insert_node(db, "seite", access="protected")
+
+    eintrag = next(node for node in await _tree(db) if node.id == "seite")
+
+    assert eintrag.access == "protected"
+    assert eintrag.has_pin is False
+
+
+@pytest.mark.asyncio
+async def test_the_tree_tells_an_admin_that_a_protected_page_has_a_pin(db: Database) -> None:
+    """Der andere Zweig - sonst stuende der Hinweis an jeder geschuetzten Seite."""
+    await _insert_node(db, "seite", access="protected")
+    await _set_pin(db, "seite")
+
+    eintrag = next(node for node in await _tree(db) if node.id == "seite")
+
+    assert eintrag.has_pin is True
+
+
+@pytest.mark.asyncio
+async def test_the_tree_does_not_disclose_the_pin_state_to_a_visitor(db: Database) -> None:
+    """Ein Besucher erfaehrt es nicht: `None` heisst „nicht ausgewiesen"."""
+    await _insert_node(db, "seite", access="protected")
+
+    eintrag = next(node for node in await _tree(db, user=None) if node.id == "seite")
+
+    assert eintrag.access == "protected"
+    assert eintrag.has_pin is None
+
+
+@pytest.mark.asyncio
+async def test_a_page_imported_without_its_pin_is_recognisable_afterwards(db: Database) -> None:
+    """Die Naht zum Import-Header: derselbe Befund, nur dauerhaft."""
+    datei = {
+        "obs_export": "visu_subtree",
+        "version": 1,
+        "nodes": [
+            {"id": "a", "parent_id": None, "name": "Geschuetzt", "type": "PAGE", "access": "protected", "page_config": {}},
+        ],
+    }
+    neu, headers = await _import(db, datei)
+
+    eintrag = next(node for node in await _tree(db) if node.id == neu.id)
+
+    assert headers["X-Visu-Import-Protected-Without-Pin"] == "1"
+    assert eintrag.has_pin is False
+
+
+@pytest.mark.asyncio
+async def test_a_single_node_reports_the_pin_state_the_same_way(db: Database) -> None:
+    """Derselbe Befund am Einzelknoten - und ebenso nur fuer einen Admin."""
+    await _insert_node(db, "seite", access="protected")
+
+    als_admin = await visu_api.get_node(node_id="seite", db=db, user="admin")
+    als_besucher = await visu_api.get_node(node_id="seite", db=db, user=None)
+
+    assert als_admin.has_pin is False
+    assert als_besucher.has_pin is None
+
+
+@pytest.mark.asyncio
+async def test_the_dropped_fields_header_says_how_many_names_it_left_out(db: Database) -> None:
+    """Der Deckel von 20 Namen darf nicht schweigend abschneiden.
+
+    Ein Header, der 20 von 42 Namen nennt und so aussieht, als waeren es alle,
+    ist schlimmer als ein langer: der Autor haelt die Liste fuer vollstaendig
+    und sucht die restlichen 22 Felder nie.
+    """
+    fremd = {"widgets": [], "includes": []}
+    for nummer in range(42):
+        fremd[f"zukunftsfeld_{nummer:02d}"] = nummer
+    await _insert_node(db, "seite", raw_page_config=json.dumps(fremd))
+    datei = await _export(db, "seite")
+
+    _neu, headers = await _import(db, datei)
+
+    assert len(headers["X-Visu-Import-Dropped-Fields"].split(",")) == visu_api._DROPPED_FIELDS_CAP
+    assert headers["X-Visu-Import-Dropped-Fields-Omitted"] == str(42 - visu_api._DROPPED_FIELDS_CAP)
+
+
+@pytest.mark.asyncio
+async def test_a_field_list_that_fits_reports_no_omission(db: Database) -> None:
+    """Der andere Zweig: was ganz hineinpasst, meldet keine Kuerzung."""
+    await _insert_node(
+        db,
+        "seite",
+        raw_page_config=json.dumps({"widgets": [], "includes": [], "zukunftsfeld": 1}),
+    )
+    datei = await _export(db, "seite")
+
+    _neu, headers = await _import(db, datei)
+
+    assert headers["X-Visu-Import-Dropped-Fields"] == "zukunftsfeld"
+    assert "X-Visu-Import-Dropped-Fields-Omitted" not in headers
+
+
+@pytest.mark.asyncio
+async def test_exactly_the_capped_number_of_fields_reports_no_omission(db: Database) -> None:
+    """Die Kante selbst: genau 20 Namen sind vollstaendig, nicht gekuerzt."""
+    fremd: dict[str, typing.Any] = {"widgets": [], "includes": []}
+    for nummer in range(visu_api._DROPPED_FIELDS_CAP):
+        fremd[f"zukunftsfeld_{nummer:02d}"] = nummer
+    await _insert_node(db, "seite", raw_page_config=json.dumps(fremd))
+    datei = await _export(db, "seite")
+
+    _neu, headers = await _import(db, datei)
+
+    assert "X-Visu-Import-Dropped-Fields-Omitted" not in headers
+
+
 @pytest.mark.asyncio
 async def test_a_page_without_pin_protection_reports_nothing(db: Database) -> None:
     """Der andere Zweig: eine oeffentliche Seite loest keine Meldung aus."""
@@ -939,3 +1079,177 @@ def test_entries_that_are_not_objects_are_skipped_instead_of_crashing() -> None:
 def test_a_page_config_that_is_not_an_object_reports_nothing() -> None:
     """Und der aeusserste Zweig: gar keine Konfiguration (ein Ordner im Export)."""
     assert visu_api._unknown_config_fields(None) == []
+
+
+# ── Der SECHSTE Schreibweg: das Einspielen einer ganzen Konfiguration ─────────
+#
+# `POST /config/import` (`obs/api/v1/config.py`) schreibt `page_config`
+# ebenfalls, und zwar als UPSERT: eine bestehende Seite behaelt ihre `id` und
+# bekommt einen neuen Stand. Eine Version schreibt dieser Weg bewusst NICHT
+# (Begruendung dort) - aber damit ist erst die halbe Frage beantwortet. Die
+# andere: **was wird aus den Zeilen, die schon da sind?**
+#
+# Bleiben sie stehen, dann ist die oberste von ihnen nach dem Einspielen NICHT
+# mehr der ausgelieferte Stand - entgegen der unbedingten Zusage von
+# `get_page_versions` und entgegen dem Etikett „Zuletzt gespeichert", das der
+# Editor genau dieser Zeile gibt. Ihr Wiederherstellen ist dann ein
+# gewoehnliches, gelingendes `PUT`: es macht die eingespielte Konfiguration
+# still rueckgaengig und quittiert das als Erfolg. Ein Datenverlust mit gruener
+# Quittung, erreichbar ueber `POST /config/autobackup/restore/{name}` (das ohne
+# vorheriges Reset arbeitet) und ueber die Einstellungen der Admin-GUI.
+#
+# Der Verlauf gehoerte zu einem Stand, den es nicht mehr gibt. Genau das sagt
+# der Einspielweg jetzt: er RAEUMT ihn ab, wo er den Stand einer Seite
+# tatsaechlich veraendert - und laesst ihn stehen, wo er ihn nicht anfasst.
+
+
+def _exported_node(
+    node_id: str,
+    config: PageConfig | None = None,
+    *,
+    node_type: str = "PAGE",
+    access: str | None = None,
+) -> config_api.ExportedVisuNode:
+    return config_api.ExportedVisuNode(
+        id=node_id,
+        parent_id=None,
+        name=node_id,
+        type=node_type,
+        node_order=0,
+        icon=None,
+        access=access,
+        page_config=config.model_dump_json() if config is not None else None,
+        users=[],
+    )
+
+
+async def _config_import(db: Database, *nodes: config_api.ExportedVisuNode) -> typing.Any:
+    body = config_api.ConfigExport(
+        obs_version="5",
+        exported_at=NOW,
+        datapoints=[],
+        bindings=[],
+        visu_nodes=list(nodes),
+    )
+    registry = MagicMock()
+    registry.all.return_value = []
+    with (
+        patch.object(config_api, "get_registry", return_value=registry),
+        patch("obs.adapters.registry.stop_all", new_callable=AsyncMock),
+        patch("obs.adapters.registry.start_all", new_callable=AsyncMock),
+        patch("obs.adapters.registry.get_all_instances", return_value={}),
+        patch("obs.core.event_bus.get_event_bus", return_value=MagicMock()),
+    ):
+        return await config_api.import_config(body=body, _user="admin", db=db)
+
+
+@pytest.mark.asyncio
+async def test_a_configuration_import_drops_the_history_of_a_page_it_overwrites(db: Database) -> None:
+    """Der Verlauf gehoerte zu einem Stand, den das Einspielen ersetzt hat."""
+    await _insert_node(db, "seite")
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=1)]))
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=7)]))
+    assert [version.revision for version in await _versions(db, "seite")] == [2, 1]
+
+    ergebnis = await _config_import(db, _exported_node("seite", PageConfig(widgets=[_widget(x=99)])))
+
+    assert ergebnis.errors == []
+    assert ergebnis.visu_nodes_upserted == 1
+    assert await _versions(db, "seite") == []
+
+
+@pytest.mark.asyncio
+async def test_after_a_configuration_import_the_history_never_contradicts_the_delivered_state(db: Database) -> None:
+    """Die Ordnungszusage von `get_page_versions`, gemessen nach dem Einspielen.
+
+    Entweder es gibt keine Zeile - oder Position 0 ist byteweise der Stand, den
+    `GET /visu/pages/{id}` ausliefert. Ein Dazwischen gibt es nicht.
+    """
+    await _insert_node(db, "seite")
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=7)]))
+
+    await _config_import(db, _exported_node("seite", PageConfig(widgets=[_widget(x=99)])))
+
+    versions = await _versions(db, "seite")
+    assert (await _load(db, "seite")).widgets[0].x == 99
+    if versions:
+        oberste = await _version_config(db, "seite", versions[0].revision)
+        assert oberste.model_dump() == (await _load(db, "seite")).model_dump()
+
+
+@pytest.mark.asyncio
+async def test_no_restore_after_a_configuration_import_can_silently_undo_it(db: Database) -> None:
+    """Der Bruch selbst: kein angebotener Eintrag darf den Einspielstand zuruecknehmen."""
+    await _insert_node(db, "seite")
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=7)]))
+
+    await _config_import(db, _exported_node("seite", PageConfig(widgets=[_widget(x=99)])))
+
+    for version in await _versions(db, "seite"):
+        await _restore(db, "seite", version.revision)
+        assert (await _load(db, "seite")).widgets[0].x == 99
+
+
+@pytest.mark.asyncio
+async def test_a_configuration_import_that_leaves_a_page_untouched_keeps_its_history(db: Database) -> None:
+    """Der andere Zweig: gleicher Stand, gleicher Verlauf.
+
+    Das Einspielen der Sicherung von heute darf den Verlauf nicht abraeumen - es
+    hat an dieser Seite nichts veraendert, ihre Vorgeschichte beschreibt den
+    ausgelieferten Stand also weiterhin richtig.
+    """
+    await _insert_node(db, "seite")
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=1)]))
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=7)]))
+    unveraendert = await db.fetchone("SELECT page_config FROM visu_nodes WHERE id = 'seite'")
+
+    await _config_import(db, _exported_node("seite", PageConfig.model_validate_json(unveraendert["page_config"])))
+
+    assert [version.revision for version in await _versions(db, "seite")] == [2, 1]
+    oberste = await _version_config(db, "seite", 2)
+    assert oberste.model_dump() == (await _load(db, "seite")).model_dump()
+
+
+@pytest.mark.asyncio
+async def test_a_configuration_import_does_not_touch_the_history_of_a_page_it_never_mentions(db: Database) -> None:
+    """Eine Seite, die in der Datei gar nicht vorkommt, behaelt ihre Vorgeschichte."""
+    await _insert_node(db, "seite")
+    await _insert_node(db, "unbeteiligt")
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=1)]))
+    await _save(db, "unbeteiligt", PageConfig(widgets=[_widget(x=5)]))
+    await _save(db, "unbeteiligt", PageConfig(widgets=[_widget(x=6)]))
+
+    await _config_import(db, _exported_node("seite", PageConfig(widgets=[_widget(x=99)])))
+
+    assert [version.revision for version in await _versions(db, "unbeteiligt")] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_a_configuration_import_still_writes_no_version_of_its_own(db: Database) -> None:
+    """Die Begruendung dieses Weges bleibt gueltig: er ist kein Autorenschritt."""
+    await _insert_node(db, "seite")
+
+    await _config_import(db, _exported_node("seite", PageConfig(widgets=[_widget(x=99)])))
+
+    assert await _versions(db, "seite") == []
+
+
+@pytest.mark.asyncio
+async def test_a_page_the_import_brings_in_new_starts_without_a_history(db: Database) -> None:
+    """Der Einfuege-Zweig des Upserts: eine neue Seite, kein Verlauf, kein Fehler."""
+    ergebnis = await _config_import(db, _exported_node("frisch", PageConfig(widgets=[_widget(x=2)])))
+
+    assert ergebnis.errors == []
+    assert await _versions(db, "frisch") == []
+    assert (await _load(db, "frisch")).widgets[0].x == 2
+
+
+@pytest.mark.asyncio
+async def test_a_folder_in_the_imported_configuration_is_no_special_case(db: Database) -> None:
+    """Ein Ordner traegt keinen Autorenstand - und der Einspielweg stolpert nicht ueber ihn."""
+    await _insert_node(db, "ordner", node_type="LOCATION")
+
+    ergebnis = await _config_import(db, _exported_node("ordner", PageConfig(), node_type="LOCATION"))
+
+    assert ergebnis.errors == []
+    assert await db.fetchall("SELECT revision FROM visu_page_versions WHERE node_id = 'ordner'") == []

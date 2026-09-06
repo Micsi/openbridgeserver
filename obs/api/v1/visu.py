@@ -118,6 +118,7 @@ def _row_to_summary(
     *,
     access: str | None = None,
     parent_id: str | None | object = _UNSET,
+    has_pin: bool | None = None,
 ) -> VisuNodeSummary:
     """SQLite row to the deliberately redacted navigation DTO."""
     return VisuNodeSummary(
@@ -129,9 +130,29 @@ def _row_to_summary(
         order=row["node_order"],
         icon=row["icon"],
         access=access,
+        has_pin=has_pin,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _may_see_pin_state(principal: Principal | None) -> bool:
+    """Wem die Antwort ``has_pin`` überhaupt ausweist.
+
+    Nur einem angemeldeten Admin - also genau dem, der das Editorwerkzeug
+    bedient und die fehlende PIN auch setzen kann. Für jeden anderen bleibt das
+    Feld ``None``: der Baum ist die Navigationsantwort und geht auch anonym
+    hinaus, und wie eine geschützte Seite ausgestattet ist, ist keine
+    Navigationsangabe. Der Zugriffsschutz hängt nicht daran (eine Seite ohne
+    PIN-Zeile ist fehlerschließend zu, mit Angabe wie ohne) - es ist die
+    Zurückhaltung, nicht der Riegel.
+    """
+    return principal is not None and principal.type == "user" and principal.is_admin
+
+
+async def _nodes_with_pin(db: Database) -> set[str]:
+    rows = await db.fetchall("SELECT node_id FROM authz_visu_page_credentials")
+    return {row["node_id"] for row in rows}
 
 
 async def _get_node_or_404(db: Database, node_id: str) -> VisuNode:
@@ -786,12 +807,15 @@ async def _record_page_version(
     4. kopieren (``copy_node``), 5. das Aufräumen toter Include-Verweise beim
     Löschen (``_drop_include_references``).
 
-    **Die eine Ausnahme, ausdrücklich:** das Einspielen einer ganzen
-    Konfiguration (``obs/api/v1/config.py``, ``POST /config/import``) schreibt
-    ``page_config`` ebenfalls, schreibt aber KEINE Version - siehe die
-    Begründung dort. Es ist kein Autorenschritt, sondern das Ersetzen des
-    gesamten Bestandes, und es hält keine gemeinsame Transaktion, in der eine
-    Version mit dem Stand zusammen gelten könnte.
+    **Der sechste Weg, ausdrücklich:** das Einspielen einer ganzen Konfiguration
+    (``obs/api/v1/config.py``, ``POST /config/import``) schreibt ``page_config``
+    ebenfalls. Es schreibt KEINE Version - es ist kein Autorenschritt, sondern
+    das Ersetzen des gesamten Bestandes, und es hält keine gemeinsame
+    Transaktion, in der eine Version mit dem Stand zusammen gelten könnte. Es
+    RÄUMT die vorhandenen Versionen einer Seite aber ab, wo es deren Stand
+    tatsächlich ändert: sonst wäre die oberste Zeile danach nicht mehr der
+    ausgelieferte Stand, und ihr Wiederherstellen nähme das Eingespielte still
+    zurück. Die ausführliche Begründung steht dort.
 
     **Gleich bleibt gleich.** Ist der Stand mit dem obersten identisch, entsteht
     keine Zeile: der Canvas sichert die Reihenfolge sofort (E2) und V1 schickt
@@ -868,11 +892,15 @@ async def get_tree(
     )
     visible_rows = [row for row in rows if await _can_discover_node(db, row["id"], principal)]
     visible_ids = {row["id"] for row in visible_rows}
+    # Eine Abfrage fuer den ganzen Baum, nicht eine je Zeile - und nur, wenn die
+    # Antwort die Angabe ueberhaupt ausweist.
+    with_pin = await _nodes_with_pin(db) if _may_see_pin_state(principal) else None
     return [
         _row_to_summary(
             row,
             access=row["access_mode"] if "access_mode" in row.keys() else None,  # noqa: SIM118 -- sqlite Row membership checks values
             parent_id=row["parent_id"] if row["parent_id"] in visible_ids else None,
+            has_pin=None if with_pin is None else row["id"] in with_pin,
         )
         for row in visible_rows
     ]
@@ -892,6 +920,15 @@ _DROPPED_FIELDS_CAP = 20
 
 
 def _header_list(values: list[str]) -> str:
+    """Die ersten ``_DROPPED_FIELDS_CAP`` Namen, jeder auf 64 Zeichen beschnitten.
+
+    Wie viele Namen dabei WEGFALLEN, sagt der Aufrufer in einem eigenen Header
+    (``X-Visu-Import-Dropped-Fields-Omitted``). Ohne diese Zahl saehe eine
+    abgeschnittene Aufzaehlung genauso aus wie eine vollstaendige - der Autor
+    haette 20 von 42 Namen vor sich und keinen Anlass, nach den uebrigen 22 zu
+    suchen. Die Zahl steht getrennt und nicht als Pseudo-Feldname in der Liste:
+    diese Liste enthaelt Feldnamen, sonst nichts.
+    """
     return ",".join(_HEADER_TOKEN.sub("_", value)[:64] for value in values[:_DROPPED_FIELDS_CAP])
 
 
@@ -949,6 +986,10 @@ async def import_nodes(
 
     * ``X-Visu-Import-Dropped-Fields`` - Felder, die diese OBS-Version nicht
       kennt und deshalb nicht uebernimmt (siehe ``_unknown_config_fields``).
+      Die Aufzaehlung ist gedeckelt (``_DROPPED_FIELDS_CAP``); wo sie kuerzt,
+      steht daneben ``X-Visu-Import-Dropped-Fields-Omitted`` mit der Anzahl der
+      NICHT genannten Namen. Ohne diese Zahl waere eine gekuerzte Liste von
+      einer vollstaendigen nicht zu unterscheiden.
     * ``X-Visu-Import-Protected-Without-Pin`` - wie viele eingelesene Seiten
       PIN-geschuetzt sind, aber OHNE PIN ankommen. Der Export laesst
       ``access_pin`` bewusst weg (ein Geheimnis gehoert nicht in eine Datei,
@@ -960,8 +1001,9 @@ async def import_nodes(
       Genau das muss er erfahren - eine Seite, die stillschweigend fuer alle
       verschlossen ist, sieht im Baum aus wie jede andere.
 
-    Beide Header fehlen, wenn es nichts zu melden gibt; ein leerer Wert waere
-    eine Meldung ueber nichts.
+    Jeder dieser Header fehlt, wenn es nichts zu melden gibt; ein leerer Wert
+    waere eine Meldung ueber nichts, und eine Kuerzungsangabe ohne Kuerzung
+    waere eine Warnung ueber nichts.
     """
     if body.obs_export != "visu_subtree":
         raise HTTPException(status_code=400, detail="Ungültiges Export-Format (erwartet 'visu_subtree')")
@@ -1077,6 +1119,10 @@ async def import_nodes(
     if response is not None:
         if dropped_fields:
             response.headers["X-Visu-Import-Dropped-Fields"] = _header_list(sorted(dropped_fields))
+            if len(dropped_fields) > _DROPPED_FIELDS_CAP:
+                response.headers["X-Visu-Import-Dropped-Fields-Omitted"] = str(
+                    len(dropped_fields) - _DROPPED_FIELDS_CAP,
+                )
         if protected_without_pin:
             response.headers["X-Visu-Import-Protected-Without-Pin"] = str(protected_without_pin)
     return await _get_node_or_404(db, root_new_id)
@@ -1093,6 +1139,9 @@ async def get_node(
     parent_id = node.parent_id
     if parent_id is not None and not await _can_discover_node(db, parent_id, principal):
         parent_id = None
+    has_pin: bool | None = None
+    if _may_see_pin_state(principal):
+        has_pin = (await db.fetchone("SELECT 1 FROM authz_visu_page_credentials WHERE node_id = ?", (node_id,))) is not None
     return VisuNodeSummary(
         id=node.id,
         parent_id=parent_id,
@@ -1102,6 +1151,7 @@ async def get_node(
         order=node.order,
         icon=node.icon,
         access=node.access,
+        has_pin=has_pin,
         created_at=node.created_at,
         updated_at=node.updated_at,
     )
@@ -1458,9 +1508,20 @@ def _export_content_disposition(name: str) -> str:
     ``filename*=UTF-8''…``. Jeder heutige Browser nimmt den zweiten, aeltere
     Empfaenger den ersten.
 
-    Der Rueckfall wird nicht bloss beschnitten, sondern auf einen brauchbaren
-    Namen zurueckgefuehrt: bleibt nichts Druckbares uebrig (ein Name nur aus
-    Emoji), steht dort ein fester Ersatz statt einer leeren Zeichenkette.
+    **Was der Rueckfall leistet, und was nicht.** Er ist auf die Zeichen
+    beschraenkt, die in einem ``filename="…"`` stehen duerfen, und er ist nie
+    leer: bleibt nichts Druckbares uebrig (ein Name nur aus Emoji), steht dort
+    ein fester Ersatz statt einer leeren Zeichenkette.
+
+    Eine LAENGE deckelt hier nichts, und das ist Absicht. Gemessen: ein
+    Seitenname aus 300 Zeichen ergibt einen Dateinamen von 310 Zeichen und einen
+    Header von 662 Byte - jenseits der 255 Byte, die die meisten Dateisysteme
+    fuer einen Namen annehmen. Der Browser faengt das ab (er kuerzt beim
+    Speichern selbst, und der Nutzer sieht den Namen im Dialog), waehrend ein
+    Deckel hier das Gegenteil anrichtete: zwei Seiten, deren lange Namen sich
+    erst spaet unterscheiden, bekaemen denselben abgeschnittenen Dateinamen, und
+    der zweite Export ueberschriebe wortlos den ersten. Ein langer Name ist
+    laestig, ein falscher waere gefaehrlich.
     """
     filename = f"{name.replace(' ', '_').replace('/', '_')}_visu.json"
     fallback = _FILENAME_RUNS.sub("_", _FILENAME_ASCII.sub("_", filename)).strip("._-")

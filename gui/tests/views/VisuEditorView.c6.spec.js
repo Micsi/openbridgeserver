@@ -245,6 +245,37 @@ describe('VisuEditorView - Verlauf und Datei (C6)', () => {
     expect(wrapper.findComponent(VisuPageProperties).props('restoring')).toBe(false)
   })
 
+  /**
+   * Das Restfenster: zwischen `restored` und dem frischen Entwurf liegen zwei
+   * Runden zum Server (`load()` und `select()`). Gaebe das Formular schon vorher
+   * frei, haelt es in dieser Zeit noch den Entwurf von VORHER - und ein Klick
+   * auf „Speichern" schriebe ihn zurueck, also genau die Ruecknahme, gegen die
+   * die Sperre da ist. Gemessen mit angehaltenem `GET /visu/tree`.
+   */
+  it('haelt das Formular gesperrt, bis der frische Stand da ist', async () => {
+    const wrapper = await mountEditor({ pageId: 'solo' })
+    const { default: VisuPageProperties } = await import('@/components/visu/VisuPageProperties.vue')
+    const verlauf = await historyOf(wrapper)
+    let freigeben
+    visuApi.tree.mockImplementationOnce(
+      () => new Promise((resolve) => { freigeben = () => resolve({ data: TREE.map((n) => ({ ...n })) }) }),
+    )
+
+    verlauf.vm.$emit('restore-start')
+    await flushPromises()
+    verlauf.vm.$emit('restored', { ok: true })
+    await flushPromises()
+
+    expect(wrapper.findComponent(VisuPageProperties).props('restoring')).toBe(true)
+    expect(wrapper.find('[data-testid="visu-props-fields"]').attributes('disabled')).toBeDefined()
+
+    freigeben()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.findComponent(VisuPageProperties).props('restoring')).toBe(false)
+  })
+
   it('laedt den Baum nach einem Import neu - sonst fehlte die neue Seite', async () => {
     const wrapper = await mountEditor({ pageId: 'solo' })
     const vorher = visuApi.tree.mock.calls.length

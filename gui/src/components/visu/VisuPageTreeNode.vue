@@ -125,14 +125,18 @@ function onMove(event) {
           Aufklappmenues. `label` ist laut HTML-Spezifikation genau die
           Beschriftung einer Option, und der Browser zeigt sie unveraendert an.
 
-          DAS `title` DANEBEN IST NICHT DOPPELT GEMOPPELT. Bis Runde 1 stand
-          hier die Behauptung „der zugaengliche Name bleibt derselbe" - sie war
-          falsch, und zwar messbar: `getByRole('option', { name })` fand auf der
-          Basis 19 Treffer, mit `label` allein NULL. Der Namensrechner des
-          Harness zieht das `label`-Attribut nicht heran; ohne diese Zeile waere
-          ein Verschieben-Ziel ueber Rolle+Name nicht mehr adressierbar - eine
-          Verschlechterung der Zugaenglichkeit als Preis fuer eine aufgeraeumte
-          Textsuche.
+          DAS `title` DANEBEN IST NICHT DOPPELT GEMOPPELT, ABER ES IST AUCH
+          KEIN GEWINN FUER DEN SCREENREADER. Genau getrennt: nach HTML-AAM ist
+          bei einer `<option>` das `label`-Attribut die PRIMAERE Namensquelle,
+          `title` steht darunter und kommt nur zum Zug, wenn `label` und
+          Textinhalt fehlen. Fuer eine echte Hilfstechnik hat der Name also nie
+          gefehlt - er kam und kommt aus `label`. Was fehlte, war die
+          Adressierbarkeit in PLAYWRIGHTS accname-Rechnung: die zieht das
+          `label`-Attribut nicht heran, und `getByRole('option', { name })` fand
+          auf der Basis 19 Treffer, mit `label` allein NULL. Das `title` ist
+          damit eine Vorkehrung fuer den Harness, kein Zugaenglichkeitsgewinn;
+          es kostet nichts (fuer die Optionen eines geschlossenen `<select>`
+          zeigt kein Browser einen Tooltip) und es schadet nichts.
 
           WARUM `title` UND NICHT `aria-label`: aus demselben Grund, aus dem der
           Knotenname schon bei den Aktionsknoepfen oben im `title` steht (siehe

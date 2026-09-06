@@ -228,7 +228,23 @@ class VisuPageVersion(BaseModel):
 
 
 class VisuNodeSummary(BaseModel):
-    """Navigation metadata without page configuration or credentials."""
+    """Navigation metadata without page configuration or credentials.
+
+    ``has_pin`` ist die einzige Angabe hier, die nicht der Navigation dient
+    (M5 C6, Issue #173). Sie sagt, ob es zu dieser Seite überhaupt eine
+    PIN-Zeile gibt - nie den Hash und nie den PIN selbst. Der Grund ist ein
+    dauerhafter Zustand, den sonst niemand sehen kann: eine ``protected``-Seite
+    OHNE PIN ist für jeden Besucher zu, und im Eigenschaftsformular ist sie von
+    einer gewöhnlichen geschützten Seite nicht zu unterscheiden - das PIN-Feld
+    steht dort immer leer, denn der Hash geht nie an den Browser. So entsteht
+    er vor allem beim Import einer Seite (ein Export trägt kein Geheimnis, siehe
+    ``import_nodes``); die Meldung dort ist flüchtig, dieser Befund bleibt.
+
+    ``None`` heißt **nicht ausgewiesen**, nicht „keine PIN": der Baum geht auch
+    an Besucher hinaus, und wie eine geschützte Seite ausgestattet ist, gehört
+    dem Autorenwerkzeug. Wer die Antwort nicht als Admin holt, bekommt hier
+    ``None`` - für ihn ist die Frage nicht beantwortet.
+    """
 
     id: str
     parent_id: str | None = None
@@ -238,6 +254,7 @@ class VisuNodeSummary(BaseModel):
     order: int = 0
     icon: str | None = None
     access: AccessLevel | None = None
+    has_pin: bool | None = None
     created_at: datetime
     updated_at: datetime
 

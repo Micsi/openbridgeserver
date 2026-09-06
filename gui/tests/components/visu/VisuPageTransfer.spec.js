@@ -281,6 +281,49 @@ describe('VisuPageTransfer (E18)', () => {
     expect(hinweis.text()).toContain('widgets[].neu_im_widget')
   })
 
+  /**
+   * Der Header deckelt seine Aufzaehlung bei 20 Namen. Eine gekuerzte Liste, die
+   * wie eine vollstaendige aussieht, ist die gefaehrlichere Anzeige: der Autor
+   * haelt sie fuer alles und sucht die uebrigen Felder nie.
+   */
+  it('sagt es, wenn die Feldliste gekuerzt ist', async () => {
+    importNodes.mockResolvedValue({
+      data: { id: 'neu' },
+      headers: {
+        'x-visu-import-dropped-fields': 'zukunftsfeld,widgets[].neu_im_widget',
+        'x-visu-import-dropped-fields-omitted': '22',
+      },
+    })
+    const wrapper = await mountTransfer()
+    await byButton(wrapper, 'Importieren').trigger('click')
+    await chooseFile(wrapper, JSON.stringify(dokument))
+
+    await byButton(wrapper, 'Import starten').trigger('click')
+    await flushPromises()
+
+    const hinweis = wrapper.find('[data-testid="editor-transfer-dropped-notice"]')
+    expect(hinweis.exists()).toBe(true)
+    expect(hinweis.text()).toContain('zukunftsfeld')
+    expect(hinweis.text()).toContain('22')
+  })
+
+  it('kuerzt nichts, wo nichts gekuerzt wurde - dieselbe Liste ohne Rest-Angabe', async () => {
+    importNodes.mockResolvedValue({
+      data: { id: 'neu' },
+      headers: { 'x-visu-import-dropped-fields': 'zukunftsfeld' },
+    })
+    const wrapper = await mountTransfer()
+    await byButton(wrapper, 'Importieren').trigger('click')
+    await chooseFile(wrapper, JSON.stringify(dokument))
+
+    await byButton(wrapper, 'Import starten').trigger('click')
+    await flushPromises()
+
+    const hinweis = wrapper.find('[data-testid="editor-transfer-dropped-notice"]')
+    expect(hinweis.text()).toContain('zukunftsfeld')
+    expect(hinweis.text()).not.toContain('weitere')
+  })
+
   it('meldet nichts, wenn nichts verloren ging - der haeufige Fall bleibt ruhig', async () => {
     const wrapper = await mountTransfer()
     await byButton(wrapper, 'Importieren').trigger('click')
