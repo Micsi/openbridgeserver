@@ -46,8 +46,12 @@ describe('ein Code-Stand für PWA, iOS und Android', () => {
   });
 
   it('enthält keine plattformabhängige Verzweigung im Quellcode', () => {
+    const files = sourceFiles(srcDir);
+    // Leere Erhebung ist kein Gruen: verschwaende `src/`, waere `findings` leer und dieser
+    // Test bestuende, ohne eine einzige Zeile gesehen zu haben.
+    expect(files.length, `${relative(appRoot, srcDir)} enthaelt keine Quelldateien`).toBeGreaterThan(0);
     const findings: string[] = [];
-    for (const file of sourceFiles(srcDir)) {
+    for (const file of files) {
       const content = readFileSync(file, 'utf-8');
       for (const { pattern, hint } of PLATFORM_FORKS) {
         if (pattern.test(content)) findings.push(`${relative(appRoot, file)}: ${hint}`);

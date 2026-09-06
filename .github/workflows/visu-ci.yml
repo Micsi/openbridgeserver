@@ -65,6 +65,20 @@ jobs:
       - name: Build
         run: pnpm -r build
 
+      # Der Web-Spiegel in den nativen Projekten (ios/App/App/public,
+      # android/app/src/main/assets/public) ist per Capacitors eigener .gitignore
+      # ungetrackt und existiert im Runner deshalb nicht. `cap copy` stellt ihn
+      # aus dem frischen `dist/` her — sonst könnte
+      # apps/visu/tests/native-platforms.test.ts die Zusage „ein Code-Stand"
+      # nicht messen.
+      - name: Capacitor copy (nativen Web-Spiegel herstellen)
+        run: pnpm --filter @obs/visu-app exec cap copy
+
+      # Prüft die Capacitor-Installation und beide Plattformprojekte. Braucht
+      # weder Xcode-Runtime noch Android SDK.
+      - name: Capacitor doctor
+        run: pnpm --filter @obs/visu-app exec cap doctor
+
       - name: Typecheck
         run: pnpm -r typecheck
 
@@ -76,3 +90,14 @@ jobs:
 
       - name: Import boundaries
         run: pnpm boundaries
+
+      # Definition of Done aus #103: „App startet als PWA". Lädt den
+      # Produktionsbuild über `vite preview` in einem echten Chromium und prüft
+      # Mount + Service-Worker-Registrierung. Getrennt vom authz-E2E
+      # (playwright.config.ts), das ein laufendes, geseedetes Backend braucht
+      # und deshalb kein Gate ist.
+      - name: Install Playwright Chromium
+        run: pnpm --filter @obs/visu-app exec playwright install --with-deps chromium
+
+      - name: PWA boot (Playwright gegen dist/)
+        run: pnpm --filter @obs/visu-app e2e:pwa

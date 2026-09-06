@@ -9,20 +9,61 @@
 // oder auf ein Icon zeigt, das nie emittiert wurde — ist der klassische stille
 // PWA-Fehler. Genau den soll dieser Test fangen.
 //
+// Ausgabeverzeichnis UND `base` werden aus der echten Vite-Konfiguration erhoben
+// (`resolveConfig`), nicht als Literal behauptet. Sonst prüft der Test nur den
+// Sonderfall `base: '/'` und wird irreführend, sobald die Visu unter einem
+// Unterpfad ausgeliefert wird (heute serviert obs die Visu unter `/visu`).
+//
 // `visu-ci` baut vor dem Testschritt (`pnpm -r build` → `pnpm -r test`), dort ist
 // `dist/` also vorhanden. Lokal vorher `pnpm build` (oder `pnpm exec vite build`)
 // in `apps/visu` laufen lassen.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
+import { resolveConfig } from 'vite';
 
-const distDir = fileURLToPath(new URL('../dist', import.meta.url));
+const appRoot = fileURLToPath(new URL('..', import.meta.url));
 
-/** Löst einen URL-Pfad aus dem Bundle (base `/`) auf eine Datei in `dist/` auf. */
+let distDir: string;
+let base: string;
+let indexHtml: string;
+
+// `resolveConfig` lädt und transpiliert die echte vite.config.ts — auf
+// ausgelasteten Maschinen mehrere Sekunden. Einmal im Hook, mit grosszügigem
+// Timeout statt vitests 5s-Default.
+beforeAll(async () => {
+  const config = await resolveConfig({ configFile: resolve(appRoot, 'vite.config.ts'), root: appRoot }, 'build');
+  distDir = resolve(appRoot, config.build.outDir);
+  base = config.base;
+
+  const indexPath = join(distDir, 'index.html');
+  if (!existsSync(indexPath)) {
+    throw new Error(
+      `Kein Build-Artefakt unter ${indexPath}. Vor der Testsuite \`pnpm build\` in apps/visu ausführen ` +
+        `(visu-ci baut vor dem Testschritt).`,
+    );
+  }
+  // HTML-Kommentare raus: sonst würde auskommentiertes Markup als echte
+  // Verlinkung durchgehen.
+  indexHtml = readFileSync(indexPath, 'utf-8').replace(/<!--[\s\S]*?-->/g, '');
+}, 120_000);
+
+/**
+ * Löst einen URL-Pfad aus dem Bundle auf eine Datei in `dist/` auf.
+ * Absolute URLs müssen unter der Build-`base` liegen — der Präfix wird
+ * abgeschnitten, weil er im Ausgabeverzeichnis nicht existiert.
+ */
 function distPath(urlPath: string): string {
-  return join(distDir, urlPath.replace(/^\//, ''));
+  if (urlPath.startsWith('/')) {
+    expect(
+      urlPath.startsWith(base),
+      `"${urlPath}" liegt nicht unter der Build-base "${base}" — im Auslieferungspfad läuft das ins Leere`,
+    ).toBe(true);
+    return join(distDir, urlPath.slice(base.length));
+  }
+  return join(distDir, urlPath);
 }
 
 /** Liest die echten Pixelmasse aus dem PNG-IHDR-Chunk — ohne Bild-Bibliothek. */
@@ -34,25 +75,11 @@ function pngSize(file: string): { width: number; height: number } {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
-let indexHtml: string;
-
-beforeAll(() => {
-  const indexPath = join(distDir, 'index.html');
-  if (!existsSync(indexPath)) {
-    throw new Error(
-      `Kein Build-Artefakt unter ${indexPath}. Vor der Testsuite \`pnpm build\` in apps/visu ausführen ` +
-        `(visu-ci baut vor dem Testschritt).`,
-    );
-  }
-  // HTML-Kommentare raus: sonst würde auskommentiertes Markup als echte
-  // Verlinkung durchgehen.
-  indexHtml = readFileSync(indexPath, 'utf-8').replace(/<!--[\s\S]*?-->/g, '');
-});
-
 interface WebAppManifest {
   name?: string;
   short_name?: string;
   start_url?: string;
+  scope?: string;
   display?: string;
   icons?: { src: string; sizes?: string; type?: string; purpose?: string }[];
 }
@@ -66,6 +93,35 @@ function loadManifest(): WebAppManifest {
   const file = distPath(href![1]);
   expect(existsSync(file), `Manifest verlinkt, aber nicht gebaut: ${file}`).toBe(true);
   return JSON.parse(readFileSync(file, 'utf-8')) as WebAppManifest;
+}
+
+/** Alle `<link rel="…icon…">` der gebauten Seite als {href, sizes}. */
+function iconLinks(): { tag: string; href: string; sizes?: string }[] {
+  return [...indexHtml.matchAll(/<link[^>]*>/gi)]
+    .map((m) => m[0])
+    .filter((tag) => /rel="[^"]*icon[^"]*"/i.test(tag))
+    .map((tag) => ({
+      tag,
+      href: tag.match(/href="([^"]+)"/i)?.[1] ?? '',
+      sizes: tag.match(/sizes="([^"]+)"/i)?.[1],
+    }));
+}
+
+/** Prüft eine Icon-Datei: existiert sie, und hat sie die Grösse, die sie behauptet? */
+function assertIconFile(src: string, declaredSizes: string | undefined, origin: string): void {
+  const file = distPath(src);
+  expect(existsSync(file), `${origin} zeigt ins Leere: ${src}`).toBe(true);
+  if (!file.endsWith('.png')) return;
+  const actual = pngSize(file);
+  if (/^\d+x\d+$/.test(declaredSizes ?? '')) {
+    const [width, height] = declaredSizes!.split('x').map(Number);
+    expect(actual, `${src} deklariert ${declaredSizes}`).toEqual({ width, height });
+  } else {
+    // Ohne deklarierte Grösse bleibt prüfbar, dass es ein dekodierbares,
+    // quadratisches Icon ist — ein 0-Byte- oder verstümmeltes PNG fällt auf.
+    expect(actual.width, `${src} hat keine Breite`).toBeGreaterThan(0);
+    expect(actual.width, `${src} ist nicht quadratisch (${actual.width}x${actual.height})`).toBe(actual.height);
+  }
 }
 
 describe('PWA-Manifest (Build-Artefakt)', () => {
@@ -83,6 +139,20 @@ describe('PWA-Manifest (Build-Artefakt)', () => {
     expect(Array.isArray(manifest.icons) && manifest.icons.length > 0, 'manifest.icons ist leer').toBe(true);
   });
 
+  it('verankert start_url, scope und Icon-Pfade unter der Build-base', () => {
+    // Die base steuert index.html, Asset-URLs und die SW-Registrierung
+    // automatisch — die Manifest-Felder schreiben WIR. Laufen sie auseinander,
+    // installiert der Browser eine App mit falschem Scope und toten Icons,
+    // ohne dass irgendetwas 404 wirft.
+    const manifest = loadManifest();
+    const underBase = (value: string | undefined, what: string) =>
+      expect(value?.startsWith(base), `${what} = "${value}" liegt nicht unter der Build-base "${base}"`).toBe(true);
+
+    underBase(manifest.start_url, 'manifest.start_url');
+    underBase(manifest.scope, 'manifest.scope');
+    for (const icon of manifest.icons ?? []) underBase(icon.src, `manifest.icons[].src`);
+  });
+
   it('deklariert die von Android/Chrome geforderten 192er- und 512er-Icons', () => {
     const sizes = (loadManifest().icons ?? []).map((icon) => icon.sizes);
     expect(sizes).toContain('192x192');
@@ -90,13 +160,26 @@ describe('PWA-Manifest (Build-Artefakt)', () => {
   });
 
   it('nennt nur Icons, die im Build existieren und die angegebene Grösse wirklich haben', () => {
-    for (const icon of loadManifest().icons ?? []) {
-      const file = distPath(icon.src);
-      expect(existsSync(file), `Manifest-Icon zeigt ins Leere: ${icon.src}`).toBe(true);
-      if (/^\d+x\d+$/.test(icon.sizes ?? '')) {
-        const [width, height] = icon.sizes!.split('x').map(Number);
-        expect(pngSize(file), `${icon.src} deklariert ${icon.sizes}`).toEqual({ width, height });
-      }
+    for (const icon of loadManifest().icons ?? []) assertIconFile(icon.src, icon.sizes, 'Manifest-Icon');
+  });
+});
+
+describe('Icons aus der gebauten index.html', () => {
+  // Favicon und apple-touch-icon stehen NICHT im Manifest — iOS liest den
+  // apple-touch-icon-Link. Ohne diesen Test können beide Dateien verschwinden,
+  // ohne dass eine Suite rot wird.
+  it('verlinkt mindestens Favicon und apple-touch-icon', () => {
+    const rels = iconLinks().map((link) => link.tag.match(/rel="([^"]+)"/i)?.[1]);
+    expect(rels, 'gebaute index.html verlinkt kein Favicon').toContain('icon');
+    expect(rels, 'gebaute index.html verlinkt kein apple-touch-icon (iOS-Homescreen)').toContain('apple-touch-icon');
+  });
+
+  it('löst jeden Icon-Link auf eine existierende Datei der behaupteten Grösse auf', () => {
+    const links = iconLinks();
+    expect(links.length, 'keine Icon-Links in der gebauten index.html').toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link.href, `Icon-Link ohne href: ${link.tag}`).toBeTruthy();
+      assertIconFile(link.href, link.sizes, 'Icon-Link der index.html');
     }
   });
 });

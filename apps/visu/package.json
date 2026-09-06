@@ -13,6 +13,7 @@
     "m1:smoke": "vitest run --config vitest.m1.config.ts",
     "e2e": "playwright test",
     "e2e:report": "playwright show-report",
+    "e2e:pwa": "playwright test --config playwright.pwa.config.ts",
     "cap:sync": "cap sync"
   },
   "dependencies": {

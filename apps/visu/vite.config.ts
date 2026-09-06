@@ -11,7 +11,18 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const target = env.VITE_OBS_PROXY_TARGET || 'http://localhost:8080';
+
+  // EINE Quelle für den Auslieferungspfad. Vite leitet daraus index.html,
+  // Asset-URLs und die SW-Registrierung ab — die Manifest-Felder aber nicht:
+  // `start_url`, `scope` und die Icon-`src` schreiben wir selbst. Werden sie
+  // als Literal `/` gepflegt, installiert der Browser unter einem Unterpfad
+  // (obs serviert die Visu heute unter `/visu`) eine App mit falschem Scope
+  // und toten Icons, ohne dass irgendetwas 404 wirft. Deshalb hier ableiten.
+  // Muss auf `/` enden. Bewacht von tests/pwa-build.test.ts.
+  const base = '/';
+  const underBase = (path: string) => `${base}${path}`;
   return {
+    base,
     plugins: [
       vue(),
       // PWA-Hälfte von Issue #103 (M4). Derselbe `dist/`-Build ist zugleich das
@@ -41,15 +52,15 @@ export default defineConfig(({ mode }) => {
           short_name: 'obs Visu',
           description: 'open bridge server – Visualisierung',
           lang: 'de',
-          start_url: '/',
-          scope: '/',
+          start_url: base,
+          scope: base,
           display: 'standalone',
           background_color: '#085041',
           theme_color: '#085041',
           icons: [
-            { src: '/icons/pwa-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-            { src: '/icons/pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-            { src: '/icons/maskable-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+            { src: underBase('icons/pwa-192x192.png'), sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: underBase('icons/pwa-512x512.png'), sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: underBase('icons/maskable-512x512.png'), sizes: '512x512', type: 'image/png', purpose: 'maskable' },
           ],
         },
         workbox: {
