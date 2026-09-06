@@ -28,7 +28,33 @@ import { C5, box, el, openEditor, resizeHandle } from './editor-helpers';
 test.use({ hasTouch: true });
 
 test.describe('M5 Editor-Matrix E14 · Touch-Eingabe (wartet auf Teil C5)', () => {
-  test.fixme(
+  /**
+   * DIESELBE DECKE WIE DIE UEBRIGE EDITOR-MATRIX - und aus demselben Grund.
+   *
+   * `m5-editor-matrix.spec.ts` steht schon vor Teil C5 auf 150 s; E14 stand auf
+   * den 30 s der Vorgabe (`playwright.config.ts`), obwohl es durch genau
+   * dieselbe Anmeldemaske geht und genau dieselben ZWEI Anwendungen hochfaehrt
+   * (die Admin-GUI mit dem Editor und, im Vorschaurahmen, die echte Visu). Die
+   * Angleichung ist deshalb Konsistenz, keine Nachsicht.
+   *
+   * WORIN DIE ZEIT WIRKLICH STECKT - an dieser Zeile nachgemessen, nicht
+   * geschaetzt: dreimal ALLEIN gefahren, bei voellig freiem Anmelde-Kontingent
+   * (eine einzige Anmeldung im Minutenfenster, keine `[login-budget]`-Meldung),
+   * brauchte sie 16,0 s / 17,7 s / 23,3 s; in den beiden Pflichtlaeufen 14,0 s
+   * und 30,8 s - im zweiten also bis dicht an die alte Decke, ohne dass
+   * ueberhaupt gewartet worden waere. Der Posten ist damit NICHT das Kontingent,
+   * sondern die echte Anmeldemaske plus zwei SPA-Kaltstarts gegen die
+   * Vite-Dev-Server. Das Kontingent (5/Minute, `waitForLoginSlot` in
+   * `fixtures.ts`) kommt in einem vollen Fenster obendrauf und kann bis zu einer
+   * Minute WARTEN innerhalb des Szenarios bedeuten; 150 s decken beides.
+   *
+   * Angehoben ist deshalb NUR das Budget, nicht eine Erwartung: jede einzelne
+   * `expect`-Zusicherung behaelt ihre kurze Frist aus `playwright.config.ts`
+   * (7 s). Eine Zeile, die inhaltlich falsch ist, scheitert weiterhin schnell.
+   */
+  test.describe.configure({ timeout: 150_000 });
+
+  test(
     'E14 Touch-Drag/-Resize eines Widgets im Editor bewegt es um dieselbe Distanz wie Maus-Drag (page.touchscreen)',
     C5,
     async ({ page }) => {
