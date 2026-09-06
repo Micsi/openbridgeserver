@@ -741,19 +741,25 @@ describe('E14 - der Anfasser sitzt AUSSERHALB der Kachel', () => {
   })
 
   /**
-   * Ausserhalb heisst: er kann ueber einer NACHBARKACHEL liegen. Dort gehoert
-   * der Zeiger der Nachbarin - sonst faenge der Anfasser der ausgewaehlten
-   * Kachel den Klick auf die daneben ab (in Runde 1 zweimal reproduziert).
+   * Ausserhalb heisst: er kann ueber einer NACHBARKACHEL liegen. Verschwindet
+   * sie GANZ unter ihm, gehoert der Zeiger ihr - sonst faenge der Anfasser der
+   * ausgewaehlten Kachel den Klick auf die daneben ab, und die Nachbarin waere
+   * mit der Maus ueberhaupt nicht mehr erreichbar (in Runde 1 zweimal
+   * reproduziert). Genau dieser Fall ist die M5-Beispielwelt: ihre Kacheln
+   * messen 3x2 Autoreneinheiten, der Anfasser 8x8 - er schluckt eine ganze
+   * Kachel.
    */
-  it('gibt den Zeiger an die Nachbarkachel weiter, wenn er ueber ihr liegt', async () => {
-    seed('p1', [widget('a', 0, 0), widget('b', 10, 10)])
+  it('gibt den Zeiger an die Nachbarkachel weiter, wenn sie GANZ unter ihm verschwindet', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 10, 10, { w: 3, h: 2 })])
     const w = await mountCanvas()
     await pick(w, 'a')
     const griff = els(w)
       .find((e) => e.attributes('data-el') === 'a')
       .find('[data-resize="se"]')
-    // (12,12) liegt auf dem Anfasser von `a` UND mitten auf `b`.
-    await mouseDragFrom(griff.element, 12, 12, 16, 0)
+    // Der Anfasser von `a` beginnt auf (10,10) und misst 8x8; (11,11) liegt auf
+    // ihm UND auf `b`, und `b` liegt mit 3x2 vollstaendig unter ihm - haette
+    // also keinen freien Pixel mehr.
+    await mouseDragFrom(griff.element, 11, 11, 16, 0)
     expect(boxOf(w, 'a')).toMatchObject({ x: 0, y: 0, w: 10, h: 10 })
     expect(selectedIds(w)).toEqual(['b'])
     expect(boxOf(w, 'b').x).toBeGreaterThan(10)
@@ -770,6 +776,102 @@ describe('E14 - der Anfasser sitzt AUSSERHALB der Kachel', () => {
     expect(boxOf(w, 'a').w).toBeGreaterThan(10)
     expect(boxOf(w, 'a')).toMatchObject({ x: 0, y: 0 })
     expect(boxOf(w, 'b')).toMatchObject({ x: 100, y: 100 })
+  })
+
+  /**
+   * DAS LUECKENLOSE RASTER - der Befund aus Runde 2, und der Normalfall dieses
+   * Editors: sein Einrasten erzeugt genau solche Anordnungen.
+   *
+   * Vier Kacheln 40x40 an (0,0), (40,0), (0,40), (40,40). Der Anfasser der
+   * ersten beginnt exakt auf (40,40) und liegt damit vollstaendig auf der
+   * diagonalen Nachbarin - kein einziger seiner 64 Pixel ist frei. Bis Runde 2
+   * trat er deshalb zurueck: die Kachel war am Anfasser gar nicht mehr
+   * vergroesserbar, und der Zug daran VERSCHOB die Nachbarin (gemessen: `GA`
+   * unveraendert, `GD:40,40 → 80,80`).
+   *
+   * Jetzt gilt: die Nachbarin ist 40x40 gross und verschwindet nicht unter dem
+   * 8x8 grossen Anfasser - er behaelt den Zeiger. Die EIGENE Kachel waechst,
+   * und keine fremde ruehrt sich.
+   */
+  it('zieht im lueckenlosen Raster die EIGENE Kachel gross und bewegt keine fremde', async () => {
+    seed('p1', [
+      widget('ga', 0, 0, { w: 40, h: 40 }),
+      widget('gb', 40, 0, { w: 40, h: 40 }),
+      widget('gc', 0, 40, { w: 40, h: 40 }),
+      widget('gd', 40, 40, { w: 40, h: 40 }),
+    ])
+    const w = await mountCanvas()
+    await pick(w, 'ga')
+    const griff = els(w)
+      .find((e) => e.attributes('data-el') === 'ga')
+      .find('[data-resize="se"]')
+    // Seine linke obere Ecke liegt auf (40,40) - mitten in `gd`, und er
+    // verspricht dort `se-resize`, was jetzt auch stimmt.
+    expect(griff.element.style.left).toBe('39px')
+    expect(griff.element.style.top).toBe('39px')
+    expect(griff.classes()).toContain('cursor-se-resize')
+
+    await mouseDragFrom(griff.element, 42, 42, 40, 40)
+
+    expect(selectedIds(w)).toEqual(['ga'])
+    expect(boxOf(w, 'ga')).toMatchObject({ x: 0, y: 0 })
+    expect(boxOf(w, 'ga').w).toBeGreaterThan(40)
+    expect(boxOf(w, 'ga').h).toBeGreaterThan(40)
+    expect(boxOf(w, 'gb')).toMatchObject({ x: 40, y: 0, w: 40, h: 40 })
+    expect(boxOf(w, 'gc')).toMatchObject({ x: 0, y: 40, w: 40, h: 40 })
+    expect(boxOf(w, 'gd')).toMatchObject({ x: 40, y: 40, w: 40, h: 40 })
+  })
+
+  /**
+   * Und dasselbe von der anderen Seite: was HINTER der eigenen Kachel liegt,
+   * darf den Anfasser nie verdraengen. Eine Unterlage (ein grosses Panel ganz
+   * hinten) ist der Grund, auf dem gearbeitet wird - bis Runde 2 zog der Zug am
+   * Anfasser einer Kachel darauf das ganze Panel weg (`PANEL:0,0 → 40,40`), und
+   * bei gesperrter Unterlage war der Anfasser vollends tot.
+   */
+  it('laesst sich von einer Kachel HINTER der eigenen nicht verdraengen', async () => {
+    seed('p1', [widget('panel', 0, 0, { w: 400, h: 200 }), widget('ka', 40, 40, { w: 40, h: 30 })])
+    const w = await mountCanvas()
+    await pick(w, 'ka')
+    const griff = els(w)
+      .find((e) => e.attributes('data-el') === 'ka')
+      .find('[data-resize="se"]')
+    await mouseDragFrom(griff.element, 82, 72, 40, 40)
+    expect(selectedIds(w)).toEqual(['ka'])
+    expect(boxOf(w, 'ka')).toMatchObject({ x: 40, y: 40 })
+    expect(boxOf(w, 'ka').w).toBeGreaterThan(40)
+    expect(boxOf(w, 'panel')).toMatchObject({ x: 0, y: 0, w: 400, h: 200 })
+  })
+
+  /**
+   * Und der Gegenprobe-Fall zum Raster: eine Nachbarkachel, die der Anfasser
+   * ganz zudeckt, bekommt den Zeiger AN GENAU DEM PUNKT, an dem sie liegt - der
+   * Rest des Anfassers vergroessert weiterhin die eigene Kachel. Genau so liegt
+   * die M5-Beispielwelt: 3x2 grosse Kacheln, dazwischen der 8x8 grosse
+   * Anfasser, dessen Mitte gerade noch frei ist (E1 zieht dort gross).
+   */
+  it('behaelt an seinem freien Teil den Zeiger, auch wenn er anderswo zurueckweicht', async () => {
+    seed('p1', [widget('a', 0, 0, { w: 3, h: 2 }), widget('b', 4, 2, { w: 3, h: 2 })])
+    const w = await mountCanvas()
+    await pick(w, 'a')
+    const griff = els(w)
+      .find((e) => e.attributes('data-el') === 'a')
+      .find('[data-resize="se"]')
+    // Der Anfasser spannt [3,11)x[2,10); `b` liegt darin auf [4,7)x[2,4).
+    // (5,3) gehoert `b` - dort tritt er zurueck.
+    await mouseDragFrom(griff.element, 5, 3, 16, 0)
+    expect(selectedIds(w)).toEqual(['b'])
+    expect(boxOf(w, 'a')).toMatchObject({ x: 0, y: 0, w: 3, h: 2 })
+
+    // (8,6) gehoert keiner Kachel - dort zieht er die eigene gross.
+    await pick(w, 'a')
+    const griffB = els(w)
+      .find((e) => e.attributes('data-el') === 'a')
+      .find('[data-resize="se"]')
+    await mouseDragFrom(griffB.element, 8, 6, 40, 40)
+    expect(selectedIds(w)).toEqual(['a'])
+    expect(boxOf(w, 'a')).toMatchObject({ x: 0, y: 0 })
+    expect(boxOf(w, 'a').w).toBeGreaterThan(3)
   })
 })
 

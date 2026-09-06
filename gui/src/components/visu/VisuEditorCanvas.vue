@@ -961,23 +961,73 @@ function onElementMouseDown(widget, ev) {
 }
 
 /**
- * Die oberste Kachel unter einem Punkt - ohne die, der der Punkt gehoert.
- *
- * Gerechnet und nicht ueber `elementFromPoint` gesucht: der Anfasser liegt ueber
- * allem, was dort steht, und die Frage lautet gerade, WAS er verdeckt. Die
- * Reihenfolge der Liste ist die Z-Ordnung, also gewinnt die spaeteste Kachel -
- * dieselbe Regel, nach der der Browser den Klick verteilt hat, bevor der
- * Anfasser da war.
+ * Die Kantenlaenge des Anfassers in CSS-Pixeln - dieselbe Zahl wie `h-2 w-2` an
+ * ihm (0,5 rem). Sie steht hier, weil der Rueckzug unten eine RECHNUNG ist und
+ * kein `elementFromPoint`: gefragt wird, WAS der Anfasser ganz zudeckt, und dazu
+ * muss man wissen, wie gross er ist.
  */
-function widgetAt(clientX, clientY, exceptId) {
+const HANDLE_SIZE = 8
+
+/** Die Flaeche des Anfassers in Flaechenkoordinaten (siehe {@link resizeHandleStyle}). */
+function resizeHandleRect(widget) {
+  return {
+    x: widget.x + Math.max(1, widget.w),
+    y: widget.y + Math.max(1, widget.h),
+    w: HANDLE_SIZE,
+    h: HANDLE_SIZE,
+  }
+}
+
+/**
+ * WOVOR DER ANFASSER ZURUECKTRITT - und wovor eben NICHT.
+ *
+ * Die Korrektur aus Runde 3. Bis dahin trat er vor JEDER Kachel zurueck, die
+ * unter ihm lag, und das war viel zu weit: im lueckenlosen Raster, das dieser
+ * Editor mit seinem Einrasten selbst erzeugt, liegt seine gesamte Flaeche auf
+ * der diagonalen Nachbarin (vier Kacheln 40x40 an 0/0, 40/0, 0/40, 40/40: der
+ * Anfasser von (0,0) beginnt genau auf (40,40)). Kein einziger seiner 64 Pixel
+ * war frei, die Kachel liess sich am Anfasser gar nicht mehr vergroessern, und
+ * ein Zug daran verschob stattdessen die Nachbarin (gemessen in der Kritik zu
+ * Runde 2). Auf einer Unterlage dasselbe: der Zug am Anfasser einer kleinen
+ * Kachel zog das ganze Panel weg.
+ *
+ * GESUCHT WIRD WEITERHIN DIE KACHEL UNTER DEM AUFSETZPUNKT - also die, der der
+ * Zeiger ohne den Anfasser gehoert haette. Neu sind die ZWEI BEDINGUNGEN, unter
+ * denen er ihr den Punkt ueberhaupt ueberlaesst; beide muessen gelten:
+ *
+ *  1. SIE STEHT VOR DER EIGENEN KACHEL (Z-Ordnung; die Reihenfolge der Liste ist
+ *     sie). Was HINTER der eigenen liegt, darf den Anfasser nicht verdraengen -
+ *     eine Unterlage ist der Grund, auf dem gearbeitet wird, und nicht das Ziel
+ *     eines Klicks auf den Anfasser der Kachel darauf. Ohne diese Bedingung zog
+ *     der Anfasser einer kleinen Kachel das ganze Panel unter ihr weg.
+ *  2. DER ANFASSER LIESSE IHR NICHTS. Er tritt nur zurueck, wenn sie
+ *     VOLLSTAENDIG unter ihm verschwindet, also selbst keinen freien Pixel mehr
+ *     haette. Genau das ist der Fall aus Runde 1: die Kacheln der
+ *     M5-Beispielwelt messen 3x2 Autoreneinheiten, der Anfasser 8x8 - er
+ *     schluckt eine ganze Nachbarkachel, und ein Klick auf sie waere sonst
+ *     unmoeglich. Bleibt ihr auch nur ein Pixel, ist sie DORT erreichbar und der
+ *     Anfasser hier: 8x8 auf einer 40x40-Kachel nehmen ihr vier Prozent, und
+ *     dafuer die einzige Maus-Geste zum Vergroessern aufzugeben, waere ein
+ *     schlechter Tausch.
+ *
+ * Trifft die oberste Kachel unter dem Punkt eine der beiden Bedingungen nicht,
+ * behaelt der Anfasser den Zeiger - es wird NICHT weiter nach unten gesucht.
+ * Gefragt ist genau eine Kachel: die, die der Punkt sonst getroffen haette.
+ */
+function handleCedesTo(widget, clientX, clientY) {
   const at = toSurface(clientX, clientY)
-  for (let i = widgets.value.length - 1; i >= 0; i -= 1) {
+  const griff = resizeHandleRect(widget)
+  const eigen = widgets.value.findIndex((w) => w && w.id === widget.id)
+  if (eigen < 0) return null
+  for (let i = widgets.value.length - 1; i > eigen; i -= 1) {
     const w = widgets.value[i]
-    if (!w || w.id === exceptId || !hasBox(w)) continue
+    if (!w || !hasBox(w)) continue
     const breite = Math.max(1, w.w)
     const hoehe = Math.max(1, w.h)
     if (at.x < w.x || at.x >= w.x + breite) continue
     if (at.y < w.y || at.y >= w.y + hoehe) continue
+    if (w.x < griff.x || w.x + breite > griff.x + griff.w) return null
+    if (w.y < griff.y || w.y + hoehe > griff.y + griff.h) return null
     return w
   }
   return null
@@ -991,20 +1041,18 @@ function widgetAt(clientX, clientY, exceptId) {
  * hier ab, und an einem gesperrten Element wird der Anfasser gar nicht erst
  * gezeigt.
  *
- * ER TRITT ZURUECK, WO EINE ANDERE KACHEL LIEGT. Seit Runde 2 sitzt er
- * vollstaendig ausserhalb seiner Kachel (siehe {@link resizeHandleStyle}), und
- * dort kann eine Nachbarkachel stehen - die Beispielwelt legt sie im Abstand von
- * zwei Einheiten uebereinander. Faenge er den Zeiger auch dann, waehlte ein Klick
- * auf die Nachbarin die Kachel daneben aus und zoege sie gross (in Runde 1
- * zweimal reproduziert). Er kapert deshalb nichts: liegt unter dem Punkt eine
- * andere Kachel, beginnt dort ein gewoehnlicher Zug. Grossgezogen wird an dem
- * Stueck des Anfassers, das wirklich frei ist; ist gar keines frei, bleiben die
- * Zahlenfelder W/H.
+ * ER TRITT ZURUECK, WO ER EINER NACHBARIN NICHTS LIESSE - und nur dort. Seit
+ * Runde 2 sitzt er vollstaendig ausserhalb seiner Kachel (siehe
+ * {@link resizeHandleStyle}), und dort kann eine Nachbarkachel stehen; die
+ * Beispielwelt legt sie im Abstand von zwei Einheiten uebereinander, und ein
+ * Klick auf sie landete in Runde 1 zweimal auf dem Anfasser. Wann genau er ihr
+ * den Zeiger ueberlaesst, entscheidet {@link handleCedesTo}; dort steht auch,
+ * warum der Rueckzug in Runde 2 zu weit ging.
  */
 function onResizeMouseDown(widget, ev) {
   if (ev.button !== undefined && ev.button !== 0) return
   ev.stopPropagation()
-  const darunter = widgetAt(ev.clientX, ev.clientY, widget.id)
+  const darunter = handleCedesTo(widget, ev.clientX, ev.clientY)
   if (darunter) {
     startElementDrag(darunter, ev.clientX, ev.clientY, ev.shiftKey === true)
     return
@@ -1030,7 +1078,7 @@ function onResizeTouchStart(widget, ev) {
   if (!at) return
   ev.stopPropagation()
   if (typeof ev.preventDefault === 'function') ev.preventDefault()
-  const darunter = widgetAt(at.x, at.y, widget.id)
+  const darunter = handleCedesTo(widget, at.x, at.y)
   if (darunter) {
     startElementDrag(darunter, at.x, at.y, ev.shiftKey === true)
     return
@@ -1705,11 +1753,22 @@ function guideStyle(guide) {
               `overflow-hidden`) - sie wuerde ihn sonst restlos wegschneiden. Der
               Name wird trotzdem beschnitten, das erledigt `truncate` an ihm
               selbst.
+
+              `z-10` IST KEINE KOSMETIK, SONDERN DER GRUND, WARUM ES IHN GIBT:
+              die Kacheln liegen alle auf `z-auto`, also malt der Browser sie in
+              Dokumentreihenfolge, und der Anfasser gehoert zum Teilbaum SEINER
+              Kachel. Ohne diese Zeile lag er unter jeder spaeteren Kachel - im
+              lueckenlosen Raster also unter der diagonalen Nachbarin, die seine
+              gesamte Flaeche deckt. Der Zeiger erreichte ihn dort gar nicht
+              mehr, und der Zug traf die Nachbarin (Kritik Runde 2, im Browser
+              gemessen: 0 von 64 Griffpixeln frei, `GA` unveraendert,
+              `GD:40,40 → 80,80`). Was er dabei verdeckt, gibt er nach der Regel
+              in {@link handleCedesTo} wieder her.
             -->
             <span
               v-if="isSelected(widget.id) && isPixel && !widgetFlags(widget).locked"
               data-resize="se"
-              class="absolute h-2 w-2 cursor-se-resize bg-sky-500"
+              class="absolute z-10 h-2 w-2 cursor-se-resize bg-sky-500"
               :style="resizeHandleStyle(widget)"
               @mousedown="onResizeMouseDown(widget, $event)"
               @touchstart="onResizeTouchStart(widget, $event)"

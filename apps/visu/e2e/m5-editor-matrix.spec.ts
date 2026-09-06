@@ -329,7 +329,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test('E5 Mehrfachauswahl per Rahmen, Gruppenverschieben, Gruppieren-Aktion', C5, async ({ page }) => {
+  test('E5 Mehrfachauswahl per Rahmen, Gruppenverschieben, Gruppieren-Aktion', C5, async ({ page, request }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.home);
 
@@ -418,6 +418,111 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await page.keyboard.press('Control+a');
     await page.getByRole('button', { name: 'Gruppieren' }).click();
     await expect(page.locator('.editor-canvas [data-group]')).toHaveCount(1);
+
+    /* ------------------- DAS LÜCKENLOSE RASTER
+     *
+     * Der Befund aus der Kritik zu Runde 2 — und der Normalfall dieses Editors,
+     * denn sein Einrasten erzeugt genau solche Anordnungen. Vier Kacheln 40x40
+     * an (0,0), (40,0), (0,40), (40,40): der Anfasser der ersten beginnt exakt
+     * auf (40,40) und liegt damit vollständig auf der diagonalen Nachbarin —
+     * KEINER seiner 64 Pixel ist frei. Gemessen wurde dort, dass die Kachel am
+     * Anfasser gar nicht mehr vergrößerbar war und der Zug daran stattdessen die
+     * Nachbarin verschob (`GA` unverändert, `GD:40,40 → 80,80`); der Mauszeiger
+     * sagte dabei durchgehend `se-resize`.
+     *
+     * DIESER TEIL GEHÖRT IN DEN BROWSER und nicht nur in die schnelle Suite:
+     * die Hälfte des Befunds ist die MALREIHENFOLGE. Alle Kacheln liegen auf
+     * `z-auto`, der Anfasser gehört zum Teilbaum seiner Kachel — ohne ein
+     * eigenes `z-index` lag er unter jeder späteren Kachel und war mit dem
+     * Zeiger überhaupt nicht mehr zu treffen. jsdom/happy-dom kennen kein
+     * Layout und können das nicht sehen; `elementFromPoint` hier kann es.
+     *
+     * Die Seite wird dafür kurz umgestellt und am Ende auf ihren gelesenen
+     * Ausgangsstand zurückgeschrieben — Aufbau, keine Zusicherung, und dieselbe
+     * Bauart wie in E2.
+     */
+    const headers = await adminHeaders(request);
+    const rasterUrl = api(`/visu/pages/${fx.m5.node_ids.home}`);
+    const ausgangsstand = await request.get(rasterUrl, { headers }).then((r) => r.json());
+    try {
+      const rasterKachel = (id: string, x: number, y: number) => ({
+        id,
+        name: `Raster ${id.toUpperCase()}`,
+        type: 'Toggle',
+        datapoint_id: null,
+        status_datapoint_id: null,
+        x,
+        y,
+        w: 40,
+        h: 40,
+        config: {},
+      });
+      await request.put(rasterUrl, {
+        headers,
+        data: {
+          ...ausgangsstand,
+          layout_mode: 'pixel',
+          grid: 8,
+          widgets: [
+            rasterKachel('ra', 0, 0),
+            rasterKachel('rb', 40, 0),
+            rasterKachel('rc', 0, 40),
+            rasterKachel('rd', 40, 40),
+          ],
+        },
+      });
+      await page.reload();
+      await expect(page.locator('.editor-canvas')).toBeVisible();
+      await expect(kacheln).toHaveCount(4);
+
+      const erste = kacheln.first();
+      await erste.scrollIntoViewIfNeeded();
+      await erste.click();
+      const griff = erste.locator('[data-resize="se"]');
+      const griffRaster = (await griff.boundingBox())!;
+      const diagonale = (await kacheln.nth(3).boundingBox())!;
+
+      // Er liegt VOLLSTÄNDIG auf der diagonalen Nachbarin: kein freier Pixel.
+      expect(griffRaster.x).toBeGreaterThanOrEqual(diagonale.x - 0.01);
+      expect(griffRaster.y).toBeGreaterThanOrEqual(diagonale.y - 0.01);
+      expect(griffRaster.x + griffRaster.width).toBeLessThanOrEqual(diagonale.x + diagonale.width + 0.01);
+      expect(griffRaster.y + griffRaster.height).toBeLessThanOrEqual(diagonale.y + diagonale.height + 0.01);
+
+      const mitte = {
+        x: griffRaster.x + griffRaster.width / 2,
+        y: griffRaster.y + griffRaster.height / 2,
+      };
+      // Der Zeiger ERREICHT ihn dort auch — und verspricht nichts anderes, als
+      // gleich passiert.
+      expect(
+        await page.evaluate(
+          (p) => document.elementFromPoint(p.x, p.y)?.getAttribute('data-resize') ?? null,
+          mitte,
+        ),
+      ).toBe('se');
+      expect(await griff.evaluate((n) => getComputedStyle(n).cursor)).toBe('se-resize');
+
+      const vorRaster = await kastenAller();
+      await page.mouse.move(mitte.x, mitte.y);
+      await page.mouse.down();
+      await page.mouse.move(mitte.x + 40, mitte.y + 40, { steps: 10 });
+      await page.mouse.up();
+      const nachRaster = await kastenAller();
+
+      // Die EIGENE Kachel wächst — Lage unverändert, Maß größer …
+      expect(nachRaster[0].x).toBe(vorRaster[0].x);
+      expect(nachRaster[0].y).toBe(vorRaster[0].y);
+      expect(nachRaster[0].w).toBeGreaterThan(vorRaster[0].w);
+      expect(nachRaster[0].h).toBeGreaterThan(vorRaster[0].h);
+      // … und KEINE fremde rührt sich, weder in der Lage noch im Maß.
+      expect(nachRaster.slice(1)).toEqual(vorRaster.slice(1));
+      // Gewählt ist danach immer noch die eigene, nicht die Nachbarin.
+      await expect(page.locator('.editor-canvas [data-el].is-selected')).toHaveCount(1);
+      await expect(erste).toHaveClass(/is-selected/);
+    } finally {
+      // Die Welt bleibt, wie das Szenario sie fand.
+      await request.put(rasterUrl, { headers, data: ausgangsstand });
+    }
   });
 
   test('E6 Copy/Paste/Duplizieren eines Elements, auch seitenübergreifend', C5, async ({ page }) => {
