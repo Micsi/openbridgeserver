@@ -328,7 +328,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test.fixme('E5 Mehrfachauswahl per Rahmen, Gruppenverschieben, Gruppieren-Aktion', C5, async ({ page }) => {
+  test('E5 Mehrfachauswahl per Rahmen, Gruppenverschieben, Gruppieren-Aktion', C5, async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.home);
 
@@ -352,7 +352,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(page.locator('.editor-canvas [data-group]')).toHaveCount(1);
   });
 
-  test.fixme('E6 Copy/Paste/Duplizieren eines Elements, auch seitenübergreifend', C5, async ({ page }) => {
+  test('E6 Copy/Paste/Duplizieren eines Elements, auch seitenübergreifend', C5, async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.home);
 
@@ -372,7 +372,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await expect(el(page, fx.m5.widgets.home)).toBeVisible();
   });
 
-  test.fixme('E7 Undo/Redo-Stack, Pfeiltasten nudgen selektiertes Element pixelweise', C5, async ({ page }) => {
+  test('E7 Undo/Redo-Stack, Pfeiltasten nudgen selektiertes Element pixelweise', C5, async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.home);
     await el(page, fx.m5.widgets.home).click();

@@ -99,14 +99,28 @@ export function widgetFlags(widget) {
   }
 }
 
-/** Eine Kopie des Widgets mit geaenderten Marken; das Original bleibt stehen. */
+/**
+ * Eine Kopie des Widgets mit geaenderten Marken; das Original bleibt stehen.
+ *
+ * DIE UEBRIGEN MARKEN BLEIBEN STEHEN. Bis Teil C5 kannte dieser Ort genau zwei
+ * (`locked`, `hidden`) und schrieb den Marken-Kasten deshalb jedes Mal neu -
+ * seit C5 wohnt dort auch die GRUPPE (`group`, siehe
+ * `utils/visuEditorErgonomics.js`), und ein Haken bei „Gesperrt" haette sie
+ * stillschweigend aufgeloest. Neu geschrieben werden darum nur die beiden
+ * Marken, die diese Funktion besitzt.
+ */
 export function withWidgetFlags(widget, patch) {
+  const current = widget && widget.config ? widget.config[WIDGET_FLAGS_KEY] : null
   const flags = { ...widgetFlags(widget), ...(patch || {}) }
   return {
     ...widget,
     config: {
       ...(widget && widget.config ? widget.config : {}),
-      [WIDGET_FLAGS_KEY]: { locked: Boolean(flags.locked), hidden: Boolean(flags.hidden) },
+      [WIDGET_FLAGS_KEY]: {
+        ...(current && typeof current === 'object' ? current : {}),
+        locked: Boolean(flags.locked),
+        hidden: Boolean(flags.hidden),
+      },
     },
   }
 }

@@ -28,7 +28,32 @@ import { C5, box, el, openEditor, resizeHandle } from './editor-helpers';
 test.use({ hasTouch: true });
 
 test.describe('M5 Editor-Matrix E14 · Touch-Eingabe (wartet auf Teil C5)', () => {
-  test.fixme(
+  /**
+   * DIESELBE DECKE WIE DIE UEBRIGE EDITOR-MATRIX - und aus demselben Grund.
+   *
+   * `m5-editor-matrix.spec.ts` hebt sein Budget auf 150 s, weil seine Zeilen
+   * ZWEI Anwendungen fahren (die Admin-GUI mit dem Editor und, im
+   * Vorschaurahmen, die echte Visu) und weil die Anmeldung an der echten Maske
+   * am Kontingent haengt (5/Minute, `waitForLoginSlot` in `fixtures.ts`): ein
+   * volles Fenster kostet bis zu einer Minute WARTEN, und das laeuft INNERHALB
+   * des Szenarios.
+   *
+   * E14 geht durch genau dieselbe Maske und laedt genau dieselben zwei
+   * Anwendungen - die Decke stand hier aber bis zur Lieferung von Teil C5 auf
+   * den 30 s der Vorgabe. Gemessen an dieser Zeile (Integrationslauf C5, drei
+   * Laeufe hintereinander auf derselben Instanz): 6,0 s ohne Wartezeit,
+   * 24,9 s und 27,8 s mit; im zweiten Pflichtlauf riss sie mit
+   * „Tearing down context exceeded the test timeout" - also im ABBAU des
+   * Browser-Kontexts, nicht in einer Aussage ueber den Editor. Die ARBEIT ist
+   * damit sechs Sekunden, der Rest ist das Anmelde-Kontingent.
+   *
+   * Angehoben ist deshalb NUR das Budget, nicht eine Erwartung: jede einzelne
+   * `expect`-Zusicherung behaelt ihre kurze Frist aus `playwright.config.ts`
+   * (7 s). Eine Zeile, die inhaltlich falsch ist, scheitert weiterhin schnell.
+   */
+  test.describe.configure({ timeout: 150_000 });
+
+  test(
     'E14 Touch-Drag/-Resize eines Widgets im Editor bewegt es um dieselbe Distanz wie Maus-Drag (page.touchscreen)',
     C5,
     async ({ page }) => {
