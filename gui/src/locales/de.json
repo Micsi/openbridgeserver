@@ -3502,6 +3502,7 @@
       "notRendered": "Wird noch nirgends gerendert - weder in der Vorschau noch in der Visu"
     },
     "binding": {
+      "title": "Bindung des Elements",
       "name": "Name",
       "choose": "Datenpunkt wählen",
       "searchLabel": "Datenpunkt suchen",

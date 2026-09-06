@@ -3502,6 +3502,7 @@
       "notRendered": "Not rendered anywhere yet - neither in the preview nor in the visu"
     },
     "binding": {
+      "title": "Element binding",
       "name": "Name",
       "choose": "Choose datapoint",
       "searchLabel": "Search datapoint",

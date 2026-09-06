@@ -56,6 +56,7 @@ import {
   triggerJsonDownload,
   uniqueImportName,
 } from '@/utils/visuPageTransfer'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const props = defineProps({
   /** Die Seite, die exportiert wird. Der IMPORT braucht sie nicht. */
@@ -233,6 +234,7 @@ watch(
       >
         {{ $t('visuEditor.transfer.import') }}
       </button>
+      <HelpButton help-id="visu-transfer" />
       <span
         v-if="done"
         data-testid="editor-transfer-done"

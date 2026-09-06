@@ -21,6 +21,7 @@ import { computed, ref, watch } from 'vue'
 
 import { searchApi } from '@/api/client'
 import VisuDatapointPicker from '@/components/visu/VisuDatapointPicker.vue'
+import HelpButton from '@/components/ui/HelpButton.vue'
 import { coreTypeOf, readField, widgetFormFields, writeField, WIDGET_FORMS } from '@/utils/visuWidgetTypes'
 import { VISIBILITY_OPS, normalizeRule, readVisibilityRule, writeVisibilityRule } from '@/utils/visuVisibility'
 
@@ -112,6 +113,13 @@ watch([regelOp, regelSchwelle], () => regelSchreiben())
     class="binding-form flex flex-col gap-3"
     data-testid="visu-binding-form"
   >
+    <div class="flex items-center gap-2">
+      <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {{ $t('visuEditor.binding.title') }}
+      </h2>
+      <HelpButton help-id="visu-datapoint-binding" />
+    </div>
+
     <div class="flex flex-col gap-1">
       <label
         :for="`binding-${widget.id}-name`"

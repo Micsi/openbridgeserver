@@ -111,6 +111,7 @@ import {
   undoTo,
 } from '@/utils/visuEditorHistory'
 import { readClipboard, writeClipboard } from '@/utils/visuEditorClipboard'
+import HelpButton from '@/components/ui/HelpButton.vue'
 import {
   LAYOUT_MODES,
   LAYOUT_PIXEL,
@@ -143,7 +144,7 @@ const props = defineProps({
    */
   afterSave: { type: Function, default: null },
 })
-const emit = defineEmits(['draft', 'preview-width', 'hidden-ids'])
+const emit = defineEmits(['draft', 'preview-width', 'hidden-ids', 'selected'])
 
 /** Die Widget-Liste IST das Modell: ihre Reihenfolge ist Z-Ordnung und Fluss. */
 const widgets = ref([])
@@ -1389,6 +1390,26 @@ watch(
   { deep: true, immediate: true },
 )
 
+/**
+ * DIE AUSWAHL GEHT NACH AUSSEN (M5 Teil D, Issue #174).
+ *
+ * Bis hierher hatten Canvas und Autorenteil zwei getrennte Auswahlen: ein Klick
+ * auf eine Kachel waehlte sie zum Verschieben aus, aber die Bindung darunter
+ * meldete weiter „Kein Element ausgewaehlt". Ein Autor, der ein Element
+ * anklickt, um es zu binden, kam so nie an das Formular (an der laufenden
+ * Instanz gemessen, Szenarien E10/E11/E16).
+ *
+ * Gemeldet wird der FUEHRENDE Eintrag der Auswahl, also derselbe, den auch die
+ * Werkzeugleiste als „das ausgewaehlte Element" behandelt; bei leerer Auswahl
+ * `null`. Die Ansicht setzt daraus ihre eigene Auswahl - der Canvas bleibt der
+ * Besitzer seiner Liste, die Ansicht liest nur mit.
+ */
+watch(
+  () => selectedIds.value[0] ?? null,
+  (id) => emit('selected', id),
+  { immediate: true },
+)
+
 /** Die Layer-Schalter aendern das Bild, nicht das Modell - der Entwurf zieht mit. */
 watch([layers, showGlobalLayer, showIncludeLayer], () => {
   if (!props.pageId || !base.value) return
@@ -1596,6 +1617,9 @@ function guideStyle(guide) {
         >
           {{ $t('visuEditor.canvas.save') }}
         </button>
+        <span class="shrink-0">
+          <HelpButton help-id="visu-editor-canvas" />
+        </span>
       </div>
     </div>
 

@@ -19,6 +19,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { createVisuPreviewBridge } from '@/composables/useVisuPreviewBridge'
 import { previewOriginOf, VISU_PREVIEW_URL } from '@/utils/visuEditorAccess'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const props = defineProps({
   /** Der Entwurf, den die Vorschau zeigen soll (C1–C3 fuellen ihn). */
@@ -90,6 +91,16 @@ watch(() => props.draft, () => bridge.sendDraft(), { deep: true })
 
 <template>
   <div class="flex flex-col gap-2">
+    <!-- GESCHWISTER des Rahmens, nie ein Vorfahre: der Vorfahrenpfad des
+         `<iframe>` ist gepinnt (`tests/helpers/previewFrameFence.js`), weil
+         `transform`/`filter`/`zoom`/`opacity` darauf dem Autor ein anderes Bild
+         zeigen wuerden als dem Nutzer (E3). -->
+    <div class="flex items-center gap-2">
+      <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {{ $t('visuEditor.previewTitle') }}
+      </h2>
+      <HelpButton help-id="visu-editor-preview" />
+    </div>
     <iframe
       ref="frame"
       data-testid="visu-preview-frame"

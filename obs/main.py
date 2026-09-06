@@ -387,6 +387,59 @@ def create_app() -> FastAPI:
                 return _spa_index_response(index)
             return JSONResponse({"detail": "Visu nicht gebaut"}, status_code=404)
 
+    # ── Serve V2 Visu (visu_v2_dist → /visu-v2) ───────────────────────────
+    # Die V2-Visu (`apps/visu`) liegt NEBEN V1, nicht an dessen Stelle: V1 bleibt
+    # unter /visu unveraendert erreichbar (M5-Regel R17), V2 bekommt ein eigenes
+    # Praefix. Aus demselben Praefix kommt der VORSCHAU-Modus (/visu-v2/preview),
+    # den der V2-Editor der Admin-GUI als iframe einbettet
+    # (CONTRIBUTING-visu-m5.md §2.4, Messlatte E3).
+    #
+    # WARUM DAS EINE EIGENE ROUTE BRAUCHT: ohne sie faellt /visu-v2/... in den
+    # SPA-404-Rueckfall unten und liefert gui_dist/index.html - im Vorschaukasten
+    # stuende dann die Admin-Oberflaeche in sich selbst.
+    #
+    # Die Route liefert nur die statische Huelle aus. Sie prueft nichts und setzt
+    # nichts: die Admin-Sitzung reist per postMessage in den Rahmen (nie ueber
+    # URL, Query oder Cookie), und jeder Inhalt haengt an der API, die ihre
+    # eigene Pruefung behaelt.
+    _visu_v2_dist = Path(__file__).parent.parent / "visu_v2_dist"
+    if _visu_v2_dist.is_dir():
+        _visu_v2_assets = _visu_v2_dist / "assets"
+        if _visu_v2_assets.is_dir():
+            # Eigener Mount statt SPA-Rueckfall: sonst bekaeme jede .js-Datei
+            # index.html mit text/html, und der Browser bricht die Vorschau mit
+            # einem MIME-Type-Fehler ab.
+            app.mount(
+                "/visu-v2/assets",
+                StaticFiles(directory=_visu_v2_assets),
+                name="visu_v2_assets",
+            )
+
+        @app.get("/visu-v2/favicon.svg", include_in_schema=False)
+        async def visu_v2_favicon():
+            return FileResponse(_visu_v2_dist / "favicon.svg")
+
+        def _visu_v2_index():
+            index = _visu_v2_dist / "index.html"
+            if index.exists():
+                return _spa_index_response(index)
+            return JSONResponse({"detail": "Visu 2 nicht gebaut"}, status_code=404)
+
+        @app.get("/visu-v2", include_in_schema=False)
+        async def visu_v2_spa_root():
+            """Der nackte Praefix ohne Schraegstrich — ohne ihn faellt genau diese
+            eine Adresse in den Admin-Rueckfall (dieselbe Falle wie bei /help)."""
+            return _visu_v2_index()
+
+        @app.get("/visu-v2/{path:path}", include_in_schema=False)
+        async def visu_v2_spa(path: str):
+            """Alle /visu-v2/... Pfade → index.html (Vue Router history mode).
+
+            Der Query wird bewusst gar nicht gelesen: die Vorschau nimmt ihre
+            Sitzung ausschliesslich per postMessage entgegen.
+            """
+            return _visu_v2_index()
+
     # ── Serve Help site (help_dist → /help) ────────────────────────────────
     # VitePress renders a static multi-page site (a real .html file per route),
     # unlike the Vue Admin-GUI/Visu SPAs — html=True lets StaticFiles resolve
@@ -405,6 +458,14 @@ def create_app() -> FastAPI:
             return JSONResponse({"detail": "Not found"}, status_code=404)
         if request.url.path.startswith("/visu/"):
             # Bereits durch visu_spa abgedeckt — sollte nicht hier landen
+            return JSONResponse({"detail": "Not found"}, status_code=404)
+        if request.url.path == "/visu-v2" or request.url.path.startswith("/visu-v2/"):
+            # Ohne gebautes visu_v2_dist/ gibt es die V2-Visu nicht — dann muss
+            # das als Fehler sichtbar werden. Faellt die Adresse in den
+            # Admin-Rueckfall, zeigt der Vorschaukasten des Editors die
+            # Admin-Oberflaeche in sich selbst, und niemand sieht, dass die
+            # Vorschau fehlt. Gilt auch fuer ein fehlendes Asset unterhalb des
+            # Mounts: eine 404 statt einer HTML-Seite.
             return JSONResponse({"detail": "Not found"}, status_code=404)
         if request.url.path == "/help" or request.url.path.startswith("/help/"):
             # Der /help-Mount serviert seine eigene help_dist/404.html bereits

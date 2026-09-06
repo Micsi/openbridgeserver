@@ -61,6 +61,7 @@ node_modules/
 # Frontend build artefacts (built by vite / docker)
 gui_dist/
 frontend_dist/
+visu_v2_dist/
 help_dist/
 help/.vitepress/cache/
 help/public/help-index.json

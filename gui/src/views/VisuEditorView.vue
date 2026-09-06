@@ -57,6 +57,7 @@ import VisuEditorCanvas from '@/components/visu/VisuEditorCanvas.vue'
 import VisuPageHistory from '@/components/visu/VisuPageHistory.vue'
 import VisuPageTransfer from '@/components/visu/VisuPageTransfer.vue'
 import { mergePreviewDrafts } from '@/utils/visuEditorDraftMerge'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const props = defineProps({
   /** Die Seite aus der Route (`/visu-editor/:pageId`, `props: true`). */
@@ -195,6 +196,29 @@ const draft = computed(() =>
 const selectedId = ref(null)
 const selected = computed(() => pageWidgets.value.find((w) => w.id === selectedId.value) || null)
 
+/**
+ * Die Auswahl des Canvas ist DIESELBE Auswahl (M5 Teil D, Issue #174).
+ *
+ * Vorher waren es zwei: ein Klick auf eine Kachel waehlte sie auf der Flaeche
+ * aus, das Bindungsformular darunter meldete aber weiter „Kein Element
+ * ausgewaehlt" - der Autor musste dasselbe Element ein zweites Mal in der Liste
+ * anklicken, und wer das nicht wusste, kam an die Bindung gar nicht heran.
+ *
+ * Uebernommen wird die Id UNGEPRUEFT, und das ist Absicht. Der erste Entwurf
+ * liess nur durch, was gerade schon in `pageWidgets` stand - und genau daran
+ * fiel er unter Last um: Canvas und Store laden ihre Seite getrennt, und ein
+ * Klick, der vor dem Store ankam, wurde still verworfen (an der laufenden
+ * Instanz gemessen, mal offenes, mal geschlossenes Formular auf derselben
+ * Seite). Die Pruefung ist ohnehin ueberfluessig: `selected` schlaegt die Id in
+ * `pageWidgets` nach und liefert `null`, solange dort nichts passt. Ein Element
+ * einer Include- oder Global-Ebene, das der Ansicht nicht gehoert, laesst das
+ * Formular damit geschlossen; sobald die eigene Seite geladen ist, oeffnet es
+ * sich von selbst.
+ */
+function uebernimmAuswahl(id) {
+  selectedId.value = id ?? null
+}
+
 onMounted(async () => {
   if (!allowed.value) return
   await ladeBaum()
@@ -302,9 +326,12 @@ function platzieren(type) {
     class="flex flex-col gap-4 p-4"
   >
     <header class="flex flex-col gap-1">
-      <h1 class="text-lg font-semibold text-slate-800 dark:text-slate-100">
-        {{ $t('visuEditor.title') }}
-      </h1>
+      <div class="flex items-center gap-2">
+        <h1 class="text-lg font-semibold text-slate-800 dark:text-slate-100">
+          {{ $t('visuEditor.title') }}
+        </h1>
+        <HelpButton help-id="visu-editor" />
+      </div>
       <p class="text-sm text-slate-500 dark:text-slate-400">
         {{ $t('visuEditor.intro') }}
       </p>
@@ -336,6 +363,7 @@ function platzieren(type) {
         @draft="canvasDraft = $event"
         @preview-width="previewWidth = $event"
         @hidden-ids="canvasHiddenIds = $event"
+        @selected="uebernimmAuswahl"
       />
       <!-- Waehrend eines Wiederherstellens traegt dieser Platzhalter bewusst
            NICHT die Marke `.editor-canvas`: sie steht fuer „der Editor zeigt die

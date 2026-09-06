@@ -60,6 +60,73 @@ export const C2_PAGE_SKIN = {
 } as const;
 
 /**
+ * E3 wartet NICHT mehr auf die Ausliefer-Route der Vorschau.
+ *
+ * Teil D (Micsi/openbridgeserver#174) hat sie gebaut: der Server mountet
+ * `apps/visu` unter `/visu-v2/`, `/visu-v2/preview` liefert die echte Visu aus,
+ * und der Vorschaukasten des Editors zeigt sie (gemessen an der laufenden
+ * Instanz: `.edomi-canvas` im Rahmen, mit den Elementen der Seite und den
+ * globalen Ebenen). Was den Pixel-Diff jetzt noch verhindert, ist eine ANDERE
+ * Naht, und sie ist gemessen statt vermutet.
+ *
+ * MESSUNG (Fenster 1280x900, Rahmen 974x628, beide Seiten derselbe Ausschnitt
+ * `.edomi-root`):
+ *
+ *   Vorschau  974 x 628, Nav-Spalte 176 px, Zeichenflaeche 798 px
+ *   live      974 x 687, Nav-Spalte 191 px, Zeichenflaeche 783 px
+ *
+ * Die Nav-Spalte des Edomi-Skins ist in beiden Faellen so breit wie ihr
+ * laengster Eintrag - und die Eintraege sind NICHT dieselben: die Vorschau baut
+ * ihren Nav-Baum aus den Knoten des ENTWURFS (`PreviewDataSource.navTree()`,
+ * gefuellt von `loadDraftNodes` mit der Seite, ihren Includes und den globalen
+ * Inkludeseiten), die laufende Visu aus dem GANZEN Baum des Servers
+ * (`ObsDataSource.navTree()`). Verschieden breite Nav-Spalte heisst verschoben
+ * beginnende Zeichenflaeche, und damit ist die Zeile „0 abweichende Pixel"
+ * nicht erreichbar, egal wie gut die Route ist.
+ *
+ * Das ist eine Frage des ENTWURFS, nicht der Auslieferung, und sie gehoert
+ * damit zu C3/C4 (Entwurfsumfang) und nicht zu Teil D. Sobald der Entwurf
+ * denselben Nav-Boden traegt wie die Visu, faellt an dieser Zeile genau eine
+ * Handarbeit an: `test.fixme` → `test`.
+ */
+/**
+ * E10 wartet NICHT mehr auf die Ausliefer-Route der Vorschau, sondern auf einen
+ * SCHREIBWEG fuer den Autorenteil.
+ *
+ * Gemessen an der laufenden Instanz (Teil D): der Name eines Elements laesst
+ * sich im Bindungsformular aendern, die Vorschau zeigt die Aenderung sofort - und
+ * kein Knopf schreibt sie fort. Es gibt in `gui/src` genau drei Schreibwege auf
+ * `page_config` (`visuApi.savePage`): die Seiteneigenschaften (C1), die
+ * Werkzeugleiste des Canvas (C2) und das Wiederherstellen aus dem Verlauf (C6).
+ * Der Autorenteil (C3) gehoert zu keinem davon: `replaceWidget`/`addWidget` in
+ * `composables/useVisuEditorDraft.js` aendern nur den ENTWURF, und das
+ * „Speichern" des Canvas legt seine EIGENE, unveraenderte Widget-Liste ab. Nach
+ * einem Neuladen ist die Aenderung weg (gemessen: E10 benannte um, speicherte
+ * ueber den Canvas, und die einbettende Seite zeigte weiter den alten Namen).
+ *
+ * Damit ist die Zeile nicht erreichbar: „propagiert in referenzierende
+ * Instanzen" setzt voraus, dass die Aenderung an der Vorlage ueberhaupt
+ * gespeichert wird. Dasselbe gilt fuer eine Bindung (E11) und eine
+ * Sichtbarkeitsregel (E16); die beiden Zeilen behaupten nur die Vorschau und
+ * laufen deshalb.
+ */
+export const D_AUTHORING_NOT_PERSISTED = {
+  annotation: {
+    type: 'blocked-by',
+    description:
+      'Autorenteil ohne Schreibweg (C3 — Micsi/openbridgeserver#170): Bindung, Name und Sichtbarkeitsregel erreichen nur den Entwurf; das „Speichern" des Canvas legt seine eigene Widget-Liste ab',
+  },
+} as const;
+
+export const D_PREVIEW_NAV_FLOOR = {
+  annotation: {
+    type: 'blocked-by',
+    description:
+      'Entwurfsumfang der Vorschau (C3/C4) — der Nav-Baum des Entwurfs traegt nur die Knoten der Seite, die laufende Visu den ganzen Baum; verschieden breite Nav-Spalte (176 vs. 191 px, gemessen) verschiebt die Zeichenflaeche',
+  },
+} as const;
+
+/**
  * Die Sprache der Admin-GUI, in der die Editor-Szenarien ihre Affordanzen
  * suchen.
  *
@@ -190,3 +257,14 @@ export const saveCanvas = (page: Page) =>
 /** Die Quittung des Canvas - dieselbe Eingrenzung wie oben. */
 export const canvasSaved = (page: Page) =>
   page.getByTestId('visu-editor-canvas').getByText('Gespeichert', { exact: true });
+
+/**
+ * Das Feld „Name" des BINDUNGSFORMULARS (C3), nicht das der Seiteneigenschaften.
+ *
+ * Beide heissen „Name", und beide stehen gleichzeitig auf dem Schirm, sobald ein
+ * Element ausgewaehlt ist. Ein ungefasstes `getByLabel('Name')` trifft deshalb
+ * zwei Felder; vor der Auswahl traf es still das falsche (die Seite statt des
+ * Elements). Dieselbe Eingrenzung wie bei den beiden „Speichern" oben.
+ */
+export const bindingName = (page: Page) =>
+  page.getByTestId('visu-binding-form').getByLabel('Name', { exact: true });

@@ -22,6 +22,7 @@ import { useVisuEditorStore } from '@/stores/visuEditor'
 import { EDITOR_PAGE_KINDS, supportsIncludes, supportsPopup } from '@/utils/visuPageKind'
 import { sortNodes } from '@/utils/visuPageTree'
 import { VISU_SKIN_KEYS } from '@/utils/visuSkins'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const props = defineProps({
   /**
@@ -190,14 +191,22 @@ async function onSubmit() {
          reicht bis in die Tastaturbedienung. `contents` haelt das Gitter des
          Formulars unveraendert - das Feldgruppen-Element selbst nimmt keinen
          Platz ein und aendert keine Anordnung. -->
+    <!-- Die Ueberschrift und ihr Hilfe-Knopf stehen AUSSERHALB der Feldgruppe:
+         waehrend eines Wiederherstellens ist die Gruppe gesperrt, und eine
+         gesperrte Hilfe waere genau dann unerreichbar, wenn jemand nachliest,
+         was da gerade passiert. -->
+    <div class="flex items-center gap-2">
+      <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {{ $t('visuEditor.props.title') }}
+      </h2>
+      <HelpButton help-id="visu-page-kinds" />
+    </div>
+
     <fieldset
       data-testid="visu-props-fields"
       class="contents"
       :disabled="restoring"
     >
-      <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
-        {{ $t('visuEditor.props.title') }}
-      </h2>
 
       <div class="flex flex-col gap-1">
         <label
