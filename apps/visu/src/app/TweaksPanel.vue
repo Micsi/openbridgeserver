@@ -189,3 +189,30 @@ function unsupportedType(spec: SkinTweak): never {
     </div>
   </section>
 </template>
+
+<style scoped>
+/* Der Panel hat bewusst kein eigenes Aussehen — er erbt das der Umgebung. Was er
+   NICHT von der Umgebung erben kann, ist eine fingerfreundliche Grösse: die
+   Browser-Defaults für `<button>` und `<input type="range">` sind 21 px bzw.
+   16 px hoch (gemessen im Produktionsbuild, e2e-pwa/touch-targets.spec.ts).
+   Deshalb hier nur der Touch-Boden aus #104 AC3 — 44 px in beiden Achsen —, kein
+   Look. */
+.tweaks-panel__seg-btn {
+  /* `min-height` trägt hier allein: die Höhe kam von 21 px. `min-width` ist bei
+     den heutigen Beschriftungen WIRKUNGSLOS — die schmalste Schaltfläche misst
+     44.8 px schon aus `padding-inline`. Es steht als Boden für kürzere
+     Übersetzungen da, ist also bewusst von keinem heutigen Fall bewacht. */
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: 10px;
+}
+
+/* Beim Range-Input wird der Boden über `padding` gebaut, nicht über `height`:
+   die Bahn bleibt so schmal wie zuvor und liegt mittig in einer 44 px hohen
+   Trefferfläche, statt auf Fingerbreite aufgeblasen zu werden. */
+.tweaks-panel__slider {
+  box-sizing: content-box;
+  min-height: 16px;
+  padding-block: 14px;
+}
+</style>

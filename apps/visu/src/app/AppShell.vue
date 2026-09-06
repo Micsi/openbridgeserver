@@ -21,7 +21,8 @@
  * Must-keep (A3): the clock/messages pill pulses on `unread`; the titlebar is
  * optional (`showTitlebar`); the overview is room-grouped — the gap between
  * groups reads as "another room" (Goldene Regel 5). Safe-area insets are wired
- * via CSS `env(safe-area-inset-*)` so notches/home-indicators are respected.
+ * via CSS `env(safe-area-inset-*)` so notches/home-indicators are respected —
+ * measured against emulated device insets in e2e-pwa/safe-areas.spec.ts (#104).
  *
  * Slot props let a skin reuse the host's data without owning it:
  *   - `header`      { title, withClock, unread, markRead } — `markRead` lets a
@@ -281,7 +282,7 @@ defineExpose({ shell });
           <IonTitle>{{ t('shell.nav.menuTitle') }}</IonTitle>
         </IonToolbar>
       </IonHeader>
-      <IonContent>
+      <IonContent class="app-shell-menu-content">
         <IonList>
           <IonItem
             v-for="key in shell.nav"
@@ -413,21 +414,42 @@ defineExpose({ shell });
 </template>
 
 <style scoped>
-/* Safe-area insets — respect notches / home indicators (prepared in M2). The
-   shell pads its chrome by the device insets so nothing sits under a cutout. */
-.app-shell-titlebar,
-.app-shell-header {
-  padding-top: env(safe-area-inset-top, 0px);
-}
+/* Safe-area insets — respect notches / home indicators (#104 AC2).
+   Measured against emulated device insets in e2e-pwa/safe-areas.spec.ts.
 
-.app-shell-header {
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
-}
+   The HEADERS carry no rule of their own, and that is deliberate. Ionic derives
+   `--ion-safe-area-*` from `env()` on `html` (@ionic/core/css/core.css) and then
+   spends them in two DIFFERENT rules — worth naming exactly, because the top
+   inset does NOT come from the toolbar's own stylesheet:
+     - top:        `ion-header ion-toolbar:first-of-type { padding-top: var(--ion-safe-area-top, 0) }`
+                   (…/collection/components/header/header.md.css:65) — a descendant
+                   rule of the HEADER, which is why it covers `.app-shell-titlebar` too;
+     - left/right: `ion-toolbar { padding-left/right: var(--ion-safe-area-left/right) }`
+                   (…/collection/components/toolbar/toolbar.md.css:84-85).
+   The rule that used to sit here padded the
+   `ion-header` on top of that, and measuring it showed both failure modes at
+   once: the top inset counted TWICE (the header content started at 94px instead
+   of 47px, a 47px dead band under the notch), and `padding-left/right` on a
+   box that is already full width pushed the header 24px past the right edge of
+   the viewport (right=417 in a 393px viewport). The shell only has to cover what
+   Ionic does not.
 
+   What Ionic does NOT cover is the two SCROLLING surfaces below/beside it. */
 .app-shell-content {
   --padding-start: env(safe-area-inset-left, 0px);
   --padding-end: env(safe-area-inset-right, 0px);
+  --padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* The side menu is a SECOND scrolling surface with its own edges, and it was the
+   gap: Ionic derives `--ion-safe-area-*` from `env()` and its TOOLBAR uses them,
+   so the menu's titlebar was already clear — but the list below it was not. On a
+   notched device in landscape the menu opens against the cut-off edge, so every
+   nav row started underneath it (measured: item x=0 with a 12 px left inset), and
+   the last row of a scrolled menu ended under the home indicator. The menu sits on
+   the START side, so it takes the start + bottom insets. */
+.app-shell-menu-content {
+  --padding-start: env(safe-area-inset-left, 0px);
   --padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 

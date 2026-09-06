@@ -235,6 +235,8 @@ const pageNames = computed<Record<string, string> | undefined>(() =>
 
 .overview-tweaks-toggle {
   margin: var(--obs-space, 12px);
+  /* 44 px Touch-Boden (#104 AC3) — die Polsterung allein ergab 40 px. */
+  min-height: 44px;
   padding: 8px 14px;
   border-radius: 999px;
   border: 1px solid var(--ion-color-step-200, #cfd4dc);

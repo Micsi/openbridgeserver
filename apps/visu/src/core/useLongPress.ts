@@ -8,12 +8,15 @@
  *  - cancels on pointerup / pointerleave / pointercancel,
  *  - suppresses the native context menu.
  *
- * The haptic feedback is encapsulated in {@link buzz} so the platform
- * implementation (today `navigator.vibrate`) can later be swapped for
- * `@capacitor/haptics` without touching the gesture logic (MIGRATION.md §7.4).
+ * The haptic feedback is encapsulated in {@link buzz} and goes through
+ * `@capacitor/haptics` (M4 · #104 AC1): one call for all three platforms — iOS
+ * and Android get the native taptic/vibrator, the Web/PWA build gets the
+ * plugin's own web implementation on top of `navigator.vibrate`. No platform
+ * branch here (tests/single-codebase.test.ts); the plugin owns the dispatch.
  *
  * Pure gesture/timer logic — owns no application state (Goldene Regel 4).
  */
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 export interface LongPressOptions {
   /** Press duration in milliseconds before the callback fires. Default 420. */
@@ -36,15 +39,31 @@ const MOVE_TOLERANCE_PX = 10;
 /** Default long-press threshold. */
 const DEFAULT_MS = 420;
 
-/** Encapsulated haptic feedback; swappable for @capacitor/haptics later. */
+/**
+ * Encapsulated haptic feedback (#104 AC1).
+ *
+ * `ImpactStyle.Light` is the short tick a long-press should give — the closest
+ * equivalent to the 8 ms `navigator.vibrate` this replaces (the plugin's web
+ * implementation maps Light to a 20 ms pattern).
+ *
+ * Haptics are best-effort and MUST NOT abort the interaction, and the ONE way
+ * they fail is a REJECTED PROMISE — no `try` is needed around this call:
+ *  - the shipped web implementation throws `unavailable('Browser does not
+ *    support the vibrate API')` when `navigator.vibrate` is missing (Safari,
+ *    desktop Firefox), and `impact()` is `async`, so that surfaces as a
+ *    rejection;
+ *  - a missing implementation throws too, but Capacitor's own proxy raises that
+ *    inside the promise chain as well: every throw in
+ *    `createPluginMethodWrapper` sits in `loadPluginImplementation().then(…)`
+ *    (@capacitor/core@8.5.1/dist/index.js:111-129), and the wrapper always
+ *    returns that promise.
+ * An earlier `try` around this was therefore unreachable code that no test could
+ * enter (it survived every mutation); the `.catch()` is the whole failure path.
+ */
 function buzz(): void {
-  try {
-    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-      navigator.vibrate(8);
-    }
-  } catch {
-    /* haptics are best-effort; never let them break the gesture */
-  }
+  void Haptics.impact({ style: ImpactStyle.Light }).catch(() => {
+    /* no vibration API on this platform — the gesture still stands */
+  });
 }
 
 export function useLongPress(

@@ -141,6 +141,9 @@ function onChange(ev: Event): void {
    menu open over the black terminal page. */
 .settings-idle-seconds {
   width: 6rem;
+  /* 44 px Touch-Boden (#104 AC3) — die Polsterung allein ergab 32 px. */
+  box-sizing: border-box;
+  min-height: 44px;
   padding: 6px 8px;
   border: 1px solid var(--ion-color-step-200, #cfd4dc);
   border-radius: 8px;

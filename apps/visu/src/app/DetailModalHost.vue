@@ -378,3 +378,18 @@ export default defineComponent({
   },
 });
 </script>
+
+<style scoped>
+/* Die generische Detailfläche (`defaultDetail`) ist HOST-Code: sie springt ein,
+   wenn der Skin für einen Typ keinen Detail-Renderer mitbringt (beim ionic-Skin
+   heute u. a. `scene`, `media`, `camera`, `sensor`). Sie war komplett ungestylt,
+   und der Browser-Default für `<button>` ist 21 px hoch — gemessen 133×21 in
+   e2e-pwa/touch-targets.spec.ts. Hier steht deshalb nur der 44-px-Touch-Boden
+   aus #104 AC3, kein Aussehen: das Aussehen der Fläche gehört dem Skin, der
+   Boden dem Host. */
+.skin-host-default-action {
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: 12px;
+}
+</style>

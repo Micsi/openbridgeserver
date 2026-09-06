@@ -163,5 +163,10 @@ async function onLogout(): Promise<void> {
 
 .login-submit {
   margin-top: 12px;
+  /* 44 px Touch-Boden (#104 AC3). Ionics md-Default ist `min-height: 36px`
+     (@ionic/core .../components/button/button.md.css:399); die native
+     Schaltfläche im Shadow-Root erbt sie (`min-height: inherit`, ebd. :197),
+     das Anheben am Host wirkt also durch. Gemessen: 268×36 vor der Regel. */
+  min-height: 44px;
 }
 </style>
