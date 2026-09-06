@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TARGET_FILE_RE = re.compile(r"^(gui/src|frontend/src)/.+\.(vue|js|ts)$")
-LOCALE_FILE_RE = re.compile(r"^(gui|frontend)/src/locales/(de|en)\.json$")
+LOCALE_FILE_RE = re.compile(r"^(gui|frontend|apps/visu)/src/locales/(de|en)\.json$")
 TEMPLATE_TAG_RE = re.compile(r"</?template\b[^>]*>", re.IGNORECASE)
 ATTR_RE = re.compile(
     r"(?<![:\w-])\b(label|title|placeholder|alt|aria-label|helper-text|tooltip|caption|headline|confirm-text|cancel-text|no-data-text|loading-text)\s*=\s*(['\"])(.*?)\2"

@@ -19,7 +19,10 @@ jobs:
   visu:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 — der i18n-Gate unten vergleicht gegen den Basis-Commit.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # M2 dev-link (CONTRIBUTING-visu.md → "Dev-Link"): apps/visu depends on the
       # ionic skin via an absolute `link:` path, and the skin links back to the
@@ -91,6 +94,40 @@ jobs:
       - name: Import boundaries
         run: pnpm boundaries
 
+      # i18n-Gate fuer `apps/visu`. Der repoweite `i18n-guard.yml` greift hier
+      # nicht: sein pull_request-Trigger listet nur `main` und die
+      # Release-Linien, waehrend die Visu-PRs gegen `feat/visu-mobile-skins`
+      # laufen. Geprueft wird die Schluessel-Paritaet von de.json/en.json —
+      # `apps/visu/src` steht bewusst NICHT in `TARGET_FILE_RE` (Begruendung in
+      # tools/check_i18n_guard.py).
+      #
+      # PR hart, Push weich — dasselbe Muster wie in `i18n-guard.yml`.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: i18n gate (pull_request)
+        if: github.event_name == 'pull_request'
+        env:
+          I18N_DIFF_BASE: ${{ github.event.pull_request.base.sha }}
+          I18N_DIFF_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: ./tools/check-i18n-hardcoded-strings.sh
+
+      - name: i18n gate (push, weich)
+        id: i18n_push
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          I18N_DIFF_BASE: ${{ github.event.before }}
+          I18N_DIFF_HEAD: ${{ github.sha }}
+        run: ./tools/check-i18n-hardcoded-strings.sh
+
+      - name: i18n-Warnung melden (push)
+        if: github.event_name == 'push' && steps.i18n_push.outcome == 'failure'
+        run: |
+          echo "::warning title=i18n gate soft-fail::i18n-Befunde im Push-Diff. Push-Laeufe blockiert das nicht; PR-Laeufe bleiben hart."
+
       # Definition of Done aus #103: „App startet als PWA". Lädt den
       # Produktionsbuild über `vite preview` in einem echten Chromium und prüft
       # Mount + Service-Worker-Registrierung. Getrennt vom authz-E2E
@@ -101,3 +138,60 @@ jobs:
 
       - name: PWA boot (Playwright gegen dist/)
         run: pnpm --filter @obs/visu-app e2e:pwa
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SwiftPM-Gate. `apps/visu/tests/capacitor-versions.test.ts` wertet
+  # `ios/App/CapApp-SPM/Package.swift` mit `swift package dump-package` aus statt
+  # es nur zu durchsuchen — das faengt ein syntaktisch kaputtes Manifest und
+  # einen `path:` ins Leere, was eine Textsuche beides durchlaesst.
+  #
+  # Der Block ueberspringt sich selbst, wenn kein `swift` da ist, und der
+  # Hauptjob laeuft auf Linux — dort lief er also nie. Dieser Job ist genau
+  # dafuer da. Er baut bewusst NICHT und faehrt nur diese eine Datei: der Test
+  # liest Dateien und ruft `swift`, mehr braucht er nicht. macOS-Runner sind
+  # teuer, deshalb so schlank wie moeglich.
+  swiftpm:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Micsi/obs-visu-skins
+          ref: main
+          path: .obs-visu-skins
+
+      # Dieselbe Dev-Link-Topologie wie im Hauptjob — `pnpm install` scheitert
+      # sonst an den absoluten `link:`-Spezifizierern.
+      - name: Recreate dev-link paths
+        run: |
+          WORK_PARENT="$(dirname "$GITHUB_WORKSPACE")"
+          mv "$GITHUB_WORKSPACE/.obs-visu-skins" "$WORK_PARENT/obs-visu-skins"
+          ln -s "$GITHUB_WORKSPACE" "$WORK_PARENT/openbridgeserver-visu-integrate"
+          sudo mkdir -p /Volumes/Daten/Projekte/openbridge
+          sudo ln -s "$WORK_PARENT/obs-visu-skins" /Volumes/Daten/Projekte/openbridge/obs-visu-skins
+          sudo ln -s "$GITHUB_WORKSPACE" /Volumes/Daten/Projekte/openbridge/openbridgeserver-visu-integrate
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install (linked skins repo)
+        run: pnpm --dir /Volumes/Daten/Projekte/openbridge/obs-visu-skins install --frozen-lockfile
+
+      # Laut werden, statt still zu ueberspringen: ohne `swift` misst dieser Job
+      # nichts, und genau das war der Zustand, den er beheben soll.
+      - name: Swift vorhanden
+        run: swift --version
+
+      - name: SwiftPM-Manifest (Vitest)
+        run: pnpm --filter @obs/visu-app exec vitest run tests/capacitor-versions.test.ts
+

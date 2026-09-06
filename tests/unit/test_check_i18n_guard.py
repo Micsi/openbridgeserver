@@ -487,3 +487,53 @@ def test_issue_864_locale_keys_exist():
     for locale in (frontend_en, frontend_de):
         assert "mainLabelPlaceholder" in locale["widgets"]["info"]
         assert "unitPlaceholder" in locale["widgets"]["info"]
+
+
+# --- Locale-Parität: welche Apps der Gate überhaupt kennt ---------------------
+#
+# Der Gate prüft zwei Dinge: hartkodierte Strings in geänderten Frontend-Dateien
+# (TARGET_FILE_RE) und die Schlüssel-Parität von de.json/en.json (LOCALE_FILE_RE).
+# Die Visu-App unter `apps/visu` fiel unter keine der beiden Regexe, war also
+# ungeschützt — ein Schlüssel, den nur eine der beiden Locales kennt, fiel niemandem
+# auf. Diese Tests halten fest, WELCHE Apps der Paritäts-Teil abdeckt.
+
+
+def test_locale_file_re_matches_every_frontend_app():
+    matched = {}
+    for path in (
+        "gui/src/locales/de.json",
+        "frontend/src/locales/en.json",
+        "apps/visu/src/locales/de.json",
+    ):
+        m = gate.LOCALE_FILE_RE.match(path)
+        assert m is not None, f"LOCALE_FILE_RE erfasst {path} nicht — die App hat keinen Paritäts-Schutz"
+        matched[path] = m.group(1)
+
+    # Die erste Gruppe ist der App-Präfix, den check_locale_pair zu
+    # `<app>/src/locales/` zusammensetzt.
+    assert matched["gui/src/locales/de.json"] == "gui"
+    assert matched["frontend/src/locales/en.json"] == "frontend"
+    assert matched["apps/visu/src/locales/de.json"] == "apps/visu"
+
+
+def test_locale_file_re_ignores_unrelated_json(tmp_path):
+    for path in (
+        "gui/src/locales/fr.json",
+        "gui/src/other/de.json",
+        "apps/visu/src/locales/de.json.bak",
+    ):
+        assert gate.LOCALE_FILE_RE.match(path) is None, f"{path} sollte nicht als Locale-Datei gelten"
+
+
+def test_check_locale_pair_reports_one_sided_key_for_apps_visu(tmp_path):
+    locales = tmp_path / "apps" / "visu" / "src" / "locales"
+    locales.mkdir(parents=True)
+    (locales / "de.json").write_text(
+        json.dumps({"skin": {"default": {"activate": "Aktivieren"}}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (locales / "en.json").write_text(json.dumps({"skin": {"default": {}}}), encoding="utf-8")
+
+    errors = gate.check_locale_pair(tmp_path, "apps/visu")
+
+    assert errors == ["apps/visu/src/locales/en.json is missing key: skin.default.activate"]
