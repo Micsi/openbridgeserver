@@ -62,6 +62,16 @@
     "unlock": "Freischalten",
     "loginRequiredFor": "Anmeldung erforderlich für {page}"
   },
+  "settings": {
+    "title": "App-Einstellungen",
+    "idleReturnHome": {
+      "label": "Rücksprung zur Startseite",
+      "unit": "Sekunden",
+      "help": "Ohne Bedienung springt die Visu nach dieser Zeit zur Startseite zurück. 0 schaltet die Funktion aus, sonst {min} bis {max} Sekunden.",
+      "off": "Aus — die Visu bleibt auf der geöffneten Seite.",
+      "active": "Aktiv — Rücksprung nach {n} Sekunden ohne Bedienung."
+    }
+  },
   "overview": {
     "tweaks": {
       "toggle": "Anpassen"

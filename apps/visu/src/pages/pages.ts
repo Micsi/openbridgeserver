@@ -55,6 +55,16 @@ export interface PageDef {
    * render — still in source order, so order + grouping stay the floor.
    */
   readonly rooms?: readonly string[];
+  /**
+   * Marks THE start page (A7, Issue #144) — the page the host returns to.
+   *
+   * Before this, "which page is Home" was only implicit in the router table
+   * (`/` → `overview`): a routing fact, not an authoring statement. The idle
+   * return needs an authored answer, so the page definitions declare it — data,
+   * like everything else about a page (Daten=JSON). Exactly one page may carry
+   * it; {@link resolveHomePage} makes zero or several a loud gap.
+   */
+  readonly home?: boolean;
 }
 
 /**
@@ -66,7 +76,8 @@ export interface PageDef {
 export const PAGES: readonly PageDef[] = Object.freeze([
   // The A5 pair: ONE floor object (`mobileGroups`), two skins. Same rooms, same
   // order, same devices — only `skin` differs.
-  { id: 'overview', titleKey: 'pages.overview.title', skin: 'ionic', groups: mobileGroups },
+  // `home: true` — THE start page (A7, #144): what the idle return navigates to.
+  { id: 'overview', titleKey: 'pages.overview.title', skin: 'ionic', groups: mobileGroups, home: true },
   { id: 'terminal', titleKey: 'pages.terminal.title', skin: 'terminal', groups: mobileGroups },
   // The v1.2 media/camera demo (Issue #122): the Medien block, rendered by the
   // ionic skin. Until the ionic skin ships media/camera renderers (parallel skins
@@ -85,6 +96,33 @@ export const PAGES: readonly PageDef[] = Object.freeze([
 export const pageById: Readonly<Record<string, PageDef>> = Object.freeze(
   Object.fromEntries(PAGES.map((p) => [p.id, p])) as Record<string, PageDef>,
 );
+
+/**
+ * THE start page of a page set (A7, Issue #144) — pure, testable resolver.
+ *
+ * Exactly one definition may declare `home`. Neither zero nor several is a case
+ * to paper over with a "first page wins" fallback: the idle return would then
+ * silently send a wall panel to whatever page happened to be listed first, and
+ * an author who forgot the marker would never learn of it. Same "never a silent
+ * default" discipline the skin registry and {@link resolvePage} follow.
+ */
+export function resolveHomePage(pages: readonly PageDef[]): PageDef {
+  const homes = pages.filter((p) => p.home);
+  if (homes.length === 0) {
+    const known = pages.map((p) => p.id).join(', ');
+    throw new Error(`pages: no page declares \`home\` — the start page is undefined (known: ${known}).`);
+  }
+  if (homes.length > 1) {
+    const ids = homes.map((p) => p.id).join(', ');
+    throw new Error(`pages: more than one page declares \`home\` — the start page is ambiguous (${ids}).`);
+  }
+  return homes[0];
+}
+
+/** The app's start page — {@link resolveHomePage} over the shipped {@link PAGES}. */
+export function homePage(): PageDef {
+  return resolveHomePage(PAGES);
+}
 
 /** A resolved page: the def plus the concrete, ordered room blocks it renders. */
 export interface ResolvedPage {

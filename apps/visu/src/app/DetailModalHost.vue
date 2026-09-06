@@ -22,7 +22,18 @@
  * dialog mutated the device directly; here every control is a host intent so the
  * skin stays stateless and the store remains the single owner of state.
  */
-import { defineComponent, h, computed, ref, provide, type InjectionKey, type PropType, type VNode } from 'vue';
+import {
+  defineComponent,
+  h,
+  computed,
+  ref,
+  provide,
+  onMounted,
+  onUnmounted,
+  type InjectionKey,
+  type PropType,
+  type VNode,
+} from 'vue';
 import { IonModal, IonPopover } from '@ionic/vue';
 
 import type { Ctx, Device } from '@obs/visu-contract';
@@ -32,6 +43,7 @@ import { activeCtx } from '../core/ctx';
 import { makeTokens, type Theme } from '../core/tokens';
 import { resolveSkin } from '../skin-host/skins';
 import { parseIntent, dispatchIntent, type HostAction, type ActionStore } from '../skin-host/actions';
+import { useShellContext } from './shell/shellContext';
 
 /** The host surface provided to descendants (tiles drive it via these handles). */
 export interface SkinHostApi {
@@ -124,6 +136,27 @@ export default defineComponent({
     provide<SkinHostApi>(HOST_KEY, { dispatch, openDetail, closeDetail, openPresets });
 
     /**
+     * Hand the shell a way to dismiss both overlays (A7, Issue #144).
+     *
+     * The idle return lives in the shell, ABOVE the router outlet, so it cannot
+     * inject this host API — the page publishes its closer through the shared
+     * shell context instead. The entering page registers after the leaving one
+     * (mount order), so the closer always belongs to the page actually shown;
+     * unregistering only our own closer keeps a leaving page from clearing it.
+     */
+    const shellCtx = useShellContext();
+    function closeOverlays(): void {
+      closeDetail();
+      closePresets();
+    }
+    onMounted(() => {
+      shellCtx.closeOverlays = closeOverlays;
+    });
+    onUnmounted(() => {
+      if (shellCtx.closeOverlays === closeOverlays) shellCtx.closeOverlays = undefined;
+    });
+
+    /**
      * Capture a tap/input inside the modal: parse the skin's data-action marker
      * and dispatch the canonical action. `close` dismisses the modal; UI-only and
      * unknown nodes are ignored (no silent state write — golden rule 4).
@@ -161,7 +194,17 @@ export default defineComponent({
       closePresets();
     }
 
-    /** Ionic range custom events the modal body listens for (exact camelCase). */
+    /**
+     * Ionic range custom events the modal body listens for (exact camelCase).
+     *
+     * KNOWN, out of scope here: `ionInput` is NOT user-only. `ion-range` watches its
+     * `value` prop (`@ionic/core`, `watchers … value:[{valueChanged:0}]`) and emits
+     * `ionInput` on every programmatic write, so a backend-driven live value reaches
+     * `parseIntent` and writes itself straight back. Predates this file's current
+     * shape (issue A2); the idle timer no longer shares this seam — see
+     * `IDLE_INTERACTION_EVENTS` in `useIdleReturnHome.ts`, which excludes `ionInput`
+     * for exactly this reason.
+     */
     const ION_EVENTS = ['ionInput', 'ionChange'] as const;
 
     /** Attach the exact-cased Ionic range listeners to the modal body element. */

@@ -3,13 +3,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { mount, flushPromises } from '@vue/test-utils';
-import { defineComponent, h, inject } from 'vue';
+import { defineComponent, h, inject, reactive } from 'vue';
 // (defineComponent/h used both for the capturing child and the IonModal stub below)
 import type { Device } from '@obs/visu-contract';
 
 import DetailModalHost, { HOST_KEY, type SkinHostApi } from './DetailModalHost.vue';
 import { useDeviceStore } from '../core/store';
 import { MockDataSource } from '../core/datasource';
+import { SHELL_CONTEXT_KEY, type ShellContext } from './shell/shellContext';
 
 /**
  * app/DetailModalHost — the host shell that owns the detail surface (A2, Issue #98).
@@ -377,5 +378,92 @@ describe('DetailModalHost — the teleported surfaces carry the ACTIVE skin name
     api!.openPresets('kueche-roll');
     await flushPromises();
     expect(wrapper.find('.skin-host-presets-body').classes()).toContain('visu-root');
+  });
+});
+
+describe('DetailModalHost — hands the shell a way to close its overlays (A7, #144)', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  /** Mount the host under a shell context the test can read back. */
+  async function mountWithShellContext() {
+    await seed();
+    const ctx = reactive<ShellContext>({});
+    let api: SkinHostApi | undefined;
+    const wrapper = mount(DetailModalHost, {
+      global: { ...global, provide: { [SHELL_CONTEXT_KEY as symbol]: ctx } },
+      props: { skin: 'ionic' },
+      slots: { default: () => h(childCapturing((a) => (api = a))) },
+    });
+    await flushPromises();
+    return { wrapper, ctx, api: api! };
+  }
+
+  it('registers a closer the shell above the router outlet can call', async () => {
+    // The idle return (A7) lives in the shell, which sits ABOVE the outlet and so
+    // cannot inject this host API — the page publishes its closer instead.
+    const { ctx } = await mountWithShellContext();
+    expect(typeof ctx.closeOverlays).toBe('function');
+  });
+
+  it('the registered closer dismisses BOTH the detail modal and the preset popover', async () => {
+    const { wrapper, ctx, api } = await mountWithShellContext();
+
+    api.openDetail('kueche-wand');
+    api.openPresets('kueche-roll');
+    await flushPromises();
+    expect(wrapper.find('ion-modal').attributes('is-open')).toBe('true');
+    expect(wrapper.find('ion-popover').attributes('is-open')).toBe('true');
+
+    ctx.closeOverlays!();
+    await flushPromises();
+    expect(wrapper.find('ion-modal').attributes('is-open')).toBe('false');
+    expect(wrapper.find('ion-popover').attributes('is-open')).toBe('false');
+  });
+
+  it('unregisters on unmount — the shell never calls into a page that is gone', async () => {
+    const { wrapper, ctx } = await mountWithShellContext();
+    expect(ctx.closeOverlays).toBeTypeOf('function');
+
+    wrapper.unmount();
+    await flushPromises();
+    expect(ctx.closeOverlays).toBeUndefined();
+  });
+
+  it('the LEAVING page does not clear the closer the ENTERING page just registered', async () => {
+    // The Ionic router outlet keeps the leaving page mounted for its transition,
+    // so two DetailModalHosts are alive at once and the order is: entering page
+    // mounts (registers), THEN leaving page unmounts (unregisters). Without the
+    // identity check in `onUnmounted` the departing page wipes the closer its
+    // successor had just installed — and from the next page change onwards the
+    // idle return silently stops closing dialogs ("offenes Detail/Modal wird beim
+    // Rücksprung geschlossen" fails, with nothing red to show for it).
+    await seed();
+    const ctx = reactive<ShellContext>({});
+    const mountHost = () =>
+      mount(DetailModalHost, {
+        global: { ...global, provide: { [SHELL_CONTEXT_KEY as symbol]: ctx } },
+        props: { skin: 'ionic' },
+      });
+
+    const leaving = mountHost();
+    await flushPromises();
+    const leavingCloser = ctx.closeOverlays;
+    expect(leavingCloser).toBeTypeOf('function');
+
+    // The entering page registers while the leaving one is still mounted.
+    const entering = mountHost();
+    await flushPromises();
+    const enteringCloser = ctx.closeOverlays;
+    expect(enteringCloser).toBeTypeOf('function');
+    expect(enteringCloser).not.toBe(leavingCloser);
+
+    // Only now does the leaving page go away — it must not take the closer with it.
+    leaving.unmount();
+    await flushPromises();
+    expect(ctx.closeOverlays).toBe(enteringCloser);
+
+    entering.unmount();
+    await flushPromises();
+    expect(ctx.closeOverlays).toBeUndefined();
   });
 });

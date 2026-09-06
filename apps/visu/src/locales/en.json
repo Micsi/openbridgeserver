@@ -62,6 +62,16 @@
     "unlock": "Unlock",
     "loginRequiredFor": "Sign-in required for {page}"
   },
+  "settings": {
+    "title": "App settings",
+    "idleReturnHome": {
+      "label": "Return to the start page",
+      "unit": "seconds",
+      "help": "With no interaction the Visu returns to the start page after this time. 0 turns the feature off, otherwise {min} to {max} seconds.",
+      "off": "Off — the Visu stays on the page you opened.",
+      "active": "On — returns after {n} seconds without interaction."
+    }
+  },
   "overview": {
     "tweaks": {
       "toggle": "Customise"

@@ -33,8 +33,9 @@
  *                   so a skin override of `#roomDivider` actually takes effect.
  *                   With no override the default RoomDivider is the fallback.
  */
-import { computed, h, provide, ref, useSlots, watch, watchEffect, type ComponentPublicInstance } from 'vue';
+import { computed, h, inject, provide, ref, useSlots, watch, watchEffect, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { routerKey } from 'vue-router';
 import {
   IonApp,
   IonContent,
@@ -60,6 +61,11 @@ import LoginPanel from './LoginPanel.vue';
 import AccessGate from './AccessGate.vue';
 import { useShellContext } from './shell/shellContext';
 import { ROOM_DIVIDER_KEY, type RoomDividerRenderer } from './shell/roomDivider';
+import SettingsPanel from './SettingsPanel.vue';
+import { useAppSettings } from './appSettings';
+import { useIdleReturnHome } from './useIdleReturnHome';
+import { homePage } from '../pages/pages';
+import { useDeviceStore } from '../core/store';
 import type { RootTweakStyle } from '@obs-visu-skins/ionic';
 
 const props = withDefaults(
@@ -171,6 +177,90 @@ provide(ROOM_DIVIDER_KEY, roomDividerRenderer);
 /** Clock pill lives inline in the header only when no brand titlebar is shown. */
 const headerWithClock = computed(() => !shell.showTitlebar.value);
 
+/* ------------------------------------- idle return to the start page (A7, #144) */
+/**
+ * Kiosk behaviour: after a configurable span with no interaction the host puts
+ * the panel back into its defined resting state — the page the definitions mark
+ * as `home` (`pages.homePage()`), with no dialog left open. Off by default.
+ *
+ * The two halves are deliberately apart: `useIdleReturnHome` only measures the
+ * idle span (Verhalten=Code, no knowledge of pages), and THIS handler is the
+ * only place that decides what a timeout means. Skins know nothing of either
+ * (Goldene Regel 4) — the timer and the navigation live in the host.
+ *
+ * The router is injected optionally: the shell also mounts without one (unit
+ * tests, and the page-owning-skin path where the host's own `currentPageId` is
+ * the truth), and there the return moves the host state alone.
+ */
+const router = inject(routerKey, null);
+const store = useDeviceStore();
+const appSettings = useAppSettings();
+
+/**
+ * The page the host currently shows — the SAME precedence as
+ * `SkinHost.shownPageId()` (skin-host/SkinHost.ts), which asks the routed page
+ * FIRST and only then the host's own `currentPageId`.
+ *
+ * Which of the two is the truth depends on the floor, so the floor decides:
+ *
+ *  - **Static floor** (`externalFloor === false`, the shipped page definitions):
+ *    the ROUTE is the truth. `SkinPage` deliberately does not write
+ *    `store.currentPageId` here (SkinPage.vue: the Ionic outlet keeps the leaving
+ *    page mounted, so two SkinPages are alive during a transition and a shared
+ *    piece of state would race between them) — it hands the routed id down as
+ *    `currentPage` instead. Reading `currentPageId` first therefore measured the
+ *    wrong thing: the only writers on this floor are `store.followLink` and this
+ *    very `returnHome`, so after the FIRST return the value stuck at the start
+ *    page forever and every later timeout became a silent no-op — while the
+ *    router had long moved on. Two ways that happens, both real in this app
+ *    (`router.ts` uses `createWebHistory`, so history entries ARE router
+ *    navigations): the browser's own Back/Forward, and opening a deep URL such as
+ *    `/visu/terminal` directly. Neither writes `currentPageId`. The Back case was
+ *    reproduced in a real browser against the running dev server, and is
+ *    regression-tested in AppShell.idle.spec.ts → "returns home AGAIN after a
+ *    router-only navigation".
+ *  - **External floor** (a live backend tree): `currentPageId` is the truth. The
+ *    backend page ids are not routes, so a link jump moves that state while the
+ *    URL stays put, and trusting the route name would make the shell believe it
+ *    sits on the start page when it does not.
+ */
+function shownPageId(): string | null {
+  const routed = router?.currentRoute.value.name;
+  const routedId = typeof routed === 'string' ? routed : null;
+  if (store.externalFloor) return store.currentPageId ?? routedId;
+  // No router at all (the shell mounted standalone) falls back to the host state.
+  return routedId ?? store.currentPageId ?? null;
+}
+
+function returnHome(): void {
+  // Always leave the page without an open overlay: closing a dialog is not a
+  // navigation, so it costs no reload and no flicker even on the start page —
+  // and a panel resting on the start page with a detail modal still up is
+  // exactly the state A7 exists to prevent.
+  ctx.closeOverlays?.();
+
+  // KNOWN LIMIT (deliberate, A7 scope): `homePage()` resolves against the frozen
+  // static `PAGES`, so the id it yields is a definition id. Against a live backend
+  // tree (`store.externalFloor`) no node carries that id, and the return would
+  // write a page id the tree does not know. A7's technical gate is A5 #101
+  // (static page definitions) — "which backend node is Home" is not declared
+  // anywhere yet, so resolving it is out of this issue's scope rather than
+  // something guessed here. Named, not left implicit: when the external floor
+  // gains a home marker, THIS is the line that reads it.
+  const home = homePage();
+  // Already there: no push. Re-pushing the current route every span would be a
+  // pointless reload of the start page (the "kein Flackern" requirement).
+  if (shownPageId() === home.id) return;
+
+  // The canonical host navigation (`core/store → navigate`), plus the routed
+  // half for the statically routed pages — the same two steps the page-link
+  // action takes in OverviewGrid.
+  store.navigate(home.id);
+  if (router?.hasRoute(home.id)) void router.push({ name: home.id });
+}
+
+useIdleReturnHome(appSettings.idleReturnHomeSeconds, returnHome);
+
 function selectNav(key: NavKey): void {
   shell.setNav(key);
   void menuController.close();
@@ -208,6 +298,9 @@ defineExpose({ shell });
         <!-- Opt-in login (Welle L). Guest stays the default: this is an entry,
              never a wall — the nav above works without it. -->
         <LoginPanel />
+
+        <!-- Host settings (A7, #144): the app's own preferences, not skin tweaks. -->
+        <SettingsPanel />
       </IonContent>
     </IonMenu>
 

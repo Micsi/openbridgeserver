@@ -41,6 +41,20 @@ export interface ShellContext {
   error?: string | null;
   /** Whether the active page body is empty (drives the `empty` slot fallback). */
   empty?: boolean;
+  /**
+   * Dismiss the page's open overlays — detail modal and preset popover (A7,
+   * Issue #144).
+   *
+   * The overlays are owned by DetailModalHost, which sits INSIDE the routed page
+   * and therefore below the shell: the shell cannot `inject` its host API. The
+   * page registers its closer here instead, and the shell calls it when the idle
+   * return puts the panel back to its resting state — a panel that jumped home
+   * with a dialog still open is not in a defined state.
+   *
+   * Optional by nature: with no page mounted (a shell mounted standalone) there
+   * is nothing to close, and the shell's `?.()` call is simply a no-op.
+   */
+  closeOverlays?: () => void;
 }
 
 /** Inject key for the shared, reactive shell context. */

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { PAGES, pageById, resolvePage, groupDevicesByRoom } from './pages';
+import { PAGES, pageById, resolvePage, groupDevicesByRoom, homePage, resolveHomePage } from './pages';
 import { resolveSkin } from '../skin-host/skins';
 import { rooms as modelRooms, demoRooms, byId } from '../core/model';
 import { schema } from '@obs/visu-contract';
@@ -211,5 +211,41 @@ describe('pages — the #1194 full-screen camera page + link plumbing', () => {
     const entries = groups.flatMap((g) => g.entries);
     expect(entries.find((e) => e.id === 'hof-cam')?.link).toEqual({ targetNodeId: 'node-7' });
     expect(entries.find((e) => e.id === 'wohn-sonos')?.link).toBeUndefined();
+  });
+});
+
+/**
+ * The start page (A7, Issue #144).
+ *
+ * "Which page is Home" must be a DECLARATION in the page definitions, not a fact
+ * a reader has to infer from the router table. The idle return (A7) navigates to
+ * it, so a missing or ambiguous marker has to be a loud gap, never a silent
+ * "first page wins".
+ */
+describe('the start page (A7, #144)', () => {
+  it('marks exactly one page as the start page', () => {
+    const homes = PAGES.filter((p) => p.home);
+    expect(homes.map((p) => p.id)).toEqual(['overview']);
+  });
+
+  it('homePage() resolves the declared start page', () => {
+    expect(homePage().id).toBe('overview');
+    // by reference — the resolver never rebuilds a definition
+    expect(homePage()).toBe(pageById['overview']);
+  });
+
+  it('a page set with no home marker is a loud gap, never a silent default', () => {
+    expect(() => resolveHomePage([{ id: 'a', titleKey: 'x', skin: 'ionic', groups: [] }])).toThrow(
+      /no page declares `home`/,
+    );
+  });
+
+  it('two home markers are a loud gap too (ambiguous start page)', () => {
+    expect(() =>
+      resolveHomePage([
+        { id: 'a', titleKey: 'x', skin: 'ionic', groups: [], home: true },
+        { id: 'b', titleKey: 'y', skin: 'ionic', groups: [], home: true },
+      ]),
+    ).toThrow(/more than one page declares `home`/);
   });
 });
