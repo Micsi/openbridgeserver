@@ -12,6 +12,7 @@ import {
   el,
   openEditor,
   pagePropsSaved,
+  resizeHandle,
   savePageProps,
   saveCanvas,
 } from './editor-helpers';
@@ -347,7 +348,74 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     const after = await page.locator('.editor-canvas [data-el]').evaluateAll((els) => els.map((e) => Number(e.getAttribute('data-x'))));
     expect(after).toEqual(before.map((x) => x + 1));
 
+    /* ------------------- Gruppenverschieben MIT DER MAUS (und nicht nur per Taste)
+     *
+     * Bis hierher fuhr E5 das Gruppenverschieben ausschliesslich per Pfeiltaste
+     * — und war deshalb grün, obwohl ein MAUS-Zug an einem Mitglied der Auswahl
+     * nur die angefasste Kachel bewegte und die übrige Auswahl still verwarf
+     * (Kritik Runde 1, im Browser gemessen: 2 gewählt → 1 bewegt, danach 1
+     * gewählt). Der Rahmen ist aber genau dafür da, dass man das Eingesammelte
+     * anschließend anfasst und zieht; diese Verbindung steht ab jetzt hier.
+     *
+     * ZUGLEICH DIE PROBE AUF DEN ANFASSER AN EINER KLEINEN KACHEL: die Kacheln
+     * der M5-Beispielwelt messen 3x2 Autoreneinheiten, also 3x2 CSS-Pixel. Ein
+     * Anfasser AUF dieser Ecke verdeckte sie vollständig, und derselbe Zug in
+     * ihrer Mitte vergrößerte sie, statt sie zu verschieben (gemessen
+     * 3x2 → 40x1). Deshalb wird unten nicht nur die Lage, sondern auch das MASS
+     * geprüft — und dass der Anfasser wirklich außerhalb der Kachel liegt.
+     */
+    const gewaehlt = await selected.count();
+    const kacheln = page.locator('.editor-canvas [data-el]');
+    const kastenAller = () =>
+      kacheln.evaluateAll((els) =>
+        els.map((e) => ({
+          x: Number(e.getAttribute('data-x')),
+          y: Number(e.getAttribute('data-y')),
+          w: Number(e.getAttribute('data-w')),
+          h: Number(e.getAttribute('data-h')),
+        })),
+      );
+
+    const gezogen = el(page, fx.m5.widgets.home);
+    const kachelBox = (await gezogen.boundingBox())!;
+    // Klein genug, dass ein Anfasser AUF der Ecke sie ganz zudecken würde.
+    expect(kachelBox.width).toBeLessThan(8);
+    const griffBox = (await resizeHandle(page, fx.m5.widgets.home).boundingBox())!;
+    // Seine linke obere Ecke liegt auf der rechten unteren der Kachel — er
+    // überdeckt von ihr also keinen Pixel. (Die 0,01 fangen nur die Rundung des
+    // Layouts ab, nicht einen halben Pixel Überdeckung.)
+    expect(griffBox.x).toBeGreaterThanOrEqual(kachelBox.x + kachelBox.width - 0.01);
+    expect(griffBox.y).toBeGreaterThanOrEqual(kachelBox.y + kachelBox.height - 0.01);
+
+    const vorZug = await kastenAller();
+    const zugStart = { x: kachelBox.x + kachelBox.width / 2, y: kachelBox.y + kachelBox.height / 2 };
+    await page.mouse.move(zugStart.x, zugStart.y);
+    await page.mouse.down();
+    await page.mouse.move(zugStart.x + 40, zugStart.y + 40, { steps: 10 });
+    await page.mouse.up();
+
+    const nachZug = await kastenAller();
+    // Die Distanz bestimmt die gezogene Kachel; jede andere folgt ihr um genau
+    // denselben Betrag — und keine ändert dabei ihr Maß.
+    const versatzX = nachZug[0].x - vorZug[0].x;
+    const versatzY = nachZug[0].y - vorZug[0].y;
+    expect(versatzX).toBeGreaterThan(0);
+    expect(nachZug).toEqual(vorZug.map((b) => ({ ...b, x: b.x + versatzX, y: b.y + versatzY })));
+    // Und die Auswahl steht noch: ein Zug verwirft sie nicht.
+    expect(await selected.count()).toBe(gewaehlt);
+
+    /* Der Anfasser kapert auch den Klick auf die NACHBARKACHEL nicht: die
+     * Beispielwelt legt die Kacheln im Abstand von zwei Einheiten übereinander,
+     * und ein Anfasser, der 4 px nach außen ragt, fing dort den Klick auf die
+     * Nachbarin ab (Kritik Runde 1, zweimal reproduziert). */
+    const nachbar = kacheln.nth(1);
+    const nachbarBox = (await nachbar.boundingBox())!;
+    await page.mouse.click(nachbarBox.x + nachbarBox.width / 2, nachbarBox.y + nachbarBox.height / 2);
+    await expect(page.locator('.editor-canvas [data-el].is-selected')).toHaveCount(1);
+    await expect(nachbar).toHaveClass(/is-selected/);
+
     // Gruppieren-Aktion fasst die Auswahl zu einer Gruppe zusammen.
+    await page.keyboard.press('Control+a');
     await page.getByRole('button', { name: 'Gruppieren' }).click();
     await expect(page.locator('.editor-canvas [data-group]')).toHaveCount(1);
   });

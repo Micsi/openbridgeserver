@@ -31,21 +31,22 @@ test.describe('M5 Editor-Matrix E14 · Touch-Eingabe (wartet auf Teil C5)', () =
   /**
    * DIESELBE DECKE WIE DIE UEBRIGE EDITOR-MATRIX - und aus demselben Grund.
    *
-   * `m5-editor-matrix.spec.ts` hebt sein Budget auf 150 s, weil seine Zeilen
-   * ZWEI Anwendungen fahren (die Admin-GUI mit dem Editor und, im
-   * Vorschaurahmen, die echte Visu) und weil die Anmeldung an der echten Maske
-   * am Kontingent haengt (5/Minute, `waitForLoginSlot` in `fixtures.ts`): ein
-   * volles Fenster kostet bis zu einer Minute WARTEN, und das laeuft INNERHALB
-   * des Szenarios.
+   * `m5-editor-matrix.spec.ts` steht schon vor Teil C5 auf 150 s; E14 stand auf
+   * den 30 s der Vorgabe (`playwright.config.ts`), obwohl es durch genau
+   * dieselbe Anmeldemaske geht und genau dieselben ZWEI Anwendungen hochfaehrt
+   * (die Admin-GUI mit dem Editor und, im Vorschaurahmen, die echte Visu). Die
+   * Angleichung ist deshalb Konsistenz, keine Nachsicht.
    *
-   * E14 geht durch genau dieselbe Maske und laedt genau dieselben zwei
-   * Anwendungen - die Decke stand hier aber bis zur Lieferung von Teil C5 auf
-   * den 30 s der Vorgabe. Gemessen an dieser Zeile (Integrationslauf C5, drei
-   * Laeufe hintereinander auf derselben Instanz): 6,0 s ohne Wartezeit,
-   * 24,9 s und 27,8 s mit; im zweiten Pflichtlauf riss sie mit
-   * „Tearing down context exceeded the test timeout" - also im ABBAU des
-   * Browser-Kontexts, nicht in einer Aussage ueber den Editor. Die ARBEIT ist
-   * damit sechs Sekunden, der Rest ist das Anmelde-Kontingent.
+   * WORIN DIE ZEIT WIRKLICH STECKT - an dieser Zeile nachgemessen, nicht
+   * geschaetzt: dreimal ALLEIN gefahren, bei voellig freiem Anmelde-Kontingent
+   * (eine einzige Anmeldung im Minutenfenster, keine `[login-budget]`-Meldung),
+   * brauchte sie 16,0 s / 17,7 s / 23,3 s; in den beiden Pflichtlaeufen 14,0 s
+   * und 30,8 s - im zweiten also bis dicht an die alte Decke, ohne dass
+   * ueberhaupt gewartet worden waere. Der Posten ist damit NICHT das Kontingent,
+   * sondern die echte Anmeldemaske plus zwei SPA-Kaltstarts gegen die
+   * Vite-Dev-Server. Das Kontingent (5/Minute, `waitForLoginSlot` in
+   * `fixtures.ts`) kommt in einem vollen Fenster obendrauf und kann bis zu einer
+   * Minute WARTEN innerhalb des Szenarios bedeuten; 150 s decken beides.
    *
    * Angehoben ist deshalb NUR das Budget, nicht eine Erwartung: jede einzelne
    * `expect`-Zusicherung behaelt ihre kurze Frist aus `playwright.config.ts`

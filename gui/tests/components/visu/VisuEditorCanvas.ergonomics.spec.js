@@ -162,16 +162,29 @@ async function marquee(wrapper, x0, y0, x1, y1) {
   await flushPromises()
 }
 
-/** Maus-Zug an einem Element (oder an seinem Anfasser). */
-async function mouseDrag(target, dx, dy) {
-  target.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, clientX: 100, clientY: 100 }))
+/**
+ * Maus-Zug an einem Element (oder an seinem Anfasser), mit frei gewaehltem
+ * Aufsetzpunkt.
+ *
+ * WO der Zeiger aufsetzt, zaehlt seit Runde 2: der Anfasser sitzt ausserhalb
+ * seiner Kachel und kann dort ueber einer NACHBARKACHEL liegen - dann gehoert
+ * der Zeiger der Nachbarin. `getBoundingClientRect` liefert in jsdom lauter
+ * Nullen; Fenster- und Flaechenkoordinaten sind hier also dieselbe Zahl.
+ */
+async function mouseDragFrom(target, x0, y0, dx, dy) {
+  target.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, clientX: x0, clientY: y0 }))
   window.dispatchEvent(
-    new window.MouseEvent('mousemove', { bubbles: true, clientX: 100 + dx, clientY: 100 + dy }),
+    new window.MouseEvent('mousemove', { bubbles: true, clientX: x0 + dx, clientY: y0 + dy }),
   )
   window.dispatchEvent(
-    new window.MouseEvent('mouseup', { bubbles: true, clientX: 100 + dx, clientY: 100 + dy }),
+    new window.MouseEvent('mouseup', { bubbles: true, clientX: x0 + dx, clientY: y0 + dy }),
   )
   await flushPromises()
+}
+
+/** Maus-Zug an einem Element (oder an seinem Anfasser). */
+async function mouseDrag(target, dx, dy) {
+  await mouseDragFrom(target, 100, 100, dx, dy)
 }
 
 /**
@@ -197,6 +210,15 @@ async function touchDrag(target, dx, dy) {
   target.dispatchEvent(touchEvent('touchstart', 100, 100))
   window.dispatchEvent(touchEvent('touchmove', 100 + dx, 100 + dy))
   window.dispatchEvent(touchEvent('touchend', 100 + dx, 100 + dy))
+  await flushPromises()
+}
+
+/** Derselbe Rahmen wie {@link marquee}, nur per Finger. */
+async function touchMarquee(wrapper, x0, y0, x1, y1) {
+  const canvas = wrapper.find('.editor-canvas')
+  canvas.element.dispatchEvent(touchEvent('touchstart', x0, y0))
+  window.dispatchEvent(touchEvent('touchmove', x1, y1))
+  window.dispatchEvent(touchEvent('touchend', x1, y1))
   await flushPromises()
 }
 
@@ -604,5 +626,276 @@ describe('E14 - Touch bewegt und vergroessert um dieselbe Distanz wie die Maus',
     const el = els(w).find((e) => e.attributes('data-el') === 'a').element
     await touchDrag(el, 60, 0)
     expect(boxOf(w, 'a')).toMatchObject({ x: 20, y: 20 })
+  })
+})
+
+describe('E5 - eine Mehrfachauswahl laesst sich MIT DER MAUS als Ganzes verschieben', () => {
+  /**
+   * Der Befund aus Runde 1, als Zeile.
+   *
+   * Bis dahin waehlte jeder Zug an einer Kachel zuerst NEU (`select`) und las
+   * die Mitzieher erst danach - die Auswahl war zu diesem Zeitpunkt schon auf
+   * eine Kachel geschrumpft. Ergebnis: die angefasste Kachel wanderte, die
+   * uebrigen blieben stehen, und die Auswahl war still verloren. Das
+   * Gruppenverschieben aus E5 gab es damit nur per Pfeiltaste (das faehrt der
+   * Playwright-Teil) oder nach einem zusaetzlichen Klick auf „Gruppieren".
+   */
+  it('bewegt die ganze RAHMEN-Auswahl und laesst sie bestehen', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 10), widget('c', 300, 300)])
+    const w = await mountCanvas()
+    await marquee(w, -5, -5, 100, 100)
+    expect(selectedIds(w)).toEqual(['a', 'b'])
+
+    const el = els(w).find((e) => e.attributes('data-el') === 'a')
+    await mouseDrag(el.element, 16, 0)
+
+    expect(boxOf(w, 'a')).toMatchObject({ x: 16, y: 0 })
+    expect(boxOf(w, 'b')).toMatchObject({ x: 56, y: 10 })
+    expect(boxOf(w, 'c')).toMatchObject({ x: 300, y: 300 })
+    expect(selectedIds(w)).toEqual(['a', 'b'])
+  })
+
+  it('bewegt auch eine UMSCHALT-Auswahl als Ganzes', async () => {
+    seed('p1', [widget('a', 0, 16), widget('b', 40, 26)])
+    const w = await mountCanvas()
+    await pick(w, 'a')
+    await pick(w, 'b', true)
+    expect(selectedIds(w)).toEqual(['a', 'b'])
+
+    const el = els(w).find((e) => e.attributes('data-el') === 'b')
+    await mouseDrag(el.element, 16, 0)
+
+    // Der GEZOGENE bestimmt die Distanz samt Einrasten (Raster 8: 26 → 24), die
+    // uebrigen folgen ihm um genau diesen Betrag.
+    expect(boxOf(w, 'b')).toMatchObject({ x: 56, y: 24 })
+    expect(boxOf(w, 'a')).toMatchObject({ x: 16, y: 14 })
+    expect(selectedIds(w)).toEqual(['a', 'b'])
+  })
+
+  it('waehlt neu, wenn der Zug an einem Element AUSSERHALB der Auswahl beginnt', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 10), widget('c', 300, 300)])
+    const w = await mountCanvas()
+    await marquee(w, -5, -5, 100, 100)
+
+    const el = els(w).find((e) => e.attributes('data-el') === 'c')
+    await mouseDrag(el.element, 16, 0)
+
+    expect(selectedIds(w)).toEqual(['c'])
+    expect(boxOf(w, 'a')).toMatchObject({ x: 0, y: 0 })
+    expect(boxOf(w, 'b')).toMatchObject({ x: 40, y: 10 })
+  })
+
+  /**
+   * Die Gegenprobe zur Zeile darueber: ein KLICK (ohne Bewegung) auf ein
+   * Mitglied der Auswahl sammelt sie auf genau dieses eine Element ein - so
+   * verhalten sich die belegten Champions, und ohne das gaebe es keinen Weg
+   * mehr von einer Mehrfachauswahl zurueck zu einer einzelnen Kachel.
+   */
+  it('sammelt die Auswahl bei einem Klick OHNE Bewegung auf das angefasste Element ein', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 10)])
+    const w = await mountCanvas()
+    await marquee(w, -5, -5, 100, 100)
+    expect(selectedIds(w)).toEqual(['a', 'b'])
+    await pick(w, 'a')
+    expect(selectedIds(w)).toEqual(['a'])
+    expect(boxOf(w, 'b')).toMatchObject({ x: 40, y: 10 })
+  })
+
+  it('zieht eine gesperrte Kachel nicht mit, auch nicht als Teil der Auswahl', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 10, { config: { editor: { locked: true } } })])
+    const w = await mountCanvas()
+    await marquee(w, -5, -5, 100, 100)
+    const el = els(w).find((e) => e.attributes('data-el') === 'a')
+    await mouseDrag(el.element, 16, 0)
+    expect(boxOf(w, 'a')).toMatchObject({ x: 16 })
+    expect(boxOf(w, 'b')).toMatchObject({ x: 40, y: 10 })
+  })
+})
+
+describe('E14 - der Anfasser sitzt AUSSERHALB der Kachel', () => {
+  /**
+   * Der zweite Befund aus Runde 1.
+   *
+   * Eine Kachel der M5-Beispielwelt misst 3x2 Autoreneinheiten, also 3x2
+   * CSS-Pixel. Ein 8x8 grosser Anfasser AUF dieser Ecke verdeckte sie
+   * vollstaendig: ein Zug in ihrer Mitte vergroesserte sie, statt sie zu
+   * verschieben (gemessen 3x2 → 40x1). Er liegt deshalb jetzt vollstaendig
+   * ausserhalb - links oben genau auf der aeusseren Ecke.
+   *
+   * Die Kachel traegt 1 px Rahmen und rechnet in `border-box`; der Bezug eines
+   * absolut gesetzten Kindes ist ihr INNENkasten. `w - 1` / `h - 1` schiebt den
+   * Anfasser damit auf x+w bzw. y+h - die Aussenkante, ohne einen Pixel
+   * Ueberdeckung.
+   */
+  it('setzt ihn bei einer 3x2-Kachel auf die aeussere Ecke, nicht auf die Flaeche', async () => {
+    seed('p1', [widget('klein', 10, 10, { w: 3, h: 2 })])
+    const w = await mountCanvas()
+    await pick(w, 'klein')
+    const griff = els(w)
+      .find((e) => e.attributes('data-el') === 'klein')
+      .find('[data-resize="se"]')
+    // 3 - 1 = 2 und 2 - 1 = 1: zusammen mit dem 1 px Rahmen liegt die linke
+    // obere Ecke des Anfassers auf (x+3, y+2), also GENAU auf der Kachelecke.
+    expect(griff.element.style.left).toBe('2px')
+    expect(griff.element.style.top).toBe('1px')
+  })
+
+  /**
+   * Ausserhalb heisst: er kann ueber einer NACHBARKACHEL liegen. Dort gehoert
+   * der Zeiger der Nachbarin - sonst faenge der Anfasser der ausgewaehlten
+   * Kachel den Klick auf die daneben ab (in Runde 1 zweimal reproduziert).
+   */
+  it('gibt den Zeiger an die Nachbarkachel weiter, wenn er ueber ihr liegt', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 10, 10)])
+    const w = await mountCanvas()
+    await pick(w, 'a')
+    const griff = els(w)
+      .find((e) => e.attributes('data-el') === 'a')
+      .find('[data-resize="se"]')
+    // (12,12) liegt auf dem Anfasser von `a` UND mitten auf `b`.
+    await mouseDragFrom(griff.element, 12, 12, 16, 0)
+    expect(boxOf(w, 'a')).toMatchObject({ x: 0, y: 0, w: 10, h: 10 })
+    expect(selectedIds(w)).toEqual(['b'])
+    expect(boxOf(w, 'b').x).toBeGreaterThan(10)
+  })
+
+  it('zieht dort gross, wo keine Nachbarkachel liegt', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 100, 100)])
+    const w = await mountCanvas()
+    await pick(w, 'a')
+    const griff = els(w)
+      .find((e) => e.attributes('data-el') === 'a')
+      .find('[data-resize="se"]')
+    await mouseDragFrom(griff.element, 12, 12, 40, 40)
+    expect(boxOf(w, 'a').w).toBeGreaterThan(10)
+    expect(boxOf(w, 'a')).toMatchObject({ x: 0, y: 0 })
+    expect(boxOf(w, 'b')).toMatchObject({ x: 100, y: 100 })
+  })
+})
+
+describe('E5 - der Rahmen laesst sich auch mit dem Finger aufziehen', () => {
+  /**
+   * Der Harness fuehrt den Editor bei 393x851 und nimmt ihn in E14
+   * ausdruecklich als Touch-Geraet ab. Ohne den Finger-Rahmen gaebe es dort
+   * ueberhaupt keine Mehrfachauswahl per Zeiger - und „Gruppieren" waere eine
+   * Schaltflaeche, die man nie benutzen kann.
+   */
+  it('waehlt die umschlossenen Elemente auch per Finger', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 0), widget('c', 300, 300)])
+    const w = await mountCanvas()
+    await touchMarquee(w, -5, -5, 100, 100)
+    expect(selectedIds(w)).toEqual(['a', 'b'])
+  })
+
+  it('startet auch per Finger keinen Rahmen, wenn der Zug auf einer Kachel beginnt', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 0)])
+    const w = await mountCanvas()
+    const el = els(w).find((e) => e.attributes('data-el') === 'a')
+    await touchDrag(el.element, 16, 0)
+    expect(selectedIds(w)).toEqual(['a'])
+    expect(boxOf(w, 'a').x).toBe(16)
+  })
+})
+
+describe('E7 - eine Aktion, die nichts aendert, kommt nicht auf den Stapel', () => {
+  /**
+   * Fuer den ZUG stimmte das schon in Runde 1 (`noteDragChange`), fuer die
+   * Schaltflaechen nicht: dreimal „Gruppieren" derselben Auswahl legte drei
+   * Schritte ab, obwohl sich ab dem zweiten nichts mehr aenderte. Wer einen
+   * Fehlgriff zuruecknehmen will, druecke sonst mehrfach auf „Rueckgaengig"
+   * und sehe dabei nichts geschehen.
+   */
+  it('bietet „Gruppieren" nicht mehr an, wenn die Auswahl schon genau diese Gruppe ist', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 0)])
+    const w = await mountCanvas()
+    await marquee(w, -5, -5, 100, 100)
+    await byButton(w, 'Gruppieren').trigger('click')
+    expect(w.findAll('.editor-canvas [data-group]')).toHaveLength(1)
+    expect(byButton(w, 'Gruppieren').attributes('disabled')).toBeDefined()
+    // EIN Undo genuegt, um die Gruppe wieder aufzuloesen.
+    await press('z', { ctrlKey: true })
+    expect(w.findAll('.editor-canvas [data-group]')).toHaveLength(0)
+  })
+
+  it('zeichnet „Nach vorne" an der schon vordersten Kachel nicht auf', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 0)])
+    const w = await mountCanvas()
+    await pick(w, 'b')
+    await byButton(w, 'Nach vorne').trigger('click')
+    expect(ids(w)).toEqual(['a', 'b'])
+    expect(byButton(w, 'Rückgängig').attributes('disabled')).toBeDefined()
+  })
+
+  it('zeichnet „Nach hinten" an der schon hintersten Kachel nicht auf', async () => {
+    seed('p1', [widget('a', 0, 0), widget('b', 40, 0)])
+    const w = await mountCanvas()
+    await pick(w, 'a')
+    await byButton(w, 'Nach hinten').trigger('click')
+    expect(ids(w)).toEqual(['a', 'b'])
+    expect(byButton(w, 'Rückgängig').attributes('disabled')).toBeDefined()
+  })
+
+  /**
+   * Das Ankreuzfeld haengt an `:checked` und `@change`, nicht an `v-model` - es
+   * kann also ein `change` erreichen, das den Wert traegt, der schon steht.
+   * `setValue` von `@vue/test-utils` schickt genau das NICHT (es kehrt still um,
+   * wenn `element.checked` bereits stimmt); das Ereignis steht hier deshalb von
+   * Hand.
+   */
+  it('zeichnet eine Marke auf ihren jetzigen Wert nicht auf', async () => {
+    seed('p1', [widget('a', 0, 0)])
+    const w = await mountCanvas()
+    await pick(w, 'a')
+    const gesperrt = () => w.find('#editor-canvas-locked').element
+    const ankreuzen = async (checked) => {
+      gesperrt().checked = checked
+      gesperrt().dispatchEvent(new window.Event('change', { bubbles: true }))
+      await flushPromises()
+    }
+    await ankreuzen(true)
+    await ankreuzen(true)
+    await ankreuzen(true)
+    // Genau EIN Schritt liegt auf dem Stapel, nicht drei.
+    await press('z', { ctrlKey: true })
+    expect(gesperrt().checked).toBe(false)
+    expect(byButton(w, 'Rückgängig').attributes('disabled')).toBeDefined()
+  })
+
+  it('zeichnet eine Koordinate auf ihren jetzigen Wert nicht auf', async () => {
+    seed('p1', [widget('a', 24, 0)])
+    const w = await mountCanvas()
+    await pick(w, 'a')
+    await w.find('#editor-canvas-x').setValue('24')
+    expect(byButton(w, 'Rückgängig').attributes('disabled')).toBeDefined()
+  })
+})
+
+describe('Der Seitenwechsel INNERHALB der Anwendung', () => {
+  /**
+   * `.editor-canvas` ist die Marke, an der der Harness „der Editor steht"
+   * abliest. Sie deckte bis Runde 2 nur den ERSTAUFBAU: `loaded` wurde nie
+   * wieder `false`, und beim Wechsel auf eine andere Seite stand unter der
+   * Marke weiter die alte Seite - mit ihren Kacheln, ihren Tasten und ihrem
+   * Stapel.
+   */
+  it('nimmt die alte Seite vom Schirm, bis die neue wirklich da ist', async () => {
+    seed('p1', [widget('a', 0, 0)])
+    const w = await mountCanvas('p1')
+    expect(ids(w)).toEqual(['a'])
+
+    let liefern
+    getPage.mockImplementation((id) =>
+      id === 'p2'
+        ? new Promise((resolve) => (liefern = resolve))
+        : Promise.resolve({ data: pageConfig([widget('a', 0, 0)]) }),
+    )
+    await w.setProps({ pageId: 'p2' })
+    await flushPromises()
+    expect(w.find('.editor-canvas').exists()).toBe(false)
+
+    liefern({ data: pageConfig([widget('z', 0, 0)]) })
+    await flushPromises()
+    await flushPromises()
+    expect(ids(w)).toEqual(['z'])
   })
 })

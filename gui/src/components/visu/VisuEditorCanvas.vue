@@ -309,6 +309,13 @@ function adopt(config) {
 
 async function load() {
   if (!props.pageId) return
+  // DIE MARKE FAELLT ZUERST. `.editor-canvas` sagt „der Editor steht" - und das
+  // stimmt beim Wechsel INNERHALB der Anwendung erst, wenn die neue Seite da
+  // ist. Bis Runde 2 wurde `loaded` nur einmal wahr und nie wieder falsch: unter
+  // der Marke stand dann weiter die alte Seite, mit ihren Kacheln und ihren
+  // Tasten, und ein Einfuegen oder eine Pfeiltaste traf eine Liste, die gleich
+  // darauf ersetzt wurde. Die Wache deckte damit nur den Erstaufbau.
+  loaded.value = false
   errorKey.value = null
   try {
     const [node, page] = await Promise.all([
@@ -595,7 +602,28 @@ function redo() {
 
 /** Je Gruppe ein Rahmen - das Sichtbare einer Gruppe (nur im Pixel-Modus). */
 const groupBoxes = computed(() => (isPixel.value ? groupFrames(widgets.value) : []))
-const canGroup = computed(() => selectedIds.value.length >= 2)
+
+/**
+ * Ist die Auswahl SCHON genau eine Gruppe?
+ *
+ * Dann aendert „Gruppieren" nichts, und die Schaltflaeche sagt das auch: bis
+ * Runde 2 legte dreimal Gruppieren derselben Auswahl DREI Schritte auf den
+ * Stapel, von denen zwei nichts taten - „Rueckgaengig" musste man dann mehrfach
+ * druecken und sah dabei zweimal nichts geschehen. Zu einer Gruppe gehoert
+ * beides: alle Gewaehlten tragen dieselbe Marke, UND keine fremde Kachel traegt
+ * sie auch. Sonst waere das Herausloesen einer Teilmenge in eine eigene Gruppe
+ * versperrt.
+ */
+const selectionIsOneGroup = computed(() => {
+  const wanted = new Set(selectedIds.value)
+  if (wanted.size < 2) return false
+  const gruppen = new Set(widgets.value.filter((w) => wanted.has(w.id)).map((w) => groupIdOf(w)))
+  if (gruppen.size !== 1) return false
+  const [gruppe] = [...gruppen]
+  if (!gruppe) return false
+  return widgets.value.every((w) => groupIdOf(w) !== gruppe || wanted.has(w.id))
+})
+const canGroup = computed(() => selectedIds.value.length >= 2 && !selectionIsOneGroup.value)
 const canUngroup = computed(() =>
   widgets.value.some((w) => selectedIds.value.includes(w.id) && groupIdOf(w)),
 )
@@ -663,16 +691,27 @@ function patchWidget(id, patch) {
   widgets.value = widgets.value.map((w) => (w.id === id ? { ...w, ...patch } : w))
 }
 
+/**
+ * NUR AUFZEICHNEN, WENN SICH ETWAS AENDERT - dieselbe Linie wie beim Zug
+ * ({@link noteDragChange}). Wer die Zahl tippt, die schon dasteht, bekommt
+ * keinen Schritt auf den Stapel; wer sie aendert, genau einen (das Zusammenfassen
+ * ueber `tag` besorgt den Rest).
+ */
 function setCoordinate(key, value) {
   if (!selected.value) return
   const n = Number(value)
+  const naechster = Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0
+  if (selected.value[key] === naechster) return
   record(`coord:${selected.value.id}:${key}`)
-  patchWidget(selected.value.id, { [key]: Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0 })
+  patchWidget(selected.value.id, { [key]: naechster })
 }
 
 function setFlag(key, value) {
   if (!selected.value) return
   const id = selected.value.id
+  // Das Ankreuzfeld haengt an `:checked`, nicht an `v-model`: es kann ein
+  // `change` schicken, das den Wert traegt, der schon steht. Der zaehlt nicht.
+  if (widgetFlags(selected.value)[key] === value) return
   record()
   widgets.value = widgets.value.map((w) => (w.id === id ? withWidgetFlags(w, { [key]: value }) : w))
 }
@@ -693,21 +732,27 @@ function setMode(mode) {
   guides.value = []
 }
 
+/** Die schon vorderste (bzw. hinterste) Kachel noch weiter zu schieben, ist nichts. */
 function toFront() {
   if (!selected.value) return
+  const liste = widgets.value
+  if (liste.length > 0 && liste[liste.length - 1].id === selected.value.id) return
   record()
-  widgets.value = bringToFront(widgets.value, selected.value.id)
+  widgets.value = bringToFront(liste, selected.value.id)
 }
 
 function toBack() {
   if (!selected.value) return
+  const liste = widgets.value
+  if (liste.length > 0 && liste[0].id === selected.value.id) return
   record()
-  widgets.value = sendToBack(widgets.value, selected.value.id)
+  widgets.value = sendToBack(liste, selected.value.id)
 }
 
 function distribute() {
   const next = distributeHorizontally(widgets.value, selectionInPageOrder.value)
   if (!next) return
+  if (widgets.value.every((w) => next[w.id] === undefined || next[w.id] === w.x)) return
   record()
   widgets.value = widgets.value.map((w) => (next[w.id] === undefined ? w : { ...w, x: next[w.id] }))
 }
@@ -715,6 +760,13 @@ function distribute() {
 function equalSize() {
   const next = matchSize(widgets.value, selectionInPageOrder.value)
   if (!next) return
+  if (
+    widgets.value.every(
+      (w) => next[w.id] === undefined || (next[w.id].w === w.w && next[w.id].h === w.h),
+    )
+  ) {
+    return
+  }
   record()
   widgets.value = widgets.value.map((w) => (next[w.id] === undefined ? w : { ...w, ...next[w.id] }))
 }
@@ -742,18 +794,38 @@ function touchPoint(ev) {
 }
 
 /**
+ * Auf welches Element die Auswahl beim Loslassen zusammenfaellt, falls der Zug
+ * ein blosser Klick bleibt - siehe {@link startElementDrag} und {@link endDrag}.
+ */
+let collapseTo = null
+
+/**
  * Einen Zug am Element beginnen: waehlen, und im Pixel-Modus die Ausgangslage
  * jedes MITGEZOGENEN Elements festhalten.
  *
- * Mitgezogen wird die ganze (ungesperrte) Auswahl - das ist das
- * Gruppenverschieben aus E5. Festgehalten wird die Lage VOR dem Zug, damit jede
- * Bewegung absolut aus dem Ausgangspunkt gerechnet wird: eine Kette relativer
- * Schritte sammelte bei jedem Einrasten einen Rest, und die Kacheln liefen
- * auseinander.
+ * WER SCHON ZUR AUSWAHL GEHOERT, ZIEHT SIE MIT. Das ist das Gruppenverschieben
+ * aus E5 und die Korrektur aus Runde 2: bis dahin waehlte JEDER Zug zuerst neu
+ * (`select` schrumpft ohne Umschalttaste auf ein Element) und las die Mitzieher
+ * erst DANACH - die angefasste Kachel wanderte allein, und die uebrige Auswahl
+ * war stillschweigend verworfen. Per Rahmen liess sich damit einsammeln, aber
+ * nicht verschieben; genau diese Verbindung meint E5. Ein Zug an einem Element
+ * AUSSERHALB der Auswahl waehlt weiterhin neu.
+ *
+ * EIN KLICK OHNE BEWEGUNG sammelt die Auswahl trotzdem auf das angefasste
+ * Element ein ({@link endDrag}) - so verhalten sich die belegten Champions, und
+ * ohne diesen Rueckweg fuehrte von einer Mehrfachauswahl kein Weg mehr zu einer
+ * einzelnen Kachel ausser ueber den leeren Grund.
+ *
+ * Festgehalten wird die Lage VOR dem Zug, damit jede Bewegung absolut aus dem
+ * Ausgangspunkt gerechnet wird: eine Kette relativer Schritte sammelte bei jedem
+ * Einrasten einen Rest, und die Kacheln liefen auseinander.
  */
 function startElementDrag(widget, clientX, clientY, additive) {
   drag = null
-  select(widget.id, additive === true)
+  collapseTo = null
+  const gehoertDazu = isSelected(widget.id)
+  if (additive === true || !gehoertDazu) select(widget.id, additive === true)
+  else if (selectedIds.value.length > 1) collapseTo = widget.id
   if (!isPixel.value) {
     drag = { kind: 'order', id: widget.id }
     return
@@ -765,9 +837,14 @@ function startElementDrag(widget, clientX, clientY, additive) {
     startX: clientX,
     startY: clientY,
     origin: { x: widget.x, y: widget.y },
-    others: movableSelection.value
-      .filter((w) => w.id !== widget.id)
-      .map((w) => ({ id: w.id, x: w.x, y: w.y })),
+    // Mitgezogen wird nur, wenn das angefasste Element selbst gewaehlt ist. Ein
+    // Umschalt-Klick, der es gerade ABgewaehlt hat, zieht es allein - sonst
+    // bewegte ausgerechnet das Abwaehlen die uebrige Auswahl mit.
+    others: isSelected(widget.id)
+      ? movableSelection.value
+          .filter((w) => w.id !== widget.id)
+          .map((w) => ({ id: w.id, x: w.x, y: w.y }))
+      : [],
     before: snapshot(),
     committed: false,
   }
@@ -776,6 +853,7 @@ function startElementDrag(widget, clientX, clientY, additive) {
 /** Dasselbe fuer den Anfasser: er zieht die MASSE, nie die Lage. */
 function startResizeDrag(widget, clientX, clientY) {
   drag = null
+  collapseTo = null
   select(widget.id)
   if (!isPixel.value || widgetFlags(widget).locked) return
   drag = {
@@ -801,6 +879,8 @@ function startResizeDrag(widget, clientX, clientY) {
  */
 function noteDragChange(changed) {
   if (!drag || drag.committed || !changed) return
+  // Ab hier ist es ein Zug und kein Klick mehr - die Auswahl bleibt stehen.
+  collapseTo = null
   recordChange(history, drag.before)
   lastRecordTag = null
   drag.committed = true
@@ -862,6 +942,11 @@ function applyDrag(clientX, clientY, node) {
 }
 
 function endDrag() {
+  // Der Zug blieb ein Klick auf ein Mitglied der Auswahl: sie faellt jetzt auf
+  // dieses eine Element zusammen (siehe {@link startElementDrag}).
+  const einsammeln = collapseTo
+  collapseTo = null
+  if (einsammeln) select(einsammeln, false)
   if (!drag) return
   drag = null
   marquee.value = null
@@ -876,16 +961,54 @@ function onElementMouseDown(widget, ev) {
 }
 
 /**
+ * Die oberste Kachel unter einem Punkt - ohne die, der der Punkt gehoert.
+ *
+ * Gerechnet und nicht ueber `elementFromPoint` gesucht: der Anfasser liegt ueber
+ * allem, was dort steht, und die Frage lautet gerade, WAS er verdeckt. Die
+ * Reihenfolge der Liste ist die Z-Ordnung, also gewinnt die spaeteste Kachel -
+ * dieselbe Regel, nach der der Browser den Klick verteilt hat, bevor der
+ * Anfasser da war.
+ */
+function widgetAt(clientX, clientY, exceptId) {
+  const at = toSurface(clientX, clientY)
+  for (let i = widgets.value.length - 1; i >= 0; i -= 1) {
+    const w = widgets.value[i]
+    if (!w || w.id === exceptId || !hasBox(w)) continue
+    const breite = Math.max(1, w.w)
+    const hoehe = Math.max(1, w.h)
+    if (at.x < w.x || at.x >= w.x + breite) continue
+    if (at.y < w.y || at.y >= w.y + hoehe) continue
+    return w
+  }
+  return null
+}
+
+/**
  * Der Anfasser unten rechts (E14, `data-resize="se"`): er zieht die MASSE, nicht
  * die Lage. Bis Runde 1 hatte er keinen Handler - ein Zug daran blubberte an das
  * `mousedown` des Elternelements und VERSCHOB das Element. Eine Affordanz, die
  * etwas anderes tut, als sie zeigt; deshalb faengt `stopPropagation` das Ereignis
  * hier ab, und an einem gesperrten Element wird der Anfasser gar nicht erst
  * gezeigt.
+ *
+ * ER TRITT ZURUECK, WO EINE ANDERE KACHEL LIEGT. Seit Runde 2 sitzt er
+ * vollstaendig ausserhalb seiner Kachel (siehe {@link resizeHandleStyle}), und
+ * dort kann eine Nachbarkachel stehen - die Beispielwelt legt sie im Abstand von
+ * zwei Einheiten uebereinander. Faenge er den Zeiger auch dann, waehlte ein Klick
+ * auf die Nachbarin die Kachel daneben aus und zoege sie gross (in Runde 1
+ * zweimal reproduziert). Er kapert deshalb nichts: liegt unter dem Punkt eine
+ * andere Kachel, beginnt dort ein gewoehnlicher Zug. Grossgezogen wird an dem
+ * Stueck des Anfassers, das wirklich frei ist; ist gar keines frei, bleiben die
+ * Zahlenfelder W/H.
  */
 function onResizeMouseDown(widget, ev) {
   if (ev.button !== undefined && ev.button !== 0) return
   ev.stopPropagation()
+  const darunter = widgetAt(ev.clientX, ev.clientY, widget.id)
+  if (darunter) {
+    startElementDrag(darunter, ev.clientX, ev.clientY, ev.shiftKey === true)
+    return
+  }
   startResizeDrag(widget, ev.clientX, ev.clientY)
 }
 
@@ -907,6 +1030,11 @@ function onResizeTouchStart(widget, ev) {
   if (!at) return
   ev.stopPropagation()
   if (typeof ev.preventDefault === 'function') ev.preventDefault()
+  const darunter = widgetAt(at.x, at.y, widget.id)
+  if (darunter) {
+    startElementDrag(darunter, at.x, at.y, ev.shiftKey === true)
+    return
+  }
   startResizeDrag(widget, at.x, at.y)
 }
 
@@ -954,11 +1082,43 @@ function toSurface(clientX, clientY) {
  */
 function onCanvasMouseDown(ev) {
   if (ev.button !== undefined && ev.button !== 0) return
-  if (!isPixel.value) return
+  if (!beginsOnEmptyGround(ev)) return
+  beginMarquee(ev.clientX, ev.clientY)
+}
+
+/**
+ * DERSELBE RAHMEN MIT DEM FINGER (E5 auf einem Touch-Geraet).
+ *
+ * Der Harness faehrt den Editor bei 393x851 und nimmt ihn in E14 ausdruecklich
+ * als Touch-Geraet ab. Bliebe der Rahmen der Maus vorbehalten, gaebe es dort
+ * ueberhaupt keine Mehrfachauswahl per Zeiger - und „Gruppieren" waere eine
+ * Schaltflaeche, die man nie benutzen kann. Gerechnet wird danach dasselbe wie
+ * bei der Maus; wie beim Ziehen gibt es nur EINE Rechnung.
+ *
+ * OHNE `preventDefault` HIER, mit Absicht: der leere Grund soll sich mit dem
+ * Finger weiterhin rollen lassen. Sobald der Rahmen wirklich gezogen wird,
+ * nimmt {@link onWindowTouchMove} die Geste an sich - und damit entfaellt auch
+ * die nachgereichte Runde Mausereignisse, die sonst nach dem Loslassen die
+ * frische Auswahl wieder geleert haette.
+ */
+function onCanvasTouchStart(ev) {
+  const at = touchPoint(ev)
+  if (!at) return
+  if (!beginsOnEmptyGround(ev)) return
+  beginMarquee(at.x, at.y)
+}
+
+/** Beginnt dieser Zug wirklich auf dem leeren Grund - und darf er es? */
+function beginsOnEmptyGround(ev) {
+  if (!isPixel.value) return false
   const node = ev.target
-  if (node && typeof node.closest === 'function' && node.closest('[data-el]')) return
-  const at = toSurface(ev.clientX, ev.clientY)
+  return !(node && typeof node.closest === 'function' && node.closest('[data-el]'))
+}
+
+function beginMarquee(clientX, clientY) {
+  const at = toSurface(clientX, clientY)
   drag = { kind: 'marquee', from: at }
+  collapseTo = null
   marquee.value = { from: at, to: at }
   // Ein Klick ins Leere leert die Auswahl - auch dann, wenn kein Rahmen folgt.
   selectedIds.value = []
@@ -1143,6 +1303,31 @@ function elementStyle(widget) {
     top: `${widget.y}px`,
     width: `${Math.max(1, widget.w)}px`,
     height: `${Math.max(1, widget.h)}px`,
+  }
+}
+
+/**
+ * WO DER ANFASSER LIEGT: vollstaendig AUSSERHALB seiner Kachel, mit der linken
+ * oberen Ecke genau auf ihrer rechten unteren.
+ *
+ * Das ist die Korrektur aus Runde 2. Eine Kachel der M5-Beispielwelt misst 3x2
+ * Autoreneinheiten, also 3x2 CSS-Pixel; ein 8x8 grosser Anfasser AUF dieser Ecke
+ * verdeckte sie vollstaendig und ragte 4 px in die Nachbarschaft. Ein Zug in der
+ * Kachelmitte vergroesserte sie dann, statt sie zu verschieben (gemessen
+ * 3x2 → 40x1), und ein Klick auf die Nachbarkachel landete auf dem Anfasser. Ein
+ * Anfasser, der die Flaeche verdeckt, an der er haengt, ist keine Affordanz.
+ *
+ * DIE RECHNUNG: die Kachel traegt 1 px Rahmen und rechnet in `border-box`; der
+ * Bezugsrahmen eines absolut gesetzten Kindes ist ihr INNENkasten, der also um
+ * genau diesen einen Pixel eingerueckt liegt. `w - 1` landet damit auf `x + w`,
+ * `h - 1` auf `y + h` - die Aussenkante, ohne einen Pixel Ueberdeckung, und zwar
+ * bei jeder Kachelgroesse. Was er dort verdeckt, gibt er wieder her (siehe
+ * {@link onResizeMouseDown}).
+ */
+function resizeHandleStyle(widget) {
+  return {
+    left: `${Math.max(1, widget.w) - 1}px`,
+    top: `${Math.max(1, widget.h) - 1}px`,
   }
 }
 
@@ -1444,6 +1629,7 @@ function guideStyle(guide) {
         class="editor-canvas relative min-h-[280px] min-w-[240px] flex-1 rounded-lg border border-slate-200 bg-white p-2 select-none dark:border-slate-700/60 dark:bg-slate-900"
         :class="isPixel ? 'overflow-auto' : ''"
         @mousedown="onCanvasMouseDown"
+        @touchstart="onCanvasTouchStart"
       >
         <div
           ref="surface"
@@ -1509,19 +1695,22 @@ function guideStyle(guide) {
           >
             <span class="pointer-events-none block truncate">{{ widget.name }}</span>
             <!--
-              DER ANFASSER SITZT AUF DER ECKE, nicht darin, und die Kachel
-              beschneidet ihn nicht mehr. Gemessen: eine Kachel der
-              M5-Beispielwelt ist 3x2 Autoreneinheiten gross, also 3x2 CSS-Pixel;
-              ein Anfasser INNERHALB einer beschneidenden Kachel hatte damit eine
-              Umrissbox (8x8), deren Mitte gar nicht mehr auf der Kachel lag - ein
-              Zeiger auf diese Mitte traf den leeren Grund, und E14 haette am
-              Anfasser nichts zu fassen bekommen. Der Name wird weiterhin
-              beschnitten, das erledigt `truncate` an ihm selbst.
+              DER ANFASSER SITZT NEBEN DER ECKE, nicht auf ihr: seine linke obere
+              Ecke liegt genau auf der rechten unteren der Kachel, er verdeckt von
+              ihr also nichts. Warum das so gerechnet wird und was er dafuer
+              wieder hergeben muss, steht an `resizeHandleStyle` und
+              `onResizeMouseDown`.
+
+              Die Kachel beschneidet ihn deshalb auch nicht (kein
+              `overflow-hidden`) - sie wuerde ihn sonst restlos wegschneiden. Der
+              Name wird trotzdem beschnitten, das erledigt `truncate` an ihm
+              selbst.
             -->
             <span
               v-if="isSelected(widget.id) && isPixel && !widgetFlags(widget).locked"
               data-resize="se"
-              class="absolute -right-1 -bottom-1 h-2 w-2 cursor-se-resize bg-sky-500"
+              class="absolute h-2 w-2 cursor-se-resize bg-sky-500"
+              :style="resizeHandleStyle(widget)"
               @mousedown="onResizeMouseDown(widget, $event)"
               @touchstart="onResizeTouchStart(widget, $event)"
             />
