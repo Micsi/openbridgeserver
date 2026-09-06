@@ -230,9 +230,17 @@ export default defineComponent({
       // The generic surface uses the centralised `ctx.t` (with the same German
       // fallback the skin detail renderers use) so it tracks the active locale
       // when the host injected a translator, and reads sensibly without one.
+      //
+      // The fallback hangs on the RESULT, not on `t` itself. vue-i18n returns the KEY
+      // when it has no entry for it, so `t ? t(key) : fallback` shipped the raw
+      // `skin.default.activate` onto the button as soon as `main.ts` had installed a
+      // translator — which it always has outside unit tests. Guarded by
+      // `defaultDetailStrings.spec.ts`, which also holds the keys against both locales.
       const tr = (key: string, fallback: string): string => {
         const t = activeCtx().t;
-        return t ? t(key) : fallback;
+        if (!t) return fallback;
+        const out = t(key);
+        return out === key ? fallback : out;
       };
 
       const actions: VNode[] = [];
