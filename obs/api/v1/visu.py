@@ -341,6 +341,71 @@ async def _mask_concealed_includes(db: Database, config: PageConfig, principal: 
     return config.model_copy(update={"includes": visible})
 
 
+async def _restore_concealed_includes(
+    db: Database,
+    stored_includes: list[str],
+    incoming_includes: list[str],
+    principal: Principal | None,
+) -> list[str]:
+    """Verhindert stillen Datenverlust durch die Maskierung aus `_mask_concealed_includes`
+    (Micsi/openbridgeserver#176, Runde 2, Befund 1).
+
+    Ein Principal ohne Sicht auf ein Include-Ziel bekommt es beim Lesen nicht zu
+    sehen (maskiert) - schickt er die so gelesene Konfiguration unverändert
+    zurück, fehlt der verdeckte Eintrag in der eingehenden Nutzlast, ohne dass
+    der Principal je entschieden hätte, ihn zu entfernen. Ohne Gegenmaßnahme
+    würde ``save_page`` genau diese verkürzte Liste speichern und das Include
+    still löschen - schlimmer als das Orakel, das die Maskierung schließt.
+
+    Deshalb: ein bereits gespeicherter Eintrag, der beim Speichern fehlt, wird
+    nur dann wirklich entfernt, wenn der schreibende Principal ihn hätte sehen
+    können (er hat sich dann bewusst dagegen entschieden). War er für ihn
+    verdeckt, bleibt er stehen - der Principal kann ihn über diesen Weg also
+    weder erfahren (der Rückgabewert von ``save_page`` ist 204 ohne Body, und
+    ein erneutes Lesen bleibt maskiert) noch verändern. Reihenfolge: gespeicherte
+    Einträge (gehalten oder wiederhergestellt) zuerst in ihrer alten Reihenfolge,
+    danach neue Einträge in der eingereichten Reihenfolge.
+    """
+    if not stored_includes:
+        return incoming_includes
+    incoming_set = set(incoming_includes)
+    stored_set = set(stored_includes)
+    merged: list[str] = []
+    for target_id in stored_includes:
+        if target_id in incoming_set or not await _can_discover_node(db, target_id, principal):
+            merged.append(target_id)
+    merged.extend(target_id for target_id in incoming_includes if target_id not in stored_set)
+    return merged
+
+
+async def _node_response_for_principal(db: Database, node_id: str, principal: Principal | None) -> VisuNode:
+    """Lädt den Knoten frisch für eine HTTP-Antwort und maskiert seine
+    `page_config.includes` für ``principal`` (Micsi/openbridgeserver#176, Runde 2,
+    Befund 2).
+
+    **Der einzige Rückgabeweg für einen VisuNode nach einer Mutation.**
+    `copy_node`, `update_node` (PATCH) und `move_node` laden den soeben
+    geänderten Knoten bisher über das rohe ``_get_node_or_404`` und lieferten
+    `page_config.includes` damit ungefiltert aus - derselbe Leerlauf wie bei
+    `get_page` vor Runde 1, nur an drei weiteren Stellen. Ein neuer Endpunkt, der
+    einen VisuNode nach einer Mutation zurückgibt, bekommt die Maskierung
+    automatisch, wenn er diese Funktion statt ``_get_node_or_404`` aufruft -
+    die Maskierungslogik selbst lebt weiterhin nur in
+    ``_mask_concealed_includes``.
+
+    Bewusst **nicht** für ``_require_discoverable_node`` und den internen
+    Ziel-Lookup in ``_validate_page_kind_config`` verwendet: die brauchen den
+    ungefilterten Stand (siehe deren Docstrings).
+    """
+    node = await _get_node_or_404(db, node_id)
+    if node.page_config is None:
+        return node
+    masked = await _mask_concealed_includes(db, node.page_config, principal)
+    if masked is node.page_config:
+        return node
+    return node.model_copy(update={"page_config": masked})
+
+
 async def _visu_subtree_ids(db: Database, node_id: str) -> list[str]:
     rows = await db.fetchall(
         """WITH RECURSIVE subtree(id) AS (
@@ -1340,7 +1405,7 @@ async def update_node(
             await _replace_target_users(db, node_id, target_usernames)
         await write_application_success(db, None, principal, "PATCH", "/api/v1/visu/nodes/{node_id}", resource_id=node_id, commit=False)
 
-    return await _get_node_or_404(db, node_id)
+    return await _node_response_for_principal(db, node_id, principal)
 
 
 @router.delete("/nodes/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1531,7 +1596,7 @@ async def copy_node(
             details={"node_count": 1, "operation": "copy", "source_node_id": node_id},
             commit=False,
         )
-    return await _get_node_or_404(db, new_id)
+    return await _node_response_for_principal(db, new_id, principal)
 
 
 # ── Exportieren ──────────────────────────────────────────────────────────────
@@ -1599,6 +1664,12 @@ async def export_node(
         if row["type"] == "PAGE":
             config = PageConfig.model_validate(page_config or {})
             await _check_page_read_access(db, nid, principal, config)
+            # #176 Runde 2: derselbe Leerlauf wie bei `get_page` - nur `includes`
+            # wird ersetzt, alle unbekannten Rohfelder bleiben stehen (Export ist
+            # sonst bewusst roh, §2.1).
+            masked = await _mask_concealed_includes(db, config, principal)
+            if masked.includes != config.includes and page_config is not None:
+                page_config = {**page_config, "includes": masked.includes}
         policy = await db.fetchone("SELECT access_mode FROM authz_visu_page_policies WHERE node_id = ?", (nid,))
         result = [
             {
@@ -1662,7 +1733,7 @@ async def move_node(
             (body.new_parent_id, body.order, _now_iso(), node_id),
         )
         await write_application_success(db, None, principal, "PUT", "/api/v1/visu/nodes/{node_id}/move", resource_id=node_id, commit=False)
-    return await _get_node_or_404(db, node_id)
+    return await _node_response_for_principal(db, node_id, principal)
 
 
 # ── PIN-Authentifizierung ─────────────────────────────────────────────────────
@@ -1865,6 +1936,18 @@ async def save_page(
     if node.type != "PAGE":
         raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
 
+    # #176 Runde 2: ein Include, das für diesen Principal verdeckt ist (er hat es
+    # beim Lesen also nie gesehen), darf ein unveränderter Round-Trip nicht
+    # stillschweigend löschen - siehe `_restore_concealed_includes`.
+    restored_includes = await _restore_concealed_includes(
+        db,
+        (node.page_config.includes if node.page_config else []),
+        config.includes,
+        principal,
+    )
+    if restored_includes != config.includes:
+        config = config.model_copy(update={"includes": restored_includes})
+
     used_capability = False
     try:
         if principal.type == "api_key":
@@ -1981,14 +2064,18 @@ async def get_page_version(
     Normalisierungen wie beim Lesen der Seite selbst - sonst könnte der
     wiederhergestellte ``GET`` vom alten abweichen.
     """
-    await _require_page_history_access(db, node_id, _user)
+    principal = await _require_page_history_access(db, node_id, _user)
     row = await db.fetchone(
         "SELECT page_config FROM visu_page_versions WHERE node_id = ? AND revision = ?",
         (node_id, revision),
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Version nicht gefunden")
-    return PageConfig.model_validate(json.loads(row["page_config"]))
+    config = PageConfig.model_validate(json.loads(row["page_config"]))
+    # #176 Runde 2: der Verlauf trägt alte `page_config`-Stände roh - dieselbe
+    # Maskierung wie beim aktuellen Stand (`get_page`), sonst leckt ein alter
+    # Eintrag, den der Principal heute nicht mehr sehen dürfte.
+    return await _mask_concealed_includes(db, config, principal)
 
 
 # ── Benutzer-Zugang (user-Access) ─────────────────────────────────────────────

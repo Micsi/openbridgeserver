@@ -189,6 +189,27 @@ class VisuNode(BaseModel):
   Klasse, aber außerhalb des M5-Schreibwegs und `frontend/` bleibt unangetastet; wer die Direktsonde
   `GET /visu/pages/{id}` mit einer bereits bekannten ID fährt, erhält weiterhin 403/401 vs. 404 - das
   bleibt eine bewusst unveränderte, dem Zwei-Ebenen-Modell inhärente Eigenschaft, kein neu offener Punkt.
+
+  **Runde 2, zwei Kritiker-Befunde gegen den obigen Fix, beide geschlossen:**
+  1. **Stiller Datenverlust.** Die Maskierung beim Lesen ohne Gegenmaßnahme beim Schreiben ließ ein
+     verdecktes Include beim unveränderten Round-Trip aus der DB verschwinden - ein eingeschränkter
+     Principal liest `includes: []` (maskiert), speichert unverändert zurück, und `save_page` schrieb
+     genau diese verkürzte Liste. Schlimmer als das Orakel, das Runde 1 schloss. Fix:
+     `_restore_concealed_includes` übernimmt beim Speichern jeden gespeicherten Eintrag, der für den
+     schreibenden Principal verdeckt ist, unverändert aus dem alten Stand - er kann ihn also weder
+     erfahren (`PUT /pages/{id}` antwortet 204 ohne Body) noch verändern. Ein für ihn *sichtbarer*
+     Eintrag bleibt absichtlich entfernbar.
+  2. **Vier weitere Ausgänge maskierten nicht.** `get_page` war die einzige maskierende Stelle;
+     `copy_node`, `update_node` (PATCH), `move_node` und `get_page_version` gaben `page_config.includes`
+     weiterhin roh heraus, `GET /visu/nodes/{id}/export` ebenso (nutzt dieselbe `_check_page_read_access`
+     wie `get_page`, maskierte aber nicht). Fix: **eine** Funktion (`_mask_concealed_includes`) bleibt die
+     einzige Maskierungslogik; `copy_node`/`update_node`/`move_node` laufen zusätzlich über einen
+     gemeinsamen Rückgabe-Helfer (`_node_response_for_principal` statt eines rohen `_get_node_or_404`),
+     `get_page_version` und `export_node` rufen `_mask_concealed_includes` direkt auf derselben Stelle wie
+     `get_page`. `export_node` ersetzt dabei nur das `includes`-Feld im rohen JSON, nie den ganzen
+     `page_config`-Eintrag - Export bleibt sonst roh (Dublettenfreiheit gilt dort weiterhin nicht, s. u.).
+     **Bewusst nicht geändert:** `POST /nodes` (Config beim Anlegen immer leer) und
+     `POST /nodes/import` (der Importeur liefert die Konfiguration selbst, es gibt nichts zu enthüllen).
 - **`source_page_readonly`** wird aus dem aufgelösten Zugriffs-Level der Quellseite abgeleitet
   (dieselbe Regel wie `GET /widget-ref/{page_id}`: `access == "readonly"`).
   **Naht:** `GET /visu/pages/{id}` liefert das Ergebnis als Antwort-Header

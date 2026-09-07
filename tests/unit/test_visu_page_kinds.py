@@ -881,6 +881,155 @@ async def test_176_get_page_keeps_a_dangling_include_target_for_the_content_404_
     assert stored.includes == ["nie-dagewesen"]
 
 
+# ── Runde 2, Befund 1: die Maskierung darf beim Speichern nichts löschen ─────
+#
+# Der Kritiker maß den vollständigen Ablauf: ein eingeschränkter Principal
+# liest eine Seite (maskiert, `includes: []`), speichert sie **unverändert**
+# zurück - und der Editor schreibt genau die verkürzte Liste, die er zu sehen
+# bekam. Ohne Gegenmaßnahme verliert die DB das verdeckte Include still. Fix:
+# `save_page` übernimmt beim Schreiben jeden gespeicherten Eintrag, der für den
+# schreibenden Principal verdeckt ist, unverändert aus dem alten Stand - der
+# Principal kann ihn also weder sehen noch versehentlich löschen. Absichtliches
+# Entfernen eines für ihn *sichtbaren* Eintrags bleibt möglich.
+
+
+@pytest.mark.asyncio
+async def test_176_an_unchanged_round_trip_by_a_restricted_principal_keeps_the_concealed_include(
+    db: Database,
+) -> None:
+    """Der volle Ablauf, wie der Kritiker ihn maß: lesen als alice, unverändert
+    speichern, in der Datenbank nachsehen - nicht nur die Funktion isoliert
+    aufrufen.
+    """
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(db, "quelle", access="public")
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
+    )
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["verdeckt"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+    alice = Principal(subject="alice", type="user", is_admin=False)
+
+    seen_by_alice = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+    assert seen_by_alice.includes == []  # die Maskierung selbst, aus #176 Runde 1
+
+    await visu_api.save_page(node_id="quelle", config=seen_by_alice, request=_request(), db=db, _user=alice)
+
+    assert await _raw_includes(db, "quelle") == [
+        "verdeckt"
+    ], "ein für den Speichernden verdecktes Include darf beim unveränderten Round-Trip nicht verloren gehen"
+
+
+@pytest.mark.asyncio
+async def test_176_a_principal_cannot_learn_the_concealed_include_via_the_save_response(db: Database) -> None:
+    """Die Wiederherstellung beim Speichern darf selbst kein neues Leck öffnen:
+    `PUT /pages/{id}` antwortet 204 ohne Body, und ein erneutes Lesen bleibt
+    maskiert - alice erfährt die ID an keiner Stelle dieses Ablaufs.
+    """
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(db, "quelle", access="public")
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
+    )
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["verdeckt"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+    alice = Principal(subject="alice", type="user", is_admin=False)
+    seen_by_alice = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+
+    result = await visu_api.save_page(node_id="quelle", config=seen_by_alice, request=_request(), db=db, _user=alice)
+    seen_again = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+
+    assert result is None  # 204 No Content, kein Body, der die ID verraten könnte
+    assert seen_again.includes == []
+
+
+@pytest.mark.asyncio
+async def test_176_a_principal_who_can_see_the_target_may_still_remove_it_intentionally(db: Database) -> None:
+    """Gegenprobe: die Wiederherstellung darf nur verdeckte Entfernungen
+    rückgängig machen, keine absichtlichen. Ein Principal, der das Ziel sehen
+    darf, muss es weiterhin per Round-Trip entfernen können.
+    """
+    await _insert_user(db, "alice")
+    await _insert_node(db, "sichtbar", access="user")
+    await _insert_node(db, "quelle", access="public")
+    for node_id in ("sichtbar", "quelle"):
+        await db.execute_and_commit(
+            """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+               VALUES ('user', 'alice', 'visu_page', ?, 'operator', 'allow')""",
+            (node_id,),
+        )
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["sichtbar"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+    alice = Principal(subject="alice", type="user", is_admin=False)
+    seen_by_alice = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+    assert seen_by_alice.includes == ["sichtbar"]
+
+    await visu_api.save_page(
+        node_id="quelle",
+        config=seen_by_alice.model_copy(update={"includes": []}),
+        request=_request(),
+        db=db,
+        _user=alice,
+    )
+
+    assert await _raw_includes(db, "quelle") == []
+
+
+@pytest.mark.asyncio
+async def test_176_restoring_a_concealed_include_does_not_block_adding_a_new_visible_one(db: Database) -> None:
+    """Die Wiederherstellung darf ein gleichzeitiges, gewolltes Hinzufügen eines
+    neuen, sichtbaren Includes nicht stören - beide Operationen in einem
+    Speichern.
+    """
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(db, "neu", access="public")
+    await _insert_node(db, "quelle", access="public")
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
+    )
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["verdeckt"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+    alice = Principal(subject="alice", type="user", is_admin=False)
+    seen_by_alice = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+    assert seen_by_alice.includes == []
+
+    await visu_api.save_page(
+        node_id="quelle",
+        config=seen_by_alice.model_copy(update={"includes": ["neu"]}),
+        request=_request(),
+        db=db,
+        _user=alice,
+    )
+
+    assert await _raw_includes(db, "quelle") == ["verdeckt", "neu"]
+
+
 def test_duplicate_includes_are_deduplicated_in_the_model_itself() -> None:
     # Die Normalisierung sitzt im Modell und greift damit auf jedem Weg
     # (PUT, Import, Kopie, Lesen) und idempotent.
@@ -1090,6 +1239,27 @@ async def test_178_copying_a_location_with_a_raw_includes_config_is_rejected(db:
 
 
 @pytest.mark.asyncio
+async def test_178_copying_a_location_with_a_non_normal_kind_is_rejected(db: Database) -> None:
+    """Runde 2, Befund 3: `_validate_node_kind(source.type, source.kind)` in
+    `copy_node` war ungetestet (die Mutation überlebte). `includes` bleibt hier
+    bewusst leer, damit ausschließlich diese Prüfung greifen kann - nicht die
+    separate `includes`-Prüfung aus dem Test oben.
+    """
+    await _insert_node(db, "bereich", node_type="LOCATION", kind="popup")
+
+    with pytest.raises(HTTPException) as exc:
+        await visu_api.copy_node(
+            node_id="bereich",
+            body=visu_api.CopyNodeRequest(target_parent_id=None, new_name="Bereich Kopie"),
+            db=db,
+            _user="admin",
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Seitentyp ist nur für Seiten (PAGE) zulässig"
+
+
+@pytest.mark.asyncio
 async def test_178_copying_a_page_with_an_orphaned_include_target_still_succeeds(db: Database) -> None:
     """Ein gueltig gespeicherter, inzwischen verwaister Eintrag darf die Kopie
     nicht strenger scheitern lassen als das Original (R17-Prinzip, hier auf
@@ -1127,6 +1297,180 @@ async def test_178_copying_a_page_that_is_part_of_a_stored_cycle_still_succeeds(
 
     assert copy.page_config is not None
     assert copy.page_config.includes == ["a"]
+
+
+# ── Runde 2, Befund 2: dieselbe Maskierung an allen Ausgängen ────────────────
+#
+# `get_page` maskierte in Runde 1 als einzige Stelle. Der Kritiker maß denselben
+# Leerlauf an vier weiteren Ausgängen, die `page_config`/`includes` roh
+# herausgeben: `copy_node`, `update_node` (PATCH), `export_node` und
+# `get_page_version`. Fix: **eine** Funktion (`_mask_concealed_includes`, aus
+# Runde 1) wird an jeder dieser Stellen aufgerufen, statt die Maskierungslogik
+# je Endpunkt neu zu schreiben - `copy_node`/`update_node`/`move_node` laufen
+# zusätzlich über einen gemeinsamen Rückgabe-Helfer (`_node_response_for_principal`
+# statt eines rohen `_get_node_or_404`), damit ein künftiger vierter
+# VisuNode-Endpunkt dieselbe Maskierung automatisch bekommt.
+
+
+async def _quelle_with_concealed_include_and_alice(db: Database, *, extra_grant_node_id: str | None = None) -> Principal:
+    """Gemeinsamer Aufbau: 'verdeckt' ist ein `user`-geschütztes Ziel, alice darf
+    nur 'quelle' (und optional einen weiteren Knoten, z. B. einen Zielordner)
+    lesen/schreiben, nicht 'verdeckt'.
+    """
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(db, "quelle", access="public")
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
+    )
+    if extra_grant_node_id is not None:
+        await db.execute_and_commit(
+            """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+               VALUES ('user', 'alice', 'visu_page', ?, 'operator', 'allow')""",
+            (extra_grant_node_id,),
+        )
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["verdeckt"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+    return Principal(subject="alice", type="user", is_admin=False)
+
+
+@pytest.mark.asyncio
+async def test_176_copy_node_masks_a_concealed_include_target(db: Database) -> None:
+    await _insert_node(db, "ordner", node_type="LOCATION", access="public")
+    alice = await _quelle_with_concealed_include_and_alice(db, extra_grant_node_id="ordner")
+
+    copy = await visu_api.copy_node(
+        node_id="quelle",
+        body=visu_api.CopyNodeRequest(target_parent_id="ordner", new_name="Quelle Kopie"),
+        db=db,
+        _user=alice,
+    )
+
+    assert copy.page_config is not None
+    assert copy.page_config.includes == [], "copy_node darf ein verdecktes Ziel nicht an alice ausliefern"
+
+
+@pytest.mark.asyncio
+async def test_176_update_node_masks_a_concealed_include_target(db: Database) -> None:
+    alice = await _quelle_with_concealed_include_and_alice(db)
+
+    updated = await visu_api.update_node(
+        node_id="quelle",
+        body=visu_api.VisuNodeUpdate(name="Umbenannt"),
+        db=db,
+        _user=alice,
+    )
+
+    assert updated.page_config is not None
+    assert updated.page_config.includes == [], "PATCH darf ein verdecktes Ziel nicht an alice ausliefern"
+
+
+@pytest.mark.asyncio
+async def test_176_move_node_masks_a_concealed_include_target(db: Database) -> None:
+    await _insert_node(db, "ordner", node_type="LOCATION", access="public")
+    alice = await _quelle_with_concealed_include_and_alice(db, extra_grant_node_id="ordner")
+
+    moved = await visu_api.move_node(
+        node_id="quelle",
+        body=visu_api.MoveNodeRequest(new_parent_id="ordner", order=0),
+        db=db,
+        _user=alice,
+    )
+
+    assert moved.page_config is not None
+    assert moved.page_config.includes == [], "move_node darf ein verdecktes Ziel nicht an alice ausliefern"
+
+
+@pytest.mark.asyncio
+async def test_176_export_node_masks_a_concealed_include_target(db: Database) -> None:
+    alice = await _quelle_with_concealed_include_and_alice(db)
+
+    exported = json.loads((await visu_api.export_node(node_id="quelle", db=db, _user=alice)).body)
+
+    assert exported["nodes"][0]["page_config"]["includes"] == [], (
+        "export_node darf ein verdecktes Ziel nicht an alice ausliefern"
+    )
+
+
+@pytest.mark.asyncio
+async def test_176_export_node_keeps_unknown_raw_fields_while_masking(db: Database) -> None:
+    """Export bleibt roh (§2.1) - die Maskierung darf nur `includes` anfassen,
+    keine unbekannten Altfelder verwerfen.
+    """
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(
+        db,
+        "quelle",
+        access="public",
+        raw_page_config=json.dumps({"widgets": [], "includes": ["verdeckt"], "zukunftsfeld": {"a": 1}}),
+    )
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
+    )
+    alice = Principal(subject="alice", type="user", is_admin=False)
+
+    exported = json.loads((await visu_api.export_node(node_id="quelle", db=db, _user=alice)).body)
+
+    assert exported["nodes"][0]["page_config"]["includes"] == []
+    assert exported["nodes"][0]["page_config"]["zukunftsfeld"] == {"a": 1}
+
+
+@pytest.mark.asyncio
+async def test_176_get_page_version_masks_a_concealed_include_target(db: Database) -> None:
+    alice = await _quelle_with_concealed_include_and_alice(db)
+    versions = await visu_api.get_page_versions(node_id="quelle", db=db, _user=alice)
+    revision = versions[0].revision
+
+    version = await visu_api.get_page_version(node_id="quelle", revision=revision, db=db, _user=alice)
+
+    assert version.includes == [], "der Verlauf darf ein verdecktes Ziel nicht an alice ausliefern"
+
+
+@pytest.mark.asyncio
+async def test_176_admin_sees_the_include_target_at_all_four_egress_points(db: Database) -> None:
+    """Gegenprobe: für einen Principal, der das Ziel sehen darf, bleiben alle vier
+    Ausgänge unverändert - die Maskierung trifft nur den verdeckten Fall.
+    """
+    await _insert_node(db, "ordner", node_type="LOCATION", access="public")
+    await _insert_node(db, "sichtbar")
+    await _insert_node(db, "quelle", access="public")
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["sichtbar"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+
+    copy = await visu_api.copy_node(
+        node_id="quelle",
+        body=visu_api.CopyNodeRequest(target_parent_id="ordner", new_name="Quelle Kopie"),
+        db=db,
+        _user="admin",
+    )
+    updated = await visu_api.update_node(
+        node_id="quelle", body=visu_api.VisuNodeUpdate(name="Umbenannt"), db=db, _user="admin"
+    )
+    moved = await visu_api.move_node(
+        node_id="quelle", body=visu_api.MoveNodeRequest(new_parent_id="ordner", order=0), db=db, _user="admin"
+    )
+    exported = json.loads((await visu_api.export_node(node_id="quelle", db=db, _user="admin")).body)
+    versions = await visu_api.get_page_versions(node_id="quelle", db=db, _user="admin")
+    version = await visu_api.get_page_version(node_id="quelle", revision=versions[0].revision, db=db, _user="admin")
+
+    assert copy.page_config.includes == ["sichtbar"]
+    assert updated.page_config.includes == ["sichtbar"]
+    assert moved.page_config.includes == ["sichtbar"]
+    assert exported["nodes"][0]["page_config"]["includes"] == ["sichtbar"]
+    assert version.includes == ["sichtbar"]
 
 
 @pytest.mark.asyncio
