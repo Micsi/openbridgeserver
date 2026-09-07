@@ -77,10 +77,12 @@ jobs:
       - name: Capacitor copy (nativen Web-Spiegel herstellen)
         run: pnpm --filter @obs/visu-app exec cap copy
 
-      # Prüft die Capacitor-Installation und beide Plattformprojekte. Braucht
-      # weder Xcode-Runtime noch Android SDK.
-      - name: Capacitor doctor
-        run: pnpm --filter @obs/visu-app exec cap doctor
+      # Nur die Android-Haelfte: `cap doctor` ohne Plattform prueft auch iOS und
+      # bricht auf einem Linux-Runner mit `[error] Xcode is not installed` ab.
+      # Die iOS-Haelfte faehrt der `swiftpm`-Job auf macOS.
+      # Ein Android-SDK braucht es dafuer nicht.
+      - name: Capacitor doctor (Android)
+        run: pnpm --filter @obs/visu-app exec cap doctor android
 
       - name: Typecheck
         run: pnpm -r typecheck
@@ -191,6 +193,11 @@ jobs:
       # nichts, und genau das war der Zustand, den er beheben soll.
       - name: Swift vorhanden
         run: swift --version
+
+      # Die iOS-Haelfte von `cap doctor` — auf dem Linux-Runner nicht moeglich,
+      # hier schon: macOS-Runner bringen Xcode mit.
+      - name: Capacitor doctor (iOS)
+        run: pnpm --filter @obs/visu-app exec cap doctor ios
 
       - name: SwiftPM-Manifest (Vitest)
         run: pnpm --filter @obs/visu-app exec vitest run tests/capacitor-versions.test.ts
