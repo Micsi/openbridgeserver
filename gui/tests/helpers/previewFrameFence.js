@@ -331,6 +331,41 @@ export function cssRegeln(css) {
 }
 
 /**
+ * Der Index, an dem ein `<style>`-Rumpf, der bei `ab` beginnt, WIRKLICH
+ * endet - oder `-1`.
+ *
+ * Kritik #182, sechste Form (dieselbe Klasse wie die vierte, jetzt auf
+ * CSS-Ebene statt HTML-Ebene): eine reine `/<\/style\s*>/`-Textsuche im
+ * Rumpf trifft auch ein `</style>`, das nur als TEXT in einem CSS-String
+ * oder -Kommentar steht (`content: "</style>";`). Der Rumpf wird dort
+ * abgeschnitten, und jede Regel DANACH - auch eine, die den Vorschaurahmen
+ * trifft - verschwindet komplett: weder `rules` noch `sonstiges` sehen sie
+ * je, weil `cssRegeln()` den abgeschnittenen Text nie bekommt. Diese Funktion
+ * ueberspringt deshalb Zeichenketten (ueber {@link zeichenkettenEnde}) UND
+ * CSS-Block-Kommentare, bevor sie auf das echte Schluss-Tag prueft - dieselben
+ * zwei Faelle, die `ohneKommentare()`/`scanne()` fuer den Rest von CSS schon
+ * kennen.
+ */
+function styleRumpfEnde(src, ab) {
+  let i = ab
+  while (i < src.length) {
+    const ch = src[i]
+    if (ch === '"' || ch === "'") {
+      i = zeichenkettenEnde(src, i)
+      continue
+    }
+    if (ch === '/' && src[i + 1] === '*') {
+      const e = src.indexOf('*/', i + 2)
+      i = e === -1 ? src.length : e + 2
+      continue
+    }
+    if (/^<\/style\s*>/i.test(src.slice(i))) return i
+    i += 1
+  }
+  return -1
+}
+
+/**
  * Die `<style>`-Bloecke eines HTML- oder SFC-Textes.
  *
  * OHNE Zeilenanker: der Vorgaenger verlangte, dass vor `<style` nur Leerraum
@@ -340,15 +375,16 @@ export function cssRegeln(css) {
  * Die Tag-Grenze selbst kommt jetzt aus {@link tags} statt aus `[^>]*` direkt
  * in dieser Regel (Kritik #182, vierte Form) - ein zitiertes `>` in einem
  * Attribut DIESES `<style>`-Tags (z.B. `<style data-note="a > b">`) riss die
- * Grenze sonst vor dem eigentlichen Rumpf ab.
+ * Grenze sonst vor dem eigentlichen Rumpf ab. Das SCHLUSS-Tag kommt jetzt aus
+ * {@link styleRumpfEnde} statt aus einer rohen Regex (Kritik #182, sechste
+ * Form).
  */
 export function styleBloecke(src) {
   const out = []
   for (const { ende } of tags(src, 'style')) {
-    const rest = src.slice(ende)
-    const schluss = /<\/style\s*>/i.exec(rest)
-    if (schluss === null) continue
-    out.push(rest.slice(0, schluss.index))
+    const schluss = styleRumpfEnde(src, ende)
+    if (schluss === -1) continue
+    out.push(src.slice(ende, schluss))
   }
   return out
 }
@@ -434,6 +470,19 @@ function tagEnde(src, offen) {
  * Jeder Start-Tag mit diesem Namen, als VOLLSTAENDIGER, zitatbewusst
  * abgegrenzter Text - der gemeinsame Ersatz fuer die `<name\b[^>]*>`-Regexe,
  * die {@link tagEnde} als toten Buchstaben ablegt.
+ *
+ * EIN misslungenes Vorkommen bricht NICHT die ganze Suche ab (Kritik #182,
+ * fuenfte Form): `<script` kann auch in einem HTML-KOMMENTAR stehen
+ * (`<!-- alt: <script data-note="disabled -->`), und ein unbalanciertes
+ * Anfuehrungszeichen darin laesst {@link tagEnde} bis zum naechsten
+ * ECHTEN Anfuehrungszeichen weiterlaufen - das kann das der naechsten,
+ * WIRKLICHEN `<script>`-Attribute sein, und dann findet `tagEnde` gar keine
+ * schliessende `>` mehr (`-1`). Ein `break` an dieser Stelle verlor damit
+ * nicht nur das kommentierte Scheinvorkommen, sondern JEDES echte
+ * `<script>`/`<link>`/`<style>` DANACH im selben Dokument - spurlos, ohne
+ * `ungelesen`/`fremd`. `continue` gibt nur DIESES eine Vorkommen auf; die
+ * Suche nach dem naechsten `<name` beginnt regulaer ab `oeffner.lastIndex`,
+ * das der globale Regex-Exec nach jedem Versuch von selbst weiterschiebt.
  */
 function tags(src, name) {
   const out = []
@@ -441,7 +490,7 @@ function tags(src, name) {
   let m
   while ((m = oeffner.exec(src)) !== null) {
     const ende = tagEnde(src, m.index)
-    if (ende === -1) break
+    if (ende === -1) continue
     out.push({ text: src.slice(m.index, ende + 1), start: m.index, ende: ende + 1 })
     oeffner.lastIndex = ende + 1
   }

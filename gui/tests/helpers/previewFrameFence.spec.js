@@ -208,6 +208,119 @@ describe('previewFrameFence - die aeussere Tag-Grenze kennt Anfuehrungszeichen (
   })
 })
 
+describe('previewFrameFence - ein misslungenes Vorkommen bricht nicht die GANZE Suche ab (#182, fuenfte Form)', () => {
+  // `tags()` bricht bei EINEM Vorkommen, das `tagEnde()` nicht schliessen
+  // kann, mit `break` die Suche fuer den GANZEN Tag-Namen ab - nicht nur fuer
+  // dieses eine Vorkommen. Ein HTML-Kommentar mit einem unbalancierten
+  // Anfuehrungszeichen (`<!-- alt: <script data-note="disabled -->`) laesst
+  // `tagEnde()` bis zum naechsten ECHTEN Anfuehrungszeichen weiterlaufen -
+  // das kann das der naechsten, WIRKLICHEN `<script>`-Attribute sein, und
+  // dann findet `tagEnde()` gar keine schliessende `>` mehr. Mit `break`
+  // verschwindet dadurch JEDES echte `<script>` DANACH im selben Dokument -
+  // spurlos, ohne `ungelesen`/`fremd`. Derselbe Fehler wie die vorigen: eine
+  // Textsuche, die Kommentare/Anfuehrungszeichen nicht kennt, bestimmt
+  // Struktur falsch.
+  it('folgt einem echten `<script src>` NACH einem HTML-Kommentar mit unbalanciertem Anfuehrungszeichen', () => {
+    const bericht = neuerBericht()
+    const index = join(FIXTURES, 'index.commentBreak.html')
+    const einstiege = guiEinstiege(bericht, index)
+    const namen = einstiege.map((p) => p.replace(FIXTURES, '').replace(/\\/g, '/'))
+
+    expect(namen).toContain('/realScript.js')
+    expect(bericht.ungelesen).toEqual([])
+    expect([...bericht.fremd]).toEqual([])
+  })
+
+  it('ROT gegen den unreparierten Stand (Commit 442bf34c): `break` gibt die Suche nach dem ersten misslungenen Vorkommen komplett auf', () => {
+    // Reproduziert exakt `tags()` aus Runde 3, die auf dem HEAD dieser Welle
+    // vor diesem Fix stand: `break` statt `continue`.
+    function tagEndeAlt(src, offen) {
+      let zitat = null
+      for (let i = offen; i < src.length; i += 1) {
+        const ch = src[i]
+        if (zitat !== null) {
+          if (ch === zitat) zitat = null
+        } else if (ch === '"' || ch === "'") {
+          zitat = ch
+        } else if (ch === '>') {
+          return i
+        }
+      }
+      return -1
+    }
+    function tagsAlt(src, name) {
+      const out = []
+      const oeffner = new RegExp(`<${name}\\b`, 'gi')
+      let m
+      while ((m = oeffner.exec(src)) !== null) {
+        const ende = tagEndeAlt(src, m.index)
+        if (ende === -1) break // <- der Fehler aus Runde 3
+        out.push({ text: src.slice(m.index, ende + 1), start: m.index, ende: ende + 1 })
+        oeffner.lastIndex = ende + 1
+      }
+      return out
+    }
+    const src = readFileSync(join(FIXTURES, 'index.commentBreak.html'), 'utf8')
+    expect(tagsAlt(src, 'script')).toEqual([])
+    // Zum Vergleich: die REPARIERTE `guiEinstiege()` findet das echte Script
+    // sehr wohl (siehe erste Probe dieses Blocks).
+  })
+})
+
+describe('previewFrameFence - styleBloecke() liest ein `</style>` NUR als echtes Schluss-Tag (#182, sechste Form)', () => {
+  // Dieselbe Klasse wie die vierte Form, jetzt auf CSS- statt HTML-Ebene: die
+  // Suche nach dem SCHLIESSENDEN `</style>` war eine reine `/<\/style\s*>/`-
+  // Textsuche im Rumpf, die auch ein `</style>` traf, das nur als TEXT in
+  // einem CSS-String oder -Kommentar steht (`content: "</style>";`). Der
+  // Rumpf wurde dort abgeschnitten, und jede Regel DANACH - auch eine, die
+  // den Vorschaurahmen trifft - verschwand komplett: weder `rules` noch
+  // `sonstiges` sahen sie je, weil `cssRegeln()` den abgeschnittenen Text nie
+  // bekam.
+  it('schneidet den Rumpf NICHT an einem `</style>` ab, das in einem CSS-String steht', () => {
+    const src =
+      '<style>.decoy{content: "</style>"} iframe[data-testid="visu-preview-frame"]{opacity:.3}</style>'
+    const bloecke = styleBloecke(src)
+    expect(bloecke).toHaveLength(1)
+    const { rules } = cssRegeln(bloecke[0])
+    expect(rules.some((r) => r.selector.includes('visu-preview-frame'))).toBe(true)
+  })
+
+  it('schneidet den Rumpf NICHT an einem `</style>` ab, das in einem CSS-Kommentar steht', () => {
+    const src =
+      '<style>/* alt: </style> */ iframe[data-testid="visu-preview-frame"]{opacity:.4}</style>'
+    const bloecke = styleBloecke(src)
+    expect(bloecke).toHaveLength(1)
+    const { rules } = cssRegeln(bloecke[0])
+    expect(rules.some((r) => r.selector.includes('visu-preview-frame'))).toBe(true)
+  })
+
+  it('ROT gegen den unreparierten Stand (Commit 442bf34c): die rohe `</style>`-Regex schneidet am Text im CSS-String ab, die Regel verschwindet aus `rules` UND `sonstiges`', () => {
+    // Reproduziert exakt die Schluss-Tag-Suche aus `styleBloecke()` in
+    // Runde 3, die auf dem HEAD dieser Welle vor diesem Fix stand (die
+    // Oeffnungs-Tag-Grenze ist hier trivial - das Fixture hat keine
+    // Attribute am `<style>` - der Fehler steckt in der SCHLUSS-Suche).
+    function styleBloeckeAlt(src) {
+      const out = []
+      const openRe = /<style\b[^>]*>/gi
+      let m
+      while ((m = openRe.exec(src)) !== null) {
+        const rest = src.slice(m.index + m[0].length)
+        const schluss = /<\/style\s*>/i.exec(rest)
+        if (schluss === null) continue
+        out.push(rest.slice(0, schluss.index))
+      }
+      return out
+    }
+    const src =
+      '<style>.decoy{content: "</style>"} iframe[data-testid="visu-preview-frame"]{opacity:.3}</style>'
+    const bloeckeAlt = styleBloeckeAlt(src)
+    expect(bloeckeAlt).toEqual(['.decoy{content: "'])
+    const { rules, sonstiges } = cssRegeln(bloeckeAlt[0])
+    expect(rules.some((r) => r.selector.includes('visu-preview-frame'))).toBe(false)
+    expect(sonstiges.some((s) => s.includes('visu-preview-frame'))).toBe(false)
+  })
+})
+
 describe('previewFrameFence - spezifizierer() folgt <style src="…"> (#182, H2)', () => {
   it('findet ein zitiertes `<style src="…">`', () => {
     const src = readFileSync(join(FIXTURES, 'Component.styleSrc.vue'), 'utf8')
