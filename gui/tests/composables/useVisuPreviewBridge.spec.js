@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { reactive } from 'vue'
 import {
   createVisuPreviewBridge,
+  cloneSafeEnvelope,
   VISU_PREVIEW_CHANNEL,
   VISU_PREVIEW_MESSAGE,
   VISU_PREVIEW_PROTOCOL,
@@ -339,5 +341,78 @@ describe('useVisuPreviewBridge — die Session bleibt geheim', () => {
     bridge.start()
     bus.emit({ data: readyMessage(), origin: PREVIEW_ORIGIN, source: frame })
     expect(frame.sent).toHaveLength(0)
+  })
+})
+
+describe('useVisuPreviewBridge — Klon-Waechter (#183)', () => {
+  // Der lehrreichste Befund der Welle: der Entwurf kam in der Vorschau nie an,
+  // weil `postMessage` strukturiert klont und ein Vue-Proxy dabei mit
+  // `DataCloneError` abgelehnt wird. Elf Abnahmerunden mit Mutationsproben
+  // sahen das nicht, weil `makeFrameWindow()` oben `postMessage` durch einen
+  // Array-Push ersetzt, der NIE klont - egal was man ihm gibt. Die beiden
+  // Proben hier tun das Gegenteil: eine benutzt einen ECHTEN
+  // `structuredClone` in der Mock-Sendefunktion (denselben Algorithmus, den
+  // `postMessage` im Browser intern anwendet), die andere prueft den
+  // Klon-Waechter direkt.
+
+  it('cloneSafeEnvelope() macht aus einem Vue-Proxy eine Nutzlast, die einen ECHTEN structuredClone uebersteht', () => {
+    const draft = reactive({
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'Wurzel', type: 'PAGE', kind: 'normal', page_config: { widgets: [{ id: 'a' }] } }],
+    })
+    // Ein echter Proxy scheitert an einem echten Klon - der Fehler aus #183.
+    expect(() => structuredClone(draft)).toThrow(/could not be cloned/)
+
+    const envelope = cloneSafeEnvelope({
+      channel: VISU_PREVIEW_CHANNEL,
+      protocol: VISU_PREVIEW_PROTOCOL,
+      type: VISU_PREVIEW_MESSAGE.draft,
+      draft,
+    })
+    // Genau die Probe, die C1 fuer `previewDraft` hat (`visuEditor.spec.js`) -
+    // hier auf der Bruecke selbst, nicht nur bei einem Aufrufer.
+    expect(() => structuredClone(envelope)).not.toThrow()
+    expect(envelope.draft).toEqual({
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'Wurzel', type: 'PAGE', kind: 'normal', page_config: { widgets: [{ id: 'a' }] } }],
+    })
+  })
+
+  it('schickt einen reaktiven Entwurf durch eine postMessage-Mock, die WIRKLICH klont - kein Array-Push', () => {
+    const frame = {
+      sent: [],
+      postMessage(message, targetOrigin) {
+        // Anders als `makeFrameWindow()`: hier steht der ECHTE
+        // Klon-Algorithmus. Ein Vue-Proxy wirft hier `DataCloneError`, exakt
+        // wie im Browser - ein Array-Push wuerde das nie sehen.
+        this.sent.push({ message: structuredClone(message), targetOrigin })
+      },
+    }
+    const bus = makeBus()
+    const draft = reactive({
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'W', type: 'PAGE', kind: 'normal', page_config: { widgets: [] } }],
+    })
+    const bridge = createVisuPreviewBridge({
+      previewOrigin: PREVIEW_ORIGIN,
+      listener: bus,
+      getFrameWindow: () => frame,
+      getSession: () => ({ accessToken: TOKEN }),
+      getDraft: () => draft,
+    })
+    bridge.start()
+    bus.emit({ data: readyMessage(), origin: PREVIEW_ORIGIN, source: frame })
+    bus.emit({ data: acceptedMessage(), origin: PREVIEW_ORIGIN, source: frame })
+
+    const draftMsg = frame.sent.find((s) => s.message.type === VISU_PREVIEW_MESSAGE.draft)
+    expect(draftMsg).toBeDefined()
+    expect(draftMsg.message.draft).toEqual({
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'W', type: 'PAGE', kind: 'normal', page_config: { widgets: [] } }],
+    })
   })
 })

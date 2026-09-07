@@ -56,6 +56,46 @@ export const VISU_PREVIEW_MESSAGE = {
 }
 
 /**
+ * Der Klon-Waechter der Bruecke (Issue #183).
+ *
+ * `postMessage` klont strukturiert; der Algorithmus lehnt einen Vue-Proxy mit
+ * `DataCloneError` ab. Vor #183 hing dieser Schutz nur an der Sorgfalt JEDES
+ * einzelnen Aufrufers - C1 (`visuEditor.js`, `previewDraft`) und C2
+ * (`VisuEditorCanvas.vue`) hatten ihn sich je selbst nachgezogen, testeten aber
+ * nur die eigene Kopie, nie das, was an DIESER Stelle tatsaechlich verlaesst.
+ * Elf Abnahmerunden mit Mutationsproben sahen das nicht: die Senderspec
+ * ersetzte `postMessage` durch einen Array-Push, der nie klont. Deshalb sitzt
+ * der Waechter jetzt HIER, am einzigen Ort, an dem diese Bruecke wirklich
+ * `postMessage` ruft - kein kuenftiger Aufrufer kann ihn mehr vergessen.
+ *
+ * Zwei Schritte, in dieser Reihenfolge:
+ *  1. Eine reine JSON-Kopie. Ein Proxy (`ref()`/`reactive()`) wird dabei zu
+ *     echten Daten, weil `JSON.stringify` durch seine Get-Falle liest statt den
+ *     Proxy selbst zu serialisieren - der Grund, warum dieser Umweg ueberhaupt
+ *     funktioniert.
+ *  2. Eine ECHTE Klonprobe mit `structuredClone` auf dem Ergebnis von (1) -
+ *     demselben Algorithmus, den der Browser bei `postMessage` selbst anwendet
+ *     (in Node ab v17 identisch verfuegbar, hier durch die Proben belegt).
+ *     Besteht die Nutzlast sie nicht (ein zirkulaerer Verweis, ein `BigInt`),
+ *     bricht der Waechter mit einer eindeutigen Meldung ab, statt eine kaputte
+ *     oder still verstuemmelte Nutzlast hinauszuschicken.
+ */
+export function cloneSafeEnvelope(message) {
+  let plain
+  try {
+    plain = JSON.parse(JSON.stringify(message))
+  } catch (err) {
+    throw new Error(`Vorschau-Bruecke: Nutzlast ist nicht JSON-faehig (${err.message})`)
+  }
+  try {
+    structuredClone(plain)
+  } catch (err) {
+    throw new Error(`Vorschau-Bruecke: Nutzlast uebersteht keinen echten Klon (${err.message})`)
+  }
+  return plain
+}
+
+/**
  * Baut die Bruecke zu einer eingebetteten Vorschau.
  *
  * @param {object}   options
@@ -119,13 +159,11 @@ export function createVisuPreviewBridge({
     const target = getFrameWindow ? getFrameWindow() : null
     if (!target) return
     target.postMessage(
-      JSON.parse(
-        JSON.stringify({
-          channel: VISU_PREVIEW_CHANNEL,
-          protocol: VISU_PREVIEW_PROTOCOL,
-          ...message,
-        }),
-      ),
+      cloneSafeEnvelope({
+        channel: VISU_PREVIEW_CHANNEL,
+        protocol: VISU_PREVIEW_PROTOCOL,
+        ...message,
+      }),
       previewOrigin,
     )
   }
