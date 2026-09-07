@@ -815,23 +815,47 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await openEditor(page, fx.m5.node_ids.solo);
     await el(page, fx.m5.widgets.solo).click();
 
-    // NACHGEZOGENER SELEKTOR, keine Erwartung geändert (Teil D): C3 hat den
+    const vorschau = page.frameLocator('iframe.editor-preview');
+    const liveWert = vorschau.getByText('21.5');
+    // Das Feld, dessen Wert die Kachel anzeigt (`dp_position_status` des
+    // Rollladens, `utils/visuWidgetTypes.js`) - genau die Bindung, an der die
+    // 21,5 des Seeds hängt. Der CSS-Griff grenzt nur den SUCHBEREICH ein, wie
+    // `savePageProps`/`bindingName` in `editor-helpers.ts`; die Affordanzen
+    // darin werden weiter über ihren zugänglichen Namen gefasst.
+    const feld = page.locator('.binding-field[data-field="dp_position_status"]');
+
+    // AUSGANGSSTAND, keine Zusicherung des Kriteriums: der Seed bindet die
+    // Kachel bereits, der Wert steht also schon da.
+    await expect(liveWert).toBeVisible();
+
+    // (a) Die BESTEHENDE Bindung wird gelöst - und der Wert verschwindet.
+    //
+    // WARUM DIESER SCHRITT (Runde 2): ohne ihn beweist das Szenario den
+    // Zusammenhang zwischen der Bindung, die der Autor setzt, und dem Wert in
+    // der Vorschau NICHT. Gemessen: eine Mutation, die `waehlen()` die Auswahl
+    // verschlucken ließ, blieb grün, weil die 21,5 aus der Seed-Bindung ohnehin
+    // dastand. Erst der Weg 21,5 → weg → 21,5 haftet an der Auswahl des Autors.
+    await feld.getByRole('button', { name: 'Bindung lösen' }).click();
+    await expect(liveWert).toHaveCount(0);
+
+    // (b) Suche und Filter liefern genau einen Treffer.
+    //
+    // NACHGEZOGENER SELEKTOR, keine Erwartung gesenkt (Teil D): C3 hat den
     // Wähler so gebaut, dass das Etikett des FELDES auf seine Schaltfläche zeigt
     // (`<label for="…-open">`) - ein `<button>` ist beschriftbar, und damit ist
     // sein zugänglicher Name „Position (Status)" und nicht mehr sein eigener
-    // Text „Datenpunkt wählen". Ein Griff über die Rolle findet ihn deshalb
-    // nicht. Gefasst wird der Wähler DES Feldes, dessen Wert die Kachel anzeigt
-    // (`dp_position_status` des Rollladens, `utils/visuWidgetTypes.js`) - genau
-    // die Bindung, an der die 21,5 des Seeds hängt.
-    await page.locator('.binding-field[data-field="dp_position_status"] .dp-picker-open').click();
+    // Text „Datenpunkt wählen". Gefasst wird er weiter über die ROLLE und den
+    // zugänglichen Namen, nur eben über den, den er heute trägt.
+    await feld.getByRole('button', { name: 'Position (Status)' }).click();
     await page.getByLabel('Datenpunkt suchen').fill('dp-m5-solo');
     const hits = page.locator('.dp-picker-item');
     await expect(hits).toHaveCount(1);
     await hits.first().click();
 
-    // Der Live-Wert (der Seed setzt 21.5) erscheint in der Vorschau — die
-    // Vorschau bezieht Werte vom echten Backend, nicht aus einer Attrappe.
-    await expect(page.frameLocator('iframe.editor-preview').getByText('21.5')).toBeVisible();
+    // (c) Und die vom AUTOR gesetzte Bindung bringt den Live-Wert zurück (der
+    // Seed setzt 21.5) — die Vorschau bezieht Werte vom echten Backend, nicht
+    // aus einer Attrappe.
+    await expect(liveWert).toBeVisible();
   });
 
   // Teil C6 (Micsi/openbridgeserver#173) hat Verlauf und Wiederherstellen
@@ -971,6 +995,27 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     await openEditor(page, fx.m5.node_ids.solo);
     await el(page, fx.m5.widgets.solo).click();
 
+    const preview = page.frameLocator('iframe.editor-preview');
+    // NACHGEZOGENER SELEKTOR, keine Erwartung geändert (Teil D): `[data-id]`
+    // trifft die Kachel ZWEIMAL - der Host legt seine Zelle (`.skin-host-cell`)
+    // in den Rahmen des Skins, und beide tragen die Id. Für `toHaveCount(0)`
+    // fiel das nicht auf (0 ist 0), die Gegenprobe scheiterte an der
+    // Mehrdeutigkeit. Gefasst wird die Zelle des HOSTS, weil sie unabhängig vom
+    // Skin da ist; gezählt wird damit dasselbe Element wie vorher.
+    const kachel = preview.locator('.skin-host-cell[data-id]', { hasText: fx.m5.widgets.solo });
+
+    // AUSGANGSSTAND, keine Zusicherung des Kriteriums: OHNE Regel ist die Kachel
+    // da. Das ist zugleich der Synchronisationspunkt.
+    //
+    // WARUM ER NÖTIG IST (Runde 2): das `toHaveCount(0)` unten stand vorher
+    // direkt hinter dem Klick auf „Speichern" - und war schon erfüllt, bevor die
+    // Vorschau die Regel überhaupt anwenden konnte. Gemessen: eine Mutation, die
+    // `isWidgetVisible` immer `true` liefern ließ, blieb grün, obwohl die Kachel
+    // sechs Sekunden später sichtbar dastand. „0 ist 0" traf den Zeitpunkt statt
+    // die Aussage. Mit dieser Zeile davor ist die Zusicherung ein ÜBERGANG von
+    // 1 auf 0, und eine wirkungslose Regel fällt auf.
+    await expect(kachel).toHaveCount(1);
+
     await page.getByRole('button', { name: 'Sichtbarkeitsregel' }).click();
     await page.getByLabel('Datenpunkt').fill('dp-m5-solo');
     await page.getByLabel('Bedingung').selectOption('gt');
@@ -981,15 +1026,7 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     // Elemente liegen.
     await saveCanvas(page).click();
 
-    const preview = page.frameLocator('iframe.editor-preview');
-    // NACHGEZOGENER SELEKTOR, keine Erwartung geändert (Teil D): `[data-id]`
-    // trifft die Kachel ZWEIMAL - der Host legt seine Zelle (`.skin-host-cell`)
-    // in den Rahmen des Skins, und beide tragen die Id. Für `toHaveCount(0)`
-    // fiel das nicht auf (0 ist 0), die Gegenprobe scheiterte an der
-    // Mehrdeutigkeit. Gefasst wird die Zelle des HOSTS, weil sie unabhängig vom
-    // Skin da ist; gezählt wird damit dasselbe Element wie vorher.
-    const kachel = preview.locator('.skin-host-cell[data-id]', { hasText: fx.m5.widgets.solo });
-    // Seed-Wert 21.5 → Bedingung nicht erfüllt → unsichtbar.
+    // Seed-Wert 21.5 → Bedingung nicht erfüllt → die Kachel verschwindet.
     await expect(kachel).toHaveCount(0);
 
     // Wert über die Schwelle heben → das Element erscheint (Live-Wert, kein Reload).

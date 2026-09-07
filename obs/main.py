@@ -402,6 +402,18 @@ def create_app() -> FastAPI:
     # nichts: die Admin-Sitzung reist per postMessage in den Rahmen (nie ueber
     # URL, Query oder Cookie), und jeder Inhalt haengt an der API, die ihre
     # eigene Pruefung behaelt.
+    #
+    # WOHER `visu_v2_dist/` KOMMT — und wo es heute fehlt: anders als gui_dist,
+    # frontend_dist und help_dist bauen die Packer dieses Buendel NICHT selbst.
+    # `apps/visu/package.json` haengt ueber drei `link:`-Pfade an einem Repo
+    # ausserhalb des Baums (obs-visu-skins), das im Abbild nicht existiert. Es
+    # wird deshalb im Quell-Checkout gebaut (`tools/build-visu-v2.sh`) und den
+    # Packern als Artefakt gereicht; `tools/build-local.sh` macht das vor jedem
+    # Paketbau. Den Werkstuecken unter `.github/workflows/` fehlt dieser Vorlauf
+    # noch, in den VEROEFFENTLICHTEN Docker-Abbildern, LXC-Templates und
+    # obs-update-Buendeln ist das Verzeichnis also nicht enthalten und /visu-v2
+    # antwortet dort mit 404: Micsi/openbridgeserver#191. Fuer V1 unter /visu
+    # aendert das nichts (R17).
     _visu_v2_dist = Path(__file__).parent.parent / "visu_v2_dist"
     if _visu_v2_dist.is_dir():
         _visu_v2_assets = _visu_v2_dist / "assets"
@@ -417,7 +429,13 @@ def create_app() -> FastAPI:
 
         @app.get("/visu-v2/favicon.svg", include_in_schema=False)
         async def visu_v2_favicon():
-            return FileResponse(_visu_v2_dist / "favicon.svg")
+            # Geprueft, nicht blind: ein leeres visu_v2_dist/ ist ein REALER
+            # Zustand (ein Paket, das ohne vorgebautes Buendel gepackt wurde),
+            # und ein ungeprueftes FileResponse gaebe dort 500 statt 404.
+            favicon = _visu_v2_dist / "favicon.svg"
+            if favicon.exists():
+                return FileResponse(favicon)
+            return JSONResponse({"detail": "Not found"}, status_code=404)
 
         def _visu_v2_index():
             index = _visu_v2_dist / "index.html"

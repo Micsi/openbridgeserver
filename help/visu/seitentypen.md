@@ -15,45 +15,45 @@ Der Editor bietet vier Typen an:
 | Typ | Was er bedeutet |
 |---|---|
 | **Normale Seite** | Eine Seite der Navigation. Sie bekommt die globalen Inkludeseiten dazu. |
-| **Inkludeseite** | Eine gewoehnliche Seite, die von mindestens einer anderen Seite eingebettet wird. |
+| **Inkludeseite** | Eine gewöhnliche Seite, die von mindestens einer anderen Seite eingebettet wird. |
 | **Globale Inkludeseite** | Wird automatisch in jede normale Seite eingebettet. |
-| **Popup** | Liegt ueber der Seite, wird ueber einen Verweis geoeffnet und steht nicht in der Navigation. |
+| **Popup** | Liegt über der Seite, wird über einen Verweis geöffnet und steht nicht in der Navigation. |
 
 **Inkludeseite ist eine abgeleitete Rolle, keine Einstellung.** Eine Seite wird
 zur Inkludeseite, sobald eine andere Seite sie in ihre Include-Liste aufnimmt,
-und sie hoert wieder auf, eine zu sein, wenn der letzte Verweis verschwindet.
-Deshalb laesst der Editor "Inkludeseite" auch nicht speichern: er sagt es
-vorher, statt die Wahl still auf "Normale Seite" zurueckfallen zu lassen.
+und sie hört wieder auf, eine zu sein, wenn der letzte Verweis verschwindet.
+Deshalb lässt der Editor "Inkludeseite" auch nicht speichern: er sagt es
+vorher, statt die Wahl still auf "Normale Seite" zurückfallen zu lassen.
 
 Der Typ steht auch als Abzeichen im Seitenbaum, und die Navigation der Visu
 blendet globale Inkludeseiten und Popups aus. Bestandsseiten aus der Zeit vor
-den Seitentypen sind normale Seiten; sie aendern sich nicht.
+den Seitentypen sind normale Seiten; sie ändern sich nicht.
 
 ## Popups und ihre Parameter {#visu-page-popup}
 
 Ein Popup ist eine eigene Seite. Es liegt nicht in der Navigation, sondern wird
-aus einer anderen Seite heraus geoeffnet. Beliebig viele **verschiedene** Popups
-duerfen gleichzeitig offen stehen; dasselbe Popup wird nicht zweimal geoeffnet.
+aus einer anderen Seite heraus geöffnet. Beliebig viele **verschiedene** Popups
+dürfen gleichzeitig offen stehen; dasselbe Popup wird nicht zweimal geöffnet.
 
-Die Seiteneigenschaften kennen dafuer folgende Angaben:
+Die Seiteneigenschaften kennen dafür folgende Angaben:
 
 | Parameter | Wirkung |
 |---|---|
 | **X**, **Y** | Position in Pixeln. Fehlt eine der beiden Angaben, wird das Popup zentriert. |
-| **Breite**, **Hoehe** | Groesse in Pixeln. Ohne Angabe entscheidet der Skin. |
-| **Automatisch schliessen (ms)** | Zeitspanne in Millisekunden. Danach schliesst das Popup von selbst. |
-| **Exklusiv oeffnen** | Modal: solange das Popup offen ist, ist alles darunter nicht bedienbar. |
+| **Breite**, **Höhe** | Größe in Pixeln. Ohne Angabe entscheidet der Skin. |
+| **Automatisch schließen (ms)** | Zeitspanne in Millisekunden. Danach schließt das Popup von selbst. |
+| **Exklusiv öffnen** | Modal: solange das Popup offen ist, ist alles darunter nicht bedienbar. |
 | **Animation** | Das Popup wird eingeblendet statt hart gesetzt. |
 | **Schlagschatten** | Das Popup hebt sich mit Schatten von der Seite ab. |
-| **Hintergrund abdunkeln** | Die Flaeche hinter dem Popup wird abgedunkelt. |
+| **Hintergrund abdunkeln** | Die Fläche hinter dem Popup wird abgedunkelt. |
 
-Zwei Regeln, die leicht ueberraschen:
+Zwei Regeln, die leicht überraschen:
 
-- **Die Frist zum automatischen Schliessen wird beim erneuten Oeffnen nicht
-  verlaengert.** Wer ein bereits offenes Popup noch einmal oeffnet, bekommt
-  keine neue Zeitspanne; es schliesst zu der Frist, die beim ersten Oeffnen
+- **Die Frist zum automatischen Schließen wird beim erneuten Öffnen nicht
+  verlängert.** Wer ein bereits offenes Popup noch einmal öffnet, bekommt
+  keine neue Zeitspanne; es schließt zu der Frist, die beim ersten Öffnen
   begonnen hat.
-- **Ein Popup bekommt keine globalen Inkludeseiten.** Es ist ein Ausschnitt ueber
+- **Ein Popup bekommt keine globalen Inkludeseiten.** Es ist ein Ausschnitt über
   der Seite, keine Seite der Navigation, und es darf auch selbst nichts
   inkludieren.
 
@@ -68,16 +68,16 @@ Die Regeln dazu:
 - Ziel darf eine **normale Seite** oder eine **globale Inkludeseite** sein, nie
   ein Popup.
 - Eine Seite kann sich nicht selbst einbetten.
-- Ringschluesse sind verboten: A bettet B ein, B bettet A ein, wird abgelehnt.
-  Das gilt auch ueber mehrere Stufen.
-- Ein Ziel steht in der Liste hoechstens einmal. Doppelte Eintraege werden still
-  entfernt, das erste Vorkommen behaelt seinen Platz.
+- Ringschlüsse sind verboten: A bettet B ein, B bettet A ein, wird abgelehnt.
+  Das gilt auch über mehrere Stufen.
+- Ein Ziel steht in der Liste höchstens einmal. Doppelte Einträge werden still
+  entfernt, das erste Vorkommen behält seinen Platz.
 
-Eine Aenderung an der eingebetteten Seite wirkt sofort in **allen** Seiten, die
+Eine Änderung an der eingebetteten Seite wirkt sofort in **allen** Seiten, die
 sie einbetten. Es gibt nichts erneut zu importieren und nichts nachzuziehen: die
 Seiten verweisen auf dieselbe Quelle, sie kopieren sie nicht.
 
-Ist eine eingebettete Quelle fuer den Betrachter nicht lesbar, wird die Stelle
+Ist eine eingebettete Quelle für den Betrachter nicht lesbar, wird die Stelle
 verdeckt, ohne Fehlermeldung. Ist die Quelle nur lesbar, aber nicht bedienbar,
 erscheinen ihre Bedienelemente gesperrt. Verlangt sie eine PIN, wird die Stelle
 als gesperrt gekennzeichnet, statt still zu verschwinden.
@@ -94,11 +94,11 @@ Navigationsspalte, die auf allen Seiten stehen soll.
 - **Eine globale Inkludeseite kann selbst nichts einbetten.** Es gibt genau eine
   Ebene. Der Versuch wird beim Speichern abgelehnt.
 - **Wird eine globale Inkludeseite direkt aufgerufen**, zeigt sie die anderen
-  globalen Inkludeseiten nicht. Sie steht dann fuer sich.
+  globalen Inkludeseiten nicht. Sie steht dann für sich.
 - **In Popups kommen globale Inkludeseiten nicht vor.**
 
 Eine einzelne normale Seite kann sich davon ausnehmen: der Schalter
-**Globale Inkludeseiten ignorieren** in den Seiteneigenschaften laesst genau
+**Globale Inkludeseiten ignorieren** in den Seiteneigenschaften lässt genau
 diese Seite ohne die globalen Ebenen.
 
 ## Zugriff und Zielgruppe {#visu-page-access}
@@ -108,18 +108,18 @@ stehen zur Wahl:
 
 | Stufe | Wer sieht die Seite |
 |---|---|
-| **Oeffentlich (public)** | Jeder, auch ohne Anmeldung. |
+| **Öffentlich (public)** | Jeder, auch ohne Anmeldung. |
 | **Nur lesen (readonly)** | Jeder, aber Bedienelemente sind gesperrt. |
-| **PIN-geschuetzt (protected)** | Wer die PIN dieser Seite eingibt. |
-| **Nur Zielgruppe (user)** | Nur die ausgewaehlten Benutzer. |
+| **PIN-geschützt (protected)** | Wer die PIN dieser Seite eingibt. |
+| **Nur Zielgruppe (user)** | Nur die ausgewählten Benutzer. |
 
-Die zusaetzlichen Felder erscheinen genau dort, wo sie gelten: die **PIN** nur
-bei `protected`, die **Zielgruppe** nur bei `user`. Der Editor faengt verbotene
+Die zusätzlichen Felder erscheinen genau dort, wo sie gelten: die **PIN** nur
+bei `protected`, die **Zielgruppe** nur bei `user`. Der Editor fängt verbotene
 Kombinationen ab, bevor gespeichert wird.
 
 **Vom Elternknoten erben** ist die Vorgabe. Eine Seite ohne eigene Stufe
-uebernimmt die des Elternknotens; erst wenn das Erben abgeschaltet ist, gilt die
-hier gewaehlte Stufe.
+übernimmt die des Elternknotens; erst wenn das Erben abgeschaltet ist, gilt die
+hier gewählte Stufe.
 
 Verdeckung wirkt in der Navigation: eine Seite, die der Betrachter nicht sehen
 darf, taucht im Baum gar nicht erst auf.

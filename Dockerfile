@@ -1,6 +1,7 @@
 # ---------------------------------------------------------------------------
-# open bridge server — Multi-Stage Dockerfile (3 stages)
+# open bridge server — Multi-Stage Dockerfile (4 stages)
 # Stage 1 (node-builder):   npm ci + vite/vitepress build → gui_dist/ + frontend_dist/ + help_dist/
+# Stage 1b (visu-v2):       picks up the PRE-BUILT visu_v2_dist/ from the build context
 # Stage 2 (py-builder):     pip install Python deps
 # Stage 3 (runtime):        python:3.14-slim, copies all artefacts
 #
@@ -37,6 +38,32 @@ RUN npm ci --prefer-offline
 COPY help/ ./
 RUN npm run build
 # Output: /help_dist
+
+
+# ── Stage 1b: V2 Visu (apps/visu → visu_v2_dist) ────────────────────────────
+# NOT built here, unlike the three stages above. `apps/visu/package.json` depends
+# on three skin packages via `link:` paths that point OUTSIDE this repository
+# (obs-visu-skins); a `pnpm install` inside the image cannot resolve them. The
+# bundle is therefore built in the source checkout (`tools/build-visu-v2.sh`,
+# called by `tools/build-local.sh`) and handed to this build as an artefact.
+#
+# The COPY is deliberately optional: `visu_v2_dist*` alone would abort the build
+# when nothing was pre-built (a wildcard matching nothing is an error), so
+# `.dockerignore` — always present in the context — keeps the COPY alive and is
+# removed again right after. An image built WITHOUT the bundle stays valid: the
+# directory is then empty, `obs/main.py` mounts nothing, and `/visu-v2` answers
+# 404 instead of silently serving the Admin shell. The build says so out loud.
+FROM node:24-slim AS visu-v2
+WORKDIR /prebuilt
+COPY .dockerignore visu_v2_dist* ./visu_v2_dist/
+RUN rm -f ./visu_v2_dist/.dockerignore && \
+    if [ -f ./visu_v2_dist/index.html ]; then \
+        echo "==> visu_v2_dist: pre-built bundle picked up ($(find ./visu_v2_dist -type f | wc -l) files)"; \
+    else \
+        echo "==> WARNING: no pre-built visu_v2_dist/ in the build context."; \
+        echo "==>          /visu-v2 will answer 404 in this image and the Visu editor's"; \
+        echo "==>          preview stays empty. Run tools/build-visu-v2.sh first."; \
+    fi
 
 
 # ── Stage 2: Python dependency builder ─────────────────────────────────────
@@ -88,6 +115,11 @@ COPY --from=node-builder /frontend_dist ./frontend_dist/
 
 # Built Help site (served by FastAPI from /app/help_dist under /help/)
 COPY --from=node-builder /help_dist ./help_dist/
+
+# Pre-built V2 Visu (served by FastAPI from /app/visu_v2_dist under /visu-v2/),
+# including the editor preview at /visu-v2/preview. Empty when the build context
+# carried no bundle — see stage `visu-v2` above.
+COPY --from=visu-v2 /prebuilt/visu_v2_dist ./visu_v2_dist/
 
 # Pre-create data directory — volume mount inherits this, preventing SQLite errors
 RUN mkdir -p /data

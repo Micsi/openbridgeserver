@@ -17,6 +17,16 @@ export default defineConfig(({ command, mode }) => {
     // den der V2-Editor der Admin-GUI einbettet - `VISU_PREVIEW_URL` in
     // `gui/src/utils/visuEditorAccess.js` faellt genau darauf zurueck.
     //
+    // WER DIESES BUENDEL BAUT: NICHT die Packer. `package.json` haengt ueber drei
+    // `link:`-Pfade an einem Repo ausserhalb dieses Baums (obs-visu-skins), das
+    // in Docker-Abbild und LXC-Builder nicht existiert. `visu_v2_dist/` entsteht
+    // deshalb im Quell-Checkout (`tools/build-visu-v2.sh`) und wird den Packern
+    // als Artefakt gereicht (`tools/build-local.sh` ruft das vor jedem Paketbau
+    // auf; `Dockerfile` Stufe `visu-v2` und `tools/_lxc-inner.sh` uebernehmen
+    // es). Den CI-Werkstuecken unter `.github/workflows/` fehlt dieser Vorlauf
+    // heute noch — in den VEROEFFENTLICHTEN Paketen antwortet /visu-v2 deshalb
+    // mit 404 und der Editor hat dort keine Vorschau: Micsi/openbridgeserver#191.
+    //
     // IM DEV-SERVER bleibt die Wurzel. Vite serviert seine Modul-Adressen
     // (`/src/...`, `/@vite/client`) NICHT unter der Basis; ein Praefix hier
     // wuerde die Laufanleitung des Messlatten-Harness umschreiben

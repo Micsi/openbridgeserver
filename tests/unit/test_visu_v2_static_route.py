@@ -254,6 +254,19 @@ async def test_v2_without_index_says_so_instead_of_showing_the_admin_gui(half_bu
     assert resp.json()["detail"] == "Visu 2 nicht gebaut"
 
 
+@pytest.mark.asyncio
+async def test_v2_favicon_without_bundle_is_404_not_500(half_built_v2_client):
+    """Ein leeres bzw. halb gefuelltes `visu_v2_dist/` ist ein REALER Zustand,
+    seit die Packer ein VORGEBAUTES Buendel uebernehmen (Dockerfile-Stufe
+    `visu-v2`, `tools/_lxc-inner.sh`): wurde vor dem Paketbau nichts gebaut,
+    legt der Docker-Bau das Verzeichnis leer an. Ein ungeprueftes FileResponse
+    gaebe dort 500 - einen Serverfehler fuer eine schlicht fehlende Datei."""
+    resp = await half_built_v2_client.get("/visu-v2/favicon.svg")
+    assert resp.status_code == 404
+    assert _GUI_MARKER not in resp.text
+    assert resp.json()["detail"] == "Not found"
+
+
 # ── V1 unveraendert (R17) ────────────────────────────────────────────────────
 
 

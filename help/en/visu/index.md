@@ -93,6 +93,16 @@ address. Two causes are common:
    and `VITE_PREVIEW_ALLOWED_ORIGINS` names the origin of the Admin GUI. The two
    settings belong together.
 
+**Visu 2.0 is still missing from the published packages.** The Docker image, the
+LXC template and the `obs-update` bundle only carry `visu_v2_dist/` if it was
+produced **before** the packaging step. The release pipelines do not do that
+yet: there, `/visu-v2` answers 404 and the editor's preview box stays empty. To
+get Visu 2.0 including the preview, build the package yourself:
+`tools/build-local.sh` produces the bundle before packaging and states in the
+build log whether it ended up in the result.
+
+Visu 1 under `/visu/` is unaffected; every package contains it unchanged.
+
 ## Skin per page {#visu-page-skin}
 
 The skin decides how a page is drawn, and it also decides which

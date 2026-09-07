@@ -79,10 +79,18 @@ export const C2_PAGE_SKIN = {
  * laengster Eintrag - und die Eintraege sind NICHT dieselben: die Vorschau baut
  * ihren Nav-Baum aus den Knoten des ENTWURFS (`PreviewDataSource.navTree()`,
  * gefuellt von `loadDraftNodes` mit der Seite, ihren Includes und den globalen
- * Inkludeseiten), die laufende Visu aus dem GANZEN Baum des Servers
- * (`ObsDataSource.navTree()`). Verschieden breite Nav-Spalte heisst verschoben
- * beginnende Zeichenflaeche, und damit ist die Zeile „0 abweichende Pixel"
- * nicht erreichbar, egal wie gut die Route ist.
+ * Inkludeseiten - hier VIER Eintraege), die laufende Visu aus dem GANZEN Baum
+ * des Servers (`ObsDataSource.navTree()` - hier ACHTZEHN). Verschieden breite
+ * Nav-Spalte heisst verschoben beginnende Zeichenflaeche, und damit ist die
+ * Zeile „0 abweichende Pixel" nicht erreichbar, egal wie gut die Route ist.
+ *
+ * ZWEITE ABWEICHUNG, aus derselben Quelle - und sie faellt zuerst auf: auch die
+ * HOEHE geht auseinander (628 gegen 687). Die Nav-Spalte ist eine Liste
+ * veraenderlicher Laenge; achtzehn Eintraege machen `.edomi-root` hoeher als
+ * vier. Die Vorbedingung `pngSize(inLive) == pngSize(inEditor)` in E3
+ * (`m5-editor-matrix.spec.ts`) schlaegt deshalb SELBST DANN an, wenn beide
+ * Spalten gleich breit waeren. Wer nur die BREITE des Nav-Bodens angleicht,
+ * findet die Zeile weiter rot: gleich sein muessen die EINTRAEGE.
  *
  * Das ist eine Frage des ENTWURFS, nicht der Auslieferung, und sie gehoert
  * damit zu C3/C4 (Entwurfsumfang) und nicht zu Teil D. Sobald der Entwurf
@@ -122,7 +130,7 @@ export const D_PREVIEW_NAV_FLOOR = {
   annotation: {
     type: 'blocked-by',
     description:
-      'Entwurfsumfang der Vorschau (C3/C4) — der Nav-Baum des Entwurfs traegt nur die Knoten der Seite, die laufende Visu den ganzen Baum; verschieden breite Nav-Spalte (176 vs. 191 px, gemessen) verschiebt die Zeichenflaeche',
+      'Entwurfsumfang der Vorschau (C3/C4) — der Nav-Baum des Entwurfs traegt nur die Knoten der Seite (4 Eintraege), die laufende Visu den ganzen Baum (18); das verschiebt die Zeichenflaeche UND aendert die Groesse des Ausschnitts: 974x628 mit 176 px Nav-Spalte gegen 974x687 mit 191 px (gemessen). Die Vorbedingung gleicher Bildgroesse in E3 schlaegt schon an der Hoehe an',
   },
 } as const;
 

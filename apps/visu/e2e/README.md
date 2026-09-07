@@ -160,10 +160,24 @@ die eingebettete Vorschau. Ohne gebautes Bündel antwortet die Adresse mit
 
 ```bash
 pnpm --filter @obs/visu-app build          # → visu_v2_dist/ (base /visu-v2/)
+# oder, mit Vorabprüfung der drei Skin-Pakete und derselben Ausgabe:
+tools/build-visu-v2.sh
 ```
 
 Der Backend-Prozess aus Schritt 2 liest die `*_dist`-Verzeichnisse beim Start:
 wird erst danach gebaut, muss er einmal neu gestartet werden.
+
+> **Dieser Schritt ist hier von Hand — und in den veröffentlichten Paketen fehlt
+> er noch.** `apps/visu` hängt über drei `link:`-Pfade an einem Repo außerhalb
+> dieses Baums (`obs-visu-skins`); Docker-Abbild und LXC-Builder können es
+> deshalb nicht selbst bauen. `tools/build-local.sh` erzeugt `visu_v2_dist/`
+> darum **vor** dem Packen und reicht es den Packern als Artefakt weiter
+> (`Dockerfile`-Stufe `visu-v2`, `tools/_lxc-inner.sh` für Rootfs und
+> `obs-update`-Bündel). Den Bauwerkstücken unter `.github/workflows/` fehlt
+> dieser Vorlauf noch: in den veröffentlichten Artefakten antwortet `/visu-v2`
+> mit 404 und der Editor hat dort keine Vorschau —
+> [Micsi/openbridgeserver#191](https://github.com/Micsi/openbridgeserver/issues/191).
+> Die Visu 1 unter `/visu` ist davon unberührt (R17).
 
 ## Step 4b — Admin-GUI dev server (nur für die Editor-Szenarien E1-E19, R16)
 
@@ -460,6 +474,22 @@ rm -rf "$(dirname "$OBS_DATABASE__PATH")/archives" "${OBS_DATABASE__PATH%.db}_ri
 >    exceeded the test timeout" statt in eine echte Aussage. `TMPDIR` also für
 >    Mosquitto/Backend setzen, aber **nicht** in die Shell exportieren, in der
 >    `playwright test` läuft.
+
+> **Zwischen zwei Läufen MUSS geseedet werden** — der Seed in Schritt 2 oben ist
+> keine Höflichkeit, sondern Voraussetzung. Ein zweiter Lauf gegen dieselbe
+> Instanz **ohne** Neu-Seed ist deterministisch rot (gemessen: 35 pass / 1 fail).
+>
+> Ursache, nachgestellt und wieder zurückgenommen: **E19** speichert auf „M5
+> Solo" `page_config.skin = "terminal"` und setzt den Wert nie zurück; **E11**
+> erwartet auf derselben Seite die Zahl der Rollladen-Kachel, wie der
+> **edomi**-Skin sie zeichnet. Gegenprobe: `skin` per API auf `null` → E11 grün,
+> zurück auf `terminal` → E11 rot. Ein Seed-Lauf setzt `skin` wieder auf `None`
+> und räumt das mit auf.
+>
+> Ein Szenario, das den Skin selbst zurücksetzt, gäbe es auch — E19 tut es heute
+> nicht, und die Zusage aus §5 („zwei Läufe, jeweils frisch geseedet") deckt den
+> Ablauf ab. Wer aber zweimal hintereinander `playwright test` tippt, ohne
+> dazwischen zu seeden, misst die Reihenfolge und nicht den Editor.
 
 ### Ergebnis der Pflichtläufe (Runde 3, 2026-09-04, mit dem Host aus Teil B)
 
@@ -811,6 +841,10 @@ sie im Speicher, `.seeded.json` enthält keine Admin-Zugangsdaten.
   Host ihn liest — inklusive der scharfen Kante „fehlende Koordinate bleibt
   `null`".
 - **R17** und die Contract-/Skins-Gates gehören nicht in diesen Harness.
+- **Die V2-Visu kommt noch in keinem veröffentlichten Paket an.** Der Harness
+  baut `visu_v2_dist/` selbst (Schritt 4c) und misst deshalb eine Lage, die im
+  ausgelieferten Produkt heute nicht hergestellt ist. Siehe Schritt 4c und
+  Micsi/openbridgeserver#191.
 - Die `fixme`-Szenarien laufen erst, wenn ihr Teil geliefert hat. Sie sind
   deshalb im Bericht als eigene Zahl auszuweisen — ein Lauf ohne `fail` ist noch
   kein fertiges M5.

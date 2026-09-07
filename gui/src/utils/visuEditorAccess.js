@@ -22,13 +22,18 @@ export const VISU_EDITOR_ROUTE = '/visu-editor'
  * waere gar keine Pruefung mehr. Der Standardpfad ist relativ, also
  * same-origin — der Normalfall, weil FastAPI Admin-GUI und Visu ausliefert.
  *
- * OFFEN (Teil D): diesen Pfad liefert heute noch niemand aus. Der Server mountet
- * `/assets`, `/visu/assets`, `/visu/{path}` und `/help`; alles andere faellt in
- * den SPA-404-Fallback, der `gui_dist/index.html` zurueckgibt — im Vorschaukasten
- * stuende also die Admin-GUI selbst. Teil C4 kann das nicht heilen (`obs/` gehoert
- * nicht dazu), macht die Lage aber sichtbar: bleibt der Handshake aus, zeigt
- * `VisuPreviewFrame` einen Hinweis statt eines verschachtelten Dashboards. Teil D
- * legt die echte Route und setzt `VITE_VISU_PREVIEW_URL` darauf.
+ * ERLEDIGT (Teil D, #174): diesen Pfad liefert der Server aus. `obs/main.py`
+ * mountet `visu_v2_dist/` unter `/visu-v2/` — neben der unveraenderten Visu 1
+ * unter `/visu` (Regel R17) — und beantwortet `/visu-v2/...` NICHT mehr aus dem
+ * SPA-404-Fallback der Admin-GUI. Fehlt das gebaute Buendel, kommt sauber ein
+ * 404 statt eines verschachtelten Dashboards; `VisuPreviewFrame` zeigt dann
+ * nach der Handshake-Frist seinen Hinweis.
+ *
+ * OFFEN BLEIBT die AUSLIEFERUNG in den veroeffentlichten Paketen: Docker-Abbild,
+ * LXC-Template und `obs-update`-Buendel tragen `visu_v2_dist/` nur, wenn es vor
+ * dem Paketbau erzeugt wurde (`tools/build-visu-v2.sh`, aufgerufen von
+ * `tools/build-local.sh`). Den CI-Werkstuecken fehlt dafuer heute noch der
+ * Checkout des Skin-Repos — Micsi/openbridgeserver#191.
  */
 export const VISU_PREVIEW_URL = import.meta.env.VITE_VISU_PREVIEW_URL || '/visu-v2/preview'
 
