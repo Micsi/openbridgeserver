@@ -1253,3 +1253,93 @@ async def test_a_folder_in_the_imported_configuration_is_no_special_case(db: Dat
 
     assert ergebnis.errors == []
     assert await db.fetchall("SELECT revision FROM visu_page_versions WHERE node_id = 'ordner'") == []
+
+
+# ---------------------------------------------------------------------------
+# Folge-Welle F2 (Issue #187/#188): zwei kleine Punkte am Konfigurations-Import
+# ---------------------------------------------------------------------------
+#
+# Beide Proben haengen an genau der Stelle oben, die entscheidet, ob der
+# Verlauf einer Seite abzuraeumen ist (`page_config_before != node.page_config`
+# in `obs/api/v1/config.py`, `import_config`).
+
+
+@pytest.mark.asyncio
+async def test_the_history_decision_reads_its_comparison_value_inside_the_same_lock_as_the_write(
+    db: Database,
+) -> None:
+    """Der Wettlauf aus #188: der Vergleichswert wird VORWEG gelesen, das Schreiben
+    kommt erst danach - dazwischen kann ein Autorenklick dieselbe Seite speichern.
+
+    Nachgestellt wird genau dieses Fenster: sobald der Einspielweg seinen
+    (heute rein topologischen) Bestand vorab liest, speichert - simuliert
+    genau in dieser Luecke - ein Autor `PUT /visu/pages/seite` mit einem neuen
+    Stand C. Das eingespielte Dokument selbst lautet ebenfalls C (Zufall des
+    Tests, kein Widerspruch: es geht um den VERGLEICHSWERT, nicht darum, was
+    importiert wird).
+
+    Vor der Behebung verglich der Import den frisch eingespielten Stand C
+    gegen den VOR der Luecke gelesenen Stand B - die beiden sind
+    verschieden, der Import raeumte den Verlauf faelschlich ab und loeschte
+    damit auch die Version, die der Autorenklick gerade erst angelegt hatte.
+    Nach der Behebung liest der Import seinen Vergleichswert ERST INNERHALB
+    derselben Sperre wie den Schreibvorgang - also NACH dem Autorenklick -
+    und sieht: die Seite traegt bereits C, es hat sich nichts geaendert, der
+    Verlauf bleibt stehen.
+    """
+    await _insert_node(db, "seite", config=PageConfig(widgets=[_widget(x=1)]))
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=2)]))  # B, Version 1
+
+    concurrent_c = PageConfig(widgets=[_widget(x=3)])
+    original_fetchall = db.fetchall
+
+    async def racy_fetchall(query: str, params: typing.Any = ()) -> typing.Any:
+        rows = await original_fetchall(query, params)
+        if "SELECT id FROM visu_nodes" in query:
+            # Der Autorenklick, der GENAU in die Luecke zwischen dem
+            # vorweggelesenen Bestand und dem eigentlichen Schreibvorgang
+            # dieser Seite faellt.
+            await _save(db, "seite", concurrent_c)  # C, Version 2
+        return rows
+
+    db.fetchall = racy_fetchall
+    try:
+        ergebnis = await _config_import(db, _exported_node("seite", concurrent_c))
+    finally:
+        db.fetchall = original_fetchall
+
+    assert ergebnis.errors == []
+    assert (await _load(db, "seite")).widgets[0].x == 3
+    # DER BELEG: die Version des Autorenklicks (C, Revision 2) ist noch da -
+    # der Vergleich hat den FRISCHEN Stand gesehen, nicht den veralteten (B).
+    assert [version.revision for version in await _versions(db, "seite")] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_upsert_leaves_the_history_standing_the_order_is_pinned(db: Database) -> None:
+    """Reihenfolge ungepinnt hiesse: das Abraeumen zuerst, dann der Upsert - beide
+    gruen bei Erfolg, aber falsch bei einem gescheiterten Upsert.
+
+    Das heutige Verhalten ist richtig: ERST schreiben, DANN abraeumen, damit ein
+    gescheiterter Import den gueltigen Verlauf behaelt. Der Upsert wird hier
+    ECHT zum Scheitern gebracht (kein Mock): `type='BOGUS'` verletzt die
+    `CHECK`-Bedingung der Spalte (`obs/db/database.py`, `visu_nodes.type`), das
+    `INSERT ... ON CONFLICT` wirft, und die (heute atomare) Transaktion aus
+    Lesen/Schreiben/Abraeumen wird ohne jede Wirkung zurueckgerollt.
+    """
+    await _insert_node(db, "seite", config=PageConfig(widgets=[_widget(x=1)]))
+    await _save(db, "seite", PageConfig(widgets=[_widget(x=2)]))
+    vor_dem_import = await _versions(db, "seite")
+    assert vor_dem_import  # Vorbedingung: es gibt ueberhaupt etwas zu verlieren.
+
+    ergebnis = await _config_import(
+        db,
+        _exported_node("seite", PageConfig(widgets=[_widget(x=99)]), node_type="BOGUS"),
+    )
+
+    assert any("seite" in fehler for fehler in ergebnis.errors)
+    assert ergebnis.visu_nodes_upserted == 0
+    # Der Stand von VOR dem gescheiterten Import steht unveraendert da ...
+    assert (await _load(db, "seite")).widgets[0].x == 2
+    # ... und genau deshalb ist sein Verlauf weiterhin die richtige Antwort.
+    assert await _versions(db, "seite") == vor_dem_import

@@ -701,3 +701,67 @@ describe('visuEditor - der Entwurf fuer die Vorschau', () => {
     expect(store.previewDraft).toBeNull()
   })
 })
+
+/**
+ * DIE HINRICHTUNG von Micsi/openbridgeserver#187 (Folge-Welle F2, Issue #187):
+ * Canvas speichert Elemente -> die Seiteneigenschaften duerfen ihren naechsten
+ * eigenen Speicherplan nicht mehr auf `pageConfigs[id]` vom AUSWAEHLEN der
+ * Seite bauen, sonst schreibt er die Widget-Liste von davor zurueck
+ * (`utils/visuPageSavePlan.js` -> `pageBody()` spreadet `storedConfig`).
+ * `refreshPageConfig()` ist die Antwort: der Canvas ruft sie ueber `afterSave`
+ * (`VisuEditorView.vue` -> `nachSpeichern()`) nach jedem eigenen Speichern.
+ *
+ * Diese Richtung war schon geschlossen, bevor Aufgabe 1 der Folge-Welle begann
+ * (die GEGENRICHTUNG, Eigenschaften -> Canvas, ist erst hier dazugekommen und
+ * steht in `gui/tests/components/visu/VisuEditorCanvas.f2.spec.js`). Die Probe
+ * hier haelt fest, dass sie es bleibt.
+ */
+describe('visuEditor - refreshPageConfig (#187, Hinrichtung: Canvas speichert -> Eigenschaften lesen frisch)', () => {
+  it('liest die gespeicherte Konfiguration EINER Seite frisch ein, ohne den Baum neu zu laden', async () => {
+    const store = await loadedStore()
+    expect(store.pageConfigs.home.widgets).toEqual([])
+
+    const frischeWidgets = [{ id: 'w1', name: 'Vom Canvas gespeichert', type: 'Toggle', config: {} }]
+    visuApi.getPage.mockImplementation((id) =>
+      id === 'home'
+        ? Promise.resolve({ data: { ...CONFIGS.home, widgets: frischeWidgets } })
+        : Promise.resolve({ data: JSON.parse(JSON.stringify(CONFIGS[id] ?? {})) }),
+    )
+    const treeVorher = visuApi.tree.mock.calls.length
+
+    await store.refreshPageConfig('home')
+
+    expect(store.pageConfigs.home.widgets).toEqual(frischeWidgets)
+    // Ein Neuladen des GANZEN Baums waere mehr, als hier noetig ist - und teurer.
+    expect(visuApi.tree.mock.calls.length).toBe(treeVorher)
+  })
+
+  it('schreibt dabei nichts - ein reines GET, kein neuer Schreiber', async () => {
+    const store = await loadedStore()
+    await store.refreshPageConfig('home')
+    expect(visuApi.savePage).not.toHaveBeenCalled()
+  })
+
+  it('bewahrt den frisch gelesenen Stand vor dem naechsten Speicherplan der Seiteneigenschaften', async () => {
+    // Genau das Szenario aus #187: der Canvas hat ein Widget gespeichert, DANACH
+    // speichert das Eigenschaftsformular (z. B. nur den Skin). Ohne das
+    // Nachlesen baute `planPageSave()` seine Nutzlast auf der alten,
+    // widget-losen Konfiguration und schriebe die neue Kachel weg.
+    const store = await loadedStore()
+    await store.select('home')
+
+    const frischeWidgets = [{ id: 'w1', name: 'Vom Canvas gespeichert', type: 'Toggle', config: {} }]
+    visuApi.getPage.mockImplementation((id) =>
+      id === 'home'
+        ? Promise.resolve({ data: { ...CONFIGS.home, widgets: frischeWidgets } })
+        : Promise.resolve({ data: JSON.parse(JSON.stringify(CONFIGS[id] ?? {})) }),
+    )
+    await store.refreshPageConfig('home')
+
+    store.draft.name = 'M5 Home, Skin gesetzt'
+    await store.save()
+
+    const [, body] = visuApi.savePage.mock.calls.at(-1)
+    expect(body.widgets).toEqual(frischeWidgets)
+  })
+})

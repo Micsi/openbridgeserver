@@ -77,7 +77,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { visuApi } from '@/api/visu'
-import { parseEditorJson, toEditorJson } from '@/utils/visuPageJson'
+import { canonicalJson, parseEditorJson, toEditorJson } from '@/utils/visuPageJson'
 import {
   DEFAULT_GRID,
   GUIDE_TOLERANCE,
@@ -172,6 +172,23 @@ const widgets = ref([])
 const storedWidgets = ref([])
 /** Der Rest der `PageConfig` (grid_cols, includes, popup ...) - unveraendert durchgereicht. */
 const base = ref(null)
+/**
+ * DERSELBE Rest der `PageConfig`, wie er GESPEICHERT ist (#187, Gegenrichtung).
+ *
+ * `base.value` ist der ENTWURF: die Textansicht schreibt ihn bei jeder
+ * Eingabe komplett neu (`adoptEdited()`), noch bevor „Speichern" auch nur
+ * gedrueckt wurde. Fuer `mergeWithFresh()` unten wird aber ein Stand
+ * gebraucht, der NUR beim Laden und nach einem erfolgreichen Speichern
+ * weiterrueckt - sonst saehe der Vergleich „hat der Canvas dieses Feld
+ * gegenueber seinem letzten Laden veraendert?" eine JSON-Bearbeitung immer
+ * als „unveraendert" (`base.value` traegt die Bearbeitung ja schon), und die
+ * Zusammenfuehrung naehme faelschlich den frischen Server-Stand statt der
+ * Eingabe des Autors - GENAU DAS ist im Vitest-Lauf so aufgefallen (E13:
+ * eine Umbenennung/Bindung/Loeschung aus der Textansicht kippte beim
+ * Speichern zurueck). Neben `storedWidgets`/`storedSettings`, die denselben
+ * Unterschied schon fuer Widgets und Modus/Raster/Breakpoints/Skin kennen.
+ */
+const storedBase = ref(null)
 const nodeName = ref('')
 const nodeKind = ref('normal')
 /** Die Seiteneigenschaften, wie der Autor sie gerade eingestellt hat. */
@@ -431,6 +448,7 @@ function adopt(config) {
   // Textansicht angeordnet hatte, ist damit erledigt.
   jsonAuthored = null
   base.value = config
+  storedBase.value = config
   const stored = readPageSettings(config)
   Object.assign(storedSettings, stored)
   settings.mode = stored.mode
@@ -577,7 +595,70 @@ async function loadLayers() {
 function confirmed(server, wanted) {
   if (!server || typeof server !== 'object') return false
   if (!sameSettings(readPageSettings(server), readPageSettings(wanted))) return false
+  // DIE FREMDEN FELDER GEHOEREN ZUR SCHRANKE DAZU (#187, Gegenrichtung). Seit
+  // `mergeWithFresh()` unten legt dieser Canvas auch Felder ab, die er selbst
+  // gar nicht bearbeitet (Includes, `ignore_global_includes`, Popup) - kommen
+  // SIE nicht an, waere „Gespeichert" derselbe falsche Erfolg wie eine
+  // verlorene Koordinate.
+  if (canonicalJson(wanted.includes ?? []) !== canonicalJson(server.includes ?? [])) return false
+  if (Boolean(wanted.ignore_global_includes) !== Boolean(server.ignore_global_includes)) return false
+  if (canonicalJson(wanted.popup ?? null) !== canonicalJson(server.popup ?? null)) return false
   return widgetSignature(server.widgets) === widgetSignature(wanted.widgets)
+}
+
+/**
+ * DREI STAENDE ZU EINEM ZUSAMMENGEFUEHRT (#187, die Gegenrichtung).
+ *
+ * Live gemessen: Skin aendern und einen Include entfernen ueber die
+ * Seiteneigenschaften, speichern; danach ein Widget im Canvas umbenennen und
+ * dort speichern - Skin und die gesamte Include-Liste kippten still zurueck,
+ * mit gruener Quittung. Ursache: dieser Canvas schrieb seine Teilsicht auf dem
+ * Stand des LETZTEN LADENS (`base.value`) fort - Felder, die er selbst nie
+ * anfasst (Skin, Includes, `ignore_global_includes`, Popup), reisten aus einer
+ * Momentaufnahme mit, die laengst ueberholt sein konnte. Die Hinrichtung
+ * (Canvas speichert -> die Seiteneigenschaften lesen danach frisch,
+ * `refreshPageConfig` im Store) war bereits geschlossen; es fehlte diese
+ * Richtung.
+ *
+ * ZWEI WEGE standen zur Wahl: (a) dieser Canvas liest nach jedem Speichern der
+ * Seiteneigenschaften neu, oder (b) er fuehrt seinen Stand kurz vor dem
+ * SCHREIBEN mit dem frischen Server-Stand zusammen. Weg (b) - hier umgesetzt -
+ * ist der gruendlichere: er kennt keine Feldliste, die gepflegt werden muss,
+ * und er passt zu der Schranke, die ohnehin schon vor jedem Schreiben steht
+ * (`matchesJsonView`).
+ *
+ * DIE REGEL JE FELD: hat DIESER Canvas das Feld gegenueber seinem eigenen
+ * letzten Laden (`originalBase`) veraendert, gewinnt seine Aenderung - sonst
+ * gewinnt der frische Server-Stand (`fresh`). Das gilt gleichermassen fuer
+ * Felder, die der Canvas besitzt (Modus, Raster, Breakpoints, Widgets) und fuer
+ * solche, die er nur durchreicht (Skin, Includes, `ignore_global_includes`,
+ * Popup) - inklusive des Falls, dass der Autor sie ueber die TEXTANSICHT
+ * geaendert hat (die serialisiert die ganze Seite, nicht nur die Widgets).
+ *
+ * KEIN NEUER SCHREIBER: das hier ist reine Berechnung auf zwei bereits
+ * gelesenen Staenden (`storedBase.value` und ein zusaetzliches `GET`, kein
+ * `PUT`). Geschrieben wird weiterhin genau einmal, an derselben Stelle wie
+ * zuvor.
+ *
+ * `originalBase` ist ausdruecklich `storedBase.value`, NICHT `base.value`:
+ * `base.value` ist der laufende Entwurf und traegt eine JSON-Bearbeitung
+ * schon, bevor „Speichern" gedrueckt wurde - der Vergleich gegen ihn saehe
+ * eine Textaenderung faelschlich als „unveraendert" und naehme den frischen
+ * Server-Stand statt der Eingabe des Autors (im Vitest-Lauf so gefunden,
+ * E13 - siehe `storedBase` oben).
+ */
+function mergeWithFresh(originalBase, wanted, fresh) {
+  const merged = { ...(fresh || {}) }
+  const seiten = new Set([
+    ...Object.keys(wanted || {}),
+    ...Object.keys(fresh || {}),
+  ])
+  for (const feld of seiten) {
+    const eigen = (wanted || {})[feld]
+    const geladen = (originalBase || {})[feld]
+    if (canonicalJson(eigen ?? null) !== canonicalJson(geladen ?? null)) merged[feld] = eigen
+  }
+  return merged
 }
 
 /**
@@ -640,9 +721,16 @@ async function save() {
     return
   }
   try {
-    await visuApi.savePage(props.pageId, wanted)
+    // ALLE WEGE FUEHREN IHREN STAND KURZ VOR DEM SCHREIBEN ZUSAMMEN (#187,
+    // Gegenrichtung): ein zusaetzliches `GET`, kein zweites `PUT`. Ohne dieses
+    // Nachlesen schriebe `wanted` seine Momentaufnahme vom letzten Laden fort
+    // und kippte damit zurueck, was die Seiteneigenschaften seitdem gespeichert
+    // haben (Skin, Includes, `ignore_global_includes`, Popup).
+    const fresh = (await visuApi.getPage(props.pageId))?.data ?? null
+    const merged = fresh ? mergeWithFresh(storedBase.value, wanted, fresh) : wanted
+    await visuApi.savePage(props.pageId, merged)
     const server = (await visuApi.getPage(props.pageId))?.data ?? null
-    if (!confirmed(server, wanted)) {
+    if (!confirmed(server, merged)) {
       errorKey.value = 'save'
       return
     }
@@ -704,13 +792,19 @@ function persistOrder() {
       do {
         orderPending = false
         const payload = configWith({ ...storedSettings }, orderedStored())
-        await visuApi.savePage(props.pageId, payload)
+        // Dieselbe Zusammenfuehrung wie in `save()` (#187, Gegenrichtung): auch
+        // die Sofort-Sicherung der Reihenfolge schreibt sonst ihre Momentaufnahme
+        // vom letzten Laden fort und kippte damit Skin/Includes zurueck, wenn die
+        // Seiteneigenschaften seitdem gespeichert haben.
+        const fresh = (await visuApi.getPage(props.pageId))?.data ?? null
+        const merged = fresh ? mergeWithFresh(storedBase.value, payload, fresh) : payload
+        await visuApi.savePage(props.pageId, merged)
         const server = (await visuApi.getPage(props.pageId))?.data ?? null
-        ok = confirmed(server, payload)
+        ok = confirmed(server, merged)
         // Der neue Boden ist, was der Server WIRKLICH haelt - auch im
         // Fehlerfall. `storedWidgets` bildet den Server ab, nicht den Wunsch;
         // sonst faehrt der naechste Zug auf einer Behauptung weiter.
-        storedWidgets.value = (server?.widgets ?? payload.widgets).map((w) => ({ ...w }))
+        storedWidgets.value = (server?.widgets ?? merged.widgets).map((w) => ({ ...w }))
       } while (orderPending)
       errorKey.value = ok ? null : 'save'
     } catch {

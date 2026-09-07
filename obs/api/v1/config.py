@@ -1166,13 +1166,12 @@ async def import_config(
         remaining = list(body.visu_nodes)
 
         # Vorhandene IDs als bereits eingefügt markieren (damit parent_id-Referenzen korrekt aufgelöst werden).
-        # Der Stand dazu wird EINMAL vorweg gelesen, vor dem ersten Schreibvorgang: danach steht in der
-        # Spalte schon das Eingespielte, und der Vergleich unten traefe sich selbst.
-        existing_rows = await db.fetchall("SELECT id, page_config FROM visu_nodes")
-        page_config_before: dict[str, str | None] = {}
+        # Dieser Stand dient NUR der Topologie (Eltern vor Kindern) - er braucht keine
+        # Sperre, denn er entscheidet keine Frage, die ein gleichzeitiger Schreiber
+        # veralten lassen könnte.
+        existing_rows = await db.fetchall("SELECT id FROM visu_nodes")
         for r in existing_rows:
             inserted_ids.add(r["id"])
-            page_config_before[r["id"]] = r["page_config"]
 
         for _pass in range(len(remaining) + 1):
             if not remaining:
@@ -1181,32 +1180,61 @@ async def import_config(
             for node in remaining:
                 if node.parent_id is None or node.parent_id in inserted_ids:
                     try:
-                        await db.execute_and_commit(
-                            """INSERT INTO visu_nodes
-                               (id, parent_id, name, type, node_order, icon, page_config, created_at, updated_at, created_by)
-                               VALUES (?,?,?,?,?,?,?,?,?,?)
-                               ON CONFLICT(id) DO UPDATE
-                               SET parent_id=excluded.parent_id, name=excluded.name, type=excluded.type,
-                                   node_order=excluded.node_order, icon=excluded.icon,
-                                   page_config=excluded.page_config, updated_at=excluded.updated_at""",
-                            (
-                                node.id,
-                                node.parent_id,
-                                node.name,
-                                node.type,
-                                node.node_order,
-                                node.icon,
-                                node.page_config,
-                                now,
-                                now,
-                                _user if node.type == "PAGE" else None,
-                            ),
-                        )
+                        # DER VERGLEICHSWERT UND DER SCHREIBVORGANG IN DERSELBEN
+                        # SPERRE (#188, Wettlauf).
+                        #
+                        # Vorher wurde `page_config_before` für ALLE Seiten EINMAL
+                        # VORWEG gelesen (vor der gesamten Schleife), lange bevor
+                        # diese eine Zeile geschrieben wird. Zwischen diesem Lesen
+                        # und dem `INSERT ... ON CONFLICT` unten kann ein
+                        # Autorenklick (`PUT /visu/pages/{id}`) genau dieselbe Seite
+                        # speichern - dann entscheidet „Verlauf abräumen?" gegen
+                        # einen Vergleichswert, der zu diesem Zeitpunkt schon
+                        # veraltet ist: entweder räumt der Import fälschlich den
+                        # Verlauf einer Änderung ab, die er selbst gar nicht
+                        # gemacht hat, oder er lässt fälschlich den Verlauf eines
+                        # Standes stehen, den er gerade überschrieben hat.
+                        #
+                        # `db.transaction()` hält den Schreib-Lock ohne Lücke über
+                        # BEIDE Schritte - das Lesen des bisherigen `page_config`
+                        # UND den Upsert -, sodass kein gleichzeitiger Schreiber
+                        # mehr dazwischenkommen kann.
+                        #
+                        # ERST DER UPSERT, DANN DAS ABRÄUMEN - bewusst weiterhin in
+                        # dieser Reihenfolge: scheitert der Upsert, bleibt der
+                        # Verlauf stehen, denn an der Seite hat sich nichts
+                        # geändert. Die Probe dafür lässt den Upsert künstlich
+                        # scheitern (`tests/unit/test_visu_page_versions.py`).
+                        async with db.transaction():
+                            before_row = await db.fetchone(
+                                "SELECT page_config FROM visu_nodes WHERE id=?", (node.id,),
+                            )
+                            page_config_before = before_row["page_config"] if before_row else None
+                            await db.execute_and_commit(
+                                """INSERT INTO visu_nodes
+                                   (id, parent_id, name, type, node_order, icon, page_config, created_at, updated_at, created_by)
+                                   VALUES (?,?,?,?,?,?,?,?,?,?)
+                                   ON CONFLICT(id) DO UPDATE
+                                   SET parent_id=excluded.parent_id, name=excluded.name, type=excluded.type,
+                                       node_order=excluded.node_order, icon=excluded.icon,
+                                       page_config=excluded.page_config, updated_at=excluded.updated_at""",
+                                (
+                                    node.id,
+                                    node.parent_id,
+                                    node.name,
+                                    node.type,
+                                    node.node_order,
+                                    node.icon,
+                                    node.page_config,
+                                    now,
+                                    now,
+                                    _user if node.type == "PAGE" else None,
+                                ),
+                            )
+                            if page_config_before != node.page_config:
+                                await db.execute_and_commit("DELETE FROM visu_page_versions WHERE node_id=?", (node.id,))
                         inserted_ids.add(node.id)
                         result.visu_nodes_upserted += 1
-
-                        if page_config_before.get(node.id) != node.page_config:
-                            await db.execute_and_commit("DELETE FROM visu_page_versions WHERE node_id=?", (node.id,))
 
                         await db.execute_and_commit("DELETE FROM authz_visu_page_policies WHERE node_id=?", (node.id,))
                         if node.access is not None:
