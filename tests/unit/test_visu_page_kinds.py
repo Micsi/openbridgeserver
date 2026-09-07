@@ -1030,6 +1030,95 @@ async def test_176_restoring_a_concealed_include_does_not_block_adding_a_new_vis
     assert await _raw_includes(db, "quelle") == ["verdeckt", "neu"]
 
 
+# ── Runde 3, Befund 1: Sichtbarkeitswechsel zwischen Lesen und Schreiben ─────
+
+
+@pytest.mark.asyncio
+async def test_176_visibility_flip_to_visible_between_read_and_write_does_not_delete_the_include(
+    db: Database,
+) -> None:
+    """Der Kritiker maß: die Wiederherstellung aus Runde 2 prüft die Sichtbarkeit
+    nur zum SCHREIB-Zeitpunkt. Bekommt alice (z. B. durch eine Rollenänderung
+    eines Admins) NACH ihrem maskierten Lesen, aber VOR ihrem Speichern Zugriff
+    auf 'verdeckt', hätte sie es beim Lesen trotzdem nie gesehen - ihre jetzige
+    Sicht sagt nichts über ihren Wissensstand beim Lesen aus. Ein unveränderter
+    Round-Trip darf das Include deshalb weiterhin nicht löschen.
+
+    Gegen den unreparierten Stand (nur `_can_discover_node` zum Schreib-
+    Zeitpunkt, ohne `_was_visible_before`) rot: das Include wurde gelöscht.
+    """
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(db, "quelle", access="public", config=PageConfig(includes=["verdeckt"], widgets=[_widget()]))
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
+    )
+    alice = Principal(subject="alice", type="user", is_admin=False)
+
+    seen_by_alice = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+    assert seen_by_alice.includes == []  # zum Lesezeitpunkt verdeckt
+
+    # Sichtbarkeitswechsel NACH dem Lesen, VOR dem Speichern.
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'verdeckt', 'operator', 'allow')""",
+    )
+
+    await visu_api.save_page(node_id="quelle", config=seen_by_alice, request=_request(), db=db, _user=alice)
+
+    assert await _raw_includes(db, "quelle") == [
+        "verdeckt"
+    ], "ein erst zwischen Lesen und Speichern sichtbar gewordenes Include darf nicht verloren gehen"
+
+
+# ── Runde 3, Befund 2: ein wiederhergestellter Eintrag darf keinen fremden ───
+# ── Zyklus gegen den Autor wenden ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_176_a_restored_concealed_include_does_not_block_an_unrelated_save_via_a_raw_cycle(
+    db: Database,
+) -> None:
+    """'verdeckt' wurde roh (#177-Stil) so manipuliert, dass es auf 'quelle'
+    zurückzeigt (Zyklus). alice will nur ein zweites, von 'verdeckt' unabhängiges
+    Widget speichern und reicht - weil sie 'verdeckt' nie sah - eine Config ohne
+    'verdeckt' ein. `_restore_concealed_includes` hängt 'verdeckt' serverseitig
+    wieder an; die Zyklusprüfung darf über diesen ihr untergeschobenen, für sie
+    unsichtbaren Eintrag aber nicht scheitern - sie hat ihn nie eingereicht und
+    kann weder ihn noch den Zyklus sehen oder beheben.
+
+    Gegen den unreparierten Stand (Zyklusprüfung ohne Ausnahme für
+    wiederhergestellte Einträge) rot: 400 "Include-Zyklus: die Seite inkludiert
+    sich mittelbar selbst", obwohl alice 'verdeckt' nie anfasste.
+    """
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(db, "quelle", access="public", config=PageConfig(includes=["verdeckt"], widgets=[_widget()]))
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
+    )
+
+    # Roh: verdeckt -> quelle (Zyklus), wie in #177 beschrieben.
+    await db.execute_and_commit(
+        "UPDATE visu_nodes SET page_config = ? WHERE id = ?",
+        (json.dumps({"widgets": [], "includes": ["quelle"]}), "verdeckt"),
+    )
+
+    alice = Principal(subject="alice", type="user", is_admin=False)
+    seen_by_alice = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+    assert seen_by_alice.includes == [], "verdeckt bleibt für alice maskiert"
+
+    # Inhaltlich unabhängige Änderung - ein zweites Widget.
+    seen_by_alice.widgets.append(WidgetInstance(id="w-2", name="Schalter", type="switch", x=2, y=0, w=2, h=2))
+    await visu_api.save_page(node_id="quelle", config=seen_by_alice, request=_request(), db=db, _user=alice)
+
+    assert await _raw_includes(db, "quelle") == ["verdeckt"]
+    saved = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user="admin")
+    assert [widget.id for widget in saved.widgets] == ["w-1", "w-2"]
+
+
 def test_duplicate_includes_are_deduplicated_in_the_model_itself() -> None:
     # Die Normalisierung sitzt im Modell und greift damit auf jedem Weg
     # (PUT, Import, Kopie, Lesen) und idempotent.

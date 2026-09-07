@@ -341,14 +341,61 @@ async def _mask_concealed_includes(db: Database, config: PageConfig, principal: 
     return config.model_copy(update={"includes": visible})
 
 
+async def _was_visible_before(db: Database, principal: Principal, target_id: str, threshold: datetime) -> bool:
+    """War ``target_id`` für ``principal`` schon sichtbar, bevor die gerade zu
+    überschreibende Fassung der Quellseite gespeichert wurde (Micsi/openbridgeserver#176,
+    Runde 3, Befund 1)?
+
+    Beantwortet die Wettlauf-Frage zwischen Lesen und Speichern: wechselt die
+    Sichtbarkeit eines Include-Ziels für den Principal von verdeckt auf
+    sichtbar, NACHDEM er die (noch maskierte) Konfiguration gelesen, aber
+    BEVOR er sie gespeichert hat, darf `_restore_concealed_includes` das
+    fehlende Ziel nicht als „er sieht es ja jetzt, also war die Entfernung
+    bewusst" werten - er hat es nie gesehen, die aktuelle Sichtbarkeit sagt
+    nichts über den Stand bei seinem Lesen aus. Reines
+    Jetzt-Zeitpunkt-`_can_discover_node` kann diese beiden Fälle nicht
+    unterscheiden.
+
+    Für `access != 'user'`-Ziele oder Admin-Principals gibt es keinen Wettlauf:
+    die Sichtbarkeit ist strukturell (nie verdeckt) bzw. dauerhaft - `True`.
+    Für `user`-geschützte Ziele wird geprüft, ob bereits vor ``threshold`` ein
+    aktiver Allow-Grant auf genau diesem Knoten bestand. Das ist eine bewusst
+    einfache Näherung des zentralen Authz-Entscheiders (`authorize_visu_page`):
+    Vererbung über Vorfahren und Deny-Overrides werden hier nicht nachgebildet,
+    um die zentrale Engine nicht zu duplizieren. Ein Ausbleiben eines Treffers
+    heißt deshalb nicht zwingend „erst kürzlich sichtbar geworden" - im Zweifel
+    wird zugunsten des Datenerhalts entschieden (wiederhergestellt statt
+    endgültig gelöscht), nie umgekehrt.
+    """
+    if principal.type != "user":
+        return False
+    if principal.is_admin:
+        return True
+    access, _ = await _resolve_access_with_node(db, target_id)
+    if access != "user":
+        return True
+    row = await db.fetchone(
+        """SELECT MIN(created_at) AS earliest FROM authz_node_roles
+           WHERE principal_type = 'user' AND principal_id = ?
+             AND node_type = 'visu_page' AND node_id = ? AND effect = 'allow'""",
+        (principal.subject, target_id),
+    )
+    earliest = row["earliest"] if row is not None else None
+    if not earliest:
+        return False
+    return datetime.fromisoformat(str(earliest)) <= threshold
+
+
 async def _restore_concealed_includes(
     db: Database,
     stored_includes: list[str],
     incoming_includes: list[str],
     principal: Principal | None,
-) -> list[str]:
+    *,
+    stored_at: datetime,
+) -> tuple[list[str], frozenset[str]]:
     """Verhindert stillen Datenverlust durch die Maskierung aus `_mask_concealed_includes`
-    (Micsi/openbridgeserver#176, Runde 2, Befund 1).
+    (Micsi/openbridgeserver#176, Runde 2, Befund 1; Runde 3, Befund 1).
 
     Ein Principal ohne Sicht auf ein Include-Ziel bekommt es beim Lesen nicht zu
     sehen (maskiert) - schickt er die so gelesene Konfiguration unverändert
@@ -358,24 +405,49 @@ async def _restore_concealed_includes(
     still löschen - schlimmer als das Orakel, das die Maskierung schließt.
 
     Deshalb: ein bereits gespeicherter Eintrag, der beim Speichern fehlt, wird
-    nur dann wirklich entfernt, wenn der schreibende Principal ihn hätte sehen
-    können (er hat sich dann bewusst dagegen entschieden). War er für ihn
-    verdeckt, bleibt er stehen - der Principal kann ihn über diesen Weg also
-    weder erfahren (der Rückgabewert von ``save_page`` ist 204 ohne Body, und
-    ein erneutes Lesen bleibt maskiert) noch verändern. Reihenfolge: gespeicherte
-    Einträge (gehalten oder wiederhergestellt) zuerst in ihrer alten Reihenfolge,
-    danach neue Einträge in der eingereichten Reihenfolge.
+    nur dann wirklich entfernt, wenn der schreibende Principal ihn schon vor
+    dieser Fassung sehen konnte (er hat sich dann nachweislich informiert
+    dagegen entschieden, siehe `_was_visible_before`). War er für ihn verdeckt
+    oder ist seine Sichtbarkeit erst zwischen Lesen und Schreiben entstanden,
+    bleibt er stehen - der Principal kann ihn über diesen Weg also weder
+    erfahren (der Rückgabewert von ``save_page`` ist 204 ohne Body, und ein
+    erneutes Lesen zeigt ihn erst nach einem frischen, informierten Lesen)
+    noch verändern. Reihenfolge: gespeicherte Einträge (gehalten oder
+    wiederhergestellt) zuerst in ihrer alten Reihenfolge, danach neue Einträge
+    in der eingereichten Reihenfolge.
+
+    Gibt zusätzlich die Menge der tatsächlich wiederhergestellten IDs zurück -
+    Einträge, die der schreibende Principal in dieser Anfrage NICHT eingereicht
+    hat, sondern die allein durch diese Funktion erhalten blieben. `save_page`
+    nimmt genau diese Menge von der Zyklusprüfung aus (Runde 3, Befund 2): der
+    Autor hat sie nie gesehen und kann weder ihren Inhalt noch einen darüber
+    laufenden Zyklus beheben. Eine dem Autor eigentlich verdeckte ID, die er
+    trotzdem selbst (z. B. aus einem alten Export) einreicht, zählt nicht dazu
+    - sie ist in `incoming_includes` vorhanden und läuft weiterhin über die
+    volle Prüfung aus #177/#178.
     """
     if not stored_includes:
-        return incoming_includes
+        return incoming_includes, frozenset()
     incoming_set = set(incoming_includes)
     stored_set = set(stored_includes)
     merged: list[str] = []
+    restored: set[str] = set()
     for target_id in stored_includes:
-        if target_id in incoming_set or not await _can_discover_node(db, target_id, principal):
+        if target_id in incoming_set:
             merged.append(target_id)
+            continue
+        if not await _can_discover_node(db, target_id, principal):
+            merged.append(target_id)
+            restored.add(target_id)
+            continue
+        if principal is None or not await _was_visible_before(db, principal, target_id, stored_at):
+            merged.append(target_id)
+            restored.add(target_id)
+            continue
+        # sichtbar, und nachweislich schon vor dieser Fassung sichtbar: die
+        # bewusste Entfernung durch einen informierten Principal wird respektiert.
     merged.extend(target_id for target_id in incoming_includes if target_id not in stored_set)
-    return merged
+    return merged, frozenset(restored)
 
 
 async def _node_response_for_principal(db: Database, node_id: str, principal: Principal | None) -> VisuNode:
@@ -512,6 +584,7 @@ async def _validate_page_kind_config(
     config: PageConfig,
     *,
     previous_includes: Iterable[str] = (),
+    restored_include_ids: frozenset[str] = frozenset(),
 ) -> None:
     """Setzt das Seitentyp-Modell durch, bevor eine Konfiguration gespeichert wird.
 
@@ -534,6 +607,20 @@ async def _validate_page_kind_config(
     sichtbares geprüft (Test: ``test_a_concealed_include_target_is_checked_without_authz_filtering``).
     Ebenso wenig der Import: er validiert nach dem Einfügen streng und lehnt tote
     Ziele ab. Neue und geänderte Einträge bleiben streng geprüft.
+
+    Die Zyklusprüfung selbst kennt **keine** ``previous_includes``-Ausnahme: sie
+    läuft immer über die volle Liste, auch für unveränderte, bereits gespeicherte
+    Einträge (#177/#178, siehe ``test_177_a_cycle_set_raw_in_the_db_still_fails_an_unchanged_round_trip``)
+    - ein Autor, der einen Eintrag unverändert zurückschickt, hatte ihn gesehen
+    und hätte ihn entfernen können. ``restored_include_ids`` ist die einzige,
+    bewusst engere Ausnahme davon (Runde 3, Befund 2): IDs, die
+    ``_restore_concealed_includes`` dem Autor untergeschoben hat, weil sie für
+    ihn beim Schreiben nicht sichtbar waren - er hat sie nie eingereicht, kann
+    weder ihren Inhalt noch einen darüber laufenden Zyklus sehen oder beheben,
+    und darf deshalb nicht an ihnen scheitern. Nur diese IDs werden als
+    Startpunkt der Traversierung ausgenommen; erreicht ein neuer oder direkt
+    eingereichter Eintrag über sie doch wieder ``node_id``, schlägt die Prüfung
+    weiterhin an (die Traversierung selbst filtert nicht).
     """
     if config.popup is not None and kind != "popup":
         raise HTTPException(status_code=400, detail="Popup-Konfiguration ist nur für Seitentyp 'popup' zulässig")
@@ -556,7 +643,8 @@ async def _validate_page_kind_config(
             raise HTTPException(status_code=400, detail="Include-Ziel ist keine Seite")
         if row["kind"] == "popup":
             raise HTTPException(status_code=400, detail="Eine Popup-Seite kann nicht inkludiert werden")
-    await _assert_no_include_cycle(db, node_id, config.includes)
+    cycle_roots = [target_id for target_id in config.includes if target_id not in restored_include_ids]
+    await _assert_no_include_cycle(db, node_id, cycle_roots)
 
 
 async def _drop_include_references(
@@ -1936,14 +2024,16 @@ async def save_page(
     if node.type != "PAGE":
         raise HTTPException(status_code=400, detail="Knoten ist keine Seite")
 
-    # #176 Runde 2: ein Include, das für diesen Principal verdeckt ist (er hat es
-    # beim Lesen also nie gesehen), darf ein unveränderter Round-Trip nicht
+    # #176 Runde 2/3: ein Include, das für diesen Principal verdeckt ist (er hat
+    # es beim Lesen also nie gesehen) - oder dessen Sichtbarkeit erst zwischen
+    # Lesen und Schreiben entstand -, darf ein unveränderter Round-Trip nicht
     # stillschweigend löschen - siehe `_restore_concealed_includes`.
-    restored_includes = await _restore_concealed_includes(
+    restored_includes, restored_include_ids = await _restore_concealed_includes(
         db,
         (node.page_config.includes if node.page_config else []),
         config.includes,
         principal,
+        stored_at=node.updated_at,
     )
     if restored_includes != config.includes:
         config = config.model_copy(update={"includes": restored_includes})
@@ -1990,6 +2080,7 @@ async def save_page(
         node.kind,
         config,
         previous_includes=(node.page_config.includes if node.page_config else []),
+        restored_include_ids=restored_include_ids,
     )
 
     access, defining_node_id = await _resolve_access_with_node(db, node_id)
