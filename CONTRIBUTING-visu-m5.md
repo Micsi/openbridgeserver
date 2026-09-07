@@ -175,12 +175,57 @@ class VisuNode(BaseModel):
   Reihenfolge bleibt); Teil B komponiert jede Seite also höchstens einmal und braucht kein eigenes
   Entdoppeln.
 
-  **Grenze der Verdeckung, offen für Teil B/C1:** `GET /visu/pages/{id}` liefert `includes` roh. Eine
-  lesbare Seite gibt damit die IDs ihrer Include-Quellen preis, auch wenn diese auf der
-  Navigationsebene verdeckt sind – zusammen mit dem Unterschied 401/403 (existiert) vs. 404
-  (existiert nicht) ein Existenz-Orakel. Derselbe Weg existiert seit V1 über
-  `widget.config.source_page_id`; M5 erweitert ihn, erfindet ihn nicht. Verdeckung gilt also für
-  Existenz **in der Navigation**, nicht für die ID in einer fremden Seiten-Konfiguration.
+  **Micsi/openbridgeserver#176, zurückgebaut in Runde 4 - Befund dokumentiert, Entscheidung
+  liegt beim Eigentümer.** Das Issue bleibt ausdrücklich **offen**: ein Informationsleck bewusst
+  offen zu lassen ist keine Agenten-Entscheidung, auch dann nicht, wenn drei gemessene
+  Reparaturversuche mehr Schaden angerichtet haben als das Leck selbst. Was hier steht, ist die
+  Beweislage für diese Entscheidung, nicht die Entscheidung. Runden 1-3 maskierten Include-Ziele in `includes`, die für den lesenden
+  Principal auf Navigationsebene verdeckt sind, und versuchten anschließend, dieselbe Maskierung
+  über einen Schreibvorgang hinweg verlustfrei zu erhalten. Jede der drei Runden schloss den zuvor
+  gemessenen Befund und maß dabei einen neuen, an derselben Stelle: Runde 1 maskierte nur `get_page`
+  (Orakel an vier weiteren Ausgängen blieb offen); Runde 2 schloss die vier weiteren Ausgänge und
+  führte eine Wiederherstellung ein, die genau dadurch **stillen Datenverlust** an einer anderen
+  Stelle einführte (ein verdecktes Include verschwand bei unverändertem Round-Trip); Runde 3 flickte
+  diesen Datenverlust mit einer Zeitstempel-Heuristik (`_was_visible_before`) und einer
+  Zyklus-Ausnahme für wiederhergestellte Einträge - **gemessen** brachte das einen **echten
+  Datenverlust bei zweimaligem Speichern derselben, nie neu gelesenen Nutzlast** (die Heuristik
+  „heilt sich selbst" nach dem ersten Schutz-Save, weil ihr Zeitanker `node.updated_at` durch genau
+  diesen Save vorrückt), eine unbelegte `<=`/`<`-Zeitgleichheitsgrenze, und eine Zyklus-Ausnahme, die
+  einen echten, roh gesetzten Zyklus über ein wiederhergestelltes Ziel unentdeckt ließ.
+
+  Der naheliegende vierte Versuch - das verdeckte Ziel durch einen an
+  (Quellseite, Ziel-ID, Server-Geheimnis) gebundenen, opaken Platzhalter ersetzen, den der Client
+  unverändert zurückschickt und der beim Schreiben zurückübersetzt wird - wurde entworfen und
+  gegen den echten Editor-Pfad geprüft (nicht nur das Backend): `gui/`s Entwurfs-/Speicherpfad
+  (`stores/visuEditor.js`, `utils/visuPageSavePlan.js`, `utils/visuPageValidation.js`,
+  `composables/useVisuEditorDraft.js`) reicht einen unbekannten `includes`-Eintrag tatsächlich
+  unverändert durch und scheitert nicht daran (`ladePageConfig` schluckt einen 404 für ein
+  unauflösbares Ziel bereits heute, R17-Fall). Trotzdem drei konkrete, im Rahmen von G1 nicht
+  auflösbare Gründe gegen die Umsetzung: (1) Der Vertrag in diesem Abschnitt legt sich hier
+  ausdrücklich auf **Maskieren durch Entfernen** fest (siehe die verworfene Alternative
+  „Signale vereinheitlichen" oben) - ein Platzhalter ist eine **dritte**, hier nicht evaluierte
+  Richtung, die Teil B/C1 zusätzlich zusagt, dass eine Seite maximal ein sichtbares Häppchen
+  „hier ist etwas, das du nicht sehen darfst" pro verdecktem Ziel bekommt (eine schwächere, aber
+  reale Abschwächung der bisherigen vollständigen Unsichtbarkeit) - eine Vertragsänderung dieser
+  Tragweite gehört nicht in einen Bugfix einer Backend-Validierungsgruppe. (2) Der aktuell einzige
+  reale Editor für `includes` (`gui/` `VisuEditorView`) ist `meta: { admin: true }` - also
+  routen-seitig auf `is_admin` beschränkt, der nie ein verdecktes Ziel sieht; die Probe deckt damit
+  nur einen heute nicht erreichbaren, zukünftigen (nicht-admin-)Konsumenten ab, während `frontend/`
+  und `packages/contract` (der eigentliche Vertragsträger für Teil B) laut Auftrag unberührt bleiben
+  müssen. (3) Der Platzhalter bräuchte ein Server-Geheimnis (wiederverwendet aus
+  `obs.api.auth`s JWT-Signierschlüssel) für einen fachlich fremden Zweck und hätte denselben
+  Rückbau der kompletten Runde-1/2/3-Testsuite (≈19 Proben) zur Folge wie der jetzige Rückbau - ohne
+  dass die drei benannten Restmängel einzeln, unabhängig geprüft werden könnten, bevor die ganze
+  Suite umgeschrieben ist.
+
+  **Entscheidung:** #176 wird ersatzlos zurückgebaut, exakt auf den Stand vor Runde 1
+  (`git diff 35c4fa39^:obs/api/v1/visu.py obs/api/v1/visu.py` zeigt nur noch die unabhängige,
+  weiterhin gültige #178-Änderung). `includes` wird an allen sechs Ausgängen wieder roh
+  ausgeliefert - dieselbe, bereits an dieser Stelle **bewusst offen gelassene** Klasse wie
+  `widget.config.source_page_id` in V1 (`WidgetRefInstance`, `frontend/`, R17): wer die Direktsonde
+  `GET /visu/pages/{id}` mit einer bereits bekannten ID fährt, erhält 403/401 vs. 404 - das ist eine
+  dem Zwei-Ebenen-Modell inhärente, unveränderte Eigenschaft, kein neu offener Punkt, und keine
+  Verschlechterung gegenüber dem Stand vor der M5-Folgewelle.
 - **`source_page_readonly`** wird aus dem aufgelösten Zugriffs-Level der Quellseite abgeleitet
   (dieselbe Regel wie `GET /widget-ref/{page_id}`: `access == "readonly"`).
   **Naht:** `GET /visu/pages/{id}` liefert das Ergebnis als Antwort-Header
@@ -197,12 +242,22 @@ class VisuNode(BaseModel):
 - **Grenzen der obigen Zusagen (vom Kritiker belegt, Teil B muss damit rechnen):**
   - Die Ausnahme fuer gespeicherte `includes` gilt fuer die Ziel-Pruefungen, **nicht** fuer Zyklus und
     Selbst-Include: die werden ueber die ganze Liste geprueft. Ein roh in die DB gesetzter Zyklus laesst
-    daher auch einen unveraenderten Round-Trip mit 400 scheitern (Micsi/openbridgeserver#177).
+    daher auch einen unveraenderten Round-Trip mit 400 scheitern - **gemessen und per Regressionsprobe
+    festgehalten** (`test_177_a_cycle_set_raw_in_the_db_still_fails_an_unchanged_round_trip`,
+    Micsi/openbridgeserver#177 blieb dabei ein Testluecken-, kein Verhaltensbefund: die 11.
+    Mutationsprobe des Teil-A-Kritikers hatte keine Probe, die diese Zeile toetet, obwohl das Verhalten
+    bereits korrekt war).
   - Die Dublettenfreiheit wirkt im Modell, also **auch beim Lesen**: die Antwort kann still von der
     gespeicherten Zeile abweichen, und ein unveraenderter Round-Trip schreibt die Bereinigung fest.
   - `GET /visu/nodes/{id}/export` und das Config-Backup lesen **roh** an der Modellschicht vorbei und
     sind daher nicht dublettenfrei. Wer Export-Daten weiterverarbeitet, dedupliziert selbst.
-  - `POST /visu/nodes/{id}/copy` validiert `includes` derzeit nicht (Micsi/openbridgeserver#178).
+  - `POST /visu/nodes/{id}/copy` validiert `includes` seit der G1-Folgewelle wie Speichern/Import
+    (Micsi/openbridgeserver#178 geschlossen): ein Nicht-Seiten-Knoten (LOCATION) mit `includes` in
+    seiner rohen `page_config` - nur ueber Restore/Migration/direkten DB-Zugriff moeglich, seit #166
+    weder speicher- noch importierbar - wird beim Kopieren mit 400 abgelehnt statt stillschweigend
+    vervielfacht; ein gueltig gespeicherter, inzwischen verwaister Eintrag einer echten Seite bleibt
+    dagegen kopierbar (dieselbe Ausnahme wie beim Speichern, damit die Kopie nicht strenger scheitert
+    als das Original).
 
 ### 2.2 Bewusste Abweichung von Edomi
 
@@ -351,3 +406,15 @@ Alle drei mit getrenntem Kritiker; jede vom Kritiker **überlebende Mutation** w
 3. **Branch-Basis:** `integ/visu-m5` vom Merge-Commit von #153, eigener Worktree (§2.5).
 4. **Referenz-Editoren:** alle sechs aus §1.1 (Edomi, ioBroker vis-2, Home Assistant, Grafana, Timberwolf, smartVISU/TabletUI).
 5. **Messlatte Editor:** Super-Set der besten Editoren, nicht V1-Parität (§1.1); Pixel-Autorenschaft ist Angebot, kein Zwang.
+
+### Offen, dem Eigentümer vorgelegt
+
+- **#176 (Existenzorakel über `includes`):** nach drei Reparaturrunden ersatzlos zurückgebaut, weil
+  jeder Versuch einen schwereren Mangel einführte als er behob (Datenverlust, blockierte Autoren).
+  Die vollständige Beweislage steht in §2.1. Zur Wahl stehen: die Grenze wie in V1
+  (`source_page_id`) bewusst offen lassen, oder den dort entworfenen Platzhalter-Weg freigeben -
+  der ist technisch machbar, wäre aber eine **Vertragsänderung** (eine verdeckte Seite würde als
+  „hier ist etwas, das du nicht sehen darfst" sichtbar, statt vollständig unsichtbar zu bleiben)
+  und berührt damit `packages/contract` und Teil B.
+- **#179 (Contract 1.14):** nicht begonnen. Der Bump hat einen strukturell roten Zwischenschritt;
+  einen roten PR zu mergen ist keine Agenten-Entscheidung.

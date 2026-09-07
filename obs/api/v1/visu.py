@@ -1427,7 +1427,27 @@ async def copy_node(
             new_pc = pc.model_copy(update={"widgets": new_widgets})
         else:
             new_pc = PageConfig()
+        # #178: dieselbe Validierung wie Speichern/Import, statt page_config
+        # unbesehen zu übernehmen. Ein Nicht-Seiten-Knoten mit `includes` (nur
+        # über Restore/Migration/direkten DB-Zugriff möglich, seit #166 weder
+        # speicher- noch importierbar) würde sonst stillschweigend vervielfacht -
+        # dieselbe Ablehnung wie im Import, keine stille Reparatur.
+        _validate_node_kind(source.type, source.kind)
+        if source.type != "PAGE" and new_pc.includes:
+            raise HTTPException(status_code=400, detail="Include-Konfiguration ist nur für Seiten (PAGE) zulässig")
         if source.type == "PAGE":
+            # `previous_includes` = die Einträge der Quelle: dieselbe Ausnahme wie
+            # bei einem unveränderten Speichern (§2.1), damit eine gültig
+            # gespeicherte, inzwischen verwaiste Quelle nicht strenger scheitert
+            # als das Original. Selbst-Include/Zyklus/Struktur-Regeln laufen
+            # trotzdem über die volle Liste.
+            await _validate_page_kind_config(
+                db,
+                new_id,
+                source.kind,
+                new_pc,
+                previous_includes=(pc.includes if pc else []),
+            )
             await _check_page_datapoint_policy(
                 db,
                 principal,

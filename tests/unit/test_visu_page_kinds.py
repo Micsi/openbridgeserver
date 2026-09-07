@@ -439,6 +439,38 @@ async def test_r14_diamond_graph_and_dangling_nested_target_stay_valid(db: Datab
 
 
 @pytest.mark.asyncio
+async def test_177_a_cycle_set_raw_in_the_db_still_fails_an_unchanged_round_trip(db: Database) -> None:
+    """Issue #177: die Zielprüfung entfällt für bereits gespeicherte Einträge
+    (§2.1), aber die Zyklusprüfung läuft immer über die volle Liste
+    (`_assert_no_include_cycle(db, node_id, config.includes)`, unbedingt am Ende
+    von `_validate_page_kind_config`) - auch für unveränderte Einträge. Ein
+    Zyklus, der roh in der DB gesetzt wurde (x->y regulär gespeichert, y->x roh
+    nachträglich gesetzt), lässt daher auch einen unveränderten Round-Trip von x
+    mit 400 scheitern; er wird nicht „nicht mehr erkannt". Gemessen gegen den
+    heutigen Stand (siehe Bericht) - dieser Test hält den Befund fest, damit ihn
+    eine spätere Änderung der Zielprüfungs-Ausnahme (z. B. würde sie versehentlich
+    auch auf `_assert_no_include_cycle` ausgedehnt) nicht stillschweigend
+    zunichtemacht.
+    """
+    await _insert_node(db, "x")
+    await _insert_node(db, "y")
+    await _save(db, "x", PageConfig(includes=["y"]))  # regulärer, gültiger Stand
+
+    # Zyklus NICHT über die API, sondern roh in der DB (Restore/Migration/
+    # direkter Zugriff, wie in #177 beschrieben).
+    await db.execute_and_commit(
+        "UPDATE visu_nodes SET page_config = ? WHERE id = ?",
+        (json.dumps({"widgets": [], "includes": ["x"]}), "y"),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await _save(db, "x", PageConfig(includes=["y"]))  # unveränderter Round-Trip
+
+    assert exc.value.status_code == 400
+    assert "Zyklus" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_r14_nested_target_without_page_config_is_skipped(db: Database) -> None:
     await _insert_node(db, "leer", raw_page_config="")
     await _insert_node(db, "seite")
@@ -882,6 +914,102 @@ async def test_copy_carries_the_page_kind(db: Database) -> None:
     assert copy.page_config is not None
     assert copy.page_config.popup is not None
     assert copy.page_config.popup.modal is True
+
+
+# ── Issue #178: `copy_node` validiert `page_config.includes` nicht ───────────
+#
+# `copy_node` uebernahm `page_config` bisher unveraendert (nur Widget-IDs neu),
+# ohne durch `_validate_page_kind_config` zu laufen. Betroffen sind Altbestaende
+# ausserhalb des normalen Schreibwegs, z. B. ein LOCATION-Knoten mit `includes`
+# in seiner rohen `page_config` (ueber die API seit #166 weder speicherbar noch
+# importierbar, siehe `Include-Konfiguration ist nur fuer Seiten (PAGE)
+# zulaessig` im Import). Fix: dieselbe Validierung wie Speichern/Import, mit der
+# Ausnahme fuer bereits gespeicherte Eintraege (`previous_includes`), damit eine
+# Kopie einer gueltigen, aber inzwischen verwaisten Seite nicht strenger
+# scheitert als das Original.
+
+
+@pytest.mark.asyncio
+async def test_178_copying_a_location_with_a_raw_includes_config_is_rejected(db: Database) -> None:
+    """Altbestand: ein LOCATION-Knoten mit `includes` in seiner rohen page_config
+    kann ueber die API weder entstehen noch gespeichert werden (nur Migration/
+    direkter DB-Zugriff) - `copy_node` darf ihn deshalb nicht stillschweigend
+    vervielfachen.
+    """
+    await _insert_node(db, "ziel")
+    await _insert_node(db, "bereich", node_type="LOCATION", raw_page_config=json.dumps({"includes": ["ziel"]}))
+
+    with pytest.raises(HTTPException) as exc:
+        await visu_api.copy_node(
+            node_id="bereich",
+            body=visu_api.CopyNodeRequest(target_parent_id=None, new_name="Bereich Kopie"),
+            db=db,
+            _user="admin",
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Include-Konfiguration ist nur für Seiten (PAGE) zulässig"
+
+
+@pytest.mark.asyncio
+async def test_178_copying_a_location_with_a_non_normal_kind_is_rejected(db: Database) -> None:
+    """Runde 2, Befund 3: `_validate_node_kind(source.type, source.kind)` in
+    `copy_node` war ungetestet (die Mutation überlebte). `includes` bleibt hier
+    bewusst leer, damit ausschließlich diese Prüfung greifen kann - nicht die
+    separate `includes`-Prüfung aus dem Test oben.
+    """
+    await _insert_node(db, "bereich", node_type="LOCATION", kind="popup")
+
+    with pytest.raises(HTTPException) as exc:
+        await visu_api.copy_node(
+            node_id="bereich",
+            body=visu_api.CopyNodeRequest(target_parent_id=None, new_name="Bereich Kopie"),
+            db=db,
+            _user="admin",
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Seitentyp ist nur für Seiten (PAGE) zulässig"
+
+
+@pytest.mark.asyncio
+async def test_178_copying_a_page_with_an_orphaned_include_target_still_succeeds(db: Database) -> None:
+    """Ein gueltig gespeicherter, inzwischen verwaister Eintrag darf die Kopie
+    nicht strenger scheitern lassen als das Original (R17-Prinzip, hier auf
+    `copy_node` uebertragen).
+    """
+    await _insert_node(db, "quelle", config=PageConfig(includes=["nie-dagewesen"], widgets=[_widget()]))
+
+    copy = await visu_api.copy_node(
+        node_id="quelle",
+        body=visu_api.CopyNodeRequest(target_parent_id=None, new_name="Quelle Kopie"),
+        db=db,
+        _user="admin",
+    )
+
+    assert copy.page_config is not None
+    assert copy.page_config.includes == ["nie-dagewesen"]
+
+
+@pytest.mark.asyncio
+async def test_178_copying_a_page_that_is_part_of_a_stored_cycle_still_succeeds(db: Database) -> None:
+    """Ein roh gesetzter Zyklus zwischen zwei Bestandsseiten (a<->b, #177) bindet
+    nur diese beiden IDs; eine Kopie von b bekommt eine neue ID und haengt als
+    Blatt an a, ohne den Zyklus fortzusetzen - die Kopie darf daher nicht an
+    einem Zyklus scheitern, der sie selbst gar nicht einschliesst.
+    """
+    await _insert_node(db, "a", config=PageConfig(includes=["b"]))
+    await _insert_node(db, "b", raw_page_config=json.dumps({"includes": ["a"]}))
+
+    copy = await visu_api.copy_node(
+        node_id="b",
+        body=visu_api.CopyNodeRequest(target_parent_id=None, new_name="B Kopie"),
+        db=db,
+        _user="admin",
+    )
+
+    assert copy.page_config is not None
+    assert copy.page_config.includes == ["a"]
 
 
 @pytest.mark.asyncio
