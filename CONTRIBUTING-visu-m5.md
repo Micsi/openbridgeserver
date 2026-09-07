@@ -175,8 +175,11 @@ class VisuNode(BaseModel):
   Reihenfolge bleibt); Teil B komponiert jede Seite also höchstens einmal und braucht kein eigenes
   Entdoppeln.
 
-  **Micsi/openbridgeserver#176, zurückgebaut in Runde 4 - dokumentierte, bewusste Grenze,
-  keine offene Aufgabe.** Runden 1-3 maskierten Include-Ziele in `includes`, die für den lesenden
+  **Micsi/openbridgeserver#176, zurückgebaut in Runde 4 - Befund dokumentiert, Entscheidung
+  liegt beim Eigentümer.** Das Issue bleibt ausdrücklich **offen**: ein Informationsleck bewusst
+  offen zu lassen ist keine Agenten-Entscheidung, auch dann nicht, wenn drei gemessene
+  Reparaturversuche mehr Schaden angerichtet haben als das Leck selbst. Was hier steht, ist die
+  Beweislage für diese Entscheidung, nicht die Entscheidung. Runden 1-3 maskierten Include-Ziele in `includes`, die für den lesenden
   Principal auf Navigationsebene verdeckt sind, und versuchten anschließend, dieselbe Maskierung
   über einen Schreibvorgang hinweg verlustfrei zu erhalten. Jede der drei Runden schloss den zuvor
   gemessenen Befund und maß dabei einen neuen, an derselben Stelle: Runde 1 maskierte nur `get_page`
@@ -403,3 +406,15 @@ Alle drei mit getrenntem Kritiker; jede vom Kritiker **überlebende Mutation** w
 3. **Branch-Basis:** `integ/visu-m5` vom Merge-Commit von #153, eigener Worktree (§2.5).
 4. **Referenz-Editoren:** alle sechs aus §1.1 (Edomi, ioBroker vis-2, Home Assistant, Grafana, Timberwolf, smartVISU/TabletUI).
 5. **Messlatte Editor:** Super-Set der besten Editoren, nicht V1-Parität (§1.1); Pixel-Autorenschaft ist Angebot, kein Zwang.
+
+### Offen, dem Eigentümer vorgelegt
+
+- **#176 (Existenzorakel über `includes`):** nach drei Reparaturrunden ersatzlos zurückgebaut, weil
+  jeder Versuch einen schwereren Mangel einführte als er behob (Datenverlust, blockierte Autoren).
+  Die vollständige Beweislage steht in §2.1. Zur Wahl stehen: die Grenze wie in V1
+  (`source_page_id`) bewusst offen lassen, oder den dort entworfenen Platzhalter-Weg freigeben -
+  der ist technisch machbar, wäre aber eine **Vertragsänderung** (eine verdeckte Seite würde als
+  „hier ist etwas, das du nicht sehen darfst" sichtbar, statt vollständig unsichtbar zu bleiben)
+  und berührt damit `packages/contract` und Teil B.
+- **#179 (Contract 1.14):** nicht begonnen. Der Bump hat einen strukturell roten Zwischenschritt;
+  einen roten PR zu mergen ist keine Agenten-Entscheidung.
