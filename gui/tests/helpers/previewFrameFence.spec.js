@@ -165,6 +165,25 @@ describe('previewFrameFence - die aeussere Tag-Grenze kennt Anfuehrungszeichen (
     expect(spezifizierer(src)).toContain('./real.css')
   })
 
+  /**
+   * MEHRERE `<style>`-Bloecke waren ungeprueft: eine Mutation von
+   * `querySelectorAll` auf `querySelector` (nur der erste Block) blieb gruen.
+   * Vue-SFCs tragen regelmaessig zwei Bloecke - einen `scoped` und einen
+   * globalen -, und ausgerechnet der globale ist der, der bis in die Vorschau
+   * durchschlagen kann. Der `src`-Block bleibt dabei aussen vor (H2): sein
+   * Inhalt steht in einer eigenen Datei, die der Verfolger separat liest.
+   */
+  it('styleBloecke() liefert JEDEN Block, nicht nur den ersten', () => {
+    const src = [
+      '<template><div /></template>',
+      '<style scoped>.a{color:red}</style>',
+      '<style src="./extern.css"></style>',
+      '<style lang="css">.b{color:blue}</style>',
+    ].join('\n')
+
+    expect(styleBloecke(src)).toEqual(['.a{color:red}', '.b{color:blue}'])
+  })
+
   it('styleBloecke() findet den Rumpf, auch wenn der `<style>`-Tag selbst ein zitiertes `>` traegt', () => {
     const src = '<style data-note="a > b">.x{color:red}</style>'
     expect(styleBloecke(src)).toEqual(['.x{color:red}'])

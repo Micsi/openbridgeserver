@@ -218,7 +218,21 @@ function blockEnde(text, i) {
   return text.length
 }
 
-/** Kommentare weg - ohne dabei in eine Zeichenkette zu greifen. */
+/**
+ * Kommentare weg - ohne dabei in eine Zeichenkette zu greifen.
+ *
+ * BEKANNTE GRENZE, gemessen (Kritik zu Runde 5): ein bis Dateiende OFFENER
+ * `/*`-Kommentar verschluckt alles ab seiner Oeffnung - die Datei kommt dann
+ * mit leeren `rules` UND leerem `sonstiges` zurueck, also spurlos. Die
+ * Behauptung „der Scanner verliert nichts still" gilt fuer diesen einen Fall
+ * NICHT.
+ *
+ * Trotzdem bewusst nicht behoben: dieselbe Eingabe bricht den echten Build
+ * hart ab (`vite:css`/postcss, „Unclosed comment"), ein solches Blatt kann also
+ * gar nicht erst ausgeliefert werden. Der Zaun schweigt hier ueber etwas, das
+ * niemand je zu sehen bekommt. Wird der Bau je nachsichtiger, ist dies die
+ * erste Stelle, die nachgezogen werden muss.
+ */
 function ohneKommentare(css) {
   let out = ''
   for (let i = 0; i < css.length; i += 1) {
