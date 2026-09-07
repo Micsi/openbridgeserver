@@ -9,6 +9,7 @@ import {
   guiEinstiege,
   neuerBericht,
   cssRegeln,
+  styleBloecke,
 } from './previewFrameFence.js'
 
 /**
@@ -59,6 +60,14 @@ describe('previewFrameFence - attributWert()', () => {
     expect(
       attributWert("<script data-note='see src=deckname.js' src=./echt.js>", 'src'),
     ).toBe('./echt.js')
+  })
+  it('vergleicht den Attributnamen GROSS-/kleinschreibungs-unabhaengig (Kritik R3: ungetestete Mutation)', () => {
+    // Ohne diese Probe ueberlebt eine Mutation, die `.toLowerCase()` aus dem
+    // Namensvergleich entfernt: `SRC` und `src` muessen dasselbe Attribut
+    // treffen, HTML kennt bei Attributnamen keine Gross-/Kleinschreibung.
+    expect(attributWert('<script SRC="./x.js">', 'src')).toBe('./x.js')
+    expect(attributWert('<script src="./x.js">', 'SRC')).toBe('./x.js')
+    expect(attributWert('<script Src="./x.js">', 'sRc')).toBe('./x.js')
   })
 })
 
@@ -122,6 +131,80 @@ describe('previewFrameFence - guiEinstiege() laesst sich nicht von einem Decoy-A
     const tag = '<script data-note="see src=deckname.js" src="./echt.js">'
     expect(altesAttributWert(tag, 'src')).toBe('deckname.js')
     expect(altesAttributWert(tag, 'src')).not.toBe('./echt.js')
+  })
+})
+
+describe('previewFrameFence - die aeussere Tag-Grenze kennt Anfuehrungszeichen (#182, vierte Form)', () => {
+  // Der Tokenizer aus der dritten Form liest EIN Attribut richtig - aber die
+  // AEUSSERE Tag-Grenze in `guiEinstiege()`/`spezifizierer()` schnitt den
+  // Tag-Text weiterhin mit `[^>]*` heraus, und dieses Muster kennt selbst
+  // keine Anfuehrungszeichen. Ein zitiertes `>` in einem FREMDEN Attribut VOR
+  // dem echten `src`/`href` (`data-note="a > b"`) riss die Tag-Grenze schon
+  // DORT ab - das echte Attribut kam im (verstuemmelten) Tag-Text gar nicht
+  // mehr vor. `attributWert()` fand folgerichtig nichts, aber `wert === null`
+  // sieht dort wie „kein Attribut" aus, nicht wie „Tag abgeschnitten" - das
+  // Blatt verschwand spurlos, UND `ungelesen`/`fremd` blieben BEIDE leer.
+  // Genau die falsche Vollstaendigkeit, die die dritte Form so gefaehrlich
+  // machte - nur eine Ebene hoeher.
+  it('folgt `<script src>` UND `<link href>`, auch wenn ein vorangehendes Attribut ein zitiertes `>` enthaelt', () => {
+    const bericht = neuerBericht()
+    const index = join(FIXTURES, 'index.tagBoundary.html')
+    const einstiege = guiEinstiege(bericht, index)
+    const namen = einstiege.map((p) => p.replace(FIXTURES, '').replace(/\\/g, '/'))
+
+    expect(namen).toContain('/tagBoundaryScript.js')
+    expect(namen).toContain('/tagBoundaryLink.css')
+    // Keine falsche Vollstaendigkeit: waeren die Blaetter uebersehen worden,
+    // MUESSTE das hier stehen statt in stillem Schweigen zu enden.
+    expect(bericht.ungelesen).toEqual([])
+    expect([...bericht.fremd]).toEqual([])
+  })
+
+  it('spezifizierer() findet ein `<style src>`, auch wenn der `<style>`-Tag selbst ein zitiertes `>` traegt', () => {
+    const src = '<style data-note="a > b" src="./real.css"></style>'
+    expect(spezifizierer(src)).toContain('./real.css')
+  })
+
+  it('styleBloecke() findet den Rumpf, auch wenn der `<style>`-Tag selbst ein zitiertes `>` traegt', () => {
+    const src = '<style data-note="a > b">.x{color:red}</style>'
+    expect(styleBloecke(src)).toEqual(['.x{color:red}'])
+  })
+
+  it('die `rel=stylesheet`-Erkennung liest jetzt das ECHTE `rel`-Attribut, statt den ganzen Tag nach dem Wort zu durchsuchen', () => {
+    // Solange die Klassifizierung eine reine Textsuche im ganzen Tag war,
+    // konnte ein vorangehendes Attribut mit dem TEXT `stylesheet` einen
+    // `<link>` faelschlich als Stylesheet einstufen, dessen echtes `rel`
+    // etwas anderes sagt (Deckname `data-note="stylesheet"` VOR
+    // `rel="preload"`) - eine andere Form desselben Fehlers: hier eine
+    // FALSCHE Bejahung statt eines stillen Verschwindens.
+    const bericht = neuerBericht()
+    const index = join(FIXTURES, 'index.relDecoy.html')
+    const einstiege = guiEinstiege(bericht, index)
+    const namen = einstiege.map((p) => p.replace(FIXTURES, '').replace(/\\/g, '/'))
+
+    expect(namen).not.toContain('/nicht-lesen.css')
+    // Und direkt an der Klassifizierung: `rel` ist "preload", nicht
+    // "stylesheet" - unabhaengig vom Deckname im Tag-Text.
+    // Unzitiert, wie im Fixture: `[^"'>]*` (die alte Klassifizierung) kennt
+    // keine Attributgrenzen und liess sich genau hier taeuschen.
+    const falscherPositivTag = '<link rel=preload data-note=stylesheet href="./nicht-lesen.css">'
+    expect(attributWert(falscherPositivTag, 'rel')).toBe('preload')
+  })
+
+  it('ROT gegen den unreparierten Stand (Commit 94e82143): `[^>]*` reisst die Tag-Grenze am zitierten `>` ab, das echte Blatt verschwindet spurlos', () => {
+    // Reproduziert exakt die Regexe aus Runde 2 (`guiEinstiege()`), die auf
+    // dem HEAD dieser Welle vor diesem Fix standen.
+    const src = readFileSync(join(FIXTURES, 'index.tagBoundary.html'), 'utf8')
+    const scriptTreffer = [...src.matchAll(/<script\b[^>]*>/gi)]
+    expect(scriptTreffer).toHaveLength(1)
+    // Der "Tag", den die alte Regex liefert, endet VOR dem echten `src`.
+    expect(scriptTreffer[0][0]).toBe('<script data-note="a >')
+    expect(attributWert(scriptTreffer[0][0], 'src')).toBeNull()
+
+    const linkTreffer = [...src.matchAll(/<link\b[^>]*>/gi)]
+    expect(linkTreffer).toHaveLength(1)
+    expect(linkTreffer[0][0]).toBe('<link data-note="x >')
+    expect(attributWert(linkTreffer[0][0], 'href')).toBeNull()
   })
 })
 

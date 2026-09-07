@@ -336,9 +336,21 @@ export function cssRegeln(css) {
  * OHNE Zeilenanker: der Vorgaenger verlangte, dass vor `<style` nur Leerraum
  * steht, und ein `<style>` hinter `<title>` auf derselben Zeile blieb deshalb
  * ungelesen (Kritik R10, X5).
+ *
+ * Die Tag-Grenze selbst kommt jetzt aus {@link tags} statt aus `[^>]*` direkt
+ * in dieser Regel (Kritik #182, vierte Form) - ein zitiertes `>` in einem
+ * Attribut DIESES `<style>`-Tags (z.B. `<style data-note="a > b">`) riss die
+ * Grenze sonst vor dem eigentlichen Rumpf ab.
  */
 export function styleBloecke(src) {
-  return Array.from(src.matchAll(/<style(\s[^>]*)?>([\s\S]*?)<\/style\s*>/gi)).map((m) => m[2])
+  const out = []
+  for (const { ende } of tags(src, 'style')) {
+    const rest = src.slice(ende)
+    const schluss = /<\/style\s*>/i.exec(rest)
+    if (schluss === null) continue
+    out.push(rest.slice(0, schluss.index))
+  }
+  return out
 }
 
 /** Dateien, in denen ueberhaupt CSS stehen kann. */
@@ -387,6 +399,56 @@ export function attributWert(tag, name) {
 }
 
 /**
+ * Der Index des `>`, der EINEN Start-Tag beendet, der bei `offen` beginnt -
+ * oder `-1`, wenn er nicht schliesst. Zitatbewusst (Kritik #182, vierte Form -
+ * derselbe Klassenfehler wie die dritte, eine Ebene hoeher): die AEUSSERE
+ * Tag-Grenze wurde bisher mit `[^>]*` herausgeschnitten, und dieses Muster
+ * kennt keine Anfuehrungszeichen. Ein fremdes, zitiertes Attribut VOR dem
+ * echten `src`/`href`, dessen Wert selbst ein `>` enthaelt
+ * (`data-note="a > b"`), riss die Tag-Grenze schon DORT ab - der Tag-Text
+ * endete, BEVOR das echte Attribut ueberhaupt vorkam. `attributWert()` fand
+ * dann folgerichtig nichts, und `guiEinstiege()`/`spezifizierer()` gaben dafuer
+ * keinen Grund an: `wert === null` heisst dort „kein Attribut", nicht „Tag
+ * abgeschnitten" - das Blatt verschwand spurlos, UND `ungelesen`/`fremd`
+ * blieben beide leer (belegt end-zu-end in `previewFrameFence.spec.js`). Diese
+ * Funktion scannt deshalb Zeichen fuer Zeichen und ueberspringt zitierte
+ * Abschnitte ganz, genau wie {@link ATTRIBUT} es beim Lesen EINES Attributs
+ * schon tut - nur hier fuer die Tag-Grenze selbst.
+ */
+function tagEnde(src, offen) {
+  let zitat = null
+  for (let i = offen; i < src.length; i += 1) {
+    const ch = src[i]
+    if (zitat !== null) {
+      if (ch === zitat) zitat = null
+    } else if (ch === '"' || ch === "'") {
+      zitat = ch
+    } else if (ch === '>') {
+      return i
+    }
+  }
+  return -1
+}
+
+/**
+ * Jeder Start-Tag mit diesem Namen, als VOLLSTAENDIGER, zitatbewusst
+ * abgegrenzter Text - der gemeinsame Ersatz fuer die `<name\b[^>]*>`-Regexe,
+ * die {@link tagEnde} als toten Buchstaben ablegt.
+ */
+function tags(src, name) {
+  const out = []
+  const oeffner = new RegExp(`<${name}\\b`, 'gi')
+  let m
+  while ((m = oeffner.exec(src)) !== null) {
+    const ende = tagEnde(src, m.index)
+    if (ende === -1) break
+    out.push({ text: src.slice(m.index, ende + 1), start: m.index, ende: ende + 1 })
+    oeffner.lastIndex = ende + 1
+  }
+  return out
+}
+
+/**
  * Jeder Spezifizierer, den eine Quelldatei nennt - statisch, dynamisch,
  * `@import`, und `<style src="…">` in einem SFC (Kritik #182, H2: ein
  * `<style>`-Block OHNE Rumpf, dessen Inhalt stattdessen in einer externen
@@ -408,8 +470,8 @@ export function spezifizierer(src) {
   for (const m of src.matchAll(re)) out.push(m[1])
   // `<style src="…">` bzw. `<style src=…>` - der Rumpf des Blocks bleibt dabei
   // leer, das eigentliche Blatt steht extern.
-  for (const m of src.matchAll(/<style\b[^>]*>/gi)) {
-    const wert = attributWert(m[0], 'src')
+  for (const { text } of tags(src, 'style')) {
+    const wert = attributWert(text, 'src')
     if (wert !== null) out.push(wert)
   }
   return out
@@ -520,13 +582,13 @@ export function guiEinstiege(bericht = null, index = join(GUI_ROOT, 'index.html'
     const ziel = aufloesen(spec, index, bericht)
     if (ziel !== null) einstiege.push(ziel)
   }
-  for (const m of src.matchAll(/<script\b[^>]*>/gi)) {
-    const wert = attributWert(m[0], 'src')
+  for (const { text } of tags(src, 'script')) {
+    const wert = attributWert(text, 'src')
     if (wert !== null) folge(wert)
   }
-  for (const m of src.matchAll(/<link\b[^>]*>/gi)) {
-    const tag = m[0]
-    if (!/\brel\s*=\s*["']?[^"'>]*\bstylesheet\b/i.test(tag)) continue
+  for (const { text: tag } of tags(src, 'link')) {
+    const rel = attributWert(tag, 'rel') ?? ''
+    if (!rel.split(/\s+/).includes('stylesheet')) continue
     const href = attributWert(tag, 'href')
     if (href === null) continue
     if (/^(?:@\/|\.{1,2}\/|\/)/.test(href)) folge(href)
