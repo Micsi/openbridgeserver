@@ -311,6 +311,36 @@ async def _require_discoverable_node(db: Database, node_id: str, principal: Prin
     return node
 
 
+async def _mask_concealed_includes(db: Database, config: PageConfig, principal: Principal | None) -> PageConfig:
+    """Entfernt Include-Ziele, die für ``principal`` auf Navigationsebene verdeckt
+    sind, bevor die Konfiguration den Client erreicht (Micsi/openbridgeserver#176).
+
+    ``PageConfig.includes`` wurde bisher roh ausgeliefert - unabhängig davon, ob
+    der lesende Principal das Ziel selbst sehen darf. Zusammen mit den
+    unterschiedlichen Signalen von ``GET /visu/pages/{id}`` (403/401 „existiert,
+    aber verdeckt" vs. 404 „existiert nicht", CONTRIBUTING-visu-m5.md §2.1)
+    entstand daraus ein Existenzorakel: wer die Quellseite lesen darf, erfährt
+    die ID eines ihm sonst verborgenen Ziels und kann dessen Existenz per Probe
+    bestätigen.
+
+    Maskiert wird exakt dieselbe Menge, die auch `/visu/tree`/`/nodes/{id}`
+    verdeckt (`_can_discover_node`: nur `user`-geschützte Ziele ohne
+    Berechtigung). PIN-geschützte (`protected`) und verwaiste Ziele bleiben
+    stehen: PIN ist ausdrücklich **keine** Verdeckung, sondern eine auflösbare
+    Aufforderung, und ein verwaister Eintrag ist über das gewöhnliche
+    404-Signal beim Laden schon ununterscheidbar von „existiert nicht" - beides
+    zu maskieren würde Teil B/C1 die Grundlage entziehen, PIN-Ziele als
+    „gesperrt" anzuzeigen bzw. verwaiste Ziele wie in §2.1 zugesichert still
+    wegzulassen.
+    """
+    if not config.includes:
+        return config
+    visible = [target_id for target_id in config.includes if await _can_discover_node(db, target_id, principal)]
+    if visible == config.includes:
+        return config
+    return config.model_copy(update={"includes": visible})
+
+
 async def _visu_subtree_ids(db: Database, node_id: str) -> list[str]:
     rows = await db.fetchall(
         """WITH RECURSIVE subtree(id) AS (
@@ -1427,7 +1457,27 @@ async def copy_node(
             new_pc = pc.model_copy(update={"widgets": new_widgets})
         else:
             new_pc = PageConfig()
+        # #178: dieselbe Validierung wie Speichern/Import, statt page_config
+        # unbesehen zu übernehmen. Ein Nicht-Seiten-Knoten mit `includes` (nur
+        # über Restore/Migration/direkten DB-Zugriff möglich, seit #166 weder
+        # speicher- noch importierbar) würde sonst stillschweigend vervielfacht -
+        # dieselbe Ablehnung wie im Import, keine stille Reparatur.
+        _validate_node_kind(source.type, source.kind)
+        if source.type != "PAGE" and new_pc.includes:
+            raise HTTPException(status_code=400, detail="Include-Konfiguration ist nur für Seiten (PAGE) zulässig")
         if source.type == "PAGE":
+            # `previous_includes` = die Einträge der Quelle: dieselbe Ausnahme wie
+            # bei einem unveränderten Speichern (§2.1), damit eine gültig
+            # gespeicherte, inzwischen verwaiste Quelle nicht strenger scheitert
+            # als das Original. Selbst-Include/Zyklus/Struktur-Regeln laufen
+            # trotzdem über die volle Liste.
+            await _validate_page_kind_config(
+                db,
+                new_id,
+                source.kind,
+                new_pc,
+                previous_includes=(pc.includes if pc else []),
+            )
             await _check_page_datapoint_policy(
                 db,
                 principal,
@@ -1681,6 +1731,7 @@ async def get_page(
         config,
         session_token=request.headers.get("X-Session-Token"),
     )
+    config = await _mask_concealed_includes(db, config, principal)
     if response is not None:
         # Include-Quellen kommen über genau diesen Weg; der Host sperrt ihre
         # Widgets nach derselben Regel wie bei /widget-ref (R15). Der Body

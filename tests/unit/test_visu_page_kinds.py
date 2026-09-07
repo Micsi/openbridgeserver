@@ -439,6 +439,38 @@ async def test_r14_diamond_graph_and_dangling_nested_target_stay_valid(db: Datab
 
 
 @pytest.mark.asyncio
+async def test_177_a_cycle_set_raw_in_the_db_still_fails_an_unchanged_round_trip(db: Database) -> None:
+    """Issue #177: die Zielprüfung entfällt für bereits gespeicherte Einträge
+    (§2.1), aber die Zyklusprüfung läuft immer über die volle Liste
+    (`_assert_no_include_cycle(db, node_id, config.includes)`, unbedingt am Ende
+    von `_validate_page_kind_config`) - auch für unveränderte Einträge. Ein
+    Zyklus, der roh in der DB gesetzt wurde (x->y regulär gespeichert, y->x roh
+    nachträglich gesetzt), lässt daher auch einen unveränderten Round-Trip von x
+    mit 400 scheitern; er wird nicht „nicht mehr erkannt". Gemessen gegen den
+    heutigen Stand (siehe Bericht) - dieser Test hält den Befund fest, damit ihn
+    eine spätere Änderung der Zielprüfungs-Ausnahme (z. B. würde sie versehentlich
+    auch auf `_assert_no_include_cycle` ausgedehnt) nicht stillschweigend
+    zunichtemacht.
+    """
+    await _insert_node(db, "x")
+    await _insert_node(db, "y")
+    await _save(db, "x", PageConfig(includes=["y"]))  # regulärer, gültiger Stand
+
+    # Zyklus NICHT über die API, sondern roh in der DB (Restore/Migration/
+    # direkter Zugriff, wie in #177 beschrieben).
+    await db.execute_and_commit(
+        "UPDATE visu_nodes SET page_config = ? WHERE id = ?",
+        (json.dumps({"widgets": [], "includes": ["x"]}), "y"),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await _save(db, "x", PageConfig(includes=["y"]))  # unveränderter Round-Trip
+
+    assert exc.value.status_code == 400
+    assert "Zyklus" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_r14_nested_target_without_page_config_is_skipped(db: Database) -> None:
     await _insert_node(db, "leer", raw_page_config="")
     await _insert_node(db, "seite")
@@ -711,6 +743,144 @@ async def test_duplicate_includes_are_deduplicated_keeping_the_first_position(db
     assert stored.includes == ["a", "b"]
 
 
+# ── Issue #176: `includes` als Existenzorakel für verdeckte Include-Ziele ─────
+#
+# `GET /visu/pages/{id}` gab `includes` bisher roh zurück, unabhängig davon, ob
+# der lesende Principal das Ziel selbst sehen darf. Gemessen (siehe Bericht):
+# ein Principal, der eine `user`-geschützte Zielseite direkt abfragt, erhält
+# 403 „Zugriff verweigert" (existiert, aber verdeckt); eine nie vorhandene ID
+# liefert 404. Wer die ID also aus `includes` einer lesbaren Quellseite kennt,
+# kann diese beiden Signale unterscheiden und damit die Existenz einer ihm
+# verdeckten Seite erraten. Der Fix maskiert genau die Ziele, die für den
+# lesenden Principal auf Navigationsebene verdeckt sind (dieselbe Prüfung wie
+# `/visu/tree`/`/nodes/{id}`, `_can_discover_node`) - PIN-geschützte Ziele
+# bleiben sichtbar, weil PIN keine Verdeckung ist (§2.1), Teil B/C1 brauchen sie
+# für den Sperr-Hinweis.
+
+
+async def _insert_user(db: Database, username: str) -> None:
+    await db.execute_and_commit(
+        "INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, ?, 'hash', 0, ?)",
+        (str(uuid.uuid4()), username, NOW),
+    )
+
+
+@pytest.mark.asyncio
+async def test_176_direct_probe_distinguishes_hidden_page_from_nonexistent_id(db: Database) -> None:
+    """Misst das Orakel-Fundament: 403 (existiert, verdeckt) vs. 404 (existiert nicht)."""
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    alice = Principal(subject="alice", type="user", is_admin=False)
+
+    with pytest.raises(HTTPException) as hidden_exc:
+        await visu_api.get_page(node_id="verdeckt", request=_request(), db=db, user=alice)
+    with pytest.raises(HTTPException) as missing_exc:
+        await visu_api.get_page(node_id="nie-vergeben-xyz", request=_request(), db=db, user=alice)
+
+    assert hidden_exc.value.status_code == 403
+    assert missing_exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_176_get_page_masks_a_concealed_user_protected_include_target(db: Database) -> None:
+    await _insert_user(db, "alice")
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(db, "quelle", access="public")
+    await db.execute_and_commit(
+        """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+           VALUES ('user', 'alice', 'visu_page', 'quelle', 'operator', 'allow')""",
+    )
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["verdeckt"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+    alice = Principal(subject="alice", type="user", is_admin=False)
+
+    stored = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+
+    assert stored.includes == [], "verdecktes Ziel darf für alice nicht in includes auftauchen"
+    # Ungefiltert bleibt die gespeicherte Zeile unverändert (kein Schreibzugriff hier).
+    assert await _raw_includes(db, "quelle") == ["verdeckt"]
+
+
+@pytest.mark.asyncio
+async def test_176_get_page_keeps_a_visible_include_target_for_an_authorized_reader(db: Database) -> None:
+    await _insert_user(db, "alice")
+    await _insert_node(db, "sichtbar", access="user")
+    await _insert_node(db, "quelle", access="public")
+    for node_id in ("sichtbar", "quelle"):
+        await db.execute_and_commit(
+            """INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+               VALUES ('user', 'alice', 'visu_page', ?, 'operator', 'allow')""",
+            (node_id,),
+        )
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["sichtbar"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+    alice = Principal(subject="alice", type="user", is_admin=False)
+
+    stored = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=alice)
+
+    assert stored.includes == ["sichtbar"]
+
+
+@pytest.mark.asyncio
+async def test_176_get_page_keeps_a_pin_protected_include_target_visible(db: Database) -> None:
+    """PIN ist keine Verdeckung (§2.1): Teil B/C1 brauchen die ID, um den PIN-
+    Hinweis an der Include-Stelle anzuzeigen, statt sie kommentarlos wegzulassen.
+    """
+    await _insert_node(db, "pin-geschuetzt", access="protected")
+    await _insert_node(db, "quelle", access="public")
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["pin-geschuetzt"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+
+    stored = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=None)
+
+    assert stored.includes == ["pin-geschuetzt"]
+
+
+@pytest.mark.asyncio
+async def test_176_get_page_keeps_all_include_targets_visible_for_admin(db: Database) -> None:
+    await _insert_node(db, "verdeckt", access="user")
+    await _insert_node(db, "quelle", access="public")
+    await visu_api.save_page(
+        node_id="quelle",
+        config=PageConfig(includes=["verdeckt"], widgets=[_widget()]),
+        request=_request(),
+        db=db,
+        _user="admin",
+    )
+
+    stored = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user="admin")
+
+    assert stored.includes == ["verdeckt"]
+
+
+@pytest.mark.asyncio
+async def test_176_get_page_keeps_a_dangling_include_target_for_the_content_404_signal(db: Database) -> None:
+    """Ein verwaister Eintrag ist kein Verdeckungsfall (§2.1): Teil B erhält beim
+    Laden ein gewöhnliches 404 und behandelt es wie „existiert nicht" - dafür
+    muss die ID in `includes` stehen bleiben.
+    """
+    await _insert_node(db, "quelle", access="public", config=PageConfig(includes=["nie-dagewesen"]))
+
+    stored = await visu_api.get_page(node_id="quelle", request=_request(), db=db, user=None)
+
+    assert stored.includes == ["nie-dagewesen"]
+
+
 def test_duplicate_includes_are_deduplicated_in_the_model_itself() -> None:
     # Die Normalisierung sitzt im Modell und greift damit auf jedem Weg
     # (PUT, Import, Kopie, Lesen) und idempotent.
@@ -882,6 +1052,81 @@ async def test_copy_carries_the_page_kind(db: Database) -> None:
     assert copy.page_config is not None
     assert copy.page_config.popup is not None
     assert copy.page_config.popup.modal is True
+
+
+# ── Issue #178: `copy_node` validiert `page_config.includes` nicht ───────────
+#
+# `copy_node` uebernahm `page_config` bisher unveraendert (nur Widget-IDs neu),
+# ohne durch `_validate_page_kind_config` zu laufen. Betroffen sind Altbestaende
+# ausserhalb des normalen Schreibwegs, z. B. ein LOCATION-Knoten mit `includes`
+# in seiner rohen `page_config` (ueber die API seit #166 weder speicherbar noch
+# importierbar, siehe `Include-Konfiguration ist nur fuer Seiten (PAGE)
+# zulaessig` im Import). Fix: dieselbe Validierung wie Speichern/Import, mit der
+# Ausnahme fuer bereits gespeicherte Eintraege (`previous_includes`), damit eine
+# Kopie einer gueltigen, aber inzwischen verwaisten Seite nicht strenger
+# scheitert als das Original.
+
+
+@pytest.mark.asyncio
+async def test_178_copying_a_location_with_a_raw_includes_config_is_rejected(db: Database) -> None:
+    """Altbestand: ein LOCATION-Knoten mit `includes` in seiner rohen page_config
+    kann ueber die API weder entstehen noch gespeichert werden (nur Migration/
+    direkter DB-Zugriff) - `copy_node` darf ihn deshalb nicht stillschweigend
+    vervielfachen.
+    """
+    await _insert_node(db, "ziel")
+    await _insert_node(db, "bereich", node_type="LOCATION", raw_page_config=json.dumps({"includes": ["ziel"]}))
+
+    with pytest.raises(HTTPException) as exc:
+        await visu_api.copy_node(
+            node_id="bereich",
+            body=visu_api.CopyNodeRequest(target_parent_id=None, new_name="Bereich Kopie"),
+            db=db,
+            _user="admin",
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Include-Konfiguration ist nur für Seiten (PAGE) zulässig"
+
+
+@pytest.mark.asyncio
+async def test_178_copying_a_page_with_an_orphaned_include_target_still_succeeds(db: Database) -> None:
+    """Ein gueltig gespeicherter, inzwischen verwaister Eintrag darf die Kopie
+    nicht strenger scheitern lassen als das Original (R17-Prinzip, hier auf
+    `copy_node` uebertragen).
+    """
+    await _insert_node(db, "quelle", config=PageConfig(includes=["nie-dagewesen"], widgets=[_widget()]))
+
+    copy = await visu_api.copy_node(
+        node_id="quelle",
+        body=visu_api.CopyNodeRequest(target_parent_id=None, new_name="Quelle Kopie"),
+        db=db,
+        _user="admin",
+    )
+
+    assert copy.page_config is not None
+    assert copy.page_config.includes == ["nie-dagewesen"]
+
+
+@pytest.mark.asyncio
+async def test_178_copying_a_page_that_is_part_of_a_stored_cycle_still_succeeds(db: Database) -> None:
+    """Ein roh gesetzter Zyklus zwischen zwei Bestandsseiten (a<->b, #177) bindet
+    nur diese beiden IDs; eine Kopie von b bekommt eine neue ID und haengt als
+    Blatt an a, ohne den Zyklus fortzusetzen - die Kopie darf daher nicht an
+    einem Zyklus scheitern, der sie selbst gar nicht einschliesst.
+    """
+    await _insert_node(db, "a", config=PageConfig(includes=["b"]))
+    await _insert_node(db, "b", raw_page_config=json.dumps({"includes": ["a"]}))
+
+    copy = await visu_api.copy_node(
+        node_id="b",
+        body=visu_api.CopyNodeRequest(target_parent_id=None, new_name="B Kopie"),
+        db=db,
+        _user="admin",
+    )
+
+    assert copy.page_config is not None
+    assert copy.page_config.includes == ["a"]
 
 
 @pytest.mark.asyncio

@@ -175,12 +175,20 @@ class VisuNode(BaseModel):
   Reihenfolge bleibt); Teil B komponiert jede Seite also höchstens einmal und braucht kein eigenes
   Entdoppeln.
 
-  **Grenze der Verdeckung, offen für Teil B/C1:** `GET /visu/pages/{id}` liefert `includes` roh. Eine
-  lesbare Seite gibt damit die IDs ihrer Include-Quellen preis, auch wenn diese auf der
-  Navigationsebene verdeckt sind – zusammen mit dem Unterschied 401/403 (existiert) vs. 404
-  (existiert nicht) ein Existenz-Orakel. Derselbe Weg existiert seit V1 über
-  `widget.config.source_page_id`; M5 erweitert ihn, erfindet ihn nicht. Verdeckung gilt also für
-  Existenz **in der Navigation**, nicht für die ID in einer fremden Seiten-Konfiguration.
+  **Grenze der Verdeckung, geschlossen für die eigene `includes`-Liste (Micsi/openbridgeserver#176).**
+  `GET /visu/pages/{id}` maskiert seit der G1-Folgewelle die Ziele in `includes`, die für den lesenden
+  Principal auf Navigationsebene verdeckt sind (`_can_discover_node`, dieselbe Prüfung wie
+  `/visu/tree`/`/nodes/{id}`) - eine lesbare Seite gibt die ID eines ihr `user`-geschützten,
+  unberechtigten Include-Ziels also nicht mehr preis. **Zwei Richtungen standen zur Wahl:** IDs
+  maskieren, oder die Signale 404/403/401 vereinheitlichen. Gewählt wurde Maskieren, weil Vereinheitlichen
+  das Zwei-Ebenen-Modell selbst geändert hätte (von M5 ausdrücklich nicht vorgesehen) und die
+  Direkt-Navigation eines Principals auf eine eigene, nicht verdeckte Seite unnötig verarmt hätte;
+  Maskieren trifft dagegen nur die `includes`-Antwort und lässt PIN-geschützte Ziele (`protected`, keine
+  Verdeckung) unangetastet sichtbar, wie Teil B/C1 es für den Sperr-Hinweis braucht. **Bewusst nicht
+  geschlossen:** `widget.config.source_page_id` in V1 (`WidgetRefInstance`, `frontend/`, R17) - dieselbe
+  Klasse, aber außerhalb des M5-Schreibwegs und `frontend/` bleibt unangetastet; wer die Direktsonde
+  `GET /visu/pages/{id}` mit einer bereits bekannten ID fährt, erhält weiterhin 403/401 vs. 404 - das
+  bleibt eine bewusst unveränderte, dem Zwei-Ebenen-Modell inhärente Eigenschaft, kein neu offener Punkt.
 - **`source_page_readonly`** wird aus dem aufgelösten Zugriffs-Level der Quellseite abgeleitet
   (dieselbe Regel wie `GET /widget-ref/{page_id}`: `access == "readonly"`).
   **Naht:** `GET /visu/pages/{id}` liefert das Ergebnis als Antwort-Header
@@ -197,12 +205,22 @@ class VisuNode(BaseModel):
 - **Grenzen der obigen Zusagen (vom Kritiker belegt, Teil B muss damit rechnen):**
   - Die Ausnahme fuer gespeicherte `includes` gilt fuer die Ziel-Pruefungen, **nicht** fuer Zyklus und
     Selbst-Include: die werden ueber die ganze Liste geprueft. Ein roh in die DB gesetzter Zyklus laesst
-    daher auch einen unveraenderten Round-Trip mit 400 scheitern (Micsi/openbridgeserver#177).
+    daher auch einen unveraenderten Round-Trip mit 400 scheitern - **gemessen und per Regressionsprobe
+    festgehalten** (`test_177_a_cycle_set_raw_in_the_db_still_fails_an_unchanged_round_trip`,
+    Micsi/openbridgeserver#177 blieb dabei ein Testluecken-, kein Verhaltensbefund: die 11.
+    Mutationsprobe des Teil-A-Kritikers hatte keine Probe, die diese Zeile toetet, obwohl das Verhalten
+    bereits korrekt war).
   - Die Dublettenfreiheit wirkt im Modell, also **auch beim Lesen**: die Antwort kann still von der
     gespeicherten Zeile abweichen, und ein unveraenderter Round-Trip schreibt die Bereinigung fest.
   - `GET /visu/nodes/{id}/export` und das Config-Backup lesen **roh** an der Modellschicht vorbei und
     sind daher nicht dublettenfrei. Wer Export-Daten weiterverarbeitet, dedupliziert selbst.
-  - `POST /visu/nodes/{id}/copy` validiert `includes` derzeit nicht (Micsi/openbridgeserver#178).
+  - `POST /visu/nodes/{id}/copy` validiert `includes` seit der G1-Folgewelle wie Speichern/Import
+    (Micsi/openbridgeserver#178 geschlossen): ein Nicht-Seiten-Knoten (LOCATION) mit `includes` in
+    seiner rohen `page_config` - nur ueber Restore/Migration/direkten DB-Zugriff moeglich, seit #166
+    weder speicher- noch importierbar - wird beim Kopieren mit 400 abgelehnt statt stillschweigend
+    vervielfacht; ein gueltig gespeicherter, inzwischen verwaister Eintrag einer echten Seite bleibt
+    dagegen kopierbar (dieselbe Ausnahme wie beim Speichern, damit die Kopie nicht strenger scheitert
+    als das Original).
 
 ### 2.2 Bewusste Abweichung von Edomi
 
