@@ -167,16 +167,18 @@ tools/build-visu-v2.sh
 Der Backend-Prozess aus Schritt 2 liest die `*_dist`-Verzeichnisse beim Start:
 wird erst danach gebaut, muss er einmal neu gestartet werden.
 
-> **Dieser Schritt ist hier von Hand — und in den veröffentlichten Paketen fehlt
-> er noch.** `apps/visu` hängt über drei `link:`-Pfade an einem Repo außerhalb
-> dieses Baums (`obs-visu-skins`); Docker-Abbild und LXC-Builder können es
-> deshalb nicht selbst bauen. `tools/build-local.sh` erzeugt `visu_v2_dist/`
-> darum **vor** dem Packen und reicht es den Packern als Artefakt weiter
+> **Dieser Schritt ist hier von Hand, in den veröffentlichten Paketen läuft er
+> automatisch.** `apps/visu` hängt über drei `link:`-Pfade an einem Repo
+> außerhalb dieses Baums (`obs-visu-skins`); Docker-Abbild und LXC-Builder
+> können es deshalb nicht selbst bauen. `tools/build-visu-v2.sh` erzeugt
+> `visu_v2_dist/` darum vorab und reicht es den Packern als Artefakt weiter
 > (`Dockerfile`-Stufe `visu-v2`, `tools/_lxc-inner.sh` für Rootfs und
-> `obs-update`-Bündel). Den Bauwerkstücken unter `.github/workflows/` fehlt
-> dieser Vorlauf noch: in den veröffentlichten Artefakten antwortet `/visu-v2`
-> mit 404 und der Editor hat dort keine Vorschau —
-> [Micsi/openbridgeserver#191](https://github.com/Micsi/openbridgeserver/issues/191).
+> `obs-update`-Bündel). Lokal ruft `tools/build-local.sh` das vor jedem
+> Paketbau auf; in CI tun das `.github/workflows/release.yml`,
+> `lxc-template.yml` und `nightly-docker.yml` selbst, samt Checkout von
+> `obs-visu-skins`. Schlägt das dort fehl, wird der Lauf rot, statt das Paket
+> still ohne die V2-Visu zu veröffentlichen
+> ([Micsi/openbridgeserver#191](https://github.com/Micsi/openbridgeserver/issues/191)).
 > Die Visu 1 unter `/visu` ist davon unberührt (R17).
 
 ## Step 4b — Admin-GUI dev server (nur für die Editor-Szenarien E1-E19, R16)
@@ -880,10 +882,10 @@ sie im Speicher, `.seeded.json` enthält keine Admin-Zugangsdaten.
   Host ihn liest — inklusive der scharfen Kante „fehlende Koordinate bleibt
   `null`".
 - **R17** und die Contract-/Skins-Gates gehören nicht in diesen Harness.
-- **Die V2-Visu kommt noch in keinem veröffentlichten Paket an.** Der Harness
-  baut `visu_v2_dist/` selbst (Schritt 4c) und misst deshalb eine Lage, die im
-  ausgelieferten Produkt heute nicht hergestellt ist. Siehe Schritt 4c und
-  Micsi/openbridgeserver#191.
+- **Die V2-Visu kommt inzwischen auch in den veröffentlichten Paketen an**
+  (Micsi/openbridgeserver#191). Der Harness baut `visu_v2_dist/` weiterhin
+  selbst (Schritt 4c); die dort gemessene Lage entspricht seitdem auch dem
+  ausgelieferten Produkt, nicht nur dem Harness.
 - Die `fixme`-Szenarien laufen erst, wenn ihr Teil geliefert hat. Sie sind
   deshalb im Bericht als eigene Zahl auszuweisen — ein Lauf ohne `fail` ist noch
   kein fertiges M5.

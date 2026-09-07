@@ -15,9 +15,11 @@
 # fertiges Artefakt gereicht: `tools/build-local.sh` ruft dieses Skript vor jedem
 # Paketbau auf, `Dockerfile` und `tools/_lxc-inner.sh` uebernehmen das Ergebnis.
 #
-# Was noch fehlt, damit auch die CI-Artefakte das Buendel tragen, steht in
-# Micsi/openbridgeserver#191 (die Werkstuecke unter `.github/workflows/` haben
-# keinen Checkout von `obs-visu-skins`).
+# Die Werkstuecke unter `.github/workflows/` (release, nightly-docker,
+# lxc-template) holen sich `obs-visu-skins` per eigenem Checkout, stellen die
+# `link:`-Pfade wieder her und rufen dieses Skript vor dem Verpacken auf
+# (Micsi/openbridgeserver#191). Schlaegt es dort fehl, faellt der Lauf hart rot
+# aus: ein Paket ohne `visu_v2_dist/` soll gar nicht erst entstehen.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

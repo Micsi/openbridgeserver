@@ -97,13 +97,20 @@ Vorschau-Adresse keine Visu. Zwei Ursachen sind häufig:
    `VITE_PREVIEW_ALLOWED_ORIGINS` nennt die Herkunft der Admin-GUI. Beide
    Angaben gehören zusammen.
 
-**In den veröffentlichten Paketen fehlt die Visu 2.0 noch.** Docker-Abbild,
-LXC-Template und das Bündel von `obs-update` tragen `visu_v2_dist/` nur dann,
-wenn es **vor** dem Paketbau erzeugt wurde. Die Bauwerkstücke der
-Veröffentlichung tun das noch nicht: dort antwortet `/visu-v2` mit 404, und der
-Vorschaukasten des Editors bleibt leer. Wer die Visu 2.0 samt Vorschau haben
-will, baut das Paket selbst: `tools/build-local.sh` erzeugt das Bündel vor dem
-Packen und sagt im Bauprotokoll, ob es im Ergebnis liegt.
+**Die veröffentlichten Pakete tragen die Visu 2.0 mit.** Docker-Abbild,
+LXC-Template und das Bündel von `obs-update` bauen `visu_v2_dist/` selbst, als
+Teil ihrer Veröffentlichungs-Werkstücke: `.github/workflows/release.yml`,
+`lxc-template.yml` und `nightly-docker.yml` checken dafür `obs-visu-skins` aus
+und rufen `tools/build-visu-v2.sh`, bevor sie das jeweilige Paket bauen.
+Schlägt das dort fehl, wird der Lauf rot, statt das Paket still ohne die
+Visu 2.0 zu veröffentlichen.
+
+Nur der Docker-Bauschritt selbst bleibt bewusst tolerant gegenüber einem
+fehlenden `visu_v2_dist/` im Baukontext, etwa bei einem lokalen
+`docker build .` ohne vorherigen `tools/build-visu-v2.sh`-Lauf: das Abbild
+bleibt dann gültig, warnt im Bauprotokoll laut, und `/visu-v2` antwortet
+sauber mit 404 statt mit einem Fehler. Genau diesen Weg nutzt auch
+`tools/build-local.sh` für lokale Baue ohne `obs-visu-skins`-Checkout.
 
 Die Visu 1 unter `/visu/` ist davon nicht betroffen; sie ist in jedem Paket
 unverändert enthalten.

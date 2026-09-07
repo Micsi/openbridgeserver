@@ -403,17 +403,21 @@ def create_app() -> FastAPI:
     # URL, Query oder Cookie), und jeder Inhalt haengt an der API, die ihre
     # eigene Pruefung behaelt.
     #
-    # WOHER `visu_v2_dist/` KOMMT — und wo es heute fehlt: anders als gui_dist,
-    # frontend_dist und help_dist bauen die Packer dieses Buendel NICHT selbst.
-    # `apps/visu/package.json` haengt ueber drei `link:`-Pfade an einem Repo
-    # ausserhalb des Baums (obs-visu-skins), das im Abbild nicht existiert. Es
-    # wird deshalb im Quell-Checkout gebaut (`tools/build-visu-v2.sh`) und den
-    # Packern als Artefakt gereicht; `tools/build-local.sh` macht das vor jedem
-    # Paketbau. Den Werkstuecken unter `.github/workflows/` fehlt dieser Vorlauf
-    # noch, in den VEROEFFENTLICHTEN Docker-Abbildern, LXC-Templates und
-    # obs-update-Buendeln ist das Verzeichnis also nicht enthalten und /visu-v2
-    # antwortet dort mit 404: Micsi/openbridgeserver#191. Fuer V1 unter /visu
-    # aendert das nichts (R17).
+    # WOHER `visu_v2_dist/` KOMMT: anders als gui_dist, frontend_dist und
+    # help_dist bauen die Packer dieses Buendel nicht selbst. `apps/visu/package.json`
+    # haengt ueber drei `link:`-Pfade an einem Repo ausserhalb des Baums
+    # (obs-visu-skins), das im Abbild nicht existiert. Es wird deshalb VORGEBAUT
+    # uebernommen (`tools/build-visu-v2.sh`): lokal ruft `tools/build-local.sh`
+    # das vor jedem Paketbau auf, in CI tun das `.github/workflows/release.yml`,
+    # `lxc-template.yml` und `nightly-docker.yml` selbst (Checkout von
+    # obs-visu-skins, dann der Bau, bevor das jeweilige Paket entsteht).
+    # Schlaegt das dort fehl, wird der Lauf rot statt das Paket still ohne die
+    # V2-Visu zu veroeffentlichen (Micsi/openbridgeserver#191).
+    #
+    # Fehlt `visu_v2_dist/` trotzdem einmal (etwa bei einem lokalen
+    # `docker build .` ohne vorherigen `tools/build-visu-v2.sh`-Lauf), bleibt
+    # dieser Mount einfach aus: /visu-v2 antwortet dann sauber mit 404 statt
+    # mit einem Fehler. Fuer V1 unter /visu aendert das nichts (R17).
     _visu_v2_dist = Path(__file__).parent.parent / "visu_v2_dist"
     if _visu_v2_dist.is_dir():
         _visu_v2_assets = _visu_v2_dist / "assets"

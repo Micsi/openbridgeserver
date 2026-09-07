@@ -17,11 +17,12 @@
  *
  * Antwortet im Rahmen trotzdem keine Vorschau, ist das eine sichtbare Lage und
  * kein Schweigen: nach der Handshake-Frist steht dort ein Hinweis. Zwei
- * Ursachen sind haeufig — die V2-Visu ist nicht gebaut (`visu_v2_dist/` fehlt;
- * in den VEROEFFENTLICHTEN Paketen ist das bis Micsi/openbridgeserver#191 noch
- * der Normalfall), oder Admin-GUI und Visu laufen im Entwicklungsbetrieb
- * getrennt und `VITE_VISU_PREVIEW_URL`/`VITE_PREVIEW_ALLOWED_ORIGINS` passen
- * nicht zusammen (s. `visuEditorAccess.js`).
+ * Ursachen sind haeufig: die V2-Visu ist nicht gebaut (`visu_v2_dist/` fehlt;
+ * in den veroeffentlichten Paketen ist das seit Micsi/openbridgeserver#191 nur
+ * noch der Ausnahmefall bei fehlgeschlagenem Skin-Bau, siehe Dockerfile Stufe
+ * `visu-v2`), oder Admin-GUI und Visu laufen im Entwicklungsbetrieb getrennt
+ * und `VITE_VISU_PREVIEW_URL`/`VITE_PREVIEW_ALLOWED_ORIGINS` passen nicht
+ * zusammen (s. `visuEditorAccess.js`).
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { createVisuPreviewBridge } from '@/composables/useVisuPreviewBridge'

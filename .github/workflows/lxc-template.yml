@@ -113,6 +113,55 @@ jobs:
           npm ci --prefer-offline
           npm run build
 
+      # ── V2 Visu (visu_v2_dist/) ──────────────────────────────────────────────
+      # `apps/visu` depends on three skin packages via `link:` paths that point
+      # OUTSIDE this repository (obs-visu-skins) — see tools/build-visu-v2.sh.
+      # Neither this job nor the app-bundle/rootfs steps below can resolve
+      # those paths on their own, so the V2 Visu is built here, on the runner,
+      # and handed to the packaging steps below as a plain artefact
+      # (visu_v2_dist/), exactly like tools/build-local.sh does for local
+      # builds. Built on BOTH matrix legs: the amd64 leg needs it for the app
+      # bundle, and both legs need it in their own LXC rootfs.
+      #
+      # Unlike build-local.sh's local fallback (which tolerates a missing
+      # obs-visu-skins checkout — a normal state on a developer machine), a
+      # failure HERE fails this job: the checkout below is deterministic and
+      # under our control, so a broken build is a real regression. Silently
+      # publishing a template that quietly lost the Visu editor's preview
+      # would be worse than a red pipeline. See Micsi/openbridgeserver#191.
+      - name: Checkout obs-visu-skins (V2 Visu skin packages)
+        uses: actions/checkout@v7
+        with:
+          repository: Micsi/obs-visu-skins
+          ref: main
+          path: .obs-visu-skins
+
+      - name: Recreate dev-link paths for the V2 Visu build
+        # apps/visu/package.json (and the skins' own package.json) pin absolute
+        # `link:` paths to a fixed local layout — see CONTRIBUTING-visu.md
+        # ("Dev-Link"). Recreated here the same way visu-ci.yml does it.
+        run: |
+          set -euo pipefail
+          WORK_PARENT="$(dirname "$GITHUB_WORKSPACE")"
+          mv "$GITHUB_WORKSPACE/.obs-visu-skins" "$WORK_PARENT/obs-visu-skins"
+          sudo mkdir -p /Volumes/Daten/Projekte/openbridge
+          sudo ln -s "$WORK_PARENT/obs-visu-skins" /Volumes/Daten/Projekte/openbridge/obs-visu-skins
+          sudo ln -s "$GITHUB_WORKSPACE" /Volumes/Daten/Projekte/openbridge/openbridgeserver-visu-integrate
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install (linked skins repo)
+        # The linked skin resolves @obs/visu-contract through its own
+        # node_modules, so the skins workspace needs its own install too
+        # (links only, no registry). Node is already active from the
+        # "Setup Node.js" step above (.nvmrc), pnpm just needed adding.
+        run: pnpm --dir /Volumes/Daten/Projekte/openbridge/obs-visu-skins install --frozen-lockfile
+
+      - name: Build V2 Visu (visu_v2_dist/)
+        run: ./tools/build-visu-v2.sh
+
       - name: Write obs-update script
         run: |
           sed -e "s|__REPO__|${{ github.repository }}|g" \
@@ -129,9 +178,12 @@ jobs:
 
       - name: Create app bundle
         if: matrix.arch == 'amd64'
+        # visu_v2_dist/ is included unconditionally: the "Build V2 Visu" step
+        # above already failed this job if it could not produce it (see the
+        # comment there), so by the time this step runs the directory exists.
         run: |
           tar -czf "${{ runner.temp }}/${{ steps.meta.outputs.app_bundle_file }}" \
-            obs/ gui_dist/ frontend_dist/ help_dist/ requirements.txt obs-update -C scripts obs-admin
+            obs/ gui_dist/ frontend_dist/ help_dist/ visu_v2_dist/ requirements.txt obs-update -C scripts obs-admin
           cd "${{ runner.temp }}"
           sha256sum "${{ steps.meta.outputs.app_bundle_file }}" \
             > "${{ steps.meta.outputs.app_bundle_file }}.sha256"
@@ -258,6 +310,9 @@ jobs:
           sudo cp -r gui_dist         "$ROOTFS/opt/obs/"
           sudo cp -r frontend_dist    "$ROOTFS/opt/obs/"
           sudo cp -r help_dist        "$ROOTFS/opt/obs/"
+          # visu_v2_dist/ is copied unconditionally: the "Build V2 Visu" step
+          # above already failed this job if it could not produce it.
+          sudo cp -r visu_v2_dist     "$ROOTFS/opt/obs/"
           sudo cp    requirements.txt "$ROOTFS/opt/obs/"
           sudo cp    scripts/obs-admin   "$ROOTFS/opt/obs/"
           echo "${{ steps.meta.outputs.version }}" | sudo tee "$ROOTFS/opt/obs/version" > /dev/null
