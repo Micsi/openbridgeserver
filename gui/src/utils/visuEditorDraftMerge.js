@@ -36,6 +36,13 @@
  * laedt die Include-Kette beim Oeffnen), sodass eine NOCH NICHT gespeicherte
  * Include-Beziehung in keinem der beiden Entwuerfe einen Knoten haette.
  *
+ * DIESE DATEI IST DER WEG IN DIE VORSCHAU, NICHT IN DIE SPALTE. Fuer das
+ * SPEICHERN gilt dieselbe Aufteilung in der anderen Richtung: der Autorenteil
+ * reicht seine Elemente dem Canvas herein, und dessen einer `PUT` schreibt sie
+ * mit (`utils/visuEditorWidgets.js`). Ein eigener Schreibweg fuer den
+ * Autorenteil waere der naechste unabhaengige Schreiber auf `page_config`
+ * (Micsi/openbridgeserver#187) - und genau den soll es nicht geben.
+ *
  * Rein: gleiche Eingabe, gleiche Ausgabe, keine Seiteneffekte.
  */
 import { BOX_KEYS } from '@/utils/visuEditorPage'

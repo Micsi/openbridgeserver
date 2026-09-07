@@ -6,6 +6,7 @@ import {
   C3,
   C4,
   C5,
+  bindingName,
   box,
   canvasSaved,
   el,
@@ -748,18 +749,33 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     }
   });
 
-  test.fixme(
+  /**
+   * DREI AFFORDANZEN ZOGEN NACH, keine Behauptung ist angefasst (Nachzug C3).
+   *
+   * Der Editor trägt seit der Integration von C1+C2+C3 zwei Formulare mit einem
+   * Feld „Name" (Seiteneigenschaften und Bindungsformular) und zwei
+   * Schaltflächen „Speichern" (Seiteneigenschaften und Canvas). Ein
+   * `getByLabel('Name')` bzw. `getByRole('button', { name: 'Speichern' })` trifft
+   * damit je ZWEI Elemente, und Playwright bricht mit „strict mode violation"
+   * ab - eine Aussage über die Ansicht, nicht über das Kriterium dieser Zeile.
+   * Jeder Zugriff sagt deshalb ausdrücklich, welche Hälfte er meint; dieselbe
+   * Eingrenzung, die E9/E15 seit Teil C1 benutzen (`editor-helpers.ts`).
+   *
+   * Gespeichert wird über den Knopf des CANVAS, weil dort der eine Schreibweg
+   * auf `page_config` liegt: der Autorenteil reicht seine Elemente hinein, statt
+   * einen zweiten aufzumachen (Micsi/openbridgeserver#187).
+   */
+  test(
     'E10 Änderung an zentraler Vorlage propagiert automatisch in referenzierende Instanzen ohne manuellen Re-Import',
-    C3,
     async ({ page }) => {
       const fx = seeded();
       // Die zentrale Vorlage = die individuelle Inkludeseite; „M5 Home"
       // referenziert sie (R14). Eine Änderung dort muss ohne Zutun ankommen.
       await openEditor(page, fx.m5.node_ids.include_ind);
       await el(page, fx.m5.widgets.include_ind).click();
-      await page.getByLabel('Name').fill('M5 Gamma Umbenannt');
-      await page.getByRole('button', { name: 'Speichern' }).click();
-      await expect(page.getByText('Gespeichert', { exact: true })).toBeVisible();
+      await bindingName(page).fill('M5 Gamma Umbenannt');
+      await saveCanvas(page).click();
+      await expect(canvasSaved(page)).toBeVisible();
 
       await page.goto(`${EDITOR_BASE}/visu-editor/${fx.m5.node_ids.home}`);
       await expect(page.frameLocator('iframe.editor-preview').getByText('M5 Gamma Umbenannt')).toBeVisible();
@@ -767,8 +783,9 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       // Aufräumen: der Name der Beispielwelt bleibt, wie der Seed ihn setzt.
       await page.goto(`${EDITOR_BASE}/visu-editor/${fx.m5.node_ids.include_ind}`);
       await el(page, 'M5 Gamma Umbenannt').click();
-      await page.getByLabel('Name').fill(fx.m5.widgets.include_ind);
-      await page.getByRole('button', { name: 'Speichern' }).click();
+      await bindingName(page).fill(fx.m5.widgets.include_ind);
+      await saveCanvas(page).click();
+      await expect(canvasSaved(page)).toBeVisible();
     },
   );
 

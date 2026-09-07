@@ -593,6 +593,45 @@ zweiten Laufs fiel eine Zeile der **Bestandsdatei** `authz-roles.spec.ts`
 of 30000ms", also dieselbe Fehlerform und dieselbe Ursache: Maschinenlast. Die
 wiederholte Fahrt derselben Instanz war grün. Nichts davon liegt an C1.
 
+### Ergebnis der Pflichtläufe (Teil C3 · Nachzug Schreibweg, 2026-09-07)
+
+Eigener Portstapel: Mosquitto anonym auf `127.0.0.1:1891` (Colima), Backend
+`http://127.0.0.1:8091` (venv/uvicorn), Visu-Dev-Server `http://localhost:5191`,
+Admin-GUI-Dev-Server `http://localhost:5181`. Gefahren nach den Schritten 1-4b
+und „Harness starten" oben, auf einer Maschine unter Parallellast (ein
+Nachbar-Agent plus ein fremder Dauerlauf, load 3-4).
+
+| Lauf | Instanz | pass | fixme | flaky | fail | Dauer | E10 |
+|---|---|---|---|---|---|---|---|
+| 1 | frisch + leer, beide Dev-Server **kalt**, Seed **einmal** | **35** | **4** | **0** | **0** | 8,6 min | 16,9 s |
+| 2 | dieselbe Instanz, Seed **erneut** | **35** | **4** | **0** | **0** | 6,5 min | 18,5 s |
+
+Der Unterschied zum Stand davor (34/5) ist **E10**: die Zeile wartete auf einen
+Schreibweg für den Autorenteil. Sie fährt jetzt und misst genau das, wofür sie
+geschrieben wurde: eine Umbenennung an der zentralen Vorlage kommt in der
+referenzierenden Seite an, ohne dass jemand neu importiert.
+
+Drei Affordanzen zogen dabei nach, **keine Erwartung ist angefasst**: der
+zusammengesetzte Editor trägt zwei Felder „Name" (Seite und Element) und zwei
+Schaltflächen „Speichern" (Seiteneigenschaften und Canvas), ein ungefähres
+`getByLabel`/`getByRole` lief also in „strict mode violation". Eingegrenzt wird
+über `bindingName()` und `saveCanvas()`/`canvasSaved()` in `editor-helpers.ts`,
+dieselbe Eingrenzung, die E9/E15 seit Teil C1 benutzen.
+
+**Belegte Schärfe der aktivierten Zeile.** Gemessen, nicht behauptet: mit einem
+`return` als erster Zeile von `adoptAuthored()`
+(`gui/src/components/visu/VisuEditorCanvas.vue`) erreicht der Autorenteil die
+Nutzlast des Canvas nicht mehr, und **E10 wird rot**, und zwar genau an der
+Zusage der Zeile, der Vorschau der referenzierenden Seite (`m5-editor-matrix.spec.ts:781`).
+Nach dem Zurücknehmen ist sie wieder grün (20,1 s). Die Beispielwelt blieb dabei
+unverändert (`M5 Gamma Item`), weil die mutierte Fassung gar nichts schreibt.
+
+Die zweite Hälfte des Fundes, der **falsche Erfolg**, ist ohne Browser
+entscheidbar und steht deshalb dort:
+`gui/tests/components/visu/VisuEditorCanvas.authoring.spec.js` lässt vier
+Verluste (Name, Bindung, Sichtbarkeitsregel, neues Element) serverseitig
+geschehen und verlangt jedes Mal den Speicherfehler statt der Quittung.
+
 ## Abdeckung — welche Zeile prüft welches Szenario
 
 **Regeltabelle R1-R16** (`CONTRIBUTING-visu-m5.md` §1)
@@ -638,7 +677,7 @@ Dateien gegen dieselbe Anforderung bauen:
 | E7 Undo/Redo + Pfeiltasten-Nudging | C5 #172 | E17 Responsive-Breakpoints | C2 #169 |
 | E8 Z-Ordnung, sperren/ausblenden | C2 #169 | E18 Export/Import als Datei | C6 #173 |
 | E9 Seitentypen wählbar und wirksam | **läuft** (C1 #168) | E19 Skin/Theme pro Seite oder global | C2 #169 (Feld `skin` in `PageConfig`); danach ist die einzige Handarbeit `test.fixme` → `test` |
-| E10 zentrale Vorlage propagiert automatisch | C3 #170 | | |
+| E10 zentrale Vorlage propagiert automatisch | **läuft** (C3 #170, Nachzug: der Autorenteil schreibt über den Speicherweg des Canvas mit) | | |
 
 Die Bedien-Affordanzen der E-Szenarien (Rollen, Beschriftungen, die
 `[data-el]`-Marke am Canvas-Element) sind die **Anforderung des Harness** an den

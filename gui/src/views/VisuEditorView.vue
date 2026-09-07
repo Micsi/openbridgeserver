@@ -195,6 +195,19 @@ const draft = computed(() =>
 const selectedId = ref(null)
 const selected = computed(() => pageWidgets.value.find((w) => w.id === selectedId.value) || null)
 
+/**
+ * EINE AUSWAHL, ZWEI ANSICHTEN (Nachzug M5 C3, #170).
+ *
+ * Der Canvas und die Elementliste zeigen dieselben Kacheln. Bis hierher hatten
+ * sie zwei getrennte Auswahlen: wer eine Kachel im Canvas anklickte, um sie zu
+ * benennen oder zu binden, tippte in das Formular des zuletzt in der LISTE
+ * angeklickten Elements - also in ein anderes Element. Der Canvas meldet seine
+ * Wahl deshalb nach oben, und sie ist auch die des Formulars.
+ */
+function onCanvasSelect(id) {
+  if (id) selectedId.value = id
+}
+
 onMounted(async () => {
   if (!allowed.value) return
   await ladeBaum()
@@ -333,6 +346,8 @@ function platzieren(type) {
         class="order-first lg:order-none"
         :page-id="pageId"
         :after-save="nachSpeichern"
+        :authored-widgets="pageWidgets"
+        @select="onCanvasSelect"
         @draft="canvasDraft = $event"
         @preview-width="previewWidth = $event"
         @hidden-ids="canvasHiddenIds = $event"

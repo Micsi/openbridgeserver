@@ -111,6 +111,7 @@ import {
   undoTo,
 } from '@/utils/visuEditorHistory'
 import { readClipboard, writeClipboard } from '@/utils/visuEditorClipboard'
+import { mergeAuthoredWidgets, widgetSignature } from '@/utils/visuEditorWidgets'
 import {
   LAYOUT_MODES,
   LAYOUT_PIXEL,
@@ -142,8 +143,27 @@ const props = defineProps({
    * Editor zeigt, was der Server traegt.
    */
   afterSave: { type: Function, default: null },
+  /**
+   * Die Elemente, wie der AUTORENTEIL sie gerade haelt (Nachzug M5 C3, #170).
+   *
+   * DER GRUND, warum sie hier hereinkommen: Palette und Bindungsformular
+   * schreiben in den Entwurf des Autorenteils, und der hatte keinen Weg auf
+   * `page_config`. Name, Bindung, Rolle, Icon, Beschriftung, Preset und die
+   * Sichtbarkeitsregel erreichten den Server nie, und „Speichern" quittierte
+   * trotzdem - der Rueckvergleich sah nur Seiteneigenschaften und Boxen.
+   *
+   * KEIN ZWEITER SCHREIBER (Micsi/openbridgeserver#187): der Autorenteil
+   * bekommt keinen eigenen `PUT`, er reicht seine Elemente hier herein, und der
+   * eine Speicherweg dieses Canvas schreibt sie mit. Wer welches Feld besitzt,
+   * steht in `utils/visuEditorWidgets.js`.
+   *
+   * `null` heisst „es gibt keinen Autorenteil" (die Proben des Canvas montieren
+   * ihn allein); eine leere Liste heisst „er laedt gerade" - beides laesst die
+   * Kacheln dieses Canvas unangetastet.
+   */
+  authoredWidgets: { type: Array, default: null },
 })
-const emit = defineEmits(['draft', 'preview-width', 'hidden-ids'])
+const emit = defineEmits(['draft', 'preview-width', 'hidden-ids', 'select'])
 
 /** Die Widget-Liste IST das Modell: ihre Reihenfolge ist Z-Ordnung und Fluss. */
 const widgets = ref([])
@@ -392,6 +412,33 @@ function adopt(config) {
   widgets.value = ohneBox.length > 0 ? ensureBoxes(list) : list
 }
 
+/**
+ * Die Elemente des Autorenteils in die eigene Liste hereinnehmen (Nachzug C3).
+ *
+ * Der Autorenteil (Palette, Bindungsformular) entscheidet Name, Typ, Bindung und
+ * jeden Konfig-Schluessel; dieser Canvas entscheidet Lage, Marken und
+ * Reihenfolge. `mergeAuthoredWidgets` haelt beides auseinander.
+ *
+ * ES WIRD NUR ZUGEWIESEN, WENN SICH ETWAS AENDERT. Sonst legte jede Runde des
+ * Beobachters eine neue Liste an, der Entwurfs-Beobachter darueber liefe mit,
+ * und die Vorschau bekaeme eine Nachricht ohne Nachricht.
+ *
+ * KEINE AUFZEICHNUNG auf dem Undo-Stapel: „Rueckgaengig" gehoert den Zuegen auf
+ * dieser Flaeche (E7). Ein Tastendruck im Bindungsformular ist kein Zug hier,
+ * und ihn zurueckzunehmen wuerde das Formular nicht mitnehmen - der Stapel
+ * behauptete dann etwas ueber einen Zustand, den er nicht herstellen kann.
+ */
+function adoptAuthored() {
+  if (!loaded.value) return
+  const naechste = mergeAuthoredWidgets(widgets.value, props.authoredWidgets)
+  if (widgetSignature(naechste) === widgetSignature(widgets.value)) return
+  widgets.value = naechste
+  const bekannt = new Set(naechste.map((w) => w.id))
+  selectedIds.value = selectedIds.value.filter((id) => bekannt.has(id))
+}
+
+watch(() => props.authoredWidgets, adoptAuthored)
+
 async function load() {
   if (!props.pageId) return
   // DIE MARKE FAELLT ZUERST. `.editor-canvas` sagt „der Editor steht" - und das
@@ -419,6 +466,10 @@ async function load() {
     lastRecordTag = null
     marquee.value = null
     loaded.value = true
+    // Der Autorenteil kann frueher fertig sein als dieser Canvas. Ohne diese
+    // Zeile bliebe sein Stand bis zur naechsten Eingabe draussen - und ein
+    // „Speichern" dazwischen schriebe den Server-Stand zurueck.
+    adoptAuthored()
   } catch {
     errorKey.value = 'load'
     return
@@ -474,21 +525,23 @@ async function loadLayers() {
 /**
  * Traegt der Server danach, was er tragen sollte?
  *
- * Verglichen werden die Seiteneigenschaften, die Reihenfolge der Ids UND die
- * Autoren-Box jeder Kachel. Die Box stand bis Runde 2 nicht drin, und das war
- * eine Luecke derselben Bauart wie der Fund von Runde 1: ginge serverseitig eine
- * Koordinate verloren, stuende trotzdem „Gespeichert" da. Sie ist erst seit
- * dieser Runde vergleichbar - vorher leerte das Backend-Modell die Zahlen im
- * responsiven Modus selbst, ein Vergleich haette also immer angeschlagen.
+ * Verglichen werden die Seiteneigenschaften UND jedes Element GANZ - Id,
+ * Reihenfolge, Name, Typ, Bindung, jeder Konfig-Schluessel (Rolle, Icon,
+ * Beschriftung, Preset, `visible_when`, die Marken) und die vier Zahlen der
+ * Autoren-Box.
+ *
+ * ZWEIMAL WAR DIESER VERGLEICH ZU KURZ, und beide Male stand „Gespeichert" ueber
+ * einem Verlust. In Runde 1 (C2) sah er nur die Seiteneigenschaften und die
+ * Id-Reihenfolge: eine verlorene Koordinate fiel nicht auf. Bis zu diesem
+ * Nachzug sah er zusaetzlich die Box - aber nichts von dem, was Palette und
+ * Bindungsformular setzen; ein Name, eine Bindung, eine Sichtbarkeitsregel
+ * konnten spurlos verschwinden, und die Quittung log weiter. Der Vergleich sieht
+ * jetzt alles, was in der Nutzlast steht (`utils/visuEditorWidgets.js`).
  */
-function boxSignature(list) {
-  return (list ?? []).map((w) => `${w.id}:${w.x},${w.y},${w.w},${w.h}`).join('|')
-}
-
 function confirmed(server, wanted) {
   if (!server || typeof server !== 'object') return false
   if (!sameSettings(readPageSettings(server), readPageSettings(wanted))) return false
-  return boxSignature(server.widgets) === boxSignature(wanted.widgets)
+  return widgetSignature(server.widgets) === widgetSignature(wanted.widgets)
 }
 
 /**
@@ -505,6 +558,10 @@ async function save() {
   // gespeichert. Sonst schriebe „Speichern" klaglos den Stand VOR der
   // Bearbeitung weg - eine Erfolgsmeldung, die stimmt und etwas anderes meint.
   if (jsonError.value) return
+  // Der Stand des Autorenteils gehoert in DIESE Nutzlast. Der Beobachter oben
+  // hat ihn im Normalfall laengst hereingenommen; hier steht es noch einmal,
+  // damit der Schreibweg nicht davon abhaengt, wann der Scheduler gelaufen ist.
+  adoptAuthored()
   const wanted = configWith(pendingSettings(), widgets.value)
   saved.value = false
   try {
@@ -620,6 +677,23 @@ function select(id, additive = false) {
   }
   selectedIds.value = expandToGroups(widgets.value, [id])
 }
+
+/**
+ * Die Wahl nach OBEN melden (Nachzug M5 C3, #170).
+ *
+ * Bis hierher hatten Canvas und Bindungsformular zwei getrennte Auswahlen: wer
+ * eine Kachel anklickte, um sie zu benennen oder zu binden, sah weiter das
+ * Formular des zuletzt in der LISTE angeklickten Elements - und tippte seine
+ * Aenderung damit in ein anderes Element. Gemeldet wird nur eine BELEGTE Wahl;
+ * ein Klick auf den leeren Grund (der Beginn einer Rahmenauswahl, E5) raeumt
+ * das Formular nicht weg, denn er sagt nichts ueber das Element aus.
+ */
+watch(
+  () => selectedIds.value[0] ?? null,
+  (id) => {
+    if (id) emit('select', id)
+  },
+)
 
 /** Die Auswahl in der Reihenfolge der Seite - „zuerst gewaehlt" ist reproduzierbar. */
 const selectionInPageOrder = computed(() =>

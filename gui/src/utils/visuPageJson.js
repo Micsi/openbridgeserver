@@ -85,15 +85,23 @@ export function parseEditorJson(text) {
  * darf erst gemeldet werden, wenn der Server den alten Stand WIRKLICH traegt.
  */
 export function sameConfig(a, b) {
-  return canonical(a) === canonical(b)
+  return canonicalJson(a) === canonicalJson(b)
 }
 
-function canonical(value) {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+/**
+ * Die kanonische Fassung eines Wertes: sortierte Schluessel, sonst nichts.
+ *
+ * Seit dem Nachzug zu Teil C3 EXPORTIERT, weil der Canvas dieselbe Rechnung
+ * fuer die Widget-Liste braucht (`utils/visuEditorWidgets.js`, die Schranke
+ * hinter der Quittung). Eine zweite Kopie waere eine zweite Lesart derselben
+ * Frage, und die beiden koennten auseinanderlaufen, ohne dass es jemand merkt.
+ */
+export function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
   if (value && typeof value === 'object') {
     return `{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
       .join(',')}}`
   }
   return JSON.stringify(value ?? null)

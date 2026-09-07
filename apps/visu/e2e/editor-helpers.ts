@@ -190,3 +190,16 @@ export const saveCanvas = (page: Page) =>
 /** Die Quittung des Canvas - dieselbe Eingrenzung wie oben. */
 export const canvasSaved = (page: Page) =>
   page.getByTestId('visu-editor-canvas').getByText('Gespeichert', { exact: true });
+
+/**
+ * ZWEI FELDER „NAME" IN EINER ANSICHT - dieselbe Lage wie bei den beiden
+ * „Speichern" darueber, und dieselbe Antwort.
+ *
+ * Die Seiteneigenschaften (C1) benennen die SEITE, das Bindungsformular (C3) das
+ * ausgewaehlte ELEMENT. Beide Beschriftungen lauten „Name", ein blosses
+ * `getByLabel('Name')` traefe also zwei Elemente und braeche mit „strict mode
+ * violation" ab. Die Beschriftung bleibt Teil der Erwartung, nur der Suchbereich
+ * ist eingegrenzt; keine Behauptung ist gesenkt.
+ */
+export const bindingName = (page: Page) =>
+  page.getByTestId('visu-binding-form').getByLabel('Name', { exact: true });
