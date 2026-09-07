@@ -260,6 +260,24 @@ describe('useWebSocketStore', () => {
     )
   })
 
+  /**
+   * Die Wache vor dem Nachsenden (`_subscribedIds.size > 0`) war bisher nur
+   * INDIREKT gefangen: entfernt man sie, schickt jeder Verbindungsaufbau ein
+   * leeres `subscribe` ans Backend - ein Abo ueber nichts, das dort als
+   * gueltige Anmeldung ankommt und den bestehenden Satz ueberschreiben koennte.
+   * Sichtbar wird das nur, wenn man auf die ABWESENHEIT der Nachricht prueft.
+   */
+  it('sendet nach einem Aufbau OHNE Abos gar kein subscribe (leeres Abo ist kein Abo)', async () => {
+    const { useWebSocketStore } = await import('@/stores/websocket')
+    const store = useWebSocketStore()
+    store.connect()
+    FakeWS.instance.sent = []
+
+    FakeWS.instance.simulateOpen()
+
+    expect(FakeWS.instance.sent.filter((n) => JSON.parse(n).action === 'subscribe')).toEqual([])
+  })
+
   it('unsubscribe removes ids from the buffer so they are not resent on reconnect', async () => {
     const { useWebSocketStore } = await import('@/stores/websocket')
     const store = useWebSocketStore()
