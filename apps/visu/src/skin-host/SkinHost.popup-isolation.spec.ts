@@ -115,4 +115,31 @@ describe('SkinHost — Unmount schliesst nur die eigenen Popups (#180)', () => {
 
     expect(store.openPopups).toEqual([]);
   });
+  /**
+   * Die Buchfuehrung muss beim Schliessen auch WIEDER VERGESSEN. Sonst haelt
+   * eine Instanz eine laengst abgegebene Id fest und reisst beim Unmount ein
+   * Popup mit, das inzwischen einer ANDEREN Seite gehoert - derselbe Fehler wie
+   * #180, nur eine Windung spaeter und darum schwerer zu sehen.
+   */
+  it('vergisst eine wieder geschlossene Id, sodass ihr Unmount ein FREMD geoeffnetes Popup gleicher Id verschont', async () => {
+    const { a, b } = await mountTwo();
+    const store = useDeviceStore();
+
+    a.openPopup({ id: 'shared' });
+    await nextTick();
+    a.closePopup('shared');
+    await nextTick();
+    expect(store.openPopups).toEqual([]);
+
+    // Dieselbe Id, neu geoeffnet - sie gehoert jetzt B.
+    b.openPopup({ id: 'shared' });
+    await nextTick();
+    expect(store.openPopups.map((p) => p.id)).toEqual(['shared']);
+
+    wrapperA!.unmount();
+    wrapperA = null;
+    await nextTick();
+
+    expect(store.openPopups.map((p) => p.id)).toEqual(['shared']);
+  });
 });

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import { h, type VNode } from 'vue';
+import { h, nextTick, type VNode } from 'vue';
 import { routeLocationKey, type RouteLocationNormalizedLoaded } from 'vue-router';
 import type { PageHost } from '@obs/visu-contract';
 
@@ -83,10 +83,10 @@ const TREE: ObsVisuNode[] = [
   }),
 ];
 
-function source(): ObsDataSource {
+function source(tree: ObsVisuNode[] = TREE): ObsDataSource {
   const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
     const u = String(url);
-    if (u.endsWith('/visu/tree')) return new Response(JSON.stringify(TREE), { status: 200 });
+    if (u.endsWith('/visu/tree')) return new Response(JSON.stringify(tree), { status: 200 });
     if (u.endsWith('/writable')) return new Response(JSON.stringify({ writable: {} }), { status: 200 });
     if (u.endsWith('/value')) return new Response(JSON.stringify({ value: null }), { status: 200 });
     return new Response('not found', { status: 404 });
@@ -157,5 +157,28 @@ describe('SkinHost — der Popup-Deep-Link (`?popup=<id>`, #184)', () => {
 
     expect(captured!.openPopups).toEqual([]);
     expect(captured!.currentPageId).toBe('home');
+  });
+  /**
+   * Der Deep-Link ist eine EINMALIGE Anweisung, kein Dauerauftrag. Ohne das
+   * Einmal-Flag wertet der Beobachter `?popup=` bei JEDEM neuen Baum erneut aus
+   * - und ein neuer Baum ist nichts Seltenes: `refresh()` nach Login/Logout
+   * (E16) ersetzt ihn. Der Nutzer schliesst das Popup, es geht von selbst
+   * wieder auf, und die Adresszeile laesst sich nicht mehr loswerden.
+   */
+  it('wertet `?popup=` nur EINMAL aus - ein neuer Baum reisst das geschlossene Popup nicht wieder auf', async () => {
+    await mountWithQuery({ popup: 'pop' });
+    const store = useDeviceStore();
+    expect(captured!.openPopups.map((p) => p.id)).toEqual(['pop']);
+
+    captured!.closePopup('pop');
+    await nextTick();
+    expect(store.openPopups).toEqual([]);
+
+    // Ein zweiter `init` mit ANDEREM Inhalt - der Baum wechselt wirklich, der
+    // Beobachter feuert also erneut (ein gleicher Baum bewiese hier nichts).
+    await store.init(source([...TREE, page('spaeter')]));
+    await nextTick();
+
+    expect(store.openPopups).toEqual([]);
   });
 });
