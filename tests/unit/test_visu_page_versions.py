@@ -1292,10 +1292,21 @@ async def test_the_history_decision_reads_its_comparison_value_inside_the_same_l
 
     concurrent_c = PageConfig(widgets=[_widget(x=3)])
     original_fetchall = db.fetchall
+    klick_erledigt = False
 
     async def racy_fetchall(query: str, params: typing.Any = ()) -> typing.Any:
+        nonlocal klick_erledigt
         rows = await original_fetchall(query, params)
-        if "SELECT id FROM visu_nodes" in query:
+        # DAS FENSTER OEFFNET SICH BEI DER BESTANDSABFRAGE VORWEG - und die
+        # Bedingung hier ist bewusst NICHT am heutigen Wortlaut der Abfrage
+        # festgemacht. Vor der Behebung las dieselbe Stelle
+        # `SELECT id, page_config FROM visu_nodes`, danach nur noch
+        # `SELECT id FROM visu_nodes`; ein Test, der den neuen Wortlaut
+        # verlangt, feuerte gegen die alte Fassung gar nicht erst und bliebe
+        # gruen, ohne irgendetwas zu belegen. Getroffen wird deshalb die ERSTE
+        # Bestandsabfrage auf `visu_nodes`, in beiden Fassungen dieselbe.
+        if not klick_erledigt and "FROM visu_nodes" in query and query.lstrip().upper().startswith("SELECT ID"):
+            klick_erledigt = True
             # Der Autorenklick, der GENAU in die Luecke zwischen dem
             # vorweggelesenen Bestand und dem eigentlichen Schreibvorgang
             # dieser Seite faellt.
@@ -1308,6 +1319,7 @@ async def test_the_history_decision_reads_its_comparison_value_inside_the_same_l
     finally:
         db.fetchall = original_fetchall
 
+    assert klick_erledigt, "Vorbedingung: das Wettlauf-Fenster wurde ueberhaupt geoeffnet"
     assert ergebnis.errors == []
     assert (await _load(db, "seite")).widgets[0].x == 3
     # DER BELEG: die Version des Autorenklicks (C, Revision 2) ist noch da -
@@ -1316,16 +1328,22 @@ async def test_the_history_decision_reads_its_comparison_value_inside_the_same_l
 
 
 @pytest.mark.asyncio
-async def test_a_failed_upsert_leaves_the_history_standing_the_order_is_pinned(db: Database) -> None:
-    """Reihenfolge ungepinnt hiesse: das Abraeumen zuerst, dann der Upsert - beide
-    gruen bei Erfolg, aber falsch bei einem gescheiterten Upsert.
+async def test_a_failed_upsert_leaves_the_history_standing(db: Database) -> None:
+    """Ein gescheiterter Import darf den gueltigen Verlauf nicht mitreissen.
 
-    Das heutige Verhalten ist richtig: ERST schreiben, DANN abraeumen, damit ein
-    gescheiterter Import den gueltigen Verlauf behaelt. Der Upsert wird hier
-    ECHT zum Scheitern gebracht (kein Mock): `type='BOGUS'` verletzt die
-    `CHECK`-Bedingung der Spalte (`obs/db/database.py`, `visu_nodes.type`), das
-    `INSERT ... ON CONFLICT` wirft, und die (heute atomare) Transaktion aus
-    Lesen/Schreiben/Abraeumen wird ohne jede Wirkung zurueckgerollt.
+    ZUM NAMEN: dieser Test hiess zuerst "...the_order_is_pinned" und behauptete
+    damit mehr, als er zeigt. Die Reihenfolge von Upsert und Abraeumen WAR die
+    tragende Zusage, solange beide Schritte einzeln liefen. Seit sie in
+    derselben Transaktion stehen, ist sie es nicht mehr: die Atomaritaet rollt
+    bei einem Fehler ohnehin BEIDES zurueck, die umgedrehte Reihenfolge waere
+    von aussen nicht mehr zu unterscheiden. Ein Test kann nicht pinnen, was
+    verhaltensneutral geworden ist - er belegt jetzt die Zusage, die wirklich
+    traegt, und heisst danach.
+
+    Der Upsert wird ECHT zum Scheitern gebracht (kein Mock): `type='BOGUS'`
+    verletzt die `CHECK`-Bedingung der Spalte (`obs/db/database.py`,
+    `visu_nodes.type`), das `INSERT ... ON CONFLICT` wirft, und die Transaktion
+    aus Lesen/Schreiben/Abraeumen wird ohne jede Wirkung zurueckgerollt.
     """
     await _insert_node(db, "seite", config=PageConfig(widgets=[_widget(x=1)]))
     await _save(db, "seite", PageConfig(widgets=[_widget(x=2)]))

@@ -274,4 +274,60 @@ describe('VisuEditorCanvas - Seiteneigenschaften ueberleben ein Speichern danach
     expect(server.config.skin).toBe('ionic')
     expect(server.config.includes).toEqual([])
   })
+  /**
+   * DIE SCHRANKE GILT FUER JEDES DER MITGEFUEHRTEN FELDER, nicht nur fuer den
+   * Skin. `confirmed()` prueft seit #187 auch `includes`,
+   * `ignore_global_includes` und `popup` - drei Zeilen, die bislang von keiner
+   * Probe negativ abgesichert waren: sie liessen sich streichen, ohne dass ein
+   * einziger Test rot wurde. Genau dieselbe Luecke, die schon zweimal ein
+   * falsches „Gespeichert" ueber einem Verlust stehen liess.
+   *
+   * Jeder Fall laesst den Server GENAU EIN Feld verwerfen und verlangt, dass
+   * die Quittung ausbleibt.
+   */
+  const POPUP_STAND = {
+    x: 10, y: 10, w: 200, h: 100,
+    auto_close_ms: null, modal: false, animate: false, shadow: true, dim_backdrop: false,
+  }
+  const verworfeneFelder = [
+    {
+      feld: 'includes',
+      frisch: { includes: ['welcome', 'footer'] },
+      verwirf: (abgelegt) => { abgelegt.includes = [] },
+    },
+    {
+      feld: 'ignore_global_includes',
+      frisch: { ignore_global_includes: true },
+      verwirf: (abgelegt) => { abgelegt.ignore_global_includes = false },
+    },
+    {
+      feld: 'popup',
+      frisch: { popup: POPUP_STAND },
+      verwirf: (abgelegt) => { abgelegt.popup = null },
+    },
+  ]
+  for (const fall of verworfeneFelder) {
+    it(`meldet KEIN „Gespeichert", wenn der Server „${fall.feld}" verwirft`, async () => {
+      const w = await mountCanvas(
+        [widget('a')],
+        { includes: [], ignore_global_includes: false, popup: null },
+      )
+      await speichereEigenschaftenAnderswo(fall.frisch)
+
+      savePage.mockImplementation(async (id, config) => {
+        const abgelegt = normalizeOnServer(config)
+        fall.verwirf(abgelegt)
+        server.config = abgelegt
+        return { status: 204 }
+      })
+
+      await w.setProps({ authoredWidgets: [widget('a', { name: 'Umbenannt' })] })
+      await flushPromises()
+      await byButton(w, 'Speichern').trigger('click')
+      await flushPromises()
+
+      expect(quittung(w)).toBe(false)
+      expect(fehler(w)).toBe(true)
+    })
+  }
 })
