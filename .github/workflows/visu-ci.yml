@@ -152,6 +152,12 @@ jobs:
   # dafuer da. Er baut bewusst NICHT und faehrt nur diese eine Datei: der Test
   # liest Dateien und ruft `swift`, mehr braucht er nicht. macOS-Runner sind
   # teuer, deshalb so schlank wie moeglich.
+  #
+  # Kein `cap doctor ios` hier: der verlangt ein gebautes `dist/`
+  # („Could not find the web assets directory"), und dafuer den Build zu fahren
+  # widerspraeche dem Zweck des Jobs. Die iOS-Verdrahtung deckt der SwiftPM-Test
+  # ohnehin strenger ab als `doctor` — er wertet das Manifest aus, statt nur
+  # nachzusehen, ob Xcode da ist.
   swiftpm:
     runs-on: macos-latest
     steps:
@@ -193,11 +199,6 @@ jobs:
       # nichts, und genau das war der Zustand, den er beheben soll.
       - name: Swift vorhanden
         run: swift --version
-
-      # Die iOS-Haelfte von `cap doctor` — auf dem Linux-Runner nicht moeglich,
-      # hier schon: macOS-Runner bringen Xcode mit.
-      - name: Capacitor doctor (iOS)
-        run: pnpm --filter @obs/visu-app exec cap doctor ios
 
       - name: SwiftPM-Manifest (Vitest)
         run: pnpm --filter @obs/visu-app exec vitest run tests/capacitor-versions.test.ts
