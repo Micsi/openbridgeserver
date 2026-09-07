@@ -267,57 +267,120 @@ describe('previewFrameFence - ein misslungenes Vorkommen bricht nicht die GANZE 
   })
 })
 
-describe('previewFrameFence - styleBloecke() liest ein `</style>` NUR als echtes Schluss-Tag (#182, sechste Form)', () => {
-  // Dieselbe Klasse wie die vierte Form, jetzt auf CSS- statt HTML-Ebene: die
-  // Suche nach dem SCHLIESSENDEN `</style>` war eine reine `/<\/style\s*>/`-
-  // Textsuche im Rumpf, die auch ein `</style>` traf, das nur als TEXT in
-  // einem CSS-String oder -Kommentar steht (`content: "</style>";`). Der
-  // Rumpf wurde dort abgeschnitten, und jede Regel DANACH - auch eine, die
-  // den Vorschaurahmen trifft - verschwand komplett: weder `rules` noch
-  // `sonstiges` sahen sie je, weil `cssRegeln()` den abgeschnittenen Text nie
-  // bekam.
-  it('schneidet den Rumpf NICHT an einem `</style>` ab, das in einem CSS-String steht', () => {
+describe('previewFrameFence - styleBloecke() parst echt statt nachzubauen (#182, sechste/siebte/achte Form -> Runde 5 Umbau)', () => {
+  // GESCHICHTE, damit die Kurskorrektur nachvollziehbar bleibt: Runde 4 baute
+  // `styleRumpfEnde()` - eine eigene Anfuehrungszeichen-/Kommentar-Buchhaltung
+  // fuer die Suche nach dem SCHLIESSENDEN `</style>`, weil eine rohe
+  // `/<\/style\s*>/`-Textsuche auch ein `</style>` traf, das nur als TEXT in
+  // einem CSS-String stand (`content: "</style>";`). Diese Buchhaltung selbst
+  // brachte danach ZWEI NEUE Faelle mit (Runde 5, siebte/achte Form): ein
+  // `</style>` in einer UNZITIERTEN `url(...)` (die Buchhaltung kennt nur
+  // Anfuehrungszeichen) schnitt trotzdem mittendrin ab, und ein einzelnes
+  // UNBALANCIERTES Anfuehrungszeichen liess `zeichenkettenEnde()` bis ans Ende
+  // der GANZEN Quelldatei laufen - der KOMPLETTE Block verschwand dann
+  // spurlos, nicht einmal `ungelesen`/`fremd` sahen ihn. Vier Formen an EINER
+  // Stelle (H2, vierte, sechste, jetzt siebte/achte) sind kein Einzelfall mehr.
+  //
+  // GEMESSEN statt angenommen, bevor ersetzt wurde: `<style>` ist ein HTML5
+  // RAW-TEXT-Element wie `<script>` - sein Rumpf endet beim ERSTEN woertlichen
+  // `</style>`, PUNKT, UNABHAENGIG von jedem CSS-Anfuehrungszeichen, -Klammer
+  // oder -Kommentar darin. Das ist keine Vereinfachung, sondern die
+  // Spezifikation - nachgemessen gegen den ECHTEN `@vue/compiler-sfc`, den
+  // Vite selbst benutzt: fuer `content: "</style>"` UND fuer `url(</style>)`
+  // liefert er exakt denselben abgeschnittenen Rumpf UND einen Compile-Fehler
+  // ("Invalid end tag") - eine Datei mit so einem Text baut also gar nicht
+  // erst, kein stiller Verlust im ausgelieferten Bundle. `styleBloecke()`
+  // nutzt jetzt denselben `DOMParser` wie {@link dokumentPfad} und erbt diese
+  // Regel, ohne sie selbst nachzubauen - die ersten beiden Proben hier
+  // bestaetigen exakt diese Deckungsgleichheit mit dem echten Compiler.
+  it('schneidet den Rumpf am ersten woertlichen `</style>` ab, das in einem CSS-String steht - wie der echte Compiler', () => {
+    // Nachgemessen gegen `@vue/compiler-sfc`: `parse(...).descriptor.styles[0].content`
+    // liefert fuer dieselbe Eingabe ebenfalls `.decoy{content: "` UND einen
+    // Fehler „Invalid end tag" - die Datei baut in Wirklichkeit gar nicht.
     const src =
       '<style>.decoy{content: "</style>"} iframe[data-testid="visu-preview-frame"]{opacity:.3}</style>'
-    const bloecke = styleBloecke(src)
-    expect(bloecke).toHaveLength(1)
-    const { rules } = cssRegeln(bloecke[0])
-    expect(rules.some((r) => r.selector.includes('visu-preview-frame'))).toBe(true)
+    expect(styleBloecke(src)).toEqual(['.decoy{content: "'])
   })
 
-  it('schneidet den Rumpf NICHT an einem `</style>` ab, das in einem CSS-Kommentar steht', () => {
+  it('schneidet den Rumpf auch an einem `</style>` ab, das in einem CSS-Kommentar steht', () => {
     const src =
       '<style>/* alt: </style> */ iframe[data-testid="visu-preview-frame"]{opacity:.4}</style>'
-    const bloecke = styleBloecke(src)
-    expect(bloecke).toHaveLength(1)
-    const { rules } = cssRegeln(bloecke[0])
-    expect(rules.some((r) => r.selector.includes('visu-preview-frame'))).toBe(true)
+    expect(styleBloecke(src)).toEqual(['/* alt: '])
   })
 
-  it('ROT gegen den unreparierten Stand (Commit 442bf34c): die rohe `</style>`-Regex schneidet am Text im CSS-String ab, die Regel verschwindet aus `rules` UND `sonstiges`', () => {
-    // Reproduziert exakt die Schluss-Tag-Suche aus `styleBloecke()` in
-    // Runde 3, die auf dem HEAD dieser Welle vor diesem Fix stand (die
-    // Oeffnungs-Tag-Grenze ist hier trivial - das Fixture hat keine
-    // Attribute am `<style>` - der Fehler steckt in der SCHLUSS-Suche).
-    function styleBloeckeAlt(src) {
-      const out = []
-      const openRe = /<style\b[^>]*>/gi
-      let m
-      while ((m = openRe.exec(src)) !== null) {
-        const rest = src.slice(m.index + m[0].length)
-        const schluss = /<\/style\s*>/i.exec(rest)
-        if (schluss === null) continue
-        out.push(rest.slice(0, schluss.index))
+  it('schneidet den Rumpf auch an einem `</style>` ab, das in einer UNZITIERTEN url(...) steht (Runde 5, siebte Form)', () => {
+    // Nachgemessen gegen `@vue/compiler-sfc`: identischer abgeschnittener
+    // Rumpf UND „Invalid end tag" fuer dieselbe Eingabe - auch dieser Fall
+    // ist kein stiller Bundle-Verlust, sondern ein roter Build.
+    const src =
+      '<style>.decoy{background:url(</style>)} iframe[data-testid="visu-preview-frame"]{opacity:.3}</style>'
+    expect(styleBloecke(src)).toEqual(['.decoy{background:url('])
+  })
+
+  it('verliert NICHTS, wenn irgendwo im Rumpf ein einzelnes unbalanciertes Anfuehrungszeichen steht, ohne dass `</style>` je woertlich vorkommt (Runde 5, achte Form)', () => {
+    // Der Nachbau aus Runde 4 liess `zeichenkettenEnde()` in diesem Fall bis
+    // zum Ende der GANZEN Quelldatei laufen und fand dann gar kein Schluss-Tag
+    // mehr - der KOMPLETTE Block verschwand. Ein Raw-Text-Element kennt keine
+    // Anfuehrungszeichen-Buchhaltung und ist von einem unbalancierten Zitat
+    // darin unbeeindruckt: der Rumpf kommt VOLLSTAENDIG an, woertlich bis zum
+    // echten Schluss-Tag.
+    const src =
+      '<style>.decoy{content: "unbalanced} iframe[data-testid="visu-preview-frame"]{opacity:.4}</style>'
+    const bloecke = styleBloecke(src)
+    expect(bloecke).toHaveLength(1)
+    expect(bloecke[0]).toBe('.decoy{content: "unbalanced} iframe[data-testid="visu-preview-frame"]{opacity:.4}')
+    // Das unbalancierte Zitat ist danach eine Aufgabe von `cssRegeln()`, nicht
+    // mehr von `styleBloecke()` - und `cssRegeln()` verwirft auch dabei nichts
+    // still: die Textstelle bleibt sichtbar in den Deklarationen der einen
+    // Regel, die der eigene Scanner daraus macht (Kritik #182, dritte/vierte
+    // Form: eine unlesbare Stelle wird nie zu einem leeren Ergebnis).
+    const { rules } = cssRegeln(bloecke[0])
+    expect(rules.some((r) => r.decls.includes('visu-preview-frame'))).toBe(true)
+  })
+
+  it('ROT gegen den unreparierten Stand (Commit eed1341f, Runde 4): die eigene Anfuehrungszeichen-Buchhaltung verliert den KOMPLETTEN Block bei einem unbalancierten Zitat', () => {
+    // Reproduziert exakt `styleRumpfEnde()`/`styleBloecke()` aus Runde 4, die
+    // auf dem HEAD dieser Welle vor diesem Umbau standen.
+    function zeichenkettenEndeAlt(text, i) {
+      const q = text[i]
+      for (let j = i + 1; j < text.length; j += 1) {
+        if (text[j] === '\\') {
+          j += 1
+          continue
+        }
+        if (text[j] === q) return j + 1
       }
-      return out
+      return text.length
+    }
+    function styleRumpfEndeAlt(src, ab) {
+      let i = ab
+      while (i < src.length) {
+        const ch = src[i]
+        if (ch === '"' || ch === "'") {
+          i = zeichenkettenEndeAlt(src, i)
+          continue
+        }
+        if (ch === '/' && src[i + 1] === '*') {
+          const e = src.indexOf('*/', i + 2)
+          i = e === -1 ? src.length : e + 2
+          continue
+        }
+        if (/^<\/style\s*>/i.test(src.slice(i))) return i
+        i += 1
+      }
+      return -1
     }
     const src =
-      '<style>.decoy{content: "</style>"} iframe[data-testid="visu-preview-frame"]{opacity:.3}</style>'
-    const bloeckeAlt = styleBloeckeAlt(src)
-    expect(bloeckeAlt).toEqual(['.decoy{content: "'])
-    const { rules, sonstiges } = cssRegeln(bloeckeAlt[0])
-    expect(rules.some((r) => r.selector.includes('visu-preview-frame'))).toBe(false)
-    expect(sonstiges.some((s) => s.includes('visu-preview-frame'))).toBe(false)
+      '<style>.decoy{content: "unbalanced} iframe[data-testid="visu-preview-frame"]{opacity:.4}</style>'
+    const oeffnung = /<style\b[^>]*>/i.exec(src)
+    const ende = oeffnung.index + oeffnung[0].length
+    expect(styleRumpfEndeAlt(src, ende)).toBe(-1)
+    // Zum Vergleich: die REPARIERTE `styleBloecke()` verliert hier nichts
+    // (siehe vorige Probe).
+  })
+
+  it('`<style src="…">` bleibt uebersprungen - kein Rumpf zu melden (H2 bleibt Aufgabe von spezifizierer())', () => {
+    expect(styleBloecke('<style src="./x.css"></style>')).toEqual([])
   })
 })
 

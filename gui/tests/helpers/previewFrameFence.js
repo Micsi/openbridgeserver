@@ -331,60 +331,54 @@ export function cssRegeln(css) {
 }
 
 /**
- * Der Index, an dem ein `<style>`-Rumpf, der bei `ab` beginnt, WIRKLICH
- * endet - oder `-1`.
- *
- * Kritik #182, sechste Form (dieselbe Klasse wie die vierte, jetzt auf
- * CSS-Ebene statt HTML-Ebene): eine reine `/<\/style\s*>/`-Textsuche im
- * Rumpf trifft auch ein `</style>`, das nur als TEXT in einem CSS-String
- * oder -Kommentar steht (`content: "</style>";`). Der Rumpf wird dort
- * abgeschnitten, und jede Regel DANACH - auch eine, die den Vorschaurahmen
- * trifft - verschwindet komplett: weder `rules` noch `sonstiges` sehen sie
- * je, weil `cssRegeln()` den abgeschnittenen Text nie bekommt. Diese Funktion
- * ueberspringt deshalb Zeichenketten (ueber {@link zeichenkettenEnde}) UND
- * CSS-Block-Kommentare, bevor sie auf das echte Schluss-Tag prueft - dieselben
- * zwei Faelle, die `ohneKommentare()`/`scanne()` fuer den Rest von CSS schon
- * kennen.
- */
-function styleRumpfEnde(src, ab) {
-  let i = ab
-  while (i < src.length) {
-    const ch = src[i]
-    if (ch === '"' || ch === "'") {
-      i = zeichenkettenEnde(src, i)
-      continue
-    }
-    if (ch === '/' && src[i + 1] === '*') {
-      const e = src.indexOf('*/', i + 2)
-      i = e === -1 ? src.length : e + 2
-      continue
-    }
-    if (/^<\/style\s*>/i.test(src.slice(i))) return i
-    i += 1
-  }
-  return -1
-}
-
-/**
  * Die `<style>`-Bloecke eines HTML- oder SFC-Textes.
  *
- * OHNE Zeilenanker: der Vorgaenger verlangte, dass vor `<style` nur Leerraum
- * steht, und ein `<style>` hinter `<title>` auf derselben Zeile blieb deshalb
- * ungelesen (Kritik R10, X5).
+ * ECHTES Parsing statt Nachbau (Kritik #182, siebte + achte Form - beide im
+ * `styleRumpfEnde()`-Nachbau aus Runde 4, der Form 6 schliessen sollte): eine
+ * unzitierte `url(</style>)` traf die eigene Anfuehrungszeichen-Buchhaltung
+ * gar nicht und schnitt trotzdem ab; ein einzelnes UNBALANCIERTES
+ * Anfuehrungszeichen liess `zeichenkettenEnde()` bis ans Ende der GANZEN
+ * Quelldatei laufen, `styleRumpfEnde()` fand dann gar kein Ende mehr, und der
+ * KOMPLETTE Block verschwand - nicht in `rules`, `sonstiges`, `ungelesen`
+ * oder `fremd`. Vier Formen an EINER Stelle (H2, vierte, sechste, jetzt
+ * siebte/achte) sind kein Einzelfall mehr, sondern ein Nachbau, der nie
+ * fertig wird.
  *
- * Die Tag-Grenze selbst kommt jetzt aus {@link tags} statt aus `[^>]*` direkt
- * in dieser Regel (Kritik #182, vierte Form) - ein zitiertes `>` in einem
- * Attribut DIESES `<style>`-Tags (z.B. `<style data-note="a > b">`) riss die
- * Grenze sonst vor dem eigentlichen Rumpf ab. Das SCHLUSS-Tag kommt jetzt aus
- * {@link styleRumpfEnde} statt aus einer rohen Regex (Kritik #182, sechste
- * Form).
+ * Gemessen statt angenommen, bevor ersetzt wurde: `<style>` ist ein HTML5
+ * RAW-TEXT-Element wie `<script>` - sein Rumpf endet beim ERSTEN woertlichen
+ * `</style>`, PUNKT, unabhaengig von jedem CSS-Anfuehrungszeichen oder
+ * -Kommentar darin. Das ist keine Vereinfachung, sondern die Spezifikation -
+ * belegt gegen den ECHTEN `@vue/compiler-sfc`, den Vite selbst benutzt: der
+ * Fall `content: "</style>"` aus Runde 4 bricht DORT mit `SyntaxError: Invalid
+ * end tag` ab und liefert exakt denselben abgeschnittenen Rumpf, den auch
+ * dieser Zaun jetzt liefert. Eine Datei, die das enthaelt, baut also gar
+ * nicht erst - kein stiller Verlust im ausgelieferten Bundle, sondern ein
+ * roter Build. Ein CSS-bewusstes Nachbauen dieser Grenze loest deshalb kein
+ * echtes Problem, es simuliert nur eine Nachsicht, die die echte Werkzeugkette
+ * gar nicht hat.
+ *
+ * `DOMParser` (global, von vitest ueber `environment: 'happy-dom'` gestellt -
+ * derselbe, den {@link dokumentPfad} schon nutzt) implementiert die Raw-Text-
+ * Regel von Haus aus, ohne eigene Anfuehrungszeichen-/Kommentar-Buchhaltung:
+ * `element.textContent` eines Raw-Text-Elements ist woertlich das, was
+ * dazwischen stand, OHNE Entity-Dekodierung (`&amp;` bleibt `&amp;`, wie es
+ * fuer CSS sein muss - nachgemessen). `querySelectorAll('style')` findet
+ * jeden Block, gleich ob er in `<head>`/`<body>` einsortiert wird oder - wie
+ * bei einem SFC-Fragment ohne `<html>` - direkt neben `<template>` steht;
+ * keinen Zeilenanker mehr noetig (Kritik R10, X5).
+ *
+ * `<style src="…">` (Kritik #182, H2) behaelt sein Attribut - {@link
+ * spezifizierer} liest `src` weiterhin selbst ueber {@link tags}/{@link
+ * attributWert} (dort gibt es keinen Rumpf zu begrenzen, also auch keine
+ * dieser vier Formen); hier wird ein solcher Block uebersprungen, weil er
+ * keinen Rumpf zu melden hat.
  */
 export function styleBloecke(src) {
+  const doc = new DOMParser().parseFromString(src, 'text/html')
   const out = []
-  for (const { ende } of tags(src, 'style')) {
-    const schluss = styleRumpfEnde(src, ende)
-    if (schluss === -1) continue
-    out.push(src.slice(ende, schluss))
+  for (const el of doc.querySelectorAll('style')) {
+    if (el.hasAttribute('src')) continue
+    out.push(el.textContent)
   }
   return out
 }
