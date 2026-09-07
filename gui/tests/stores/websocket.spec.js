@@ -3,6 +3,10 @@ import { createPinia, setActivePinia } from 'pinia'
 
 let constructorCalls = 0
 
+// Geschaerfte Attrappe (Vorlage: apps/visu/src/core/obs/client.ts / WsHandle):
+// bildet CONNECTING/OPEN/CLOSED nach und wirft beim Senden im Aufbau, exakt
+// wie ein echtes Browser-WebSocket (InvalidStateError). Damit kann eine Probe
+// stilles Verwerfen nicht mehr mit stillem Senden verwechseln.
 class FakeWS {
   constructor(url, protocols) {
     constructorCalls++
@@ -12,7 +16,16 @@ class FakeWS {
     this.sent = []
     FakeWS.instance = this
   }
-  send(data) { this.sent.push(data) }
+  send(data) {
+    if (this.readyState === 0) {
+      throw new DOMException(
+        "Failed to execute 'send' on 'WebSocket': Still in CONNECTING state.",
+        'InvalidStateError'
+      )
+    }
+    if (this.readyState !== 1) return // CLOSING/CLOSED: verwirft still, wie das Original
+    this.sent.push(data)
+  }
   close(code) {
     this.readyState = 3 // CLOSED
     this.onclose?.({ code })
@@ -210,12 +223,90 @@ describe('useWebSocketStore', () => {
     expect(FakeWS.instance.sent).toContainEqual(JSON.stringify({ action: 'unsubscribe', ids: ['dp-1'] }))
   })
 
-  it('subscribe is a no-op when socket is not OPEN', async () => {
+  // War bis hierher (#185) eine zementierende Probe: sie pinnte, dass ein
+  // Abo waehrend des Verbindungsaufbaus stillschweigend verworfen wird, ohne
+  // Gegenprobe, dass es je ankommt. Jetzt haelt sie das richtige Verhalten
+  // fest - buffern statt verwerfen, nachsenden sobald die Verbindung offen ist.
+  it('subscribe buffers ids while the socket is not yet OPEN, and sends them once it opens', async () => {
     const { useWebSocketStore } = await import('@/stores/websocket')
     const store = useWebSocketStore()
     store.connect() // CONNECTING, not yet OPEN
 
     store.subscribe(['dp-1'])
+    expect(FakeWS.instance.sent).toHaveLength(0) // noch nicht gesendet - aber gepuffert, nicht verworfen
+
+    FakeWS.instance.simulateOpen()
+
+    expect(FakeWS.instance.sent).toContainEqual(JSON.stringify({ action: 'subscribe', ids: ['dp-1'] }))
+  })
+
+  it('resends the full buffered id set after a reconnect (#185)', async () => {
+    const { useWebSocketStore } = await import('@/stores/websocket')
+    const store = useWebSocketStore()
+    store.connect()
+    FakeWS.instance.simulateOpen()
+
+    store.subscribe(['dp-1', 'dp-2'])
+    FakeWS.instance.sent = [] // nur den Wiederaufbau beobachten
+
+    FakeWS.instance.close(1000) // Verbindungsabbruch
+    vi.advanceTimersByTime(5001) // Wiederaufbau nach 5s -> neue Instanz
+    expect(constructorCalls).toBe(2)
+
+    FakeWS.instance.simulateOpen() // neue Verbindung oeffnet
+
+    expect(FakeWS.instance.sent).toContainEqual(
+      JSON.stringify({ action: 'subscribe', ids: ['dp-1', 'dp-2'] })
+    )
+  })
+
+  /**
+   * Die Wache vor dem Nachsenden (`_subscribedIds.size > 0`) war bisher nur
+   * INDIREKT gefangen: entfernt man sie, schickt jeder Verbindungsaufbau ein
+   * leeres `subscribe` ans Backend - ein Abo ueber nichts, das dort als
+   * gueltige Anmeldung ankommt und den bestehenden Satz ueberschreiben koennte.
+   * Sichtbar wird das nur, wenn man auf die ABWESENHEIT der Nachricht prueft.
+   */
+  it('sendet nach einem Aufbau OHNE Abos gar kein subscribe (leeres Abo ist kein Abo)', async () => {
+    const { useWebSocketStore } = await import('@/stores/websocket')
+    const store = useWebSocketStore()
+    store.connect()
+    FakeWS.instance.sent = []
+
+    FakeWS.instance.simulateOpen()
+
+    expect(FakeWS.instance.sent.filter((n) => JSON.parse(n).action === 'subscribe')).toEqual([])
+  })
+
+  it('unsubscribe removes ids from the buffer so they are not resent on reconnect', async () => {
+    const { useWebSocketStore } = await import('@/stores/websocket')
+    const store = useWebSocketStore()
+    store.connect()
+    FakeWS.instance.simulateOpen()
+
+    store.subscribe(['dp-1', 'dp-2'])
+    store.unsubscribe(['dp-1'])
+    FakeWS.instance.sent = []
+
+    FakeWS.instance.close(1000)
+    vi.advanceTimersByTime(5001)
+    FakeWS.instance.simulateOpen()
+
+    expect(FakeWS.instance.sent).toContainEqual(JSON.stringify({ action: 'subscribe', ids: ['dp-2'] }))
+    expect(FakeWS.instance.sent).not.toContainEqual(JSON.stringify({ action: 'subscribe', ids: ['dp-1'] }))
+  })
+
+  it('disconnect clears the buffered subscription set', async () => {
+    const { useWebSocketStore } = await import('@/stores/websocket')
+    const store = useWebSocketStore()
+    store.connect()
+    FakeWS.instance.simulateOpen()
+
+    store.subscribe(['dp-1'])
+    store.disconnect()
+
+    store.connect()
+    FakeWS.instance.simulateOpen()
 
     expect(FakeWS.instance.sent).toHaveLength(0)
   })

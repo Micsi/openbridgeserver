@@ -418,6 +418,11 @@ function onJsonInput(text) {
   jsonError.value = null
   jsonIsSource = true
   jsonAuthored = gelesen.config
+  // #189.3 - eine Uebernahme aus dem Text ist genauso ein Schritt wie jede
+  // andere Aenderung im Editor (E7). `record()` gruppiert wie beim
+  // Zahlenfeld: aufeinanderfolgende Anschlaege in DERSELBEN Textansicht
+  // bleiben EIN Schritt, bis eine andere Aktion die Serie beendet.
+  record('json')
   adoptEdited(gelesen.config)
   // DIE TEXTANSICHT SCHREIBT IN DENSELBEN ENTWURF WIE DER AUTORENTEIL
   // (Nachzug M5 C3 Runde 2, #170/#173).
