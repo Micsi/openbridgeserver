@@ -91,11 +91,19 @@ function seedZusage(): { typ: string; slot: string; wert: number } {
   return { typ, slot, wert };
 }
 
-/** Die Zeichenfolge, die Szenario E11 in der Vorschau sucht. */
+/**
+ * Die Zeichenfolge, die Szenario E11 in der Vorschau sucht.
+ *
+ * `test.fixme` ODER `test`: der Zaun haengt an der ZUSAGE der Zeile, nicht
+ * daran, ob sie gerade laeuft. Bis zum Zusammenfuehren von Teil C3 und Teil D
+ * stand hier nur `test\.fixme`, und in dem Augenblick, in dem D die Zeile
+ * aktivierte, fand der Zaun sein Szenario nicht mehr und riss - ein Zaun, der
+ * genau dann faellt, wenn das Bewachte zu leben anfaengt, bewacht nichts.
+ */
 function e11Erwartung(): string {
   const block = treffer(
     szenarien,
-    /test\.fixme\(\s*'E11[\s\S]*?\n {2}\}\);/,
+    /test(?:\.fixme)?\(\s*'E11[\s\S]*?\n {2}\}\);/,
     'Szenario E11',
   )[0];
   return treffer(block, /getByText\('([^']+)'\)/, "getByText von E11")[1];

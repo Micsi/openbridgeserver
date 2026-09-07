@@ -60,6 +60,52 @@ export const C2_PAGE_SKIN = {
 } as const;
 
 /**
+ * E3 wartet NICHT mehr auf die Ausliefer-Route der Vorschau.
+ *
+ * Teil D (Micsi/openbridgeserver#174) hat sie gebaut: der Server mountet
+ * `apps/visu` unter `/visu-v2/`, `/visu-v2/preview` liefert die echte Visu aus,
+ * und der Vorschaukasten des Editors zeigt sie (gemessen an der laufenden
+ * Instanz: `.edomi-canvas` im Rahmen, mit den Elementen der Seite und den
+ * globalen Ebenen). Was den Pixel-Diff jetzt noch verhindert, ist eine ANDERE
+ * Naht, und sie ist gemessen statt vermutet.
+ *
+ * MESSUNG (Fenster 1280x900, Rahmen 974x628, beide Seiten derselbe Ausschnitt
+ * `.edomi-root`):
+ *
+ *   Vorschau  974 x 628, Nav-Spalte 176 px, Zeichenflaeche 798 px
+ *   live      974 x 687, Nav-Spalte 191 px, Zeichenflaeche 783 px
+ *
+ * Die Nav-Spalte des Edomi-Skins ist in beiden Faellen so breit wie ihr
+ * laengster Eintrag - und die Eintraege sind NICHT dieselben: die Vorschau baut
+ * ihren Nav-Baum aus den Knoten des ENTWURFS (`PreviewDataSource.navTree()`,
+ * gefuellt von `loadDraftNodes` mit der Seite, ihren Includes und den globalen
+ * Inkludeseiten - hier VIER Eintraege), die laufende Visu aus dem GANZEN Baum
+ * des Servers (`ObsDataSource.navTree()` - hier ACHTZEHN). Verschieden breite
+ * Nav-Spalte heisst verschoben beginnende Zeichenflaeche, und damit ist die
+ * Zeile „0 abweichende Pixel" nicht erreichbar, egal wie gut die Route ist.
+ *
+ * ZWEITE ABWEICHUNG, aus derselben Quelle - und sie faellt zuerst auf: auch die
+ * HOEHE geht auseinander (628 gegen 687). Die Nav-Spalte ist eine Liste
+ * veraenderlicher Laenge; achtzehn Eintraege machen `.edomi-root` hoeher als
+ * vier. Die Vorbedingung `pngSize(inLive) == pngSize(inEditor)` in E3
+ * (`m5-editor-matrix.spec.ts`) schlaegt deshalb SELBST DANN an, wenn beide
+ * Spalten gleich breit waeren. Wer nur die BREITE des Nav-Bodens angleicht,
+ * findet die Zeile weiter rot: gleich sein muessen die EINTRAEGE.
+ *
+ * Das ist eine Frage des ENTWURFS, nicht der Auslieferung, und sie gehoert
+ * damit zu C3/C4 (Entwurfsumfang) und nicht zu Teil D. Sobald der Entwurf
+ * denselben Nav-Boden traegt wie die Visu, faellt an dieser Zeile genau eine
+ * Handarbeit an: `test.fixme` → `test`.
+ */
+export const D_PREVIEW_NAV_FLOOR = {
+  annotation: {
+    type: 'blocked-by',
+    description:
+      'Entwurfsumfang der Vorschau (C3/C4) — der Nav-Baum des Entwurfs traegt nur die Knoten der Seite (4 Eintraege), die laufende Visu den ganzen Baum (18); das verschiebt die Zeichenflaeche UND aendert die Groesse des Ausschnitts: 974x628 mit 176 px Nav-Spalte gegen 974x687 mit 191 px (gemessen). Die Vorbedingung gleicher Bildgroesse in E3 schlaegt schon an der Hoehe an',
+  },
+} as const;
+
+/**
  * Die Sprache der Admin-GUI, in der die Editor-Szenarien ihre Affordanzen
  * suchen.
  *
@@ -196,10 +242,12 @@ export const canvasSaved = (page: Page) =>
  * „Speichern" darueber, und dieselbe Antwort.
  *
  * Die Seiteneigenschaften (C1) benennen die SEITE, das Bindungsformular (C3) das
- * ausgewaehlte ELEMENT. Beide Beschriftungen lauten „Name", ein blosses
- * `getByLabel('Name')` traefe also zwei Elemente und braeche mit „strict mode
- * violation" ab. Die Beschriftung bleibt Teil der Erwartung, nur der Suchbereich
- * ist eingegrenzt; keine Behauptung ist gesenkt.
+ * ausgewaehlte ELEMENT. Beide stehen gleichzeitig auf dem Schirm, sobald ein
+ * Element ausgewaehlt ist; ein blosses `getByLabel('Name')` traefe also zwei
+ * Felder und braeche mit „strict mode violation" ab - und vor der Auswahl traf
+ * es still das falsche (die Seite statt des Elements). Die Beschriftung bleibt
+ * Teil der Erwartung, nur der Suchbereich ist eingegrenzt; keine Behauptung ist
+ * gesenkt.
  */
 export const bindingName = (page: Page) =>
   page.getByTestId('visu-binding-form').getByLabel('Name', { exact: true });

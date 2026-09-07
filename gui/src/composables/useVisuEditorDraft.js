@@ -250,6 +250,32 @@ export function useVisuEditorDraft(pageId, optionen = {}) {
     void beobachte(draftDatapointIds(nodes.value))
   }
 
+  /**
+   * Die GANZE Widget-Liste der bearbeiteten Seite ersetzen (Nachzug C3 Runde 2).
+   *
+   * Der Weg dafuer ist die Textansicht des Canvas (E13): sie zeigt dieselbe
+   * Seite wie Flaeche und Autorenliste und darf deshalb auch Name, Typ, Bindung
+   * und Konfig-Schluessel setzen - und ein Element loeschen. Ohne diese Naht
+   * wusste der Autorenteil davon nichts und drehte die Aenderung beim Speichern
+   * still zurueck.
+   *
+   * KEIN SCHREIBER: hier wird nur der Entwurf umgelegt, genau wie in
+   * `replaceWidget` und `addWidget`. Zum Backend geht weiterhin nur der eine
+   * `PUT` des Canvas (#187).
+   *
+   * Die Abo-Liste zieht mit, denn eine Bindung aus dem Text ist eine Bindung
+   * wie jede andere - ohne das Abo bliebe ihr Wert in der Vorschau leer.
+   */
+  function setWidgets(widgets) {
+    const liste = Array.isArray(widgets) ? widgets : []
+    nodes.value = nodes.value.map((node) =>
+      node.id === pageId.value
+        ? { ...node, page_config: { ...node.page_config, widgets: liste } }
+        : node,
+    )
+    void beobachte(draftDatapointIds(nodes.value))
+  }
+
   /** Ein neues Widget auf der bearbeiteten Seite ablegen. */
   function addWidget(widget) {
     nodes.value = nodes.value.map((node) =>
@@ -300,5 +326,16 @@ export function useVisuEditorDraft(pageId, optionen = {}) {
     if (abonniert.length > 0) ws.unsubscribe(abonniert)
   })
 
-  return { nodes, values, draft, pageWidgets, loading, error, reload, replaceWidget, addWidget }
+  return {
+    nodes,
+    values,
+    draft,
+    pageWidgets,
+    loading,
+    error,
+    reload,
+    replaceWidget,
+    setWidgets,
+    addWidget,
+  }
 }

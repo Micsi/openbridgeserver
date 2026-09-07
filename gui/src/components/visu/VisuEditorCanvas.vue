@@ -112,6 +112,7 @@ import {
 } from '@/utils/visuEditorHistory'
 import { readClipboard, writeClipboard } from '@/utils/visuEditorClipboard'
 import { mergeAuthoredWidgets, widgetSignature } from '@/utils/visuEditorWidgets'
+import HelpButton from '@/components/ui/HelpButton.vue'
 import {
   LAYOUT_MODES,
   LAYOUT_PIXEL,
@@ -163,7 +164,7 @@ const props = defineProps({
    */
   authoredWidgets: { type: Array, default: null },
 })
-const emit = defineEmits(['draft', 'preview-width', 'hidden-ids', 'select'])
+const emit = defineEmits(['draft', 'preview-width', 'hidden-ids', 'selected', 'widgets'])
 
 /** Die Widget-Liste IST das Modell: ihre Reihenfolge ist Z-Ordnung und Fluss. */
 const widgets = ref([])
@@ -350,12 +351,27 @@ const view = ref(VIEW_VISUAL)
 const jsonText = ref('')
 const jsonError = ref(null)
 let jsonIsSource = false
+/**
+ * Das Dokument, das der Autor ZULETZT SELBST in die Textansicht geschrieben hat
+ * - oder `null`, wenn dort gerade eine erzeugte Fassung steht.
+ *
+ * Der Unterschied traegt die Schranke unten. `jsonText` allein taugt dafuer
+ * nicht: der Beobachter darueber schreibt ihn bei jeder Aenderung des Entwurfs
+ * neu, also auch dann, wenn eine Aenderung gerade STILL ZURUECKGEDREHT wurde -
+ * der Text folgte dem Verlust und bestaetigte ihn. Dieser Merker haelt fest,
+ * was der Autor angeordnet hat, und faellt weg, sobald die Ansicht wieder etwas
+ * anderes zeigt (Laden, Speichern, ein Zug auf der Flaeche, das Formular).
+ */
+let jsonAuthored = null
 
 watch(
   () => (props.pageId ? currentConfig() : null),
   (config) => {
     if (jsonIsSource) return
     jsonText.value = toEditorJson(config)
+    // Ab hier steht in der Ansicht eine ERZEUGTE Fassung, kein angeordnetes
+    // Dokument mehr - die Schranke unten hat nichts zu vergleichen.
+    jsonAuthored = null
   },
   { deep: true, immediate: true },
 )
@@ -384,7 +400,24 @@ function onJsonInput(text) {
   }
   jsonError.value = null
   jsonIsSource = true
+  jsonAuthored = gelesen.config
   adoptEdited(gelesen.config)
+  // DIE TEXTANSICHT SCHREIBT IN DENSELBEN ENTWURF WIE DER AUTORENTEIL
+  // (Nachzug M5 C3 Runde 2, #170/#173).
+  //
+  // Sie ist die dritte Ansicht auf EINE Seite: Text, Flaeche, Autorenliste. Bis
+  // hierher lief die Naht nur in eine Richtung - der Autorenteil reichte seine
+  // Elemente herein, und `adoptAuthored()` setzte sie beim Speichern durch.
+  // Eine Umbenennung, eine Bindung, ein geloeschtes Element aus dem TEXT wusste
+  // der Autorenteil nicht, und er drehte sie vor dem `PUT` still zurueck; die
+  // Quittung stand trotzdem da (im Browser gemessen). Deshalb geht der gelesene
+  // Stand hier hinaus, und der Autorenteil zieht mit.
+  //
+  // KEIN NEUER SCHREIBER: das ist eine Meldung an das Elternteil, keine
+  // Anfrage. Gespeichert wird weiterhin ueber genau einen `PUT`, den dieses
+  // Canvas absetzt (#187). Gemeldet werden REINE DATEN - der Entwurf reist
+  // spaeter per `postMessage`, und ein Vue-Proxy scheitert dort am Klon.
+  emit('widgets', gelesen.config.widgets.map((w) => JSON.parse(JSON.stringify(w))))
   nextTick(() => {
     jsonIsSource = false
   })
@@ -394,6 +427,9 @@ function onJsonInput(text) {
 
 /** Den Server-Stand als den eigenen uebernehmen (nach Laden und nach Speichern). */
 function adopt(config) {
+  // Der Server-Stand ist nicht das Dokument des Autors - was er in der
+  // Textansicht angeordnet hatte, ist damit erledigt.
+  jsonAuthored = null
   base.value = config
   const stored = readPageSettings(config)
   Object.assign(storedSettings, stored)
@@ -545,6 +581,33 @@ function confirmed(server, wanted) {
 }
 
 /**
+ * Steht in der Nutzlast dasselbe, was die TEXTANSICHT zeigt?
+ *
+ * DIE ZWEITE SCHRANKE, und sie steht VOR dem Schreiben (Nachzug Runde 2).
+ * `confirmed()` unten fragt „traegt der Server, was wir geschickt haben?" - und
+ * genau daran ging der letzte falsche Erfolg vorbei: die Nutzlast selbst war
+ * schon nicht mehr das, was der Autor gelesen hatte. `adoptAuthored()` hatte
+ * eine Aenderung aus dem Text auf den Stand des Autorenteils zurueckgedreht,
+ * der Server trug sie folgerichtig, und „Gespeichert" stimmte formal ueber
+ * einem Verlust.
+ *
+ * Verglichen werden NUR DIE ELEMENTE, und zwar mit derselben Rechnung wie die
+ * Rueckleseprobe (`widgetSignature`). Dort sitzt der Verlust, und dort ist der
+ * Vergleich belastbar: die Autoren-Box ist auf beiden Seiten gleich geheilt,
+ * die Vorgaben des Servermodells sind gefuellt, die Schluessel sortiert. Die
+ * Seiteneigenschaften bleiben draussen - sie laufen ueber `readPageSettings`
+ * durch eine Normalisierung (Breakpoints sortieren und entdoppeln), und ein
+ * Vergleich darueber verweigerte ein voellig regulaeres Speichern.
+ *
+ * OHNE ANGEORDNETES DOKUMENT ist hier nichts zu pruefen: dann zeigt die
+ * Textansicht, was der Entwurf ohnehin sagt.
+ */
+function matchesJsonView(angeordnet, wanted) {
+  if (!angeordnet) return true
+  return widgetSignature(angeordnet.widgets) === widgetSignature(wanted.widgets)
+}
+
+/**
  * „Speichern": die ganze Seite - Widgets, Marken UND Seiteneigenschaften.
  *
  * Danach wird zurueckgelesen. Erst wenn die Seite auf dem Server traegt, was sie
@@ -561,9 +624,21 @@ async function save() {
   // Der Stand des Autorenteils gehoert in DIESE Nutzlast. Der Beobachter oben
   // hat ihn im Normalfall laengst hereingenommen; hier steht es noch einmal,
   // damit der Schreibweg nicht davon abhaengt, wann der Scheduler gelaufen ist.
+  // Das angeordnete Dokument wird VOR dem Nachzug festgehalten: draehte er
+  // etwas zurueck, zoege der Beobachter den Text hinterher, und die Schranke
+  // vergliche den Verlust mit sich selbst.
+  const angeordnet = jsonAuthored
   adoptAuthored()
-  const wanted = configWith(pendingSettings(), widgets.value)
   saved.value = false
+  const wanted = configWith(pendingSettings(), widgets.value)
+  // WAS DER AUTOR ANGEORDNET HAT, MUSS HINAUSGEHEN - sonst wird gar nicht erst
+  // geschrieben. Eine Nutzlast, die von der Textansicht abweicht, waere ein
+  // Stand, den niemand angeordnet hat; ihn abzulegen und dann zu quittieren ist
+  // genau der falsche Erfolg, gegen den die Runden 1 und 2 angetreten sind.
+  if (!matchesJsonView(angeordnet, wanted)) {
+    errorKey.value = 'save'
+    return
+  }
   try {
     await visuApi.savePage(props.pageId, wanted)
     const server = (await visuApi.getPage(props.pageId))?.data ?? null
@@ -677,23 +752,6 @@ function select(id, additive = false) {
   }
   selectedIds.value = expandToGroups(widgets.value, [id])
 }
-
-/**
- * Die Wahl nach OBEN melden (Nachzug M5 C3, #170).
- *
- * Bis hierher hatten Canvas und Bindungsformular zwei getrennte Auswahlen: wer
- * eine Kachel anklickte, um sie zu benennen oder zu binden, sah weiter das
- * Formular des zuletzt in der LISTE angeklickten Elements - und tippte seine
- * Aenderung damit in ein anderes Element. Gemeldet wird nur eine BELEGTE Wahl;
- * ein Klick auf den leeren Grund (der Beginn einer Rahmenauswahl, E5) raeumt
- * das Formular nicht weg, denn er sagt nichts ueber das Element aus.
- */
-watch(
-  () => selectedIds.value[0] ?? null,
-  (id) => {
-    if (id) emit('select', id)
-  },
-)
 
 /** Die Auswahl in der Reihenfolge der Seite - „zuerst gewaehlt" ist reproduzierbar. */
 const selectionInPageOrder = computed(() =>
@@ -1463,6 +1521,26 @@ watch(
   { deep: true, immediate: true },
 )
 
+/**
+ * DIE AUSWAHL GEHT NACH AUSSEN (M5 Teil D, Issue #174).
+ *
+ * Bis hierher hatten Canvas und Autorenteil zwei getrennte Auswahlen: ein Klick
+ * auf eine Kachel waehlte sie zum Verschieben aus, aber die Bindung darunter
+ * meldete weiter „Kein Element ausgewaehlt". Ein Autor, der ein Element
+ * anklickt, um es zu binden, kam so nie an das Formular (an der laufenden
+ * Instanz gemessen, Szenarien E10/E11/E16).
+ *
+ * Gemeldet wird der FUEHRENDE Eintrag der Auswahl, also derselbe, den auch die
+ * Werkzeugleiste als „das ausgewaehlte Element" behandelt; bei leerer Auswahl
+ * `null`. Die Ansicht setzt daraus ihre eigene Auswahl - der Canvas bleibt der
+ * Besitzer seiner Liste, die Ansicht liest nur mit.
+ */
+watch(
+  () => selectedIds.value[0] ?? null,
+  (id) => emit('selected', id),
+  { immediate: true },
+)
+
 /** Die Layer-Schalter aendern das Bild, nicht das Modell - der Entwurf zieht mit. */
 watch([layers, showGlobalLayer, showIncludeLayer], () => {
   if (!props.pageId || !base.value) return
@@ -1552,10 +1630,29 @@ function guideStyle(guide) {
 </script>
 
 <template>
+  <!--
+    EIN BENANNTER BEREICH, kein blosser Kasten (Nachzug M5 C3 Runde 2).
+
+    Auf einer Editorseite stehen ZWEI Knoepfe „Speichern" (hier und in den
+    Seiteneigenschaften) und ZWEI Felder „Name" (Bindungsformular und
+    Seiteneigenschaften). Optisch trennt sie ihre Ueberschrift; fuer einen
+    Screenreader war das bis hierher nicht so: dieser Abschnitt trug weder
+    Ueberschrift noch Namen, war also kein benannter Bereich, und wer die Seite
+    durchtabt hoerte zweimal dasselbe Wort ohne Unterschied. Mit dem Namen wird
+    aus dem `section` ein Landmark, und die Werkzeugleiste samt „Speichern"
+    liegt darin.
+
+    WARUM `aria-label` UND WARUM DIESER TEXT: `getByLabel` des Harness sucht
+    TEILSTRING-genau ueber `aria-label` (in Teil C6 gemessen: ein Name mit dem
+    Wort „Seitentyp" darin machte `getByLabel('Seitentyp')` 21-fach und riss E9
+    und E15). „Zeichenflaeche der Seite" enthaelt keine der Beschriftungen, die
+    die Szenarien suchen - gepinnt in `VisuEditorView.a11yRegions.spec.js`.
+  -->
   <section
     v-if="pageId"
     data-testid="visu-editor-canvas"
     class="flex flex-col gap-2"
+    :aria-label="$t('visuEditor.canvas.region')"
   >
     <!--
       Die Werkzeugleiste steht bewusst in EINER Zeile, die waagerecht rollt,
@@ -1670,6 +1767,9 @@ function guideStyle(guide) {
         >
           {{ $t('visuEditor.canvas.save') }}
         </button>
+        <span class="shrink-0">
+          <HelpButton help-id="visu-editor-canvas" />
+        </span>
       </div>
     </div>
 

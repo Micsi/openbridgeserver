@@ -29,6 +29,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import { visuApi } from '@/api/visu'
 import { sameConfig } from '@/utils/visuPageJson'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const props = defineProps({
   /** Die Seite, deren Verlauf gezeigt wird. Ohne sie gibt es keinen Verlauf. */
@@ -158,6 +159,7 @@ onMounted(loadVersions)
       >
         {{ $t('visuEditor.history.toggle') }}
       </button>
+      <HelpButton help-id="visu-versions" />
       <span
         v-if="busy"
         data-testid="editor-history-busy"

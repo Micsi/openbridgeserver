@@ -21,6 +21,7 @@ import { computed, ref, watch } from 'vue'
 
 import { searchApi } from '@/api/client'
 import VisuDatapointPicker from '@/components/visu/VisuDatapointPicker.vue'
+import HelpButton from '@/components/ui/HelpButton.vue'
 import { coreTypeOf, readField, widgetFormFields, writeField, WIDGET_FORMS } from '@/utils/visuWidgetTypes'
 import { VISIBILITY_OPS, normalizeRule, readVisibilityRule, writeVisibilityRule } from '@/utils/visuVisibility'
 
@@ -108,10 +109,37 @@ watch([regelOp, regelSchwelle], () => regelSchreiben())
 </script>
 
 <template>
+  <!--
+    BENANNT VON DER EIGENEN UEBERSCHRIFT (Nachzug M5 C3 Runde 2).
+
+    Die Ueberschrift „Bindung des Elements" stand schon da, aber sie benannte
+    den Abschnitt nicht: ein `section` wird erst mit einem zugaenglichen Namen
+    zum Bereich. Fuer einen Screenreader waren deshalb das Feld „Name" hier und
+    das Feld „Name" der Seiteneigenschaften ununterscheidbar. `aria-labelledby`
+    auf die sichtbare Ueberschrift ist die Fassung ohne zweiten Text: kein
+    Satz, der auseinanderlaufen koennte, und keine neue Zeile fuer die
+    Uebersetzung.
+
+    Dass diese Ueberschrift keine Beschriftung enthaelt, die der
+    Playwright-Harness ueber `getByLabel` sucht, ist gepinnt
+    (`VisuEditorView.a11yRegions.spec.js`) - in Teil C6 hat genau so ein Name an
+    der falschen Stelle 21 Treffer erzeugt und zwei Szenarien gerissen.
+  -->
   <section
     class="binding-form flex flex-col gap-3"
     data-testid="visu-binding-form"
+    :aria-labelledby="`binding-${widget.id}-title`"
   >
+    <div class="flex items-center gap-2">
+      <h2
+        :id="`binding-${widget.id}-title`"
+        class="text-sm font-semibold text-slate-700 dark:text-slate-200"
+      >
+        {{ $t('visuEditor.binding.title') }}
+      </h2>
+      <HelpButton help-id="visu-datapoint-binding" />
+    </div>
+
     <div class="flex flex-col gap-1">
       <label
         :for="`binding-${widget.id}-name`"

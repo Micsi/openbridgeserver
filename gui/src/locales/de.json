@@ -3502,6 +3502,7 @@
       "notRendered": "Wird noch nirgends gerendert - weder in der Vorschau noch in der Visu"
     },
     "binding": {
+      "title": "Bindung des Elements",
       "name": "Name",
       "choose": "Datenpunkt wählen",
       "searchLabel": "Datenpunkt suchen",
@@ -3618,7 +3619,8 @@
       "jsonLabel": "JSON der Seite",
       "jsonHint": "Die Textansicht zeigt dieselbe Seite wie der Canvas; eine Änderung hier erscheint dort und umgekehrt. Gespeichert wird über „Speichern“.",
       "jsonSyntaxError": "Kein gültiges JSON. Die Änderung wurde nicht übernommen.",
-      "jsonShapeError": "Das Dokument beschreibt keine Seite: es braucht eine Liste „widgets“, und jedes Element darin eine „id“. Die Änderung wurde nicht übernommen."
+      "jsonShapeError": "Das Dokument beschreibt keine Seite: es braucht eine Liste „widgets“, und jedes Element darin eine „id“. Die Änderung wurde nicht übernommen.",
+      "region": "Zeichenfläche der Seite"
     },
     "history": {
       "toggle": "Verlauf",

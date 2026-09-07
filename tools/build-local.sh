@@ -52,6 +52,11 @@ Notes:
     built automatically on first run and cached via Docker layer cache.
   - The debootstrap base system is cached in ~/.cache/obs-lxc-builder/ to speed up
     repeated lxc builds. Remove that directory or pass --no-cache to rebuild from scratch.
+  - The V2 Visu (visu_v2_dist/, served under /visu-v2 including the editor preview)
+    is NOT built by the packers: apps/visu depends on skin packages outside this
+    repo via link: paths. docker/lxc/bundle therefore run tools/build-visu-v2.sh
+    first and hand the result in as an artefact. If that build is not possible
+    here, the packaging continues and says out loud what the artefact will lack.
   - Cross-arch LXC builds are not supported locally; the output arch matches the host.
   - For multi-arch Docker builds, ensure QEMU binfmts are registered first:
       docker run --privileged --rm tonistiigi/binfmt --install all
@@ -88,11 +93,45 @@ require_docker() {
     fi
 }
 
+# Die V2-Visu (`visu_v2_dist/`) bereitstellen, BEVOR ein Paket gebaut wird.
+#
+# Sie ist das einzige Frontend, das die Packer nicht selbst bauen koennen:
+# `apps/visu` haengt ueber `link:`-Pfade an einem Repo ausserhalb dieses Baums
+# (siehe tools/build-visu-v2.sh). Gebaut wird sie deshalb hier, im Checkout, und
+# den Packern als Artefakt gereicht.
+#
+# Schlaegt das fehl, bricht der Paketbau NICHT ab — aber er sagt, was dem
+# Ergebnis fehlt. Eine stille Luecke waere schlimmer als ein unvollstaendiges
+# Paket, von dem man es weiss.
+ensure_visu_v2_dist() {
+    if [[ -f "$PROJECT_ROOT/visu_v2_dist/index.html" ]]; then
+        echo "==> visu_v2_dist/ liegt vor — wird ins Paket uebernommen."
+        return 0
+    fi
+    echo "==> visu_v2_dist/ fehlt — V2-Visu wird gebaut..."
+    if "$SCRIPT_DIR/build-visu-v2.sh"; then
+        return 0
+    fi
+    echo "" >&2
+    echo "WARNUNG: die V2-Visu konnte nicht gebaut werden." >&2
+    echo "         Das entstehende Paket traegt KEIN visu_v2_dist/:" >&2
+    echo "           - /visu-v2 antwortet dort mit 404," >&2
+    echo "           - der Visu-Editor der Admin-GUI zeigt keine Vorschau," >&2
+    echo "           - der WYSIWYG-Teil aus CONTRIBUTING-visu-m5.md §2.4 ist ohne Funktion." >&2
+    echo "         Alles andere im Paket ist davon unberuehrt (Regel R17: die Visu 1" >&2
+    echo "         unter /visu bleibt, wie sie ist). Stand: Micsi/openbridgeserver#191." >&2
+    echo "" >&2
+    return 0
+}
+
 ensure_builder_image() {
     echo "==> Building LXC builder image (obs-lxc-builder)..."
     local no_cache_flag=()
     [[ "$NO_CACHE" == "true" ]] && no_cache_flag=(--no-cache)
-    docker build "${no_cache_flag[@]}" \
+    # `${a[@]+"${a[@]}"}` statt `"${a[@]}"`: unter `set -u` bricht Bash 3.2 (das
+    # `/bin/bash` von macOS) an einem LEEREN Array mit „unbound variable" ab -
+    # gemessen, und damit war `lxc`/`bundle` dort ueberhaupt nicht fahrbar.
+    docker build ${no_cache_flag[@]+"${no_cache_flag[@]}"} \
         --tag "$BUILDER_IMAGE" \
         --file "$SCRIPT_DIR/Dockerfile.lxc-builder" \
         "$SCRIPT_DIR"
@@ -130,6 +169,7 @@ compose_image_tag() {
 build_docker() {
     local version="$1"
     require_docker
+    ensure_visu_v2_dist
     echo "==> Building Docker image ${IMAGE_NAME}:${version}..."
 
     # Derive the stamped obs/version string from RELEASENOTES.md + optional RC suffix.
@@ -167,6 +207,7 @@ build_docker() {
 build_lxc() {
     local version="$1" repo="$2"
     require_docker
+    ensure_visu_v2_dist
     ensure_builder_image
     check_privileged
 
@@ -191,6 +232,7 @@ build_lxc() {
 build_bundle() {
     local version="$1" repo="$2"
     require_docker
+    ensure_visu_v2_dist
     ensure_builder_image
 
     mkdir -p "$OUTPUT_DIR"

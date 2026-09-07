@@ -404,9 +404,7 @@ def main() -> int:
                     "y": i * 2,
                     "w": 3,
                     "h": 2,
-                    "config": (
-                        {} if slot == "datapoint_id" else {slot[len("config.") :]: dp_id}
-                    ),
+                    "config": ({} if slot == "datapoint_id" else {slot[len("config.") :]: dp_id}),
                 }
                 for i, (wname, dp_id) in enumerate(dps)
             ]
@@ -598,11 +596,7 @@ def main() -> int:
                 die(f"verify page {spec['name']}: widget {spec['widget']!r} fehlt")
             if eigen["type"] != want_type:
                 die(f"verify page {spec['name']}: type {eigen['type']!r} != {want_type!r}")
-            gebunden = (
-                eigen["datapoint_id"]
-                if slot == "datapoint_id"
-                else eigen["config"].get(slot[len("config.") :])
-            )
+            gebunden = eigen["datapoint_id"] if slot == "datapoint_id" else eigen["config"].get(slot[len("config.") :])
             if gebunden != m5_dp[key]:
                 die(f"verify page {spec['name']}: {slot} {gebunden!r} != {m5_dp[key]!r}")
 

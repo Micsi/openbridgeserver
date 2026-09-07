@@ -130,20 +130,54 @@ OBS_BASE=http://127.0.0.1:8080 OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin
 The Visu only wires up the real `ObsDataSource` when opted in via `VITE_USE_OBS=1`
 (or `VITE_OBS_API`); `/api` REST + WebSocket are proxied to `VITE_OBS_PROXY_TARGET`.
 
-`VITE_PREVIEW_ALLOWED_ORIGINS` ist neu und **für die Editor-Szenarien Pflicht**:
-die Vorschau (`/preview`) nimmt einen Entwurf nur von einer Herkunft an, die zur
-**Bauzeit** feststeht (`apps/visu/src/preview/origins.ts`) — ohne die Variable
-gilt allein der eigene Origin, und der Editor sendet aus der Admin-GUI, also von
-einem anderen Port. Der Empfänger schweigt dann, und die Konsole meldet
-`Failed to execute 'postMessage': The target origin provided … does not match`.
-Der Wert ist der Origin der **Admin-GUI** aus Schritt 4b.
+Dieser Server ist die **laufende Visu**, an der die Szenarien messen. Die
+eingebettete Vorschau des Editors kommt seit Teil D (#174) NICHT mehr von ihm,
+sondern vom Backend selbst (`/visu-v2/preview`, Schritt 4c) — same-origin mit der
+Admin-GUI, und damit entfällt `VITE_PREVIEW_ALLOWED_ORIGINS` hier.
 
 ```bash
 VITE_USE_OBS=1 VITE_OBS_PROXY_TARGET=http://127.0.0.1:8080 \
-  VITE_PREVIEW_ALLOWED_ORIGINS=http://localhost:5173 \
   pnpm --filter @obs/visu-app dev &          # serves http://localhost:5175
 VISU_PID=$!
 ```
+
+> Wer die Vorschau doch aus diesem Dev-Server holen will (etwa um eine
+> ungebaute Änderung an `apps/visu` in der Vorschau zu sehen), setzt hier
+> `VITE_PREVIEW_ALLOWED_ORIGINS` auf den Origin der Admin-GUI und dort
+> `VITE_VISU_PREVIEW_URL` auf `…/preview`. Beide Angaben gehören dann zusammen:
+> die Vorschau nimmt einen Entwurf nur von einer zur **Bauzeit** festgelegten
+> Herkunft an (`apps/visu/src/preview/origins.ts`), sonst schweigt der Empfänger
+> und die Konsole meldet `Failed to execute 'postMessage': The target origin
+> provided … does not match`. GEMESSEN ist dieser Weg allerdings der langsamere:
+> die Vorschau wird dann bei jedem Aufruf frisch transpiliert, und E3 lief in die
+> 30-s-Decke, bevor der Screenshot stand.
+
+## Step 4c — Die V2-Visu bauen (Ausliefer-Route der Vorschau, Teil D #174)
+
+`obs/main.py` liefert `visu_v2_dist/` unter `/visu-v2/` aus, und von dort kommt
+die eingebettete Vorschau. Ohne gebautes Bündel antwortet die Adresse mit
+**404** (nicht mit der Admin-GUI), und der Vorschaukasten zeigt seinen Hinweis.
+
+```bash
+pnpm --filter @obs/visu-app build          # → visu_v2_dist/ (base /visu-v2/)
+# oder, mit Vorabprüfung der drei Skin-Pakete und derselben Ausgabe:
+tools/build-visu-v2.sh
+```
+
+Der Backend-Prozess aus Schritt 2 liest die `*_dist`-Verzeichnisse beim Start:
+wird erst danach gebaut, muss er einmal neu gestartet werden.
+
+> **Dieser Schritt ist hier von Hand — und in den veröffentlichten Paketen fehlt
+> er noch.** `apps/visu` hängt über drei `link:`-Pfade an einem Repo außerhalb
+> dieses Baums (`obs-visu-skins`); Docker-Abbild und LXC-Builder können es
+> deshalb nicht selbst bauen. `tools/build-local.sh` erzeugt `visu_v2_dist/`
+> darum **vor** dem Packen und reicht es den Packern als Artefakt weiter
+> (`Dockerfile`-Stufe `visu-v2`, `tools/_lxc-inner.sh` für Rootfs und
+> `obs-update`-Bündel). Den Bauwerkstücken unter `.github/workflows/` fehlt
+> dieser Vorlauf noch: in den veröffentlichten Artefakten antwortet `/visu-v2`
+> mit 404 und der Editor hat dort keine Vorschau —
+> [Micsi/openbridgeserver#191](https://github.com/Micsi/openbridgeserver/issues/191).
+> Die Visu 1 unter `/visu` ist davon unberührt (R17).
 
 ## Step 4b — Admin-GUI dev server (nur für die Editor-Szenarien E1-E19, R16)
 
@@ -152,28 +186,24 @@ Die Editor-Szenarien öffnen `GUI_BASE_URL/visu-editor/…`, melden sich dort an
 und lesen die Vorschau in einem `iframe`. Ohne diesen Server sind **alle**
 E-Szenarien und R16 rot; die Schritte 1-4 allein genügen ihnen nicht.
 
-Zwei Dinge müssen dabei stimmen:
-
-- `VITE_VISU_PREVIEW_URL` zeigt auf die `/preview`-Route des Visu-Dev-Servers.
-  Die eingebaute Vorgabe ist `/visu-v2/preview` (same-origin, der Normalfall im
-  ausgelieferten Server) — **diese Route liefert im Dev-Betrieb niemand aus**
-  (sie gehört Teil D), im Vorschaukasten stünde sonst die Admin-GUI selbst.
-- Der Wert ist zugleich die Herkunft, die der Visu-Dev-Server erlauben muss
-  (Schritt 4, `VITE_PREVIEW_ALLOWED_ORIGINS`) — beide Angaben gehören zusammen.
+`VITE_VISU_PREVIEW_URL` braucht es dafür **nicht mehr**: die eingebaute Vorgabe
+`/visu-v2/preview` ist same-origin, und der Dev-Server der Admin-GUI reicht
+`/visu-v2/…` an `VITE_VISU_PROXY_TARGET` weiter. Zeigt der auf das **Backend**
+(Schritt 2), kommt die Vorschau aus der echten Ausliefer-Route von Schritt 4c —
+derselbe Weg wie im ausgelieferten Server, und ohne Origin-Sonderregel.
 
 ```bash
 GUI_DEV_PORT=5173 \
   VITE_OBS_PROXY_TARGET=http://127.0.0.1:8080 \
-  VITE_VISU_PROXY_TARGET=http://localhost:5175 \
-  VITE_VISU_PREVIEW_URL=http://localhost:5175/preview \
+  VITE_VISU_PROXY_TARGET=http://127.0.0.1:8080 \
   npm --prefix gui run dev &                 # serves http://localhost:5173
 GUI_PID=$!
 ```
 
 > Eigener Portstapel (parallele Läufe): jeder Port ist umlegbar — `GUI_DEV_PORT`
 > für die Admin-GUI, `--port` bzw. `PLAYWRIGHT_BASE_URL` für die Visu. Werden sie
-> verschoben, wandern `VITE_VISU_PREVIEW_URL`, `VITE_PREVIEW_ALLOWED_ORIGINS`,
-> `VITE_VISU_PROXY_TARGET` und `GUI_BASE_URL` **mit**; sie zeigen aufeinander.
+> verschoben, wandern `VITE_VISU_PROXY_TARGET`, `OBS_BASE` und `GUI_BASE_URL`
+> **mit**; sie zeigen aufeinander.
 
 ## Step 5 — Run the E2E
 
@@ -288,41 +318,37 @@ OBS_BASE=$OBS_BASE OBS_ADMIN_USER=admin OBS_ADMIN_PASSWORD=e2e-admin-pw \
 | `PLAYWRIGHT_BASE_URL` | Visu-Dev-Server für die UI-Szenarien | `http://localhost:5175` |
 | `GUI_BASE_URL` | Admin-GUI, in der der V2-Editor liegt (§2.4); nur die E-Szenarien und R16 nutzen sie | `http://localhost:5173` |
 | `GUI_DEV_PORT` | Port des Admin-GUI-Dev-Servers (Schritt 4b) — muss zu `GUI_BASE_URL` passen | `5173` |
-| `VITE_VISU_PREVIEW_URL` | **am GUI-Dev-Server**: wo die eingebettete Vorschau liegt. Vorgabe ist eine Route, die im Dev-Betrieb niemand ausliefert — ohne diese Angabe zeigt der Vorschaukasten die Admin-GUI selbst, und E3/E19 sind rot | `/visu-v2/preview` |
-| `VITE_PREVIEW_ALLOWED_ORIGINS` | **am Visu-Dev-Server**: welche Herkunft der Vorschau einen Entwurf schicken darf (Bauzeit-Liste). Ohne sie gilt nur der eigene Origin, und die Bruecke schweigt | der eigene Origin |
+| `VITE_VISU_PREVIEW_URL` | **am GUI-Dev-Server**: wo die eingebettete Vorschau liegt. Seit Teil D (#174) liefert der Server die Vorgabe selbst aus; nötig nur, wenn die Vorschau woanders liegen soll | `/visu-v2/preview` |
+| `VITE_PREVIEW_ALLOWED_ORIGINS` | **am Visu-Dev-Server**: welche Herkunft der Vorschau einen Entwurf schicken darf (Bauzeit-Liste). Nur nötig, wenn die Vorschau NICHT same-origin liegt; sonst gilt der eigene Origin und das genügt | der eigene Origin |
 | `VITE_VISU_PROXY_TARGET` | **am GUI-Dev-Server**: wohin `/visu` und `/visu/*` proxiert werden | `http://localhost:5174` |
 
 ### Vorschau der Editor-Szenarien (M5 C2, ab Runde 2)
 
 Ein Szenario, das etwas über die **Vorschau** behauptet (E8: „das Element
 verschwindet aus der Vorschau"), braucht eine Vorschau, die überhaupt etwas
-zeigt. Die Vorgabe-Adresse `/visu-v2/preview` liefert heute **niemand** aus — die
-Ausliefer-Route gehört zu Teil D —, im Rahmen stünde also die SPA-Rückfallebene,
-und die Behauptung wäre gegen einen leeren Rahmen gerichtet (vakuum-grün).
-Deshalb bekommen die **beiden Dev-Server je eine Variable** mit:
+zeigt. Seit Teil D (#174) liefert der Server sie selbst aus, unter
+`/visu-v2/preview`; die Vorgabe-Adresse der Admin-GUI zeigt genau dorthin, und es
+ist **keine** zusätzliche Variable mehr nötig. Zwei Dinge müssen dafür stimmen:
 
 ```bash
-# Visu-Dev-Server: welcher Herkunft die Vorschau überhaupt zuhört (Bauzeit, nie aus der URL)
-VITE_USE_OBS=1 VITE_OBS_PROXY_TARGET=http://127.0.0.1:8080 \
-  VITE_PREVIEW_ALLOWED_ORIGINS=http://localhost:5173 \
-  pnpm --filter @obs/visu-app exec vite --port 5175 --strictPort &
+# einmal bauen, damit es unter /visu-v2/ überhaupt etwas auszuliefern gibt
+pnpm --filter @obs/visu-app build
 
-# Admin-GUI: wo die Vorschau liegt (absolut, weil Visu und GUI hier zwei Dev-Server sind)
+# Admin-GUI: /visu-v2/… geht an das BACKEND, nicht an den Visu-Dev-Server
 cd gui && OBS_PROXY_TARGET=http://127.0.0.1:8080 \
-  VISU_PROXY_TARGET=http://localhost:5175 \
-  VITE_VISU_PREVIEW_URL=http://localhost:5175/preview \
+  VISU_PROXY_TARGET=http://127.0.0.1:8080 \
   npm run dev &
 ```
 
 | Variable | Wo | Zweck |
 |---|---|---|
-| `VITE_VISU_PREVIEW_URL` | Admin-GUI (`gui/`) | Adresse der eingebetteten Vorschau; absolut, wenn Visu und GUI getrennte Dev-Server sind |
-| `VITE_PREVIEW_ALLOWED_ORIGINS` | Visu (`apps/visu`) | Herkünfte, denen die Vorschau antwortet — ohne die GUI-Herkunft schweigt sie (Bauzeit, C4) |
-| `VISU_PROXY_TARGET` | Admin-GUI (`gui/`) | Ziel des `/visu`- und `/visu-v2`-Proxys, wenn die Visu nicht auf 5174 liegt |
+| `VISU_PROXY_TARGET` | Admin-GUI (`gui/`) | Ziel des `/visu`- und `/visu-v2`-Proxys; für die Vorschau das Backend aus Schritt 2 |
+| `VITE_VISU_PREVIEW_URL` | Admin-GUI (`gui/`) | nur nötig, wenn die Vorschau NICHT unter `/visu-v2/preview` liegen soll (etwa am Visu-Dev-Server) |
+| `VITE_PREVIEW_ALLOWED_ORIGINS` | Visu (`apps/visu`) | dann zusätzlich nötig: Herkünfte, denen die Vorschau antwortet (Bauzeit, C4) |
 
-Ohne diese Variablen läuft der Harness weiter, **E8 wird dann aber rot**: seine
-Vorschau-Hälfte verlangt seit Runde 2 ausdrücklich, dass das Element vor dem
-Ausblenden in der Vorschau **steht**. Die Fehlermeldung nennt die Variablen.
+Fehlt das Bündel oder zeigt der Proxy woanders hin, läuft der Harness weiter,
+**E8 wird dann aber rot**: seine Vorschau-Hälfte verlangt seit Runde 2
+ausdrücklich, dass das Element vor dem Ausblenden in der Vorschau **steht**.
 
 `POST /api/v1/auth/login` ist auf **5 Anmeldungen pro Minute** begrenzt
 (`@limiter.limit("5/minute")`, `obs/api/auth.py:471`; bis Runde 1 stand hier
@@ -448,6 +474,22 @@ rm -rf "$(dirname "$OBS_DATABASE__PATH")/archives" "${OBS_DATABASE__PATH%.db}_ri
 >    exceeded the test timeout" statt in eine echte Aussage. `TMPDIR` also für
 >    Mosquitto/Backend setzen, aber **nicht** in die Shell exportieren, in der
 >    `playwright test` läuft.
+
+> **Zwischen zwei Läufen MUSS geseedet werden** — der Seed in Schritt 2 oben ist
+> keine Höflichkeit, sondern Voraussetzung. Ein zweiter Lauf gegen dieselbe
+> Instanz **ohne** Neu-Seed ist deterministisch rot (gemessen: 35 pass / 1 fail).
+>
+> Ursache, nachgestellt und wieder zurückgenommen: **E19** speichert auf „M5
+> Solo" `page_config.skin = "terminal"` und setzt den Wert nie zurück; **E11**
+> erwartet auf derselben Seite die Zahl der Rollladen-Kachel, wie der
+> **edomi**-Skin sie zeichnet. Gegenprobe: `skin` per API auf `null` → E11 grün,
+> zurück auf `terminal` → E11 rot. Ein Seed-Lauf setzt `skin` wieder auf `None`
+> und räumt das mit auf.
+>
+> Ein Szenario, das den Skin selbst zurücksetzt, gäbe es auch — E19 tut es heute
+> nicht, und die Zusage aus §5 („zwei Läufe, jeweils frisch geseedet") deckt den
+> Ablauf ab. Wer aber zweimal hintereinander `playwright test` tippt, ohne
+> dazwischen zu seeden, misst die Reihenfolge und nicht den Editor.
 
 ### Ergebnis der Pflichtläufe (Runde 3, 2026-09-04, mit dem Host aus Teil B)
 
@@ -838,6 +880,10 @@ sie im Speicher, `.seeded.json` enthält keine Admin-Zugangsdaten.
   Host ihn liest — inklusive der scharfen Kante „fehlende Koordinate bleibt
   `null`".
 - **R17** und die Contract-/Skins-Gates gehören nicht in diesen Harness.
+- **Die V2-Visu kommt noch in keinem veröffentlichten Paket an.** Der Harness
+  baut `visu_v2_dist/` selbst (Schritt 4c) und misst deshalb eine Lage, die im
+  ausgelieferten Produkt heute nicht hergestellt ist. Siehe Schritt 4c und
+  Micsi/openbridgeserver#191.
 - Die `fixme`-Szenarien laufen erst, wenn ihr Teil geliefert hat. Sie sind
   deshalb im Bericht als eigene Zahl auszuweisen — ein Lauf ohne `fail` ist noch
   kein fertiges M5.

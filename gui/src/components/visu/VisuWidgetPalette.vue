@@ -13,6 +13,7 @@
  * bei sich suchen.
  */
 import { CORE_WIDGET_TYPES, WIDGET_FORMS } from '@/utils/visuWidgetTypes'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 defineEmits(['place'])
 </script>
@@ -22,9 +23,12 @@ defineEmits(['place'])
     class="widget-palette flex flex-col gap-2"
     data-testid="visu-widget-palette"
   >
-    <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
-      {{ $t('visuEditor.palette.title') }}
-    </h2>
+    <div class="flex items-center gap-2">
+      <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {{ $t('visuEditor.palette.title') }}
+      </h2>
+      <HelpButton help-id="visu-widget-palette" />
+    </div>
     <ul class="grid grid-cols-3 gap-2">
       <li
         v-for="type in CORE_WIDGET_TYPES"

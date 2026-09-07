@@ -55,13 +55,34 @@ npm ci --prefer-offline
 npm run build
 cd ..
 
+# ── V2 Visu (visu_v2_dist) — VORGEBAUT uebernommen, nicht hier gebaut ──────────
+# `apps/visu` haengt ueber drei `link:`-Abhaengigkeiten an einem Repo AUSSERHALB
+# dieses Baums (obs-visu-skins). Ein `pnpm install` im Builder-Container kann
+# diese Pfade nicht aufloesen; die V2-Visu wird deshalb im Quell-Checkout gebaut
+# (`tools/build-visu-v2.sh`, aufgerufen von `tools/build-local.sh`) und hier nur
+# uebernommen — `/workspace` bringt sie mit.
+#
+# Fehlt sie, laeuft der Bau weiter, aber NICHT still: im Template und im
+# App-Buendel antwortet `/visu-v2` dann mit 404, und die Vorschau des
+# Visu-Editors bleibt leer.
+VISU_V2=()
+if [[ -f visu_v2_dist/index.html ]]; then
+    echo "==> V2-Visu: vorgebautes visu_v2_dist/ uebernommen ($(find visu_v2_dist -type f | wc -l) Dateien)"
+    VISU_V2=(visu_v2_dist/)
+else
+    echo "==> WARNUNG: kein vorgebautes visu_v2_dist/ im Workspace."
+    echo "==>          /visu-v2 antwortet in diesem Artefakt mit 404, die Vorschau"
+    echo "==>          des Visu-Editors bleibt leer. Vorher tools/build-visu-v2.sh fahren."
+fi
+
 # ── Write obs-update ───────────────────────────────────────────────────────────
 sed "s|__REPO__|$REPO|g" scripts/obs-update > obs-update
 chmod +x obs-update
 
 # ── App bundle ─────────────────────────────────────────────────────────────────
 echo "==> Creating app bundle..."
-tar -czf "/tmp/$APP_BUNDLE_FILE" obs/ gui_dist/ frontend_dist/ help_dist/ requirements.txt obs-update \
+tar -czf "/tmp/$APP_BUNDLE_FILE" obs/ gui_dist/ frontend_dist/ help_dist/ \
+    ${VISU_V2[@]+"${VISU_V2[@]}"} requirements.txt obs-update \
     -C scripts obs-admin obs-onewire-configure.sh obs-onewire-should-run.sh
 (cd /tmp && sha256sum "$APP_BUNDLE_FILE" > "$APP_BUNDLE_FILE.sha256")
 # Backward-compat: pre-migration obs-update versions verify via a .sha512 asset.
@@ -153,6 +174,11 @@ cp -r obs              "$ROOTFS/opt/obs/"
 cp -r gui_dist         "$ROOTFS/opt/obs/"
 cp -r frontend_dist    "$ROOTFS/opt/obs/"
 cp -r help_dist        "$ROOTFS/opt/obs/"
+# Nur wenn vorgebaut — siehe die Uebernahme oben. Als `if`, nicht als
+# `[[ … ]] && cp`: unter `set -e` waere der falsche Zweig ein Abbruch.
+if [[ ${#VISU_V2[@]} -gt 0 ]]; then
+    cp -r visu_v2_dist "$ROOTFS/opt/obs/"
+fi
 cp    requirements.txt "$ROOTFS/opt/obs/"
 cp    scripts/obs-admin   "$ROOTFS/opt/obs/"
 cp    scripts/obs-onewire-configure.sh scripts/obs-onewire-should-run.sh "$ROOTFS/opt/obs/"

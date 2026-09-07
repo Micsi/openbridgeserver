@@ -324,6 +324,42 @@ describe('Die Auswahl im Canvas ist dieselbe wie die des Bindungsformulars', () 
     )
     await flushPromises()
 
-    expect(w.emitted('select')?.at(-1)).toEqual(['b'])
+    // `selected` ist die EINE Auswahl-Bruecke: Teil D und der Nachzug zu C3
+    // hatten sie unabhaengig voneinander gebaut (`selected` gegen `select`);
+    // beim Zusammenfuehren blieb Ds Fassung, weil sie auch die leere Wahl
+    // durchreicht. Die Behauptung dieser Zeile ist unveraendert.
+    expect(w.emitted('selected')?.at(-1)).toEqual(['b'])
+  })
+})
+
+/**
+ * DIE SCHRANKE GILT AUCH FUER DIE TEXTANSICHT (Nachzug Runde 2, #170/#173).
+ *
+ * Regulaer kann das hier nicht mehr passieren: eine Textaenderung geht nach oben
+ * und der Autorenteil zieht mit (`VisuEditorView.writepath.spec.js`). Diese
+ * Probe montiert den Canvas ABSICHTLICH ohne diesen Weg - der Autorenteil haelt
+ * seinen alten Stand und hoert die Meldung nicht. Dann darf die Nutzlast nicht
+ * hinausgehen und erst recht keine Quittung erscheinen: was der Autor liest,
+ * MUSS das sein, was geschrieben wird.
+ */
+describe('Was die Textansicht zeigt, ist die Nutzlast - sonst keine Quittung', () => {
+  it('speichert NICHT und quittiert NICHT, wenn der Autorenteil die Textaenderung zurueckdreht', async () => {
+    const w = await mountCanvas([widget('a')], [widget('a')])
+    await w.find('[data-view="json"]').trigger('click')
+    await flushPromises()
+    const feld = w.find('#editor-canvas-json')
+    const gelesen = JSON.parse(feld.element.value)
+    gelesen.widgets[0].name = 'K3 JSON Name'
+    await feld.setValue(JSON.stringify(gelesen, null, 2))
+    await flushPromises()
+    // Der Autorenteil hoert die Meldung nicht (kein Elternteil) und haelt weiter
+    // „Kachel a" - genau die Lage, in der vorher still zurueckgedreht wurde.
+    savePage.mockClear()
+
+    await speichern(w)
+
+    expect(savePage).not.toHaveBeenCalled()
+    expect(quittung(w)).toBe(false)
+    expect(fehler(w)).toBe(true)
   })
 })

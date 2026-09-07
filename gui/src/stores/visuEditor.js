@@ -220,6 +220,27 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
     }
   }
 
+  /**
+   * Die GESPEICHERTE Konfiguration EINER Seite neu einlesen (Nachzug C3 R2).
+   *
+   * Der Anlass ist Micsi/openbridgeserver#187, „der letzte gewinnt". Der
+   * Speicherplan der Seiteneigenschaften baut seine Nutzlast auf
+   * `pageConfigs[id]` - also auf dem Stand, den dieser Store beim AUSWAEHLEN
+   * der Seite gelesen hat. Speichert der Canvas danach Elemente (Lage, Name,
+   * Bindung, Regel, neue Kacheln), weiss dieser Store nichts davon, und das
+   * naechste „Speichern" der Seiteneigenschaften schriebe die alte Widget-Liste
+   * zurueck - mit einer Quittung darueber. Bis Teil C3 kostete das nur Lage,
+   * seit dem Schreibweg des Autorenteils ganze Elemente (gemessen).
+   *
+   * KEIN NEUER SCHREIBER: das hier ist ein `GET`. Geschrieben wird weiterhin an
+   * denselben zwei Stellen wie zuvor, sie stehen nur nicht mehr auf einem
+   * veralteten Boden.
+   */
+  async function refreshPageConfig(nodeId) {
+    if (!nodeId) return
+    await loadPageConfig(nodeId)
+  }
+
   async function load() {
     loading.value = true
     loadError.value = false
@@ -485,6 +506,7 @@ export const useVisuEditorStore = defineStore('visuEditor', () => {
   return {
     nodes,
     pageConfigs,
+    refreshPageConfig,
     allUsernames,
     usernamesLoaded,
     selectedId,

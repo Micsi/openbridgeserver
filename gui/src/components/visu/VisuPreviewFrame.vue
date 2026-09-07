@@ -9,16 +9,24 @@
  * Die Admin-Session geht ausschliesslich ueber die Bruecke an den geprueften
  * Origin — nie an die iframe-URL (`src` bleibt der nackte Pfad).
  *
- * Wenn im Rahmen gar keine Vorschau antwortet, ist das eine sichtbare Lage und
- * kein Schweigen: heute liefert der Server unter der Standard-Vorschauadresse
- * ueber seinen SPA-404-Fallback die Admin-GUI selbst aus, im Vorschaukasten
- * stuende also ein verschachteltes Dashboard. Nach der Handshake-Frist steht
- * stattdessen ein Hinweis. Die echte Ausliefer-Route der Vorschau gehoert zu
- * **Teil D** (s. `visuEditorAccess.js`).
+ * Die Ausliefer-Route steht seit Teil D (#174): `obs/main.py` mountet
+ * `visu_v2_dist/` unter `/visu-v2/`, und `/visu-v2/preview` liefert die echte
+ * Visu aus. Fehlt das Verzeichnis, antwortet die Route mit 404 — NICHT mit der
+ * Admin-Schale; ein verschachteltes Dashboard im Vorschaukasten kann es also
+ * nicht mehr geben.
+ *
+ * Antwortet im Rahmen trotzdem keine Vorschau, ist das eine sichtbare Lage und
+ * kein Schweigen: nach der Handshake-Frist steht dort ein Hinweis. Zwei
+ * Ursachen sind haeufig — die V2-Visu ist nicht gebaut (`visu_v2_dist/` fehlt;
+ * in den VEROEFFENTLICHTEN Paketen ist das bis Micsi/openbridgeserver#191 noch
+ * der Normalfall), oder Admin-GUI und Visu laufen im Entwicklungsbetrieb
+ * getrennt und `VITE_VISU_PREVIEW_URL`/`VITE_PREVIEW_ALLOWED_ORIGINS` passen
+ * nicht zusammen (s. `visuEditorAccess.js`).
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { createVisuPreviewBridge } from '@/composables/useVisuPreviewBridge'
 import { previewOriginOf, VISU_PREVIEW_URL } from '@/utils/visuEditorAccess'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const props = defineProps({
   /** Der Entwurf, den die Vorschau zeigen soll (C1–C3 fuellen ihn). */
@@ -90,6 +98,16 @@ watch(() => props.draft, () => bridge.sendDraft(), { deep: true })
 
 <template>
   <div class="flex flex-col gap-2">
+    <!-- GESCHWISTER des Rahmens, nie ein Vorfahre: der Vorfahrenpfad des
+         `<iframe>` ist gepinnt (`tests/helpers/previewFrameFence.js`), weil
+         `transform`/`filter`/`zoom`/`opacity` darauf dem Autor ein anderes Bild
+         zeigen wuerden als dem Nutzer (E3). -->
+    <div class="flex items-center gap-2">
+      <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
+        {{ $t('visuEditor.previewTitle') }}
+      </h2>
+      <HelpButton help-id="visu-editor-preview" />
+    </div>
     <iframe
       ref="frame"
       data-testid="visu-preview-frame"

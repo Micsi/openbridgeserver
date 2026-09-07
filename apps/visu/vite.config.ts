@@ -7,10 +7,38 @@ import vue from '@vitejs/plugin-vue';
 // VITE_OBS_API), its `/api` REST + WebSocket calls are proxied to the obs
 // server — mirroring frontend/vite.config. The target is configurable via
 // VITE_OBS_PROXY_TARGET (default http://localhost:8080).
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const target = env.VITE_OBS_PROXY_TARGET || 'http://localhost:8080';
   return {
+    // AUSGELIEFERT liegt die V2-Visu unter /visu-v2/ (M5 Teil D, Issue #174):
+    // `obs/main.py` mountet `visu_v2_dist/` dort, NEBEN der unveraenderten V1
+    // unter /visu (Regel R17). Von diesem Praefix kommt auch der Vorschau-Modus,
+    // den der V2-Editor der Admin-GUI einbettet - `VISU_PREVIEW_URL` in
+    // `gui/src/utils/visuEditorAccess.js` faellt genau darauf zurueck.
+    //
+    // WER DIESES BUENDEL BAUT: NICHT die Packer. `package.json` haengt ueber drei
+    // `link:`-Pfade an einem Repo ausserhalb dieses Baums (obs-visu-skins), das
+    // in Docker-Abbild und LXC-Builder nicht existiert. `visu_v2_dist/` entsteht
+    // deshalb im Quell-Checkout (`tools/build-visu-v2.sh`) und wird den Packern
+    // als Artefakt gereicht (`tools/build-local.sh` ruft das vor jedem Paketbau
+    // auf; `Dockerfile` Stufe `visu-v2` und `tools/_lxc-inner.sh` uebernehmen
+    // es). Den CI-Werkstuecken unter `.github/workflows/` fehlt dieser Vorlauf
+    // heute noch — in den VEROEFFENTLICHTEN Paketen antwortet /visu-v2 deshalb
+    // mit 404 und der Editor hat dort keine Vorschau: Micsi/openbridgeserver#191.
+    //
+    // IM DEV-SERVER bleibt die Wurzel. Vite serviert seine Modul-Adressen
+    // (`/src/...`, `/@vite/client`) NICHT unter der Basis; ein Praefix hier
+    // wuerde die Laufanleitung des Messlatten-Harness umschreiben
+    // (`apps/visu/e2e/README.md` faehrt gegen `/edomi`, `/preview`), ohne dass
+    // die Auslieferung davon etwas haette.
+    base: command === 'build' ? '/visu-v2/' : '/',
+    build: {
+      // Geschwister von gui_dist/, frontend_dist/ und help_dist/ - dieselbe
+      // Ordnung, dieselbe Stelle, von der `obs/main.py` liest.
+      outDir: '../../visu_v2_dist',
+      emptyOutDir: true,
+    },
     plugins: [vue()],
     resolve: {
       alias: {

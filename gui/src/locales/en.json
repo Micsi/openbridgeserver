@@ -3502,6 +3502,7 @@
       "notRendered": "Not rendered anywhere yet - neither in the preview nor in the visu"
     },
     "binding": {
+      "title": "Element binding",
       "name": "Name",
       "choose": "Choose datapoint",
       "searchLabel": "Search datapoint",
@@ -3618,7 +3619,8 @@
       "jsonLabel": "Page JSON",
       "jsonHint": "The text view shows the same page as the canvas; a change here appears there and vice versa. Saving happens through \"Save\".",
       "jsonSyntaxError": "Not valid JSON. The change was not applied.",
-      "jsonShapeError": "The document does not describe a page: it needs a \"widgets\" list, and every entry in it an \"id\". The change was not applied."
+      "jsonShapeError": "The document does not describe a page: it needs a \"widgets\" list, and every entry in it an \"id\". The change was not applied.",
+      "region": "Page canvas"
     },
     "history": {
       "toggle": "History",

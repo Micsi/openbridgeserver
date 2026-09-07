@@ -44,6 +44,15 @@ export default defineConfig({
             items: [{ text: 'Übersicht', link: '/' }],
           },
           {
+            text: 'Visu-Editor',
+            items: [
+              { text: 'Übersicht', link: '/visu/' },
+              { text: 'Seitentypen', link: '/visu/seitentypen' },
+              { text: 'Canvas und Elemente', link: '/visu/canvas' },
+              { text: 'Versionen, Export und Import', link: '/visu/versionen' },
+            ],
+          },
+          {
             text: 'Einstellungen',
             items: [
               { text: 'Allgemeine Einstellungen', link: '/settings/general' },
@@ -79,6 +88,15 @@ export default defineConfig({
           {
             text: 'Getting Started',
             items: [{ text: 'Overview', link: '/en/' }],
+          },
+          {
+            text: 'Visu editor',
+            items: [
+              { text: 'Overview', link: '/en/visu/' },
+              { text: 'Page kinds', link: '/en/visu/seitentypen' },
+              { text: 'Canvas and elements', link: '/en/visu/canvas' },
+              { text: 'Versions, export and import', link: '/en/visu/versionen' },
+            ],
           },
           {
             text: 'Settings',

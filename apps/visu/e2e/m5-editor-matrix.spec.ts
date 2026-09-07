@@ -3,9 +3,8 @@ import { EDITOR_BASE, VISU_BASE, adminHeaders, api, seeded } from './fixtures';
 import {
   C1,
   C2,
-  C3,
-  C4,
   C5,
+  D_PREVIEW_NAV_FLOOR,
   bindingName,
   box,
   canvasSaved,
@@ -226,9 +225,30 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test.fixme(
+  // Teil D (Micsi/openbridgeserver#174) hat die AUSLIEFER-ROUTE der Vorschau
+  // gebaut; der Vorschaukasten zeigt jetzt die echte Visu statt der Admin-GUI.
+  // Die Zeile bleibt trotzdem `fixme`, und zwar aus einem GEMESSENEN Grund, der
+  // mit der Route nichts zu tun hat: der Entwurf trägt einen kleineren Nav-Baum
+  // als die laufende Visu, die Nav-Spalte des Skins ist deshalb 176 statt
+  // 191 px breit, und die Zeichenfläche beginnt verschoben. Der ganze Befund
+  // steht an `D_PREVIEW_NAV_FLOOR` in `editor-helpers.ts`.
+  //
+  // EIGENES FENSTER, dieselbe Begründung wie beim eigenen Projekt für E14: die
+  // Harness-Konfiguration, nicht das Erzeugnis, stand der Zeile im Weg. Der
+  // 393px-Viewport dieser Datei stammt aus der authz-Welle (dort öffnet nur so
+  // der `ion-menu`-Streifen). Die Admin-Schale nimmt davon 224px für ihre
+  // Seitenleiste; im Vorschaurahmen bleiben GEMESSENE 71px, der Edomi-Skin legt
+  // darin seine Navigationsspalte ab und die Zeichenfläche bekommt 0px. Ein
+  // Pixel-Diff auf einer 0px breiten Fläche ist keine Aussage. Gemessen wird
+  // deshalb an einem Schreibtisch-Fenster; die Zeile selbst (gleicher
+  // Ausschnitt, gleiche Abmessung, NULL abweichende Pixel) ist unverändert, und
+  // die Live-Seite bekommt weiterhin exakt das Fenster der Vorschau.
+  test.describe(() => {
+    test.use({ viewport: { width: 1280, height: 900 } });
+
+    test.fixme(
     'E3 Editor-Vorschau = Live-Renderer, Pixel-Diff Editor- vs. Live-Screenshot = 0 abweichende Pixel außerhalb Editor-Chrome',
-    C4,
+    D_PREVIEW_NAV_FLOOR,
     async ({ page, browser }) => {
       const fx = seeded();
       await openEditor(page, fx.m5.node_ids.home);
@@ -277,7 +297,8 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       // Und dann die Zeile selbst: NULL abweichende Pixel in diesem Ausschnitt.
       expect(await differingPixels(page, inEditor, inLive)).toBe(0);
     },
-  );
+    );
+  });
 
   test(
     'E4 Ausrichtlinie bei Kantendeckung ≤4px, "Verteilen" bei ≥3 Elementen, "gleiche Größe" übernimmt Maße',
@@ -764,6 +785,11 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
    * Gespeichert wird über den Knopf des CANVAS, weil dort der eine Schreibweg
    * auf `page_config` liegt: der Autorenteil reicht seine Elemente hinein, statt
    * einen zweiten aufzumachen (Micsi/openbridgeserver#187).
+   *
+   * TEIL D hatte diese Zeile mit `blocked-by C3 #170` stillgelegt, weil der
+   * Autorenteil damals keinen Schreibweg hatte. Den gibt es seit dem Nachzug zu
+   * C3; die Marke `D_AUTHORING_NOT_PERSISTED` ist damit gegenstandslos und
+   * beim Zusammenführen der beiden Zweige entfallen.
    */
   test(
     'E10 Änderung an zentraler Vorlage propagiert automatisch in referenzierende Instanzen ohne manuellen Re-Import',
@@ -771,6 +797,13 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
       const fx = seeded();
       // Die zentrale Vorlage = die individuelle Inkludeseite; „M5 Home"
       // referenziert sie (R14). Eine Änderung dort muss ohne Zutun ankommen.
+      // ZWEI SELEKTOREN NACHGEZOGEN, keine Erwartung geändert (Teil D): der
+      // Editor trägt „Name" zweimal (Seiteneigenschaften und Bindungsformular)
+      // und „Speichern" ebenso (Seiteneigenschaften und Canvas-Werkzeugleiste).
+      // Ungefasst traf der erste Griff die SEITE statt des ELEMENTS, und der
+      // zweite scheiterte an der Mehrdeutigkeit. Gemeint war von Anfang an das
+      // Element (nur sein Name erscheint in der Vorschau der einbettenden
+      // Seite) und das Speichern des Canvas (dort liegen die Elemente).
       await openEditor(page, fx.m5.node_ids.include_ind);
       await el(page, fx.m5.widgets.include_ind).click();
       await bindingName(page).fill('M5 Gamma Umbenannt');
@@ -789,21 +822,54 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test.fixme('E11 Datenpunkt-Bindung mit Suche/Filter, Live-Wert erscheint in Editor-Vorschau', C3, async ({ page }) => {
+  // Wie E10: C3 (#170) hat den Datenpunkt-Wähler geliefert, D (#174) die
+  // Vorschau-Route, ohne die der Live-Wert nirgends erscheinen konnte.
+  test('E11 Datenpunkt-Bindung mit Suche/Filter, Live-Wert erscheint in Editor-Vorschau', async ({ page }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.solo);
     await el(page, fx.m5.widgets.solo).click();
 
-    // Suche/Filter im Datenpunkt-Picker.
-    await page.getByRole('button', { name: 'Datenpunkt wählen' }).click();
+    const vorschau = page.frameLocator('iframe.editor-preview');
+    const liveWert = vorschau.getByText('21.5');
+    // Das Feld, dessen Wert die Kachel anzeigt (`dp_position_status` des
+    // Rollladens, `utils/visuWidgetTypes.js`) - genau die Bindung, an der die
+    // 21,5 des Seeds hängt. Der CSS-Griff grenzt nur den SUCHBEREICH ein, wie
+    // `savePageProps`/`bindingName` in `editor-helpers.ts`; die Affordanzen
+    // darin werden weiter über ihren zugänglichen Namen gefasst.
+    const feld = page.locator('.binding-field[data-field="dp_position_status"]');
+
+    // AUSGANGSSTAND, keine Zusicherung des Kriteriums: der Seed bindet die
+    // Kachel bereits, der Wert steht also schon da.
+    await expect(liveWert).toBeVisible();
+
+    // (a) Die BESTEHENDE Bindung wird gelöst - und der Wert verschwindet.
+    //
+    // WARUM DIESER SCHRITT (Runde 2): ohne ihn beweist das Szenario den
+    // Zusammenhang zwischen der Bindung, die der Autor setzt, und dem Wert in
+    // der Vorschau NICHT. Gemessen: eine Mutation, die `waehlen()` die Auswahl
+    // verschlucken ließ, blieb grün, weil die 21,5 aus der Seed-Bindung ohnehin
+    // dastand. Erst der Weg 21,5 → weg → 21,5 haftet an der Auswahl des Autors.
+    await feld.getByRole('button', { name: 'Bindung lösen' }).click();
+    await expect(liveWert).toHaveCount(0);
+
+    // (b) Suche und Filter liefern genau einen Treffer.
+    //
+    // NACHGEZOGENER SELEKTOR, keine Erwartung gesenkt (Teil D): C3 hat den
+    // Wähler so gebaut, dass das Etikett des FELDES auf seine Schaltfläche zeigt
+    // (`<label for="…-open">`) - ein `<button>` ist beschriftbar, und damit ist
+    // sein zugänglicher Name „Position (Status)" und nicht mehr sein eigener
+    // Text „Datenpunkt wählen". Gefasst wird er weiter über die ROLLE und den
+    // zugänglichen Namen, nur eben über den, den er heute trägt.
+    await feld.getByRole('button', { name: 'Position (Status)' }).click();
     await page.getByLabel('Datenpunkt suchen').fill('dp-m5-solo');
     const hits = page.locator('.dp-picker-item');
     await expect(hits).toHaveCount(1);
     await hits.first().click();
 
-    // Der Live-Wert (der Seed setzt 21.5) erscheint in der Vorschau — die
-    // Vorschau bezieht Werte vom echten Backend, nicht aus einer Attrappe.
-    await expect(page.frameLocator('iframe.editor-preview').getByText('21.5')).toBeVisible();
+    // (c) Und die vom AUTOR gesetzte Bindung bringt den Live-Wert zurück (der
+    // Seed setzt 21.5) — die Vorschau bezieht Werte vom echten Backend, nicht
+    // aus einer Attrappe.
+    await expect(liveWert).toBeVisible();
   });
 
   // Teil C6 (Micsi/openbridgeserver#173) hat Verlauf und Wiederherstellen
@@ -936,25 +1002,61 @@ test.describe('M5 Editor-Matrix E1-E19 ohne E14 (wartet auf die Editor-Teile C1-
     },
   );
 
-  test.fixme('E16 Element bedingt sichtbar/unsichtbar je nach Datenpunktwert', C3, async ({ page, request }) => {
+  // Wie E10/E11: die Regel wirkt im Host, also erst in einer wirklich
+  // ausgelieferten Vorschau (Teil D, #174) sichtbar.
+  test('E16 Element bedingt sichtbar/unsichtbar je nach Datenpunktwert', async ({ page, request }) => {
     const fx = seeded();
     await openEditor(page, fx.m5.node_ids.solo);
     await el(page, fx.m5.widgets.solo).click();
+
+    const preview = page.frameLocator('iframe.editor-preview');
+    // NACHGEZOGENER SELEKTOR, keine Erwartung geändert (Teil D): `[data-id]`
+    // trifft die Kachel ZWEIMAL - der Host legt seine Zelle (`.skin-host-cell`)
+    // in den Rahmen des Skins, und beide tragen die Id. Für `toHaveCount(0)`
+    // fiel das nicht auf (0 ist 0), die Gegenprobe scheiterte an der
+    // Mehrdeutigkeit. Gefasst wird die Zelle des HOSTS, weil sie unabhängig vom
+    // Skin da ist; gezählt wird damit dasselbe Element wie vorher.
+    const kachel = preview.locator('.skin-host-cell[data-id]', { hasText: fx.m5.widgets.solo });
+
+    // AUSGANGSSTAND, keine Zusicherung des Kriteriums: OHNE Regel ist die Kachel
+    // da. Das ist zugleich der Synchronisationspunkt.
+    //
+    // WARUM ER NÖTIG IST (Runde 2): das `toHaveCount(0)` unten stand vorher
+    // direkt hinter dem Klick auf „Speichern" - und war schon erfüllt, bevor die
+    // Vorschau die Regel überhaupt anwenden konnte. Gemessen: eine Mutation, die
+    // `isWidgetVisible` immer `true` liefern ließ, blieb grün, obwohl die Kachel
+    // sechs Sekunden später sichtbar dastand. „0 ist 0" traf den Zeitpunkt statt
+    // die Aussage. Mit dieser Zeile davor ist die Zusicherung ein ÜBERGANG von
+    // 1 auf 0, und eine wirkungslose Regel fällt auf.
+    await expect(kachel).toHaveCount(1);
 
     await page.getByRole('button', { name: 'Sichtbarkeitsregel' }).click();
     await page.getByLabel('Datenpunkt').fill('dp-m5-solo');
     await page.getByLabel('Bedingung').selectOption('gt');
     await page.getByLabel('Schwelle').fill('30');
-    await page.getByRole('button', { name: 'Speichern' }).click();
+    // NACHGEZOGENER SELEKTOR, keine Erwartung geändert (Teil D): „Speichern"
+    // steht zweimal auf dem Schirm (Seiteneigenschaften und Canvas), ein
+    // ungefasster Griff ist mehrdeutig. Gemeint ist der der Fläche, auf der die
+    // Elemente liegen.
+    await saveCanvas(page).click();
 
-    const preview = page.frameLocator('iframe.editor-preview');
-    // Seed-Wert 21.5 → Bedingung nicht erfüllt → unsichtbar.
-    await expect(preview.locator(`[data-id]`, { hasText: fx.m5.widgets.solo })).toHaveCount(0);
+    // Seed-Wert 21.5 → Bedingung nicht erfüllt → die Kachel verschwindet.
+    await expect(kachel).toHaveCount(0);
 
     // Wert über die Schwelle heben → das Element erscheint (Live-Wert, kein Reload).
     const headers = await adminHeaders(request);
     await request.post(api(`/datapoints/${fx.m5.datapoint_ids.solo}/value`), { headers, data: { value: 42 } });
-    await expect(preview.locator(`[data-id]`, { hasText: fx.m5.widgets.solo })).toBeVisible();
+    try {
+      await expect(kachel).toBeVisible();
+    } finally {
+      // Die Beispielwelt bleibt, wie der Seed sie setzt: ohne dieses Zurücksetzen
+      // sähe ein zweiter Lauf gegen dieselbe Instanz die 42 statt der 21,5 - und
+      // E11, das den Seed-Wert in der Vorschau erwartet, wäre rot (gemessen).
+      await request.post(api(`/datapoints/${fx.m5.datapoint_ids.solo}/value`), {
+        headers,
+        data: { value: 21.5 },
+      });
+    }
   });
 
   test('E17 Responsive-Breakpoints in Seiteneigenschaften konfigurierbar', C2, async ({ page, request }) => {

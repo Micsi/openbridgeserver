@@ -57,6 +57,7 @@ import VisuEditorCanvas from '@/components/visu/VisuEditorCanvas.vue'
 import VisuPageHistory from '@/components/visu/VisuPageHistory.vue'
 import VisuPageTransfer from '@/components/visu/VisuPageTransfer.vue'
 import { mergePreviewDrafts } from '@/utils/visuEditorDraftMerge'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const props = defineProps({
   /** Die Seite aus der Route (`/visu-editor/:pageId`, `props: true`). */
@@ -110,8 +111,27 @@ const {
   draft: autorenEntwurf,
   pageWidgets,
   replaceWidget,
+  setWidgets,
   addWidget,
 } = useVisuEditorDraft(pageId, { tree: async () => (await ladeBaum(), editor.nodes) })
+
+/**
+ * DREI ANSICHTEN, EIN ENTWURF (Nachzug M5 C3 Runde 2, #170/#173).
+ *
+ * Die Textansicht des Canvas (E13) zeigt dieselbe Seite wie die Flaeche und wie
+ * die Autorenliste daneben. Wer dort einen Namen, eine Bindung oder einen
+ * Konfig-Schluessel aendert - oder ein Element loescht -, aendert damit den
+ * EINEN Entwurf, und der Autorenteil muss mitziehen.
+ *
+ * OHNE DIESE ZEILE war es ein stiller Verlust: der Autorenteil hielt seinen
+ * alten Stand, der Canvas legte ihn beim Speichern ueber die Textaenderung
+ * (`adoptAuthored`), der Server bekam den alten Namen - und „Gespeichert" stand
+ * darueber. Im Browser gemessen, per Gegenprobe auf `adoptAuthored()`
+ * zurueckgefuehrt.
+ */
+function uebernimmTextstand(widgets) {
+  setWidgets(widgets)
+}
 
 /**
  * Der Entwurf, den die Vorschau zeigt - aus BEIDEN Teilen zusammengesetzt.
@@ -196,16 +216,26 @@ const selectedId = ref(null)
 const selected = computed(() => pageWidgets.value.find((w) => w.id === selectedId.value) || null)
 
 /**
- * EINE AUSWAHL, ZWEI ANSICHTEN (Nachzug M5 C3, #170).
+ * Die Auswahl des Canvas ist DIESELBE Auswahl (M5 Teil D, Issue #174).
  *
- * Der Canvas und die Elementliste zeigen dieselben Kacheln. Bis hierher hatten
- * sie zwei getrennte Auswahlen: wer eine Kachel im Canvas anklickte, um sie zu
- * benennen oder zu binden, tippte in das Formular des zuletzt in der LISTE
- * angeklickten Elements - also in ein anderes Element. Der Canvas meldet seine
- * Wahl deshalb nach oben, und sie ist auch die des Formulars.
+ * Vorher waren es zwei: ein Klick auf eine Kachel waehlte sie auf der Flaeche
+ * aus, das Bindungsformular darunter meldete aber weiter „Kein Element
+ * ausgewaehlt" - der Autor musste dasselbe Element ein zweites Mal in der Liste
+ * anklicken, und wer das nicht wusste, kam an die Bindung gar nicht heran.
+ *
+ * Uebernommen wird die Id UNGEPRUEFT, und das ist Absicht. Der erste Entwurf
+ * liess nur durch, was gerade schon in `pageWidgets` stand - und genau daran
+ * fiel er unter Last um: Canvas und Store laden ihre Seite getrennt, und ein
+ * Klick, der vor dem Store ankam, wurde still verworfen (an der laufenden
+ * Instanz gemessen, mal offenes, mal geschlossenes Formular auf derselben
+ * Seite). Die Pruefung ist ohnehin ueberfluessig: `selected` schlaegt die Id in
+ * `pageWidgets` nach und liefert `null`, solange dort nichts passt. Ein Element
+ * einer Include- oder Global-Ebene, das der Ansicht nicht gehoert, laesst das
+ * Formular damit geschlossen; sobald die eigene Seite geladen ist, oeffnet es
+ * sich von selbst.
  */
-function onCanvasSelect(id) {
-  if (id) selectedId.value = id
+function uebernimmAuswahl(id) {
+  selectedId.value = id ?? null
 }
 
 onMounted(async () => {
@@ -249,6 +279,15 @@ const historyRef = ref(null)
  * Verlauf unmittelbar nach dem Speichern die Liste von vor dem Speichern.
  */
 async function nachSpeichern() {
+  // DER STAND DER SEITENEIGENSCHAFTEN ZIEHT MIT (#187).
+  //
+  // Ihr Speicherplan baut seine Nutzlast auf der Konfiguration, die der Store
+  // beim Auswaehlen der Seite gelesen hat. Ohne dieses Nachlesen stuende dort
+  // weiter die Widget-Liste von vorher, und ein Klick auf „Speichern" in den
+  // Seiteneigenschaften machte die gerade gespeicherte Autorenarbeit wieder
+  // zunichte - Name, Bindung, Regel und ganze Elemente, mit zwei Quittungen
+  // „Gespeichert" hintereinander (gemessen). Ein `GET`, kein zweiter Schreiber.
+  if (allowed.value && pageId.value) await editor.refreshPageConfig(pageId.value)
   await historyRef.value?.reload?.()
 }
 
@@ -315,9 +354,12 @@ function platzieren(type) {
     class="flex flex-col gap-4 p-4"
   >
     <header class="flex flex-col gap-1">
-      <h1 class="text-lg font-semibold text-slate-800 dark:text-slate-100">
-        {{ $t('visuEditor.title') }}
-      </h1>
+      <div class="flex items-center gap-2">
+        <h1 class="text-lg font-semibold text-slate-800 dark:text-slate-100">
+          {{ $t('visuEditor.title') }}
+        </h1>
+        <HelpButton help-id="visu-editor" />
+      </div>
       <p class="text-sm text-slate-500 dark:text-slate-400">
         {{ $t('visuEditor.intro') }}
       </p>
@@ -347,10 +389,11 @@ function platzieren(type) {
         :page-id="pageId"
         :after-save="nachSpeichern"
         :authored-widgets="pageWidgets"
-        @select="onCanvasSelect"
         @draft="canvasDraft = $event"
         @preview-width="previewWidth = $event"
         @hidden-ids="canvasHiddenIds = $event"
+        @selected="uebernimmAuswahl"
+        @widgets="uebernimmTextstand"
       />
       <!-- Waehrend eines Wiederherstellens traegt dieser Platzhalter bewusst
            NICHT die Marke `.editor-canvas`: sie steht fuer „der Editor zeigt die

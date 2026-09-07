@@ -16,6 +16,7 @@ import { computed, ref } from 'vue'
 import { useVisuEditorStore } from '@/stores/visuEditor'
 import { buildTree } from '@/utils/visuPageTree'
 import VisuPageTreeNode from '@/components/visu/VisuPageTreeNode.vue'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const store = useVisuEditorStore()
 const roots = computed(() => buildTree(store.nodes))
@@ -50,6 +51,7 @@ async function confirmDelete() {
       >
         {{ $t('visuEditor.tree.newFolder') }}
       </button>
+      <HelpButton help-id="visu-page-tree" />
     </div>
 
     <p

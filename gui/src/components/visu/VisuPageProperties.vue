@@ -22,6 +22,7 @@ import { useVisuEditorStore } from '@/stores/visuEditor'
 import { EDITOR_PAGE_KINDS, supportsIncludes, supportsPopup } from '@/utils/visuPageKind'
 import { sortNodes } from '@/utils/visuPageTree'
 import { VISU_SKIN_KEYS } from '@/utils/visuSkins'
+import HelpButton from '@/components/ui/HelpButton.vue'
 
 const props = defineProps({
   /**
@@ -179,9 +180,25 @@ async function onSubmit() {
     {{ $t('visuEditor.props.empty') }}
   </p>
 
+  <!--
+    AUCH DIESE HAELFTE WIRD BENANNT (Nachzug M5 C3 Runde 2).
+
+    „Speichern" und „Name" stehen auf dieser Seite je zweimal: hier fuer die
+    SEITE, drueben fuer das ELEMENT. Der Canvas und das Bindungsformular tragen
+    seit diesem Nachzug einen zugaenglichen Namen; ohne einen hier waere die
+    Unterscheidung nur halb da - ein benanntes Formular ist ein Landmark, ein
+    unbenanntes nicht, und der Screenreader saehe weiter zwei gleich lautende
+    Bedienelemente, von denen nur eines eingeordnet ist.
+
+    `aria-labelledby` auf die sichtbare Ueberschrift, kein zweiter Text: der
+    Name kann so nicht von dem abweichen, was dasteht. „Seiteneigenschaften"
+    enthaelt keine der Beschriftungen, die der Playwright-Harness ueber
+    `getByLabel` sucht (gepinnt in `VisuEditorView.writepath.spec.js`).
+  -->
   <form
     v-else
     class="visu-page-properties flex flex-col gap-3 text-sm"
+    aria-labelledby="visu-page-properties-title"
     @submit.prevent="onSubmit"
   >
     <!-- EIN `<fieldset disabled>` statt eines `disabled` je Feld: das ist die
@@ -190,14 +207,25 @@ async function onSubmit() {
          reicht bis in die Tastaturbedienung. `contents` haelt das Gitter des
          Formulars unveraendert - das Feldgruppen-Element selbst nimmt keinen
          Platz ein und aendert keine Anordnung. -->
+    <!-- Die Ueberschrift und ihr Hilfe-Knopf stehen AUSSERHALB der Feldgruppe:
+         waehrend eines Wiederherstellens ist die Gruppe gesperrt, und eine
+         gesperrte Hilfe waere genau dann unerreichbar, wenn jemand nachliest,
+         was da gerade passiert. -->
+    <div class="flex items-center gap-2">
+      <h2
+        id="visu-page-properties-title"
+        class="text-sm font-semibold text-slate-700 dark:text-slate-200"
+      >
+        {{ $t('visuEditor.props.title') }}
+      </h2>
+      <HelpButton help-id="visu-page-kinds" />
+    </div>
+
     <fieldset
       data-testid="visu-props-fields"
       class="contents"
       :disabled="restoring"
     >
-      <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
-        {{ $t('visuEditor.props.title') }}
-      </h2>
 
       <div class="flex flex-col gap-1">
         <label
