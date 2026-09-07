@@ -175,41 +175,54 @@ class VisuNode(BaseModel):
   Reihenfolge bleibt); Teil B komponiert jede Seite also höchstens einmal und braucht kein eigenes
   Entdoppeln.
 
-  **Grenze der Verdeckung, geschlossen für die eigene `includes`-Liste (Micsi/openbridgeserver#176).**
-  `GET /visu/pages/{id}` maskiert seit der G1-Folgewelle die Ziele in `includes`, die für den lesenden
-  Principal auf Navigationsebene verdeckt sind (`_can_discover_node`, dieselbe Prüfung wie
-  `/visu/tree`/`/nodes/{id}`) - eine lesbare Seite gibt die ID eines ihr `user`-geschützten,
-  unberechtigten Include-Ziels also nicht mehr preis. **Zwei Richtungen standen zur Wahl:** IDs
-  maskieren, oder die Signale 404/403/401 vereinheitlichen. Gewählt wurde Maskieren, weil Vereinheitlichen
-  das Zwei-Ebenen-Modell selbst geändert hätte (von M5 ausdrücklich nicht vorgesehen) und die
-  Direkt-Navigation eines Principals auf eine eigene, nicht verdeckte Seite unnötig verarmt hätte;
-  Maskieren trifft dagegen nur die `includes`-Antwort und lässt PIN-geschützte Ziele (`protected`, keine
-  Verdeckung) unangetastet sichtbar, wie Teil B/C1 es für den Sperr-Hinweis braucht. **Bewusst nicht
-  geschlossen:** `widget.config.source_page_id` in V1 (`WidgetRefInstance`, `frontend/`, R17) - dieselbe
-  Klasse, aber außerhalb des M5-Schreibwegs und `frontend/` bleibt unangetastet; wer die Direktsonde
-  `GET /visu/pages/{id}` mit einer bereits bekannten ID fährt, erhält weiterhin 403/401 vs. 404 - das
-  bleibt eine bewusst unveränderte, dem Zwei-Ebenen-Modell inhärente Eigenschaft, kein neu offener Punkt.
+  **Micsi/openbridgeserver#176, zurückgebaut in Runde 4 - dokumentierte, bewusste Grenze,
+  keine offene Aufgabe.** Runden 1-3 maskierten Include-Ziele in `includes`, die für den lesenden
+  Principal auf Navigationsebene verdeckt sind, und versuchten anschließend, dieselbe Maskierung
+  über einen Schreibvorgang hinweg verlustfrei zu erhalten. Jede der drei Runden schloss den zuvor
+  gemessenen Befund und maß dabei einen neuen, an derselben Stelle: Runde 1 maskierte nur `get_page`
+  (Orakel an vier weiteren Ausgängen blieb offen); Runde 2 schloss die vier weiteren Ausgänge und
+  führte eine Wiederherstellung ein, die genau dadurch **stillen Datenverlust** an einer anderen
+  Stelle einführte (ein verdecktes Include verschwand bei unverändertem Round-Trip); Runde 3 flickte
+  diesen Datenverlust mit einer Zeitstempel-Heuristik (`_was_visible_before`) und einer
+  Zyklus-Ausnahme für wiederhergestellte Einträge - **gemessen** brachte das einen **echten
+  Datenverlust bei zweimaligem Speichern derselben, nie neu gelesenen Nutzlast** (die Heuristik
+  „heilt sich selbst" nach dem ersten Schutz-Save, weil ihr Zeitanker `node.updated_at` durch genau
+  diesen Save vorrückt), eine unbelegte `<=`/`<`-Zeitgleichheitsgrenze, und eine Zyklus-Ausnahme, die
+  einen echten, roh gesetzten Zyklus über ein wiederhergestelltes Ziel unentdeckt ließ.
 
-  **Runde 2, zwei Kritiker-Befunde gegen den obigen Fix, beide geschlossen:**
-  1. **Stiller Datenverlust.** Die Maskierung beim Lesen ohne Gegenmaßnahme beim Schreiben ließ ein
-     verdecktes Include beim unveränderten Round-Trip aus der DB verschwinden - ein eingeschränkter
-     Principal liest `includes: []` (maskiert), speichert unverändert zurück, und `save_page` schrieb
-     genau diese verkürzte Liste. Schlimmer als das Orakel, das Runde 1 schloss. Fix:
-     `_restore_concealed_includes` übernimmt beim Speichern jeden gespeicherten Eintrag, der für den
-     schreibenden Principal verdeckt ist, unverändert aus dem alten Stand - er kann ihn also weder
-     erfahren (`PUT /pages/{id}` antwortet 204 ohne Body) noch verändern. Ein für ihn *sichtbarer*
-     Eintrag bleibt absichtlich entfernbar.
-  2. **Vier weitere Ausgänge maskierten nicht.** `get_page` war die einzige maskierende Stelle;
-     `copy_node`, `update_node` (PATCH), `move_node` und `get_page_version` gaben `page_config.includes`
-     weiterhin roh heraus, `GET /visu/nodes/{id}/export` ebenso (nutzt dieselbe `_check_page_read_access`
-     wie `get_page`, maskierte aber nicht). Fix: **eine** Funktion (`_mask_concealed_includes`) bleibt die
-     einzige Maskierungslogik; `copy_node`/`update_node`/`move_node` laufen zusätzlich über einen
-     gemeinsamen Rückgabe-Helfer (`_node_response_for_principal` statt eines rohen `_get_node_or_404`),
-     `get_page_version` und `export_node` rufen `_mask_concealed_includes` direkt auf derselben Stelle wie
-     `get_page`. `export_node` ersetzt dabei nur das `includes`-Feld im rohen JSON, nie den ganzen
-     `page_config`-Eintrag - Export bleibt sonst roh (Dublettenfreiheit gilt dort weiterhin nicht, s. u.).
-     **Bewusst nicht geändert:** `POST /nodes` (Config beim Anlegen immer leer) und
-     `POST /nodes/import` (der Importeur liefert die Konfiguration selbst, es gibt nichts zu enthüllen).
+  Der naheliegende vierte Versuch - das verdeckte Ziel durch einen an
+  (Quellseite, Ziel-ID, Server-Geheimnis) gebundenen, opaken Platzhalter ersetzen, den der Client
+  unverändert zurückschickt und der beim Schreiben zurückübersetzt wird - wurde entworfen und
+  gegen den echten Editor-Pfad geprüft (nicht nur das Backend): `gui/`s Entwurfs-/Speicherpfad
+  (`stores/visuEditor.js`, `utils/visuPageSavePlan.js`, `utils/visuPageValidation.js`,
+  `composables/useVisuEditorDraft.js`) reicht einen unbekannten `includes`-Eintrag tatsächlich
+  unverändert durch und scheitert nicht daran (`ladePageConfig` schluckt einen 404 für ein
+  unauflösbares Ziel bereits heute, R17-Fall). Trotzdem drei konkrete, im Rahmen von G1 nicht
+  auflösbare Gründe gegen die Umsetzung: (1) Der Vertrag in diesem Abschnitt legt sich hier
+  ausdrücklich auf **Maskieren durch Entfernen** fest (siehe die verworfene Alternative
+  „Signale vereinheitlichen" oben) - ein Platzhalter ist eine **dritte**, hier nicht evaluierte
+  Richtung, die Teil B/C1 zusätzlich zusagt, dass eine Seite maximal ein sichtbares Häppchen
+  „hier ist etwas, das du nicht sehen darfst" pro verdecktem Ziel bekommt (eine schwächere, aber
+  reale Abschwächung der bisherigen vollständigen Unsichtbarkeit) - eine Vertragsänderung dieser
+  Tragweite gehört nicht in einen Bugfix einer Backend-Validierungsgruppe. (2) Der aktuell einzige
+  reale Editor für `includes` (`gui/` `VisuEditorView`) ist `meta: { admin: true }` - also
+  routen-seitig auf `is_admin` beschränkt, der nie ein verdecktes Ziel sieht; die Probe deckt damit
+  nur einen heute nicht erreichbaren, zukünftigen (nicht-admin-)Konsumenten ab, während `frontend/`
+  und `packages/contract` (der eigentliche Vertragsträger für Teil B) laut Auftrag unberührt bleiben
+  müssen. (3) Der Platzhalter bräuchte ein Server-Geheimnis (wiederverwendet aus
+  `obs.api.auth`s JWT-Signierschlüssel) für einen fachlich fremden Zweck und hätte denselben
+  Rückbau der kompletten Runde-1/2/3-Testsuite (≈19 Proben) zur Folge wie der jetzige Rückbau - ohne
+  dass die drei benannten Restmängel einzeln, unabhängig geprüft werden könnten, bevor die ganze
+  Suite umgeschrieben ist.
+
+  **Entscheidung:** #176 wird ersatzlos zurückgebaut, exakt auf den Stand vor Runde 1
+  (`git diff 35c4fa39^:obs/api/v1/visu.py obs/api/v1/visu.py` zeigt nur noch die unabhängige,
+  weiterhin gültige #178-Änderung). `includes` wird an allen sechs Ausgängen wieder roh
+  ausgeliefert - dieselbe, bereits an dieser Stelle **bewusst offen gelassene** Klasse wie
+  `widget.config.source_page_id` in V1 (`WidgetRefInstance`, `frontend/`, R17): wer die Direktsonde
+  `GET /visu/pages/{id}` mit einer bereits bekannten ID fährt, erhält 403/401 vs. 404 - das ist eine
+  dem Zwei-Ebenen-Modell inhärente, unveränderte Eigenschaft, kein neu offener Punkt, und keine
+  Verschlechterung gegenüber dem Stand vor der M5-Folgewelle.
 - **`source_page_readonly`** wird aus dem aufgelösten Zugriffs-Level der Quellseite abgeleitet
   (dieselbe Regel wie `GET /widget-ref/{page_id}`: `access == "readonly"`).
   **Naht:** `GET /visu/pages/{id}` liefert das Ergebnis als Antwort-Header
