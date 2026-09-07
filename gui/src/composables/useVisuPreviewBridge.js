@@ -58,41 +58,45 @@ export const VISU_PREVIEW_MESSAGE = {
 /**
  * Der Klon-Waechter der Bruecke (Issue #183).
  *
- * `postMessage` klont strukturiert; der Algorithmus lehnt einen Vue-Proxy mit
- * `DataCloneError` ab. Vor #183 hing dieser Schutz nur an der Sorgfalt JEDES
- * einzelnen Aufrufers - C1 (`visuEditor.js`, `previewDraft`) und C2
- * (`VisuEditorCanvas.vue`) hatten ihn sich je selbst nachgezogen, testeten aber
- * nur die eigene Kopie, nie das, was an DIESER Stelle tatsaechlich verlaesst.
- * Elf Abnahmerunden mit Mutationsproben sahen das nicht: die Senderspec
- * ersetzte `postMessage` durch einen Array-Push, der nie klont. Deshalb sitzt
- * der Waechter jetzt HIER, am einzigen Ort, an dem diese Bruecke wirklich
- * `postMessage` ruft - kein kuenftiger Aufrufer kann ihn mehr vergessen.
+ * NACHGEMESSEN in Runde 2: der `DataCloneError` aus #183 war zu diesem
+ * Zeitpunkt bereits behoben - seit #169 (Commit `e047328b`) macht `post()`
+ * schon eine reine JSON-Kopie, BEVOR `postMessage` sie sieht, und ein
+ * `JSON.parse(JSON.stringify(…))`-Ergebnis besteht jeden echten
+ * `structuredClone` selbst hinter einer eingebetteten `<iframe>`-Grenze
+ * (belegt: `useVisuPreviewBridge.iframeBoundary.spec.js` lief gegen die
+ * UNVERAENDERTE Datei von `e047328b`/`c2b30910` bereits gruen). Diese Funktion
+ * fixt also keinen offenen Fehler mehr - sie buendelt die JSON-Kopie an EINEM
+ * benannten Ort mit einer Fehlermeldung, die sagt WELCHE Bruecke betroffen
+ * ist, statt eines rohen `SyntaxError`/`TypeError` aus `JSON.stringify`.
  *
- * Zwei Schritte, in dieser Reihenfolge:
- *  1. Eine reine JSON-Kopie. Ein Proxy (`ref()`/`reactive()`) wird dabei zu
- *     echten Daten, weil `JSON.stringify` durch seine Get-Falle liest statt den
- *     Proxy selbst zu serialisieren - der Grund, warum dieser Umweg ueberhaupt
- *     funktioniert.
- *  2. Eine ECHTE Klonprobe mit `structuredClone` auf dem Ergebnis von (1) -
- *     demselben Algorithmus, den der Browser bei `postMessage` selbst anwendet
- *     (in Node ab v17 identisch verfuegbar, hier durch die Proben belegt).
- *     Besteht die Nutzlast sie nicht (ein zirkulaerer Verweis, ein `BigInt`),
- *     bricht der Waechter mit einer eindeutigen Meldung ab, statt eine kaputte
- *     oder still verstuemmelte Nutzlast hinauszuschicken.
+ * Ein einziger Schritt, nicht zwei: eine zweite Klonprobe mit `structuredClone`
+ * auf dem JSON-Ergebnis stand hier bis Runde 2 zusaetzlich - eine
+ * Mutationsprobe zeigte, dass sie NIE ausloesen kann und deshalb toten Code
+ * darstellte. Der Grund ist strukturell: alles, was `JSON.parse(JSON.stringify(…))`
+ * uebersteht, ist per Konstruktion bereits auf reine Objekte, Arrays, Strings,
+ * Zahlen, Booleans und `null` reduziert - genau die Werte, die der
+ * Struktur-Klon-Algorithmus als Erstes und ohne jede Einschraenkung klont. Ein
+ * zweiter Aufruf konnte also nur entweder klaglos durchlaufen oder - nie -
+ * werfen; ihn zu entfernen aendert kein Verhalten, schliesst aber einen Zweig,
+ * den keine Probe je rot faerben konnte.
+ *
+ * WAS DIESER WAECHTER NICHT LEISTET (die vorige Fassung behauptete das
+ * faelschlich): er verhindert KEINE still verstuemmelte Nutzlast. Der
+ * JSON-Umweg selbst engt die Typen ein - `Date` wird zu einem String, `Map`/
+ * `Set` werden zu `{}`, `undefined` verschwindet lautlos - und all das wirft
+ * NICHT, laeuft also unbemerkt durch. Verhindert wird nur, was am JSON-Umweg
+ * selbst scheitert (ein zirkulaerer Verweis, ein `BigInt`) - dafuer bricht er
+ * mit einer eindeutigen Meldung ab. Dass die Nutzlast der Bruecke (`PreviewDraft`,
+ * `apps/visu/src/preview/protocol.ts`) ohnehin nur Strings, Zahlen, Booleans
+ * und Structs davon fuehrt, ist eine Eigenschaft des VERTRAGS, keine dieser
+ * Funktion.
  */
 export function cloneSafeEnvelope(message) {
-  let plain
   try {
-    plain = JSON.parse(JSON.stringify(message))
+    return JSON.parse(JSON.stringify(message))
   } catch (err) {
     throw new Error(`Vorschau-Bruecke: Nutzlast ist nicht JSON-faehig (${err.message})`)
   }
-  try {
-    structuredClone(plain)
-  } catch (err) {
-    throw new Error(`Vorschau-Bruecke: Nutzlast uebersteht keinen echten Klon (${err.message})`)
-  }
-  return plain
 }
 
 /**
@@ -153,19 +157,33 @@ export function createVisuPreviewBridge({
    *
    * Der Vertrag nennt beide Nachrichtenformen ohnehin als Daten (Protokoll 1.1);
    * der JSON-Umweg ist ihre Form und keine Notloesung.
+   *
+   * Der Waechter WIRFT bei einer Nutzlast, die den JSON-Umweg selbst nicht
+   * uebersteht - gefangen wird das HIER, am einzigen Aufrufer, nicht beim
+   * Aufrufer von `post()`. Ohne diesen Fang liefe die Ausnahme ungefangen bis
+   * zu dem Vue-`watch`, der `sendDraft()` bei jeder Entwurfsaenderung ruft
+   * (`VisuPreviewFrame.vue`) - ein Waechter, dessen Fehler niemanden erreicht,
+   * ersetzt einen unsichtbaren Fehler nur durch einen anderen. Der Fehlerfall
+   * geht deshalb ueber denselben Weg wie eine Ablehnung durch die Vorschau
+   * selbst: `onRejected('clone')`, dieselbe Anzeige, die auch fuer `payload`
+   * und `protocol` steht.
    */
   function post(message) {
     if (!previewOrigin) return
     const target = getFrameWindow ? getFrameWindow() : null
     if (!target) return
-    target.postMessage(
-      cloneSafeEnvelope({
+    let envelope
+    try {
+      envelope = cloneSafeEnvelope({
         channel: VISU_PREVIEW_CHANNEL,
         protocol: VISU_PREVIEW_PROTOCOL,
         ...message,
-      }),
-      previewOrigin,
-    )
+      })
+    } catch {
+      if (onRejected) onRejected('clone')
+      return
+    }
+    target.postMessage(envelope, previewOrigin)
   }
 
   function sendDraft() {

@@ -48,6 +48,18 @@ describe('previewFrameFence - attributWert()', () => {
   it('verwechselt `src` NICHT mit `data-src` (kein `\\b`-Fehltreffer)', () => {
     expect(attributWert('<div data-src=./decoy.js>', 'src')).toBeNull()
   })
+  it('laesst sich NICHT von `src=…` innerhalb eines fremden, zitierten Attributwerts taeuschen (dritte Form, schwerer als H1/H2)', () => {
+    // `data-note` steht VOR dem echten `src` und enthaelt selbst den Text
+    // `src=deckname.js` - eine reine `name=`-Textsuche im ganzen Tag traf
+    // diesen Text zuerst und lieferte den Deckname statt der echten Datei.
+    expect(
+      attributWert('<script data-note="see src=deckname.js" src="./echt.js">', 'src'),
+    ).toBe('./echt.js')
+    // Auch unzitiert dahinter, und mit dem Deckname in einfachen Anfuehrungszeichen.
+    expect(
+      attributWert("<script data-note='see src=deckname.js' src=./echt.js>", 'src'),
+    ).toBe('./echt.js')
+  })
 })
 
 describe('previewFrameFence - guiEinstiege() liest unzitierte Attribute (#182, H1)', () => {
@@ -72,6 +84,44 @@ describe('previewFrameFence - guiEinstiege() liest unzitierte Attribute (#182, H
     const src = readFileSync(join(FIXTURES, 'index.unquoted.html'), 'utf8')
     const treffer = [...src.matchAll(altesMuster)]
     expect(treffer).toHaveLength(0)
+  })
+})
+
+describe('previewFrameFence - guiEinstiege() laesst sich nicht von einem Decoy-Attribut taeuschen (#182, dritte Form)', () => {
+  // Der gefaehrlichste der drei Funde: `attributWert()` suchte `name=…` als
+  // reine Textsuche im GANZEN Tag. Ein vorangehendes Attribut, dessen
+  // zitierter Wert selbst `src=…` enthaelt, gewann das Match - die echte
+  // `src`-Datei verschwand spurlos, UND `ungelesen`/`fremd` blieben leer, weil
+  // der Deckname selbst zu einer echten, lesbaren Datei aufloeste. Der Zaun
+  // meldete also nicht „unbekannt", sondern „alles gelesen" - eine falsche
+  // Vollstaendigkeit, schwerer als H1/H2 (die immerhin sichtbar blieben).
+  it('liest das ECHTE `src`-Blatt, nicht den Deckname in einem vorangehenden Attribut', () => {
+    const bericht = neuerBericht()
+    const index = join(FIXTURES, 'index.decoyAttribute.html')
+    const einstiege = guiEinstiege(bericht, index)
+    const namen = einstiege.map((p) => p.replace(FIXTURES, '').replace(/\\/g, '/'))
+
+    expect(namen).toContain('/realAttribute.js')
+    expect(namen).not.toContain('/decoyAttribute.js')
+    // Und keine falsche Vollstaendigkeit: waere die echte Datei uebersehen
+    // worden, MUESSTE das hier auftauchen statt in stillem Schweigen zu enden.
+    expect(bericht.ungelesen).toEqual([])
+    expect([...bericht.fremd]).toEqual([])
+  })
+
+  it('ROT gegen den unreparierten Stand: die alte `name=`-Textsuche liest den Deckname statt der echten Datei', () => {
+    // Reproduziert den Vorgaenger-Regex aus #182/Runde 1 direkt (das negative
+    // Lookbehind statt eines Attribut-Tokenizers) - exakt die Fassung, die auf
+    // dem HEAD dieser Welle vor diesem Fix stand.
+    function altesAttributWert(tag, name) {
+      const re = new RegExp(`(?<![\\w-])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`, 'i')
+      const m = tag.match(re)
+      if (m === null) return null
+      return m[1] ?? m[2] ?? m[3] ?? null
+    }
+    const tag = '<script data-note="see src=deckname.js" src="./echt.js">'
+    expect(altesAttributWert(tag, 'src')).toBe('deckname.js')
+    expect(altesAttributWert(tag, 'src')).not.toBe('./echt.js')
   })
 })
 

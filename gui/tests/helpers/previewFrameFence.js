@@ -347,7 +347,8 @@ const BLATT = /\.(css|scss|sass|less|vue|html)$/
 const MODUL = /\.(css|scss|sass|less|vue|html|js|mjs|cjs|ts|mts|tsx|jsx)$/
 
 /**
- * Der Wert EINES HTML-Attributs - zitiert ODER unzitiert (Kritik #182, H1).
+ * Jedes Attribut EINES HTML-Tags, der Reihe nach - zitiert ODER unzitiert
+ * (Kritik #182, H1).
  *
  * HTML5 kennt drei Schreibweisen: `attr="wert"`, `attr='wert'` und das
  * unzitierte `attr=wert`, das an jedem Leerraum, `>` oder `/` endet. Der
@@ -356,14 +357,33 @@ const MODUL = /\.(css|scss|sass|less|vue|html|js|mjs|cjs|ts|mts|tsx|jsx)$/
  * am Blattscan vorbei - nicht gemeldet, nicht gelesen, aber woertlich im
  * gebauten Bundle (belegt in `gui_dist/assets/index-*.css`).
  */
+const ATTRIBUT = /([a-zA-Z_:][-\w:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g
+
+/**
+ * Der Wert EINES benannten HTML-Attributs in einem Tag - oder `null`.
+ *
+ * Gelesen wird Attribut fuer Attribut ueber {@link ATTRIBUT}, nie `name=` als
+ * blosse Textsuche im ganzen Tag: eine `.match()`-Suche nach `name=` traf auch
+ * innerhalb eines FREMDEN, zitierten Attributwerts, wenn der zufaellig `name=`
+ * als Text enthielt (Kritik #182, dritte Form - schwerer als H1/H2, weil sie
+ * nicht bloss ungelesen bleibt, sondern eine FALSCHE Datei liest und den Fund
+ * dabei unterschlaegt). Ein Tag wie
+ * `<script data-note="see src=deckname.js" src="./echt.js">` lieferte so
+ * `deckname.js` statt `./echt.js` - das echte Blatt verschwand spurlos, ohne
+ * in `ungelesen` aufzutauchen. Der Tokenizer schliesst das: jedes zitierte
+ * Attribut wird als EIN GANZES Stueck konsumiert, bevor die Suche nach dem
+ * naechsten Attributnamen weitergeht - ein `src=…` INNERHALB eines fremden
+ * Zitats kann also nie mehr als eigener Treffer gelten.
+ */
 export function attributWert(tag, name) {
-  // Negatives Lookbehind statt `\b`: sonst traefe `\bsrc\b` auch auf
-  // `data-src` (der Uebergang von `-` zu `s` ist per `\b`-Definition auch ein
-  // Wortende).
-  const re = new RegExp(`(?<![\\w-])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`, 'i')
-  const m = tag.match(re)
-  if (m === null) return null
-  return m[1] ?? m[2] ?? m[3] ?? null
+  ATTRIBUT.lastIndex = 0
+  let m
+  while ((m = ATTRIBUT.exec(tag)) !== null) {
+    if (m[1].toLowerCase() === name.toLowerCase()) {
+      return m[2] ?? m[3] ?? m[4] ?? null
+    }
+  }
+  return null
 }
 
 /**
