@@ -1,0 +1,2 @@
+/* Fixture fuer H2 (#182): das externe Blatt eines `<style src="…">`-Blocks. */
+iframe[data-testid="visu-preview-frame"] { filter: saturate(0.5); }

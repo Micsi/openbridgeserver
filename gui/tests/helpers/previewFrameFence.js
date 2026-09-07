@@ -346,12 +346,52 @@ const BLATT = /\.(css|scss|sass|less|vue|html)$/
 /** Dateien, denen der Verfolger weiter folgt. */
 const MODUL = /\.(css|scss|sass|less|vue|html|js|mjs|cjs|ts|mts|tsx|jsx)$/
 
-/** Jeder Spezifizierer, den eine Quelldatei nennt - statisch, dynamisch, `@import`. */
-function spezifizierer(src) {
+/**
+ * Der Wert EINES HTML-Attributs - zitiert ODER unzitiert (Kritik #182, H1).
+ *
+ * HTML5 kennt drei Schreibweisen: `attr="wert"`, `attr='wert'` und das
+ * unzitierte `attr=wert`, das an jedem Leerraum, `>` oder `/` endet. Der
+ * Vorgaenger kannte nur die ersten beiden (`["']([^"']+)["']`); `<script
+ * src=./x.js>` und `<link rel=stylesheet href=./x.css>` gingen dadurch STILL
+ * am Blattscan vorbei - nicht gemeldet, nicht gelesen, aber woertlich im
+ * gebauten Bundle (belegt in `gui_dist/assets/index-*.css`).
+ */
+export function attributWert(tag, name) {
+  // Negatives Lookbehind statt `\b`: sonst traefe `\bsrc\b` auch auf
+  // `data-src` (der Uebergang von `-` zu `s` ist per `\b`-Definition auch ein
+  // Wortende).
+  const re = new RegExp(`(?<![\\w-])${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\`]+))`, 'i')
+  const m = tag.match(re)
+  if (m === null) return null
+  return m[1] ?? m[2] ?? m[3] ?? null
+}
+
+/**
+ * Jeder Spezifizierer, den eine Quelldatei nennt - statisch, dynamisch,
+ * `@import`, und `<style src="…">` in einem SFC (Kritik #182, H2: ein
+ * `<style>`-Block OHNE Rumpf, dessen Inhalt stattdessen in einer externen
+ * Datei steht - `<style src=…>` kannte weder `styleBloecke()` noch der
+ * Vorgaenger dieser Funktion, das referenzierte Blatt wurde nie gelesen).
+ *
+ * Ein unzitiertes `@import url(pfad)` bleibt bewusst AUSSEN vor: CSS erlaubt
+ * die Form, aber sie faellt schon heute nicht still weg - `cssRegeln()` liest
+ * die ganze `@import`-Anweisung als EIN Statement und legt sie, weil sie
+ * keinen Selektor hat, wortgleich in `sonstiges` ab (geprueft in
+ * `previewFrameFence.spec.js`). Sie zu verfolgen waere eine Verbesserung,
+ * keine Schliessung einer stillen Luecke wie H1/H2 - und aendert das gepinnte
+ * `sonstiges` in `VisuEditorView.spec.js`, ohne dass ein Fund das verlangt.
+ */
+export function spezifizierer(src) {
   const out = []
   const re =
     /(?:\bimport\s*\(\s*|\bfrom\s+|\bimport\s+|@import\s+(?:url\s*\(\s*)?)['"]([^'"\n]+)['"]/g
   for (const m of src.matchAll(re)) out.push(m[1])
+  // `<style src="…">` bzw. `<style src=…>` - der Rumpf des Blocks bleibt dabei
+  // leer, das eigentliche Blatt steht extern.
+  for (const m of src.matchAll(/<style\b[^>]*>/gi)) {
+    const wert = attributWert(m[0], 'src')
+    if (wert !== null) out.push(wert)
+  }
   return out
 }
 
@@ -398,16 +438,29 @@ export function neuerBericht() {
  * vorher kommentarlos, obwohl Vite das Blatt woertlich ins Bundle nahm
  * (Kritik R11, Y2).
  */
-function aufloesen(spec, von, bericht = null) {
+export function aufloesen(spec, von, bericht = null) {
   let basis
+  // Ein wurzelabsoluter Spezifizierer, der zu KEINER Datei unter `gui/`
+  // aufgeht, gehoert oft zu `gui/public/` - Vite liefert diesen Ordner
+  // UNVERAENDERT unter der Wurzel aus (`/theme.css` -> `gui/public/theme.css`).
+  // Der Vorgaenger versuchte nur `join(GUI_ROOT, spec)`, fand die Datei dort
+  // folgerichtig nie und meldete sie mit dem irrefuehrenden Grund „nicht
+  // gefunden" - obwohl sie existiert und ausgeliefert wird (Kritik #182,
+  // theoretisch gleichartig zu H1/H2). Der Kandidat unter `public/` wird
+  // deshalb ZUERST versucht: ein echtes Blatt dort wird jetzt gelesen wie
+  // jedes andere.
+  let publicBasis = null
   if (spec.startsWith('@/')) basis = join(GUI_ROOT, 'src', spec.slice(2))
   else if (spec.startsWith('./') || spec.startsWith('../')) basis = resolve(dirname(von), spec)
-  else if (spec.startsWith('/')) basis = join(GUI_ROOT, spec)
-  else {
+  else if (spec.startsWith('/')) {
+    basis = join(GUI_ROOT, spec)
+    publicBasis = join(GUI_ROOT, 'public', spec.slice(1))
+  } else {
     if (bericht !== null) bericht.fremd.add(spec)
     return null
   }
   const kandidaten = [
+    ...(publicBasis !== null ? [publicBasis] : []),
     basis,
     ...['.js', '.mjs', '.ts', '.vue', '.css'].map((e) => basis + e),
     ...['index.js', 'index.ts', 'index.vue'].map((n) => join(basis, n)),
@@ -433,6 +486,12 @@ function aufloesen(spec, von, bericht = null) {
  * (Kritik R11, Y1) - und `index.html` traegt heute schon ein solches `<link>`.
  * Ein ENTFERNTES Blatt kann dieser Lauf nicht laden; es wird gemeldet, nicht
  * uebergangen.
+ *
+ * Beide Attribute - `src` UND `href` - werden mit {@link attributWert}
+ * gelesen, zitiert ODER unzitiert (Kritik #182, H1). Der Vorgaenger verlangte
+ * Anfuehrungszeichen; `<script src=./x.js>` und `<link rel=stylesheet
+ * href=./x.css>` gingen dadurch STILL durch - nicht gemeldet, nicht gelesen,
+ * aber woertlich im gebauten Bundle.
  */
 export function guiEinstiege(bericht = null, index = join(GUI_ROOT, 'index.html')) {
   const src = readFileSync(index, 'utf8')
@@ -441,15 +500,18 @@ export function guiEinstiege(bericht = null, index = join(GUI_ROOT, 'index.html'
     const ziel = aufloesen(spec, index, bericht)
     if (ziel !== null) einstiege.push(ziel)
   }
-  for (const m of src.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) folge(m[1])
+  for (const m of src.matchAll(/<script\b[^>]*>/gi)) {
+    const wert = attributWert(m[0], 'src')
+    if (wert !== null) folge(wert)
+  }
   for (const m of src.matchAll(/<link\b[^>]*>/gi)) {
     const tag = m[0]
     if (!/\brel\s*=\s*["']?[^"'>]*\bstylesheet\b/i.test(tag)) continue
-    const href = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i)
+    const href = attributWert(tag, 'href')
     if (href === null) continue
-    if (/^(?:@\/|\.{1,2}\/|\/)/.test(href[1])) folge(href[1])
+    if (/^(?:@\/|\.{1,2}\/|\/)/.test(href)) folge(href)
     else if (bericht !== null) {
-      bericht.ungelesen.push(`${dateiname(index)}: ${href[1]} (entferntes Blatt, wird nicht geladen)`)
+      bericht.ungelesen.push(`${dateiname(index)}: ${href} (entferntes Blatt, wird nicht geladen)`)
     }
   }
   return einstiege

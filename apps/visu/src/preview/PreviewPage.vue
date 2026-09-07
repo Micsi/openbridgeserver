@@ -122,7 +122,7 @@
  *         Grenze DIESER MONTAGE: in einem nachgebauten Abbild der Auslieferung
  *         treffen alle drei auch ohne Browser); und der LESEUMFANG - was
  *         ausserhalb von `gui/` liegt, ein entferntes Blatt oder ein nur mit
- *         NAMEN genanntes Paket (`tailwindcss`, vier Blaetter von
+ *         NAMEN genanntes Paket (`tailwindcss`, fuenf Blaetter von
  *         `@vue-flow/*`) wird nicht gelesen, faellt aber seit Kritik R11 nicht
  *         mehr still weg, sondern steht namentlich in zwei gepinnten Listen.
  *         Der lange Wortlaut steht im Kopf von `PreviewParity.spec.ts`.

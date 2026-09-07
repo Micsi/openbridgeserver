@@ -254,12 +254,14 @@ import { dirname, join, resolve } from 'node:path';
  *              bekommt. GELESEN wird: jede Datei unter `gui/src`, in der CSS
  *              stehen kann, und dazu jede Datei UNTER `gui/`, die vom
  *              ausgelieferten `index.html` aus erreichbar ist - ueber
- *              `<script src>`, ueber `<link rel="stylesheet">` und ueber die
- *              `import`-/`@import`-Ketten dahinter, beliebig tief. NICHT
+ *              `<script src>` und `<link rel="stylesheet">` (beide zitiert
+ *              ODER unzitiert - Kritik #182, H1), ueber die
+ *              `import`-/`@import`-Ketten dahinter, beliebig tief, und ueber
+ *              `<style src="…">` in einem SFC (Kritik #182, H2). NICHT
  *              gelesen wird: was ausserhalb von `gui/` liegt; ein ENTFERNTES
  *              Blatt (`index.html` traegt eines, Google Fonts); eine Datei, in
  *              der kein CSS stehen kann; und jedes Paket, das nur mit NAMEN
- *              genannt ist - darunter `tailwindcss` und vier mitausgelieferte
+ *              genannt ist - darunter `tailwindcss` und fuenf mitausgelieferte
  *              Blaetter von `@vue-flow/*`.
  *
  *              Bis Kritik R11 fiel das STILL weg, auf zwei Wegen, beide im
@@ -276,11 +278,29 @@ import { dirname, join, resolve } from 'node:path';
  *              Wurzelgrenze ist dabei jetzt ein PFADvergleich; das fruehere
  *              `startsWith` liess `…/gui-extra-probe.css` NEBEN `gui/` durch.
  *
+ *              Kritik #182 fand DANACH zwei WEITERE stille Formen, wieder im
+ *              gebauten Bundle nachgewiesen: ein unzitiertes `<script src=…>`
+ *              bzw. `<link href=…>` (H1) und ein `<style src="…">` in einem
+ *              SFC (H2) - beide gingen am alten, zitierungspflichtigen Scan
+ *              vorbei, dieselbe Regel wie oben landete darueber woertlich im
+ *              Bundle. BEIDE sind GESCHLOSSEN: das Attribut wird zitiert ODER
+ *              unzitiert gelesen, und `<style src>` wird wie ein `@import`
+ *              verfolgt. Zwei theoretisch gleichartige Formen wurden dabei
+ *              selbst nachgeprueft, nicht blind geschlossen: ein unzitiertes
+ *              `@import url(…)` fiel schon vorher SICHTBAR in `sonstiges` -
+ *              keine Aenderung noetig; ein Pfad aus `gui/public/` wurde zwar
+ *              gemeldet, aber mit dem irrefuehrenden Grund „nicht gefunden" -
+ *              er wird jetzt wie jedes andere Blatt gelesen.
+ *
  *              WAS UEBRIG BLEIBT und an Teil E geht: der INHALT der Blaetter,
  *              die gemeldet, aber nicht gelesen werden - das entfernte Blatt,
- *              die vier `@vue-flow`-Blaetter, alles ausserhalb von `gui/`. Sie
+ *              die fuenf `@vue-flow`-Blaetter, alles ausserhalb von `gui/`. Sie
  *              werden ausgeliefert und koennen den Rahmen treffen; hier steht
- *              nur ihr NAME, nicht ihre Regel. Still ist daran nichts mehr.
+ *              nur ihr NAME, nicht ihre Regel. NAMENTLICH gemeldet statt STILL
+ *              zu verschwinden sind heute: zitierte UND unzitierte
+ *              HTML-Attribute, `<style src>` und die Wege aus Y1/Y2 oben - eine
+ *              vierte, noch unbekannte Form waere ein neuer Fund und kein
+ *              Ruecksprung in den alten Zustand.
  */
 
 // Ionic-Webkomponenten sind nicht jsdom-freundlich (gleiches Muster wie
