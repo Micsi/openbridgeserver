@@ -93,13 +93,19 @@ address. Two causes are common:
    and `VITE_PREVIEW_ALLOWED_ORIGINS` names the origin of the Admin GUI. The two
    settings belong together.
 
-**Visu 2.0 is still missing from the published packages.** The Docker image, the
-LXC template and the `obs-update` bundle only carry `visu_v2_dist/` if it was
-produced **before** the packaging step. The release pipelines do not do that
-yet: there, `/visu-v2` answers 404 and the editor's preview box stays empty. To
-get Visu 2.0 including the preview, build the package yourself:
-`tools/build-local.sh` produces the bundle before packaging and states in the
-build log whether it ended up in the result.
+**The published packages now carry Visu 2.0.** The Docker image, the LXC
+template and the `obs-update` bundle build `visu_v2_dist/` themselves, as part
+of their publishing workflows: `.github/workflows/release.yml`,
+`lxc-template.yml` and `nightly-docker.yml` check out `obs-visu-skins` and run
+`tools/build-visu-v2.sh` before packaging. If that build fails there, the run
+turns red instead of quietly publishing without Visu 2.0.
+
+Only the Docker build stage itself stays deliberately tolerant of a missing
+`visu_v2_dist/` in the build context, for example a local `docker build .`
+without a prior `tools/build-visu-v2.sh` run: the image still comes out valid,
+warns loudly in the build log, and `/visu-v2` then answers cleanly with 404
+instead of an error. `tools/build-local.sh` relies on exactly that path for
+local builds without an `obs-visu-skins` checkout.
 
 Visu 1 under `/visu/` is unaffected; every package contains it unchanged.
 

@@ -38,6 +38,60 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      # ── V2 Visu (visu_v2_dist/) — built here, handed to the Docker build as a
+      # context artefact ──────────────────────────────────────────────────────
+      # `apps/visu` depends on three skin packages via `link:` paths that point
+      # OUTSIDE this repository (obs-visu-skins); the Docker build's own stages
+      # cannot resolve them (see Dockerfile, stage `visu-v2`, and
+      # tools/build-visu-v2.sh). Built here instead, exactly like
+      # tools/build-local.sh does for local builds, and picked up by the
+      # Dockerfile's optional COPY — which stays optional (see there), so a
+      # plain `docker build .` without this step still produces a valid image.
+      #
+      # Unlike build-local.sh's local fallback (which tolerates a missing
+      # obs-visu-skins checkout — a normal state on a developer machine), a
+      # failure HERE fails the release: the checkout below is deterministic and
+      # under our control, so a broken build is a real regression. Silently
+      # publishing a release image that quietly lost the Visu editor's preview
+      # would be worse than a red pipeline. See Micsi/openbridgeserver#191.
+      - name: Checkout obs-visu-skins (V2 Visu skin packages)
+        uses: actions/checkout@v7
+        with:
+          repository: Micsi/obs-visu-skins
+          ref: main
+          path: .obs-visu-skins
+
+      - name: Recreate dev-link paths for the V2 Visu build
+        # apps/visu/package.json (and the skins' own package.json) pin absolute
+        # `link:` paths to a fixed local layout — see CONTRIBUTING-visu.md
+        # ("Dev-Link"). Recreated here the same way visu-ci.yml does it.
+        run: |
+          set -euo pipefail
+          WORK_PARENT="$(dirname "$GITHUB_WORKSPACE")"
+          mv "$GITHUB_WORKSPACE/.obs-visu-skins" "$WORK_PARENT/obs-visu-skins"
+          sudo mkdir -p /Volumes/Daten/Projekte/openbridge
+          sudo ln -s "$WORK_PARENT/obs-visu-skins" /Volumes/Daten/Projekte/openbridge/obs-visu-skins
+          sudo ln -s "$GITHUB_WORKSPACE" /Volumes/Daten/Projekte/openbridge/openbridgeserver-visu-integrate
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js (pnpm workspace)
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install (linked skins repo)
+        # The linked skin resolves @obs/visu-contract through its own
+        # node_modules, so the skins workspace needs its own install too
+        # (links only, no registry).
+        run: pnpm --dir /Volumes/Daten/Projekte/openbridge/obs-visu-skins install --frozen-lockfile
+
+      - name: Build V2 Visu (visu_v2_dist/)
+        run: ./tools/build-visu-v2.sh
+
       - name: Set up Python
         uses: actions/setup-python@v7.0.0
         with:

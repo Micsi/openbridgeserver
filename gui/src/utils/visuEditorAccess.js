@@ -29,11 +29,16 @@ export const VISU_EDITOR_ROUTE = '/visu-editor'
  * 404 statt eines verschachtelten Dashboards; `VisuPreviewFrame` zeigt dann
  * nach der Handshake-Frist seinen Hinweis.
  *
- * OFFEN BLEIBT die AUSLIEFERUNG in den veroeffentlichten Paketen: Docker-Abbild,
- * LXC-Template und `obs-update`-Buendel tragen `visu_v2_dist/` nur, wenn es vor
- * dem Paketbau erzeugt wurde (`tools/build-visu-v2.sh`, aufgerufen von
- * `tools/build-local.sh`). Den CI-Werkstuecken fehlt dafuer heute noch der
- * Checkout des Skin-Repos — Micsi/openbridgeserver#191.
+ * AUSLIEFERUNG in den veroeffentlichten Paketen: Docker-Abbild, LXC-Template
+ * und `obs-update`-Buendel bauen `visu_v2_dist/` inzwischen selbst, als Teil
+ * ihrer Veroeffentlichungs-Werkstuecke (`.github/workflows/release.yml`,
+ * `lxc-template.yml`, `nightly-docker.yml`): Checkout von obs-visu-skins,
+ * dann `tools/build-visu-v2.sh`, bevor das jeweilige Paket entsteht. Schlaegt
+ * das dort fehl, wird der Lauf rot statt das Paket still ohne die V2-Visu zu
+ * veroeffentlichen. Nur die Docker-Baustufe selbst bleibt tolerant gegenueber
+ * einem fehlenden `visu_v2_dist/` im Baukontext (siehe Dockerfile, Stufe
+ * `visu-v2`): dann bleibt das Abbild gueltig und /visu-v2 antwortet mit 404.
+ * Micsi/openbridgeserver#191.
  */
 export const VISU_PREVIEW_URL = import.meta.env.VITE_VISU_PREVIEW_URL || '/visu-v2/preview'
 
