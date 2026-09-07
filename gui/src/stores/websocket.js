@@ -20,6 +20,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
   const _handlers    = []        // [{ id, fn }] — external value listeners
   const _rbHandlers  = []        // ringbuffer entry listeners
   const _logHandlers = []        // log_entry listeners
+  const _subscribedIds = new Set()  // Puffer der abonnierten Ids, ueberlebt Abbruch + Wiederaufbau
   let   _pingInterval = null
   let   _reconnectTimer = null
   let   _shouldReconnect = true
@@ -39,6 +40,10 @@ export const useWebSocketStore = defineStore('websocket', () => {
 
     ws.onopen = () => {
       connected.value = true
+      // Nach jedem (Wieder-)Aufbau den vollstaendigen Satz gepufferter Ids
+      // nachsenden - sonst friert der Live-Wert nach jedem Abbruch still ein.
+      if (_subscribedIds.size > 0)
+        ws.send(JSON.stringify({ action: 'subscribe', ids: [..._subscribedIds] }))
       _pingInterval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ action: 'ping' }))
       }, 30_000)
@@ -106,14 +111,17 @@ export const useWebSocketStore = defineStore('websocket', () => {
     _ws.value?.close()
     _ws.value   = null
     connected.value = false
+    _subscribedIds.clear()
   }
 
   function subscribe(ids) {
+    ids.forEach(id => _subscribedIds.add(id))
     if (_ws.value?.readyState === WebSocket.OPEN)
       _ws.value.send(JSON.stringify({ action: 'subscribe', ids }))
   }
 
   function unsubscribe(ids) {
+    ids.forEach(id => _subscribedIds.delete(id))
     if (_ws.value?.readyState === WebSocket.OPEN)
       _ws.value.send(JSON.stringify({ action: 'unsubscribe', ids }))
   }

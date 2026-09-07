@@ -120,6 +120,12 @@ async function nudgeRight(wrapper, id) {
   await flushPromises()
 }
 
+/** Eine Taste am Fenster, so wie der Browser sie schickt (fuer Strg+Z/Y). */
+async function press(key, modifiers = {}) {
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, ...modifiers }))
+  await flushPromises()
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
@@ -188,6 +194,28 @@ describe('VisuEditorCanvas - JSON-Dualitaet (E13)', () => {
     await tab(wrapper, 'Visuell').trigger('click')
 
     expect(boxOf(wrapper, 'a').x).toBe(77)
+  })
+
+  /**
+   * #189.3 - eine Uebernahme aus der Textansicht zeichnete bisher NICHT auf
+   * den Undo-Stapel von C5 auf (kein Datenverlust: der aktuelle Stand landet
+   * beim naechsten Undo einfach auf der Redo-Seite - aber inkonsistent, denn
+   * jede andere Aenderung im Editor IST ein Schritt). Strg+Z nach einer reinen
+   * JSON-Bearbeitung tat deshalb nichts.
+   */
+  it('legt eine Uebernahme aus dem Text als eigenen Undo-Schritt ab (#189.3)', async () => {
+    const wrapper = await mountCanvas()
+    await tab(wrapper, 'JSON').trigger('click')
+    const doc = JSON.parse(json(wrapper).element.value)
+    doc.widgets[0].x = 77
+
+    await json(wrapper).setValue(JSON.stringify(doc))
+    await tab(wrapper, 'Visuell').trigger('click')
+    expect(boxOf(wrapper, 'a').x).toBe(77)
+
+    await press('z', { ctrlKey: true })
+
+    expect(boxOf(wrapper, 'a').x).toBe(10)
   })
 
   it('nimmt auch eine neue Kachel aus dem Text an', async () => {

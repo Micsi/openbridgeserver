@@ -844,6 +844,36 @@ describe('E14 - der Anfasser sitzt AUSSERHALB der Kachel', () => {
   })
 
   /**
+   * #189.1 - die Z-Ordnungs-Bedingung war bisher UNGEPINNT: der obige Test
+   * (Panel 400x200 HINTER `ka`) erfuellt Bedingung 2 (vollstaendig verdeckt)
+   * gar nicht - das Panel ist viel zu gross, um unter dem 8x8-Anfasser zu
+   * verschwinden. Entfernt man Bedingung 1 (Z-Ordnung) aus `handleCedesTo`,
+   * bleibt dieser Test also gruen, obwohl der Fehler wieder da ist - genau der
+   * Befund aus der Kritik, der nur im Browser sichtbar war (zweimal
+   * reproduziert). Diese Kachel ist klein genug, um BEIDE Bedingungen im
+   * Anfasser zu erfuellen (Bedingung 2 ja, Bedingung 1 nein), und schliesst
+   * damit die Luecke: nur wenn beide Bedingungen im Code stehen, bleibt der
+   * Zeiger bei `a`.
+   */
+  it('gibt den Zeiger NICHT an eine kleine, ganz verdeckte Kachel HINTER der eigenen weiter (#189.1)', async () => {
+    seed('p1', [widget('hinten', 10, 10, { w: 3, h: 2 }), widget('a', 0, 0)])
+    const w = await mountCanvas()
+    await pick(w, 'a')
+    const griff = els(w)
+      .find((e) => e.attributes('data-el') === 'a')
+      .find('[data-resize="se"]')
+    // Der Anfasser von `a` beginnt auf (10,10) und misst 8x8; `hinten` liegt
+    // mit 3x2 vollstaendig darunter - Bedingung 2 waere erfuellt. Aber
+    // `hinten` steht VOR `a` in der Liste, also HINTER ihr in der Z-Ordnung
+    // (Bedingung 1 fehlt) - der Anfasser behaelt den Zeiger und vergroessert
+    // `a`, statt `hinten` zu verschieben.
+    await mouseDragFrom(griff.element, 11, 11, 16, 0)
+    expect(selectedIds(w)).toEqual(['a'])
+    expect(boxOf(w, 'a').w).toBeGreaterThan(10)
+    expect(boxOf(w, 'hinten')).toMatchObject({ x: 10, y: 10, w: 3, h: 2 })
+  })
+
+  /**
    * Und der Gegenprobe-Fall zum Raster: eine Nachbarkachel, die der Anfasser
    * ganz zudeckt, bekommt den Zeiger AN GENAU DEM PUNKT, an dem sie liegt - der
    * Rest des Anfassers vergroessert weiterhin die eigene Kachel. Genau so liegt
