@@ -483,9 +483,9 @@ describe('VisuEditorView - der Vorfahrenpfad in der echten Schale', () => {
       ])
 
       // Die zweite Liste: blosse NAMEN, an denen die Kette endet. Sie sind
-      // fremder Code und stehen ausdruecklich in der Uebergabe an Teil E - vier
-      // von ihnen sind BLAETTER, die mitausgeliefert und hier nicht gelesen
-      // werden. Der Scan verschweigt das nicht, er schreibt es aus.
+      // fremder Code und stehen ausdruecklich in der Uebergabe an Teil E -
+      // fuenf von ihnen sind BLAETTER, die mitausgeliefert und hier nicht
+      // gelesen werden. Der Scan verschweigt das nicht, er schreibt es aus.
       expect(fremd).toEqual([
         '@floating-ui/vue',
         '@vue-flow/background',

@@ -218,7 +218,21 @@ function blockEnde(text, i) {
   return text.length
 }
 
-/** Kommentare weg - ohne dabei in eine Zeichenkette zu greifen. */
+/**
+ * Kommentare weg - ohne dabei in eine Zeichenkette zu greifen.
+ *
+ * BEKANNTE GRENZE, gemessen (Kritik zu Runde 5): ein bis Dateiende OFFENER
+ * `/*`-Kommentar verschluckt alles ab seiner Oeffnung - die Datei kommt dann
+ * mit leeren `rules` UND leerem `sonstiges` zurueck, also spurlos. Die
+ * Behauptung „der Scanner verliert nichts still" gilt fuer diesen einen Fall
+ * NICHT.
+ *
+ * Trotzdem bewusst nicht behoben: dieselbe Eingabe bricht den echten Build
+ * hart ab (`vite:css`/postcss, „Unclosed comment"), ein solches Blatt kann also
+ * gar nicht erst ausgeliefert werden. Der Zaun schweigt hier ueber etwas, das
+ * niemand je zu sehen bekommt. Wird der Bau je nachsichtiger, ist dies die
+ * erste Stelle, die nachgezogen werden muss.
+ */
 function ohneKommentare(css) {
   let out = ''
   for (let i = 0; i < css.length; i += 1) {
@@ -333,12 +347,54 @@ export function cssRegeln(css) {
 /**
  * Die `<style>`-Bloecke eines HTML- oder SFC-Textes.
  *
- * OHNE Zeilenanker: der Vorgaenger verlangte, dass vor `<style` nur Leerraum
- * steht, und ein `<style>` hinter `<title>` auf derselben Zeile blieb deshalb
- * ungelesen (Kritik R10, X5).
+ * ECHTES Parsing statt Nachbau (Kritik #182, siebte + achte Form - beide im
+ * `styleRumpfEnde()`-Nachbau aus Runde 4, der Form 6 schliessen sollte): eine
+ * unzitierte `url(</style>)` traf die eigene Anfuehrungszeichen-Buchhaltung
+ * gar nicht und schnitt trotzdem ab; ein einzelnes UNBALANCIERTES
+ * Anfuehrungszeichen liess `zeichenkettenEnde()` bis ans Ende der GANZEN
+ * Quelldatei laufen, `styleRumpfEnde()` fand dann gar kein Ende mehr, und der
+ * KOMPLETTE Block verschwand - nicht in `rules`, `sonstiges`, `ungelesen`
+ * oder `fremd`. Vier Formen an EINER Stelle (H2, vierte, sechste, jetzt
+ * siebte/achte) sind kein Einzelfall mehr, sondern ein Nachbau, der nie
+ * fertig wird.
+ *
+ * Gemessen statt angenommen, bevor ersetzt wurde: `<style>` ist ein HTML5
+ * RAW-TEXT-Element wie `<script>` - sein Rumpf endet beim ERSTEN woertlichen
+ * `</style>`, PUNKT, unabhaengig von jedem CSS-Anfuehrungszeichen oder
+ * -Kommentar darin. Das ist keine Vereinfachung, sondern die Spezifikation -
+ * belegt gegen den ECHTEN `@vue/compiler-sfc`, den Vite selbst benutzt: der
+ * Fall `content: "</style>"` aus Runde 4 bricht DORT mit `SyntaxError: Invalid
+ * end tag` ab und liefert exakt denselben abgeschnittenen Rumpf, den auch
+ * dieser Zaun jetzt liefert. Eine Datei, die das enthaelt, baut also gar
+ * nicht erst - kein stiller Verlust im ausgelieferten Bundle, sondern ein
+ * roter Build. Ein CSS-bewusstes Nachbauen dieser Grenze loest deshalb kein
+ * echtes Problem, es simuliert nur eine Nachsicht, die die echte Werkzeugkette
+ * gar nicht hat.
+ *
+ * `DOMParser` (global, von vitest ueber `environment: 'happy-dom'` gestellt -
+ * derselbe, den {@link dokumentPfad} schon nutzt) implementiert die Raw-Text-
+ * Regel von Haus aus, ohne eigene Anfuehrungszeichen-/Kommentar-Buchhaltung:
+ * `element.textContent` eines Raw-Text-Elements ist woertlich das, was
+ * dazwischen stand, OHNE Entity-Dekodierung (`&amp;` bleibt `&amp;`, wie es
+ * fuer CSS sein muss - nachgemessen). `querySelectorAll('style')` findet
+ * jeden Block, gleich ob er in `<head>`/`<body>` einsortiert wird oder - wie
+ * bei einem SFC-Fragment ohne `<html>` - direkt neben `<template>` steht;
+ * keinen Zeilenanker mehr noetig (Kritik R10, X5).
+ *
+ * `<style src="…">` (Kritik #182, H2) behaelt sein Attribut - {@link
+ * spezifizierer} liest `src` weiterhin selbst ueber {@link tags}/{@link
+ * attributWert} (dort gibt es keinen Rumpf zu begrenzen, also auch keine
+ * dieser vier Formen); hier wird ein solcher Block uebersprungen, weil er
+ * keinen Rumpf zu melden hat.
  */
 export function styleBloecke(src) {
-  return Array.from(src.matchAll(/<style(\s[^>]*)?>([\s\S]*?)<\/style\s*>/gi)).map((m) => m[2])
+  const doc = new DOMParser().parseFromString(src, 'text/html')
+  const out = []
+  for (const el of doc.querySelectorAll('style')) {
+    if (el.hasAttribute('src')) continue
+    out.push(el.textContent)
+  }
+  return out
 }
 
 /** Dateien, in denen ueberhaupt CSS stehen kann. */
@@ -346,12 +402,135 @@ const BLATT = /\.(css|scss|sass|less|vue|html)$/
 /** Dateien, denen der Verfolger weiter folgt. */
 const MODUL = /\.(css|scss|sass|less|vue|html|js|mjs|cjs|ts|mts|tsx|jsx)$/
 
-/** Jeder Spezifizierer, den eine Quelldatei nennt - statisch, dynamisch, `@import`. */
-function spezifizierer(src) {
+/**
+ * Jedes Attribut EINES HTML-Tags, der Reihe nach - zitiert ODER unzitiert
+ * (Kritik #182, H1).
+ *
+ * HTML5 kennt drei Schreibweisen: `attr="wert"`, `attr='wert'` und das
+ * unzitierte `attr=wert`, das an jedem Leerraum, `>` oder `/` endet. Der
+ * Vorgaenger kannte nur die ersten beiden (`["']([^"']+)["']`); `<script
+ * src=./x.js>` und `<link rel=stylesheet href=./x.css>` gingen dadurch STILL
+ * am Blattscan vorbei - nicht gemeldet, nicht gelesen, aber woertlich im
+ * gebauten Bundle (belegt in `gui_dist/assets/index-*.css`).
+ */
+const ATTRIBUT = /([a-zA-Z_:][-\w:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g
+
+/**
+ * Der Wert EINES benannten HTML-Attributs in einem Tag - oder `null`.
+ *
+ * Gelesen wird Attribut fuer Attribut ueber {@link ATTRIBUT}, nie `name=` als
+ * blosse Textsuche im ganzen Tag: eine `.match()`-Suche nach `name=` traf auch
+ * innerhalb eines FREMDEN, zitierten Attributwerts, wenn der zufaellig `name=`
+ * als Text enthielt (Kritik #182, dritte Form - schwerer als H1/H2, weil sie
+ * nicht bloss ungelesen bleibt, sondern eine FALSCHE Datei liest und den Fund
+ * dabei unterschlaegt). Ein Tag wie
+ * `<script data-note="see src=deckname.js" src="./echt.js">` lieferte so
+ * `deckname.js` statt `./echt.js` - das echte Blatt verschwand spurlos, ohne
+ * in `ungelesen` aufzutauchen. Der Tokenizer schliesst das: jedes zitierte
+ * Attribut wird als EIN GANZES Stueck konsumiert, bevor die Suche nach dem
+ * naechsten Attributnamen weitergeht - ein `src=…` INNERHALB eines fremden
+ * Zitats kann also nie mehr als eigener Treffer gelten.
+ */
+export function attributWert(tag, name) {
+  ATTRIBUT.lastIndex = 0
+  let m
+  while ((m = ATTRIBUT.exec(tag)) !== null) {
+    if (m[1].toLowerCase() === name.toLowerCase()) {
+      return m[2] ?? m[3] ?? m[4] ?? null
+    }
+  }
+  return null
+}
+
+/**
+ * Der Index des `>`, der EINEN Start-Tag beendet, der bei `offen` beginnt -
+ * oder `-1`, wenn er nicht schliesst. Zitatbewusst (Kritik #182, vierte Form -
+ * derselbe Klassenfehler wie die dritte, eine Ebene hoeher): die AEUSSERE
+ * Tag-Grenze wurde bisher mit `[^>]*` herausgeschnitten, und dieses Muster
+ * kennt keine Anfuehrungszeichen. Ein fremdes, zitiertes Attribut VOR dem
+ * echten `src`/`href`, dessen Wert selbst ein `>` enthaelt
+ * (`data-note="a > b"`), riss die Tag-Grenze schon DORT ab - der Tag-Text
+ * endete, BEVOR das echte Attribut ueberhaupt vorkam. `attributWert()` fand
+ * dann folgerichtig nichts, und `guiEinstiege()`/`spezifizierer()` gaben dafuer
+ * keinen Grund an: `wert === null` heisst dort „kein Attribut", nicht „Tag
+ * abgeschnitten" - das Blatt verschwand spurlos, UND `ungelesen`/`fremd`
+ * blieben beide leer (belegt end-zu-end in `previewFrameFence.spec.js`). Diese
+ * Funktion scannt deshalb Zeichen fuer Zeichen und ueberspringt zitierte
+ * Abschnitte ganz, genau wie {@link ATTRIBUT} es beim Lesen EINES Attributs
+ * schon tut - nur hier fuer die Tag-Grenze selbst.
+ */
+function tagEnde(src, offen) {
+  let zitat = null
+  for (let i = offen; i < src.length; i += 1) {
+    const ch = src[i]
+    if (zitat !== null) {
+      if (ch === zitat) zitat = null
+    } else if (ch === '"' || ch === "'") {
+      zitat = ch
+    } else if (ch === '>') {
+      return i
+    }
+  }
+  return -1
+}
+
+/**
+ * Jeder Start-Tag mit diesem Namen, als VOLLSTAENDIGER, zitatbewusst
+ * abgegrenzter Text - der gemeinsame Ersatz fuer die `<name\b[^>]*>`-Regexe,
+ * die {@link tagEnde} als toten Buchstaben ablegt.
+ *
+ * EIN misslungenes Vorkommen bricht NICHT die ganze Suche ab (Kritik #182,
+ * fuenfte Form): `<script` kann auch in einem HTML-KOMMENTAR stehen
+ * (`<!-- alt: <script data-note="disabled -->`), und ein unbalanciertes
+ * Anfuehrungszeichen darin laesst {@link tagEnde} bis zum naechsten
+ * ECHTEN Anfuehrungszeichen weiterlaufen - das kann das der naechsten,
+ * WIRKLICHEN `<script>`-Attribute sein, und dann findet `tagEnde` gar keine
+ * schliessende `>` mehr (`-1`). Ein `break` an dieser Stelle verlor damit
+ * nicht nur das kommentierte Scheinvorkommen, sondern JEDES echte
+ * `<script>`/`<link>`/`<style>` DANACH im selben Dokument - spurlos, ohne
+ * `ungelesen`/`fremd`. `continue` gibt nur DIESES eine Vorkommen auf; die
+ * Suche nach dem naechsten `<name` beginnt regulaer ab `oeffner.lastIndex`,
+ * das der globale Regex-Exec nach jedem Versuch von selbst weiterschiebt.
+ */
+function tags(src, name) {
+  const out = []
+  const oeffner = new RegExp(`<${name}\\b`, 'gi')
+  let m
+  while ((m = oeffner.exec(src)) !== null) {
+    const ende = tagEnde(src, m.index)
+    if (ende === -1) continue
+    out.push({ text: src.slice(m.index, ende + 1), start: m.index, ende: ende + 1 })
+    oeffner.lastIndex = ende + 1
+  }
+  return out
+}
+
+/**
+ * Jeder Spezifizierer, den eine Quelldatei nennt - statisch, dynamisch,
+ * `@import`, und `<style src="…">` in einem SFC (Kritik #182, H2: ein
+ * `<style>`-Block OHNE Rumpf, dessen Inhalt stattdessen in einer externen
+ * Datei steht - `<style src=…>` kannte weder `styleBloecke()` noch der
+ * Vorgaenger dieser Funktion, das referenzierte Blatt wurde nie gelesen).
+ *
+ * Ein unzitiertes `@import url(pfad)` bleibt bewusst AUSSEN vor: CSS erlaubt
+ * die Form, aber sie faellt schon heute nicht still weg - `cssRegeln()` liest
+ * die ganze `@import`-Anweisung als EIN Statement und legt sie, weil sie
+ * keinen Selektor hat, wortgleich in `sonstiges` ab (geprueft in
+ * `previewFrameFence.spec.js`). Sie zu verfolgen waere eine Verbesserung,
+ * keine Schliessung einer stillen Luecke wie H1/H2 - und aendert das gepinnte
+ * `sonstiges` in `VisuEditorView.spec.js`, ohne dass ein Fund das verlangt.
+ */
+export function spezifizierer(src) {
   const out = []
   const re =
     /(?:\bimport\s*\(\s*|\bfrom\s+|\bimport\s+|@import\s+(?:url\s*\(\s*)?)['"]([^'"\n]+)['"]/g
   for (const m of src.matchAll(re)) out.push(m[1])
+  // `<style src="…">` bzw. `<style src=…>` - der Rumpf des Blocks bleibt dabei
+  // leer, das eigentliche Blatt steht extern.
+  for (const { text } of tags(src, 'style')) {
+    const wert = attributWert(text, 'src')
+    if (wert !== null) out.push(wert)
+  }
   return out
 }
 
@@ -398,16 +577,29 @@ export function neuerBericht() {
  * vorher kommentarlos, obwohl Vite das Blatt woertlich ins Bundle nahm
  * (Kritik R11, Y2).
  */
-function aufloesen(spec, von, bericht = null) {
+export function aufloesen(spec, von, bericht = null) {
   let basis
+  // Ein wurzelabsoluter Spezifizierer, der zu KEINER Datei unter `gui/`
+  // aufgeht, gehoert oft zu `gui/public/` - Vite liefert diesen Ordner
+  // UNVERAENDERT unter der Wurzel aus (`/theme.css` -> `gui/public/theme.css`).
+  // Der Vorgaenger versuchte nur `join(GUI_ROOT, spec)`, fand die Datei dort
+  // folgerichtig nie und meldete sie mit dem irrefuehrenden Grund „nicht
+  // gefunden" - obwohl sie existiert und ausgeliefert wird (Kritik #182,
+  // theoretisch gleichartig zu H1/H2). Der Kandidat unter `public/` wird
+  // deshalb ZUERST versucht: ein echtes Blatt dort wird jetzt gelesen wie
+  // jedes andere.
+  let publicBasis = null
   if (spec.startsWith('@/')) basis = join(GUI_ROOT, 'src', spec.slice(2))
   else if (spec.startsWith('./') || spec.startsWith('../')) basis = resolve(dirname(von), spec)
-  else if (spec.startsWith('/')) basis = join(GUI_ROOT, spec)
-  else {
+  else if (spec.startsWith('/')) {
+    basis = join(GUI_ROOT, spec)
+    publicBasis = join(GUI_ROOT, 'public', spec.slice(1))
+  } else {
     if (bericht !== null) bericht.fremd.add(spec)
     return null
   }
   const kandidaten = [
+    ...(publicBasis !== null ? [publicBasis] : []),
     basis,
     ...['.js', '.mjs', '.ts', '.vue', '.css'].map((e) => basis + e),
     ...['index.js', 'index.ts', 'index.vue'].map((n) => join(basis, n)),
@@ -433,6 +625,12 @@ function aufloesen(spec, von, bericht = null) {
  * (Kritik R11, Y1) - und `index.html` traegt heute schon ein solches `<link>`.
  * Ein ENTFERNTES Blatt kann dieser Lauf nicht laden; es wird gemeldet, nicht
  * uebergangen.
+ *
+ * Beide Attribute - `src` UND `href` - werden mit {@link attributWert}
+ * gelesen, zitiert ODER unzitiert (Kritik #182, H1). Der Vorgaenger verlangte
+ * Anfuehrungszeichen; `<script src=./x.js>` und `<link rel=stylesheet
+ * href=./x.css>` gingen dadurch STILL durch - nicht gemeldet, nicht gelesen,
+ * aber woertlich im gebauten Bundle.
  */
 export function guiEinstiege(bericht = null, index = join(GUI_ROOT, 'index.html')) {
   const src = readFileSync(index, 'utf8')
@@ -441,15 +639,18 @@ export function guiEinstiege(bericht = null, index = join(GUI_ROOT, 'index.html'
     const ziel = aufloesen(spec, index, bericht)
     if (ziel !== null) einstiege.push(ziel)
   }
-  for (const m of src.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) folge(m[1])
-  for (const m of src.matchAll(/<link\b[^>]*>/gi)) {
-    const tag = m[0]
-    if (!/\brel\s*=\s*["']?[^"'>]*\bstylesheet\b/i.test(tag)) continue
-    const href = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i)
+  for (const { text } of tags(src, 'script')) {
+    const wert = attributWert(text, 'src')
+    if (wert !== null) folge(wert)
+  }
+  for (const { text: tag } of tags(src, 'link')) {
+    const rel = attributWert(tag, 'rel') ?? ''
+    if (!rel.split(/\s+/).includes('stylesheet')) continue
+    const href = attributWert(tag, 'href')
     if (href === null) continue
-    if (/^(?:@\/|\.{1,2}\/|\/)/.test(href[1])) folge(href[1])
+    if (/^(?:@\/|\.{1,2}\/|\/)/.test(href)) folge(href)
     else if (bericht !== null) {
-      bericht.ungelesen.push(`${dateiname(index)}: ${href[1]} (entferntes Blatt, wird nicht geladen)`)
+      bericht.ungelesen.push(`${dateiname(index)}: ${href} (entferntes Blatt, wird nicht geladen)`)
     }
   }
   return einstiege

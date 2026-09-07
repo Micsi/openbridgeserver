@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { reactive } from 'vue'
 import {
   createVisuPreviewBridge,
+  cloneSafeEnvelope,
   VISU_PREVIEW_CHANNEL,
   VISU_PREVIEW_MESSAGE,
   VISU_PREVIEW_PROTOCOL,
@@ -339,5 +341,196 @@ describe('useVisuPreviewBridge — die Session bleibt geheim', () => {
     bridge.start()
     bus.emit({ data: readyMessage(), origin: PREVIEW_ORIGIN, source: frame })
     expect(frame.sent).toHaveLength(0)
+  })
+})
+
+describe('useVisuPreviewBridge — Klon-Waechter (#183)', () => {
+  // NACHGEMESSEN in Runde 2 (Kritik an Runde 1): der `DataCloneError` aus
+  // #183 - `postMessage` klont strukturiert und lehnt einen Vue-Proxy ab -
+  // war zu diesem Zeitpunkt bereits behoben, seit #169 (Commit `e047328b`,
+  // Ahn von `c2b30910`). `post()` machte dort schon eine reine JSON-Kopie vor
+  // `postMessage`. Belegt: `useVisuPreviewBridge.iframeBoundary.spec.js` lief
+  // GRUEN gegen die unveraenderte Datei von `c2b30910`, und dieselbe Datei
+  // liess `structuredClone` an einem Vue-Proxy scheitern, aber NICHT an ihrer
+  // eigenen JSON-Kopie. `cloneSafeEnvelope()` fixt hier also keinen offenen
+  // Fehler mehr - die beiden Proben unten pruefen, was es WIRKLICH leistet:
+  // eine bestehende Nutzlast klont sauber (kein Regressionsrisiko durch die
+  // Umbenennung/Buendelung).
+
+  it('cloneSafeEnvelope() macht aus einem Vue-Proxy eine Nutzlast, die einen ECHTEN structuredClone uebersteht', () => {
+    const draft = reactive({
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'Wurzel', type: 'PAGE', kind: 'normal', page_config: { widgets: [{ id: 'a' }] } }],
+    })
+    // Ein echter Proxy scheitert an einem echten Klon - der Fehler aus #183.
+    expect(() => structuredClone(draft)).toThrow(/could not be cloned/)
+
+    const envelope = cloneSafeEnvelope({
+      channel: VISU_PREVIEW_CHANNEL,
+      protocol: VISU_PREVIEW_PROTOCOL,
+      type: VISU_PREVIEW_MESSAGE.draft,
+      draft,
+    })
+    // Genau die Probe, die C1 fuer `previewDraft` hat (`visuEditor.spec.js`) -
+    // hier auf der Bruecke selbst, nicht nur bei einem Aufrufer.
+    expect(() => structuredClone(envelope)).not.toThrow()
+    expect(envelope.draft).toEqual({
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'Wurzel', type: 'PAGE', kind: 'normal', page_config: { widgets: [{ id: 'a' }] } }],
+    })
+  })
+
+  it('schickt einen reaktiven Entwurf durch eine postMessage-Mock, die WIRKLICH klont - kein Array-Push', () => {
+    const frame = {
+      sent: [],
+      postMessage(message, targetOrigin) {
+        // Anders als `makeFrameWindow()`: hier steht der ECHTE
+        // Klon-Algorithmus. Ein Vue-Proxy wirft hier `DataCloneError`, exakt
+        // wie im Browser - ein Array-Push wuerde das nie sehen.
+        this.sent.push({ message: structuredClone(message), targetOrigin })
+      },
+    }
+    const bus = makeBus()
+    const draft = reactive({
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'W', type: 'PAGE', kind: 'normal', page_config: { widgets: [] } }],
+    })
+    const bridge = createVisuPreviewBridge({
+      previewOrigin: PREVIEW_ORIGIN,
+      listener: bus,
+      getFrameWindow: () => frame,
+      getSession: () => ({ accessToken: TOKEN }),
+      getDraft: () => draft,
+    })
+    bridge.start()
+    bus.emit({ data: readyMessage(), origin: PREVIEW_ORIGIN, source: frame })
+    bus.emit({ data: acceptedMessage(), origin: PREVIEW_ORIGIN, source: frame })
+
+    const draftMsg = frame.sent.find((s) => s.message.type === VISU_PREVIEW_MESSAGE.draft)
+    expect(draftMsg).toBeDefined()
+    expect(draftMsg.message.draft).toEqual({
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'W', type: 'PAGE', kind: 'normal', page_config: { widgets: [] } }],
+    })
+  })
+})
+
+describe('useVisuPreviewBridge – der Waechter wirft, aber jemand faengt (Kritik an Runde 1)', () => {
+  // Ein wirklich unklonbarer Entwurf (ein zirkulaerer Verweis, ein `BigInt`)
+  // liess `cloneSafeEnvelope()` in Runde 1 ungefangen aus `post()` werfen -
+  // bis zum Aufrufer von `sendDraft()`/`handle()`. In der echten App ist das
+  // der Vue-`watch` in `VisuPreviewFrame.vue`, der bei jeder Entwurfsaenderung
+  // synchron `bridge.sendDraft()` ruft: eine unbehandelte Ausnahme dort ersetzt
+  // die vom Bridge-Vertrag vorgesehene Anzeige (`onRejected`) durch einen
+  // unsichtbaren Fehler anderer Art - eine Regression versteckt hinter einer
+  // Schutzschicht.
+  function circularDraft() {
+    const draft = {
+      skin: 'edomi',
+      pageId: 'p1',
+      nodes: [{ id: 'p1', parent_id: null, name: 'W', type: 'PAGE', kind: 'normal', page_config: { widgets: [] } }],
+    }
+    draft.selbstbezug = draft
+    return draft
+  }
+
+  it('meldet einen unklonbaren Entwurf ueber onRejected(\'clone\') - statt ungefangen zu werfen', () => {
+    const frame = makeFrameWindow()
+    const bus = makeBus()
+    const events = []
+    const bridge = createVisuPreviewBridge({
+      previewOrigin: PREVIEW_ORIGIN,
+      listener: bus,
+      getFrameWindow: () => frame,
+      getSession: () => ({ accessToken: TOKEN }),
+      getDraft: () => circularDraft(),
+      onRejected: (r) => events.push(['rejected', r]),
+    })
+    bridge.start()
+    expect(() => {
+      bus.emit({ data: readyMessage(), origin: PREVIEW_ORIGIN, source: frame })
+      bus.emit({ data: acceptedMessage(), origin: PREVIEW_ORIGIN, source: frame })
+    }).not.toThrow()
+
+    expect(events).toContainEqual(['rejected', 'clone'])
+    // Und es wird NICHTS Kaputtes hinausgeschickt - nur die vorherige
+    // `init`-Nachricht mit der Session steht im Rahmen, kein Entwurf.
+    expect(frame.sent.some((s) => s.message.type === VISU_PREVIEW_MESSAGE.draft)).toBe(false)
+  })
+
+  it('ROT gegen den unreparierten Stand (Runde 1, Commit 78f715a9): derselbe Entwurf verlaesst die Bruecke als unbehandelte Ausnahme', () => {
+    // Reproduziert `post()` exakt wie in Runde 1: `cloneSafeEnvelope()` wird
+    // aufgerufen, aber niemand faengt ihren Wurf.
+    function postRunde1(cloneSafeEnvelope, target, previewOrigin, message) {
+      target.postMessage(
+        cloneSafeEnvelope({ channel: VISU_PREVIEW_CHANNEL, protocol: VISU_PREVIEW_PROTOCOL, ...message }),
+        previewOrigin,
+      )
+    }
+    function cloneSafeEnvelopeRunde1(message) {
+      let plain
+      try {
+        plain = JSON.parse(JSON.stringify(message))
+      } catch (err) {
+        throw new Error(`Vorschau-Bruecke: Nutzlast ist nicht JSON-faehig (${err.message})`)
+      }
+      structuredClone(plain)
+      return plain
+    }
+    const frame = makeFrameWindow()
+    expect(() =>
+      postRunde1(cloneSafeEnvelopeRunde1, frame, PREVIEW_ORIGIN, {
+        type: VISU_PREVIEW_MESSAGE.draft,
+        draft: circularDraft(),
+      }),
+    ).toThrow(/nicht JSON-faehig/)
+  })
+})
+
+describe('useVisuPreviewBridge – cloneSafeEnvelope() hat nur einen Schritt (Kritik an Runde 1: toter Code)', () => {
+  it('braucht keinen zweiten structuredClone-Schritt - eine reine JSON-Kopie besteht ihn immer', () => {
+    // Die Mutationsprobe aus der Kritik nachgebaut: der ZWEITE Klonschritt aus
+    // Runde 1 (`structuredClone(plain)` NACH dem JSON-Umweg) konnte nie
+    // werfen - alles, was `JSON.parse(JSON.stringify(…))` uebersteht, ist per
+    // Konstruktion auf Objekte/Arrays/Strings/Zahlen/Booleans/`null` reduziert,
+    // und die klont `structuredClone` immer. Diese Probe haelt genau das fest,
+    // damit ein kuenftiger toter Zweig nicht wieder unbemerkt einzieht.
+    const envelope = cloneSafeEnvelope({
+      channel: VISU_PREVIEW_CHANNEL,
+      protocol: VISU_PREVIEW_PROTOCOL,
+      type: VISU_PREVIEW_MESSAGE.draft,
+      draft: { a: 1, b: [1, 2, { c: 'x' }], d: null },
+    })
+    expect(() => structuredClone(envelope)).not.toThrow()
+  })
+
+  it('faengt nur, was den JSON-Umweg selbst nicht uebersteht (zirkulaerer Verweis) - nicht mehr', () => {
+    const circular = {}
+    circular.self = circular
+    expect(() => cloneSafeEnvelope({ draft: circular })).toThrow(/nicht JSON-faehig/)
+  })
+})
+
+describe('useVisuPreviewBridge – was der Klon-Waechter NICHT verhindert (Kritik an Runde 1: irrefuehrender Kommentar)', () => {
+  // Die Runde-1-Fassung des Kommentars versprach, eine „still verstuemmelte
+  // Nutzlast" zu verhindern. Gemessen statt behauptet: der JSON-Umweg selbst
+  // engt Typen ein, OHNE zu werfen - `Date` wird zu einem String, `Map`/`Set`
+  // werden zu `{}`, `undefined` verschwindet. Diese Probe haelt das aktuelle,
+  // EHRLICHE Verhalten fest (kein Bug - der Vertrag der Bruecke fuehrt ohnehin
+  // nur JSON-sichere Werte), damit der Kommentar nicht wieder mehr behauptet,
+  // als der Code haelt.
+  it('narrowt Date, Map und undefined lautlos, statt zu werfen', () => {
+    const envelope = cloneSafeEnvelope({
+      when: new Date('2024-01-01T00:00:00.000Z'),
+      lookup: new Map([['a', 1]]),
+      missing: undefined,
+    })
+    expect(typeof envelope.when).toBe('string')
+    expect(envelope.lookup).toEqual({})
+    expect('missing' in envelope).toBe(false)
   })
 })
