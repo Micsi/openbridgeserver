@@ -683,6 +683,44 @@ describe('ObsClient — page-scoped WebSocket auth', () => {
     vi.useRealTimers();
   });
 
+  it('re-sends the FULL, deduplicated subscription set on the reconnected socket (#186)', () => {
+    // Micsi/openbridgeserver#186: `it('does reconnect after a non-4001 close')`
+    // (oben) zählt nur, DASS eine zweite Verbindung entsteht - nie, was sie
+    // sendet. Diese Probe sieht in die gesendete Nachricht hinein: der volle
+    // Satz muss ankommen, keine Id doppelt und keine verloren. Ohne das
+    // Nachsenden in `WsHandle.connect` → `onopen` (`if (this.ids.size > 0)
+    // this.sendSubscribe([...this.ids])`) bliebe der Satz an dieser Stelle rot.
+    vi.useFakeTimers();
+    const client = makeClient(vi.fn() as unknown as typeof fetch);
+    const handle = client.openWebSocket(() => {});
+
+    const ws1 = FakeWs.last!;
+    handle.subscribe(['a', 'b']);
+    ws1.open(); // treibt den Aufbau: `onopen` sendet den gepufferten Satz
+    handle.subscribe(['b', 'c']); // 'b' ist schon abonniert - nur 'c' ist neu
+
+    const sentOnFirst = ws1.sent.flatMap((s) => (JSON.parse(s) as { ids: string[] }).ids);
+    // Über die erste Verbindung ging jede Id genau EINMAL hinaus, nicht doppelt.
+    expect(sentOnFirst.sort()).toEqual(['a', 'b', 'c']);
+
+    ws1.closeWith(1006); // abnormal → schedule reconnect
+    vi.advanceTimersByTime(2000);
+    expect(FakeWs.instances.length).toBe(2);
+
+    const ws2 = FakeWs.last!;
+    ws2.open(); // treibt den WIEDERAUFBAU: derselbe `onopen`-Pfad
+
+    const subscribeMsgs = ws2.sent.map((s) => JSON.parse(s) as { action: string; ids: string[] });
+    expect(subscribeMsgs).toHaveLength(1); // ein einziges Nachsenden, kein Mehrfachversand
+    // Der vollständige Satz aller drei Ids - keine Dublette, keine verlorene Id.
+    expect(subscribeMsgs[0].action).toBe('subscribe');
+    expect(subscribeMsgs[0].ids.sort()).toEqual(['a', 'b', 'c']);
+    expect(new Set(subscribeMsgs[0].ids).size).toBe(subscribeMsgs[0].ids.length);
+
+    handle.close();
+    vi.useRealTimers();
+  });
+
   it('close() clears a pending reconnect timer', () => {
     vi.useFakeTimers();
     const client = makeClient(vi.fn() as unknown as typeof fetch);

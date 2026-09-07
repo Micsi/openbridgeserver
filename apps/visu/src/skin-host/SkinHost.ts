@@ -30,12 +30,14 @@ import {
   computed,
   inject,
   onBeforeUnmount,
+  watch,
   Fragment,
   type PropType,
   type VNode,
 } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
+import { routeLocationKey } from 'vue-router';
 
 import type {
   Device,
@@ -43,6 +45,7 @@ import type {
   NavNode,
   PageHost,
   PageLink,
+  PopupDescriptor,
 } from '@obs/visu-contract';
 import { makeTokens, type Theme } from '../core/tokens';
 import { activeCtx } from '../core/ctx';
@@ -312,7 +315,73 @@ export default defineComponent({
     // state — and a component-local ref could not be reached from there. The seam
     // to the skin is unchanged: it still reads/calls these through its PageHost.
     const { navTree, currentPageId, links: deviceLinks, openPopups } = storeToRefs(store);
-    onBeforeUnmount(() => store.closeAllPopups());
+
+    /**
+     * Welche offenen Popups DIESE Instanz geöffnet hat (#180). `openPopups`
+     * liegt im Store und ist damit für JEDE gemountete `SkinHost`-Instanz
+     * sichtbar — der Ionic-Outlet hält eine verlassende Seite für ihre
+     * Übergangsanimation lebendig (`pages/SkinPage.vue`), also können zwei
+     * Instanzen gleichzeitig leben. Ein pauschales `closeAllPopups()` beim
+     * Unmount der einen räumte bislang auch die Popups der ANDEREN ab. Diese
+     * Buchführung merkt sich nur, WELCHE Ids über diese Instanz geöffnet
+     * wurden, damit ihr Unmount ausschliesslich die eigenen schliesst.
+     */
+    const ownedPopupIds = new Set<string>();
+
+    function trackedOpenPopup(descriptor: PopupDescriptor): void {
+      ownedPopupIds.add(descriptor.id);
+      store.openPopup(descriptor);
+    }
+    function trackedClosePopup(id: string): void {
+      ownedPopupIds.delete(id);
+      store.closePopup(id);
+    }
+    /**
+     * Dieselbe Stelle wie jede andere Navigation (`store.navigate` prüft selbst
+     * `popupFor` und öffnet dort — #184 wie R2-R6): diese Hülle öffnet NICHTS
+     * zusätzlich, sie merkt sich nur, ob das Ziel ein Popup war, damit es der
+     * Buchführung oben zufällt.
+     */
+    function trackedNavigate(pageId: string): void {
+      const popup = store.popupFor(pageId);
+      if (popup) ownedPopupIds.add(popup.id);
+      store.navigate(pageId);
+    }
+
+    onBeforeUnmount(() => {
+      for (const id of ownedPopupIds) store.closePopup(id);
+      ownedPopupIds.clear();
+    });
+
+    /**
+     * Der Popup-Deep-Link (`?popup=<id>`, #184): R16 scheitert daran, dass eine
+     * im Editor angelegte Popup-Seite nicht direkt adressierbar ist. Die
+     * Auflage ist eng — dieselbe Stelle wie jede andere Popup-Öffnung
+     * (`store.navigate` + `popupFor`), keine zweite Bahn. `route` kommt über
+     * dieselbe Injektion wie in `pages/SkinPage.vue` (`inject(routeLocationKey,
+     * null)` statt `useRoute()`), toleriert also einen Mount ganz ohne Router
+     * (ein Unit-Test). Nur eine seitenbesitzende Skin kennt Popups überhaupt.
+     *
+     * Der Baum eines externen Sources lädt ASYNChron (`store.init`, vor dem
+     * Mount angestossen, s. `main.ts`) — bei einem Direktaufruf der URL ist er
+     * beim ersten Render oft noch leer. Der Watch feuert deshalb `immediate`
+     * und wartet auf den ERSTEN nicht-leeren Baum, statt den Deep-Link beim
+     * leeren Zwischenstand stillschweigend zu verwerfen; ein späteres
+     * `refresh()` (Login/Logout/E16) löst ihn NICHT erneut aus — der Ort bleibt
+     * stehen, exakt wie `store.init` es für Seite und Popups ohnehin vorsieht.
+     */
+    const route = inject(routeLocationKey, null);
+    let deepLinkHandled = false;
+    watch(
+      navTree,
+      (tree) => {
+        if (deepLinkHandled || !skin.value.page || tree.length === 0) return;
+        deepLinkHandled = true;
+        const popupId = route?.query.popup;
+        if (typeof popupId === 'string' && popupId) trackedNavigate(popupId);
+      },
+      { immediate: true },
+    );
 
     /** Render the host's content tile for a device id — the skin's own type
      *  renderer, wrapped in a cell carrying `data-id` so gestures still resolve.
@@ -415,12 +484,15 @@ export default defineComponent({
         const host: PageHost = {
           navTree: navTree.value,
           currentPageId: shownPageId(),
-          navigate: store.navigate,
+          // Popup-Öffnungen laufen durch die getrackten Hüllen (#180), nicht
+          // durch die rohe Store-Funktion: dieselbe Stelle, plus die
+          // Buchführung, WER (diese Instanz) sie geöffnet hat.
+          navigate: trackedNavigate,
           layersFor: (id) => store.layersFor(id),
           renderTile,
           openPopups: openPopups.value,
-          openPopup: store.openPopup,
-          closePopup: store.closePopup,
+          openPopup: trackedOpenPopup,
+          closePopup: trackedClosePopup,
           // Page links as a HOST service (contract v1.12, #146). Without these a
           // page-owning skin that wanted to honour `LayerItem.link` would have to
           // descend the navTree, read `access` and walk the ancestor chain itself
