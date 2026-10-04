@@ -1432,7 +1432,7 @@ Falls nur eine der beiden Regeln zur eigenen Hardware passt, meldet `ls` für de
 ```bash
 OBS_ONEWIRE__USB_ALL=true                    # falls ein einfacher Busmaster durchgereicht wurde
 OBS_ONEWIRE__PBM_DEVICES=/dev/onewire-pbm    # kommagetrennt für mehrere PBMs
-# OBS_ONEWIRE__PORT=4304                     # nur Docker — im LXC legt der systemd-Socket (127.0.0.1:4304) den Port fest
+# OBS_ONEWIRE__PORT hat im LXC keine Wirkung — der systemd-Socket (127.0.0.1:4304) legt den Port fest
 ```
 
 Anschließend den Dienst neu starten — `ExecCondition=` wird bei jedem Startversuch neu ausgewertet, das regeneriert also sowohl `/etc/owfs.conf` als auch startet `owserver` jetzt, wo es tatsächlich etwas zu bedienen gibt:
