@@ -1434,7 +1434,7 @@ If only one of the two rules applies to your hardware, `ls` reports `No such fil
 ```bash
 OBS_ONEWIRE__USB_ALL=true                    # if a plain busmaster is passed through
 OBS_ONEWIRE__PBM_DEVICES=/dev/onewire-pbm    # comma-separated for multiple PBMs
-# OBS_ONEWIRE__PORT=4304                     # optional, only if you changed the default
+# OBS_ONEWIRE__PORT=4304                     # Docker only — in the LXC the systemd socket (127.0.0.1:4304) sets the port
 ```
 
 Then restart the service — `ExecCondition=` is re-evaluated on every start attempt, so this both regenerates `/etc/owfs.conf` and (re)starts `owserver` now that it has something to serve:
