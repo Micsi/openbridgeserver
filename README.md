@@ -1421,10 +1421,12 @@ If only one of the two rules applies to your hardware, `ls` reports `No such fil
 
   Don't pass the busmaster through as a symlink via *Device Passthrough*: the node then only exists inside the container under the symlink name, while libusb looks for busmasters exclusively under `/dev/bus/usb/<bus>/<device>` — `owserver` fails with `LIBUSB_ERROR_NO_DEVICE` / `No valid 1-wire buses found` (https://github.com/abeggled/openbridgeserver/issues/1287). The bind mount also covers several busmasters and re-plugging without a container restart (a passed-through path is resolved only once, at container start). Restart the container (`pct reboot <CTID>`) once after adding the lines; both lines are required — the mount alone is not enough.
 
+  Note that with the cgroup rule and the bind mount the container sees **all** USB devices of the host, not just the busmaster. With the usual permissions under `/dev/bus/usb` (`0664 root:root`), root inside the unprivileged container can only read them; but if other host udev rules grant looser modes (e.g. `MODE="0666"`), the container can use those devices as well.
+
 - **Proxmox LXC, ElabNET PBM**: open the container → **Resources** → **Add** → **Device Passthrough**, set **Device Path** to the stable path from step 2 (e.g. `/dev/onewire-pbm` or the `/dev/serial/by-id/...` path), and confirm:
 
-  ![Proxmox container Resources tab with two passed-through 1-Wire devices](docs/device-passthrough1.jpeg)
-  ![Proxmox Device Passthrough edit dialog](docs/device-passthrough2.jpeg)
+  ![Proxmox container Resources tab with the PBM passed through](docs/device-passthrough1.jpeg)
+  ![Proxmox Device Passthrough edit dialog for the PBM](docs/device-passthrough2.jpeg)
 
   Proxmox writes the matching mount entry and cgroup device permission for you — no manual `lxc.mount.entry`/`lxc.cgroup2.devices.allow` editing. Restart the container (`pct reboot <CTID>`) for the passthrough to take effect.
 
