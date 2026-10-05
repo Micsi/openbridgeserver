@@ -565,6 +565,7 @@ actually starts once an admin has configured a 1-Wire bus master.
 | Path | Purpose |
 |---|---|
 | `/etc/systemd/system/owserver.service.d/override.conf` | Drop-in that gates the packaged unit — does not replace its `ExecStart=`, so package upgrades keep working |
+| `/etc/systemd/system/owserver.socket.d/override.conf` | Binds the packaged, always-enabled `owserver.socket` to `127.0.0.1:4304` instead of all interfaces — owserver has no authentication (#1288). With socket activation owserver ignores the port from `/etc/owfs.conf`, so `OBS_ONEWIRE__PORT` has no effect in the LXC; change the socket instead |
 | `scripts/obs-onewire-should-run.sh` | `ExecCondition=` — exits 0 only if `OBS_ONEWIRE__USB_ALL=true` or `OBS_ONEWIRE__PBM_DEVICES` is set in `/etc/obs.env` |
 | `scripts/obs-onewire-configure.sh` | `ExecStartPre=` — (re)generates `/etc/owfs.conf` from those same env vars on every start attempt |
 | `/etc/obs.env` | Same file as the MQTT credentials; `OBS_ONEWIRE__*` lines ship commented out |
