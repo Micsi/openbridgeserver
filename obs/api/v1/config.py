@@ -25,10 +25,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Re
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from obs.adapters.knx.group_address import normalize_ga
 from obs.api.audit import AuditLogWriter, AuditOutcome, audit_payload_sha256, build_audit_context
 from obs.api.auth import get_admin_user
 from obs.api.v1.authz import _canonical_principal_id, _require_grant_targets
-from obs.api.v1.bindings import _json_config, _validate_adapter_binding
+from obs.api.v1.bindings import _json_config, _normalize_knx_group_addresses, _validate_adapter_binding
 from obs.api.v1.services.hierarchy_lifecycle import collect_hierarchy_tree_node_ids, delete_hierarchy_grants
 from obs.core.formula import validate_formula
 from obs.core.registry import get_registry
@@ -924,6 +925,7 @@ async def import_config(
                 enabled=b_data.enabled,
                 instance_config=instance_config,
             )
+            config = _normalize_knx_group_addresses(effective_adapter_type, b_data.config)
             if existing_binding:
                 await db.execute_and_commit(
                     """UPDATE adapter_bindings
@@ -934,7 +936,7 @@ async def import_config(
                        WHERE id=?""",
                     (
                         b_data.direction,
-                        json.dumps(b_data.config),
+                        json.dumps(config),
                         int(b_data.enabled),
                         formula,
                         b_data.send_throttle_ms,
@@ -961,7 +963,7 @@ async def import_config(
                         b_data.adapter_type,
                         b_data.adapter_instance_id,
                         b_data.direction,
-                        json.dumps(b_data.config),
+                        json.dumps(config),
                         int(b_data.enabled),
                         formula,
                         b_data.send_throttle_ms,
@@ -1006,7 +1008,7 @@ async def import_config(
                    VALUES (?,?,?,?)
                    ON CONFLICT(address) DO UPDATE
                    SET name=excluded.name, description=excluded.description, dpt=excluded.dpt""",
-                (ga.address, ga.name, ga.description, ga.dpt),
+                (normalize_ga(ga.address), ga.name, ga.description, ga.dpt),
             )
             result.knx_group_addresses_upserted += 1
         except Exception as exc:
