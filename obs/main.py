@@ -139,6 +139,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     import obs.adapters.mqtt.adapter
     import obs.adapters.onewire.adapter
     import obs.adapters.snmp.adapter
+    import obs.adapters.webhook.adapter
     import obs.adapters.zeitschaltuhr.adapter  # noqa: F401
 
     await adapter_registry.start_all(bus, db, value_getter=registry.get_value)
@@ -321,6 +322,23 @@ def create_app() -> FastAPI:
 
     from fastapi import Request
     from fastapi.responses import JSONResponse, RedirectResponse
+
+    # ── WEBHOOK adapter trigger endpoint (issue #1256) ────────────────────
+    # Registered *before* _setup_gate so the setup gate stays the outermost
+    # middleware: Starlette runs the last-added middleware first, and an
+    # installation that has not been claimed yet must not expose any entry
+    # point, not even one guarded by a per-binding token.
+    #
+    # A middleware rather than a route because each WEBHOOK instance picks its
+    # own path prefix at runtime; see obs/api/webhook.py for the full reasoning.
+    @app.middleware("http")
+    async def _webhook_gate(request: Request, call_next):
+        from obs.api.webhook import handle_webhook_request
+
+        response = await handle_webhook_request(request)
+        if response is not None:
+            return response
+        return await call_next(request)
 
     @app.middleware("http")
     async def _setup_gate(request: Request, call_next):

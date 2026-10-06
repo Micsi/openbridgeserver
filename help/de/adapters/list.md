@@ -59,3 +59,87 @@ Im aufgeklappten Zustand einer Instanz:
 
 „Aktiviert" schaltet die Instanz komplett aus, ohne sie zu löschen — eine deaktivierte
 Instanz behält ihre Konfiguration und Bindings, verbindet sich aber nicht.
+
+## Webhook: eingehender HTTP-Aufruf als Quelle {#adapters-webhook}
+
+Viele Geräte können bei einem Ereignis nur **eine URL aufrufen** — ohne eigene Header, ohne
+Body, ohne MQTT. Eine Türsprechstelle ruft beim Klingeln eine konfigurierte URL auf, ein
+IP-Taster beim Tastendruck, eine Kamera bei Bewegung. Der Adapter-Typ **WEBHOOK** macht aus
+so einem Aufruf einen Wert auf einem Objekt. Von dort wirkt er wie jede andere Quelle: ein
+zusätzliches DEST-Binding (z. B. KNX) auf demselben Objekt schickt das Telegramm auf den Bus,
+auf das Gong, Visu und Logik reagieren.
+
+### Instanz einrichten
+
+| Feld | Bedeutung |
+|---|---|
+| **Pfad-Präfix** | Pfad, unter dem die Instanz erreichbar ist. Standard `/hook`. Maximal drei Segmente; `api`, `assets`, `help`, `setup` und `visu` sind belegt. |
+| **Erlaubte Netze (CIDR)** | Liste von Netzen oder Einzeladressen (z. B. `192.168.1.0/24, 192.168.2.5`), die den Endpunkt erreichen dürfen. Leer = keine Einschränkung. |
+| **X-Forwarded-For vertrauen** | Nur einschalten, wenn ein Reverse Proxy vorgeschaltet ist. Ohne Proxy könnte jeder Aufrufer eine erlaubte Absenderadresse vortäuschen. |
+| **Ratenlimit** | Angenommene Aufrufe pro Minute und Absender-IP. Darüber antwortet der Endpunkt mit `429`. |
+
+Zwei Instanzen können nicht dasselbe Präfix belegen; die zweite meldet einen Fehler und
+bleibt getrennt.
+
+### Verknüpfung anlegen
+
+Eine Webhook-Verknüpfung entsteht wie jede andere: am Objekt unter **Verknüpfungen** die
+Webhook-Instanz wählen. Die Richtung ist immer **Lesen (SOURCE)** — ein Webhook ist ein
+Eingang.
+
+| Feld | Bedeutung |
+|---|---|
+| **Slug** | Pfadsegment der Aufruf-URL, z. B. `haustuer-klingel`. Kleinbuchstaben, Ziffern, `-` und `_`; je Instanz eindeutig. |
+| **Erlaubte HTTP-Methoden** | `GET`, `POST` oder beides. Geräte, die nur eine URL aufrufen können, benutzen `GET`. |
+| **Wertquelle** | **Fester Wert** für Taster und Klingeln (`true`), oder **Wert aus der Anfrage**. |
+| **Parameter-/Feldname** | Bei *Wert aus der Anfrage*: der Query-Parameter bei `GET` (`?value=1`), bzw. das gleichnamige Feld im JSON-Body bei `POST`. Standard `value`. |
+| **Entprellung (ms)** | Weitere Aufrufe innerhalb dieser Zeit werden mit `204` bestätigt, setzen den Wert aber nicht erneut. `0` = aus. |
+
+Der Wert wird in den Datentyp des Objekts umgewandelt — `1`, `true`, `on` und `yes` ergeben
+auf einem Boolean-Objekt `true`, `0`, `false`, `off` und `no` ergeben `false`. Passt der Wert
+nicht zum Datentyp, antwortet der Endpunkt mit `400` und es wird nichts gesetzt. Formel und
+Wertzuordnung aus dem Reiter *Transformation* gelten wie bei jeder anderen Quelle.
+
+### Aufruf-URL und Token
+
+Beim Anlegen erzeugt der Server **je Verknüpfung ein eigenes Token**. Nach dem Speichern zeigt
+das Formular die fertige Aufruf-URL zum Kopieren — in zwei Varianten:
+
+```
+http://obs:8080/hook/haustuer-klingel?token=<geheimnis>
+http://obs:8080/hook/haustuer-klingel/<geheimnis>
+```
+
+Die zweite Variante hilft bei Geräten, deren Konfigurationsfeld keine Query-Parameter
+zulässt. Beide verhalten sich gleich:
+
+| Antwort | Bedeutung |
+|---|---|
+| `204` | Wert übernommen (oder durch die Entprellung bewusst verworfen) |
+| `400` | Wert fehlt oder passt nicht zum Datentyp des Objekts |
+| `404` | Unbekannter Slug, falsches Token, nicht erlaubte Methode oder gesperrte Absenderadresse — bewusst nicht unterscheidbar |
+| `429` | Ratenlimit der Instanz überschritten |
+
+Unter der URL zeigt das Formular außerdem **Aufrufe**, **gesetzte Werte** und den **letzten
+Aufruf** dieser Verknüpfung. Diese Zähler leben im laufenden Betrieb und beginnen nach einem
+Neustart wieder bei null; die Werte selbst stehen wie immer im Monitor und in der Historie,
+dort mit `WEBHOOK` als Quelle.
+
+**Token neu erzeugen** widerruft die bisherige URL sofort und gibt eine neue aus — z. B.
+wenn ein Gerät ausgetauscht wird oder seine Konfiguration in falsche Hände geraten ist.
+Andere Verknüpfungen und Integrationen bleiben davon unberührt.
+
+### Warum ein Token je Verknüpfung und kein API-Key
+
+Ein API-Key darf jedes Objekt schreiben. In einem Gerät außen am Haus, dessen Konfiguration
+oft im Klartext liegt, wäre das ein echtes Risiko — zumal Tokens in Geräte- und Proxy-Logs
+landen. Das Webhook-Token berechtigt dagegen **genau dieses eine Objekt mit genau dieser
+Wertabbildung**: ein kompromittiertes Gerät kann nur klingeln.
+
+Aus demselben Grund lassen sich Webhook-Verknüpfungen **nicht** auf Objekte der Steuerklasse
+`central_plant` legen — dieselbe Grenze, die auch der anonyme Schreibweg der Visu zieht. Wird
+ein Objekt nachträglich so eingestuft, lehnt der Endpunkt den Aufruf mit `403` ab.
+
+Das Anlegen und Rotieren einer Verknüpfung bleibt dagegen eine normale Konfigurationsänderung:
+sie verlangt Schreibrechte (Rolle *operator*) auf der Adapter-Instanz und ist nur mit einem
+Benutzer-Login möglich, nicht mit einem API-Key.

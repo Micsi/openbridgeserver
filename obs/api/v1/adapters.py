@@ -1825,6 +1825,190 @@ async def snmp_walk(
 
 
 # ---------------------------------------------------------------------------
+# WEBHOOK — ready-to-copy call URLs and token rotation (issue #1256)
+# ---------------------------------------------------------------------------
+
+
+class WebhookBindingEntry(BaseModel):
+    binding_id: str
+    datapoint_id: str
+    datapoint_name: str | None
+    enabled: bool
+    slug: str
+    token: str
+    methods: list[str]
+    value_source: str
+    fixed_value: str
+    value_param: str
+    debounce_ms: int
+    # Relative paths — the GUI prefixes its own origin, because the server
+    # cannot know the host name or port the device has to call.
+    call_path: str
+    call_path_token_in_path: str
+    call_count: int
+    publish_count: int
+    last_called: str | None
+    last_status: int | None
+
+
+class WebhookTokenRotationResult(BaseModel):
+    binding_id: str
+    slug: str
+    token: str
+    call_path: str
+    call_path_token_in_path: str
+
+
+async def _webhook_instance_row(db: Database, instance_id: uuid.UUID) -> Any:
+    row = await db.fetchone("SELECT adapter_type, config FROM adapter_instances WHERE id=?", (str(instance_id),))
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Instanz nicht gefunden")
+    if row["adapter_type"] != "WEBHOOK":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nur für WEBHOOK-Instanzen verfügbar")
+    return row
+
+
+def _webhook_path_prefix(instance_row: Any) -> str:
+    from obs.adapters.webhook.adapter import DEFAULT_PATH_PREFIX, normalise_path_prefix
+
+    raw = _json_config(instance_row["config"]).get("path_prefix") or DEFAULT_PATH_PREFIX
+    try:
+        return normalise_path_prefix(str(raw))
+    except ValueError:
+        # A stored prefix can only be invalid if it predates the current
+        # validation; report the default rather than failing the listing.
+        return DEFAULT_PATH_PREFIX
+
+
+def _webhook_call_paths(prefix: str, slug: str, token: str) -> tuple[str, str]:
+    return f"{prefix}/{slug}?token={token}", f"{prefix}/{slug}/{token}"
+
+
+@router.get("/instances/{instance_id}/webhook/bindings", response_model=list[WebhookBindingEntry])
+async def webhook_list_bindings(
+    instance_id: uuid.UUID,
+    _user: Principal | str = Depends(get_current_principal),
+    db: Database = Depends(lambda: get_db()),
+) -> list[WebhookBindingEntry]:
+    """List this instance's webhook bindings, with their call URL and call counters.
+
+    This is the only route that serves a binding token in clear text — the
+    generic binding listing redacts it — so it requires the same WRITE grant on
+    the adapter instance that creating the binding needed.  The token is a
+    bearer secret for exactly one DataPoint, and whoever may hand it to a
+    device may also read it back to build the URL.
+    """
+    from obs.adapters.webhook.adapter import WebhookBindingConfig
+    from obs.core.registry import get_registry
+
+    principal = _principal_from_dependency(_user)
+    instance_row = await _webhook_instance_row(db, instance_id)
+    await _ensure_instance_write_grant(db, principal, str(instance_id))
+
+    prefix = _webhook_path_prefix(instance_row)
+    instance = adapter_registry.get_instance_by_id(str(instance_id))
+    rows = await db.fetchall(
+        "SELECT * FROM adapter_bindings WHERE adapter_instance_id=? AND adapter_type='WEBHOOK' ORDER BY created_at",
+        (str(instance_id),),
+    )
+    allowed_dp_ids = await _filter_readable_datapoint_ids(db, principal, [row["datapoint_id"] for row in rows])
+
+    registry = get_registry()
+    result: list[WebhookBindingEntry] = []
+    for row in rows:
+        if row["datapoint_id"] not in allowed_dp_ids:
+            continue
+        try:
+            config = WebhookBindingConfig(**_json_config(row["config"]))
+        except ValidationError:
+            logger.warning("WEBHOOK binding %s has an invalid configuration — skipped in listing", row["id"])
+            continue
+        stats = instance.stats_for(row["id"]) if instance is not None else None
+        dp = registry.get(uuid.UUID(row["datapoint_id"]))
+        call_path, call_path_in_path = _webhook_call_paths(prefix, config.slug, config.token)
+        result.append(
+            WebhookBindingEntry(
+                binding_id=row["id"],
+                datapoint_id=row["datapoint_id"],
+                datapoint_name=dp.name if dp is not None else None,
+                enabled=bool(row["enabled"]),
+                slug=config.slug,
+                token=config.token,
+                methods=list(config.methods),
+                value_source=config.value_source,
+                fixed_value=config.fixed_value,
+                value_param=config.value_param,
+                debounce_ms=config.debounce_ms,
+                call_path=call_path,
+                call_path_token_in_path=call_path_in_path,
+                call_count=stats.call_count if stats else 0,
+                publish_count=stats.publish_count if stats else 0,
+                last_called=stats.last_called.isoformat() if stats and stats.last_called else None,
+                last_status=stats.last_status if stats else None,
+            )
+        )
+    return result
+
+
+@router.post(
+    "/instances/{instance_id}/webhook/bindings/{binding_id}/rotate-token",
+    response_model=WebhookTokenRotationResult,
+    dependencies=[Depends(contract_audit("POST", "/api/v1/adapters/instances/{instance_id}/webhook/bindings/{binding_id}/rotate-token"))],
+)
+async def webhook_rotate_token(
+    instance_id: uuid.UUID,
+    binding_id: uuid.UUID,
+    request: Request = None,
+    _user: Principal | str = Depends(get_current_principal),
+    db: Database = Depends(lambda: get_db()),
+) -> WebhookTokenRotationResult:
+    """Issue a new token for one webhook binding, revoking the old one.
+
+    Scoped to this binding on purpose: a device whose configuration leaked can
+    be re-keyed without touching any other integration.  The new token is
+    returned once in the response and never written to the audit log — the
+    audit entry records only that the binding was rotated.
+    """
+    from obs.adapters.webhook.adapter import WebhookBindingConfig, generate_token
+
+    principal = _principal_from_dependency(_user)
+    instance_row = await _webhook_instance_row(db, instance_id)
+    await _ensure_instance_write_grant(db, principal, str(instance_id))
+
+    row = await db.fetchone(
+        "SELECT * FROM adapter_bindings WHERE id=? AND adapter_instance_id=? AND adapter_type='WEBHOOK'",
+        (str(binding_id), str(instance_id)),
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding nicht gefunden")
+    await _ensure_binding_mutation_scope(db, principal, uuid.UUID(row["datapoint_id"]))
+
+    try:
+        config = WebhookBindingConfig(**_json_config(row["config"]))
+    except Exception as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Ungültige Binding-Config: {exc}") from exc
+
+    rotated = config.model_copy(update={"token": generate_token()})
+    await db.execute_and_commit(
+        "UPDATE adapter_bindings SET config=?, updated_at=? WHERE id=?",
+        (json.dumps(rotated.model_dump()), datetime.now(UTC).isoformat(), str(binding_id)),
+    )
+    await adapter_registry.reload_instance_bindings(str(instance_id), db)
+    if request is not None:
+        set_contract_audit_resource_id(request, str(binding_id))
+
+    prefix = _webhook_path_prefix(instance_row)
+    call_path, call_path_in_path = _webhook_call_paths(prefix, rotated.slug, rotated.token)
+    return WebhookTokenRotationResult(
+        binding_id=str(binding_id),
+        slug=rotated.slug,
+        token=rotated.token,
+        call_path=call_path,
+        call_path_token_in_path=call_path_in_path,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Typ-Routen (unverändert — Schema-Abfragen + Legacy-Config)
 # ---------------------------------------------------------------------------
 

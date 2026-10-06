@@ -1,0 +1,750 @@
+"""Unit tests for the WEBHOOK adapter (issue #1256).
+
+No HTTP server is involved — the adapter's trigger entry point is called
+directly, the EventBus is a mock and the DataPoint registry is stubbed.
+"""
+
+from __future__ import annotations
+
+import datetime
+import uuid
+
+import pytest
+from pydantic import ValidationError
+
+from obs.adapters.webhook import adapter as webhook_module
+from obs.adapters.webhook.adapter import (
+    DEFAULT_PATH_PREFIX,
+    FixedWindowRateLimiter,
+    WebhookAdapter,
+    WebhookAdapterConfig,
+    WebhookBindingConfig,
+    active_prefixes,
+    coerce_webhook_value,
+    generate_token,
+    normalise_path_prefix,
+    resolve_webhook_target,
+    token_matches,
+)
+from obs.core.event_bus import DataValueEvent
+from tests.adapters.conftest import make_binding
+
+TOKEN = "s3cr3t-token-value"
+
+
+class _Dp:
+    def __init__(self, dp_id: uuid.UUID, data_type: str = "BOOLEAN", control_class: str = "room_local") -> None:
+        self.id = dp_id
+        self.name = "Klingel"
+        self.data_type = data_type
+        self.control_class = control_class
+
+
+class _Registry:
+    def __init__(self, dp: _Dp | None) -> None:
+        self._dp = dp
+
+    def get(self, dp_id: uuid.UUID):
+        if self._dp is not None and self._dp.id == dp_id:
+            return self._dp
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _clean_dispatch_registry():
+    """Keep the module-level prefix registry isolated between tests."""
+    webhook_module._instances_by_prefix.clear()
+    yield
+    webhook_module._instances_by_prefix.clear()
+
+
+def _data_events(mock_bus) -> list:
+    """Only the value events — ``_publish_status`` uses the same bus."""
+    return [call.args[0] for call in mock_bus.publish.await_args_list if isinstance(call.args[0], DataValueEvent)]
+
+
+def _binding(**config_overrides):
+    config = {"slug": "haustuer-klingel", "token": TOKEN, "methods": ["GET"], **config_overrides}
+    return make_binding(config)
+
+
+def _stub_registry(monkeypatch, dp: _Dp | None) -> None:
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _Registry(dp))
+
+
+async def _adapter(mock_bus, bindings, config=None) -> WebhookAdapter:
+    instance = WebhookAdapter(mock_bus, config or {}, instance_id=uuid.uuid4(), name="Webhook")
+    await instance.connect()
+    await instance.reload_bindings(bindings)
+    return instance
+
+
+# ---------------------------------------------------------------------------
+# Config schemas
+# ---------------------------------------------------------------------------
+
+
+def test_path_prefix_defaults_and_normalises():
+    assert normalise_path_prefix("") == DEFAULT_PATH_PREFIX
+    assert normalise_path_prefix("hook") == "/hook"
+    assert normalise_path_prefix("/iot/hook/") == "/iot/hook"
+    assert WebhookAdapterConfig().path_prefix == DEFAULT_PATH_PREFIX
+    assert WebhookAdapterConfig(path_prefix="webhooks").path_prefix == "/webhooks"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["/", "/api", "/API/x", "/a/b/c/d", "/bad segment", "/-leading"],
+)
+def test_path_prefix_rejects_unusable_values(raw):
+    with pytest.raises(ValueError):
+        normalise_path_prefix(raw)
+
+
+def test_adapter_config_rejects_malformed_network():
+    with pytest.raises(ValidationError):
+        WebhookAdapterConfig(allowed_networks="192.168.1.0/33")
+
+
+def test_adapter_config_keeps_valid_networks():
+    cfg = WebhookAdapterConfig(allowed_networks=" 10.0.0.0/8, 192.168.1.5 ")
+    assert cfg.allowed_networks == "10.0.0.0/8, 192.168.1.5"
+
+
+def test_binding_config_defaults():
+    cfg = WebhookBindingConfig(slug="bell")
+    assert cfg.methods == ["GET"]
+    assert cfg.value_source == "fixed"
+    assert cfg.fixed_value == "true"
+    assert cfg.value_param == "value"
+    assert cfg.debounce_ms == 0
+
+
+def test_binding_config_normalises_slug_and_methods():
+    cfg = WebhookBindingConfig(slug="  Haustuer-Klingel  ", methods=["GET", "GET", "POST"])
+    assert cfg.slug == "haustuer-klingel"
+    assert cfg.methods == ["GET", "POST"]
+
+
+@pytest.mark.parametrize("slug", ["", "-bell", "Bell!", "a" * 65, "bell/other"])
+def test_binding_config_rejects_bad_slug(slug):
+    with pytest.raises(ValidationError):
+        WebhookBindingConfig(slug=slug)
+
+
+def test_binding_config_rejects_empty_methods_and_value_param():
+    with pytest.raises(ValidationError):
+        WebhookBindingConfig(slug="bell", methods=[])
+    with pytest.raises(ValidationError):
+        WebhookBindingConfig(slug="bell", value_param="   ")
+
+
+# ---------------------------------------------------------------------------
+# Token helpers
+# ---------------------------------------------------------------------------
+
+
+def test_generate_token_is_unique_and_long():
+    first, second = generate_token(), generate_token()
+    assert first != second
+    assert len(first) >= 40
+
+
+@pytest.mark.parametrize(
+    ("expected", "provided", "result"),
+    [
+        (TOKEN, TOKEN, True),
+        (TOKEN, "wrong", False),
+        (TOKEN, None, False),
+        ("", TOKEN, False),
+        ("", "", False),
+    ],
+)
+def test_token_matches(expected, provided, result):
+    assert token_matches(expected, provided) is result
+
+
+# ---------------------------------------------------------------------------
+# Value coercion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "data_type", "expected"),
+    [
+        ("true", "BOOLEAN", True),
+        ("1", "BOOLEAN", True),
+        ("on", "BOOLEAN", True),
+        ("YES", "BOOLEAN", True),
+        ("0", "BOOLEAN", False),
+        ("off", "BOOLEAN", False),
+        (True, "BOOLEAN", True),
+        (1, "BOOLEAN", True),
+        (0.0, "BOOLEAN", False),
+        ("42", "INTEGER", 42),
+        ("42.7", "INTEGER", 42),
+        (7, "INTEGER", 7),
+        (True, "INTEGER", 1),
+        ("1.5", "FLOAT", 1.5),
+        (3, "FLOAT", 3.0),
+        (False, "FLOAT", 0.0),
+        (5, "STRING", "5"),
+        ("2026-10-06", "DATE", datetime.date(2026, 10, 6)),
+        ("07:30", "TIME", datetime.time(7, 30)),
+        ("2026-10-06T07:30:00+00:00", "DATETIME", datetime.datetime(2026, 10, 6, 7, 30, tzinfo=datetime.UTC)),
+        ("raw", "UNKNOWN", "raw"),
+    ],
+)
+def test_coerce_webhook_value(raw, data_type, expected):
+    assert coerce_webhook_value(raw, data_type) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "data_type"),
+    [
+        ("maybe", "BOOLEAN"),
+        (None, "BOOLEAN"),
+        ("abc", "INTEGER"),
+        (None, "INTEGER"),
+        ("abc", "FLOAT"),
+        (None, "FLOAT"),
+        ("not-a-date", "DATE"),
+        ("25:99", "TIME"),
+        ("nope", "DATETIME"),
+    ],
+)
+def test_coerce_webhook_value_rejects_incompatible(raw, data_type):
+    with pytest.raises(ValueError):
+        coerce_webhook_value(raw, data_type)
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limiter_allows_up_to_the_limit_then_blocks():
+    limiter = FixedWindowRateLimiter(2)
+    assert limiter.allow("ip", now=0.0) is True
+    assert limiter.allow("ip", now=1.0) is True
+    assert limiter.allow("ip", now=2.0) is False
+
+
+def test_rate_limiter_resets_in_the_next_window():
+    limiter = FixedWindowRateLimiter(1)
+    assert limiter.allow("ip", now=10.0) is True
+    assert limiter.allow("ip", now=20.0) is False
+    assert limiter.allow("ip", now=61.0) is True
+
+
+def test_rate_limiter_counts_per_key():
+    limiter = FixedWindowRateLimiter(1)
+    assert limiter.allow("a", now=0.0) is True
+    assert limiter.allow("b", now=0.0) is True
+    assert limiter.allow("a", now=0.0) is False
+
+
+def test_rate_limiter_uses_the_wall_clock_when_no_time_is_given():
+    limiter = FixedWindowRateLimiter(1)
+    assert limiter.allow("ip") is True
+    assert limiter.allow("ip") is False
+
+
+def test_rate_limiter_prunes_stale_windows():
+    limiter = FixedWindowRateLimiter(10)
+    for index in range(1100):
+        limiter.allow(f"ip-{index}", now=0.0)
+    limiter.allow("fresh", now=120.0)
+    assert limiter._windows == {"fresh": (120.0, 1)}
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle and dispatch registry
+# ---------------------------------------------------------------------------
+
+
+async def test_connect_claims_its_prefix_and_disconnect_releases_it(mock_bus):
+    instance = await _adapter(mock_bus, [])
+    assert active_prefixes() == ["/hook"]
+    assert instance.connected is True
+    assert instance.path_prefix == "/hook"
+
+    await instance.disconnect()
+    assert active_prefixes() == []
+    assert instance.connected is False
+
+
+async def test_connect_reports_an_invalid_instance_configuration(mock_bus):
+    instance = WebhookAdapter(mock_bus, {"path_prefix": "/api"})
+    await instance.connect()
+    assert instance.connected is False
+    assert instance.last_detail_code == "webhookInvalidConfig"
+    assert active_prefixes() == []
+
+
+async def test_second_instance_on_the_same_prefix_is_refused(mock_bus):
+    first = await _adapter(mock_bus, [])
+    second = WebhookAdapter(mock_bus, {})
+    await second.connect()
+
+    assert second.connected is False
+    assert second.last_detail_code == "webhookPrefixConflict"
+    assert webhook_module._instances_by_prefix["/hook"] is first
+
+
+async def test_reconnecting_the_same_instance_keeps_its_prefix(mock_bus):
+    instance = await _adapter(mock_bus, [])
+    await instance.connect()
+    assert instance.connected is True
+    assert active_prefixes() == ["/hook"]
+
+
+async def test_resolve_webhook_target_matches_only_claimed_prefixes(mock_bus):
+    instance = await _adapter(mock_bus, [], {"path_prefix": "/iot/hook"})
+
+    assert resolve_webhook_target("/iot/hook/bell") == (instance, "bell")
+    assert resolve_webhook_target("/iot/hook/bell/tok") == (instance, "bell/tok")
+    assert resolve_webhook_target("/iot/hook") == (instance, "")
+    assert resolve_webhook_target("/iot/hook/") == (instance, "")
+    assert resolve_webhook_target("/iot/hooks/bell") is None
+    assert resolve_webhook_target("/datapoints/42") is None
+
+
+def test_resolve_webhook_target_without_running_instances():
+    assert resolve_webhook_target("/hook/bell") is None
+
+
+async def test_longest_prefix_wins(mock_bus):
+    outer = await _adapter(mock_bus, [], {"path_prefix": "/hook"})
+    inner = await _adapter(mock_bus, [], {"path_prefix": "/hook/inner"})
+
+    assert resolve_webhook_target("/hook/inner/bell") == (inner, "bell")
+    assert resolve_webhook_target("/hook/bell") == (outer, "bell")
+
+
+# ---------------------------------------------------------------------------
+# Binding index
+# ---------------------------------------------------------------------------
+
+
+async def test_only_source_bindings_are_indexed(mock_bus):
+    source = _binding()
+    dest = make_binding({"slug": "other", "token": TOKEN}, direction="DEST")
+    instance = await _adapter(mock_bus, [source, dest])
+
+    assert set(instance._by_slug) == {"haustuer-klingel"}
+
+
+async def test_both_direction_bindings_are_indexed(mock_bus):
+    both = make_binding({"slug": "bell", "token": TOKEN}, direction="BOTH")
+    instance = await _adapter(mock_bus, [both])
+
+    assert set(instance._by_slug) == {"bell"}
+
+
+async def test_invalid_binding_configuration_is_skipped(mock_bus):
+    instance = await _adapter(mock_bus, [make_binding({"slug": "not a slug"})])
+    assert instance._by_slug == {}
+
+
+async def test_duplicate_slugs_raise_a_warning_status(mock_bus):
+    first = _binding()
+    second = _binding()
+    instance = await _adapter(mock_bus, [first, second])
+
+    assert instance._by_slug["haustuer-klingel"] is first
+    assert instance.last_severity == "warning"
+    assert instance.last_detail_code == "webhookDuplicateSlug"
+
+
+async def test_reloading_bindings_drops_statistics_of_removed_bindings(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+    await instance.handle_trigger(method="GET", remainder=f"haustuer-klingel/{TOKEN}", query_params={}, body=b"", peer_ip="10.0.0.1")
+    assert instance.stats_for(binding.id).call_count == 1
+
+    await instance.reload_bindings([])
+    assert instance.stats_for(binding.id).call_count == 0
+
+
+async def test_read_and_write_are_inert(mock_bus):
+    binding = _binding()
+    instance = await _adapter(mock_bus, [binding])
+
+    assert await instance.read(binding) is None
+    assert await instance.write(binding, True) is None
+
+
+# ---------------------------------------------------------------------------
+# Trigger — happy paths
+# ---------------------------------------------------------------------------
+
+
+async def test_get_with_query_token_publishes_the_fixed_value(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="GET",
+        remainder="haustuer-klingel",
+        query_params={"token": TOKEN},
+        body=b"",
+        peer_ip="192.168.1.9",
+    )
+
+    assert outcome.status == 204
+    event = _data_events(mock_bus)[-1]
+    assert event.datapoint_id == binding.datapoint_id
+    assert event.value is True
+    assert event.quality == "good"
+    assert event.source_adapter == "WEBHOOK"
+    assert event.binding_id == binding.id
+
+    stats = instance.stats_for(binding.id)
+    assert (stats.call_count, stats.publish_count, stats.last_status) == (1, 1, 204)
+    assert isinstance(stats.last_called, datetime.datetime)
+
+
+async def test_token_in_the_path_is_accepted(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="GET",
+        remainder=f"haustuer-klingel/{TOKEN}",
+        query_params={},
+        body=b"",
+        peer_ip="192.168.1.9",
+    )
+
+    assert outcome.status == 204
+    assert len(_data_events(mock_bus)) == 1
+
+
+async def test_slug_lookup_is_case_insensitive(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="GET",
+        remainder="Haustuer-Klingel",
+        query_params={"token": TOKEN},
+        body=b"",
+        peer_ip="192.168.1.9",
+    )
+    assert outcome.status == 204
+
+
+async def test_value_from_query_parameter(mock_bus, monkeypatch):
+    binding = _binding(value_source="request")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="GET",
+        remainder="haustuer-klingel",
+        query_params={"token": TOKEN, "value": "23"},
+        body=b"",
+        peer_ip="192.168.1.9",
+    )
+
+    assert outcome.status == 204
+    assert _data_events(mock_bus)[-1].value == 23
+
+
+async def test_value_from_json_body_on_post(mock_bus, monkeypatch):
+    binding = _binding(methods=["POST"], value_source="request")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="FLOAT"))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="POST",
+        remainder="haustuer-klingel",
+        query_params={"token": TOKEN},
+        body=b'{"value": 21.5}',
+        peer_ip="192.168.1.9",
+    )
+
+    assert outcome.status == 204
+    assert _data_events(mock_bus)[-1].value == 21.5
+
+
+async def test_post_falls_back_to_the_query_parameter(mock_bus, monkeypatch):
+    binding = _binding(methods=["POST"], value_source="request")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+
+    for body in (b"not json at all", b'{"other": 1}', b"\xff\xfe"):
+        mock_bus.publish.reset_mock()
+        outcome = await instance.handle_trigger(
+            method="POST",
+            remainder="haustuer-klingel",
+            query_params={"token": TOKEN, "value": "5"},
+            body=body,
+            peer_ip="192.168.1.9",
+        )
+        assert outcome.status == 204
+        assert _data_events(mock_bus)[-1].value == 5
+
+
+async def test_custom_value_param_name(mock_bus, monkeypatch):
+    binding = _binding(value_source="request", value_param="kovalue")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="GET",
+        remainder="haustuer-klingel",
+        query_params={"token": TOKEN, "kovalue": "9"},
+        body=b"",
+        peer_ip="192.168.1.9",
+    )
+    assert outcome.status == 204
+    assert _data_events(mock_bus)[-1].value == 9
+
+
+async def test_formula_and_value_map_are_applied(mock_bus, monkeypatch):
+    binding = make_binding(
+        {"slug": "bell", "token": TOKEN, "value_source": "request"},
+        value_formula="x * 10",
+        value_map={"50": "99"},
+    )
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="GET",
+        remainder="bell",
+        query_params={"token": TOKEN, "value": "5"},
+        body=b"",
+        peer_ip="192.168.1.9",
+    )
+
+    assert outcome.status == 204
+    assert _data_events(mock_bus)[-1].value == "99"
+
+
+# ---------------------------------------------------------------------------
+# Trigger — rejections
+# ---------------------------------------------------------------------------
+
+
+async def test_unknown_slug_and_wrong_token_are_indistinguishable(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    unknown = await instance.handle_trigger(method="GET", remainder="nope", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    wrong = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": "bad"}, body=b"", peer_ip="10.0.0.1")
+
+    assert (unknown.status, unknown.detail) == (wrong.status, wrong.detail) == (404, "Not found")
+    assert _data_events(mock_bus) == []
+
+
+async def test_missing_token_is_rejected(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={}, body=b"", peer_ip="10.0.0.1")
+    assert outcome.status == 404
+
+
+async def test_empty_and_overlong_remainders_are_rejected(mock_bus):
+    instance = await _adapter(mock_bus, [_binding()])
+
+    for remainder in ("", "a/b/c"):
+        outcome = await instance.handle_trigger(method="GET", remainder=remainder, query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+        assert outcome.status == 404
+
+
+async def test_disallowed_method_returns_404_and_is_recorded(mock_bus, monkeypatch):
+    binding = _binding(methods=["POST"])
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert outcome.status == 404
+    assert instance.stats_for(binding.id).last_status == 404
+    assert instance.stats_for(binding.id).call_count == 0
+
+
+async def test_binding_whose_config_became_invalid_is_rejected(mock_bus):
+    binding = _binding()
+    instance = await _adapter(mock_bus, [binding])
+    binding.config = {"slug": "haustuer-klingel", "token": TOKEN, "methods": ["TRACE"]}
+
+    outcome = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    assert outcome.status == 404
+
+
+async def test_ip_allowlist_blocks_a_foreign_caller(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding], {"allowed_networks": "192.168.1.0/24"})
+
+    blocked = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.1.2.3")
+    allowed = await instance.handle_trigger(
+        method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="192.168.1.7"
+    )
+
+    assert blocked.status == 404
+    assert allowed.status == 204
+
+
+async def test_forwarded_for_is_only_trusted_when_configured(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    untrusting = await _adapter(mock_bus, [binding], {"allowed_networks": "192.168.1.0/24"})
+
+    spoofed = await untrusting.handle_trigger(
+        method="GET",
+        remainder="haustuer-klingel",
+        query_params={"token": TOKEN},
+        body=b"",
+        peer_ip="10.1.2.3",
+        forwarded_for="192.168.1.7",
+    )
+    assert spoofed.status == 404
+    await untrusting.disconnect()
+
+    trusting = await _adapter(
+        mock_bus,
+        [binding],
+        {"allowed_networks": "192.168.1.0/24", "trust_forwarded_for": True},
+    )
+    honoured = await trusting.handle_trigger(
+        method="GET",
+        remainder="haustuer-klingel",
+        query_params={"token": TOKEN},
+        body=b"",
+        peer_ip="10.1.2.3",
+        forwarded_for="192.168.1.7, 10.1.2.3",
+    )
+    assert honoured.status == 204
+
+
+async def test_rate_limit_returns_429(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding], {"rate_limit_per_minute": 1})
+
+    first = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    second = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert first.status == 204
+    assert (second.status, second.detail) == (429, "Too many requests")
+
+
+async def test_rate_limit_without_a_client_address(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding], {"rate_limit_per_minute": 1})
+
+    first = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip=None)
+    second = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip=None)
+
+    assert first.status == 204
+    assert second.status == 429
+
+
+async def test_debounce_suppresses_a_repeat_call(mock_bus, monkeypatch):
+    binding = _binding(debounce_ms=60_000)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    first = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    second = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert first.status == 204
+    assert second.status == 204
+    assert len(_data_events(mock_bus)) == 1
+    stats = instance.stats_for(binding.id)
+    assert (stats.call_count, stats.publish_count) == (2, 1)
+
+
+async def test_missing_datapoint_returns_404(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, None)
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    assert outcome.status == 404
+    assert _data_events(mock_bus) == []
+
+
+async def test_central_plant_datapoint_is_refused(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, control_class="central_plant"))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert outcome.status == 403
+    assert _data_events(mock_bus) == []
+
+
+async def test_missing_request_value_returns_400(mock_bus, monkeypatch):
+    binding = _binding(value_source="request")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert outcome.status == 400
+    assert "value" in outcome.detail
+    assert _data_events(mock_bus) == []
+
+
+async def test_oversized_post_body_returns_400(mock_bus, monkeypatch):
+    binding = _binding(methods=["POST"], value_source="request")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="POST",
+        remainder="haustuer-klingel",
+        query_params={"token": TOKEN},
+        body=b"x" * (64 * 1024 + 1),
+        peer_ip="10.0.0.1",
+    )
+
+    assert outcome.status == 400
+    assert outcome.detail == "Request body is too large"
+
+
+async def test_incompatible_value_returns_400(mock_bus, monkeypatch):
+    binding = _binding(value_source="request")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="GET",
+        remainder="haustuer-klingel",
+        query_params={"token": TOKEN, "value": "nope"},
+        body=b"",
+        peer_ip="10.0.0.1",
+    )
+
+    assert outcome.status == 400
+    assert _data_events(mock_bus) == []
+
+
+async def test_datapoint_without_a_control_class_attribute_is_treated_as_room_local(mock_bus, monkeypatch):
+    binding = _binding()
+
+    class _Bare:
+        id = binding.datapoint_id
+        name = "Klingel"
+        data_type = "BOOLEAN"
+
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _Registry(_Bare()))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    assert outcome.status == 204
