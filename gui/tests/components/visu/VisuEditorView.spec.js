@@ -234,7 +234,7 @@ describe('VisuEditorView — Admin-Gate', () => {
 })
 
 async function mountSidebar({ isLoggedIn = true, isAdmin = true } = {}) {
-  vi.doMock('vue-router', () => ({ useRoute: () => ({ path: '/', name: 'Dashboard' }) }))
+  vi.doMock('vue-router', () => ({ useRoute: () => ({ path: '/', name: 'Dashboard' }), useRouter: () => undefined }))
   vi.doMock('@/components/ui/VisuIcon.vue', () => ({ default: { template: '<span class="visu-icon" />' } }))
   vi.doMock('@/stores/websocket', () => ({ useWebSocketStore: () => ({ connected: true }) }))
   vi.doMock('@/stores/navLinks', () => ({ useNavLinksStore: () => ({ links: [], load: vi.fn().mockResolvedValue([]) }) }))
@@ -302,7 +302,7 @@ describe('Sidebar — Menuepunkt Visu-Editor', () => {
 describe('VisuEditorView - der Vorfahrenpfad in der echten Schale', () => {
   async function mountShell() {
     stubVisuApi()
-    vi.doMock('vue-router', () => ({ useRoute: () => ({ meta: {}, name: 'VisuEditor' }) }))
+    vi.doMock('vue-router', () => ({ useRoute: () => ({ meta: {}, name: 'VisuEditor' }), useRouter: () => undefined }))
     vi.doMock('@/stores/auth', () => ({
       useAuthStore: () => ({ isLoggedIn: true, isAdmin: true, username: 'admin', loadMe: vi.fn() }),
     }))

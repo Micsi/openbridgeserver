@@ -3386,7 +3386,8 @@
     "unreachable": "In diesem Rahmen antwortet keine Visu-Vorschau. Angezeigt wird deshalb nicht der Entwurf, sondern was unter der Vorschau-Adresse liegt. Bitte die Vorschau-Auslieferung prüfen (VITE_VISU_PREVIEW_URL).",
     "applied": "Entwurf in der Vorschau gerendert ({count} Widgets).",
     "editorTitle": "Visu-Editor",
-    "canvasHint": "Der Canvas erscheint, sobald eine Seite ausgewählt ist.",
+    "canvasHint": "Wähle im Seitenbaum eine Seite aus, um sie zu bearbeiten.",
+    "canvasFolderHint": "Ein Ordner hat keinen Canvas. Wähle eine Seite darin aus, um sie zu bearbeiten.",
     "loadError": "Der Seitenbaum konnte nicht geladen werden.",
     "tree": {
       "title": "Seitenbaum",

@@ -3386,7 +3386,8 @@
     "unreachable": "No visu preview answers in this frame. What you see is whatever the preview address serves, not your draft. Please check how the preview is served (VITE_VISU_PREVIEW_URL).",
     "applied": "Draft rendered in the preview ({count} widgets).",
     "editorTitle": "Visu editor",
-    "canvasHint": "The canvas appears as soon as a page is selected.",
+    "canvasHint": "Select a page in the page tree to edit it.",
+    "canvasFolderHint": "A folder has no canvas. Select a page inside it to edit it.",
     "loadError": "The page tree could not be loaded.",
     "tree": {
       "title": "Page tree",

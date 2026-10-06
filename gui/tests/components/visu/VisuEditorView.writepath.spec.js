@@ -73,7 +73,8 @@ function normalizeOnServer(config) {
 
 const welt = vi.hoisted(() => ({ routeParams: {}, page: null, puts: 0 }))
 
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: welt.routeParams, meta: {} }) }))
+// Kein Router (#192): die Auswahl im Baum schreibt dann keine Adresse nach.
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: welt.routeParams, meta: {} }), useRouter: () => undefined }))
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ isLoggedIn: true, isAdmin: true, username: 'admin', loadMe: vi.fn() }),
 }))

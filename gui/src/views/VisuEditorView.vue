@@ -41,11 +41,11 @@
  * Ansicht ohne Router montierbar bleibt (M5 C2).
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
 import { useVisuEditorStore } from '@/stores/visuEditor'
-import { canUseVisuEditor } from '@/utils/visuEditorAccess'
+import { canUseVisuEditor, VISU_EDITOR_ROUTE } from '@/utils/visuEditorAccess'
 import VisuPreviewFrame from '@/components/visu/VisuPreviewFrame.vue'
 import VisuPageTree from '@/components/visu/VisuPageTree.vue'
 import VisuPageProperties from '@/components/visu/VisuPageProperties.vue'
@@ -249,8 +249,35 @@ onMounted(async () => {
 watch(pageId, async (neu, vorher) => {
   if (!allowed.value || neu === vorher) return
   selectedId.value = null
+  // Ein Ordner hat keine Adresse: wer ihn im Baum waehlt, landet auf
+  // `/visu-editor` - und die Auswahl des Ordners muss dabei stehen bleiben.
+  const auswahl = editor.selectedNode
+  if (neu == null && auswahl && auswahl.type !== 'PAGE') return
   await editor.select(neu)
 })
+
+/**
+ * DER BAUM OEFFNET DIE SEITE (Micsi/openbridgeserver#192).
+ *
+ * Der Canvas liest seine Seite allein aus der Adresse. Ein Klick im Baum setzte
+ * bis hierher nur die Auswahl im Store: die Eigenschaften zeigten die Seite, der
+ * Canvas blieb leer. Die Auswahl schreibt deshalb die Adresse nach - die Adresse
+ * bleibt die eine Quelle, und Deep-Link und Zurueck-Taste laufen weiter ueber
+ * den Beobachter oben. Ohne Router (die Zaun-Specs des Vorschaurahmens) bleibt
+ * es bei der Auswahl.
+ */
+const router = useRouter()
+watch(
+  () => editor.selectedNode,
+  (node) => {
+    if (!allowed.value || !router || !node) return
+    if (node.type === 'PAGE') {
+      if (node.id !== pageId.value) router.push(`${VISU_EDITOR_ROUTE}/${node.id}`)
+    } else if (pageId.value) {
+      router.push(VISU_EDITOR_ROUTE)
+    }
+  },
+)
 
 /* ------------------------------------------------ Verlauf und Datei (C6) */
 
@@ -406,7 +433,15 @@ function platzieren(type) {
         {{ $t('visuEditor.restoring') }}
       </div>
       <div
+        v-else-if="editor.selectedNode && editor.selectedNode.type !== 'PAGE'"
+        data-testid="visu-editor-folder-hint"
+        class="editor-canvas min-h-40 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-4 text-sm text-slate-500 dark:text-slate-400"
+      >
+        {{ $t('visuEditor.canvasFolderHint') }}
+      </div>
+      <div
         v-else
+        data-testid="visu-editor-canvas-hint"
         class="editor-canvas min-h-40 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-4 text-sm text-slate-500 dark:text-slate-400"
       >
         {{ $t('visuEditor.canvasHint') }}
