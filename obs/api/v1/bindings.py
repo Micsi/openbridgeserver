@@ -266,6 +266,21 @@ def _validate_adapter_binding(
             ) from exc
 
 
+def _normalize_knx_group_addresses(adapter_type: str, config: dict[str, Any]) -> dict[str, Any]:
+    """KNX: store group addresses only in the internal notation (#1296).
+
+    Runs after ``_validate_adapter_binding``, so the addresses are known to be valid.
+    """
+    if adapter_type != "KNX":
+        return config
+    from obs.adapters.knx.group_address import normalize_ga
+
+    return {
+        key: normalize_ga(value) if key in ("group_address", "state_group_address") and str(value or "").strip() else value
+        for key, value in config.items()
+    }
+
+
 def _validate_timer_output_value(adapter_type: str, config: dict[str, Any], dp_id: uuid.UUID) -> None:
     """Reject a Zeitschaltuhr switching value that the target DataPoint type cannot hold.
 
@@ -416,6 +431,7 @@ async def create_binding(
         instance_config=_json_config(instance_row["config"]) if adapter_type == "MESSAGE" else None,
     )
     _validate_timer_output_value(adapter_type, body.config, dp_id)
+    config = _normalize_knx_group_addresses(adapter_type, body.config)
 
     # Formel validieren
     if body.value_formula:
@@ -449,7 +465,7 @@ async def create_binding(
                 adapter_type,
                 str(body.adapter_instance_id),
                 body.direction,
-                json.dumps(body.config),
+                json.dumps(config),
                 int(body.enabled),
                 body.send_throttle_ms,
                 int(body.send_on_change),
@@ -501,7 +517,6 @@ async def update_binding(
 
     direction = updates.get("direction", row["direction"])
     config = updates.get("config", _json_config(row["config"]))
-    config_val = json.dumps(config)
     enabled = int(updates.get("enabled", bool(row["enabled"])))
     throttle_ms = updates.get("send_throttle_ms", row["send_throttle_ms"])
     on_change = int(updates.get("send_on_change", bool(row["send_on_change"])))
@@ -527,6 +542,8 @@ async def update_binding(
     )
     if "config" in updates:
         _validate_timer_output_value(row["adapter_type"], config, dp_id)
+        config = _normalize_knx_group_addresses(row["adapter_type"], config)
+    config_val = json.dumps(config)
 
     # Formel validieren
     if formula:
