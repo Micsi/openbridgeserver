@@ -183,7 +183,6 @@
           :cfg="cfg"
           :is-existing="!!props.initial"
           :entry="webhookEntry"
-          :overview="webhookOverview"
           :loading="webhookLoading"
           :error="webhookError"
           :rotating="webhookRotating"
@@ -500,7 +499,6 @@ const onewireAliasDrafts = reactive({})
 
 // WEBHOOK call-URL state (token is served only by the dedicated route)
 const webhookEntry    = ref(null)
-const webhookOverview = ref(null)
 const webhookLoading  = ref(false)
 const webhookError    = ref(null)
 const webhookRotating = ref(false)
@@ -912,7 +910,6 @@ async function loadWebhookEntry() {
   webhookError.value = null
   try {
     const { data } = await adapterApi.webhookBindings(selectedInstanceId.value)
-    webhookOverview.value = data
     webhookEntry.value = (data.bindings ?? []).find(e => String(e.binding_id) === String(props.initial.id)) ?? null
     if (!webhookEntry.value) webhookError.value = t('adapters.bindingForm.errors.webhookEntryNotFound')
   } catch (e) {

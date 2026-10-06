@@ -239,12 +239,12 @@ async def test_overview_reports_the_instance_settings_and_rejections(monkeypatch
     instance_id = uuid.uuid4()
     dp = _dp(uuid.uuid4(), "Bell")
     counters = RejectionCounters()
-    counters.record(RejectionReason.INSTANCE_ADDRESS_BLOCKED, client_ip="127.0.0.1")
-    counters.record(RejectionReason.INSTANCE_ADDRESS_BLOCKED, client_ip="127.0.0.1")
+    counters.record(RejectionReason.ADDRESS_BLOCKED, client_ip="127.0.0.1")
+    counters.record(RejectionReason.ADDRESS_BLOCKED, client_ip="127.0.0.1")
     await _insert_instance(
         db,
         instance_id,
-        config=json.dumps({"path_prefix": "/iot/hook", "allowed_networks": ["10.38.0.0/16"], "rate_limit_per_minute": 120}),
+        config=json.dumps({"path_prefix": "/iot/hook", "rate_limit_per_minute": 120}),
     )
     await _insert_datapoint_row(db, dp.id, dp.name)
     await _insert_binding(
@@ -262,12 +262,12 @@ async def test_overview_reports_the_instance_settings_and_rejections(monkeypatch
     assert overview.instance_id == str(instance_id)
     assert overview.running is True
     assert overview.path_prefix == "/iot/hook"
-    assert overview.allowed_networks == ["10.38.0.0/16"]
+    assert not hasattr(overview, "allowed_networks")
     assert overview.rate_limit_per_minute == 120
     assert overview.trust_forwarded_for is False
     assert overview.rejections.total == 2
-    assert overview.rejections.counts == {"instance_address_blocked": 2}
-    assert overview.rejections.last_reason == "instance_address_blocked"
+    assert overview.rejections.counts == {"address_blocked": 2}
+    assert overview.rejections.last_reason == "address_blocked"
     assert overview.rejections.last_client_ip == "127.0.0.1"
     assert overview.rejections.last_at is not None
     assert overview.bindings[0].allowed_networks == ["192.168.1.5/32"]
@@ -284,7 +284,6 @@ async def test_overview_of_a_stopped_instance_reports_empty_diagnostics(monkeypa
     assert overview.running is False
     assert overview.rejections.total == 0
     assert overview.rejections.last_reason is None
-    assert overview.allowed_networks == []
 
 
 async def test_overview_falls_back_to_defaults_for_an_unparseable_instance_config(monkeypatch, db: Database):

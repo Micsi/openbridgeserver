@@ -16,7 +16,6 @@ function overview(bindings, extra = {}) {
     instance_id: 'hook-1',
     running: true,
     path_prefix: '/hook',
-    allowed_networks: [],
     trust_forwarded_for: false,
     rate_limit_per_minute: 60,
     rejections: { total: 0, counts: {}, last_reason: null, last_client_ip: null, last_slug: null, last_at: null },
@@ -252,9 +251,8 @@ describe('BindingForm — WEBHOOK edit', () => {
     w.unmount()
   })
 
-  it('warns when the instance allowlist excludes the host the GUI runs on', async () => {
-    webhookBindings.mockResolvedValue({ data: overview([ENTRY], { allowed_networks: ['10.38.0.0/16'] }) })
-    const w = await mountForm({ initial: existingBinding() })
+  it('warns when the binding allowlist excludes the host the GUI runs on', async () => {
+    const w = await mountForm({ initial: existingBinding({ allowed_networks: ['10.38.0.0/16'] }) })
 
     expect(w.find('[data-testid="webhook-origin-warning"]').exists()).toBe(true)
     w.unmount()

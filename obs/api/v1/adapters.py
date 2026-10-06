@@ -1867,15 +1867,13 @@ class WebhookBindingEntry(BaseModel):
 class WebhookOverview(BaseModel):
     """The instance's own webhook settings plus its bindings.
 
-    The GUI needs the instance's allowlist and path prefix alongside the
-    bindings: a call must pass both levels, so a warning about an unreachable
-    call URL can only be computed from both together.
+    The GUI needs the endpoint-wide settings alongside the bindings to build
+    and judge a call URL; the allowlist itself lives on each binding.
     """
 
     instance_id: str
     running: bool
     path_prefix: str
-    allowed_networks: list[str]
     trust_forwarded_for: bool
     rate_limit_per_minute: int
     rejections: WebhookRejectionOut = WebhookRejectionOut()
@@ -2020,7 +2018,6 @@ async def webhook_list_bindings(
         instance_id=str(instance_id),
         running=instance is not None,
         path_prefix=prefix,
-        allowed_networks=list(settings.allowed_networks),
         trust_forwarded_for=settings.trust_forwarded_for,
         rate_limit_per_minute=settings.rate_limit_per_minute,
         rejections=_webhook_rejections_out(instance.rejections if instance is not None else None),

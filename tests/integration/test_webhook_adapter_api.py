@@ -242,11 +242,15 @@ async def test_instance_rejects_a_reserved_path_prefix(client, auth_headers):
 async def test_binding_schema_is_served_for_the_new_adapter_type(client, auth_headers):
     resp = await client.get("/api/v1/adapters/WEBHOOK/binding-schema", headers=auth_headers)
     assert resp.status_code == 200, resp.text
-    assert set(resp.json()["properties"]) >= {"slug", "token", "methods", "value_source", "fixed_value", "value_param", "debounce_ms"}
+    binding_properties = set(resp.json()["properties"])
+    assert binding_properties >= {"slug", "token", "methods", "allowed_networks", "value_source", "fixed_value", "value_param", "debounce_ms"}
 
     schema = await client.get("/api/v1/adapters/WEBHOOK/schema", headers=auth_headers)
     assert schema.status_code == 200, schema.text
-    assert set(schema.json()["properties"]) >= {"path_prefix", "allowed_networks", "trust_forwarded_for", "rate_limit_per_minute"}
+    instance_properties = set(schema.json()["properties"])
+    assert instance_properties == {"path_prefix", "trust_forwarded_for", "rate_limit_per_minute"}
+    # The allowlist belongs to the binding; the instance must not offer one.
+    assert "allowed_networks" not in instance_properties
 
 
 # ---------------------------------------------------------------------------
@@ -377,20 +381,7 @@ async def test_custom_path_prefix_is_honoured(client, auth_headers):
         await _delete_instance(client, auth_headers, instance["id"])
 
 
-async def test_ip_allowlist_blocks_the_test_client(client, auth_headers):
-    dp = await _create_dp(client, auth_headers)
-    instance = await _create_instance(client, auth_headers, config={"allowed_networks": "203.0.113.0/24"})
-    try:
-        await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "bell-allowlist"})
-        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
-
-        resp = await client.get(entry["call_path"])
-        assert resp.status_code == 404
-    finally:
-        await _delete_instance(client, auth_headers, instance["id"])
-
-
-async def test_binding_allowlist_blocks_the_test_client(client, auth_headers):
+async def test_allowlist_blocks_the_test_client(client, auth_headers):
     dp = await _create_dp(client, auth_headers)
     instance = await _create_instance(client, auth_headers)
     try:
@@ -434,27 +425,33 @@ async def test_a_binding_allowlist_that_covers_the_caller_lets_it_through(client
 async def test_rejections_are_reported_with_reason_and_address(client, auth_headers):
     """The diagnostics that turn an opaque 404 into something actionable."""
     dp = await _create_dp(client, auth_headers)
-    instance = await _create_instance(client, auth_headers, config={"allowed_networks": ["203.0.113.0/24"]})
+    instance = await _create_instance(client, auth_headers)
     try:
-        await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "bell-diag"})
+        await _create_binding(
+            client,
+            auth_headers,
+            dp["id"],
+            instance["id"],
+            {"slug": "bell-diag", "allowed_networks": ["203.0.113.0/24"]},
+        )
         entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
 
         assert (await client.get(entry["call_path"])).status_code == 404
 
         overview = await _webhook_overview(client, auth_headers, instance["id"])
-        assert overview["allowed_networks"] == ["203.0.113.0/24"]
+        assert "allowed_networks" not in overview
         assert overview["running"] is True
         rejections = overview["rejections"]
         assert rejections["total"] == 1
-        assert rejections["counts"] == {"instance_address_blocked": 1}
-        assert rejections["last_reason"] == "instance_address_blocked"
+        assert rejections["counts"] == {"address_blocked": 1}
+        assert rejections["last_reason"] == "address_blocked"
         assert rejections["last_client_ip"]
         assert rejections["last_at"]
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
 
 
-async def test_a_binding_rejection_is_reported_on_that_binding(client, auth_headers):
+async def test_a_rejection_is_reported_on_the_binding_that_caused_it(client, auth_headers):
     dp = await _create_dp(client, auth_headers)
     instance = await _create_instance(client, auth_headers)
     try:
@@ -469,19 +466,27 @@ async def test_a_binding_rejection_is_reported_on_that_binding(client, auth_head
         assert (await client.get(entry["call_path"])).status_code == 404
 
         after = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
-        assert after["rejections"]["counts"] == {"binding_address_blocked": 1}
-        assert after["rejections"]["last_reason"] == "binding_address_blocked"
+        assert after["rejections"]["counts"] == {"address_blocked": 1}
+        assert after["rejections"]["last_reason"] == "address_blocked"
         assert after["last_status"] == 404
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
 
 
 async def test_a_legacy_comma_separated_allowlist_still_loads(client, auth_headers):
-    """Instances stored before the field became a list must keep working."""
-    instance = await _create_instance(client, auth_headers, config={"allowed_networks": "10.0.0.0/8, 192.168.1.5"})
+    """A binding stored before the field became a list must keep working."""
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers, enabled=False)
     try:
-        overview = await _webhook_overview(client, auth_headers, instance["id"])
-        assert overview["allowed_networks"] == ["10.0.0.0/8", "192.168.1.5/32"]
+        await _create_binding(
+            client,
+            auth_headers,
+            dp["id"],
+            instance["id"],
+            {"slug": "bell-legacy", "allowed_networks": "10.0.0.0/8, 192.168.1.5"},
+        )
+        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+        assert entry["allowed_networks"] == ["10.0.0.0/8", "192.168.1.5/32"]
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
 

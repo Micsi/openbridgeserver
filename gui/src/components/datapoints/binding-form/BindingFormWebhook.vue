@@ -42,12 +42,8 @@
     <label class="label">{{ $t('adapters.allowlist.bindingLabel') }}</label>
     <NetworkAllowlistEditor
       :model-value="cfg.allowed_networks ?? []"
-      :empty-hint="$t('adapters.allowlist.bindingEmptyMeansAny')"
       @update:model-value="cfg.allowed_networks = $event"
     />
-    <p v-if="overview?.allowed_networks?.length" class="hint" data-testid="webhook-instance-allowlist">
-      {{ $t('adapters.allowlist.instanceAlsoApplies', { list: overview.allowed_networks.join(', ') }) }}
-    </p>
   </div>
 
   <!-- Value source -->
@@ -94,11 +90,11 @@
         </div>
         <p class="hint">{{ $t('adapters.bindingForm.webhookCallUrlHint') }}</p>
         <p
-          v-if="originBlockedBy"
+          v-if="originBlocked"
           class="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-600 dark:text-amber-400"
           data-testid="webhook-origin-warning"
         >
-          {{ $t(`adapters.allowlist.originBlocked.${originBlockedBy}`, { host: originHost }) }}
+          {{ $t('adapters.allowlist.originBlocked', { host: originHost }) }}
         </p>
       </div>
 
@@ -168,7 +164,6 @@ const props = defineProps({
   cfg: { type: Object, required: true },
   isExisting: { type: Boolean, default: false },
   entry: { type: [Object, null], default: null },
-  overview: { type: [Object, null], default: null },
   loading: { type: Boolean, default: false },
   error: { type: [String, null], default: null },
   rotating: { type: Boolean, default: false },
@@ -197,7 +192,8 @@ const copied = ref(null)
 const originHost = window.location.hostname
 
 /**
- * Which level would reject a call from the host this GUI is open on, if any.
+ * Whether this binding's allowlist would reject a call from the host the GUI
+ * is open on.
  *
  * The call URL is built from the browser's own origin, so administering OBS
  * via localhost while the allowlist only names the LAN hands the operator a
@@ -206,11 +202,7 @@ const originHost = window.location.hostname
  * hostname needing DNS, an IPv6 entry), and then no warning is shown: a wrong
  * warning about a working URL would be worse than none.
  */
-const originBlockedBy = computed(() => {
-  if (isAddressCovered(originHost, props.overview?.allowed_networks ?? []) === false) return 'instance'
-  if (isAddressCovered(originHost, props.cfg.allowed_networks ?? []) === false) return 'binding'
-  return null
-})
+const originBlocked = computed(() => isAddressCovered(originHost, props.cfg.allowed_networks ?? []) === false)
 
 const rejectionSummary = computed(() => {
   const rejections = props.entry?.rejections

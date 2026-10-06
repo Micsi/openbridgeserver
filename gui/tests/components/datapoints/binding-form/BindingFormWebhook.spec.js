@@ -161,61 +161,35 @@ describe('BindingFormWebhook — ingress allowlist', () => {
 
   it('tolerates a config stored before the binding allowlist existed', async () => {
     const cfg = { ...BASE_CFG, allowed_networks: undefined }
-    const w = mk({ isExisting: true, entry: ENTRY, overview: { allowed_networks: [] } }, cfg)
+    const w = mk({ isExisting: true, entry: ENTRY }, cfg)
     expect(w.find('[data-testid="webhook-origin-warning"]').exists()).toBe(false)
     await w.find('[data-testid="allowlist-add"]').trigger('click')
     expect(cfg.allowed_networks).toEqual([''])
     w.unmount()
   })
 
-  it("shows the instance's allowlist alongside, because both must pass", () => {
-    const w = mk({ overview: { allowed_networks: ['10.38.0.0/16'] } })
-    expect(w.find('[data-testid="webhook-instance-allowlist"]').text()).toContain('10.38.0.0/16')
-    w.unmount()
-  })
-
-  it("hides that hint when the instance does not restrict anything", () => {
-    const w = mk({ overview: { allowed_networks: [] } })
-    expect(w.find('[data-testid="webhook-instance-allowlist"]').exists()).toBe(false)
-    w.unmount()
-  })
-
-  it('warns when the instance allowlist excludes the host this GUI runs on', () => {
+  it('warns when the allowlist excludes the host this GUI runs on', () => {
     // happy-dom serves the page from localhost, which 10.38.0.0/16 excludes —
     // exactly the reported case where the copied URL answers 404.
-    const w = mk({ isExisting: true, entry: ENTRY, overview: { allowed_networks: ['10.38.0.0/16'] } })
-    const warning = w.find('[data-testid="webhook-origin-warning"]')
-    expect(warning.exists()).toBe(true)
-    expect(warning.text()).toContain('Allowlist der Instanz')
-    w.unmount()
-  })
-
-  it('warns when the binding allowlist excludes it', () => {
-    const w = mk(
-      { isExisting: true, entry: ENTRY, overview: { allowed_networks: [] } },
-      { ...BASE_CFG, allowed_networks: ['10.38.0.0/16'] },
-    )
+    const w = mk({ isExisting: true, entry: ENTRY }, { ...BASE_CFG, allowed_networks: ['10.38.0.0/16'] })
     const warning = w.find('[data-testid="webhook-origin-warning"]')
     expect(warning.exists()).toBe(true)
     expect(warning.text()).toContain('Allowlist dieser Verknüpfung')
     w.unmount()
   })
 
-  it('stays quiet when both allowlists cover the host', () => {
-    const w = mk(
-      { isExisting: true, entry: ENTRY, overview: { allowed_networks: ['127.0.0.0/8'] } },
-      { ...BASE_CFG, allowed_networks: ['127.0.0.1'] },
-    )
+  it('stays quiet when the allowlist covers the host', () => {
+    const w = mk({ isExisting: true, entry: ENTRY }, { ...BASE_CFG, allowed_networks: ['127.0.0.1'] })
     expect(w.find('[data-testid="webhook-origin-warning"]').exists()).toBe(false)
     w.unmount()
   })
 
   it('stays quiet when nothing restricts and when no verdict is possible', () => {
-    const open = mk({ isExisting: true, entry: ENTRY, overview: { allowed_networks: [] } })
+    const open = mk({ isExisting: true, entry: ENTRY })
     expect(open.find('[data-testid="webhook-origin-warning"]').exists()).toBe(false)
     open.unmount()
 
-    const undecidable = mk({ isExisting: true, entry: ENTRY, overview: { allowed_networks: ['fd00::/8'] } })
+    const undecidable = mk({ isExisting: true, entry: ENTRY }, { ...BASE_CFG, allowed_networks: ['fd00::/8'] })
     expect(undecidable.find('[data-testid="webhook-origin-warning"]').exists()).toBe(false)
     undecidable.unmount()
   })
@@ -229,8 +203,8 @@ describe('BindingFormWebhook — rejection diagnostics', () => {
         ...ENTRY,
         rejections: {
           total: 3,
-          counts: { binding_address_blocked: 3 },
-          last_reason: 'binding_address_blocked',
+          counts: { address_blocked: 3 },
+          last_reason: 'address_blocked',
           last_client_ip: '127.0.0.1',
           last_at: '2026-10-06T19:48:49+00:00',
         },
@@ -238,7 +212,7 @@ describe('BindingFormWebhook — rejection diagnostics', () => {
     })
     const box = w.find('[data-testid="webhook-rejections"]')
     expect(box.text()).toContain('3')
-    expect(box.text()).toContain('Allowlist der Verknüpfung')
+    expect(box.text()).toContain('Allowlist')
     expect(box.text()).toContain('127.0.0.1')
     w.unmount()
   })

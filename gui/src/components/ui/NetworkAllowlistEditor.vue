@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-col gap-2">
     <div v-if="entries.length === 0" class="text-xs text-slate-500">
-      {{ emptyHint || $t('adapters.allowlist.emptyMeansAny') }}
+      {{ $t('adapters.allowlist.emptyMeansAny') }}
     </div>
 
     <div v-for="(entry, index) in entries" :key="index" class="flex items-center gap-2">
@@ -45,7 +45,6 @@ import { classifyEntry } from '@/utils/ipAllowlist'
 
 const props = defineProps({
   modelValue: { type: [Array, String, null], default: () => [] },
-  emptyHint: { type: String, default: '' },
 })
 
 const emit = defineEmits(['update:modelValue'])

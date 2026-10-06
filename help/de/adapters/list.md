@@ -74,7 +74,6 @@ auf das Gong, Visu und Logik reagieren.
 | Feld | Bedeutung |
 |---|---|
 | **Pfad-Präfix** | Pfad, unter dem die Instanz erreichbar ist. Standard `/hook`. Maximal drei Segmente; `api`, `assets`, `help`, `setup` und `visu` sind belegt. |
-| **Erlaubte Netze (CIDR)** | Liste von Netzen oder Einzeladressen, die den Endpunkt erreichen dürfen. Einträge werden einzeln verwaltet (Zeile hinzufügen/entfernen). Leer = keine Einschränkung. |
 | **X-Forwarded-For vertrauen** | Nur einschalten, wenn ein Reverse Proxy vorgeschaltet ist. Ohne Proxy könnte jeder Aufrufer eine erlaubte Absenderadresse vortäuschen. |
 | **Ratenlimit** | Angenommene Aufrufe pro Minute und Absender-IP. Darüber antwortet der Endpunkt mit `429`. |
 
@@ -93,16 +92,17 @@ Eingang.
 | **Erlaubte HTTP-Methoden** | `GET`, `POST` oder beides. Geräte, die nur eine URL aufrufen können, benutzen `GET`. |
 | **Wertquelle** | **Fester Wert** für Taster und Klingeln (`true`), oder **Wert aus der Anfrage**. |
 | **Parameter-/Feldname** | Bei *Wert aus der Anfrage*: der Query-Parameter bei `GET` (`?value=1`), bzw. das gleichnamige Feld im JSON-Body bei `POST`. Standard `value`. |
-| **Erlaubte Netze (CIDR)** | Zusätzliche Allowlist nur für diese Verknüpfung — z. B. die feste Adresse genau dieser Türsprechstelle. Leer = es gilt nur die Allowlist der Instanz. |
+| **Erlaubte Netze (CIDR)** | Von welchen Absenderadressen dieser Slug ausgelöst werden darf — z. B. die feste Adresse genau dieser Türsprechstelle. Einträge werden zeilenweise verwaltet. Leer = keine Einschränkung. |
 | **Entprellung (ms)** | Weitere Aufrufe innerhalb dieser Zeit werden mit `204` bestätigt, setzen den Wert aber nicht erneut. `0` = aus. |
 
-### Zwei Ebenen für die Allowlist
+### Erlaubte Netze
 
-Ein Aufruf muss **beide** Allowlists passieren: die der Instanz (Perimeter für
-den ganzen Endpunkt) und die der Verknüpfung (nur dieses eine Gerät). Eine leere
-Liste schränkt auf ihrer Ebene nicht ein. Damit kann eine Verknüpfung den
-Perimeter der Instanz immer nur **enger** ziehen, nie weiter — sonst wäre der
-Perimeter wirkungslos.
+Welche Absenderadressen einen Webhook auslösen dürfen, wird **je Verknüpfung**
+festgelegt, nicht auf der Instanz: es ist eine Eigenschaft des einen Geräts
+hinter diesem Slug, nicht des Endpunkts als Ganzes. Jede Verknüpfung bekommt so
+genau die Adresse ihres eigenen Geräts; eine leere Liste schränkt nicht ein. Auf
+der Instanz bleibt nur, was wirklich für den ganzen Endpunkt gilt — Pfad-Präfix,
+Ermittlung der Absenderadresse und Ratenlimit.
 
 ::: warning Vorsicht bei einem Reverse Proxy
 Steht ein Reverse Proxy (nginx, Caddy) vor OBS, kommen alle Aufrufe mit dessen
@@ -140,7 +140,7 @@ zulässt. Beide verhalten sich gleich:
 ::: tip Die URL wird mit der Adresse gebaut, unter der die Admin-GUI gerade offen ist
 Wer OBS über `http://localhost:8080` administriert, bekommt eine `localhost`-URL
 zum Kopieren — und ein Aufruf von dort kommt als `127.0.0.1` an. Ist in der
-Allowlist nur das LAN eingetragen (z. B. `10.38.0.0/16`), wird genau dieser
+Allowlist der Verknüpfung nur das LAN eingetragen (z. B. `10.38.0.0/16`), wird genau dieser
 Testaufruf mit `404` abgewiesen, obwohl Slug und Token stimmen. Das Formular
 weist darauf hin, sobald die Allowlist den gerade verwendeten Absender nicht
 abdeckt; zum Testen entweder `127.0.0.1` ergänzen oder die GUI über die
@@ -153,8 +153,8 @@ Neustart wieder bei null; die Werte selbst stehen wie immer im Monitor und in de
 dort mit `WEBHOOK` als Quelle.
 
 Abgewiesene Aufrufe erscheinen daneben mit **Grund und Absenderadresse** —
-Ratenlimit, Adresse nicht in der Allowlist (Instanz oder Verknüpfung),
-unbekannter Slug, falsches Token oder nicht erlaubte Methode. Weil die Antwort
+Ratenlimit, Adresse nicht in der Allowlist, unbekannter Slug, falsches Token
+oder nicht erlaubte Methode. Weil die Antwort
 nach außen bewusst ein nicht unterscheidbares `404` bleibt, ist diese Anzeige
 der einzige Ort, an dem sich ein stiller Fehlschlag überhaupt erkennen lässt.
 Die Zähler der Instanz stehen unter **Adapter → Instanz**, die einer einzelnen

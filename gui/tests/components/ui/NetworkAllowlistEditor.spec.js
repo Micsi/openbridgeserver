@@ -16,14 +16,8 @@ describe('NetworkAllowlistEditor', () => {
 
   it('explains an empty list instead of showing nothing', () => {
     const w = mk([])
-    expect(w.text()).toContain('alle Absender sind erlaubt')
+    expect(w.text()).toContain('alle Absender dürfen diese Verknüpfung auslösen')
     expect(w.find('[data-testid="allowlist-entry-0"]').exists()).toBe(false)
-    w.unmount()
-  })
-
-  it('uses a caller-supplied empty hint when given', () => {
-    const w = mk([], { emptyHint: 'nur die Instanz zählt' })
-    expect(w.text()).toContain('nur die Instanz zählt')
     w.unmount()
   })
 
@@ -65,7 +59,7 @@ describe('NetworkAllowlistEditor', () => {
 
   it('treats a null model value as an empty list', () => {
     const w = mk(null)
-    expect(w.text()).toContain('alle Absender sind erlaubt')
+    expect(w.text()).toContain('alle Absender dürfen diese Verknüpfung auslösen')
     w.unmount()
   })
 

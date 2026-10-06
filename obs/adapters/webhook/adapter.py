@@ -30,15 +30,14 @@ A webhook binding may only point at a ``room_local`` DataPoint — the same
 boundary the anonymous Visu path draws for ``central_plant`` — and that is
 re-checked on every call, not just when the binding is created.
 
-The ingress allowlist exists on both levels and a call must pass **both**: the
-instance list is the perimeter for the whole endpoint, the binding list narrows
-it to the one device that owns that slug. Either list may be empty, which means
-"no restriction at this level" — a binding list can therefore only ever narrow
-the instance list, never widen it, so the perimeter stays meaningful.
+The ingress allowlist lives on the **binding**, not on the instance: which
+addresses may call is a property of the one device that owns a slug, not of the
+endpoint as a whole. An empty list means no restriction for that binding. The
+instance keeps only what is genuinely endpoint-wide — where it listens, how the
+client address is determined, and how often any one address may call.
 
 Adapter configuration (``adapter_instances.config``):
   path_prefix:          str    URL prefix the instance claims  (default: "/hook")
-  allowed_networks:     list   CIDRs/IPs; empty = any           (default: [])
   trust_forwarded_for:  bool   Read the client IP from X-Forwarded-For (default: False)
   rate_limit_per_minute: int   Accepted calls per client IP per minute (default: 60)
 
@@ -70,7 +69,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from obs.adapters.base import AdapterBase
 from obs.adapters.registry import register
-from obs.adapters.webhook.ingress import IpNetwork, address_allowed, normalise_entries, parse_networks, resolve_client_ip
+from obs.adapters.webhook.ingress import address_allowed, normalise_entries, parse_networks, resolve_client_ip
 from obs.core.event_bus import DataValueEvent
 from obs.models.types import DataTypeRegistry
 
@@ -136,7 +135,6 @@ def normalise_path_prefix(raw: str) -> str:
 
 class WebhookAdapterConfig(BaseModel):
     path_prefix: str = Field(default=DEFAULT_PATH_PREFIX, title="Pfad-Präfix")
-    allowed_networks: list[str] = Field(default_factory=list, title="Erlaubte Netze (CIDR)")
     trust_forwarded_for: bool = Field(default=False, title="X-Forwarded-For vertrauen")
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000, title="Ratenlimit (Aufrufe/Minute je IP)")
 
@@ -144,11 +142,6 @@ class WebhookAdapterConfig(BaseModel):
     @classmethod
     def _check_path_prefix(cls, value: str) -> str:
         return normalise_path_prefix(value)
-
-    @field_validator("allowed_networks", mode="before")
-    @classmethod
-    def _check_allowed_networks(cls, value: Any) -> list[str]:
-        return normalise_entries(value)
 
 
 class WebhookBindingConfig(BaseModel):
@@ -309,11 +302,10 @@ class RejectionReason(StrEnum):
     """
 
     RATE_LIMITED = "rate_limited"
-    INSTANCE_ADDRESS_BLOCKED = "instance_address_blocked"
     UNKNOWN_SLUG = "unknown_slug"
     INVALID_BINDING = "invalid_binding"
     INVALID_TOKEN = "invalid_token"
-    BINDING_ADDRESS_BLOCKED = "binding_address_blocked"
+    ADDRESS_BLOCKED = "address_blocked"
     METHOD_NOT_ALLOWED = "method_not_allowed"
 
 
@@ -426,7 +418,6 @@ class WebhookAdapter(AdapterBase):
     def __init__(self, event_bus: Any, config: dict | None = None, **kwargs) -> None:
         super().__init__(event_bus, config, **kwargs)
         self._path_prefix: str = DEFAULT_PATH_PREFIX
-        self._allowed_networks: list[IpNetwork] = []
         self._trust_forwarded_for: bool = False
         self._limiter = FixedWindowRateLimiter(60)
         self._by_slug: dict[str, Any] = {}
@@ -447,7 +438,6 @@ class WebhookAdapter(AdapterBase):
             return
 
         self._path_prefix = cfg.path_prefix
-        self._allowed_networks = parse_networks(cfg.allowed_networks)
         self._trust_forwarded_for = cfg.trust_forwarded_for
         self._limiter = FixedWindowRateLimiter(cfg.rate_limit_per_minute)
 
@@ -576,11 +566,6 @@ class WebhookAdapter(AdapterBase):
             self._reject(RejectionReason.RATE_LIMITED, client_ip=client_ip)
             return TriggerOutcome(429, "Too many requests")
 
-        if not address_allowed(client_ip, self._allowed_networks):
-            logger.warning("WEBHOOK: rejected call from %s — not in the instance's allowed networks", client_ip)
-            self._reject(RejectionReason.INSTANCE_ADDRESS_BLOCKED, client_ip=client_ip)
-            return _NOT_FOUND
-
         slug, path_token = self._split_remainder(remainder)
         binding = self._by_slug.get(slug) if slug else None
         if binding is None:
@@ -606,7 +591,7 @@ class WebhookAdapter(AdapterBase):
         # token, so the later check leaks nothing a 404 did not already say.
         if not address_allowed(client_ip, parse_networks(config.allowed_networks)):
             logger.warning("WEBHOOK: rejected call from %s — not in the allowed networks of slug %r", client_ip, slug)
-            self._reject(RejectionReason.BINDING_ADDRESS_BLOCKED, client_ip=client_ip, slug=slug, binding=binding)
+            self._reject(RejectionReason.ADDRESS_BLOCKED, client_ip=client_ip, slug=slug, binding=binding)
             return self._record(binding, _NOT_FOUND)
 
         if method not in config.methods:

@@ -1190,9 +1190,6 @@
         "path_prefix": {
           "title": "Pfad-Präfix"
         },
-        "allowed_networks": {
-          "title": "Erlaubte Netze (CIDR)"
-        },
         "trust_forwarded_for": {
           "title": "X-Forwarded-For vertrauen"
         },
@@ -1219,6 +1216,9 @@
         },
         "debounce_ms": {
           "title": "Entprellung (ms)"
+        },
+        "allowed_networks": {
+          "title": "Erlaubte Netze (CIDR)"
         }
       }
     },
@@ -1271,30 +1271,23 @@
       "connectFailed": "Verbindungsversuch fehlgeschlagen"
     },
     "allowlist": {
-      "instanceLabel": "Erlaubte Netze der Instanz (CIDR)",
-      "bindingLabel": "Erlaubte Netze dieser Verknüpfung (CIDR)",
+      "bindingLabel": "Erlaubte Netze (CIDR)",
       "placeholder": "10.38.0.0/16",
       "addEntry": "Eintrag hinzufügen",
       "removeEntry": "Eintrag entfernen",
-      "emptyMeansAny": "Keine Einträge — alle Absender sind erlaubt.",
-      "bindingEmptyMeansAny": "Keine Einträge — es gilt nur die Allowlist der Instanz.",
+      "emptyMeansAny": "Keine Einträge — alle Absender dürfen diese Verknüpfung auslösen.",
       "invalidEntries": "{n} Eintrag/Einträge sind keine gültige IP oder CIDR-Notation",
-      "hint": "Je Zeile eine IP-Adresse oder ein Netz, z. B. 10.38.0.0/16 oder 192.168.1.5. Ein Aufruf muss die Allowlist der Instanz und die der Verknüpfung passieren; eine leere Liste schränkt auf der jeweiligen Ebene nicht ein.",
-      "instanceAlsoApplies": "Zusätzlich gilt die Allowlist der Instanz: {list}",
+      "hint": "Je Zeile eine IP-Adresse oder ein Netz, z. B. 10.38.0.0/16 oder 192.168.1.5. Eine leere Liste schränkt nicht ein.",
       "rejectedCalls": "{n} Aufruf(e) abgewiesen",
       "lastRejection": "Zuletzt: {reason} — Absender {host}",
-      "originBlocked": {
-        "instance": "Diese URL zeigt auf {host}. Die Allowlist der Instanz erlaubt diesen Absender nicht — ein Aufruf von hier aus wird mit 404 abgewiesen.",
-        "binding": "Diese URL zeigt auf {host}. Die Allowlist dieser Verknüpfung erlaubt diesen Absender nicht — ein Aufruf von hier aus wird mit 404 abgewiesen."
-      },
+      "originBlocked": "Diese URL zeigt auf {host}. Die Allowlist dieser Verknüpfung erlaubt diesen Absender nicht — ein Aufruf von hier aus wird mit 404 abgewiesen.",
       "reason": {
         "rate_limited": "Ratenlimit überschritten",
-        "instance_address_blocked": "Absenderadresse nicht in der Allowlist der Instanz",
         "unknown_slug": "unbekannter Slug",
         "invalid_binding": "ungültige Binding-Konfiguration",
         "invalid_token": "falsches Token",
-        "binding_address_blocked": "Absenderadresse nicht in der Allowlist der Verknüpfung",
-        "method_not_allowed": "HTTP-Methode nicht erlaubt"
+        "method_not_allowed": "HTTP-Methode nicht erlaubt",
+        "address_blocked": "Absenderadresse nicht in der Allowlist"
       }
     }
   },
