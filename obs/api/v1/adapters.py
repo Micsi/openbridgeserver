@@ -1829,6 +1829,17 @@ async def snmp_walk(
 # ---------------------------------------------------------------------------
 
 
+class WebhookRejectionOut(BaseModel):
+    """Why calls were turned away — the diagnostics behind an opaque 404."""
+
+    total: int = 0
+    counts: dict[str, int] = {}
+    last_reason: str | None = None
+    last_client_ip: str | None = None
+    last_slug: str | None = None
+    last_at: str | None = None
+
+
 class WebhookBindingEntry(BaseModel):
     binding_id: str
     datapoint_id: str
@@ -1837,6 +1848,7 @@ class WebhookBindingEntry(BaseModel):
     slug: str
     token: str
     methods: list[str]
+    allowed_networks: list[str]
     value_source: str
     fixed_value: str
     value_param: str
@@ -1849,6 +1861,25 @@ class WebhookBindingEntry(BaseModel):
     publish_count: int
     last_called: str | None
     last_status: int | None
+    rejections: WebhookRejectionOut = WebhookRejectionOut()
+
+
+class WebhookOverview(BaseModel):
+    """The instance's own webhook settings plus its bindings.
+
+    The GUI needs the instance's allowlist and path prefix alongside the
+    bindings: a call must pass both levels, so a warning about an unreachable
+    call URL can only be computed from both together.
+    """
+
+    instance_id: str
+    running: bool
+    path_prefix: str
+    allowed_networks: list[str]
+    trust_forwarded_for: bool
+    rate_limit_per_minute: int
+    rejections: WebhookRejectionOut = WebhookRejectionOut()
+    bindings: list[WebhookBindingEntry] = []
 
 
 class WebhookTokenRotationResult(BaseModel):
@@ -1884,19 +1915,54 @@ def _webhook_call_paths(prefix: str, slug: str, token: str) -> tuple[str, str]:
     return f"{prefix}/{slug}?token={token}", f"{prefix}/{slug}/{token}"
 
 
-@router.get("/instances/{instance_id}/webhook/bindings", response_model=list[WebhookBindingEntry])
+def _webhook_rejections_out(counters: Any) -> WebhookRejectionOut:
+    """Map the adapter's in-memory rejection counters to the API shape."""
+    if counters is None:
+        return WebhookRejectionOut()
+    last = counters.last
+    return WebhookRejectionOut(
+        total=counters.total,
+        counts=dict(counters.counts),
+        last_reason=last.reason.value if last else None,
+        last_client_ip=last.client_ip if last else None,
+        last_slug=last.slug if last else None,
+        last_at=last.at.isoformat() if last else None,
+    )
+
+
+def _webhook_instance_settings(instance_row: Any) -> Any:
+    """Parse the stored instance config, falling back to the defaults.
+
+    An imported backup or a hand-edited row can hold a configuration the
+    current validation would refuse; the overview reports defaults rather than
+    failing, exactly like ``_webhook_path_prefix`` does for the prefix alone.
+    """
+    from obs.adapters.webhook.adapter import WebhookAdapterConfig
+
+    try:
+        return WebhookAdapterConfig(**_json_config(instance_row["config"]))
+    except ValidationError:
+        return WebhookAdapterConfig()
+
+
+@router.get("/instances/{instance_id}/webhook/bindings", response_model=WebhookOverview)
 async def webhook_list_bindings(
     instance_id: uuid.UUID,
     _user: Principal | str = Depends(get_current_principal),
     db: Database = Depends(lambda: get_db()),
-) -> list[WebhookBindingEntry]:
-    """List this instance's webhook bindings, with their call URL and call counters.
+) -> WebhookOverview:
+    """The instance's webhook settings plus its bindings' call URLs and counters.
 
     This is the only route that serves a binding token in clear text — the
     generic binding listing redacts it — so it requires the same WRITE grant on
     the adapter instance that creating the binding needed.  The token is a
     bearer secret for exactly one DataPoint, and whoever may hand it to a
     device may also read it back to build the URL.
+
+    It also reports why calls were turned away.  A rejected call answers an
+    indistinguishable 404 on purpose, which makes a misconfigured allowlist
+    look exactly like a broken adapter — the counters and the address of the
+    last rejection are what make that diagnosable from the GUI.
     """
     from obs.adapters.webhook.adapter import WebhookBindingConfig
     from obs.core.registry import get_registry
@@ -1905,6 +1971,7 @@ async def webhook_list_bindings(
     instance_row = await _webhook_instance_row(db, instance_id)
     await _ensure_instance_write_grant(db, principal, str(instance_id))
 
+    settings = _webhook_instance_settings(instance_row)
     prefix = _webhook_path_prefix(instance_row)
     instance = adapter_registry.get_instance_by_id(str(instance_id))
     rows = await db.fetchall(
@@ -1935,6 +2002,7 @@ async def webhook_list_bindings(
                 slug=config.slug,
                 token=config.token,
                 methods=list(config.methods),
+                allowed_networks=list(config.allowed_networks),
                 value_source=config.value_source,
                 fixed_value=config.fixed_value,
                 value_param=config.value_param,
@@ -1945,9 +2013,19 @@ async def webhook_list_bindings(
                 publish_count=stats.publish_count if stats else 0,
                 last_called=stats.last_called.isoformat() if stats and stats.last_called else None,
                 last_status=stats.last_status if stats else None,
+                rejections=_webhook_rejections_out(stats.rejections if stats else None),
             )
         )
-    return result
+    return WebhookOverview(
+        instance_id=str(instance_id),
+        running=instance is not None,
+        path_prefix=prefix,
+        allowed_networks=list(settings.allowed_networks),
+        trust_forwarded_for=settings.trust_forwarded_for,
+        rate_limit_per_minute=settings.rate_limit_per_minute,
+        rejections=_webhook_rejections_out(instance.rejections if instance is not None else None),
+        bindings=result,
+    )
 
 
 @router.post(

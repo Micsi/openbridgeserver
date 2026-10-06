@@ -106,9 +106,35 @@ def test_adapter_config_rejects_malformed_network():
         WebhookAdapterConfig(allowed_networks="192.168.1.0/33")
 
 
-def test_adapter_config_keeps_valid_networks():
+def test_adapter_config_normalises_networks_to_a_list():
+    cfg = WebhookAdapterConfig(allowed_networks=["10.0.0.0/8", " 192.168.1.5 "])
+    assert cfg.allowed_networks == ["10.0.0.0/8", "192.168.1.5/32"]
+
+
+def test_adapter_config_still_accepts_the_legacy_comma_string():
+    """A configuration stored before the field became a list must keep loading."""
     cfg = WebhookAdapterConfig(allowed_networks=" 10.0.0.0/8, 192.168.1.5 ")
-    assert cfg.allowed_networks == "10.0.0.0/8, 192.168.1.5"
+    assert cfg.allowed_networks == ["10.0.0.0/8", "192.168.1.5/32"]
+
+
+def test_adapter_config_canonicalises_and_deduplicates_entries():
+    cfg = WebhookAdapterConfig(allowed_networks=["10.38.111.21/16", "10.38.0.0/16", "10.0.0.0/8"])
+    assert cfg.allowed_networks == ["10.38.0.0/16", "10.0.0.0/8"]
+
+
+def test_adapter_config_defaults_to_an_empty_list():
+    assert WebhookAdapterConfig().allowed_networks == []
+
+
+def test_binding_config_has_its_own_allowlist():
+    assert WebhookBindingConfig(slug="bell").allowed_networks == []
+    cfg = WebhookBindingConfig(slug="bell", allowed_networks=["192.168.1.5"])
+    assert cfg.allowed_networks == ["192.168.1.5/32"]
+
+
+def test_binding_config_rejects_a_malformed_network():
+    with pytest.raises(ValidationError):
+        WebhookBindingConfig(slug="bell", allowed_networks=["nope"])
 
 
 def test_binding_config_defaults():
@@ -733,6 +759,154 @@ async def test_incompatible_value_returns_400(mock_bus, monkeypatch):
 
     assert outcome.status == 400
     assert _data_events(mock_bus) == []
+
+
+# ---------------------------------------------------------------------------
+# Two-level ingress allowlist
+# ---------------------------------------------------------------------------
+
+
+async def test_binding_allowlist_blocks_a_caller_the_instance_would_allow(mock_bus, monkeypatch):
+    binding = _binding(allowed_networks=["192.168.1.0/24"])
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    blocked = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    allowed = await instance.handle_trigger(
+        method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="192.168.1.7"
+    )
+
+    assert blocked.status == 404
+    assert allowed.status == 204
+    assert _data_events(mock_bus) != []
+
+
+async def test_a_binding_allowlist_can_only_narrow_the_instance_allowlist(mock_bus, monkeypatch):
+    """A binding must not be able to widen the instance's perimeter."""
+    binding = _binding(allowed_networks=["10.0.0.0/8"])
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding], {"allowed_networks": ["192.168.1.0/24"]})
+
+    outside = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert outside.status == 404
+    assert _data_events(mock_bus) == []
+    # Blocked by the instance, so no binding can be blamed for it.
+    assert instance.rejections.last.reason == "instance_address_blocked"
+    assert instance.stats_for(binding.id).rejections.total == 0
+
+
+async def test_both_allowlists_must_pass(mock_bus, monkeypatch):
+    binding = _binding(allowed_networks=["192.168.1.0/24"])
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding], {"allowed_networks": ["192.168.0.0/16"]})
+
+    outcome = await instance.handle_trigger(
+        method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="192.168.1.7"
+    )
+
+    assert outcome.status == 204
+
+
+async def test_an_empty_binding_allowlist_restricts_nothing(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(
+        method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="203.0.113.9"
+    )
+
+    assert outcome.status == 204
+
+
+# ---------------------------------------------------------------------------
+# Rejection diagnostics
+# ---------------------------------------------------------------------------
+
+
+async def test_instance_counts_rejections_by_reason_with_the_last_address(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding], {"allowed_networks": ["10.38.0.0/16"]})
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="127.0.0.1")
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="127.0.0.1")
+    await instance.handle_trigger(method="GET", remainder="unknown-slug", query_params={"token": TOKEN}, body=b"", peer_ip="10.38.1.2")
+
+    rejections = instance.rejections
+    assert rejections.counts == {"instance_address_blocked": 2, "unknown_slug": 1}
+    assert rejections.total == 3
+    assert rejections.last.reason == "unknown_slug"
+    assert rejections.last.client_ip == "10.38.1.2"
+    assert rejections.last.slug == "unknown-slug"
+    assert isinstance(rejections.last.at, datetime.datetime)
+
+
+@pytest.mark.parametrize(
+    ("make_call", "reason"),
+    [
+        (lambda t: {"method": "GET", "remainder": "haustuer-klingel", "query_params": {"token": "wrong"}}, "invalid_token"),
+        (lambda t: {"method": "POST", "remainder": "haustuer-klingel", "query_params": {"token": t}}, "method_not_allowed"),
+    ],
+)
+async def test_binding_level_rejections_are_attributed_to_the_binding(mock_bus, monkeypatch, make_call, reason):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(body=b"", peer_ip="10.0.0.1", **make_call(TOKEN))
+
+    assert instance.rejections.counts == {reason: 1}
+    # An invalid token must not be blamed on the binding — the caller only
+    # guessed its slug, which is not a reason to mark that binding as failing.
+    expected_binding_counts = {} if reason == "invalid_token" else {reason: 1}
+    assert instance.stats_for(binding.id).rejections.counts == expected_binding_counts
+
+
+async def test_binding_address_rejection_is_counted_on_both_levels(mock_bus, monkeypatch):
+    binding = _binding(allowed_networks=["192.168.1.0/24"])
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert instance.rejections.counts == {"binding_address_blocked": 1}
+    stats = instance.stats_for(binding.id)
+    assert stats.rejections.counts == {"binding_address_blocked": 1}
+    assert stats.rejections.last.client_ip == "10.0.0.1"
+    assert stats.last_status == 404
+    assert stats.call_count == 0
+
+
+async def test_rate_limit_and_invalid_binding_are_counted(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding], {"rate_limit_per_minute": 1})
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    assert instance.rejections.counts == {"rate_limited": 1}
+
+    # Indexed while valid, then corrupted — the slug still resolves, so this is
+    # the one path that reports an invalid binding rather than an unknown slug.
+    second_binding = _binding()
+    second = await _adapter(mock_bus, [second_binding], {"path_prefix": "/hook2"})
+    second_binding.config = {"slug": "haustuer-klingel", "token": TOKEN, "methods": ["TRACE"]}
+    await second.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.2")
+    assert second.rejections.counts == {"invalid_binding": 1}
+
+
+async def test_a_successful_call_records_no_rejection(mock_bus, monkeypatch):
+    binding = _binding()
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert instance.rejections.counts == {}
+    assert instance.rejections.total == 0
+    assert instance.rejections.last is None
 
 
 async def test_datapoint_without_a_control_class_attribute_is_treated_as_room_local(mock_bus, monkeypatch):

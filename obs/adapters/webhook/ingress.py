@@ -18,22 +18,41 @@ type IpNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 _SEPARATORS = ",;"
 
 
-def split_entries(raw: str) -> list[str]:
-    """Split a comma / semicolon / whitespace separated list into entries."""
-    if not raw:
+def split_entries(raw: str | list[str] | tuple[str, ...] | None) -> list[str]:
+    """Split an allowlist value into its entries.
+
+    Accepts both the list the schemas use today and the comma / semicolon /
+    whitespace separated string they used before (issue #1256 follow-up), so a
+    stored configuration keeps loading after the field became a list.
+    """
+    if raw is None:
         return []
-    normalised = raw
+    if isinstance(raw, (list, tuple)):
+        return [str(entry).strip() for entry in raw if str(entry).strip()]
+    normalised = str(raw)
     for separator in _SEPARATORS:
         normalised = normalised.replace(separator, " ")
     return [part for part in normalised.split() if part]
 
 
-def parse_networks(raw: str) -> list[IpNetwork]:
-    """Parse an allowlist string into networks.
+def normalise_entries(raw: str | list[str] | tuple[str, ...] | None) -> list[str]:
+    """Return the canonical text form of each entry, duplicates removed.
+
+    ``10.38.111.21/16`` is stored as ``10.38.0.0/16`` and ``192.168.1.5`` as
+    ``192.168.1.5/32``, so what the GUI lists back is what actually matches.
+    """
+    seen: dict[str, None] = {}
+    for network in parse_networks(raw):
+        seen.setdefault(str(network), None)
+    return list(seen)
+
+
+def parse_networks(raw: str | list[str] | tuple[str, ...] | None) -> list[IpNetwork]:
+    """Parse an allowlist into networks.
 
     A bare address (``192.168.1.5``) becomes its single-host network.  Invalid
-    entries raise ``ValueError`` so the adapter config schema rejects them when
-    the instance is saved instead of failing open at request time.
+    entries raise ``ValueError`` so the config schemas reject them when the
+    instance or binding is saved instead of failing open at request time.
     """
     return [ipaddress.ip_network(entry, strict=False) for entry in split_entries(raw)]
 

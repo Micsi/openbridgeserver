@@ -102,6 +102,11 @@ async def test_webhook_trigger_is_refused_while_awaiting_setup(client, auth_head
     """
     import uuid as _uuid
 
+    # A running WEBHOOK instance claims its path prefix process-wide, so it has
+    # to be removed even when an assertion below fails — otherwise every later
+    # webhook test in the session would hit a prefix conflict instead of its
+    # own instance.
+    instance_id = None
     set_setup_required(False)
     try:
         dp = await client.post(
@@ -123,21 +128,21 @@ async def test_webhook_trigger_is_refused_while_awaiting_setup(client, auth_head
             headers=auth_headers,
         )
         assert binding.status_code == 201, binding.text
-        entries = await client.get(f"/api/v1/adapters/instances/{instance_id}/webhook/bindings", headers=auth_headers)
-        call_path = entries.json()[0]["call_path"]
-    finally:
+        overview = await client.get(f"/api/v1/adapters/instances/{instance_id}/webhook/bindings", headers=auth_headers)
+        assert overview.status_code == 200, overview.text
+        call_path = overview.json()["bindings"][0]["call_path"]
+
         set_setup_required(True)
+        blocked = await client.get(call_path)
+        assert blocked.status_code == 303
+        assert blocked.headers["location"] == "/setup"
 
-    resp = await client.get(call_path)
-
-    assert resp.status_code == 303
-    assert resp.headers["location"] == "/setup"
-
-    set_setup_required(False)
-    try:
+        set_setup_required(False)
         assert (await client.get(call_path)).status_code == 204
-        await client.delete(f"/api/v1/adapters/instances/{instance_id}", headers=auth_headers)
     finally:
+        set_setup_required(False)
+        if instance_id is not None:
+            await client.delete(f"/api/v1/adapters/instances/{instance_id}", headers=auth_headers)
         set_setup_required(True)
 
 

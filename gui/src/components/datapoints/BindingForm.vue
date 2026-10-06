@@ -183,6 +183,7 @@
           :cfg="cfg"
           :is-existing="!!props.initial"
           :entry="webhookEntry"
+          :overview="webhookOverview"
           :loading="webhookLoading"
           :error="webhookError"
           :rotating="webhookRotating"
@@ -426,6 +427,7 @@ const cfg = reactive({
   // WEBHOOK
   slug: '',
   methods: ['GET'],
+  allowed_networks: [],
   value_source: 'fixed',
   fixed_value: 'true',
   value_param: 'value',
@@ -498,6 +500,7 @@ const onewireAliasDrafts = reactive({})
 
 // WEBHOOK call-URL state (token is served only by the dedicated route)
 const webhookEntry    = ref(null)
+const webhookOverview = ref(null)
 const webhookLoading  = ref(false)
 const webhookError    = ref(null)
 const webhookRotating = ref(false)
@@ -701,6 +704,7 @@ watch(() => props.initial, val => {
   // WEBHOOK defaults when loading
   if (cfg.slug         == null) cfg.slug         = ''
   if (cfg.methods      == null) cfg.methods      = ['GET']
+  if (cfg.allowed_networks == null) cfg.allowed_networks = []
   if (cfg.value_source == null) cfg.value_source = 'fixed'
   if (cfg.fixed_value  == null) cfg.fixed_value  = 'true'
   if (cfg.value_param  == null) cfg.value_param  = 'value'
@@ -908,7 +912,8 @@ async function loadWebhookEntry() {
   webhookError.value = null
   try {
     const { data } = await adapterApi.webhookBindings(selectedInstanceId.value)
-    webhookEntry.value = data.find(e => String(e.binding_id) === String(props.initial.id)) ?? null
+    webhookOverview.value = data
+    webhookEntry.value = (data.bindings ?? []).find(e => String(e.binding_id) === String(props.initial.id)) ?? null
     if (!webhookEntry.value) webhookError.value = t('adapters.bindingForm.errors.webhookEntryNotFound')
   } catch (e) {
     webhookError.value = e.response?.data?.detail ?? t('adapters.bindingForm.errors.webhookLoadFailed')
@@ -1332,6 +1337,7 @@ function buildConfig() {
     const c = {
       slug: cfg.slug.trim().toLowerCase(),
       methods: [...cfg.methods],
+      allowed_networks: [...cfg.allowed_networks].map(e => e.trim()).filter(Boolean),
       value_source: cfg.value_source,
       // An emptied number input yields '' through v-model.number, which the
       // backend would reject — normalise it back to "no debounce".

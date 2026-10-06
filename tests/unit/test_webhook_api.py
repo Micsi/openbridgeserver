@@ -14,7 +14,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from obs.adapters.webhook.adapter import DEFAULT_PATH_PREFIX, BindingStats
+from obs.adapters.webhook.adapter import DEFAULT_PATH_PREFIX, BindingStats, RejectionCounters, RejectionReason
 from obs.api.auth import Principal
 from obs.api.v1 import adapters as adapters_api
 from obs.db.database import Database
@@ -35,8 +35,9 @@ class _RegistryStub:
 
 
 class _InstanceStub:
-    def __init__(self, stats: dict[str, BindingStats] | None = None) -> None:
+    def __init__(self, stats: dict[str, BindingStats] | None = None, rejections: RejectionCounters | None = None) -> None:
         self._stats = stats or {}
+        self.rejections = rejections or RejectionCounters()
 
     def stats_for(self, binding_id) -> BindingStats:
         return self._stats.get(str(binding_id), BindingStats())
@@ -177,7 +178,7 @@ async def test_listing_filters_datapoints_the_principal_may_not_read(monkeypatch
     await _insert_binding(db, binding_id=uuid.uuid4(), dp_id=blocked.id, instance_id=instance_id, config={"slug": "blocked", "token": "t2"})
     monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([allowed, blocked]))
 
-    entries = await adapters_api.webhook_list_bindings(instance_id, _user=_principal(), db=db)
+    entries = (await adapters_api.webhook_list_bindings(instance_id, _user=_principal(), db=db)).bindings
 
     assert [entry.slug for entry in entries] == ["allowed"]
 
@@ -193,7 +194,7 @@ async def test_listing_skips_a_binding_whose_stored_config_is_invalid(monkeypatc
     await _insert_binding(db, binding_id=uuid.uuid4(), dp_id=broken.id, instance_id=instance_id, config={"slug": "NOT A SLUG"})
     monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([good, broken]))
 
-    entries = await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db)
+    entries = (await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db)).bindings
 
     assert [entry.slug for entry in entries] == ["good"]
 
@@ -206,7 +207,7 @@ async def test_listing_reports_a_binding_whose_datapoint_vanished(monkeypatch, d
     await _insert_binding(db, binding_id=uuid.uuid4(), dp_id=dp_id, instance_id=instance_id, config={"slug": "orphan", "token": "t1"})
     monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([]))
 
-    entries = await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db)
+    entries = (await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db)).bindings
 
     assert [entry.datapoint_name for entry in entries] == [None]
 
@@ -228,10 +229,75 @@ async def test_listing_reports_statistics_of_the_running_instance(monkeypatch, d
         lambda _id: _InstanceStub({str(binding_id): BindingStats(call_count=3, publish_count=2, last_called=called_at, last_status=204)}),
     )
 
-    entry = (await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db))[0]
+    entry = (await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db)).bindings[0]
 
     assert (entry.call_count, entry.publish_count, entry.last_status) == (3, 2, 204)
     assert entry.last_called == called_at.isoformat()
+
+
+async def test_overview_reports_the_instance_settings_and_rejections(monkeypatch, db: Database):
+    instance_id = uuid.uuid4()
+    dp = _dp(uuid.uuid4(), "Bell")
+    counters = RejectionCounters()
+    counters.record(RejectionReason.INSTANCE_ADDRESS_BLOCKED, client_ip="127.0.0.1")
+    counters.record(RejectionReason.INSTANCE_ADDRESS_BLOCKED, client_ip="127.0.0.1")
+    await _insert_instance(
+        db,
+        instance_id,
+        config=json.dumps({"path_prefix": "/iot/hook", "allowed_networks": ["10.38.0.0/16"], "rate_limit_per_minute": 120}),
+    )
+    await _insert_datapoint_row(db, dp.id, dp.name)
+    await _insert_binding(
+        db,
+        binding_id=uuid.uuid4(),
+        dp_id=dp.id,
+        instance_id=instance_id,
+        config={"slug": "bell", "token": "t1", "allowed_networks": ["192.168.1.5"]},
+    )
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([dp]))
+    monkeypatch.setattr(adapters_api.adapter_registry, "get_instance_by_id", lambda _id: _InstanceStub(rejections=counters))
+
+    overview = await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db)
+
+    assert overview.instance_id == str(instance_id)
+    assert overview.running is True
+    assert overview.path_prefix == "/iot/hook"
+    assert overview.allowed_networks == ["10.38.0.0/16"]
+    assert overview.rate_limit_per_minute == 120
+    assert overview.trust_forwarded_for is False
+    assert overview.rejections.total == 2
+    assert overview.rejections.counts == {"instance_address_blocked": 2}
+    assert overview.rejections.last_reason == "instance_address_blocked"
+    assert overview.rejections.last_client_ip == "127.0.0.1"
+    assert overview.rejections.last_at is not None
+    assert overview.bindings[0].allowed_networks == ["192.168.1.5/32"]
+
+
+async def test_overview_of_a_stopped_instance_reports_empty_diagnostics(monkeypatch, db: Database):
+    instance_id = uuid.uuid4()
+    await _insert_instance(db, instance_id)
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([]))
+    monkeypatch.setattr(adapters_api.adapter_registry, "get_instance_by_id", lambda _id: None)
+
+    overview = await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db)
+
+    assert overview.running is False
+    assert overview.rejections.total == 0
+    assert overview.rejections.last_reason is None
+    assert overview.allowed_networks == []
+
+
+async def test_overview_falls_back_to_defaults_for_an_unparseable_instance_config(monkeypatch, db: Database):
+    """An imported backup can hold a config the current validation refuses."""
+    instance_id = uuid.uuid4()
+    await _insert_instance(db, instance_id, config=json.dumps({"path_prefix": "/api", "rate_limit_per_minute": 0}))
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([]))
+    monkeypatch.setattr(adapters_api.adapter_registry, "get_instance_by_id", lambda _id: None)
+
+    overview = await adapters_api.webhook_list_bindings(instance_id, _user=_principal(is_admin=True), db=db)
+
+    assert overview.path_prefix == DEFAULT_PATH_PREFIX
+    assert overview.rate_limit_per_minute == 60
 
 
 async def test_listing_requires_a_write_grant_on_the_instance(db: Database):

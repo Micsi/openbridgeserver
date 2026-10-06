@@ -80,6 +80,13 @@
                 :model-value="newForm.config.custom_holidays ?? []"
                 @update:model-value="newForm.config.custom_holidays = $event"
               />
+                <div v-if="newForm.adapter_type === 'WEBHOOK'" class="form-group mt-4">
+                <label class="label">{{ $t('adapters.allowlist.instanceLabel') }}</label>
+                <NetworkAllowlistEditor
+                  :model-value="newForm.config.allowed_networks ?? []"
+                  @update:model-value="newForm.config.allowed_networks = $event"
+                />
+              </div>
             </template>
           </div>
           <div v-else-if="newForm.adapter_type && schemaLoading" class="flex items-center gap-2 text-sm text-slate-500">
@@ -200,6 +207,13 @@
                   :model-value="drafts[a.id].config.custom_holidays ?? []"
                   @update:model-value="drafts[a.id].config.custom_holidays = $event"
                 />
+                <div v-if="a.adapter_type === 'WEBHOOK'" class="form-group mt-4">
+                  <label class="label">{{ $t('adapters.allowlist.instanceLabel') }}</label>
+                  <NetworkAllowlistEditor
+                    :model-value="drafts[a.id].config.allowed_networks ?? []"
+                    @update:model-value="drafts[a.id].config.allowed_networks = $event"
+                  />
+                </div>
               </template>
             </div>
             <div v-else class="flex items-center gap-2 text-sm text-slate-500 mt-4">
@@ -417,6 +431,7 @@ import Spinner       from '@/components/ui/Spinner.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import SchemaForm    from '@/components/adapters/SchemaForm.vue'
 import ZeitschaltuhrCustomHolidaysEditor from '@/components/adapters/ZeitschaltuhrCustomHolidaysEditor.vue'
+import NetworkAllowlistEditor from '@/components/ui/NetworkAllowlistEditor.vue'
 import AnwesenheitDatapointSelector from '@/components/adapters/AnwesenheitDatapointSelector.vue'
 import AnwesenheitConfigForm from '@/components/adapters/AnwesenheitConfigForm.vue'
 import KnxConfigForm        from '@/components/adapters/KnxConfigForm.vue'
@@ -431,6 +446,7 @@ function excludedSchemaFields(adapterType) {
   const type = adapterType.toLowerCase()
   if (type === 'zeitschaltuhr') return ['custom_holidays']
   if (type === 'onewire') return ['aliases'] // edited inline via the binding-form sensor scan
+  if (type === 'webhook') return ['allowed_networks'] // multi-entry list, see NetworkAllowlistEditor
   return []
 }
 // Subset of excludedSchemaFields() that is edited entirely outside drafts[a.id].config

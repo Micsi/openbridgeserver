@@ -37,6 +37,19 @@
     <p class="hint">{{ $t('adapters.bindingForm.webhookMethodsHint') }}</p>
   </div>
 
+  <!-- Ingress allowlist (binding level) -->
+  <div class="form-group">
+    <label class="label">{{ $t('adapters.allowlist.bindingLabel') }}</label>
+    <NetworkAllowlistEditor
+      :model-value="cfg.allowed_networks ?? []"
+      :empty-hint="$t('adapters.allowlist.bindingEmptyMeansAny')"
+      @update:model-value="cfg.allowed_networks = $event"
+    />
+    <p v-if="overview?.allowed_networks?.length" class="hint" data-testid="webhook-instance-allowlist">
+      {{ $t('adapters.allowlist.instanceAlsoApplies', { list: overview.allowed_networks.join(', ') }) }}
+    </p>
+  </div>
+
   <!-- Value source -->
   <div class="grid grid-cols-2 gap-4">
     <div class="form-group">
@@ -80,6 +93,13 @@
           </button>
         </div>
         <p class="hint">{{ $t('adapters.bindingForm.webhookCallUrlHint') }}</p>
+        <p
+          v-if="originBlockedBy"
+          class="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-600 dark:text-amber-400"
+          data-testid="webhook-origin-warning"
+        >
+          {{ $t(`adapters.allowlist.originBlocked.${originBlockedBy}`, { host: originHost }) }}
+        </p>
       </div>
 
       <div class="form-group">
@@ -108,6 +128,21 @@
         </div>
       </div>
 
+      <!-- Why calls were turned away — a 404 is indistinguishable by design -->
+      <div
+        v-if="rejectionSummary"
+        class="p-2 rounded-lg bg-slate-100/80 dark:bg-slate-800/40 text-xs text-slate-600 dark:text-slate-300"
+        data-testid="webhook-rejections"
+      >
+        <div>{{ $t('adapters.allowlist.rejectedCalls', { n: rejectionSummary.total }) }}</div>
+        <div v-if="rejectionSummary.lastReason" class="mt-0.5 text-slate-500">
+          {{ $t('adapters.allowlist.lastRejection', {
+            reason: rejectionSummary.lastReason,
+            host: rejectionSummary.lastClientIp || '—',
+          }) }}
+        </div>
+      </div>
+
       <div class="flex items-center gap-3">
         <button type="button" class="btn-secondary btn-sm" :disabled="rotating" @click="$emit('rotate-token')" data-testid="webhook-rotate-token">
           <Spinner v-if="rotating" size="sm" />
@@ -123,7 +158,9 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import HelpButton from '@/components/ui/HelpButton.vue'
+import NetworkAllowlistEditor from '@/components/ui/NetworkAllowlistEditor.vue'
 import Spinner from '@/components/ui/Spinner.vue'
+import { isAddressCovered } from '@/utils/ipAllowlist'
 
 const { t } = useI18n()
 
@@ -131,6 +168,7 @@ const props = defineProps({
   cfg: { type: Object, required: true },
   isExisting: { type: Boolean, default: false },
   entry: { type: [Object, null], default: null },
+  overview: { type: [Object, null], default: null },
   loading: { type: Boolean, default: false },
   error: { type: [String, null], default: null },
   rotating: { type: Boolean, default: false },
@@ -155,6 +193,34 @@ const callUrl = computed(() => `${window.location.origin}${props.entry.call_path
 const callUrlInPath = computed(() => `${window.location.origin}${props.entry.call_path_token_in_path}`)
 
 const copied = ref(null)
+
+const originHost = window.location.hostname
+
+/**
+ * Which level would reject a call from the host this GUI is open on, if any.
+ *
+ * The call URL is built from the browser's own origin, so administering OBS
+ * via localhost while the allowlist only names the LAN hands the operator a
+ * URL their own configuration rejects — with an indistinguishable 404 and no
+ * other hint. `isAddressCovered` returns null when it cannot decide (a
+ * hostname needing DNS, an IPv6 entry), and then no warning is shown: a wrong
+ * warning about a working URL would be worse than none.
+ */
+const originBlockedBy = computed(() => {
+  if (isAddressCovered(originHost, props.overview?.allowed_networks ?? []) === false) return 'instance'
+  if (isAddressCovered(originHost, props.cfg.allowed_networks ?? []) === false) return 'binding'
+  return null
+})
+
+const rejectionSummary = computed(() => {
+  const rejections = props.entry?.rejections
+  if (!rejections || !rejections.total) return null
+  return {
+    total: rejections.total,
+    lastReason: rejections.last_reason ? t(`adapters.allowlist.reason.${rejections.last_reason}`) : '',
+    lastClientIp: rejections.last_client_ip,
+  }
+})
 
 function toggleMethod(method) {
   const current = [...selectedMethods.value]

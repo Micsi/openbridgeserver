@@ -11,6 +11,20 @@ const INSTANCES = [
   { id: 'mqtt-1', name: 'MQTT Test', adapter_type: 'MQTT' },
 ]
 
+function overview(bindings, extra = {}) {
+  return {
+    instance_id: 'hook-1',
+    running: true,
+    path_prefix: '/hook',
+    allowed_networks: [],
+    trust_forwarded_for: false,
+    rate_limit_per_minute: 60,
+    rejections: { total: 0, counts: {}, last_reason: null, last_client_ip: null, last_slug: null, last_at: null },
+    bindings,
+    ...extra,
+  }
+}
+
 const ENTRY = {
   binding_id: 'binding-1',
   slug: 'haustuer-klingel',
@@ -27,7 +41,7 @@ beforeEach(() => {
   vi.resetModules()
   createBinding = vi.fn().mockResolvedValue({})
   updateBinding = vi.fn().mockResolvedValue({})
-  webhookBindings = vi.fn().mockResolvedValue({ data: [ENTRY] })
+  webhookBindings = vi.fn().mockResolvedValue({ data: overview([ENTRY]) })
   webhookRotateToken = vi.fn().mockResolvedValue({
     data: {
       binding_id: 'binding-1',
@@ -114,6 +128,7 @@ describe('BindingForm — WEBHOOK create', () => {
       config: {
         slug: 'haustuer-klingel',
         methods: ['GET'],
+        allowed_networks: [],
         value_source: 'fixed',
         fixed_value: 'true',
         debounce_ms: 0,
@@ -135,6 +150,7 @@ describe('BindingForm — WEBHOOK create', () => {
     expect(createBinding.mock.calls[0][1].config).toEqual({
       slug: 'bell',
       methods: ['GET'],
+      allowed_networks: [],
       value_source: 'request',
       value_param: 'kovalue',
       debounce_ms: 0,
@@ -191,7 +207,7 @@ describe('BindingForm — WEBHOOK edit', () => {
   })
 
   it('reports a binding that the webhook listing does not contain', async () => {
-    webhookBindings.mockResolvedValue({ data: [] })
+    webhookBindings.mockResolvedValue({ data: overview([]) })
     const w = await mountForm({ initial: existingBinding() })
 
     expect(w.text()).toContain('Aufruf-URL für diese Verknüpfung nicht gefunden')
@@ -211,6 +227,36 @@ describe('BindingForm — WEBHOOK edit', () => {
     const w = await mountForm({ initial: existingBinding() })
 
     expect(w.text()).toContain('Aufruf-URL konnte nicht geladen werden')
+    w.unmount()
+  })
+
+  it('tolerates an overview without a bindings list', async () => {
+    webhookBindings.mockResolvedValue({ data: { ...overview([]), bindings: undefined } })
+    const w = await mountForm({ initial: existingBinding() })
+
+    expect(w.text()).toContain('Aufruf-URL für diese Verknüpfung nicht gefunden')
+    w.unmount()
+  })
+
+  it('submits the binding allowlist, dropping blank rows', async () => {
+    const w = await mountForm({
+      initial: existingBinding({ allowed_networks: ['10.38.0.0/16'] }),
+    })
+    await w.find('[data-testid="allowlist-add"]').trigger('click')
+    await w.find('[data-testid="allowlist-entry-1"]').setValue('  192.168.1.5  ')
+    await w.find('[data-testid="allowlist-add"]').trigger('click')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(updateBinding.mock.calls[0][2].config.allowed_networks).toEqual(['10.38.0.0/16', '192.168.1.5'])
+    w.unmount()
+  })
+
+  it('warns when the instance allowlist excludes the host the GUI runs on', async () => {
+    webhookBindings.mockResolvedValue({ data: overview([ENTRY], { allowed_networks: ['10.38.0.0/16'] }) })
+    const w = await mountForm({ initial: existingBinding() })
+
+    expect(w.find('[data-testid="webhook-origin-warning"]').exists()).toBe(true)
     w.unmount()
   })
 
@@ -260,6 +306,7 @@ describe('BindingForm — WEBHOOK edit', () => {
       config: {
         slug: 'haustuer-klingel',
         methods: ['GET', 'POST'],
+        allowed_networks: [],
         value_source: 'request',
         value_param: 'kovalue',
         debounce_ms: 750,
@@ -272,7 +319,15 @@ describe('BindingForm — WEBHOOK edit', () => {
     const w = await mountForm({
       initial: {
         ...existingBinding(),
-        config: { slug: null, methods: null, value_source: null, fixed_value: null, value_param: null, debounce_ms: null },
+        config: {
+          slug: null,
+          methods: null,
+          allowed_networks: null,
+          value_source: null,
+          fixed_value: null,
+          value_param: null,
+          debounce_ms: null,
+        },
       },
     })
 

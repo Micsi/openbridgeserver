@@ -17,8 +17,12 @@ from obs.adapters.webhook.ingress import (
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
+        (None, []),
         ("", []),
         ("   ", []),
+        ([], []),
+        (["10.0.0.0/8", " 192.168.1.5 ", "", "  "], ["10.0.0.0/8", "192.168.1.5"]),
+        (("10.0.0.0/8",), ["10.0.0.0/8"]),
         ("10.0.0.0/8", ["10.0.0.0/8"]),
         ("10.0.0.0/8,192.168.1.0/24", ["10.0.0.0/8", "192.168.1.0/24"]),
         ("10.0.0.0/8; 192.168.1.0/24", ["10.0.0.0/8", "192.168.1.0/24"]),
@@ -27,6 +31,13 @@ from obs.adapters.webhook.ingress import (
 )
 def test_split_entries(raw, expected):
     assert split_entries(raw) == expected
+
+
+def test_normalise_entries_canonicalises_and_deduplicates():
+    from obs.adapters.webhook.ingress import normalise_entries
+
+    assert normalise_entries(["10.38.111.21/16", "10.38.0.0/16", "192.168.1.5"]) == ["10.38.0.0/16", "192.168.1.5/32"]
+    assert normalise_entries("") == []
 
 
 def test_parse_networks_accepts_bare_addresses_and_host_bits():

@@ -74,7 +74,7 @@ auf das Gong, Visu und Logik reagieren.
 | Feld | Bedeutung |
 |---|---|
 | **Pfad-Präfix** | Pfad, unter dem die Instanz erreichbar ist. Standard `/hook`. Maximal drei Segmente; `api`, `assets`, `help`, `setup` und `visu` sind belegt. |
-| **Erlaubte Netze (CIDR)** | Liste von Netzen oder Einzeladressen (z. B. `192.168.1.0/24, 192.168.2.5`), die den Endpunkt erreichen dürfen. Leer = keine Einschränkung. |
+| **Erlaubte Netze (CIDR)** | Liste von Netzen oder Einzeladressen, die den Endpunkt erreichen dürfen. Einträge werden einzeln verwaltet (Zeile hinzufügen/entfernen). Leer = keine Einschränkung. |
 | **X-Forwarded-For vertrauen** | Nur einschalten, wenn ein Reverse Proxy vorgeschaltet ist. Ohne Proxy könnte jeder Aufrufer eine erlaubte Absenderadresse vortäuschen. |
 | **Ratenlimit** | Angenommene Aufrufe pro Minute und Absender-IP. Darüber antwortet der Endpunkt mit `429`. |
 
@@ -93,7 +93,24 @@ Eingang.
 | **Erlaubte HTTP-Methoden** | `GET`, `POST` oder beides. Geräte, die nur eine URL aufrufen können, benutzen `GET`. |
 | **Wertquelle** | **Fester Wert** für Taster und Klingeln (`true`), oder **Wert aus der Anfrage**. |
 | **Parameter-/Feldname** | Bei *Wert aus der Anfrage*: der Query-Parameter bei `GET` (`?value=1`), bzw. das gleichnamige Feld im JSON-Body bei `POST`. Standard `value`. |
+| **Erlaubte Netze (CIDR)** | Zusätzliche Allowlist nur für diese Verknüpfung — z. B. die feste Adresse genau dieser Türsprechstelle. Leer = es gilt nur die Allowlist der Instanz. |
 | **Entprellung (ms)** | Weitere Aufrufe innerhalb dieser Zeit werden mit `204` bestätigt, setzen den Wert aber nicht erneut. `0` = aus. |
+
+### Zwei Ebenen für die Allowlist
+
+Ein Aufruf muss **beide** Allowlists passieren: die der Instanz (Perimeter für
+den ganzen Endpunkt) und die der Verknüpfung (nur dieses eine Gerät). Eine leere
+Liste schränkt auf ihrer Ebene nicht ein. Damit kann eine Verknüpfung den
+Perimeter der Instanz immer nur **enger** ziehen, nie weiter — sonst wäre der
+Perimeter wirkungslos.
+
+::: warning Vorsicht bei einem Reverse Proxy
+Steht ein Reverse Proxy (nginx, Caddy) vor OBS, kommen alle Aufrufe mit dessen
+Adresse an — bei einem Proxy auf demselben Host also als `127.0.0.1`. Dann
+greift die Allowlist nicht mehr wie gedacht. In dem Fall **X-Forwarded-For
+vertrauen** einschalten *und* sicherstellen, dass der Proxy diesen Header selbst
+setzt und einen vom Client mitgeschickten überschreibt.
+:::
 
 Der Wert wird in den Datentyp des Objekts umgewandelt — `1`, `true`, `on` und `yes` ergeben
 auf einem Boolean-Objekt `true`, `0`, `false`, `off` und `no` ergeben `false`. Passt der Wert
@@ -120,10 +137,28 @@ zulässt. Beide verhalten sich gleich:
 | `404` | Unbekannter Slug, falsches Token, nicht erlaubte Methode oder gesperrte Absenderadresse — bewusst nicht unterscheidbar |
 | `429` | Ratenlimit der Instanz überschritten |
 
+::: tip Die URL wird mit der Adresse gebaut, unter der die Admin-GUI gerade offen ist
+Wer OBS über `http://localhost:8080` administriert, bekommt eine `localhost`-URL
+zum Kopieren — und ein Aufruf von dort kommt als `127.0.0.1` an. Ist in der
+Allowlist nur das LAN eingetragen (z. B. `10.38.0.0/16`), wird genau dieser
+Testaufruf mit `404` abgewiesen, obwohl Slug und Token stimmen. Das Formular
+weist darauf hin, sobald die Allowlist den gerade verwendeten Absender nicht
+abdeckt; zum Testen entweder `127.0.0.1` ergänzen oder die GUI über die
+LAN-Adresse öffnen.
+:::
+
 Unter der URL zeigt das Formular außerdem **Aufrufe**, **gesetzte Werte** und den **letzten
 Aufruf** dieser Verknüpfung. Diese Zähler leben im laufenden Betrieb und beginnen nach einem
 Neustart wieder bei null; die Werte selbst stehen wie immer im Monitor und in der Historie,
 dort mit `WEBHOOK` als Quelle.
+
+Abgewiesene Aufrufe erscheinen daneben mit **Grund und Absenderadresse** —
+Ratenlimit, Adresse nicht in der Allowlist (Instanz oder Verknüpfung),
+unbekannter Slug, falsches Token oder nicht erlaubte Methode. Weil die Antwort
+nach außen bewusst ein nicht unterscheidbares `404` bleibt, ist diese Anzeige
+der einzige Ort, an dem sich ein stiller Fehlschlag überhaupt erkennen lässt.
+Die Zähler der Instanz stehen unter **Adapter → Instanz**, die einer einzelnen
+Verknüpfung direkt unter deren Aufruf-URL.
 
 **Token neu erzeugen** widerruft die bisherige URL sofort und gibt eine neue aus — z. B.
 wenn ein Gerät ausgetauscht wird oder seine Konfiguration in falsche Hände geraten ist.

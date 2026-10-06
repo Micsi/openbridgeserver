@@ -30,20 +30,27 @@ A webhook binding may only point at a ``room_local`` DataPoint — the same
 boundary the anonymous Visu path draws for ``central_plant`` — and that is
 re-checked on every call, not just when the binding is created.
 
+The ingress allowlist exists on both levels and a call must pass **both**: the
+instance list is the perimeter for the whole endpoint, the binding list narrows
+it to the one device that owns that slug. Either list may be empty, which means
+"no restriction at this level" — a binding list can therefore only ever narrow
+the instance list, never widen it, so the perimeter stays meaningful.
+
 Adapter configuration (``adapter_instances.config``):
   path_prefix:          str    URL prefix the instance claims  (default: "/hook")
-  allowed_networks:     str    Comma-separated CIDRs/IPs; empty = any  (default: "")
+  allowed_networks:     list   CIDRs/IPs; empty = any           (default: [])
   trust_forwarded_for:  bool   Read the client IP from X-Forwarded-For (default: False)
   rate_limit_per_minute: int   Accepted calls per client IP per minute (default: 60)
 
 Binding configuration (``adapter_bindings.config``):
-  slug:            str    Path segment, e.g. "haustuer-klingel"
-  token:           str    Server-generated secret; never accepted from a client
-  methods:         list   Any of ["GET", "POST"]                   (default: ["GET"])
-  value_source:    str    "fixed" | "request"                      (default: "fixed")
-  fixed_value:     str    Value for value_source == "fixed"        (default: "true")
-  value_param:     str    Query parameter / JSON field name        (default: "value")
-  debounce_ms:     int    Ignore repeat calls within this window   (default: 0)
+  slug:             str    Path segment, e.g. "haustuer-klingel"
+  token:            str    Server-generated secret; never accepted from a client
+  methods:          list   Any of ["GET", "POST"]                  (default: ["GET"])
+  allowed_networks: list   CIDRs/IPs for this binding; empty = any (default: [])
+  value_source:     str    "fixed" | "request"                     (default: "fixed")
+  fixed_value:      str    Value for value_source == "fixed"       (default: "true")
+  value_param:      str    Query parameter / JSON field name       (default: "value")
+  debounce_ms:      int    Ignore repeat calls within this window  (default: 0)
 """
 
 from __future__ import annotations
@@ -55,14 +62,15 @@ import re
 import secrets
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from obs.adapters.base import AdapterBase
 from obs.adapters.registry import register
-from obs.adapters.webhook.ingress import IpNetwork, address_allowed, parse_networks, resolve_client_ip
+from obs.adapters.webhook.ingress import IpNetwork, address_allowed, normalise_entries, parse_networks, resolve_client_ip
 from obs.core.event_bus import DataValueEvent
 from obs.models.types import DataTypeRegistry
 
@@ -128,7 +136,7 @@ def normalise_path_prefix(raw: str) -> str:
 
 class WebhookAdapterConfig(BaseModel):
     path_prefix: str = Field(default=DEFAULT_PATH_PREFIX, title="Pfad-Präfix")
-    allowed_networks: str = Field(default="", title="Erlaubte Netze (CIDR)")
+    allowed_networks: list[str] = Field(default_factory=list, title="Erlaubte Netze (CIDR)")
     trust_forwarded_for: bool = Field(default=False, title="X-Forwarded-For vertrauen")
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000, title="Ratenlimit (Aufrufe/Minute je IP)")
 
@@ -137,21 +145,26 @@ class WebhookAdapterConfig(BaseModel):
     def _check_path_prefix(cls, value: str) -> str:
         return normalise_path_prefix(value)
 
-    @field_validator("allowed_networks")
+    @field_validator("allowed_networks", mode="before")
     @classmethod
-    def _check_allowed_networks(cls, value: str) -> str:
-        parse_networks(value)  # raises ValueError on a malformed entry
-        return value.strip()
+    def _check_allowed_networks(cls, value: Any) -> list[str]:
+        return normalise_entries(value)
 
 
 class WebhookBindingConfig(BaseModel):
     slug: str = Field(default="", title="Slug (Pfadsegment)")
     token: str = Field(default="", title="Token")
     methods: list[Literal["GET", "POST"]] = Field(default_factory=lambda: ["GET"], title="HTTP-Methoden")
+    allowed_networks: list[str] = Field(default_factory=list, title="Erlaubte Netze (CIDR)")
     value_source: Literal["fixed", "request"] = Field(default="fixed", title="Wertquelle")
     fixed_value: str = Field(default="true", title="Fester Wert")
     value_param: str = Field(default="value", title="Parameter-/Feldname")
     debounce_ms: int = Field(default=0, ge=0, le=3_600_000, title="Entprellung (ms)")
+
+    @field_validator("allowed_networks", mode="before")
+    @classmethod
+    def _check_allowed_networks(cls, value: Any) -> list[str]:
+        return normalise_entries(value)
 
     @field_validator("slug")
     @classmethod
@@ -285,6 +298,49 @@ class TriggerOutcome:
     detail: str
 
 
+class RejectionReason(StrEnum):
+    """Why a call was turned away, for the Admin GUI's diagnostics.
+
+    A rejected call answers an indistinguishable 404 by design, which makes a
+    misconfigured allowlist look exactly like a broken adapter. Counting the
+    reasons — and remembering the address of the last one — is what turns that
+    silence back into something an operator can act on, without telling the
+    caller anything it did not already know.
+    """
+
+    RATE_LIMITED = "rate_limited"
+    INSTANCE_ADDRESS_BLOCKED = "instance_address_blocked"
+    UNKNOWN_SLUG = "unknown_slug"
+    INVALID_BINDING = "invalid_binding"
+    INVALID_TOKEN = "invalid_token"
+    BINDING_ADDRESS_BLOCKED = "binding_address_blocked"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
+
+
+@dataclass
+class LastRejection:
+    reason: RejectionReason
+    client_ip: str | None
+    at: datetime.datetime
+    slug: str | None = None
+
+
+@dataclass
+class RejectionCounters:
+    """Per-reason counters; the keys are the ``RejectionReason`` values."""
+
+    counts: dict[str, int] = field(default_factory=dict)
+    last: LastRejection | None = None
+
+    def record(self, reason: RejectionReason, *, client_ip: str | None, slug: str | None = None) -> None:
+        self.counts[reason.value] = self.counts.get(reason.value, 0) + 1
+        self.last = LastRejection(reason=reason, client_ip=client_ip, at=datetime.datetime.now(datetime.UTC), slug=slug)
+
+    @property
+    def total(self) -> int:
+        return sum(self.counts.values())
+
+
 @dataclass
 class BindingStats:
     """In-memory call statistics shown next to a binding in the Admin GUI.
@@ -303,6 +359,7 @@ class BindingStats:
     publish_count: int = 0
     last_called: datetime.datetime | None = None
     last_status: int | None = None
+    rejections: RejectionCounters = field(default_factory=RejectionCounters)
 
 
 _NOT_FOUND = TriggerOutcome(404, "Not found")
@@ -375,6 +432,7 @@ class WebhookAdapter(AdapterBase):
         self._by_slug: dict[str, Any] = {}
         self._stats: dict[str, BindingStats] = {}
         self._last_trigger: dict[str, float] = {}
+        self._rejections = RejectionCounters()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -467,8 +525,27 @@ class WebhookAdapter(AdapterBase):
     def path_prefix(self) -> str:
         return self._path_prefix
 
+    @property
+    def rejections(self) -> RejectionCounters:
+        """Instance-wide rejections — the ones no binding can be blamed for."""
+        return self._rejections
+
     def stats_for(self, binding_id: uuid.UUID | str) -> BindingStats:
         return self._stats.get(str(binding_id), BindingStats())
+
+    def _reject(
+        self,
+        reason: RejectionReason,
+        *,
+        client_ip: str | None,
+        slug: str | None = None,
+        binding: Any = None,
+    ) -> None:
+        """Count a turned-away call, on the instance and on its binding if known."""
+        self._rejections.record(reason, client_ip=client_ip, slug=slug)
+        if binding is not None:
+            stats = self._stats.setdefault(str(binding.id), BindingStats())
+            stats.rejections.record(reason, client_ip=client_ip, slug=slug)
 
     # ------------------------------------------------------------------
     # Trigger
@@ -496,31 +573,45 @@ class WebhookAdapter(AdapterBase):
         # caps how many warning lines a blocked address can write to the log.
         if not self._limiter.allow(client_ip or "unknown"):
             logger.warning("WEBHOOK: rate limit exceeded for %s", client_ip)
+            self._reject(RejectionReason.RATE_LIMITED, client_ip=client_ip)
             return TriggerOutcome(429, "Too many requests")
 
         if not address_allowed(client_ip, self._allowed_networks):
-            logger.warning("WEBHOOK: rejected call from %s (not in allowed networks)", client_ip)
+            logger.warning("WEBHOOK: rejected call from %s — not in the instance's allowed networks", client_ip)
+            self._reject(RejectionReason.INSTANCE_ADDRESS_BLOCKED, client_ip=client_ip)
             return _NOT_FOUND
 
         slug, path_token = self._split_remainder(remainder)
         binding = self._by_slug.get(slug) if slug else None
         if binding is None:
             logger.warning("WEBHOOK: unknown slug %r from %s", slug, client_ip)
+            self._reject(RejectionReason.UNKNOWN_SLUG, client_ip=client_ip, slug=slug)
             return _NOT_FOUND
 
         try:
             config = WebhookBindingConfig(**binding.config)
         except ValidationError:
             logger.warning("WEBHOOK: binding %s has an invalid configuration", binding.id)
+            self._reject(RejectionReason.INVALID_BINDING, client_ip=client_ip, slug=slug)
             return _NOT_FOUND
 
         provided = path_token if path_token else query_params.get("token")
         if not token_matches(config.token, provided):
             logger.warning("WEBHOOK: invalid token for slug %r from %s", slug, client_ip)
+            self._reject(RejectionReason.INVALID_TOKEN, client_ip=client_ip, slug=slug)
             return _NOT_FOUND
+
+        # Checked after the token so the rejection can be attributed to this
+        # binding in the GUI. A caller that fails here already holds a valid
+        # token, so the later check leaks nothing a 404 did not already say.
+        if not address_allowed(client_ip, parse_networks(config.allowed_networks)):
+            logger.warning("WEBHOOK: rejected call from %s — not in the allowed networks of slug %r", client_ip, slug)
+            self._reject(RejectionReason.BINDING_ADDRESS_BLOCKED, client_ip=client_ip, slug=slug, binding=binding)
+            return self._record(binding, _NOT_FOUND)
 
         if method not in config.methods:
             logger.warning("WEBHOOK: method %s not allowed for slug %r", method, slug)
+            self._reject(RejectionReason.METHOD_NOT_ALLOWED, client_ip=client_ip, slug=slug, binding=binding)
             return self._record(binding, _NOT_FOUND)
 
         stats = self._stats.setdefault(str(binding.id), BindingStats())

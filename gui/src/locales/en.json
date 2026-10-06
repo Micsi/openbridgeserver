@@ -1269,6 +1269,33 @@
       "configValidationError": "Configuration validation error: {error}",
       "connectOk": "Connection to {type} successful",
       "connectFailed": "Connection attempt failed"
+    },
+    "allowlist": {
+      "instanceLabel": "Allowed networks of the instance (CIDR)",
+      "bindingLabel": "Allowed networks of this binding (CIDR)",
+      "placeholder": "10.38.0.0/16",
+      "addEntry": "Add entry",
+      "removeEntry": "Remove entry",
+      "emptyMeansAny": "No entries — every caller is allowed.",
+      "bindingEmptyMeansAny": "No entries — only the instance's allowlist applies.",
+      "invalidEntries": "{n} entry/entries are not a valid IP address or CIDR",
+      "hint": "One IP address or network per row, e.g. 10.38.0.0/16 or 192.168.1.5. A call must pass the instance's allowlist and the binding's; an empty list does not restrict at that level.",
+      "instanceAlsoApplies": "The instance's allowlist applies as well: {list}",
+      "rejectedCalls": "{n} call(s) rejected",
+      "lastRejection": "Last: {reason} — caller {host}",
+      "originBlocked": {
+        "instance": "This URL points at {host}. The instance's allowlist does not allow that caller — a call from here is rejected with 404.",
+        "binding": "This URL points at {host}. This binding's allowlist does not allow that caller — a call from here is rejected with 404."
+      },
+      "reason": {
+        "rate_limited": "rate limit exceeded",
+        "instance_address_blocked": "caller address not in the instance's allowlist",
+        "unknown_slug": "unknown slug",
+        "invalid_binding": "invalid binding configuration",
+        "invalid_token": "wrong token",
+        "binding_address_blocked": "caller address not in the binding's allowlist",
+        "method_not_allowed": "HTTP method not allowed"
+      }
     }
   },
   "history": {
