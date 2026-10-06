@@ -167,7 +167,7 @@
     <!-- Every hierarchy position this graph is linked to, from "Alle
          anzeigen" — each individually removable, since there is no single
          "current position" to unlink from like the folder-browse view has. -->
-    <Modal v-model="linksModal.open" :title="linksModalTitle" max-width="sm">
+    <Modal v-model="linksModal.open" :title="linksModalTitle" max-width="6xl">
       <template #header-actions>
         <HelpButton help-id="logic-graph-picker-links" />
       </template>
