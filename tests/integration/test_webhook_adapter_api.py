@@ -9,6 +9,7 @@ rules the generic binding routes enforce.
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 
 import pytest
@@ -643,7 +644,7 @@ async def test_rotation_writes_an_audit_entry_without_the_token(client, auth_hea
         )
         assert row is not None
         assert row["actor"] == "admin"
-        assert row["resource_type"] == "adapter_instance"
+        assert row["resource_type"] == "binding"
         assert row["resource_id"] == binding["id"]
         assert token not in (row["details_json"] or "")
     finally:
@@ -801,3 +802,51 @@ async def test_migration_moves_webhook_bindings_with_distinct_slugs(client, auth
     finally:
         await _delete_instance(client, auth_headers, source["id"])
         await _delete_instance(client, auth_headers, target["id"])
+
+
+async def test_a_save_that_raced_a_rotation_does_not_restore_the_old_token(client, auth_headers, monkeypatch):
+    from obs.api.v1 import bindings as bindings_api
+    from obs.db.database import get_db
+
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers, enabled=False)
+    try:
+        binding = await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "racy"})
+        rotated_token = "rotated-while-the-save-was-in-flight"
+        original = bindings_api._ensure_webhook_slug_free
+
+        async def rotate_then_check(db, *args, **kwargs):
+            # Lands after the PATCH read the old token and before it writes.
+            row = await db.fetchone("SELECT config FROM adapter_bindings WHERE id=?", (binding["id"],))
+            config = json.loads(row["config"])
+            config["token"] = rotated_token
+            await db.execute_and_commit("UPDATE adapter_bindings SET config=? WHERE id=?", (json.dumps(config), binding["id"]))
+            return await original(db, *args, **kwargs)
+
+        monkeypatch.setattr(bindings_api, "_ensure_webhook_slug_free", rotate_then_check)
+        resp = await client.patch(
+            f"/api/v1/datapoints/{dp['id']}/bindings/{binding['id']}",
+            json={"config": {"slug": "racy", "debounce_ms": 10}},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        row = await get_db().fetchone("SELECT config FROM adapter_bindings WHERE id=?", (binding["id"],))
+        assert json.loads(row["config"])["token"] == rotated_token
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_duplicating_a_datapoint_does_not_clone_its_webhook_binding(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers, enabled=False)
+    try:
+        await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "original"})
+
+        resp = await client.post(f"/api/v1/datapoints/{dp['id']}/duplicate", json={"name": f"Copy-{uuid.uuid4().hex[:6]}"}, headers=auth_headers)
+        assert resp.status_code == 201, resp.text
+
+        bindings = await _webhook_bindings(client, auth_headers, instance["id"])
+        assert [entry["slug"] for entry in bindings] == ["original"]
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])

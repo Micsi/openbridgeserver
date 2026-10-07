@@ -8,6 +8,7 @@ principal whose grants do not cover every bound DataPoint.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 
@@ -26,6 +27,7 @@ NOW = "2026-10-06T00:00:00+00:00"
 class _RegistryStub:
     def __init__(self, datapoints: list[DataPoint]) -> None:
         self._datapoints = datapoints
+        self.external_write_lock = asyncio.Lock()
 
     def all(self) -> list[DataPoint]:
         return list(self._datapoints)
@@ -75,7 +77,7 @@ async def _insert_tree_and_nodes(db: Database) -> None:
             (id, tree_id, parent_id, name, description, node_order, icon, created_at, updated_at)
         VALUES (?, 'tree', NULL, ?, '', 0, NULL, ?, ?)
         """,
-        [("allowed-room", "allowed-room", NOW, NOW), ("secret-room", "secret-room", NOW, NOW)],
+        [("allowed-room", "allowed-room", NOW, NOW), ("secret-room", "secret-room", NOW, NOW), ("read-room", "read-room", NOW, NOW)],
     )
     await db.commit()
 
@@ -164,22 +166,27 @@ def test_webhook_call_paths():
 # ---------------------------------------------------------------------------
 
 
-async def test_listing_filters_datapoints_the_principal_may_not_read(monkeypatch, db: Database):
+async def test_listing_serves_a_token_only_for_datapoints_the_principal_may_write(monkeypatch, db: Database):
     instance_id = uuid.uuid4()
     allowed = _dp(uuid.uuid4(), "Allowed")
     blocked = _dp(uuid.uuid4(), "Blocked")
+    read_only = _dp(uuid.uuid4(), "ReadOnly")
     await _insert_tree_and_nodes(db)
     await _insert_datapoint(db, allowed, "allowed-room")
     await _insert_datapoint(db, blocked, "secret-room")
-    await _insert_grant(db, "allowed-room")
+    await _insert_datapoint(db, read_only, "read-room")
+    await _insert_grant(db, "allowed-room", role="operator")
+    await _insert_grant(db, "read-room", role="guest")
     await _insert_instance(db, instance_id)
     await _insert_grant(db, str(instance_id), node_type="adapter_instance", role="operator")
-    await _insert_binding(db, binding_id=uuid.uuid4(), dp_id=allowed.id, instance_id=instance_id, config={"slug": "allowed", "token": "t1"})
-    await _insert_binding(db, binding_id=uuid.uuid4(), dp_id=blocked.id, instance_id=instance_id, config={"slug": "blocked", "token": "t2"})
-    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([allowed, blocked]))
+    for dp, slug in ((allowed, "allowed"), (blocked, "blocked"), (read_only, "readonly")):
+        await _insert_binding(db, binding_id=uuid.uuid4(), dp_id=dp.id, instance_id=instance_id, config={"slug": slug, "token": f"t-{slug}"})
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([allowed, blocked, read_only]))
 
     entries = (await adapters_api.webhook_list_bindings(instance_id, _user=_principal(), db=db)).bindings
 
+    # The token is a bearer secret with write authority: read access to the
+    # DataPoint ("readonly") must not be enough to be handed it.
     assert [entry.slug for entry in entries] == ["allowed"]
 
 

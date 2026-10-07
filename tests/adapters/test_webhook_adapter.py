@@ -216,6 +216,8 @@ def test_token_matches(expected, provided, result):
         (0.0, "BOOLEAN", False),
         ("42", "INTEGER", 42),
         ("42.0", "INTEGER", 42),
+        (42.0, "INTEGER", 42),
+        ("-1.5", "FLOAT", -1.5),
         ("9007199254740993", "INTEGER", 9007199254740993),
         (7, "INTEGER", 7),
         (True, "INTEGER", 1),
@@ -240,6 +242,11 @@ def test_coerce_webhook_value(raw, data_type, expected):
         (None, "BOOLEAN"),
         ("abc", "INTEGER"),
         ("42.7", "INTEGER"),
+        (42.7, "INTEGER"),
+        ("NaN", "FLOAT"),
+        (float("nan"), "FLOAT"),
+        ("inf", "FLOAT"),
+        (float("inf"), "FLOAT"),
         (None, "INTEGER"),
         ("abc", "FLOAT"),
         (None, "FLOAT"),
@@ -873,6 +880,32 @@ async def test_autoreset_publishes_the_reset_value_after_the_delay(mock_bus, mon
     # A plain value event, so the WriteRouter fans it out to the DEST bindings
     # too — that is what makes 1-then-0 reach KNX.
     assert reset.suppress_write_propagation is False
+
+
+async def test_autoreset_is_skipped_when_the_datapoint_was_reclassified_meanwhile(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=10)
+    dp = _Dp(binding.datapoint_id)
+    _stub_registry(monkeypatch, dp)
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    dp.control_class = "central_plant"
+    await _settle_autoreset(instance, binding)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True]
+
+
+async def test_autoreset_is_skipped_when_the_datapoint_disappeared_meanwhile(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=10)
+    dp = _Dp(binding.datapoint_id)
+    _stub_registry(monkeypatch, dp)
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    _stub_registry(monkeypatch, None)
+    await _settle_autoreset(instance, binding)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True]
 
 
 async def test_no_autoreset_when_it_is_switched_off(mock_bus, monkeypatch):

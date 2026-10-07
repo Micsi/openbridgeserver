@@ -373,7 +373,7 @@ ROUTE_SECURITY_CONTRACTS: Final[dict[RouteSignature, RouteSecurityContract]] = {
     # AdapterDelegationCapability.  No detail fields: the token itself must
     # never reach the audit log, and the resource id already names the binding.
     ("POST", "/api/v1/adapters/instances/{instance_id}/webhook/bindings/{binding_id}/rotate-token"): _policy(
-        "adapter_instance",
+        "binding",
         "adapter.webhook.token_rotated",
         result=True,
         audit_effect=AuditEffect.SECURITY_EVENT,

@@ -1902,6 +1902,17 @@ class WebhookTokenRotationResult(BaseModel):
     call_path_token_in_path: str
 
 
+async def _filter_binding_manageable_datapoint_ids(db: Database, principal: Principal, dp_ids: list[str]) -> set[str]:
+    allowed: set[str] = set()
+    for dp_id in dict.fromkeys(dp_ids):
+        try:
+            await _ensure_binding_mutation_scope(db, principal, uuid.UUID(dp_id))
+        except HTTPException:
+            continue
+        allowed.add(dp_id)
+    return allowed
+
+
 def _ensure_webhook_secret_user(principal: Principal) -> None:
     """Keep webhook bearer tokens away from API keys.
 
@@ -2003,7 +2014,11 @@ async def webhook_list_bindings(
         "SELECT * FROM adapter_bindings WHERE adapter_instance_id=? AND adapter_type='WEBHOOK' ORDER BY created_at",
         (str(instance_id),),
     )
-    allowed_dp_ids = await _filter_readable_datapoint_ids(db, principal, [row["datapoint_id"] for row in rows])
+    # The entry carries the binding's bearer token, which authorises writes to
+    # its DataPoint. READ access to that DataPoint is therefore not enough: the
+    # caller needs the same right that changing the binding requires, or the
+    # token would turn a read grant into an anonymous write path.
+    allowed_dp_ids = await _filter_binding_manageable_datapoint_ids(db, principal, [row["datapoint_id"] for row in rows])
 
     registry = get_registry()
     result: list[WebhookBindingEntry] = []
@@ -2075,30 +2090,36 @@ async def webhook_rotate_token(
     audit entry records only that the binding was rotated.
     """
     from obs.adapters.webhook.adapter import WebhookBindingConfig, generate_token
+    from obs.core.registry import get_registry
 
     principal = _principal_from_dependency(_user)
     _ensure_webhook_secret_user(principal)
     instance_row = await _webhook_instance_row(db, instance_id)
     await _ensure_instance_write_grant(db, principal, str(instance_id))
 
-    row = await db.fetchone(
-        "SELECT * FROM adapter_bindings WHERE id=? AND adapter_instance_id=? AND adapter_type='WEBHOOK'",
-        (str(binding_id), str(instance_id)),
-    )
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding nicht gefunden")
-    await _ensure_binding_mutation_scope(db, principal, uuid.UUID(row["datapoint_id"]))
+    # The token is rewritten as part of the whole config object, exactly like a
+    # binding PATCH does. Both hold the registry's external-write lock around
+    # that read-modify-write, so a save that started before the rotation cannot
+    # land afterwards and put the revoked token back.
+    async with get_registry().external_write_lock:
+        row = await db.fetchone(
+            "SELECT * FROM adapter_bindings WHERE id=? AND adapter_instance_id=? AND adapter_type='WEBHOOK'",
+            (str(binding_id), str(instance_id)),
+        )
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Binding nicht gefunden")
+        await _ensure_binding_mutation_scope(db, principal, uuid.UUID(row["datapoint_id"]))
 
-    try:
-        config = WebhookBindingConfig(**_json_config(row["config"]))
-    except Exception as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Ungültige Binding-Config: {exc}") from exc
+        try:
+            config = WebhookBindingConfig(**_json_config(row["config"]))
+        except Exception as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Ungültige Binding-Config: {exc}") from exc
 
-    rotated = config.model_copy(update={"token": generate_token()})
-    await db.execute_and_commit(
-        "UPDATE adapter_bindings SET config=?, updated_at=? WHERE id=?",
-        (json.dumps(rotated.model_dump()), datetime.now(UTC).isoformat(), str(binding_id)),
-    )
+        rotated = config.model_copy(update={"token": generate_token()})
+        await db.execute_and_commit(
+            "UPDATE adapter_bindings SET config=?, updated_at=? WHERE id=?",
+            (json.dumps(rotated.model_dump()), datetime.now(UTC).isoformat(), str(binding_id)),
+        )
     await adapter_registry.reload_instance_bindings(str(instance_id), db)
     if request is not None:
         set_contract_audit_resource_id(request, str(binding_id))

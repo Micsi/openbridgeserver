@@ -248,22 +248,20 @@ def coerce_webhook_value(raw: Any, data_type: str) -> Any:
         if token in _FALSE_TOKENS:
             return False
         raise ValueError(f"{raw!r} is not a boolean value")
-    if name == "INTEGER":
+    if name in ("INTEGER", "FLOAT"):
         if isinstance(raw, bool):
-            return int(raw)
+            return int(raw) if name == "INTEGER" else float(raw)
+        if name == "INTEGER" and isinstance(raw, int):
+            return raw
         try:
-            # A string goes through the shared typed-text parser: `int(float(raw))`
-            # would round anything beyond 2**53 and silently truncate "5.7".
-            return coerce_text_value_for_type(raw, data_type) if isinstance(raw, str) else int(raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{raw!r} is not an integer value") from exc
-    if name == "FLOAT":
-        if isinstance(raw, bool):
-            return float(raw)
-        try:
-            return float(raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{raw!r} is not a float value") from exc
+            # Everything else goes through the shared typed-text parser instead
+            # of `int(float(raw))` / `float(raw)`: that keeps integers beyond
+            # 2**53 exact and refuses what must never reach the bus — a
+            # fractional value for an INTEGER ("42.7", 42.7) and non-finite
+            # FLOATs ("NaN", "inf"), which `float()` happily accepts.
+            return coerce_text_value_for_type(str(raw), data_type)
+        except ValueError as exc:
+            raise ValueError(f"{raw!r} is not a valid {name.lower()} value") from exc
     if name == "STRING":
         return str(raw)
     parsers = {
@@ -802,6 +800,14 @@ class WebhookAdapter(AdapterBase):
             value = coerce_webhook_value(config.autoreset_value, data_type)
         except ValueError as exc:
             logger.warning("WEBHOOK: binding %s has an unusable auto-reset value — %s", binding.id, exc)
+            return
+        # The DataPoint can be reclassified while the reset is pending, and this
+        # is an anonymous write just like the trigger — apply the same boundary.
+        from obs.core.registry import get_registry
+
+        datapoint = get_registry().get(binding.datapoint_id)
+        if datapoint is None or getattr(datapoint, "control_class", "room_local") == "central_plant":
+            logger.warning("WEBHOOK: auto-reset for binding %s skipped — its DataPoint is gone or now central_plant", binding.id)
             return
         await self._emit(binding, value)
         logger.info("WEBHOOK: auto-reset dp=%s value=%r (binding %s)", binding.datapoint_id, value, binding.id)

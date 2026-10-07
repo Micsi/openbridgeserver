@@ -650,6 +650,11 @@ async def update_binding(
                 config["slug"],
                 exclude_binding_id=str(binding_id),
             )
+            # The token was read before the lock was taken; a rotation that ran
+            # in between must win, so take the stored one again under the lock.
+            fresh = await db.fetchone("SELECT config FROM adapter_bindings WHERE id=?", (str(binding_id),))
+            config = {**config, "token": _json_config(fresh["config"] if fresh is not None else None).get("token") or config.get("token")}
+            config_val = json.dumps(config)
         await db.execute_and_commit(
             """UPDATE adapter_bindings
                SET direction=?, config=?, enabled=?,
