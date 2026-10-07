@@ -622,7 +622,10 @@ async def update_binding(
         _validate_timer_output_value(row["adapter_type"], config, dp_id)
 
     if row["adapter_type"] == WEBHOOK_ADAPTER_TYPE:
-        _ensure_webhook_target_allowed(dp_id)
+        # A binding on a since-reclassified DataPoint can still be switched off;
+        # only a binding that would be live has to point at an allowed target.
+        if enabled:
+            _ensure_webhook_target_allowed(dp_id)
         stored_token = _json_config(row["config"]).get("token") or None
         config = _webhook_config_with_token(config, stored_token=stored_token)
         config_val = json.dumps(config)

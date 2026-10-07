@@ -701,3 +701,103 @@ async def test_webhook_management_routes_require_authentication(client):
     instance_id = _MISSING_ID
     assert (await client.get(f"/api/v1/adapters/instances/{instance_id}/webhook/bindings")).status_code == 401
     assert (await client.post(f"/api/v1/adapters/instances/{instance_id}/webhook/bindings/{_MISSING_ID}/rotate-token")).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("prefix", ["/docs", "/redoc", "/openapi.json", "/favicon.svg"])
+async def test_instance_rejects_prefixes_that_would_shadow_application_surfaces(client, auth_headers, prefix):
+    resp = await client.post(
+        "/api/v1/adapters/instances",
+        json={"adapter_type": "WEBHOOK", "name": f"Hook-{uuid.uuid4().hex[:6]}", "config": {"path_prefix": prefix}, "enabled": False},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_an_oversized_post_is_cut_off_before_authentication(client, auth_headers):
+    instance = await _create_instance(client, auth_headers)
+    try:
+        declared = await client.post("/hook/does-not-exist", content=b"x" * (64 * 1024 + 1))
+        assert declared.status_code == 413
+        assert declared.json() == {"detail": "Request body is too large"}
+
+        async def chunks():
+            for _ in range(65):
+                yield b"x" * 1024
+
+        undeclared = await client.post("/hook/does-not-exist", content=chunks())
+        assert undeclared.status_code == 413
+
+        small = await client.post("/hook/does-not-exist", content=b"{}")
+        assert small.status_code == 404
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_a_binding_on_a_reclassified_datapoint_can_be_disabled_but_not_re_enabled(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers, enabled=False)
+    try:
+        binding = await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "reclassified"})
+        reclass = await client.patch(f"/api/v1/datapoints/{dp['id']}", json={"control_class": "central_plant"}, headers=auth_headers)
+        assert reclass.status_code == 200, reclass.text
+
+        off = await client.patch(f"/api/v1/datapoints/{dp['id']}/bindings/{binding['id']}", json={"enabled": False}, headers=auth_headers)
+        assert off.status_code == 200, off.text
+
+        on = await client.patch(f"/api/v1/datapoints/{dp['id']}/bindings/{binding['id']}", json={"enabled": True}, headers=auth_headers)
+        assert on.status_code == 403, on.text
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_migration_refuses_a_slug_the_target_instance_already_owns(client, auth_headers):
+    source_dp = await _create_dp(client, auth_headers)
+    target_dp = await _create_dp(client, auth_headers)
+    source = await _create_instance(client, auth_headers, enabled=False)
+    target = await _create_instance(client, auth_headers, enabled=False)
+    try:
+        moving = await _create_binding(client, auth_headers, source_dp["id"], source["id"], {"slug": "bell"})
+        await _create_binding(client, auth_headers, target_dp["id"], target["id"], {"slug": "bell"})
+
+        resp = await client.post(
+            f"/api/v1/adapters/instances/{source['id']}/bindings/migrate",
+            json={"target_instance_id": target["id"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert "bell" in resp.json()["detail"]
+
+        still_there = await _webhook_bindings(client, auth_headers, source["id"])
+        assert [entry["binding_id"] for entry in still_there] == [moving["id"]]
+    finally:
+        await _delete_instance(client, auth_headers, source["id"])
+        await _delete_instance(client, auth_headers, target["id"])
+
+
+async def test_migration_moves_webhook_bindings_with_distinct_slugs(client, auth_headers):
+    source_dp = await _create_dp(client, auth_headers)
+    target_dp = await _create_dp(client, auth_headers)
+    source = await _create_instance(client, auth_headers, enabled=False)
+    target = await _create_instance(client, auth_headers, enabled=False)
+    try:
+        moving = await _create_binding(client, auth_headers, source_dp["id"], source["id"], {"slug": "moves"})
+        await _create_binding(client, auth_headers, target_dp["id"], target["id"], {"slug": "stays"})
+
+        resp = await client.post(
+            f"/api/v1/adapters/instances/{source['id']}/bindings/migrate",
+            json={"target_instance_id": target["id"]},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["migrated"] == 1
+
+        moved = await _webhook_bindings(client, auth_headers, target["id"])
+        assert moving["id"] in [entry["binding_id"] for entry in moved]
+    finally:
+        await _delete_instance(client, auth_headers, source["id"])
+        await _delete_instance(client, auth_headers, target["id"])

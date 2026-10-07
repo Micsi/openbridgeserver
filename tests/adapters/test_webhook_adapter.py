@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import time
 import uuid
 
 import pytest
@@ -95,7 +96,22 @@ def test_path_prefix_defaults_and_normalises():
 
 @pytest.mark.parametrize(
     "raw",
-    ["/", "/api", "/API/x", "/a/b/c/d", "/bad segment", "/-leading"],
+    [
+        "/",
+        "/api",
+        "/API/x",
+        "/a/b/c/d",
+        "/bad segment",
+        "/-leading",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/favicon.svg",
+        "/manifest.webmanifest",
+        "/apple-touch-icon.png",
+        "/obs_logo_light.svg",
+        "/obs_logo_dark.svg",
+    ],
 )
 def test_path_prefix_rejects_unusable_values(raw):
     with pytest.raises(ValueError):
@@ -199,7 +215,8 @@ def test_token_matches(expected, provided, result):
         (1, "BOOLEAN", True),
         (0.0, "BOOLEAN", False),
         ("42", "INTEGER", 42),
-        ("42.7", "INTEGER", 42),
+        ("42.0", "INTEGER", 42),
+        ("9007199254740993", "INTEGER", 9007199254740993),
         (7, "INTEGER", 7),
         (True, "INTEGER", 1),
         ("1.5", "FLOAT", 1.5),
@@ -222,6 +239,7 @@ def test_coerce_webhook_value(raw, data_type, expected):
         ("maybe", "BOOLEAN"),
         (None, "BOOLEAN"),
         ("abc", "INTEGER"),
+        ("42.7", "INTEGER"),
         (None, "INTEGER"),
         ("abc", "FLOAT"),
         (None, "FLOAT"),
@@ -679,6 +697,34 @@ async def test_debounce_suppresses_a_repeat_call(mock_bus, monkeypatch):
     assert len(_data_events(mock_bus)) == 1
     stats = instance.stats_for(binding.id)
     assert (stats.call_count, stats.publish_count) == (2, 1)
+
+
+async def test_a_rejected_call_does_not_consume_the_debounce_window(mock_bus, monkeypatch):
+    binding = _binding(debounce_ms=60_000, value_source="request")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+
+    rejected = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    retry = await instance.handle_trigger(
+        method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN, "value": "5"}, body=b"", peer_ip="10.0.0.1"
+    )
+
+    assert rejected.status == 400
+    assert retry.status == 204
+    assert [event.value for event in _data_events(mock_bus)] == [5]
+
+
+async def test_a_rejected_call_restores_the_previous_debounce_stamp(mock_bus, monkeypatch):
+    binding = _binding(debounce_ms=60_000, value_source="request")
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    instance = await _adapter(mock_bus, [binding])
+    long_ago = time.monotonic() - 3600
+    instance._last_trigger[str(binding.id)] = long_ago
+
+    rejected = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert rejected.status == 400
+    assert instance._last_trigger[str(binding.id)] == long_ago
 
 
 async def test_missing_datapoint_returns_404(mock_bus, monkeypatch):

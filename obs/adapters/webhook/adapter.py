@@ -87,7 +87,7 @@ from obs.adapters.base import AdapterBase
 from obs.adapters.registry import register
 from obs.adapters.webhook.ingress import address_allowed, normalise_entries, parse_networks, resolve_client_ip
 from obs.core.event_bus import DataValueEvent
-from obs.models.types import DataTypeRegistry
+from obs.models.types import DataTypeRegistry, coerce_text_value_for_type
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +101,31 @@ _MAX_PREFIX_SEGMENTS = 3
 
 # First path segments the application itself serves.  Claiming one of them would
 # shadow the API, the SPAs or the help site.
-_RESERVED_PREFIX_SEGMENTS = frozenset({"api", "assets", "help", "setup", "visu"})
+# That includes FastAPI's own documentation routes and the Admin-GUI's root-level
+# static files: the webhook middleware runs ahead of every route, so a prefix on
+# one of these would silently take that surface offline.
+_RESERVED_PREFIX_SEGMENTS = frozenset(
+    {
+        "api",
+        "apple-touch-icon.png",
+        "assets",
+        "docs",
+        "favicon.svg",
+        "help",
+        "manifest.webmanifest",
+        "obs_logo_dark.svg",
+        "obs_logo_light.svg",
+        "openapi.json",
+        "redoc",
+        "setup",
+        "visu",
+    }
+)
 
 _TRUE_TOKENS = frozenset({"1", "true", "on", "yes"})
 _FALSE_TOKENS = frozenset({"0", "false", "off", "no"})
 
-_MAX_BODY_BYTES = 64 * 1024
+MAX_BODY_BYTES = 64 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +252,9 @@ def coerce_webhook_value(raw: Any, data_type: str) -> Any:
         if isinstance(raw, bool):
             return int(raw)
         try:
-            return int(float(raw)) if isinstance(raw, str) else int(raw)
+            # A string goes through the shared typed-text parser: `int(float(raw))`
+            # would round anything beyond 2**53 and silently truncate "5.7".
+            return coerce_text_value_for_type(raw, data_type) if isinstance(raw, str) else int(raw)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{raw!r} is not an integer value") from exc
     if name == "FLOAT":
@@ -628,11 +649,17 @@ class WebhookAdapter(AdapterBase):
         stats.call_count += 1
         stats.last_called = datetime.datetime.now(datetime.UTC)
 
+        previous_trigger = self._last_trigger.get(str(binding.id))
         if self._is_debounced(binding, config):
             logger.debug("WEBHOOK: slug %r debounced (%d ms)", slug, config.debounce_ms)
             return self._record(binding, TriggerOutcome(204, ""))
 
         outcome = await self._publish(binding, config, method, query_params, body)
+        if outcome.status != 204:
+            # The window is claimed before publishing so concurrent duplicates
+            # cannot both pass, but a call that put nothing on the bus must not
+            # swallow the corrected retry that follows it.
+            self._release_debounce(binding, previous_trigger)
         return self._record(binding, outcome, published=outcome.status == 204)
 
     # ------------------------------------------------------------------
@@ -665,6 +692,13 @@ class WebhookAdapter(AdapterBase):
             return True
         self._last_trigger[key] = now
         return False
+
+    def _release_debounce(self, binding: Any, previous: float | None) -> None:
+        key = str(binding.id)
+        if previous is None:
+            self._last_trigger.pop(key, None)
+        else:
+            self._last_trigger[key] = previous
 
     def _record(self, binding: Any, outcome: TriggerOutcome, *, published: bool = False) -> TriggerOutcome:
         stats = self._stats.setdefault(str(binding.id), BindingStats())
@@ -792,7 +826,7 @@ class WebhookAdapter(AdapterBase):
             return config.fixed_value
 
         if method == "POST" and body:
-            if len(body) > _MAX_BODY_BYTES:
+            if len(body) > MAX_BODY_BYTES:
                 raise ValueError("Request body is too large")
             try:
                 payload = json.loads(body.decode("utf-8"))

@@ -35,6 +35,29 @@ _PASSTHROUGH_METHODS = frozenset({"OPTIONS"})
 _TRIGGER_METHODS = frozenset({"GET", "POST"})
 
 
+async def _read_capped_body(request: Request) -> bytes | None:
+    """Read the body, or return None as soon as it exceeds the webhook limit.
+
+    This runs before the token is checked, so an unauthenticated caller must not
+    be able to make the server buffer an arbitrary amount of data: the declared
+    length is checked up front and the stream is cut off at the limit for a
+    client that lies about it or sends chunked.
+    """
+    from obs.adapters.webhook.adapter import MAX_BODY_BYTES
+
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        return None
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def handle_webhook_request(request: Request) -> Response | None:
     """Answer *request* if a running WEBHOOK instance claims its path."""
     from obs.adapters.webhook.adapter import resolve_webhook_target
@@ -49,7 +72,11 @@ async def handle_webhook_request(request: Request) -> Response | None:
     if request.method not in _TRIGGER_METHODS:
         return JSONResponse({"detail": "Not found"}, status_code=404)
 
-    body = await request.body() if request.method == "POST" else b""
+    body = b""
+    if request.method == "POST":
+        body = await _read_capped_body(request)
+        if body is None:
+            return JSONResponse({"detail": "Request body is too large"}, status_code=413)
     outcome = await instance.handle_trigger(
         method=request.method,
         remainder=remainder,

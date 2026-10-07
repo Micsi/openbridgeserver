@@ -381,3 +381,21 @@ async def test_rotation_refuses_an_api_key_even_with_operator_grants(monkeypatch
     assert excinfo.value.status_code == 403
     row = await db.fetchone("SELECT config FROM adapter_bindings WHERE id=?", (str(binding_id),))
     assert json.loads(row["config"])["token"] == "old-token"
+
+
+async def test_listing_refuses_an_api_key_even_with_operator_grants(db: Database):
+    instance_id = uuid.uuid4()
+    await _insert_instance(db, instance_id)
+    await db.execute_and_commit(
+        """
+        INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+        VALUES ('api_key', 'device-key', 'adapter_instance', ?, 'operator', 'allow')
+        """,
+        (str(instance_id),),
+    )
+    key = Principal(subject="api_key:device-key", type="api_key", is_admin=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await adapters_api.webhook_list_bindings(instance_id, _user=key, db=db)
+
+    assert excinfo.value.status_code == 403

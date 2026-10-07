@@ -887,10 +887,11 @@ async def migrate_instance_bindings(
         (source_id,),
     )
     target_bindings = await db.fetchall(
-        "SELECT datapoint_id FROM adapter_bindings WHERE adapter_instance_id=?",
+        "SELECT datapoint_id, config FROM adapter_bindings WHERE adapter_instance_id=?",
         (target_id,),
     )
     target_datapoint_ids = {row["datapoint_id"] for row in target_bindings}
+    target_slugs = {_json_config(row["config"]).get("slug") for row in target_bindings} if source_row["adapter_type"] == "WEBHOOK" else set()
 
     migrated = 0
     skipped = 0
@@ -904,6 +905,16 @@ async def migrate_instance_bindings(
             skipped += 1
             continue
         await _ensure_binding_mutation_scope(db, principal, uuid.UUID(binding_row["datapoint_id"]))
+        # A slug is the public name of one endpoint per instance: moving a
+        # binding next to one that already owns it would leave one URL dead
+        # after the reload, so refuse the whole migration before any row moves.
+        if source_row["adapter_type"] == "WEBHOOK":
+            slug = _json_config(binding_row["config"]).get("slug")
+            if slug in target_slugs:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"Der Slug '{slug}' ist in der Ziel-Instanz bereits vergeben",
+                )
         if target_message_config is not None:
             _validate_adapter_binding(
                 "MESSAGE",
@@ -1891,6 +1902,18 @@ class WebhookTokenRotationResult(BaseModel):
     call_path_token_in_path: str
 
 
+def _ensure_webhook_secret_user(principal: Principal) -> None:
+    """Keep webhook bearer tokens away from API keys.
+
+    Both the overview (which serves the token in clear text) and the rotation
+    reply expose a secret that authorises its DataPoint anonymously and outlives
+    the key that fetched it. WEBHOOK deliberately delegates nothing to API keys,
+    so a key must not read or rotate it however many grants it holds.
+    """
+    if principal.type != "user":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Webhook-Token sind nur für Benutzer zugänglich")
+
+
 async def _webhook_instance_row(db: Database, instance_id: uuid.UUID) -> Any:
     row = await db.fetchone("SELECT adapter_type, config FROM adapter_instances WHERE id=?", (str(instance_id),))
     if row is None:
@@ -1969,6 +1992,7 @@ async def webhook_list_bindings(
     from obs.core.registry import get_registry
 
     principal = _principal_from_dependency(_user)
+    _ensure_webhook_secret_user(principal)
     instance_row = await _webhook_instance_row(db, instance_id)
     await _ensure_instance_write_grant(db, principal, str(instance_id))
 
@@ -2053,11 +2077,7 @@ async def webhook_rotate_token(
     from obs.adapters.webhook.adapter import WebhookBindingConfig, generate_token
 
     principal = _principal_from_dependency(_user)
-    # The reply carries the new bearer secret, so an API key — which WEBHOOK
-    # deliberately never delegates to — must not be able to fetch it, however
-    # many grants it holds.
-    if principal.type != "user":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Webhook-Token kann nur von einem Benutzer rotiert werden")
+    _ensure_webhook_secret_user(principal)
     instance_row = await _webhook_instance_row(db, instance_id)
     await _ensure_instance_write_grant(db, principal, str(instance_id))
 
