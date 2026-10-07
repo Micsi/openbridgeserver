@@ -404,10 +404,18 @@ _NOT_FOUND = TriggerOutcome(404, "Not found")
 _instances_by_prefix: dict[str, WebhookAdapter] = {}
 
 
+def _prefixes_overlap(first: str, second: str) -> bool:
+    """Whether one prefix equals or lies below the other (``/hook`` vs ``/hook/inner``)."""
+    return first == second or first.startswith(second + "/") or second.startswith(first + "/")
+
+
 def _register_prefix(prefix: str, instance: WebhookAdapter) -> bool:
-    existing = _instances_by_prefix.get(prefix)
-    if existing is not None and existing is not instance:
-        return False
+    # Equality is not enough: dispatch picks the longest matching prefix, so an
+    # instance at `/hook/inner` would take over every `/hook/inner…` URL of the
+    # instance at `/hook` (whose slug may well be `inner`) and answer 404 for it.
+    for claimed, owner in _instances_by_prefix.items():
+        if owner is not instance and _prefixes_overlap(prefix, claimed):
+            return False
     _instances_by_prefix[prefix] = instance
     return True
 
@@ -484,7 +492,7 @@ class WebhookAdapter(AdapterBase):
         self._limiter = FixedWindowRateLimiter(cfg.rate_limit_per_minute)
 
         if not _register_prefix(cfg.path_prefix, self):
-            logger.error("WEBHOOK: path prefix %s is already claimed by another instance", cfg.path_prefix)
+            logger.error("WEBHOOK: path prefix %s overlaps a prefix claimed by another instance", cfg.path_prefix)
             await self._publish_status(
                 False,
                 f"Path prefix {cfg.path_prefix} is already in use",

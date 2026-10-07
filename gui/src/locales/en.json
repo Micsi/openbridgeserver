@@ -1289,7 +1289,7 @@
       "messageArchiveWriteFailed": "MESSAGE archive write failed",
       "messageSent": "MESSAGE sent",
       "webhookListening": "Reachable at {prefix}/<slug>",
-      "webhookPrefixConflict": "Path prefix {prefix} is already used by another instance",
+      "webhookPrefixConflict": "Path prefix {prefix} overlaps the prefix of another instance",
       "webhookDuplicateSlug": "Duplicate slug(s) ignored: {slugs}",
       "webhookInvalidConfig": "Invalid instance configuration"
     },

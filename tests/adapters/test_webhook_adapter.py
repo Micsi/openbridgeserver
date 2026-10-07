@@ -336,6 +336,29 @@ async def test_second_instance_on_the_same_prefix_is_refused(mock_bus):
     assert webhook_module._instances_by_prefix["/hook"] is first
 
 
+@pytest.mark.parametrize(
+    ("claimed", "requested"),
+    [("/hook", "/hook/inner"), ("/hook/inner", "/hook"), ("/a/b", "/a/b/c")],
+)
+async def test_an_instance_on_an_overlapping_prefix_is_refused(mock_bus, claimed, requested):
+    first = await _adapter(mock_bus, [], {"path_prefix": claimed})
+    nested = WebhookAdapter(mock_bus, {"path_prefix": requested})
+    await nested.connect()
+
+    assert nested.connected is False
+    assert nested.last_detail_code == "webhookPrefixConflict"
+    assert webhook_module._instances_by_prefix == {claimed: first}
+
+
+async def test_sibling_prefixes_do_not_overlap(mock_bus):
+    await _adapter(mock_bus, [], {"path_prefix": "/hook"})
+    sibling = WebhookAdapter(mock_bus, {"path_prefix": "/hooks"})
+    await sibling.connect()
+
+    assert sibling.connected is True
+    assert sorted(active_prefixes()) == ["/hook", "/hooks"]
+
+
 async def test_reconnecting_the_same_instance_keeps_its_prefix(mock_bus):
     instance = await _adapter(mock_bus, [])
     await instance.connect()
@@ -358,12 +381,15 @@ def test_resolve_webhook_target_without_running_instances():
     assert resolve_webhook_target("/hook/bell") is None
 
 
-async def test_longest_prefix_wins(mock_bus):
-    outer = await _adapter(mock_bus, [], {"path_prefix": "/hook"})
-    inner = await _adapter(mock_bus, [], {"path_prefix": "/hook/inner"})
+async def test_sibling_prefixes_resolve_to_their_own_instance(mock_bus):
+    # Nested prefixes are refused at registration (see the overlap test), so a
+    # path can never be claimed by two instances and dispatch needs no
+    # "longest wins" tie-break that would silently shadow the outer one.
+    first = await _adapter(mock_bus, [], {"path_prefix": "/hook"})
+    second = await _adapter(mock_bus, [], {"path_prefix": "/hooks"})
 
-    assert resolve_webhook_target("/hook/inner/bell") == (inner, "bell")
-    assert resolve_webhook_target("/hook/bell") == (outer, "bell")
+    assert resolve_webhook_target("/hook/bell") == (first, "bell")
+    assert resolve_webhook_target("/hooks/bell") == (second, "bell")
 
 
 # ---------------------------------------------------------------------------

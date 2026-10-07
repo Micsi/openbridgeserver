@@ -1289,7 +1289,7 @@
       "messageArchiveWriteFailed": "Meldungsarchiv konnte nicht geschrieben werden",
       "messageSent": "MESSAGE gesendet",
       "webhookListening": "Erreichbar unter {prefix}/<slug>",
-      "webhookPrefixConflict": "Pfad-Präfix {prefix} wird bereits von einer anderen Instanz verwendet",
+      "webhookPrefixConflict": "Pfad-Präfix {prefix} überschneidet sich mit dem Präfix einer anderen Instanz",
       "webhookDuplicateSlug": "Doppelte Slugs ignoriert: {slugs}",
       "webhookInvalidConfig": "Ungültige Instanz-Konfiguration"
     },
