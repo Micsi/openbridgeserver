@@ -15,13 +15,19 @@ const emit = defineEmits(['update:modelValue'])
 const variableList = computed(() => normalise(props.modelValue))
 const searches = ref([])
 const results = ref([])
+const knownIds = []
+// Monotonic request counter per row: a slower, older response must not overwrite a newer one.
+const requestSeq = []
 
 watch(
   () => props.modelValue,
   (raw) => {
     const vars = normalise(raw)
-    searches.value = vars.map((v, i) => searches.value[i] ?? v.datapoint_name ?? '')
-    results.value = vars.map((_, i) => results.value[i] ?? [])
+    // A row whose object changed from outside (another node selected) drops its picker state.
+    const changed = vars.map((v, i) => knownIds[i] !== v.datapoint_id)
+    searches.value = vars.map((v, i) => (changed[i] ? v.datapoint_name ?? '' : searches.value[i] ?? v.datapoint_name ?? ''))
+    results.value = vars.map((_, i) => (changed[i] ? [] : results.value[i] ?? []))
+    knownIds.splice(0, knownIds.length, ...vars.map(v => v.datapoint_id))
   },
   { immediate: true, deep: true },
 )
@@ -42,19 +48,25 @@ function remove(index) {
   variables.splice(index, 1)
   searches.value.splice(index, 1)
   results.value.splice(index, 1)
+  knownIds.splice(index, 1)
+  requestSeq.splice(index, 1)
   commit(variables)
 }
 
 async function search(index, query) {
-  const next = results.value.slice()
+  const seq = (requestSeq[index] = (requestSeq[index] || 0) + 1)
+  let items
   try {
     const { data } = (query || '').length < 1
       ? await dpApi.list(0, 50)
       : await searchApi.search({ q: query, size: 50 })
-    next[index] = data.items || data
+    items = data.items || data
   } catch {
-    next[index] = []
+    items = []
   }
+  if (seq !== requestSeq[index]) return
+  const next = results.value.slice()
+  next[index] = items
   results.value = next
 }
 
@@ -67,6 +79,7 @@ function onSearchInput(index, event) {
 }
 
 function select(index, dp) {
+  requestSeq[index] = (requestSeq[index] || 0) + 1
   const variables = normalise(props.modelValue)
   variables[index] = { slot: variables[index]?.slot || index + 1, datapoint_id: dp.id, datapoint_name: dp.name }
   const nextSearches = searches.value.slice()

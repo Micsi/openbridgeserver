@@ -633,14 +633,14 @@ describe('NodeConfigPanel extractors — variables', () => {
         json_paths: JSON.stringify([{ label: 'a', path: '[###H###].###FOO###' }]),
         variables: [{ slot: 1, datapoint_id: 'dp1', datapoint_name: 'Lamp' }],
       },
-      { n1: { _resolved_paths: ['[7].###FOO###'], _issues: ['unknown variable ###FOO###'] } },
+      { n1: { _resolved_paths: ['[7].###FOO###'], _path_templates: ['[###H###].###FOO###'], _issues: ['unknown variable ###FOO###'] } },
     )
     await flushPromises()
 
     expect(w.find('[data-testid="variable-insert-select"]').findAll('optgroup').length).toBe(3)
     expect(w.find('[data-testid="variable-resolved-path"]').text()).toContain('[7].###FOO###')
     expect(w.find('[data-testid="variable-unresolved"]').text()).toContain('###FOO###')
-    expect(w.find('[data-testid="extractor-issues"]').text()).toContain('unknown variable')
+    expect(w.find('[data-testid="extractor-issues"]').text()).toContain('Unbekannte Variable ###FOO###')
     w.unmount()
   })
 
@@ -657,10 +657,23 @@ describe('NodeConfigPanel extractors — variables', () => {
     const w = await mountPanel(
       'json_extractor',
       { json_paths: JSON.stringify([{ label: 'a', path: '[###H###].v' }]) },
-      { n1: { _preview: '[{"v":"zero"},{"v":"one"}]', _resolved_paths: ['[1].v'] } },
+      { n1: { _preview: '[{"v":"zero"},{"v":"one"}]', _resolved_paths: ['[1].v'], _path_templates: ['[###H###].v'] } },
     )
     await flushPromises()
     expect(w.text()).toContain('one')
+    w.unmount()
+  })
+
+  it('discards the resolved path once the template was edited', async () => {
+    const w = await mountPanel(
+      'json_extractor',
+      { json_paths: JSON.stringify([{ label: 'a', path: '[###H###].v' }]) },
+      { n1: { _preview: '[{"v":"zero"},{"v":"one"}]', _resolved_paths: ['[1].v'], _path_templates: ['[###H###].v'] } },
+    )
+    await w.find('[data-testid="extractor-path-input"]').setValue('[0].v')
+    await flushPromises()
+    expect(w.text()).toContain('zero')
+    expect(w.find('[data-testid="variable-resolved-path"]').exists()).toBe(false)
     w.unmount()
   })
 

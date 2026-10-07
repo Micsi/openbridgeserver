@@ -75,3 +75,25 @@ export const VARIABLE_BLOCK_TYPES = [
   'api_client', 'json_extractor', 'xml_extractor', 'string_concat', 'string_replace',
   'message_archive', 'notify_message', 'ical',
 ]
+
+// Server issue messages (obs/logic/variables.py, executor.py) → i18n keys. The server texts
+// are stable English prose; unknown messages are shown verbatim.
+const ISSUE_PATTERNS = [
+  [/^unknown variable (###.+###)$/, 'unknownVariable', ['name']],
+  [/^path '(.*)' not found$/, 'pathNotFound', ['path']],
+  [/^invalid XPath '(.*)': (.*)$/, 'invalidXPath', ['path', 'error']],
+  [/^variable (OBS\d+) is not configured$/, 'notConfigured', ['name']],
+  [/^variable (OBS\d+) object (.*) is not available$/, 'notAvailable', ['name', 'object']],
+  [/^variable (OBS\d+) references an invalid object$/, 'invalidObject', ['name']],
+  [/^variable (OBS\d+) object (.*) has no value$/, 'noValue', ['name', 'object']],
+  [/^variable value is empty$/, 'emptyValue', []],
+]
+
+export function translateVariableIssue(issue, t) {
+  const text = String(issue)
+  for (const [re, key, names] of ISSUE_PATTERNS) {
+    const m = re.exec(text)
+    if (m) return t(`logic.variables.issues.${key}`, Object.fromEntries(names.map((n, i) => [n, m[i + 1]])))
+  }
+  return text
+}

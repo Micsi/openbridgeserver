@@ -2313,9 +2313,14 @@ function appendVariable(key, token) {
 const blockIssues = extractorIssues
 
 // Server-resolved path of output row i (empty until the block ran with variables).
+// Ignored once the path was edited after that run (the run's template no longer matches).
 function extractorResolvedPath(i) {
-  const resolved = props.node ? props.nodeOutputs?.[props.node.id]?._resolved_paths : null
-  return Array.isArray(resolved) && typeof resolved[i] === 'string' ? resolved[i] : ''
+  const out = props.node ? props.nodeOutputs?.[props.node.id] : null
+  const resolved = out?._resolved_paths
+  if (!Array.isArray(resolved) || typeof resolved[i] !== 'string') return ''
+  const rows = props.node?.type === 'xml_extractor' ? xmlPaths.value : jsonPaths.value
+  const current = String(rows[i]?.path ?? '').trim()
+  return out._path_templates?.[i] === current ? resolved[i] : ''
 }
 
 function insertExtractorVariable(kind, i, token) {

@@ -116,4 +116,46 @@ describe('NodeConfigPanel — variables in text fields (#1301)', () => {
     expect(lastUpdate(w).message).toBe('m###TS###')
     w.unmount()
   })
+  it('object picker: refreshes when another node is selected', async () => {
+    const w = await mountPanel('api_client', { variables: [{ slot: 1, datapoint_id: 'a', datapoint_name: 'Lamp' }] })
+    await flushPromises()
+    await w.setProps({ node: { id: 'n2', type: 'api_client', data: { variables: [{ slot: 1, datapoint_id: 'b', datapoint_name: 'Temperature' }] } } })
+    await flushPromises()
+    expect(w.find('[data-testid="api-client-variable-search-0"]').element.value).toBe('Temperature')
+    w.unmount()
+  })
+
+  it('object picker: ignores stale search responses', async () => {
+    const { searchApi } = await import('@/api/client')
+    let resolveA
+    let resolveAB
+    searchApi.search
+      .mockImplementationOnce(() => new Promise((r) => { resolveA = r }))
+      .mockImplementationOnce(() => new Promise((r) => { resolveAB = r }))
+    const w = await mountPanel('api_client', { variables: [{ slot: 1, datapoint_id: '', datapoint_name: '' }] })
+    await flushPromises()
+    const input = w.find('[data-testid="api-client-variable-search-0"]')
+    await input.setValue('a')
+    await input.setValue('ab')
+    resolveAB({ data: { items: [{ id: 'b', name: 'Newest' }] } })
+    await flushPromises()
+    resolveA({ data: { items: [{ id: 'a', name: 'Stale' }] } })
+    await flushPromises()
+    expect(w.text()).toContain('Newest')
+    expect(w.text()).not.toContain('Stale')
+    w.unmount()
+  })
+
+  it('object picker: a search failure empties the results and removing a row drops its state', async () => {
+    const { searchApi } = await import('@/api/client')
+    searchApi.search.mockRejectedValueOnce(new Error('boom'))
+    const w = await mountPanel('api_client', { variables: [{ slot: 1, datapoint_id: '', datapoint_name: '' }] })
+    await flushPromises()
+    await w.find('[data-testid="api-client-variable-search-0"]').setValue('x')
+    await flushPromises()
+    expect(w.find('[data-testid="api-client-variable-result-0"]').exists()).toBe(false)
+    await w.find('[data-testid="api-client-variable-remove-0"]').trigger('click')
+    expect(lastUpdate(w).variables).toEqual([])
+    w.unmount()
+  })
 })

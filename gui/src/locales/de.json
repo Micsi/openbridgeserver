@@ -2625,7 +2625,17 @@
       "extractorHint": "Variablen können als ###OBS1###, ###OBS2### usw. in den Pfaden verwendet werden – zusammen mit den Datums-/Zeitvariablen (z. B. ###HH###, ###yyyy###).",
       "textHint": "Variablen können als ###OBS1###, ###OBS2### usw. in Titel, Fallback-Text bzw. statischen Texten verwendet werden – zusammen mit den Datums-/Zeitvariablen (z. B. ###HH###, ###DATE###). Über Eingänge verbundene Werte werden nicht ausgewertet.",
       "replaceHint": "Variablen können als ###OBS1###, ###OBS2### usw. im Ersetzungstext verwendet werden – zusammen mit den Datums-/Zeitvariablen. Bei RegEx-Regeln bleiben eingesetzte Werte wörtlich (Gruppenverweise wie \\1 wirken nur im eigenen Text).",
-      "urlHint": "Variablen (z. B. ###yyyy###, ###OBS1###) sind nur im Pfad und in der Query der URL erlaubt, nicht in Schema, Host oder Port."
+      "urlHint": "Variablen (z. B. ###yyyy###, ###OBS1###) sind nur im Pfad und in der Query der URL erlaubt, nicht in Schema, Host oder Port.",
+      "issues": {
+        "unknownVariable": "Unbekannte Variable {name}",
+        "pathNotFound": "Pfad '{path}' nicht gefunden",
+        "invalidXPath": "Ungültiger XPath '{path}': {error}",
+        "notConfigured": "Variable {name} ist nicht konfiguriert",
+        "notAvailable": "Variable {name}: Objekt {object} ist nicht verfügbar",
+        "invalidObject": "Variable {name} verweist auf ein ungültiges Objekt",
+        "noValue": "Variable {name}: Objekt {object} hat keinen Wert",
+        "emptyValue": "Der Variablenwert ist leer"
+      }
     }
   },
   "authzPreflight": {

@@ -3,6 +3,7 @@ import {
   LOGIC_DATE_VARIABLES,
   LOGIC_STANDARD_VARIABLES,
   configuredObsSlots,
+  translateVariableIssue,
   normaliseObjectVariables,
   unresolvedVariables,
   variableToken,
@@ -40,5 +41,24 @@ describe('logicVariables', () => {
       { slot: 5, datapoint_id: 'a', datapoint_name: 'A' },
       { slot: 2, datapoint_id: '', datapoint_name: '' },
     ])
+  })
+})
+
+describe('translateVariableIssue', () => {
+  const t = (key, params) => `${key}|${JSON.stringify(params)}`
+  it.each([
+    ['unknown variable ###FOO###', 'unknownVariable', { name: '###FOO###' }],
+    ["path 'a.b' not found", 'pathNotFound', { path: 'a.b' }],
+    ["invalid XPath 'x[': bad", 'invalidXPath', { path: 'x[', error: 'bad' }],
+    ['variable OBS2 is not configured', 'notConfigured', { name: 'OBS2' }],
+    ['variable OBS1 object Lamp is not available', 'notAvailable', { name: 'OBS1', object: 'Lamp' }],
+    ['variable OBS1 references an invalid object', 'invalidObject', { name: 'OBS1' }],
+    ['variable OBS1 object Lamp has no value', 'noValue', { name: 'OBS1', object: 'Lamp' }],
+    ['variable value is empty', 'emptyValue', {}],
+  ])('maps %s', (msg, key, params) => {
+    expect(translateVariableIssue(msg, t)).toBe(`logic.variables.issues.${key}|${JSON.stringify(params)}`)
+  })
+  it('keeps unknown messages verbatim', () => {
+    expect(translateVariableIssue('something else', t)).toBe('something else')
   })
 })

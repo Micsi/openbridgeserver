@@ -2997,6 +2997,7 @@ class GraphExecutor:
         ports: dict[str, Any] = {}
         if any(str(t).strip() != r for t, r in zip(templates, resolved, strict=False)) or issues:
             ports["_resolved_paths"] = resolved
+            ports["_path_templates"] = [str(t).strip() for t in templates]
         if issues:
             ports["_issues"] = issues
         return ports

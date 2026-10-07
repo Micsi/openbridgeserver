@@ -2625,7 +2625,17 @@
       "extractorHint": "Variables can be used as ###OBS1###, ###OBS2###, etc. in the paths – together with the date/time variables (e.g. ###HH###, ###yyyy###).",
       "textHint": "Variables can be used as ###OBS1###, ###OBS2###, etc. in the title, fallback text or static texts – together with the date/time variables (e.g. ###HH###, ###DATE###). Values connected through inputs are not evaluated.",
       "replaceHint": "Variables can be used as ###OBS1###, ###OBS2###, etc. in the replacement text – together with the date/time variables. In regex rules substituted values stay literal (group references such as \\1 only work in your own text).",
-      "urlHint": "Variables (e.g. ###yyyy###, ###OBS1###) are only allowed in the URL path and query, not in scheme, host or port."
+      "urlHint": "Variables (e.g. ###yyyy###, ###OBS1###) are only allowed in the URL path and query, not in scheme, host or port.",
+      "issues": {
+        "unknownVariable": "Unknown variable {name}",
+        "pathNotFound": "Path '{path}' not found",
+        "invalidXPath": "Invalid XPath '{path}': {error}",
+        "notConfigured": "Variable {name} is not configured",
+        "notAvailable": "Variable {name}: object {object} is not available",
+        "invalidObject": "Variable {name} references an invalid object",
+        "noValue": "Variable {name}: object {object} has no value",
+        "emptyValue": "The variable value is empty"
+      }
     }
   },
   "authzPreflight": {

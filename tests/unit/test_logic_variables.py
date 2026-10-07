@@ -159,6 +159,7 @@ class TestJsonExtractorVariables:
         out = _executor([n]).execute({"j": {"data": HOURS}})["j"]
         assert out["value"] == "h7"
         assert out["_resolved_paths"] == ["[7].text.value"]
+        assert out["_path_templates"] == ["[###H###].text.value"]
         assert "_issues" not in out
 
     @pytest.mark.parametrize(("hour_utc", "expected"), [(22, "h0"), (23, "h1"), (21, "h23")])
