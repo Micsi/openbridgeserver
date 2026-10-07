@@ -938,14 +938,14 @@ async def import_config(
                 if instance_row is None:
                     raise ValueError(f"MESSAGE adapter instance not found: {effective_instance_id}")
                 instance_config = _json_config(instance_row["config"])
+            config = _normalize_knx_group_addresses(effective_adapter_type, b_data.config)
             _validate_adapter_binding(
                 effective_adapter_type,
                 b_data.direction,
-                b_data.config,
+                config,
                 enabled=b_data.enabled,
                 instance_config=instance_config,
             )
-            config = _normalize_knx_group_addresses(effective_adapter_type, b_data.config)
             if existing_binding:
                 await db.execute_and_commit(
                     """UPDATE adapter_bindings
