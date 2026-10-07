@@ -254,7 +254,11 @@ def coerce_webhook_value(raw: Any, data_type: str) -> Any:
         if isinstance(raw, bool):
             return raw
         if isinstance(raw, (int, float)):
-            return bool(raw)
+            # Same domain as the text form ("0"/"1"): Python truthiness would turn
+            # 2, -1 or 0.5 into True and publish a value nobody asked for.
+            if raw == 0 or raw == 1:
+                return bool(raw)
+            raise ValueError(f"{raw!r} is not a boolean value")
         token = str(raw).strip().lower()
         if token in _TRUE_TOKENS:
             return True
@@ -494,6 +498,7 @@ class WebhookAdapter(AdapterBase):
         self._stats: dict[str, BindingStats] = {}
         self._last_trigger: dict[str, float] = {}
         self._autoreset_tasks: dict[str, asyncio.Task] = {}
+        self._autoreset_armed: dict[str, str] = {}
         self._rejections = RejectionCounters()
 
     # ------------------------------------------------------------------
@@ -539,8 +544,11 @@ class WebhookAdapter(AdapterBase):
 
     async def _on_bindings_reloaded(self) -> None:
         # A pending reset belongs to the configuration it was armed under; the
-        # reloaded binding may have a different reset value or none at all.
-        self._cancel_all_autoresets()
+        # reloaded binding may have a different reset value or none at all. A
+        # reload that changes nothing relevant — a token rotation on this or
+        # another binding of the instance — must leave it alone, or the
+        # DataPoint would stay stuck at the trigger value.
+        self._cancel_stale_autoresets()
         by_slug: dict[str, Any] = {}
         duplicates: list[str] = []
         for binding in self._bindings:
@@ -820,6 +828,7 @@ class WebhookAdapter(AdapterBase):
             return
         key = str(binding.id)
         self._cancel_autoreset(key)
+        self._autoreset_armed[key] = self._reset_signature(binding)
         self._autoreset_tasks[key] = asyncio.create_task(
             self._autoreset(binding, config, data_type),
             name=f"webhook-autoreset-{key}",
@@ -846,7 +855,20 @@ class WebhookAdapter(AdapterBase):
         await self._emit(binding, value)
         logger.info("WEBHOOK: auto-reset dp=%s value=%r (binding %s)", binding.datapoint_id, value, binding.id)
 
+    @staticmethod
+    def _reset_signature(binding: Any) -> str:
+        """Everything a pending reset depends on — the token is deliberately not part of it."""
+        config = {name: value for name, value in binding.config.items() if name != "token"}
+        return json.dumps([config, binding.value_formula, binding.value_map, str(binding.datapoint_id)], sort_keys=True, default=str)
+
+    def _cancel_stale_autoresets(self) -> None:
+        current = {str(binding.id): self._reset_signature(binding) for binding in self._bindings}
+        for key in list(self._autoreset_tasks):
+            if self._autoreset_armed.get(key) != current.get(key):
+                self._cancel_autoreset(key)
+
     def _cancel_autoreset(self, key: str) -> None:
+        self._autoreset_armed.pop(key, None)
         task = self._autoreset_tasks.pop(key, None)
         if task is not None and not task.done():
             task.cancel()

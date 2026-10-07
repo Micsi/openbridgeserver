@@ -267,6 +267,10 @@ def test_coerce_webhook_value(raw, data_type, expected):
     ("raw", "data_type"),
     [
         ("maybe", "BOOLEAN"),
+        (2, "BOOLEAN"),
+        (-1, "BOOLEAN"),
+        (0.5, "BOOLEAN"),
+        (float("nan"), "BOOLEAN"),
         (None, "BOOLEAN"),
         ("abc", "INTEGER"),
         ("42.7", "INTEGER"),
@@ -997,6 +1001,66 @@ async def test_autoreset_is_skipped_when_the_datapoint_disappeared_meanwhile(moc
     assert [event.value for event in _data_events(mock_bus)] == [True]
 
 
+async def _armed_instance(mock_bus, monkeypatch, *bindings):
+    _stub_registry(monkeypatch, _Dp(bindings[0].datapoint_id))
+    instance = await _adapter(mock_bus, list(bindings))
+    for binding in bindings:
+        await instance.handle_trigger(method="GET", remainder=binding.config["slug"], query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    return instance
+
+
+async def test_a_reload_that_only_rotates_a_token_keeps_the_pending_reset(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=30)
+    instance = await _armed_instance(mock_bus, monkeypatch, binding)
+
+    binding.config["token"] = "rotated"
+    await instance.reload_bindings([binding])
+    await _settle_autoreset(instance, binding)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True, False]
+
+
+async def test_a_reload_that_changes_the_reset_behaviour_drops_the_pending_reset(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=30)
+    instance = await _armed_instance(mock_bus, monkeypatch, binding)
+    task = instance._autoreset_tasks[str(binding.id)]
+
+    binding.config["autoreset_value"] = "true"
+    await instance.reload_bindings([binding])
+    await asyncio.wait([task])
+
+    assert task.cancelled()
+    assert [event.value for event in _data_events(mock_bus)] == [True]
+    assert str(binding.id) not in instance._autoreset_armed
+
+
+async def test_a_reload_that_removes_the_binding_drops_its_pending_reset(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=30)
+    instance = await _armed_instance(mock_bus, monkeypatch, binding)
+    task = instance._autoreset_tasks[str(binding.id)]
+
+    await instance.reload_bindings([])
+    await asyncio.wait([task])
+
+    assert task.cancelled()
+
+
+async def test_rotating_one_binding_does_not_cancel_the_reset_of_another(mock_bus, monkeypatch):
+    first = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=30)
+    second = make_binding(
+        {"slug": "zweite", "token": TOKEN, "methods": ["GET"], "autoreset": True, "autoreset_value": "false", "autoreset_delay_ms": 30}
+    )
+    second.datapoint_id = first.datapoint_id
+    instance = await _armed_instance(mock_bus, monkeypatch, first, second)
+
+    first.config["token"] = "rotated"
+    await instance.reload_bindings([first, second])
+    await _settle_autoreset(instance, first)
+    await _settle_autoreset(instance, second)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True, True, False, False]
+
+
 async def test_no_autoreset_when_it_is_switched_off(mock_bus, monkeypatch):
     binding = _binding(autoreset_value="false", autoreset_delay_ms=1)
     _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
@@ -1090,6 +1154,7 @@ async def test_reloading_bindings_cancels_a_pending_reset(mock_bus, monkeypatch)
     instance = await _adapter(mock_bus, [binding])
 
     await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    binding.config["autoreset_delay_ms"] = 1_000
     await instance.reload_bindings([binding])
 
     assert instance._autoreset_tasks == {}

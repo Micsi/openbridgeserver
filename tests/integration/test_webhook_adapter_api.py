@@ -974,3 +974,42 @@ async def test_a_trigger_response_carries_the_cors_header_of_its_preflight(clien
         assert preflight.headers["access-control-allow-origin"] == trigger.headers["access-control-allow-origin"]
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_config_import_issues_a_token_for_a_tokenless_webhook_binding(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers)
+    binding_id = str(uuid.uuid4())
+
+    def document() -> dict:
+        return {
+            "obs_version": "5",
+            "exported_at": "2024-01-01T00:00:00",
+            "datapoints": [],
+            "bindings": [
+                {
+                    "id": binding_id,
+                    "datapoint_id": dp["id"],
+                    "adapter_type": "WEBHOOK",
+                    "adapter_instance_id": instance["id"],
+                    "direction": "SOURCE",
+                    "config": {"slug": "tokenless"},
+                    "enabled": True,
+                }
+            ],
+        }
+
+    try:
+        first = await client.post("/api/v1/config/import", json=document(), headers=auth_headers)
+        assert first.status_code == 200 and first.json()["errors"] == [], first.text
+        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+        assert entry["token"]
+        assert (await client.get(entry["call_path"])).status_code == 204
+
+        # Importing the same tokenless document again keeps the token that was issued.
+        second = await client.post("/api/v1/config/import", json=document(), headers=auth_headers)
+        assert second.status_code == 200 and second.json()["errors"] == [], second.text
+        again = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+        assert again["token"] == entry["token"]
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
