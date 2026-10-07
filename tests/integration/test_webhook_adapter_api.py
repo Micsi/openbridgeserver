@@ -1085,3 +1085,24 @@ async def test_config_import_refuses_an_enabled_webhook_on_a_central_plant_datap
         assert slugs == ["plant-off", "room-live"]
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_every_handled_trigger_response_is_marked_non_cacheable(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers, config={"rate_limit_per_minute": 2})
+    try:
+        await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "no-cache", "methods": ["GET", "POST"]})
+        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+
+        responses = {
+            204: await client.get(entry["call_path"]),
+            404: await client.put("/hook/anything"),
+            413: await client.post("/hook/no-cache", content=b"x" * (64 * 1024 + 1)),
+            429: await client.get(entry["call_path"]),
+        }
+
+        for status_code, response in responses.items():
+            assert response.status_code == status_code
+            assert response.headers["cache-control"] == "no-store", status_code
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])

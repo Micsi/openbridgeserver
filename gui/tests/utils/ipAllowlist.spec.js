@@ -148,3 +148,24 @@ describe('leading-zero IPv4 spellings', () => {
     expect(parseIpv4Entry('010.0.0.0/8')).toBeNull()
   })
 })
+
+describe('a literal IPv6 loopback host', () => {
+  it.each(['::1', '[::1]'])('%s is not covered by an IPv4-only allowlist', (host) => {
+    expect(isAddressCovered(host, ['127.0.0.1'])).toBe(false)
+    expect(isAddressCovered(host, ['127.0.0.0/8', '10.0.0.0/8'])).toBe(false)
+  })
+
+  it.each(['::1', '[::1]'])('%s is covered when the allowlist names ::1', (host) => {
+    expect(isAddressCovered(host, ['10.0.0.0/8', '::1'])).toBe(true)
+    expect(isAddressCovered(host, ['::1/128'])).toBe(true)
+  })
+
+  it('stays undecided when other IPv6 entries could cover it', () => {
+    expect(isAddressCovered('[::1]', ['127.0.0.1', 'fd00::/8'])).toBeNull()
+  })
+
+  it('keeps treating the hostname localhost as either family', () => {
+    expect(isAddressCovered('localhost', ['127.0.0.1'])).toBe(true)
+    expect(isAddressCovered('localhost', ['::1'])).toBe(true)
+  })
+})

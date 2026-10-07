@@ -34,6 +34,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # device never receives the Admin-GUI shell instead of a status code.
 _PASSTHROUGH_METHODS = frozenset({"OPTIONS"})
 _TRIGGER_METHODS = frozenset({"GET", "POST"})
+# A trigger is a state-changing event delivered over GET, and every answer —
+# including the opaque 404 — describes that one call. A browser or reverse proxy
+# that cached one would answer the next identical URL without forwarding it.
+_NO_STORE = {"Cache-Control": "no-store"}
 
 
 async def _claimed_by_inactive_instance(path: str) -> bool:
@@ -97,12 +101,12 @@ async def handle_webhook_request(request: Request) -> Response | None:
     target = resolve_webhook_target(request.url.path)
     if target is None:
         if await _claimed_by_inactive_instance(request.url.path):
-            return JSONResponse({"detail": "Not found"}, status_code=404)
+            return JSONResponse({"detail": "Not found"}, status_code=404, headers=_NO_STORE)
         return None
 
     instance, remainder = target
     if request.method not in _TRIGGER_METHODS:
-        return JSONResponse({"detail": "Not found"}, status_code=404)
+        return JSONResponse({"detail": "Not found"}, status_code=404, headers=_NO_STORE)
 
     peer_ip = request.client.host if request.client else None
     forwarded_for = request.headers.get("X-Forwarded-For")
@@ -114,11 +118,11 @@ async def handle_webhook_request(request: Request) -> Response | None:
         # cost the caller budget.
         denial = instance.admit(peer_ip=peer_ip, forwarded_for=forwarded_for)
         if denial is not None:
-            return JSONResponse({"detail": denial.detail}, status_code=denial.status)
+            return JSONResponse({"detail": denial.detail}, status_code=denial.status, headers=_NO_STORE)
         admitted = True
         body = await _read_capped_body(request)
         if body is None:
-            return JSONResponse({"detail": "Request body is too large"}, status_code=413)
+            return JSONResponse({"detail": "Request body is too large"}, status_code=413, headers=_NO_STORE)
     outcome = await instance.handle_trigger(
         method=request.method,
         remainder=remainder,
@@ -129,5 +133,5 @@ async def handle_webhook_request(request: Request) -> Response | None:
         admitted=admitted,
     )
     if outcome.status == 204:
-        return Response(status_code=204)
-    return JSONResponse({"detail": outcome.detail}, status_code=outcome.status)
+        return Response(status_code=204, headers=_NO_STORE)
+    return JSONResponse({"detail": outcome.detail}, status_code=outcome.status, headers=_NO_STORE)

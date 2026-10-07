@@ -1108,6 +1108,16 @@ async def test_admit_charges_the_rate_limit_and_an_admitted_call_is_not_charged_
     assert denied is not None and denied.status == 429
 
 
+async def test_a_completed_pulse_counts_both_values_as_published(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=0)
+    instance = await _armed_instance(mock_bus, monkeypatch, binding)
+    await _settle_autoreset(instance, binding)
+
+    stats = instance.stats_for(binding.id)
+    assert [event.value for event in _data_events(mock_bus)] == [True, False]
+    assert (stats.call_count, stats.publish_count) == (1, 2)
+
+
 async def test_no_autoreset_when_it_is_switched_off(mock_bus, monkeypatch):
     binding = _binding(autoreset_value="false", autoreset_delay_ms=1)
     _stub_registry(monkeypatch, _Dp(binding.datapoint_id))

@@ -129,10 +129,14 @@ shortly after `0` — and the next press is a fresh edge again.
   value — which is what puts the `1`/`0` pair on KNX.
 - **Retriggerable:** another call while the timer runs restarts it rather than
   adding a second one. Ringing twice keeps the value until the configured time
-  after the *last* press.
+  after the *last* press. This applies only to calls that are accepted: a call
+  inside the **Debounce** window is confirmed with `204` but ignored — it does
+  not restart the timer. With a debounce window longer than the reset delay the
+  pulse therefore always ends after the delay of the *first* accepted call.
 - A delay of `0` resets immediately — a pure pulse.
-- Changing the binding or stopping the instance discards a pending reset. It
-  belongs to the configuration it was armed under.
+- Changing the reset behaviour of the binding (or its value map, formula or
+  object) or stopping the instance discards a pending reset. It belongs to the
+  configuration it was armed under; rotating a token does not affect it.
 
 The binding's direction stays **read (SOURCE)**: the adapter still only ever
 feeds values *into* OBS and never writes out to a protocol endpoint. The reset
@@ -178,8 +182,9 @@ rate limit, address not in the allowlist, unknown slug, wrong token, or a
 method that is not allowed. Because the outward answer stays
 an indistinguishable `404` on purpose, this display is the only place a silent
 failure can be recognised at all. Both are shown in a binding's form, below its call URL: that
-binding's own counters first, then — in a separate box — the calls the server could not match to any
-binding (an unknown slug, a wrong token) or turned away for the whole instance (rate limit).
+binding's own counters first, then — in a separate box — the instance-wide total of turned-away calls. That total also
+contains the calls the server could not match to any binding (an unknown slug, a wrong token) and
+the rate limit, so it overlaps with the binding's own counters.
 
 **Issue a new token** revokes the previous URL immediately and hands out a new one — when a
 device is replaced, for instance, or when its configuration ended up in the wrong hands.

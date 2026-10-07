@@ -101,9 +101,18 @@ export function isAddressCovered(host, entries) {
   const list = normalizeEntries(entries).map(entry => entry.trim()).filter(Boolean)
   if (list.length === 0) return true
 
+  const hostText = String(host ?? '').trim().toLowerCase()
+  // A literal IPv6 loopback already names the address family: the caller IS
+  // ::1, so an IPv4 entry such as 127.0.0.1 cannot cover it. IPv6 entries other
+  // than ::1 are not parsed here, so they leave the verdict open.
+  if (hostText === '::1' || hostText === '[::1]') {
+    if (list.some(entry => entry === '::1' || entry === '::1/128')) return true
+    return list.every(entry => parseIpv4Entry(entry) !== null) ? false : null
+  }
+
   const loopback = isLoopbackHost(host)
-  // A browser on the OBS host reaches it as either 127.0.0.1 or ::1 and we
-  // cannot tell which, so an allowlist naming either one counts as covering it.
+  // `localhost` is reached as either 127.0.0.1 or ::1 and we cannot tell which,
+  // so an allowlist naming either one counts as covering it.
   if (loopback && list.some(entry => entry === '::1' || entry === '::1/128')) return true
 
   const address = parseIpv4(loopback ? '127.0.0.1' : String(host ?? '').trim())

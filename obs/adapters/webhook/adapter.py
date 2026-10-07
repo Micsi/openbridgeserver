@@ -876,6 +876,8 @@ class WebhookAdapter(AdapterBase):
             logger.warning("WEBHOOK: binding %s has an unusable auto-reset value — %s", binding.id, exc)
             return
         await self._emit(binding, value)
+        # The reset is a value placed on the bus like the trigger, so it counts.
+        self._stats.setdefault(str(binding.id), BindingStats()).publish_count += 1
         logger.info("WEBHOOK: auto-reset dp=%s value=%r (binding %s)", binding.datapoint_id, value, binding.id)
 
     @staticmethod

@@ -136,10 +136,16 @@ frische Flanke.
   hinaus — genau dadurch landet das `1`/`0`-Paar auf KNX.
 - **Nachtriggerbar:** ein erneuter Aufruf während der laufenden Zeit startet sie
   neu, statt einen zweiten Timer anzulegen. Zweimal klingeln hält den Wert also
-  bis zur eingestellten Zeit nach dem *letzten* Druck.
+  bis zur eingestellten Zeit nach dem *letzten* Druck. Das gilt nur für
+  angenommene Aufrufe: ein Aufruf innerhalb der **Entprellung** wird mit `204`
+  bestätigt, aber ignoriert — er startet den Timer nicht neu. Ist die Entprellung
+  länger als die Reset-Verzögerung, endet der Impuls daher immer nach der
+  Verzögerung des *ersten* angenommenen Aufrufs.
 - `0` als Verzögerung setzt sofort zurück — ein reiner Impuls.
-- Wird die Verknüpfung geändert oder die Instanz gestoppt, verfällt ein noch
-  laufender Reset. Er gehört zu der Konfiguration, unter der er gestartet wurde.
+- Wird das Reset-Verhalten der Verknüpfung (oder ihre Wertzuordnung, Formel bzw.
+  das Objekt) geändert oder die Instanz gestoppt, verfällt ein noch laufender
+  Reset. Er gehört zu der Konfiguration, unter der er gestartet wurde; ein
+  Token-Wechsel berührt ihn nicht.
 
 Die Richtung der Verknüpfung bleibt dabei **Lesen (SOURCE)**: der Adapter
 speist weiterhin ausschließlich Werte *in* OBS ein und schreibt nie auf einen
@@ -188,9 +194,9 @@ oder nicht erlaubte Methode. Weil die Antwort
 nach außen bewusst ein nicht unterscheidbares `404` bleibt, ist diese Anzeige
 der einzige Ort, an dem sich ein stiller Fehlschlag überhaupt erkennen lässt.
 Beides steht im Formular einer Verknüpfung, unter deren Aufruf-URL: zuerst die Zähler
-dieser Verknüpfung, dann — in einem eigenen Kasten — die Aufrufe, die der Server keiner Verknüpfung
-zuordnen konnte (unbekannter Slug, falsches Token) oder für die ganze Instanz abgewiesen hat
-(Ratenlimit).
+dieser Verknüpfung, dann — in einem eigenen Kasten — die Summe der abgewiesenen Aufrufe der ganzen Instanz. Sie
+enthält auch die Aufrufe, die der Server keiner Verknüpfung zuordnen konnte (unbekannter Slug,
+falsches Token), und das Ratenlimit, überschneidet sich also mit den Zählern der Verknüpfung.
 
 **Token neu erzeugen** widerruft die bisherige URL sofort und gibt eine neue aus — z. B.
 wenn ein Gerät ausgetauscht wird oder seine Konfiguration in falsche Hände geraten ist.
