@@ -84,7 +84,7 @@ the object. The direction is always **read (SOURCE)** — a webhook is an entry 
 | **Slug** | The path segment of the call URL, e.g. `front-door-bell`. Lower-case letters, digits, `-` and `_`; unique per instance. |
 | **Allowed HTTP methods** | `GET`, `POST` or both. Devices that can only call a URL use `GET`. |
 | **Value source** | **Fixed value** for push buttons and doorbells (`true`), or **value from the request**. |
-| **Parameter / field name** | For *value from the request*: the query parameter for `GET` (`?value=1`), or the field of the same name in the JSON body for `POST`. Default `value`. |
+| **Parameter / field name** | For *value from the request*: the query parameter for `GET` (`?value=1`), or the field of the same name in the JSON body for `POST`. Default `value`. The name `token` is not allowed — that parameter carries the credential. |
 | **Allowed networks (CIDR)** | Which caller addresses may trigger this slug — the fixed address of exactly this door station, for example. Entries are managed one row at a time. Empty = no restriction. |
 | **Debounce (ms)** | Further calls within this window are acknowledged with `204` but do not set the value again. `0` = off. |
 | **Auto-reset** | Optional: sets the datapoint back to the reset value after the configured time — see below. |

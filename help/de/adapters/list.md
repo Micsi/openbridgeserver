@@ -91,7 +91,7 @@ Eingang.
 | **Slug** | Pfadsegment der Aufruf-URL, z. B. `haustuer-klingel`. Kleinbuchstaben, Ziffern, `-` und `_`; je Instanz eindeutig. |
 | **Erlaubte HTTP-Methoden** | `GET`, `POST` oder beides. Geräte, die nur eine URL aufrufen können, benutzen `GET`. |
 | **Wertquelle** | **Fester Wert** für Taster und Klingeln (`true`), oder **Wert aus der Anfrage**. |
-| **Parameter-/Feldname** | Bei *Wert aus der Anfrage*: der Query-Parameter bei `GET` (`?value=1`), bzw. das gleichnamige Feld im JSON-Body bei `POST`. Standard `value`. |
+| **Parameter-/Feldname** | Bei *Wert aus der Anfrage*: der Query-Parameter bei `GET` (`?value=1`), bzw. das gleichnamige Feld im JSON-Body bei `POST`. Standard `value`. Der Name `token` ist nicht erlaubt — dieser Parameter trägt die Zugangsdaten. |
 | **Erlaubte Netze (CIDR)** | Von welchen Absenderadressen dieser Slug ausgelöst werden darf — z. B. die feste Adresse genau dieser Türsprechstelle. Einträge werden zeilenweise verwaltet. Leer = keine Einschränkung. |
 | **Entprellung (ms)** | Weitere Aufrufe innerhalb dieser Zeit werden mit `204` bestätigt, setzen den Wert aber nicht erneut. `0` = aus. |
 | **Auto-Reset** | Optional: setzt den Datenpunkt nach der eingestellten Zeit selbsttätig auf den Reset-Wert zurück — siehe unten. |

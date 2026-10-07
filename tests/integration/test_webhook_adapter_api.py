@@ -1013,3 +1013,75 @@ async def test_config_import_issues_a_token_for_a_tokenless_webhook_binding(clie
         assert again["token"] == entry["token"]
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_oversized_posts_spend_rate_limit_budget(client, auth_headers):
+    instance = await _create_instance(client, auth_headers, config={"rate_limit_per_minute": 1})
+    try:
+        first = await client.post("/hook/bell", content=b"x" * (64 * 1024 + 1))
+        second = await client.post("/hook/bell", content=b"x" * (64 * 1024 + 1))
+
+        assert first.status_code == 413
+        assert (second.status_code, second.json()) == (429, {"detail": "Too many requests"})
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_the_credential_parameter_cannot_be_used_as_the_value_parameter(client, auth_headers):
+    dp = await _create_dp(client, auth_headers, data_type="STRING")
+    instance = await _create_instance(client, auth_headers, enabled=False)
+    try:
+        resp = await client.post(
+            f"/api/v1/datapoints/{dp['id']}/bindings",
+            json={
+                "adapter_instance_id": instance["id"],
+                "direction": "SOURCE",
+                "config": {"slug": "leaky", "value_source": "request", "value_param": "token"},
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422, resp.text
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_config_import_refuses_an_enabled_webhook_on_a_central_plant_datapoint(client, auth_headers):
+    plant = await _create_dp(client, auth_headers, control_class="central_plant")
+    room = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers, enabled=False)
+
+    def binding(dp_id: str, slug: str, enabled: bool) -> dict:
+        return {
+            "id": str(uuid.uuid4()),
+            "datapoint_id": dp_id,
+            "adapter_type": "WEBHOOK",
+            "adapter_instance_id": instance["id"],
+            "direction": "SOURCE",
+            "config": {"slug": slug, "token": f"token-{slug}"},
+            "enabled": enabled,
+        }
+
+    try:
+        resp = await client.post(
+            "/api/v1/config/import",
+            json={
+                "obs_version": "5",
+                "exported_at": "2024-01-01T00:00:00",
+                "datapoints": [],
+                "bindings": [
+                    binding(plant["id"], "plant-live", True),
+                    binding(plant["id"], "plant-off", False),
+                    binding(room["id"], "room-live", True),
+                ],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["bindings_created"] == 2
+        assert [error for error in body["errors"] if "central_plant" in error]
+
+        slugs = sorted(entry["slug"] for entry in await _webhook_bindings(client, auth_headers, instance["id"]))
+        assert slugs == ["plant-off", "room-live"]
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])

@@ -232,6 +232,10 @@ class WebhookBindingConfig(BaseModel):
         candidate = (value or "").strip()
         if not candidate:
             raise ValueError("value_param must not be empty")
+        if candidate.lower() == "token":
+            # `token` carries the credential in the query string; reading it as the
+            # payload would publish the bearer secret onto the DataPoint.
+            raise ValueError("value_param must not be 'token' — that parameter carries the credential")
         return candidate
 
 
@@ -624,6 +628,25 @@ class WebhookAdapter(AdapterBase):
     # Trigger
     # ------------------------------------------------------------------
 
+    def admit(self, *, peer_ip: str | None, forwarded_for: str | None = None) -> TriggerOutcome | None:
+        """Charge one call against the per-address rate limit.
+
+        Returns the 429 outcome when the address is over its limit, else ``None``.
+        This runs before anything else — in particular before a POST body is read —
+        so a caller cannot repeat oversized or invalid requests without spending
+        budget. A blocked address is logged once per window; the counters still
+        see every call, so a flood cannot become a flood of log lines (and
+        WebSocket broadcasts) of its own.
+        """
+        client_ip = resolve_client_ip(peer_ip, forwarded_for, trust_forwarded_for=self._trust_forwarded_for)
+        allowed, first_denial = self._limiter.check(client_ip or "unknown")
+        if allowed:
+            return None
+        if first_denial:
+            logger.warning("WEBHOOK: rate limit exceeded for %s (further calls in this window are not logged)", client_ip)
+        self._reject(RejectionReason.RATE_LIMITED, client_ip=client_ip)
+        return TriggerOutcome(429, "Too many requests")
+
     async def handle_trigger(
         self,
         *,
@@ -633,24 +656,23 @@ class WebhookAdapter(AdapterBase):
         body: bytes,
         peer_ip: str | None,
         forwarded_for: str | None = None,
+        admitted: bool = False,
     ) -> TriggerOutcome:
         """Handle one incoming call below this instance's path prefix.
+
+        ``admitted`` says the caller already went through :meth:`admit` (the
+        middleware does that before reading a POST body); the call is then not
+        charged against the rate limit a second time.
 
         Returns 404 for an unknown slug, a wrong token, a method the binding
         does not allow and a disabled instance alike: a device that guesses
         must not be able to tell which part of its guess was wrong.
         """
+        if not admitted:
+            denial = self.admit(peer_ip=peer_ip, forwarded_for=forwarded_for)
+            if denial is not None:
+                return denial
         client_ip = resolve_client_ip(peer_ip, forwarded_for, trust_forwarded_for=self._trust_forwarded_for)
-        # Rate limit first, allowlist second: the limiter is keyed per address,
-        # so one caller can never starve another. A blocked address is logged once
-        # per window — the counters still see every call — so a flood cannot turn
-        # into a flood of log lines (and WebSocket broadcasts) of its own.
-        allowed, first_denial = self._limiter.check(client_ip or "unknown")
-        if not allowed:
-            if first_denial:
-                logger.warning("WEBHOOK: rate limit exceeded for %s (further calls in this window are not logged)", client_ip)
-            self._reject(RejectionReason.RATE_LIMITED, client_ip=client_ip)
-            return TriggerOutcome(429, "Too many requests")
 
         slug, path_token = self._split_remainder(remainder)
         binding = self._by_slug.get(slug) if slug else None
@@ -782,7 +804,7 @@ class WebhookAdapter(AdapterBase):
 
         await self._emit(binding, value)
         logger.info("WEBHOOK: dp=%s value=%r (binding %s)", binding.datapoint_id, value, binding.id)
-        self._schedule_autoreset(binding, config, datapoint.data_type)
+        self._schedule_autoreset(binding, config)
         return TriggerOutcome(204, "")
 
     async def _emit(self, binding: Any, value: Any) -> None:
@@ -816,7 +838,7 @@ class WebhookAdapter(AdapterBase):
     # Auto-reset
     # ------------------------------------------------------------------
 
-    def _schedule_autoreset(self, binding: Any, config: WebhookBindingConfig, data_type: str) -> None:
+    def _schedule_autoreset(self, binding: Any, config: WebhookBindingConfig) -> None:
         """Arm the timer that publishes the reset value.
 
         Retriggerable on purpose: a second call while one is pending restarts
@@ -830,27 +852,28 @@ class WebhookAdapter(AdapterBase):
         self._cancel_autoreset(key)
         self._autoreset_armed[key] = self._reset_signature(binding)
         self._autoreset_tasks[key] = asyncio.create_task(
-            self._autoreset(binding, config, data_type),
+            self._autoreset(binding, config),
             name=f"webhook-autoreset-{key}",
         )
 
-    async def _autoreset(self, binding: Any, config: WebhookBindingConfig, data_type: str) -> None:
+    async def _autoreset(self, binding: Any, config: WebhookBindingConfig) -> None:
+        from obs.core.registry import get_registry
+
         # CancelledError is a BaseException and passes straight through the
         # ValueError handler, so a cancelled timer needs no clause of its own.
         try:
             if config.autoreset_delay_ms:
                 await asyncio.sleep(config.autoreset_delay_ms / 1000.0)
-            value = coerce_webhook_value(config.autoreset_value, data_type)
+            # Resolved after the delay, not when the reset was armed: the DataPoint
+            # can be reclassified as central_plant or change its type meanwhile,
+            # and this is an anonymous write just like the trigger itself.
+            datapoint = get_registry().get(binding.datapoint_id)
+            if datapoint is None or getattr(datapoint, "control_class", "room_local") == "central_plant":
+                logger.warning("WEBHOOK: auto-reset for binding %s skipped — its DataPoint is gone or now central_plant", binding.id)
+                return
+            value = coerce_webhook_value(config.autoreset_value, datapoint.data_type)
         except ValueError as exc:
             logger.warning("WEBHOOK: binding %s has an unusable auto-reset value — %s", binding.id, exc)
-            return
-        # The DataPoint can be reclassified while the reset is pending, and this
-        # is an anonymous write just like the trigger — apply the same boundary.
-        from obs.core.registry import get_registry
-
-        datapoint = get_registry().get(binding.datapoint_id)
-        if datapoint is None or getattr(datapoint, "control_class", "room_local") == "central_plant":
-            logger.warning("WEBHOOK: auto-reset for binding %s skipped — its DataPoint is gone or now central_plant", binding.id)
             return
         await self._emit(binding, value)
         logger.info("WEBHOOK: auto-reset dp=%s value=%r (binding %s)", binding.datapoint_id, value, binding.id)

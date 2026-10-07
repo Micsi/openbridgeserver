@@ -104,8 +104,18 @@ async def handle_webhook_request(request: Request) -> Response | None:
     if request.method not in _TRIGGER_METHODS:
         return JSONResponse({"detail": "Not found"}, status_code=404)
 
+    peer_ip = request.client.host if request.client else None
+    forwarded_for = request.headers.get("X-Forwarded-For")
     body = b""
+    admitted = False
     if request.method == "POST":
+        # Charge the rate limit before touching the body: an oversized request is
+        # answered below without ever reaching handle_trigger(), and must still
+        # cost the caller budget.
+        denial = instance.admit(peer_ip=peer_ip, forwarded_for=forwarded_for)
+        if denial is not None:
+            return JSONResponse({"detail": denial.detail}, status_code=denial.status)
+        admitted = True
         body = await _read_capped_body(request)
         if body is None:
             return JSONResponse({"detail": "Request body is too large"}, status_code=413)
@@ -114,8 +124,9 @@ async def handle_webhook_request(request: Request) -> Response | None:
         remainder=remainder,
         query_params=dict(request.query_params),
         body=body,
-        peer_ip=request.client.host if request.client else None,
-        forwarded_for=request.headers.get("X-Forwarded-For"),
+        peer_ip=peer_ip,
+        forwarded_for=forwarded_for,
+        admitted=admitted,
     )
     if outcome.status == 204:
         return Response(status_code=204)

@@ -191,6 +191,12 @@ def test_binding_config_rejects_bad_slug(slug):
         WebhookBindingConfig(slug=slug)
 
 
+@pytest.mark.parametrize("name", ["token", "Token", " TOKEN "])
+def test_binding_config_rejects_the_credential_parameter_as_value_param(name):
+    with pytest.raises(ValueError, match="credential"):
+        WebhookBindingConfig(slug="bell", value_source="request", value_param=name)
+
+
 def test_binding_config_rejects_empty_methods_and_value_param():
     with pytest.raises(ValidationError):
         WebhookBindingConfig(slug="bell", methods=[])
@@ -1059,6 +1065,47 @@ async def test_rotating_one_binding_does_not_cancel_the_reset_of_another(mock_bu
     await _settle_autoreset(instance, second)
 
     assert [event.value for event in _data_events(mock_bus)] == [True, True, False, False]
+
+
+async def test_autoreset_coerces_with_the_type_the_datapoint_has_by_then(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=10)
+    dp = _Dp(binding.datapoint_id)
+    _stub_registry(monkeypatch, dp)
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    dp.data_type = "STRING"
+    await _settle_autoreset(instance, binding)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True, "false"]
+
+
+async def test_autoreset_with_an_incompatible_value_after_a_type_change_is_dropped(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=10)
+    dp = _Dp(binding.datapoint_id)
+    _stub_registry(monkeypatch, dp)
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    dp.data_type = "DATE"
+    await _settle_autoreset(instance, binding)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True]
+
+
+async def test_admit_charges_the_rate_limit_and_an_admitted_call_is_not_charged_twice(mock_bus, monkeypatch):
+    binding = _binding(methods=["POST"])
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding], {"rate_limit_per_minute": 1})
+
+    assert instance.admit(peer_ip="198.51.100.4") is None
+    outcome = await instance.handle_trigger(
+        method="POST", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="198.51.100.4", admitted=True
+    )
+    assert outcome.status == 204
+
+    denied = instance.admit(peer_ip="198.51.100.4")
+    assert denied is not None and denied.status == 429
 
 
 async def test_no_autoreset_when_it_is_switched_off(mock_bus, monkeypatch):
