@@ -58,6 +58,7 @@
           :dp-persist-value="props.dpPersistValue"
           :ga-invalid="gaRejected"
           @ga-select="onGaSelect"
+          @dpt-change="dptChosen = true"
         />
 
       <!-- Modbus -->
@@ -328,6 +329,7 @@ import BindingFormMessage from '@/components/datapoints/binding-form/BindingForm
 import { timerValueDefault, validateTimerValue } from '@/utils/timerValue'
 import { useKnxProjectStore } from '@/stores/knxProject'
 import { formatGa } from '@/utils/groupAddress'
+import { keepsStoredSubtype } from '@/utils/dpt'
 
 const props = defineProps({
   dpId:           { type: String,  required: true },
@@ -395,6 +397,10 @@ const VALUE_MAP_PRESETS = [
   { key: 'onoff_num',   label: t('adapters.bindingForm.valueMapOnOffNum'),          map: { 'off': '0', 'on': '1' } },
   { key: 'custom',      label: t('adapters.bindingForm.customValueMapping'),         map: null },
 ]
+
+// The DPT in the form is a choice (stored with the binding or picked by the user), not the
+// form default: only then does a catalog main type leave its subtype alone (#1260).
+const dptChosen = ref(false)
 
 const cfg = reactive({
   group_address: '', dpt_id: 'DPT9.001', state_group_address: '', respond_to_read: false,
@@ -644,6 +650,7 @@ watch(() => props.initial, val => {
   form.direction           = val.direction
   form.enabled             = val.enabled
   Object.assign(cfg, val.config ?? {})
+  dptChosen.value = Boolean(val.config?.dpt_id)
   if (cfg.state_group_address == null) cfg.state_group_address = ''
   if (cfg.publish_topic       == null) cfg.publish_topic = ''
   if (cfg.respond_to_read     == null) cfg.respond_to_read = false
@@ -1214,7 +1221,7 @@ function onMqttJsonSampleInput() {
 }
 
 function onGaSelect(item) {
-  if (item.dpt && item.dpt !== cfg.dpt_id) cfg.dpt_id = item.dpt
+  if (item.dpt && !keepsStoredSubtype(item.dpt, dptChosen.value ? cfg.dpt_id : null)) cfg.dpt_id = item.dpt
 }
 
 function onPresetSelect(e) {
