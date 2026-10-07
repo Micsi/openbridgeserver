@@ -188,4 +188,36 @@ describe('NodeConfigPanel — variables in text fields (#1301)', () => {
     expect(w.text()).not.toContain('Stale removed-row result')
     w.unmount()
   })
+  it('object picker: invalidates a pending search when both nodes have empty ids', async () => {
+    const { searchApi } = await import('@/api/client')
+    let resolveOld
+    searchApi.search.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+    const empty = [{ slot: 1, datapoint_id: '', datapoint_name: '' }]
+    const w = await mountPanel('json_extractor', { json_paths: '[]', variables: empty })
+    await flushPromises()
+    await w.find('[data-testid="extractor-variable-search-0"]').setValue('old')
+    await w.setProps({ node: { id: 'n2', type: 'json_extractor', data: { json_paths: '[]', variables: empty } } })
+    resolveOld({ data: { items: [{ id: 'old', name: 'Stale result' }] } })
+    await flushPromises()
+    expect(w.text()).not.toContain('Stale result')
+    w.unmount()
+  })
+
+  it('discards the resolved path when an object variable changes', async () => {
+    const { searchApi } = await import('@/api/client')
+    searchApi.search.mockResolvedValueOnce({ data: { items: [{ id: 'new', name: 'Index zero' }] } })
+    const w = await mountPanel(
+      'json_extractor',
+      { json_paths: JSON.stringify([{ label: 'a', path: '[###OBS1###].v' }]), variables: [{ slot: 1, datapoint_id: 'old', datapoint_name: 'Index one' }] },
+      { n1: { _preview: '[{"v":"zero"},{"v":"one"}]', _resolved_paths: ['[1].v'], _path_templates: ['[###OBS1###].v'] } },
+    )
+    await flushPromises()
+    expect(w.find('[data-testid="variable-resolved-path"]').exists()).toBe(true)
+    await w.find('[data-testid="extractor-variable-search-0"]').setValue('zero')
+    await flushPromises()
+    await w.find('[data-testid="extractor-variable-result-0"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="variable-resolved-path"]').exists()).toBe(false)
+    w.unmount()
+  })
 })

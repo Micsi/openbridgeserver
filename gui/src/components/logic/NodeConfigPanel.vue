@@ -390,6 +390,7 @@
           <div v-if="urlTargetMsg" :class="['mt-2 p-2 rounded text-xs', urlTargetMsg.ok ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500']">{{ urlTargetMsg.text }}</div>
         </div>
         <ObjectVariablesEditor
+          :key="node?.id"
           v-model="localData.variables"
           test-id-prefix="api-client"
           :hint="$t('logic.nodeConfig.apiClient.variablesHint')"
@@ -524,7 +525,7 @@
             <VariablePathHelper :path="localData[`text_${i}`] || ''" :obs-slots="blockObsSlots" @insert="appendVariable(`text_${i}`, $event)" />
           </div>
         </div>
-        <ObjectVariablesEditor v-model="localData.variables" test-id-prefix="concat" :hint="$t('logic.variables.textHint')" @update:model-value="emitUpdate" />
+        <ObjectVariablesEditor :key="node?.id" v-model="localData.variables" test-id-prefix="concat" :hint="$t('logic.variables.textHint')" @update:model-value="emitUpdate" />
         <IssueList :issues="blockIssues" />
       </div>
     </template>
@@ -629,7 +630,7 @@
             <span class="text-xs text-slate-600 dark:text-slate-300">{{ $t('logic.nodeConfig.stringReplace.replaceAll') }}</span>
           </label>
         </div>
-        <ObjectVariablesEditor v-model="localData.variables" test-id-prefix="replace" :hint="$t('logic.variables.replaceHint')" @update:model-value="emitUpdate" />
+        <ObjectVariablesEditor :key="node?.id" v-model="localData.variables" test-id-prefix="replace" :hint="$t('logic.variables.replaceHint')" @update:model-value="emitUpdate" />
         <IssueList :issues="blockIssues" />
       </div>
     </template>
@@ -865,6 +866,7 @@
         </div>
 
         <ObjectVariablesEditor
+          :key="node?.id"
           v-model="localData.variables"
           test-id-prefix="extractor"
           :hint="$t('logic.variables.extractorHint')"
@@ -1169,7 +1171,7 @@
           <VariablePathHelper :path="localData.url || ''" :obs-slots="blockObsSlots" @insert="appendVariable('url', $event)" />
           <p class="text-xs text-slate-500 mt-1">{{ $t('logic.variables.urlHint') }}</p>
         </div>
-        <ObjectVariablesEditor v-model="localData.variables" test-id-prefix="ical" @update:model-value="emitUpdate" />
+        <ObjectVariablesEditor :key="node?.id" v-model="localData.variables" test-id-prefix="ical" @update:model-value="emitUpdate" />
 
         <!-- Refresh interval -->
         <div class="form-group">
@@ -1455,7 +1457,7 @@
           />
           <VariablePathHelper :path="localData.message || ''" :obs-slots="blockObsSlots" @insert="appendVariable('message', $event)" />
         </div>
-        <ObjectVariablesEditor v-model="localData.variables" test-id-prefix="archive" :hint="$t('logic.variables.textHint')" @update:model-value="emitUpdate" />
+        <ObjectVariablesEditor :key="node?.id" v-model="localData.variables" test-id-prefix="archive" :hint="$t('logic.variables.textHint')" @update:model-value="emitUpdate" />
       </div>
     </template>
 
@@ -1479,7 +1481,7 @@
         </div>
         <div class="form-group"><label class="label">{{ $t('logic.nodeConfig.notification.title') }}</label><input v-model="localData.title" class="input text-sm" @change="emitUpdate" /><VariablePathHelper :path="localData.title || ''" :obs-slots="blockObsSlots" @insert="appendVariable('title', $event)" /></div>
         <div class="form-group"><label class="label">{{ $t('logic.nodeConfig.notification.fallback') }}</label><textarea v-model="localData.message" class="input text-sm min-h-24" @change="emitUpdate" /><VariablePathHelper :path="localData.message || ''" :obs-slots="blockObsSlots" @insert="appendVariable('message', $event)" /><p class="text-xs text-slate-500 mt-1">{{ $t('logic.nodeConfig.notification.placeholders') }}</p></div>
-        <ObjectVariablesEditor v-model="localData.variables" test-id-prefix="notify" :hint="$t('logic.variables.textHint')" @update:model-value="emitUpdate" />
+        <ObjectVariablesEditor :key="node?.id" v-model="localData.variables" test-id-prefix="notify" :hint="$t('logic.variables.textHint')" @update:model-value="emitUpdate" />
         <div class="form-group"><label class="label">{{ $t('logic.nodeConfig.notification.priority') }}</label><input v-model.number="localData.priority" type="number" min="-2" max="1" class="input text-sm" @change="emitUpdate" /></div>
       </div>
     </template>
@@ -1577,7 +1579,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adapterApi, dpApi, messageArchivesApi, searchApi, securityApi } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -2313,11 +2315,21 @@ function appendVariable(key, token) {
 const blockIssues = extractorIssues
 
 // Server-resolved path of output row i (empty until the block ran with variables).
-// Ignored once the path was edited after that run (the run's template no longer matches).
+// Ignored once the path or an object binding was edited after that run.
+const bindingSignature = computed(() => JSON.stringify(normaliseObjectVariables(localData.value.variables).map(v => v.datapoint_id)))
+const resolvedRunSignature = ref('')
+watch(
+  () => [props.node?.id, props.node ? props.nodeOutputs?.[props.node.id] : null],
+  () => { resolvedRunSignature.value = bindingSignature.value },
+  { flush: 'post' }, // after the node watcher refilled localData
+)
+onMounted(() => { resolvedRunSignature.value = bindingSignature.value })
+
 function extractorResolvedPath(i) {
   const out = props.node ? props.nodeOutputs?.[props.node.id] : null
   const resolved = out?._resolved_paths
   if (!Array.isArray(resolved) || typeof resolved[i] !== 'string') return ''
+  if (resolvedRunSignature.value !== bindingSignature.value) return ''
   const rows = props.node?.type === 'xml_extractor' ? xmlPaths.value : jsonPaths.value
   const current = String(rows[i]?.path ?? '').trim()
   return out._path_templates?.[i] === current ? resolved[i] : ''
