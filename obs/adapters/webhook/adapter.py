@@ -50,10 +50,26 @@ Binding configuration (``adapter_bindings.config``):
   fixed_value:      str    Value for value_source == "fixed"       (default: "true")
   value_param:      str    Query parameter / JSON field name       (default: "value")
   debounce_ms:      int    Ignore repeat calls within this window  (default: 0)
+  autoreset:        bool   Publish a reset value after the trigger (default: False)
+  autoreset_value:  str    The value to publish back               (default: "false")
+  autoreset_delay_ms: int  How long the triggered value stands     (default: 1000)
+
+**Auto-reset** turns a webhook into a trigger: the call publishes the configured
+value, and after the delay the adapter publishes the reset value by itself, so a
+doorbell produces 1 then 0 on the bus and the next press is a fresh edge again.
+Both values take the same path — type coercion, formula, value map — so a
+downstream consumer sees one value domain, and both reach that DataPoint's DEST
+bindings through the WriteRouter like any other SOURCE value.
+
+That keeps the binding a **SOURCE**: the adapter still only ever feeds values
+*into* OBS and never writes out to a protocol endpoint. A reset is one more
+value this source produces, this time on its own clock rather than on a call —
+no different in kind from a poll-driven adapter emitting a second reading.
 """
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
@@ -153,6 +169,9 @@ class WebhookBindingConfig(BaseModel):
     fixed_value: str = Field(default="true", title="Fester Wert")
     value_param: str = Field(default="value", title="Parameter-/Feldname")
     debounce_ms: int = Field(default=0, ge=0, le=3_600_000, title="Entprellung (ms)")
+    autoreset: bool = Field(default=False, title="Auto-Reset")
+    autoreset_value: str = Field(default="false", title="Reset-Wert")
+    autoreset_delay_ms: int = Field(default=1000, ge=0, le=3_600_000, title="Reset-Verzögerung (ms)")
 
     @field_validator("allowed_networks", mode="before")
     @classmethod
@@ -423,6 +442,7 @@ class WebhookAdapter(AdapterBase):
         self._by_slug: dict[str, Any] = {}
         self._stats: dict[str, BindingStats] = {}
         self._last_trigger: dict[str, float] = {}
+        self._autoreset_tasks: dict[str, asyncio.Task] = {}
         self._rejections = RejectionCounters()
 
     # ------------------------------------------------------------------
@@ -457,6 +477,7 @@ class WebhookAdapter(AdapterBase):
 
     async def disconnect(self) -> None:
         _unregister_instance(self)
+        self._cancel_all_autoresets()
         self._by_slug.clear()
         self._last_trigger.clear()
         await self._publish_status(False, "Disconnected", code="disconnected")
@@ -466,6 +487,9 @@ class WebhookAdapter(AdapterBase):
     # ------------------------------------------------------------------
 
     async def _on_bindings_reloaded(self) -> None:
+        # A pending reset belongs to the configuration it was armed under; the
+        # reloaded binding may have a different reset value or none at all.
+        self._cancel_all_autoresets()
         by_slug: dict[str, Any] = {}
         duplicates: list[str] = []
         for binding in self._bindings:
@@ -681,6 +705,19 @@ class WebhookAdapter(AdapterBase):
             logger.warning("WEBHOOK: binding %s received an incompatible value — %s", binding.id, exc)
             return TriggerOutcome(400, str(exc))
 
+        await self._emit(binding, value)
+        logger.info("WEBHOOK: dp=%s value=%r (binding %s)", binding.datapoint_id, value, binding.id)
+        self._schedule_autoreset(binding, config, datapoint.data_type)
+        return TriggerOutcome(204, "")
+
+    async def _emit(self, binding: Any, value: Any) -> None:
+        """Put one value on the bus for *binding*, transformations applied.
+
+        Shared by the triggered value and the auto-reset so both land in the
+        same value domain: a value map turning True into "on" must turn the
+        reset False into "off" as well, or a downstream consumer would see two
+        different vocabularies from one binding.
+        """
         if binding.value_formula:
             from obs.core.formula import apply_formula
 
@@ -699,8 +736,49 @@ class WebhookAdapter(AdapterBase):
                 binding_id=binding.id,
             )
         )
-        logger.info("WEBHOOK: dp=%s value=%r (binding %s)", binding.datapoint_id, value, binding.id)
-        return TriggerOutcome(204, "")
+
+    # ------------------------------------------------------------------
+    # Auto-reset
+    # ------------------------------------------------------------------
+
+    def _schedule_autoreset(self, binding: Any, config: WebhookBindingConfig, data_type: str) -> None:
+        """Arm the timer that publishes the reset value.
+
+        Retriggerable on purpose: a second call while one is pending restarts
+        the delay instead of adding a timer, so a bell pressed twice stays on
+        for the configured time after the *last* press rather than resetting in
+        the middle of it.
+        """
+        if not config.autoreset:
+            return
+        key = str(binding.id)
+        self._cancel_autoreset(key)
+        self._autoreset_tasks[key] = asyncio.create_task(
+            self._autoreset(binding, config, data_type),
+            name=f"webhook-autoreset-{key}",
+        )
+
+    async def _autoreset(self, binding: Any, config: WebhookBindingConfig, data_type: str) -> None:
+        # CancelledError is a BaseException and passes straight through the
+        # ValueError handler, so a cancelled timer needs no clause of its own.
+        try:
+            if config.autoreset_delay_ms:
+                await asyncio.sleep(config.autoreset_delay_ms / 1000.0)
+            value = coerce_webhook_value(config.autoreset_value, data_type)
+        except ValueError as exc:
+            logger.warning("WEBHOOK: binding %s has an unusable auto-reset value — %s", binding.id, exc)
+            return
+        await self._emit(binding, value)
+        logger.info("WEBHOOK: auto-reset dp=%s value=%r (binding %s)", binding.datapoint_id, value, binding.id)
+
+    def _cancel_autoreset(self, key: str) -> None:
+        task = self._autoreset_tasks.pop(key, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _cancel_all_autoresets(self) -> None:
+        for key in list(self._autoreset_tasks):
+            self._cancel_autoreset(key)
 
     @staticmethod
     def _raw_value(

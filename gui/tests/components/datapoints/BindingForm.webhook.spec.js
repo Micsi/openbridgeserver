@@ -97,6 +97,9 @@ function existingBinding(config = {}) {
       fixed_value: 'true',
       value_param: 'value',
       debounce_ms: 0,
+      autoreset: false,
+      autoreset_value: 'false',
+      autoreset_delay_ms: 1000,
       ...config,
     },
   }
@@ -131,6 +134,7 @@ describe('BindingForm — WEBHOOK create', () => {
         value_source: 'fixed',
         fixed_value: 'true',
         debounce_ms: 0,
+        autoreset: false,
       },
     }))
     w.unmount()
@@ -153,6 +157,7 @@ describe('BindingForm — WEBHOOK create', () => {
       value_source: 'request',
       value_param: 'kovalue',
       debounce_ms: 0,
+      autoreset: false,
     })
     w.unmount()
   })
@@ -226,6 +231,44 @@ describe('BindingForm — WEBHOOK edit', () => {
     const w = await mountForm({ initial: existingBinding() })
 
     expect(w.text()).toContain('Aufruf-URL konnte nicht geladen werden')
+    w.unmount()
+  })
+
+  it('submits the reset value and delay only when auto-reset is on', async () => {
+    const w = await mountForm({ initial: existingBinding() })
+    await w.find('[data-testid="webhook-autoreset"]').setValue(true)
+    await w.find('[data-testid="webhook-autoreset-value"]').setValue('0')
+    await w.find('[data-testid="webhook-autoreset-delay"]').setValue('250')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(updateBinding.mock.calls[0][2].config).toMatchObject({
+      autoreset: true,
+      autoreset_value: '0',
+      autoreset_delay_ms: 250,
+    })
+    w.unmount()
+  })
+
+  it('leaves the reset fields out of the payload while it is off', async () => {
+    const w = await mountForm({ initial: existingBinding({ autoreset_value: '0', autoreset_delay_ms: 250 }) })
+    await w.find('form').trigger('submit')
+    await flushPromises()
+
+    const config = updateBinding.mock.calls[0][2].config
+    expect(config.autoreset).toBe(false)
+    expect(config).not.toHaveProperty('autoreset_value')
+    expect(config).not.toHaveProperty('autoreset_delay_ms')
+    w.unmount()
+  })
+
+  it('normalises an emptied reset delay back to zero', async () => {
+    const w = await mountForm({ initial: existingBinding({ autoreset: true }) })
+    await w.find('[data-testid="webhook-autoreset-delay"]').setValue('')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(updateBinding.mock.calls[0][2].config.autoreset_delay_ms).toBe(0)
     w.unmount()
   })
 
@@ -308,6 +351,7 @@ describe('BindingForm — WEBHOOK edit', () => {
         value_source: 'request',
         value_param: 'kovalue',
         debounce_ms: 750,
+        autoreset: false,
       },
     }))
     w.unmount()
@@ -321,6 +365,9 @@ describe('BindingForm — WEBHOOK edit', () => {
           slug: null,
           methods: null,
           allowed_networks: null,
+          autoreset: null,
+          autoreset_value: null,
+          autoreset_delay_ms: null,
           value_source: null,
           fixed_value: null,
           value_param: null,

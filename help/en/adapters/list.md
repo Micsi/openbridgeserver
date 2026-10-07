@@ -87,6 +87,7 @@ the object. The direction is always **read (SOURCE)** — a webhook is an entry 
 | **Parameter / field name** | For *value from the request*: the query parameter for `GET` (`?value=1`), or the field of the same name in the JSON body for `POST`. Default `value`. |
 | **Allowed networks (CIDR)** | Which caller addresses may trigger this slug — the fixed address of exactly this door station, for example. Entries are managed one row at a time. Empty = no restriction. |
 | **Debounce (ms)** | Further calls within this window are acknowledged with `204` but do not set the value again. `0` = off. |
+| **Auto-reset** | Optional: sets the datapoint back to the reset value after the configured time — see below. |
 
 ### Allowed networks
 
@@ -109,6 +110,34 @@ The value is converted to the object's data type — `1`, `true`, `on` and `yes`
 on a Boolean object, `0`, `false`, `off` and `no` become `false`. If the value does not fit
 the data type, the endpoint answers `400` and nothing is set. The formula and value mapping
 from the *Transformation* tab apply just as for any other source.
+
+### Auto-reset: turning the webhook into a trigger
+
+A doorbell reports an *event*, not a state. Left alone, the datapoint would stay
+at `true` forever after the first ring, and the second press would produce no
+edge at all — the chime, the Visu and the Logic engine would see nothing.
+
+With **auto-reset** the adapter sends the **reset value** by itself after the
+configured **reset delay**. One call then puts two values on the bus — `1`,
+shortly after `0` — and the next press is a fresh edge again.
+
+- Both values take the same path: type coercion, formula and value map apply to
+  the reset value exactly as they do to the triggered one. A value map turning
+  `true` into `on` therefore maps the reset `false` to `off`, not to something
+  else.
+- The reset reaches the DEST bindings of the same object like any other source
+  value — which is what puts the `1`/`0` pair on KNX.
+- **Retriggerable:** another call while the timer runs restarts it rather than
+  adding a second one. Ringing twice keeps the value until the configured time
+  after the *last* press.
+- A delay of `0` resets immediately — a pure pulse.
+- Changing the binding or stopping the instance discards a pending reset. It
+  belongs to the configuration it was armed under.
+
+The binding's direction stays **read (SOURCE)**: the adapter still only ever
+feeds values *into* OBS and never writes out to a protocol endpoint. The reset
+is one more value from that source — on its own clock rather than on a call, no
+different in kind from a polling adapter reporting a second reading.
 
 ### Call URL and token
 

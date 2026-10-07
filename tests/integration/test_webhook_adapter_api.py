@@ -8,6 +8,7 @@ rules the generic binding routes enforce.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -417,6 +418,51 @@ async def test_a_binding_allowlist_that_covers_the_caller_lets_it_through(client
         entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
 
         assert (await client.get(entry["call_path"])).status_code == 204
+        assert await _dp_value(client, auth_headers, dp["id"]) is True
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_autoreset_turns_the_webhook_into_a_trigger(client, auth_headers):
+    """One call, two values on the bus — so the next press is a fresh edge."""
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers)
+    try:
+        await _create_binding(
+            client,
+            auth_headers,
+            dp["id"],
+            instance["id"],
+            {"slug": "bell-trigger", "autoreset": True, "autoreset_value": "false", "autoreset_delay_ms": 0},
+        )
+        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+        assert entry["autoreset"] is True
+        assert entry["autoreset_value"] == "false"
+        assert entry["autoreset_delay_ms"] == 0
+
+        assert (await client.get(entry["call_path"])).status_code == 204
+
+        # The reset runs on its own task; give the loop a turn to finish it.
+        for _ in range(50):
+            if await _dp_value(client, auth_headers, dp["id"]) is False:
+                break
+            await asyncio.sleep(0.01)
+
+        assert await _dp_value(client, auth_headers, dp["id"]) is False
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_autoreset_is_off_by_default(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers)
+    try:
+        await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "bell-no-reset"})
+        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+        assert entry["autoreset"] is False
+
+        assert (await client.get(entry["call_path"])).status_code == 204
+        await asyncio.sleep(0.05)
         assert await _dp_value(client, auth_headers, dp["id"]) is True
     finally:
         await _delete_instance(client, auth_headers, instance["id"])

@@ -66,6 +66,44 @@
     </div>
   </div>
 
+  <!-- Auto-reset: turns the webhook into a trigger -->
+  <div class="form-group">
+    <div class="flex items-center gap-2">
+      <input
+        id="webhook-autoreset"
+        type="checkbox"
+        class="w-4 h-4 rounded"
+        :checked="cfg.autoreset"
+        data-testid="webhook-autoreset"
+        @change="cfg.autoreset = $event.target.checked"
+      />
+      <label for="webhook-autoreset" class="text-sm text-slate-600 dark:text-slate-300">
+        {{ $t('adapters.bindingForm.webhookAutoresetLabel') }}
+      </label>
+    </div>
+    <p class="hint">{{ $t('adapters.bindingForm.webhookAutoresetHint') }}</p>
+  </div>
+
+  <div v-if="cfg.autoreset" class="grid grid-cols-2 gap-4">
+    <div class="form-group">
+      <label class="label">{{ $t('adapters.bindingForm.webhookAutoresetValueLabel') }}</label>
+      <input v-model="cfg.autoreset_value" class="input font-mono text-sm" data-testid="webhook-autoreset-value" />
+      <p class="hint">{{ $t('adapters.bindingForm.webhookAutoresetValueHint') }}</p>
+    </div>
+    <div class="form-group">
+      <label class="label">{{ $t('adapters.bindingForm.webhookAutoresetDelayLabel') }}</label>
+      <input
+        v-model.number="cfg.autoreset_delay_ms"
+        type="number"
+        min="0"
+        step="100"
+        class="input"
+        data-testid="webhook-autoreset-delay"
+      />
+      <p class="hint">{{ $t('adapters.bindingForm.webhookAutoresetDelayHint') }}</p>
+    </div>
+  </div>
+
   <!-- Debounce -->
   <div class="form-group">
     <label class="label">{{ $t('adapters.bindingForm.webhookDebounceLabel') }}</label>

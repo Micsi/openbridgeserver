@@ -6,6 +6,9 @@ const BASE_CFG = {
   slug: 'haustuer-klingel',
   methods: ['GET'],
   allowed_networks: [],
+  autoreset: false,
+  autoreset_value: 'false',
+  autoreset_delay_ms: 1000,
   value_source: 'fixed',
   fixed_value: 'true',
   value_param: 'value',
@@ -96,6 +99,40 @@ describe('BindingFormWebhook — binding configuration', () => {
     const w = mk({}, cfg)
     await w.find('[data-testid="webhook-method-POST"]').setValue(true)
     expect(cfg.methods).toEqual(['POST'])
+    w.unmount()
+  })
+})
+
+describe('BindingFormWebhook — auto-reset', () => {
+  it('hides the reset fields until it is switched on', async () => {
+    const cfg = { ...BASE_CFG }
+    const w = mk({}, cfg)
+    expect(w.find('[data-testid="webhook-autoreset-value"]').exists()).toBe(false)
+    expect(w.find('[data-testid="webhook-autoreset-delay"]').exists()).toBe(false)
+
+    await w.find('[data-testid="webhook-autoreset"]').setValue(true)
+    expect(cfg.autoreset).toBe(true)
+    expect(w.find('[data-testid="webhook-autoreset-value"]').exists()).toBe(true)
+    expect(w.find('[data-testid="webhook-autoreset-delay"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('writes the reset value and delay into cfg', async () => {
+    const cfg = { ...BASE_CFG, autoreset: true }
+    const w = mk({}, cfg)
+    await w.find('[data-testid="webhook-autoreset-value"]').setValue('0')
+    await w.find('[data-testid="webhook-autoreset-delay"]').setValue('250')
+    expect(cfg.autoreset_value).toBe('0')
+    expect(cfg.autoreset_delay_ms).toBe(250)
+    w.unmount()
+  })
+
+  it('can be switched off again', async () => {
+    const cfg = { ...BASE_CFG, autoreset: true }
+    const w = mk({}, cfg)
+    await w.find('[data-testid="webhook-autoreset"]').setValue(false)
+    expect(cfg.autoreset).toBe(false)
+    expect(w.find('[data-testid="webhook-autoreset-value"]').exists()).toBe(false)
     w.unmount()
   })
 })

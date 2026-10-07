@@ -431,6 +431,9 @@ const cfg = reactive({
   fixed_value: 'true',
   value_param: 'value',
   debounce_ms: 0,
+  autoreset: false,
+  autoreset_value: 'false',
+  autoreset_delay_ms: 1000,
   // ZEITSCHALTUHR
   timer_type: 'daily', meta_type: 'none',
   weekdays: [0,1,2,3,4,5,6], months: [], day_of_month: 0,
@@ -707,6 +710,9 @@ watch(() => props.initial, val => {
   if (cfg.fixed_value  == null) cfg.fixed_value  = 'true'
   if (cfg.value_param  == null) cfg.value_param  = 'value'
   if (cfg.debounce_ms  == null) cfg.debounce_ms  = 0
+  if (cfg.autoreset          == null) cfg.autoreset          = false
+  if (cfg.autoreset_value    == null) cfg.autoreset_value    = 'false'
+  if (cfg.autoreset_delay_ms == null) cfg.autoreset_delay_ms = 1000
   // MESSAGE defaults when loading
   if (cfg.operator == null) cfg.operator = '=='
   if (cfg.compare_value == null) cfg.compare_value = ''
@@ -1339,9 +1345,14 @@ function buildConfig() {
       // An emptied number input yields '' through v-model.number, which the
       // backend would reject — normalise it back to "no debounce".
       debounce_ms: Number(cfg.debounce_ms) || 0,
+      autoreset: !!cfg.autoreset,
     }
     if (c.value_source === 'fixed') c.fixed_value = cfg.fixed_value
     else c.value_param = cfg.value_param.trim() || 'value'
+    if (c.autoreset) {
+      c.autoreset_value = cfg.autoreset_value
+      c.autoreset_delay_ms = Number(cfg.autoreset_delay_ms) || 0
+    }
     return c
   }
   if (type === 'ZEITSCHALTUHR') {

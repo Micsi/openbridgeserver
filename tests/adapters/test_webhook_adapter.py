@@ -6,6 +6,7 @@ directly, the EventBus is a mock and the DataPoint registry is stubbed.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import uuid
 
@@ -791,6 +792,161 @@ async def test_an_empty_binding_allowlist_restricts_nothing(mock_bus, monkeypatc
     )
 
     assert outcome.status == 204
+
+
+# ---------------------------------------------------------------------------
+# Auto-reset — the webhook as a trigger
+# ---------------------------------------------------------------------------
+
+
+async def _settle_autoreset(instance, binding):
+    """Await the armed reset timer instead of sleeping past it."""
+    task = instance._autoreset_tasks.get(str(binding.id))
+    if task is not None:
+        await task
+
+
+async def test_autoreset_publishes_the_reset_value_after_the_delay(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=10)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    outcome = await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    assert outcome.status == 204
+    assert [event.value for event in _data_events(mock_bus)] == [True]
+
+    await _settle_autoreset(instance, binding)
+
+    events = _data_events(mock_bus)
+    assert [event.value for event in events] == [True, False]
+    reset = events[-1]
+    assert reset.datapoint_id == binding.datapoint_id
+    assert reset.binding_id == binding.id
+    assert reset.quality == "good"
+    assert reset.source_adapter == "WEBHOOK"
+    # A plain value event, so the WriteRouter fans it out to the DEST bindings
+    # too — that is what makes 1-then-0 reach KNX.
+    assert reset.suppress_write_propagation is False
+
+
+async def test_no_autoreset_when_it_is_switched_off(mock_bus, monkeypatch):
+    binding = _binding(autoreset_value="false", autoreset_delay_ms=1)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    await asyncio.sleep(0.02)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True]
+    assert instance._autoreset_tasks == {}
+
+
+async def test_autoreset_with_no_delay_resets_immediately(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=0)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    await _settle_autoreset(instance, binding)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True, False]
+
+
+async def test_a_second_call_restarts_the_reset_timer(mock_bus, monkeypatch):
+    """Retriggerable: the value stands for the delay after the *last* call."""
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=10)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    first = instance._autoreset_tasks[str(binding.id)]
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    second = instance._autoreset_tasks[str(binding.id)]
+
+    assert second is not first
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await _settle_autoreset(instance, binding)
+
+    # Two triggers, one reset — not two resets racing each other.
+    assert [event.value for event in _data_events(mock_bus)] == [True, True, False]
+
+
+async def test_the_reset_value_goes_through_formula_and_value_map(mock_bus, monkeypatch):
+    binding = make_binding(
+        {"slug": "bell", "token": TOKEN, "autoreset": True, "autoreset_value": "0", "autoreset_delay_ms": 0},
+        value_map={"1": "on", "0": "off"},
+    )
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id, data_type="INTEGER"))
+    binding.config["value_source"] = "request"
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="bell", query_params={"token": TOKEN, "value": "1"}, body=b"", peer_ip="10.0.0.1")
+    await _settle_autoreset(instance, binding)
+
+    assert [event.value for event in _data_events(mock_bus)] == ["on", "off"]
+
+
+async def test_an_unusable_reset_value_is_logged_and_skipped(mock_bus, monkeypatch, caplog):
+    binding = _binding(autoreset=True, autoreset_value="not-a-boolean", autoreset_delay_ms=0)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    await _settle_autoreset(instance, binding)
+
+    assert [event.value for event in _data_events(mock_bus)] == [True]
+    assert "auto-reset value" in caplog.text
+
+
+async def test_disconnect_cancels_a_pending_reset(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=60_000)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    task = instance._autoreset_tasks[str(binding.id)]
+    await asyncio.sleep(0)  # let the timer actually start, so it is cancelled mid-sleep
+    await instance.disconnect()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert instance._autoreset_tasks == {}
+    assert [event.value for event in _data_events(mock_bus)] == [True]
+
+
+async def test_reloading_bindings_cancels_a_pending_reset(mock_bus, monkeypatch):
+    """A pending reset belongs to the configuration it was armed under."""
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=60_000)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    await instance.reload_bindings([binding])
+
+    assert instance._autoreset_tasks == {}
+    assert [event.value for event in _data_events(mock_bus)] == [True]
+
+
+async def test_a_debounced_call_does_not_rearm_the_reset(mock_bus, monkeypatch):
+    binding = _binding(autoreset=True, autoreset_value="false", autoreset_delay_ms=10, debounce_ms=60_000)
+    _stub_registry(monkeypatch, _Dp(binding.datapoint_id))
+    instance = await _adapter(mock_bus, [binding])
+
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+    armed = instance._autoreset_tasks[str(binding.id)]
+    await instance.handle_trigger(method="GET", remainder="haustuer-klingel", query_params={"token": TOKEN}, body=b"", peer_ip="10.0.0.1")
+
+    assert instance._autoreset_tasks[str(binding.id)] is armed
+    await _settle_autoreset(instance, binding)
+    assert [event.value for event in _data_events(mock_bus)] == [True, False]
+
+
+def test_autoreset_defaults_are_off():
+    cfg = WebhookBindingConfig(slug="bell")
+    assert cfg.autoreset is False
+    assert cfg.autoreset_value == "false"
+    assert cfg.autoreset_delay_ms == 1000
 
 
 # ---------------------------------------------------------------------------

@@ -1853,6 +1853,9 @@ class WebhookBindingEntry(BaseModel):
     fixed_value: str
     value_param: str
     debounce_ms: int
+    autoreset: bool
+    autoreset_value: str
+    autoreset_delay_ms: int
     # Relative paths — the GUI prefixes its own origin, because the server
     # cannot know the host name or port the device has to call.
     call_path: str
@@ -2005,6 +2008,9 @@ async def webhook_list_bindings(
                 fixed_value=config.fixed_value,
                 value_param=config.value_param,
                 debounce_ms=config.debounce_ms,
+                autoreset=config.autoreset,
+                autoreset_value=config.autoreset_value,
+                autoreset_delay_ms=config.autoreset_delay_ms,
                 call_path=call_path,
                 call_path_token_in_path=call_path_in_path,
                 call_count=stats.call_count if stats else 0,

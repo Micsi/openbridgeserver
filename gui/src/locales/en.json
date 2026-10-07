@@ -766,7 +766,13 @@
       "webhookLastCalled": "Last call",
       "webhookNeverCalled": "never",
       "webhookRotateToken": "Issue a new token",
-      "webhookRotateTokenHint": "Revokes the previous URL immediately — other integrations are untouched."
+      "webhookRotateTokenHint": "Revokes the previous URL immediately — other integrations are untouched.",
+      "webhookAutoresetLabel": "Enable auto-reset",
+      "webhookAutoresetHint": "Sets the datapoint back to the reset value after the configured time — which turns the webhook into a trigger (bell: true, then false again shortly after). Another call restarts the timer.",
+      "webhookAutoresetValueLabel": "Reset value",
+      "webhookAutoresetValueHint": "Converted to the datapoint's data type and run through the same transformation as the triggered value.",
+      "webhookAutoresetDelayLabel": "Reset delay (ms)",
+      "webhookAutoresetDelayHint": "How long the triggered value stands. 0 = reset immediately."
     },
     "knx": {
       "scan": {
@@ -1219,6 +1225,15 @@
         },
         "allowed_networks": {
           "title": "Allowed networks (CIDR)"
+        },
+        "autoreset": {
+          "title": "Auto-reset"
+        },
+        "autoreset_value": {
+          "title": "Reset value"
+        },
+        "autoreset_delay_ms": {
+          "title": "Reset delay (ms)"
         }
       }
     },

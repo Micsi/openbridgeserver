@@ -766,7 +766,13 @@
       "webhookLastCalled": "Letzter Aufruf",
       "webhookNeverCalled": "nie",
       "webhookRotateToken": "Token neu erzeugen",
-      "webhookRotateTokenHint": "Widerruft die bisherige URL sofort — andere Integrationen bleiben unberührt."
+      "webhookRotateTokenHint": "Widerruft die bisherige URL sofort — andere Integrationen bleiben unberührt.",
+      "webhookAutoresetLabel": "Auto-Reset aktivieren",
+      "webhookAutoresetHint": "Setzt den Datenpunkt nach der eingestellten Zeit automatisch auf den Reset-Wert zurück — damit wird aus dem Webhook ein Trigger (Klingel: true, kurz darauf wieder false). Ein erneuter Aufruf startet die Zeit neu.",
+      "webhookAutoresetValueLabel": "Reset-Wert",
+      "webhookAutoresetValueHint": "Wird wie der ausgelöste Wert in den Datentyp umgewandelt und durchläuft dieselbe Transformation.",
+      "webhookAutoresetDelayLabel": "Reset-Verzögerung (ms)",
+      "webhookAutoresetDelayHint": "Wie lange der ausgelöste Wert stehen bleibt. 0 = sofort zurücksetzen."
     },
     "knx": {
       "scan": {
@@ -1219,6 +1225,15 @@
         },
         "allowed_networks": {
           "title": "Erlaubte Netze (CIDR)"
+        },
+        "autoreset": {
+          "title": "Auto-Reset"
+        },
+        "autoreset_value": {
+          "title": "Reset-Wert"
+        },
+        "autoreset_delay_ms": {
+          "title": "Reset-Verzögerung (ms)"
         }
       }
     },

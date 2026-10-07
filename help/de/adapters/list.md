@@ -94,6 +94,7 @@ Eingang.
 | **Parameter-/Feldname** | Bei *Wert aus der Anfrage*: der Query-Parameter bei `GET` (`?value=1`), bzw. das gleichnamige Feld im JSON-Body bei `POST`. Standard `value`. |
 | **Erlaubte Netze (CIDR)** | Von welchen Absenderadressen dieser Slug ausgelöst werden darf — z. B. die feste Adresse genau dieser Türsprechstelle. Einträge werden zeilenweise verwaltet. Leer = keine Einschränkung. |
 | **Entprellung (ms)** | Weitere Aufrufe innerhalb dieser Zeit werden mit `204` bestätigt, setzen den Wert aber nicht erneut. `0` = aus. |
+| **Auto-Reset** | Optional: setzt den Datenpunkt nach der eingestellten Zeit selbsttätig auf den Reset-Wert zurück — siehe unten. |
 
 ### Erlaubte Netze
 
@@ -116,6 +117,35 @@ Der Wert wird in den Datentyp des Objekts umgewandelt — `1`, `true`, `on` und 
 auf einem Boolean-Objekt `true`, `0`, `false`, `off` und `no` ergeben `false`. Passt der Wert
 nicht zum Datentyp, antwortet der Endpunkt mit `400` und es wird nichts gesetzt. Formel und
 Wertzuordnung aus dem Reiter *Transformation* gelten wie bei jeder anderen Quelle.
+
+### Auto-Reset: aus dem Webhook einen Trigger machen
+
+Eine Klingel meldet ein *Ereignis*, keinen Zustand. Ohne Zutun bliebe der
+Datenpunkt nach dem ersten Klingeln dauerhaft auf `true` stehen, und der zweite
+Druck würde gar keine Flanke mehr erzeugen — Gong, Visu und Logik sähen nichts.
+
+Mit **Auto-Reset** schickt der Adapter nach der eingestellten **Reset-Verzögerung**
+von sich aus den **Reset-Wert** hinterher. Aus einem Aufruf werden damit zwei
+Werte auf dem Bus — `1`, kurz darauf `0` — und der nächste Druck ist wieder eine
+frische Flanke.
+
+- Beide Werte nehmen denselben Weg: Typumwandlung, Formel und Wertzuordnung
+  gelten für den Reset-Wert genauso wie für den ausgelösten. Eine Wertzuordnung
+  `true → on` bildet den Reset `false` also auf `off` ab, nicht auf etwas anderes.
+- Der Reset geht wie jeder Quellwert über die DEST-Bindings desselben Objekts
+  hinaus — genau dadurch landet das `1`/`0`-Paar auf KNX.
+- **Nachtriggerbar:** ein erneuter Aufruf während der laufenden Zeit startet sie
+  neu, statt einen zweiten Timer anzulegen. Zweimal klingeln hält den Wert also
+  bis zur eingestellten Zeit nach dem *letzten* Druck.
+- `0` als Verzögerung setzt sofort zurück — ein reiner Impuls.
+- Wird die Verknüpfung geändert oder die Instanz gestoppt, verfällt ein noch
+  laufender Reset. Er gehört zu der Konfiguration, unter der er gestartet wurde.
+
+Die Richtung der Verknüpfung bleibt dabei **Lesen (SOURCE)**: der Adapter
+speist weiterhin ausschließlich Werte *in* OBS ein und schreibt nie auf einen
+Protokoll-Endpunkt hinaus. Der Reset ist ein weiterer Wert dieser Quelle — nur
+auf eigener Uhr statt auf Zuruf, nicht anders als bei einem pollenden Adapter,
+der einen zweiten Messwert liefert.
 
 ### Aufruf-URL und Token
 
