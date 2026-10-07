@@ -950,3 +950,27 @@ async def test_config_import_stores_the_webhook_slug_normalised(client, auth_hea
         assert [entry["slug"] for entry in await _webhook_bindings(client, auth_headers, instance["id"])] == ["mixed-case"]
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_a_trigger_response_carries_the_cors_header_of_its_preflight(client, auth_headers):
+    from obs.config import get_settings
+
+    allowed = get_settings().cors.origins
+    if "*" in allowed:
+        origin = "http://browser.example"
+    else:
+        origin = allowed[0]
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers)
+    try:
+        await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "cors-bell"})
+        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+        headers = {"Origin": origin}
+
+        preflight = await client.options("/hook/cors-bell", headers={**headers, "Access-Control-Request-Method": "GET"})
+        trigger = await client.get(entry["call_path"], headers=headers)
+
+        assert trigger.status_code == 204
+        assert preflight.headers["access-control-allow-origin"] == trigger.headers["access-control-allow-origin"]
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])

@@ -308,26 +308,18 @@ def create_app() -> FastAPI:
     app.state.limiter = auth_limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    # CORS — configure allowed origins via config.yaml or OBS_CORS__ORIGINS env var
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors.origins,
-        allow_credentials=settings.cors.allow_credentials,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "X-API-Key", "Content-Type", "If-Match"],
-        expose_headers=["ETag"],
-    )
-
-    app.include_router(router, prefix="/api/v1")
-
     from fastapi import Request
     from fastapi.responses import JSONResponse, RedirectResponse
 
     # ── WEBHOOK adapter trigger endpoint (issue #1256) ────────────────────
-    # Registered *before* _setup_gate so the setup gate stays the outermost
-    # middleware: Starlette runs the last-added middleware first, and an
-    # installation that has not been claimed yet must not expose any entry
-    # point, not even one guarded by a per-binding token.
+    # Registered *before* the CORS middleware and _setup_gate: Starlette runs the
+    # last-added middleware first, so this puts the webhook gate innermost.
+    #   * CORS wraps it, which means a browser caller on an allowed origin gets
+    #     the allow-origin header on the trigger response and not only on the
+    #     preflight (a response returned from here never reaches inner layers).
+    #   * The setup gate stays the outermost middleware: an installation that
+    #     has not been claimed yet must not expose any entry point, not even one
+    #     guarded by a per-binding token.
     #
     # A middleware rather than a route because each WEBHOOK instance picks its
     # own path prefix at runtime; see obs/api/webhook.py for the full reasoning.
@@ -339,6 +331,18 @@ def create_app() -> FastAPI:
         if response is not None:
             return response
         return await call_next(request)
+
+    # CORS — configure allowed origins via config.yaml or OBS_CORS__ORIGINS env var
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors.origins,
+        allow_credentials=settings.cors.allow_credentials,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "X-API-Key", "Content-Type", "If-Match"],
+        expose_headers=["ETag"],
+    )
+
+    app.include_router(router, prefix="/api/v1")
 
     @app.middleware("http")
     async def _setup_gate(request: Request, call_next):

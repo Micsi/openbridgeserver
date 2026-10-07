@@ -101,22 +101,33 @@ _MAX_PREFIX_SEGMENTS = 3
 
 # First path segments the application itself serves.  Claiming one of them would
 # shadow the API, the SPAs or the help site.
-# That includes FastAPI's own documentation routes and the Admin-GUI's root-level
-# static files: the webhook middleware runs ahead of every route, so a prefix on
+# That includes FastAPI's own documentation routes, the Admin-GUI's root-level
+# static files and its history-mode routes (`gui/src/router/index.js`, guarded
+# by a test): the webhook middleware runs ahead of every route, so a prefix on
 # one of these would silently take that surface offline.
 _RESERVED_PREFIX_SEGMENTS = frozenset(
     {
+        "adapters",
         "api",
         "apple-touch-icon.png",
         "assets",
+        "datapoints",
         "docs",
         "favicon.svg",
         "help",
+        "history",
+        "knx-devices",
+        "login",
+        "logic",
+        "logs",
         "manifest.webmanifest",
+        "message-archives",
         "obs_logo_dark.svg",
         "obs_logo_light.svg",
         "openapi.json",
         "redoc",
+        "ringbuffer",
+        "settings",
         "setup",
         "visu",
     }

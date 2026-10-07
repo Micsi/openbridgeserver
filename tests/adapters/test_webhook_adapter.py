@@ -111,11 +111,36 @@ def test_path_prefix_defaults_and_normalises():
         "/apple-touch-icon.png",
         "/obs_logo_light.svg",
         "/obs_logo_dark.svg",
+        "/datapoints",
+        "/adapters",
+        "/settings",
+        "/knx-devices",
+        "/login",
     ],
 )
 def test_path_prefix_rejects_unusable_values(raw):
     with pytest.raises(ValueError):
         normalise_path_prefix(raw)
+
+
+def test_every_admin_gui_route_is_reserved_as_a_prefix():
+    """A new top-level Admin-GUI route must not be claimable as a webhook prefix.
+
+    The middleware answers before the SPA fallback, so a prefix on a history-mode
+    route would break direct navigation and reloads of that page.
+    """
+    import pathlib
+    import re
+
+    router = pathlib.Path(__file__).resolve().parents[2] / "gui" / "src" / "router" / "index.js"
+    segments = {
+        match.group(1).split("/")[0]
+        for match in re.finditer(r"path:\s*'/([^']*)'", router.read_text(encoding="utf-8"))
+        if match.group(1) and not match.group(1).startswith(":")
+    }
+
+    assert segments, "no routes found — the router file layout changed"
+    assert segments <= webhook_module._RESERVED_PREFIX_SEGMENTS
 
 
 def test_adapter_config_has_no_allowlist_of_its_own():
