@@ -331,6 +331,41 @@ def _webhook_config_with_token(config: dict[str, Any], *, stored_token: str | No
     return parsed.model_dump()
 
 
+def _validate_timer_output_value(adapter_type: str, config: dict[str, Any], dp_id: uuid.UUID) -> None:
+    """Reject a Zeitschaltuhr switching value that the target DataPoint type cannot hold.
+
+    Issue #1008: the switching value used to be parsed type-blind at fire time, so an
+    incompatible value was only discovered (and silently dropped) hours later. Validating
+    it on save surfaces the problem immediately as a 422.
+
+    An *omitted* value is not "no value": both routes store the config as sent, and the
+    adapter then fills in its own default when the schedule point fires. So the default
+    is what has to hold for the target type — otherwise a DATE/TIME/DATETIME point would
+    be accepted here and dropped at every firing, the very failure mode this guards
+    against (Codex review).
+    """
+    if adapter_type != "ZEITSCHALTUHR":
+        return
+    if str(config.get("timer_type", "daily")) == "meta":
+        return
+    dp = get_registry().get(dp_id)
+    if dp is None:
+        return
+
+    from obs.adapters.zeitschaltuhr.adapter import ZeitschaltuhrBindingConfig
+    from obs.models.types import coerce_text_value_for_type
+
+    raw = config.get("value", ZeitschaltuhrBindingConfig.model_fields["value"].default)
+
+    try:
+        coerce_text_value_for_type(str(raw), dp.data_type)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Ungültiger Schaltwert für Objekttyp {dp.data_type}: {exc}",
+        ) from exc
+
+
 def _json_config(raw: Any) -> dict[str, Any]:
     if raw is None or raw == "":
         return {}
@@ -459,6 +494,7 @@ async def create_binding(
         enabled=body.enabled,
         instance_config=_json_config(instance_row["config"]) if adapter_type == "MESSAGE" else None,
     )
+    _validate_timer_output_value(adapter_type, body.config, dp_id)
 
     effective_config = body.config
     if adapter_type == WEBHOOK_ADAPTER_TYPE:
@@ -577,6 +613,8 @@ async def update_binding(
         enabled=bool(enabled),
         instance_config=instance_config,
     )
+    if "config" in updates:
+        _validate_timer_output_value(row["adapter_type"], config, dp_id)
 
     if row["adapter_type"] == WEBHOOK_ADAPTER_TYPE:
         _ensure_webhook_target_allowed(dp_id)

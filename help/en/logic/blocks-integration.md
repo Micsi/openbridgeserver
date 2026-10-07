@@ -9,24 +9,46 @@ extracting values from structured text formats.
 
 ## Wake on LAN {#logic-block-wake-on-lan}
 
-Sends a Wake-on-LAN magic packet via UDP broadcast as soon as the **Trigger** input becomes
-true. **MAC address**, **broadcast IP**, and **UDP port** are validated directly in the
+Sends a Wake-on-LAN magic packet via UDP broadcast when the **Trigger** input is true.
+**MAC address**, **broadcast IP**, and **UDP port** are validated directly in the
 config panel (invalid values are highlighted in red with an error message).
+
+The **Trigger mode** defines when a true trigger fires:
+
+- **On every event** (default for newly placed blocks): every newly incoming `true` fires — even
+  a repeated `true` without a preceding `false`. An event on a different data point that is not
+  wired to the trigger does not fire.
+- **Rising edge only**: fires only on a change from `false` to `true`. Blocks from older
+  versions keep this behaviour until the mode is changed.
+
+Pulses from Timer/Cron, Change Filter and Edge Detection fire every time in both modes.
 
 ## Host Check (Ping) {#logic-block-host-check}
 
-Pings a **host**/IP address and returns **Reachable** (bool) and **Latency (ms)**. Fires on a
-rising edge on the **Trigger** input — recommendation: connect it to a Timer/Cron block for
-periodic checks. **Timeout** and **ping count** are configurable.
+Pings a **host**/IP address and returns **Reachable** (bool) and **Latency (ms)** when the
+**Trigger** input is true — recommendation: connect it to a Timer/Cron block for periodic
+checks. **Timeout** and **ping count** are configurable.
+
+The **Trigger mode** defines when a true trigger fires:
+
+- **On every event** (default for newly placed blocks): every newly incoming `true` fires — even
+  a repeated `true` without a preceding `false`. An event on a different data point that is not
+  wired to the trigger does not fire.
+- **Rising edge only**: fires only on a change from `false` to `true`. Blocks from older
+  versions keep this behaviour until the mode is changed.
+
+Pulses from Timer/Cron, Change Filter and Edge Detection fire every time in both modes.
 
 ## JSON Extractor {#logic-block-json-extractor}
 
 Parses a JSON string (**Data** input) and extracts values via dot-notation key paths (e.g.
 `sensors.temperature`). Use **+** to add multiple named outputs; each row shows a live preview
 of the extracted value based on the most recently received data. A detected-paths dropdown
-(from the most recently received data) auto-fills the currently active output row. An older
-single-path configuration is shown as a legacy notice with a one-click upgrade to multiple
-outputs.
+(from the most recently received data) auto-fills the currently active output row. The path
+picker stays available once data has arrived — even when a later execution (e.g. after adding
+an output with **+**) delivers no new data. In debug mode the outputs appear under their
+configured names. An older single-path configuration is shown as a legacy notice with a
+one-click upgrade to multiple outputs.
 
 ## XML Extractor {#logic-block-xml-extractor}
 
