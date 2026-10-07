@@ -913,9 +913,13 @@ async def test_a_disabled_instance_only_claims_its_own_prefix(client, auth_heade
     try:
         claimed = await client.get("/off-hook/anything")
         assert (claimed.status_code, claimed.json()) == (404, {"detail": "Not found"})
+        assert claimed.headers["cache-control"] == "no-store"
 
+        # Whether the application answers an unknown path with the Admin-GUI shell
+        # or its own JSON 404 depends on whether a GUI build is present, so tell
+        # the two apart by the header only the webhook middleware sets.
         other = await client.get("/off-hookish")
-        assert other.text != '{"detail":"Not found"}'
+        assert other.headers.get("cache-control") != "no-store"
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
 
