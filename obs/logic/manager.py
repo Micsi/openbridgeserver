@@ -5175,7 +5175,7 @@ class LogicManager:
             resolver = _make_api_client_variable_resolver(
                 self._registry,
                 node.data.get("variables"),
-                execution_values_by_datapoint_id,
+                None,  # registry values only: a debug override must never reach a sent/archived text
                 api_time_snapshot,
                 subject="Variable",
             )

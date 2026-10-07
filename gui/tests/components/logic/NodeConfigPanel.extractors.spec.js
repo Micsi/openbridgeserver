@@ -644,6 +644,20 @@ describe('NodeConfigPanel extractors — variables', () => {
     w.unmount()
   })
 
+  it('clears stale issues once the configuration was edited', async () => {
+    const w = await mountPanel(
+      'json_extractor',
+      { json_paths: JSON.stringify([{ label: 'a', path: '[###H###].###FOO###' }]) },
+      { n1: { _resolved_paths: ['[7].###FOO###'], _path_templates: ['[###H###].###FOO###'], _issues: ['unknown variable ###FOO###'] } },
+    )
+    await flushPromises()
+    expect(w.find('[data-testid="extractor-issues"]').exists()).toBe(true)
+    await w.find('[data-testid="extractor-path-input"]').setValue('[0].v')
+    await flushPromises()
+    expect(w.find('[data-testid="extractor-issues"]').exists()).toBe(false)
+    w.unmount()
+  })
+
   it('hides resolved path and warnings for static paths', async () => {
     const w = await mountPanel('xml_extractor', { xml_paths: JSON.stringify([{ label: 'a', path: './a' }]) })
     await flushPromises()

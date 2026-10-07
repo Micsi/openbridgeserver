@@ -64,10 +64,10 @@ describe('NodeConfigPanel — variables in text fields (#1301)', () => {
   it('string_concat: per-slot insert, variables editor and issues', async () => {
     const w = await mountPanel('string_concat', { count: 2, text_1: 'a', text_2: '' }, { n1: { _issues: ['variable OBS3 is not configured'] } })
     await flushPromises()
+    expect(w.find('[data-testid="extractor-issues"]').text()).toContain('OBS3')
     await w.findAll('[data-testid="variable-insert-select"]')[1].setValue('mm')
     expect(lastUpdate(w).text_2).toBe('###mm###')
     expect(w.find('[data-testid="concat-add-variable"]').exists()).toBe(true)
-    expect(w.find('[data-testid="extractor-issues"]').text()).toContain('OBS3')
     w.unmount()
   })
 

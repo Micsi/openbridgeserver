@@ -104,6 +104,36 @@ class TestArchiveAndNotify:
         assert kwargs["message"] == "M 3"
         assert kwargs["title"].startswith("T ") and kwargs["title"][2:].isdigit()
 
+    def test_notify_object_variable_ignores_debug_read_override(self):
+        manager = _manager(value="REGISTRY")
+        adapter = MagicMock(adapter_type="MESSAGE")
+        adapter.send_notification = AsyncMock(return_value=[MessageSendResult("telegram", "t", True)])
+        nodes = [
+            node("r", "datapoint_read", {"datapoint_id": OBS1_UUID[0]["datapoint_id"]}),
+            node(
+                "n",
+                "notify_message",
+                {
+                    "adapter_instance_id": "m1",
+                    "providers": [{"provider": "telegram", "target": "t"}],
+                    "message": "###OBS1###",
+                    "variables": OBS1_UUID,
+                },
+            ),
+        ]
+        flow = FlowData.model_validate({"nodes": nodes, "edges": []})
+        manager._graphs["g"] = ("G", True, flow)
+        manager._node_state["g"] = {}
+        ws = MagicMock(has_logic_debug_subscribers=lambda _id: False, broadcast_logic_run=AsyncMock())
+        with (
+            patch("obs.adapters.registry.get_instance_by_id", return_value=adapter),
+            patch("obs.api.v1.websocket.get_ws_manager", return_value=ws),
+        ):
+            asyncio.run(
+                manager._execute_graph("g", "G", flow, {}, debug_overrides={"r": {"value": "DEBUG", "changed": True}, "n": {"trigger": True}})
+            )
+        assert adapter.send_notification.await_args.kwargs["message"] == "REGISTRY"
+
     def test_archive_wired_values_are_not_expanded(self):
         manager = _manager()
         service = MagicMock(record=AsyncMock(return_value={}))

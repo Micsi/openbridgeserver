@@ -2300,9 +2300,18 @@ function updateJsonPath(i, key, value) {
 // ── Extractor variables (issue #1301) ─────────────────────────────────────
 const blockObsSlots = computed(() => configuredObsSlots(localData.value.variables))
 const extractorObsSlots = blockObsSlots
+// Issues belong to the configuration of the run that reported them: hidden once it was edited.
+const configSignature = computed(() => JSON.stringify(localData.value))
+const issuesRunSignature = ref('')
+watch(
+  [() => props.node?.id, () => (props.node ? props.nodeOutputs?.[props.node.id] : null)],
+  () => { issuesRunSignature.value = configSignature.value },
+  { flush: 'post' },
+)
+onMounted(() => { issuesRunSignature.value = configSignature.value })
 const extractorIssues = computed(() => {
   const issues = props.node ? props.nodeOutputs?.[props.node.id]?._issues : null
-  return Array.isArray(issues) ? issues : []
+  return Array.isArray(issues) && issuesRunSignature.value === configSignature.value ? issues : []
 })
 
 // Append a variable token to a plain text field of the block (#1301).
