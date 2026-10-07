@@ -2319,7 +2319,7 @@ const blockIssues = extractorIssues
 const bindingSignature = computed(() => JSON.stringify(normaliseObjectVariables(localData.value.variables).map(v => v.datapoint_id)))
 const resolvedRunSignature = ref('')
 watch(
-  () => [props.node?.id, props.node ? props.nodeOutputs?.[props.node.id] : null],
+  [() => props.node?.id, () => (props.node ? props.nodeOutputs?.[props.node.id] : null)], // compared per element: a parent re-sync of the node object must not count
   () => { resolvedRunSignature.value = bindingSignature.value },
   { flush: 'post' }, // after the node watcher refilled localData
 )
