@@ -191,6 +191,8 @@ def test_generate_token_is_unique_and_long():
         (TOKEN, None, False),
         ("", TOKEN, False),
         ("", "", False),
+        (TOKEN, "é", False),  # non-ASCII must be a plain mismatch, not a TypeError
+        (TOKEN, "tök€n", False),
     ],
 )
 def test_token_matches(expected, provided, result):

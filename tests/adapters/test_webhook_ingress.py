@@ -75,6 +75,18 @@ def test_address_allowed_against_a_non_empty_allowlist(client_ip, expected):
     assert address_allowed(client_ip, parse_networks("192.168.1.0/24")) is expected
 
 
+@pytest.mark.parametrize(
+    ("client_ip", "expected"),
+    [
+        ("::ffff:192.168.1.5", True),  # the mapped form is matched as written …
+        ("192.168.1.5", False),  # … but a plain IPv4 caller is not inside an IPv6 entry
+        ("::ffff:192.168.2.5", False),
+    ],
+)
+def test_address_allowed_matches_ipv4_mapped_ipv6_networks(client_ip, expected):
+    assert address_allowed(client_ip, parse_networks("::ffff:192.168.1.0/120")) is expected
+
+
 def test_address_allowed_matches_ipv6_networks():
     assert address_allowed("fd00::5", parse_networks("fd00::/8")) is True
 

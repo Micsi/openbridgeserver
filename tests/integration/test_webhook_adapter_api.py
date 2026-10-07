@@ -850,3 +850,57 @@ async def test_duplicating_a_datapoint_does_not_clone_its_webhook_binding(client
         assert [entry["slug"] for entry in bindings] == ["original"]
     finally:
         await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_a_non_ascii_token_is_a_plain_404_for_an_existing_slug(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers)
+    try:
+        await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "unicode-bell"})
+
+        known = await client.get("/hook/unicode-bell", params={"token": "é"})
+        unknown = await client.get("/hook/no-such-slug", params={"token": "é"})
+
+        assert (known.status_code, known.json()) == (404, {"detail": "Not found"})
+        assert (unknown.status_code, unknown.json()) == (404, {"detail": "Not found"})
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_config_import_refuses_a_second_webhook_binding_with_the_same_slug(client, auth_headers):
+    first_dp = await _create_dp(client, auth_headers)
+    second_dp = await _create_dp(client, auth_headers)
+    third_dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers, enabled=False)
+
+    def exported(dp_id: str, slug: str) -> dict:
+        return {
+            "id": str(uuid.uuid4()),
+            "datapoint_id": dp_id,
+            "adapter_type": "WEBHOOK",
+            "adapter_instance_id": instance["id"],
+            "direction": "SOURCE",
+            "config": {"slug": slug, "token": f"token-{slug}-{uuid.uuid4().hex}"},
+            "enabled": True,
+        }
+
+    try:
+        resp = await client.post(
+            "/api/v1/config/import",
+            json={
+                "obs_version": "5",
+                "exported_at": "2024-01-01T00:00:00",
+                "datapoints": [],
+                "bindings": [exported(first_dp["id"], "bell"), exported(second_dp["id"], "Bell"), exported(third_dp["id"], "gate")],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["bindings_created"] == 2
+        assert any("bell" in error for error in body["errors"] if error.startswith("Binding "))
+
+        slugs = sorted(entry["slug"] for entry in await _webhook_bindings(client, auth_headers, instance["id"]))
+        assert slugs == ["bell", "gate"]
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])

@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from obs.api.audit import AuditLogWriter, AuditOutcome, audit_payload_sha256, build_audit_context
 from obs.api.auth import get_admin_user
 from obs.api.v1.authz import _canonical_principal_id, _require_grant_targets
-from obs.api.v1.bindings import _json_config, _validate_adapter_binding
+from obs.api.v1.bindings import _ensure_webhook_slug_free, _json_config, _validate_adapter_binding
 from obs.api.v1.services.hierarchy_lifecycle import collect_hierarchy_tree_node_ids, delete_hierarchy_grants
 from obs.core.formula import validate_formula
 from obs.core.registry import get_registry
@@ -924,6 +924,16 @@ async def import_config(
                 enabled=b_data.enabled,
                 instance_config=instance_config,
             )
+            if effective_adapter_type == "WEBHOOK":
+                # Rows are written one by one, so a later duplicate sees the
+                # earlier one. Without this both would be stored and the adapter
+                # would silently drop one of the two URLs on the restart below.
+                await _ensure_webhook_slug_free(
+                    db,
+                    effective_instance_id,
+                    str(b_data.config.get("slug", "")).strip().lower(),
+                    exclude_binding_id=b_id,
+                )
             if existing_binding:
                 await db.execute_and_commit(
                     """UPDATE adapter_bindings

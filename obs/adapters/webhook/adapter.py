@@ -142,7 +142,9 @@ def token_matches(expected: str, provided: str | None) -> bool:
     """Compare tokens without leaking their length or content through timing."""
     if not expected or not provided:
         return False
-    return secrets.compare_digest(expected, provided)
+    # Compare bytes: `compare_digest` raises TypeError for a non-ASCII str, which
+    # would turn a wrong token into a 500 that only a real slug produces.
+    return secrets.compare_digest(expected.encode("utf-8"), provided.encode("utf-8", "replace"))
 
 
 def normalise_path_prefix(raw: str) -> str:

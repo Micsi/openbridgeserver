@@ -81,10 +81,15 @@ def address_allowed(client_ip: str | None, networks: list[IpNetwork]) -> bool:
     if not client_ip:
         return False
     try:
-        address = _normalise(ipaddress.ip_address(client_ip))
+        reported = ipaddress.ip_address(client_ip)
     except ValueError:
         return False
-    return any(address in network for network in networks)
+    # Try both forms: the unwrapped IPv4 address matches IPv4 CIDRs, while the
+    # reported mapped form still matches an IPv6 entry such as
+    # ``::ffff:192.168.1.0/120`` (an IPv4 address is never "in" an IPv6 network,
+    # so the extra candidate cannot widen what a plain IPv4 entry allows).
+    candidates = (reported, _normalise(reported))
+    return any(candidate in network for network in networks for candidate in candidates)
 
 
 def _strip_port(value: str) -> str:
