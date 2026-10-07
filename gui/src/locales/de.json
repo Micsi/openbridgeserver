@@ -2055,7 +2055,7 @@
         "variablesSection": "Variablen",
         "addVariable": "Variable hinzufügen",
         "removeVariable": "Entfernen",
-        "variablesHint": "Variablen referenzieren bestehende Objekte und können als ###OBS1###, ###OBS2### usw. in URL, Headern, Auth-Feldern und Body verwendet werden.",
+        "variablesHint": "Variablen referenzieren bestehende Objekte und können als ###OBS1###, ###OBS2### usw. in URL, Headern, Auth-Feldern und Body verwendet werden. Zusätzlich stehen die Datums-/Zeitvariablen (z. B. ###HH###, ###yyyy###, ###DATE###, ###TS###) zur Verfügung; im Schema, Host und Port der URL sind keine Variablen erlaubt.",
         "noVariables": "Keine Variablen konfiguriert."
       },
       "stringConcat": {
@@ -2614,6 +2614,18 @@
       "links": "Verknüpfungen",
       "linksModalTitle": "Hierarchie-Verknüpfungen: {name}",
       "linksEmpty": "Diese Logik ist aktuell keiner Hierarchie-Position zugeordnet."
+    },
+    "variables": {
+      "insert": "Variable einfügen…",
+      "groupStandard": "Standardwerte",
+      "groupDateTime": "Datum/Zeit",
+      "groupObjects": "Objektvariablen",
+      "resolvedPath": "Aufgelöster Pfad",
+      "unresolved": "Nicht auflösbare Variable(n): {names}",
+      "extractorHint": "Variablen können als ###OBS1###, ###OBS2### usw. in den Pfaden verwendet werden – zusammen mit den Datums-/Zeitvariablen (z. B. ###HH###, ###yyyy###).",
+      "textHint": "Variablen können als ###OBS1###, ###OBS2### usw. in Titel, Fallback-Text bzw. statischen Texten verwendet werden – zusammen mit den Datums-/Zeitvariablen (z. B. ###HH###, ###DATE###). Über Eingänge verbundene Werte werden nicht ausgewertet.",
+      "replaceHint": "Variablen können als ###OBS1###, ###OBS2### usw. im Ersetzungstext verwendet werden – zusammen mit den Datums-/Zeitvariablen. Bei RegEx-Regeln bleiben eingesetzte Werte wörtlich (Gruppenverweise wie \\1 wirken nur im eigenen Text).",
+      "urlHint": "Variablen (z. B. ###yyyy###, ###OBS1###) sind nur im Pfad und in der Query der URL erlaubt, nicht in Schema, Host oder Port."
     }
   },
   "authzPreflight": {

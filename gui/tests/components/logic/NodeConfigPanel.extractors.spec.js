@@ -608,3 +608,67 @@ describe('NodeConfigPanel math_formula', () => {
     w.unmount()
   })
 })
+
+// ─── extractor variables (#1301) ─────────────────────────────────────────────
+
+describe('NodeConfigPanel extractors — variables', () => {
+  it.each([
+    ['json_extractor', 'json_paths', 'json'],
+    ['xml_extractor', 'xml_paths', 'xml'],
+  ])('%s: insert menu appends a variable token to the path', async (type, key) => {
+    const w = await mountPanel(type, { [key]: JSON.stringify([{ label: 'a', path: 'x[' }]) })
+    await flushPromises()
+
+    const select = w.find('[data-testid="variable-insert-select"]')
+    expect(select.findAll('optgroup').length).toBe(2)
+    await select.setValue('HH')
+    expect(JSON.parse(w.emitted('update')[0][0][key])[0].path).toBe('x[###HH###')
+    w.unmount()
+  })
+
+  it('offers configured OBS slots and shows resolved path and issues', async () => {
+    const w = await mountPanel(
+      'json_extractor',
+      {
+        json_paths: JSON.stringify([{ label: 'a', path: '[###H###].###FOO###' }]),
+        variables: [{ slot: 1, datapoint_id: 'dp1', datapoint_name: 'Lamp' }],
+      },
+      { n1: { _resolved_paths: ['[7].###FOO###'], _issues: ['unknown variable ###FOO###'] } },
+    )
+    await flushPromises()
+
+    expect(w.find('[data-testid="variable-insert-select"]').findAll('optgroup').length).toBe(3)
+    expect(w.find('[data-testid="variable-resolved-path"]').text()).toContain('[7].###FOO###')
+    expect(w.find('[data-testid="variable-unresolved"]').text()).toContain('###FOO###')
+    expect(w.find('[data-testid="extractor-issues"]').text()).toContain('unknown variable')
+    w.unmount()
+  })
+
+  it('hides resolved path and warnings for static paths', async () => {
+    const w = await mountPanel('xml_extractor', { xml_paths: JSON.stringify([{ label: 'a', path: './a' }]) })
+    await flushPromises()
+    expect(w.find('[data-testid="variable-resolved-path"]').exists()).toBe(false)
+    expect(w.find('[data-testid="variable-unresolved"]').exists()).toBe(false)
+    expect(w.find('[data-testid="extractor-issues"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('uses the server-resolved path for the live preview', async () => {
+    const w = await mountPanel(
+      'json_extractor',
+      { json_paths: JSON.stringify([{ label: 'a', path: '[###H###].v' }]) },
+      { n1: { _preview: '[{"v":"zero"},{"v":"one"}]', _resolved_paths: ['[1].v'] } },
+    )
+    await flushPromises()
+    expect(w.text()).toContain('one')
+    w.unmount()
+  })
+
+  it('edits object variables in the extractor panel', async () => {
+    const w = await mountPanel('json_extractor', { json_paths: '[]' })
+    await flushPromises()
+    await w.find('[data-testid="extractor-add-variable"]').trigger('click')
+    expect(w.emitted('update').at(-1)[0].variables).toEqual([{ slot: 1, datapoint_id: '', datapoint_name: '' }])
+    w.unmount()
+  })
+})

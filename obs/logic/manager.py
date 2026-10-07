@@ -38,6 +38,17 @@ from obs.core.json import jsonable
 from obs.logic.executor import GraphExecutor, _OpaqueRecoveredDict, _OpaqueRecoveredSet, _OpaqueRecoveredStr, _replay_known_output_value
 from obs.logic.models import FlowData
 from obs.logic.node_types import get_node_type
+from obs.logic.variables import (
+    VARIABLE_RE,
+    ResolvedTemplate,
+    TimeSnapshot,
+    VariableError,
+    make_time_snapshot,
+    normalise_variable_slots,
+    resolve_template,
+    value_to_string,
+    variable_key,
+)
 from obs.security.url_targets import resolve_url_target
 
 logger = logging.getLogger(__name__)
@@ -748,7 +759,7 @@ _PUSHOVER_ATTACHMENT_MAX_BYTES = 5_000_000
 _SECRET_FILE_MAX_BYTES = 8192
 _SECRET_FILE_DEFAULT_ROOT = "/run/secrets"
 _API_CLIENT_RETRYABLE_METHODS = {"GET", "HEAD", "OPTIONS"}
-_API_CLIENT_VARIABLE_RE = re.compile(r"###OBS([1-9][0-9]*)###")
+_API_CLIENT_VARIABLE_RE = VARIABLE_RE
 _API_CLIENT_URL_LEADING_STRIP_CHARS = "".join(chr(value) for value in range(0x21))
 _API_CLIENT_URL_REMOVE_CHARS = str.maketrans("", "", "\r\n\t")
 _HOST_CHECK_MIN_TIMEOUT_S = 1.0
@@ -758,7 +769,7 @@ _HOST_CHECK_MAX_COUNT = 10
 _HOST_CHECK_RUNTIME_TOKEN = uuid.uuid4().hex
 
 
-class _ApiClientVariableError(ValueError):
+class _ApiClientVariableError(VariableError):
     pass
 
 
@@ -842,34 +853,7 @@ def _migrate_legacy_api_client_field_names(flow: FlowData) -> None:
                 node.data[new_key] = legacy_value
 
 
-def _normalise_api_client_variables(raw: Any) -> dict[int, dict[str, str]]:
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            raw = []
-    if not isinstance(raw, list):
-        return {}
-
-    variables: dict[int, dict[str, str]] = {}
-    for idx, entry in enumerate(raw, start=1):
-        if not isinstance(entry, dict):
-            continue
-        slot_raw = entry.get("slot", idx)
-        try:
-            slot = int(slot_raw)
-        except (TypeError, ValueError):
-            slot = idx
-        if slot < 1:
-            slot = idx
-        datapoint_id = str(entry.get("datapoint_id") or "").strip()
-        if not datapoint_id:
-            continue
-        variables[slot] = {
-            "datapoint_id": datapoint_id,
-            "datapoint_name": str(entry.get("datapoint_name") or datapoint_id),
-        }
-    return variables
+_normalise_api_client_variables = normalise_variable_slots
 
 
 def _rename_api_client_variable_datapoint_names(raw: Any, datapoint_id: str, new_name: str) -> tuple[Any, bool]:
@@ -898,13 +882,10 @@ def _rename_api_client_variable_datapoint_names(raw: Any, datapoint_id: str, new
 
 
 def _api_client_value_to_string(value: Any) -> str:
-    if value is None:
-        raise _ApiClientVariableError("API client variable value is empty")
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False)
-    return str(value)
+    try:
+        return value_to_string(value)
+    except VariableError as exc:
+        raise _ApiClientVariableError("API client variable value is empty") from exc
 
 
 def _replace_api_client_placeholders(
@@ -915,7 +896,7 @@ def _replace_api_client_placeholders(
     if isinstance(value, str):
 
         def _replace(match: re.Match[str]) -> str:
-            replacement = resolver(int(match.group(1)))
+            replacement = resolver(variable_key(match.group(1)))
             return transform(replacement) if transform is not None else replacement
 
         return _API_CLIENT_VARIABLE_RE.sub(_replace, value)
@@ -978,7 +959,7 @@ def _replace_api_client_url_placeholders(value: str, resolver: Any) -> str:
             raise _ApiClientVariableError(
                 "API client URL variables are not allowed in the scheme, host, userinfo, or port",
             )
-        replacement = resolver(int(match.group(1)))
+        replacement = resolver(variable_key(match.group(1)))
         return _quote_api_client_url_value(replacement)
 
     return _API_CLIENT_VARIABLE_RE.sub(_replace, value)
@@ -988,37 +969,45 @@ def _make_api_client_variable_resolver(
     registry: Any,
     raw_variables: Any,
     execution_values_by_datapoint_id: dict[str, Any] | None = None,
+    snapshot: TimeSnapshot | None = None,
+    subject: str = "API client",
 ) -> Any:
     variables = _normalise_api_client_variables(raw_variables)
     execution_values_by_datapoint_id = execution_values_by_datapoint_id or {}
     cache: dict[int, str] = {}
 
-    def _resolve(index: int) -> str:
+    def _resolve(index: int | str) -> str:
+        if isinstance(index, str):
+            # Shared date/time variables (#1301): one snapshot per logic run.
+            nonlocal snapshot
+            if snapshot is None:
+                snapshot = make_time_snapshot(None)
+            return snapshot.value(index)
         if index in cache:
             return cache[index]
         variable = variables.get(index)
         if variable is None:
-            raise _ApiClientVariableError(f"API client variable OBS{index} is not configured")
+            raise _ApiClientVariableError(f"{subject} variable OBS{index} is not configured")
         datapoint_id = variable["datapoint_id"]
         if datapoint_id in execution_values_by_datapoint_id:
             value = execution_values_by_datapoint_id[datapoint_id]
             if value is None:
                 raise _ApiClientVariableError(
-                    f"API client variable OBS{index} object {variable['datapoint_name']} has no value",
+                    f"{subject} variable OBS{index} object {variable['datapoint_name']} has no value",
                 )
             cache[index] = _api_client_value_to_string(value)
             return cache[index]
         try:
             state = registry.get_value(uuid.UUID(datapoint_id))
         except Exception as exc:
-            raise _ApiClientVariableError(f"API client variable OBS{index} references an invalid object") from exc
+            raise _ApiClientVariableError(f"{subject} variable OBS{index} references an invalid object") from exc
         if state is None:
             raise _ApiClientVariableError(
-                f"API client variable OBS{index} object {variable['datapoint_name']} is not available",
+                f"{subject} variable OBS{index} object {variable['datapoint_name']} is not available",
             )
         if state.value is None:
             raise _ApiClientVariableError(
-                f"API client variable OBS{index} object {variable['datapoint_name']} has no value",
+                f"{subject} variable OBS{index} object {variable['datapoint_name']} has no value",
             )
         cache[index] = _api_client_value_to_string(state.value)
         return cache[index]
@@ -2495,6 +2484,7 @@ class LogicManager:
                     hyst_copy,
                     self._app_config,
                     retained_boundary_handles=init_retained_boundary_handles,
+                    datapoint_lookup=self._datapoint_value_lookup,
                 )
                 outputs = executor.execute(overrides, commit_memory=False)
 
@@ -2838,6 +2828,11 @@ class LogicManager:
         except Exception:
             logger.exception("Graph %s: failed to reset node_state", graph_id[:8])
 
+    def _datapoint_value_lookup(self, datapoint_id: str) -> Any:
+        """Current registry value for ``###OBSn###`` slots of non-API blocks (None if unknown)."""
+        state = self._registry.get_value(uuid.UUID(datapoint_id))
+        return None if state is None else state.value
+
     async def _execute_graph(
         self,
         graph_id: str,
@@ -2874,6 +2869,8 @@ class LogicManager:
         execute_now = datetime.now(UTC)
         execution_started = perf_counter()
         ical_app_config = dict(self._app_config)
+        # One instant for every ###VAR### of this logic run (#1301).
+        api_time_snapshot = make_time_snapshot(ical_app_config, execute_now)
         graph_state = self._node_state.setdefault(graph_id, {})
         ical_generation = self._ical_cache_generations.setdefault(graph_id, object())
         ical_result_cache = self._ical_result_caches.setdefault(graph_id, {})
@@ -2986,6 +2983,8 @@ class LogicManager:
                     ical_app_config,
                     ical_result_cache=pass_ical_cache,
                     ical_cache_outputs_owned=True,
+                    run_time=execute_now,
+                    datapoint_lookup=self._datapoint_value_lookup,
                 )
 
             else:
@@ -3007,6 +3006,8 @@ class LogicManager:
                     run_inputs,
                     pass_ical_cache,
                     ical_cache_outputs_owned=True,
+                    run_time=execute_now,
+                    datapoint_lookup=self._datapoint_value_lookup,
                 )
 
             if not ical_nodes or execution_ical_prepared:
@@ -3019,6 +3020,8 @@ class LogicManager:
                     ical_app_config,
                     ical_result_cache=pass_ical_cache,
                     ical_cache_outputs_owned=True,
+                    run_time=execute_now,
+                    datapoint_lookup=self._datapoint_value_lookup,
                 )
                 previous = pass_ical_cache.get(ical_node.id)
                 try:
@@ -3201,6 +3204,23 @@ class LogicManager:
             url = (node.data.get("url") or "").strip()
             if not url:
                 continue
+            if VARIABLE_RE.search(url):
+                # Date/object variables are allowed in path and query only; the
+                # authority guard of the API client applies unchanged (#1301).
+                try:
+                    url = _replace_api_client_url_placeholders(
+                        url,
+                        _make_api_client_variable_resolver(
+                            self._registry,
+                            node.data.get("variables"),
+                            None,
+                            api_time_snapshot,
+                            subject="iCal",
+                        ),
+                    ).strip()
+                except _ApiClientVariableError as exc:
+                    logger.warning("Graph %s: iCal variable error on node %s: %s", graph_id[:8], node.id[:8], exc)
+                    continue
             refresh_min = float(node.data.get("refresh_interval_min") or 60)
             payload_limit = _ical_payload_limit_bytes(node.data)
             hyst_node = hyst.setdefault(node.id, {})
@@ -5140,6 +5160,18 @@ class LogicManager:
             if priority >= execution_value_priority_by_datapoint_id.get(dp_id_str, 0):
                 execution_values_by_datapoint_id[dp_id_str] = node_override["value"]
                 execution_value_priority_by_datapoint_id[dp_id_str] = priority
+
+        def _resolve_node_text(node: Any, text: str) -> ResolvedTemplate:
+            """Expand ###VAR### in a static text field (notification/archive fallbacks)."""
+            resolver = _make_api_client_variable_resolver(
+                self._registry,
+                node.data.get("variables"),
+                execution_values_by_datapoint_id,
+                api_time_snapshot,
+                subject="Variable",
+            )
+            return resolve_template(text, api_time_snapshot, resolver)
+
         import json as _json
 
         async def _run_api_client_node(node: Any, target_set: set[str]) -> bool:
@@ -5150,6 +5182,7 @@ class LogicManager:
                 self._registry,
                 node.data.get("variables"),
                 execution_values_by_datapoint_id,
+                api_time_snapshot,
             )
             try:
                 url = _replace_api_client_url_placeholders(
@@ -5634,6 +5667,7 @@ class LogicManager:
                     self._registry,
                     node.data.get("variables"),
                     execution_values_by_datapoint_id,
+                    api_time_snapshot,
                 )
                 try:
                     url = _replace_api_client_url_placeholders(
@@ -6070,9 +6104,18 @@ class LogicManager:
                 return False
 
             _raw_msg = out.get("_message")
-            msg = _msg_to_str(_raw_msg) if _raw_msg is not None else str(node.data.get("message") or "")
             _raw_title = out.get("_title")
-            title = _msg_to_str(_raw_title) if _raw_title is not None else str(node.data.get("title") or "")
+            # Only the configured fallbacks are templates; wired values are data.
+            _fallback_msg = _resolve_node_text(node, str(node.data.get("message") or "")) if _raw_msg is None else None
+            _fallback_title = _resolve_node_text(node, str(node.data.get("title") or "")) if _raw_title is None else None
+            _variable_errors = [*(_fallback_msg.errors if _fallback_msg else []), *(_fallback_title.errors if _fallback_title else [])]
+            if _variable_errors:
+                outputs[node.id]["__error__"] = "; ".join(_variable_errors)
+                logger.warning("Graph %s: message archive variable error: %s", graph_id[:8], outputs[node.id]["__error__"])
+                target_set.add(node.id)
+                return False
+            msg = _msg_to_str(_raw_msg) if _raw_msg is not None else _fallback_msg.text
+            title = _msg_to_str(_raw_title) if _raw_title is not None else _fallback_title.text
             message_type = str(node.data.get("type") or "automation")
             severity = str(node.data.get("severity") or "info")
 
@@ -6233,7 +6276,15 @@ class LogicManager:
                     target_set.add(node.id)
                     return False
                 raw_message = out.get("_message")
-                message = _msg_to_str(raw_message) if raw_message is not None else str(node.data.get("message") or "")
+                fallback_message = _resolve_node_text(node, str(node.data.get("message") or "")) if raw_message is None else None
+                resolved_title = _resolve_node_text(node, str(node.data.get("title") or ""))
+                variable_errors = [*(fallback_message.errors if fallback_message else []), *resolved_title.errors]
+                if variable_errors:
+                    outputs[node.id]["__error__"] = "; ".join(variable_errors)
+                    logger.warning("Graph %s: notification variable error: %s", graph_id[:8], outputs[node.id]["__error__"])
+                    target_set.add(node.id)
+                    return False
+                message = _msg_to_str(raw_message) if raw_message is not None else fallback_message.text
                 try:
                     raw_priority = node.data.get("priority")
                     try:
@@ -6244,7 +6295,7 @@ class LogicManager:
                     results = await adapter.send_notification(
                         message=message,
                         providers=providers,
-                        title=str(node.data.get("title") or "") or None,
+                        title=resolved_title.text or None,
                         priority=priority,
                     )
                     failures = [result for result in results if not result.ok]

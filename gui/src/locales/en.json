@@ -2055,7 +2055,7 @@
         "variablesSection": "Variables",
         "addVariable": "Add variable",
         "removeVariable": "Remove",
-        "variablesHint": "Variables reference existing objects and can be used as ###OBS1###, ###OBS2###, etc. in URL, headers, auth fields and body.",
+        "variablesHint": "Variables reference existing objects and can be used as ###OBS1###, ###OBS2###, etc. in URL, headers, auth fields and body. The date/time variables (e.g. ###HH###, ###yyyy###, ###DATE###, ###TS###) are available as well; variables are not allowed in the URL scheme, host or port.",
         "noVariables": "No variables configured."
       },
       "stringConcat": {
@@ -2614,6 +2614,18 @@
       "links": "Links",
       "linksModalTitle": "Hierarchy links: {name}",
       "linksEmpty": "This logic sheet is not currently assigned to any hierarchy position."
+    },
+    "variables": {
+      "insert": "Insert variable…",
+      "groupStandard": "Standard values",
+      "groupDateTime": "Date/time",
+      "groupObjects": "Object variables",
+      "resolvedPath": "Resolved path",
+      "unresolved": "Unresolvable variable(s): {names}",
+      "extractorHint": "Variables can be used as ###OBS1###, ###OBS2###, etc. in the paths – together with the date/time variables (e.g. ###HH###, ###yyyy###).",
+      "textHint": "Variables can be used as ###OBS1###, ###OBS2###, etc. in the title, fallback text or static texts – together with the date/time variables (e.g. ###HH###, ###DATE###). Values connected through inputs are not evaluated.",
+      "replaceHint": "Variables can be used as ###OBS1###, ###OBS2###, etc. in the replacement text – together with the date/time variables. In regex rules substituted values stay literal (group references such as \\1 only work in your own text).",
+      "urlHint": "Variables (e.g. ###yyyy###, ###OBS1###) are only allowed in the URL path and query, not in scheme, host or port."
     }
   },
   "authzPreflight": {
