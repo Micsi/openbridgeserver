@@ -187,8 +187,10 @@ Ratenlimit, Adresse nicht in der Allowlist, unbekannter Slug, falsches Token
 oder nicht erlaubte Methode. Weil die Antwort
 nach außen bewusst ein nicht unterscheidbares `404` bleibt, ist diese Anzeige
 der einzige Ort, an dem sich ein stiller Fehlschlag überhaupt erkennen lässt.
-Die Zähler der Instanz stehen unter **Adapter → Instanz**, die einer einzelnen
-Verknüpfung direkt unter deren Aufruf-URL.
+Beides steht im Formular einer Verknüpfung, unter deren Aufruf-URL: zuerst die Zähler
+dieser Verknüpfung, dann — in einem eigenen Kasten — die Aufrufe, die der Server keiner Verknüpfung
+zuordnen konnte (unbekannter Slug, falsches Token) oder für die ganze Instanz abgewiesen hat
+(Ratenlimit).
 
 **Token neu erzeugen** widerruft die bisherige URL sofort und gibt eine neue aus — z. B.
 wenn ein Gerät ausgetauscht wird oder seine Konfiguration in falsche Hände geraten ist.

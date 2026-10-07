@@ -309,8 +309,15 @@ class FixedWindowRateLimiter:
         self._limit = limit
         self._window = window_seconds
         self._windows: dict[str, tuple[float, int]] = {}
+        # Window in which a denial was last announced per key, so a flood from one
+        # address can be reported once per window instead of once per request.
+        self._announced: dict[str, float] = {}
 
     def allow(self, key: str, *, now: float | None = None) -> bool:
+        return self.check(key, now=now)[0]
+
+    def check(self, key: str, *, now: float | None = None) -> tuple[bool, bool]:
+        """Return ``(allowed, first_denial_in_window)`` for one call by *key*."""
         current = time.monotonic() if now is None else now
         window_start = current - (current % self._window)
         start, count = self._windows.get(key, (window_start, 0))
@@ -318,10 +325,12 @@ class FixedWindowRateLimiter:
             start, count = window_start, 0
         if count >= self._limit:
             self._windows[key] = (start, count)
-            return False
+            first_denial = self._announced.get(key) != start
+            self._announced[key] = start
+            return False, first_denial
         self._windows[key] = (start, count + 1)
         self._prune(window_start)
-        return True
+        return True, False
 
     def _prune(self, window_start: float) -> None:
         """Drop keys from older windows so the map cannot grow without bound."""
@@ -329,6 +338,7 @@ class FixedWindowRateLimiter:
             return
         for key in [key for key, (start, _) in self._windows.items() if start != window_start]:
             del self._windows[key]
+        self._announced = {key: start for key, start in self._announced.items() if key in self._windows}
 
 
 # ---------------------------------------------------------------------------
@@ -624,10 +634,13 @@ class WebhookAdapter(AdapterBase):
         """
         client_ip = resolve_client_ip(peer_ip, forwarded_for, trust_forwarded_for=self._trust_forwarded_for)
         # Rate limit first, allowlist second: the limiter is keyed per address,
-        # so one caller can never starve another, and checking it first also
-        # caps how many warning lines a blocked address can write to the log.
-        if not self._limiter.allow(client_ip or "unknown"):
-            logger.warning("WEBHOOK: rate limit exceeded for %s", client_ip)
+        # so one caller can never starve another. A blocked address is logged once
+        # per window — the counters still see every call — so a flood cannot turn
+        # into a flood of log lines (and WebSocket broadcasts) of its own.
+        allowed, first_denial = self._limiter.check(client_ip or "unknown")
+        if not allowed:
+            if first_denial:
+                logger.warning("WEBHOOK: rate limit exceeded for %s (further calls in this window are not logged)", client_ip)
             self._reject(RejectionReason.RATE_LIMITED, client_ip=client_ip)
             return TriggerOutcome(429, "Too many requests")
 

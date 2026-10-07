@@ -18,6 +18,7 @@ from obs.adapters.webhook import adapter as webhook_module
 from obs.adapters.webhook.adapter import (
     DEFAULT_PATH_PREFIX,
     FixedWindowRateLimiter,
+    RejectionReason,
     WebhookAdapter,
     WebhookAdapterConfig,
     WebhookBindingConfig,
@@ -297,6 +298,28 @@ def test_rate_limiter_allows_up_to_the_limit_then_blocks():
     assert limiter.allow("ip", now=0.0) is True
     assert limiter.allow("ip", now=1.0) is True
     assert limiter.allow("ip", now=2.0) is False
+
+
+def test_rate_limiter_reports_the_first_denial_of_each_window_once():
+    limiter = FixedWindowRateLimiter(1, window_seconds=60.0)
+    assert limiter.check("a", now=0.0) == (True, False)
+    assert limiter.check("a", now=1.0) == (False, True)
+    assert limiter.check("a", now=2.0) == (False, False)
+    assert limiter.check("b", now=2.0) == (True, False)
+    # a new window announces again
+    assert limiter.check("a", now=61.0) == (True, False)
+    assert limiter.check("a", now=62.0) == (False, True)
+
+
+def test_rate_limiter_forgets_announcements_of_pruned_keys():
+    limiter = FixedWindowRateLimiter(1, window_seconds=60.0)
+    limiter.check("gone", now=0.0)
+    limiter.check("gone", now=1.0)
+    assert "gone" in limiter._announced
+    for index in range(1100):
+        limiter._windows[f"old-{index}"] = (0.0, 1)
+    limiter.check("fresh", now=120.0)
+    assert "gone" not in limiter._announced
 
 
 def test_rate_limiter_resets_in_the_next_window():
@@ -742,6 +765,19 @@ async def test_rate_limit_without_a_client_address(mock_bus, monkeypatch):
 
     assert first.status == 204
     assert second.status == 429
+
+
+async def test_a_rate_limit_flood_is_logged_once_per_window(mock_bus, caplog):
+    instance = await _adapter(mock_bus, [], {"rate_limit_per_minute": 1})
+
+    with caplog.at_level("WARNING", logger="obs.adapters.webhook.adapter"):
+        outcomes = [await instance.handle_trigger(method="GET", remainder="x", query_params={}, body=b"", peer_ip="198.51.100.9") for _ in range(6)]
+
+    assert [outcome.status for outcome in outcomes[1:]] == [429] * 5
+    assert [record.getMessage() for record in caplog.records if "rate limit" in record.getMessage()] == [
+        "WEBHOOK: rate limit exceeded for 198.51.100.9 (further calls in this window are not logged)"
+    ]
+    assert instance._rejections.counts[RejectionReason.RATE_LIMITED.value] == 5
 
 
 async def test_debounce_suppresses_a_repeat_call(mock_bus, monkeypatch):

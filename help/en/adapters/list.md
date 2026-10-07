@@ -177,8 +177,9 @@ Rejected calls appear next to them with their **reason and caller address** —
 rate limit, address not in the allowlist, unknown slug, wrong token, or a
 method that is not allowed. Because the outward answer stays
 an indistinguishable `404` on purpose, this display is the only place a silent
-failure can be recognised at all. The instance's counters live under
-**Adapters → instance**, a single binding's directly below its call URL.
+failure can be recognised at all. Both are shown in a binding's form, below its call URL: that
+binding's own counters first, then — in a separate box — the calls the server could not match to any
+binding (an unknown slug, a wrong token) or turned away for the whole instance (rate limit).
 
 **Issue a new token** revokes the previous URL immediately and hands out a new one — when a
 device is replaced, for instance, or when its configuration ended up in the wrong hands.
