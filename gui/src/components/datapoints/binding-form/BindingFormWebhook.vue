@@ -116,8 +116,10 @@
     <div class="optional-divider">{{ $t('adapters.bindingForm.webhookCallUrlSection') }}</div>
 
     <div v-if="loading" class="flex justify-center py-3"><Spinner size="sm" /></div>
-    <p v-else-if="error" class="text-xs text-red-400">{{ error }}</p>
-    <template v-else-if="entry">
+    <!-- An error sits beside the entry, not instead of it: a failed rotation
+         must leave the URL and the rotate button available for a retry. -->
+    <p v-if="error" class="text-xs text-red-400" data-testid="webhook-error">{{ error }}</p>
+    <template v-if="entry">
       <div class="form-group">
         <label class="label">{{ $t('adapters.bindingForm.webhookCallUrlLabel') }}</label>
         <div class="flex gap-2">

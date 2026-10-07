@@ -580,9 +580,11 @@ async def test_a_disabled_instance_claims_no_prefix(client, auth_headers):
         await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "bell-disabled"})
         entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
 
-        # Nothing claims /hook while the instance is disabled, so the call
-        # falls through to the normal request stack and no value is published.
-        await client.get(entry["call_path"])
+        # The instance is not running, but its prefix is still configured: the
+        # call is answered with the same 404 as any unavailable webhook (and not
+        # with the Admin-GUI shell), and no value is published.
+        resp = await client.get(entry["call_path"])
+        assert (resp.status_code, resp.json()) == (404, {"detail": "Not found"})
         assert await _dp_value(client, auth_headers, dp["id"]) is None
         assert entry["call_count"] == 0
         assert entry["last_status"] is None
@@ -902,5 +904,49 @@ async def test_config_import_refuses_a_second_webhook_binding_with_the_same_slug
 
         slugs = sorted(entry["slug"] for entry in await _webhook_bindings(client, auth_headers, instance["id"]))
         assert slugs == ["bell", "gate"]
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_a_disabled_instance_only_claims_its_own_prefix(client, auth_headers):
+    instance = await _create_instance(client, auth_headers, config={"path_prefix": "/off-hook"}, enabled=False)
+    try:
+        claimed = await client.get("/off-hook/anything")
+        assert (claimed.status_code, claimed.json()) == (404, {"detail": "Not found"})
+
+        other = await client.get("/off-hookish")
+        assert other.text != '{"detail":"Not found"}'
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_config_import_stores_the_webhook_slug_normalised(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers, enabled=False)
+    try:
+        resp = await client.post(
+            "/api/v1/config/import",
+            json={
+                "obs_version": "5",
+                "exported_at": "2024-01-01T00:00:00",
+                "datapoints": [],
+                "bindings": [
+                    {
+                        "id": str(uuid.uuid4()),
+                        "datapoint_id": dp["id"],
+                        "adapter_type": "WEBHOOK",
+                        "adapter_instance_id": instance["id"],
+                        "direction": "SOURCE",
+                        "config": {"slug": "Mixed-Case", "token": "imported-token"},
+                        "enabled": True,
+                    }
+                ],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["errors"] == []
+
+        assert [entry["slug"] for entry in await _webhook_bindings(client, auth_headers, instance["id"])] == ["mixed-case"]
     finally:
         await _delete_instance(client, auth_headers, instance["id"])

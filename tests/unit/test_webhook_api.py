@@ -406,3 +406,46 @@ async def test_listing_refuses_an_api_key_even_with_operator_grants(db: Database
         await adapters_api.webhook_list_bindings(instance_id, _user=key, db=db)
 
     assert excinfo.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Prefixes of instances that are configured but not running
+# ---------------------------------------------------------------------------
+
+
+async def test_a_configured_prefix_is_claimed_even_without_a_running_instance(monkeypatch, db: Database):
+    from obs.api.webhook import _claimed_by_inactive_instance
+
+    await _insert_instance(db, uuid.uuid4(), config=json.dumps({"path_prefix": "/off-hook"}))
+    await _insert_instance(db, uuid.uuid4(), config="{}")  # falls back to /hook
+    await _insert_instance(db, uuid.uuid4(), config=json.dumps({"path_prefix": "/api"}))  # invalid, skipped
+    monkeypatch.setattr("obs.db.database.get_db", lambda: db)
+
+    assert await _claimed_by_inactive_instance("/off-hook") is True
+    assert await _claimed_by_inactive_instance("/off-hook/bell/tok") is True
+    assert await _claimed_by_inactive_instance("/hook/bell") is True
+    assert await _claimed_by_inactive_instance("/off-hookish") is False
+    assert await _claimed_by_inactive_instance("/") is False
+
+
+async def test_application_owned_paths_never_reach_the_database(monkeypatch):
+    from obs.api.webhook import _claimed_by_inactive_instance
+
+    def boom():
+        raise AssertionError("the database must not be queried for application paths")
+
+    monkeypatch.setattr("obs.db.database.get_db", boom)
+
+    assert await _claimed_by_inactive_instance("/api/v1/datapoints") is False
+    assert await _claimed_by_inactive_instance("/Assets/index.js") is False
+
+
+async def test_an_uninitialised_database_claims_nothing(monkeypatch):
+    from obs.api.webhook import _claimed_by_inactive_instance
+
+    def not_ready():
+        raise RuntimeError("Database not initialized")
+
+    monkeypatch.setattr("obs.db.database.get_db", not_ready)
+
+    assert await _claimed_by_inactive_instance("/hook/bell") is False

@@ -924,16 +924,18 @@ async def import_config(
                 enabled=b_data.enabled,
                 instance_config=instance_config,
             )
+            stored_config = b_data.config
             if effective_adapter_type == "WEBHOOK":
+                # Store the slug the way the adapter and the create route see it
+                # (trimmed, lower-case): otherwise `Bell` would be imported as
+                # written and a later create of `bell` would pass the uniqueness
+                # check yet collide when the adapter normalises both.
+                slug = str(b_data.config.get("slug", "")).strip().lower()
+                stored_config = {**b_data.config, "slug": slug}
                 # Rows are written one by one, so a later duplicate sees the
                 # earlier one. Without this both would be stored and the adapter
                 # would silently drop one of the two URLs on the restart below.
-                await _ensure_webhook_slug_free(
-                    db,
-                    effective_instance_id,
-                    str(b_data.config.get("slug", "")).strip().lower(),
-                    exclude_binding_id=b_id,
-                )
+                await _ensure_webhook_slug_free(db, effective_instance_id, slug, exclude_binding_id=b_id)
             if existing_binding:
                 await db.execute_and_commit(
                     """UPDATE adapter_bindings
@@ -944,7 +946,7 @@ async def import_config(
                        WHERE id=?""",
                     (
                         b_data.direction,
-                        json.dumps(b_data.config),
+                        json.dumps(stored_config),
                         int(b_data.enabled),
                         formula,
                         b_data.send_throttle_ms,
@@ -971,7 +973,7 @@ async def import_config(
                         b_data.adapter_type,
                         b_data.adapter_instance_id,
                         b_data.direction,
-                        json.dumps(b_data.config),
+                        json.dumps(stored_config),
                         int(b_data.enabled),
                         formula,
                         b_data.send_throttle_ms,

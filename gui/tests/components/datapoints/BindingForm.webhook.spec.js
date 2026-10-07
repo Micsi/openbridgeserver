@@ -363,6 +363,22 @@ describe('BindingForm — WEBHOOK edit', () => {
     w.unmount()
   })
 
+  it('keeps the URL and the rotate button available after a failed rotation, so it can be retried', async () => {
+    webhookRotateToken.mockRejectedValueOnce(new Error('temporary'))
+    const w = await mountForm({ initial: existingBinding() })
+    await w.find('[data-testid="webhook-rotate-token"]').trigger('click')
+    await flushPromises()
+
+    expect(w.find('[data-testid="webhook-error"]').exists()).toBe(true)
+    expect(w.find('[data-testid="webhook-call-url"]').exists()).toBe(true)
+
+    await w.find('[data-testid="webhook-rotate-token"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="webhook-error"]').exists()).toBe(false)
+    expect(w.find('[data-testid="webhook-call-url"]').element.value).toContain('tok-new')
+    w.unmount()
+  })
+
   it('falls back to a generic message when the rotation failure carries no detail', async () => {
     webhookRotateToken.mockRejectedValue(new Error('boom'))
     const w = await mountForm({ initial: existingBinding() })

@@ -21,6 +21,7 @@ to the normal stack untouched.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from fastapi.responses import JSONResponse, Response
@@ -33,6 +34,35 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # device never receives the Admin-GUI shell instead of a status code.
 _PASSTHROUGH_METHODS = frozenset({"OPTIONS"})
 _TRIGGER_METHODS = frozenset({"GET", "POST"})
+
+
+async def _claimed_by_inactive_instance(path: str) -> bool:
+    """Whether *path* lies below the prefix of a configured but not running instance.
+
+    A disabled or failed instance registers nothing, so without this its stored
+    device URL would fall through to the Admin-GUI catch-all and answer
+    ``200 text/html`` — a GET-only device would count that as a delivered call.
+    Application-owned first segments are skipped before the database is touched,
+    which keeps every ``/api`` request off this path.
+    """
+    from obs.adapters.webhook.adapter import _RESERVED_PREFIX_SEGMENTS, DEFAULT_PATH_PREFIX, normalise_path_prefix
+    from obs.db.database import get_db
+
+    normalised = "/" + path.strip("/")
+    if normalised.split("/")[1].lower() in _RESERVED_PREFIX_SEGMENTS:
+        return False
+    try:
+        rows = await get_db().fetchall("SELECT config FROM adapter_instances WHERE adapter_type='WEBHOOK'")
+    except RuntimeError:  # no database yet (very early startup)
+        return False
+    for row in rows:
+        try:
+            prefix = normalise_path_prefix(json.loads(row["config"] or "{}").get("path_prefix", DEFAULT_PATH_PREFIX))
+        except ValueError:
+            continue
+        if normalised == prefix or normalised.startswith(prefix + "/"):
+            return True
+    return False
 
 
 async def _read_capped_body(request: Request) -> bytes | None:
@@ -66,6 +96,8 @@ async def handle_webhook_request(request: Request) -> Response | None:
         return None
     target = resolve_webhook_target(request.url.path)
     if target is None:
+        if await _claimed_by_inactive_instance(request.url.path):
+            return JSONResponse({"detail": "Not found"}, status_code=404)
         return None
 
     instance, remainder = target
