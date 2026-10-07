@@ -18,6 +18,7 @@ const results = ref([])
 const knownIds = []
 // Monotonic request counter per row: a slower, older response must not overwrite a newer one.
 const requestSeq = []
+let seqCounter = 0
 
 watch(
   () => props.modelValue,
@@ -25,7 +26,7 @@ watch(
     const vars = normalise(raw)
     // A row whose object changed from outside (another node selected) drops its picker state.
     const changed = vars.map((v, i) => knownIds[i] !== v.datapoint_id)
-    changed.forEach((isChanged, i) => { if (isChanged) requestSeq[i] = (requestSeq[i] || 0) + 1 })
+    changed.forEach((isChanged, i) => { if (isChanged) requestSeq[i] = ++seqCounter })
     searches.value = vars.map((v, i) => (changed[i] ? v.datapoint_name ?? '' : searches.value[i] ?? v.datapoint_name ?? ''))
     results.value = vars.map((_, i) => (changed[i] ? [] : results.value[i] ?? []))
     knownIds.splice(0, knownIds.length, ...vars.map(v => v.datapoint_id))
@@ -50,12 +51,14 @@ function remove(index) {
   searches.value.splice(index, 1)
   results.value.splice(index, 1)
   knownIds.splice(index, 1)
-  requestSeq.splice(index, 1)
+  // Rows shift down: every pending response for this index or later now targets the wrong row.
+  const rowCount = requestSeq.length
+  for (let i = index; i < rowCount; i++) requestSeq[i] = ++seqCounter
   commit(variables)
 }
 
 async function search(index, query) {
-  const seq = (requestSeq[index] = (requestSeq[index] || 0) + 1)
+  const seq = (requestSeq[index] = ++seqCounter)
   let items
   try {
     const { data } = (query || '').length < 1
@@ -80,7 +83,7 @@ function onSearchInput(index, event) {
 }
 
 function select(index, dp) {
-  requestSeq[index] = (requestSeq[index] || 0) + 1
+  requestSeq[index] = ++seqCounter
   const variables = normalise(props.modelValue)
   variables[index] = { slot: variables[index]?.slot || index + 1, datapoint_id: dp.id, datapoint_name: dp.name }
   const nextSearches = searches.value.slice()
