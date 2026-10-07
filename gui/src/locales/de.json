@@ -418,7 +418,11 @@
         "selectOnewireInstanceFirst": "Bitte zuerst eine 1-Wire-Instanz wählen",
         "noSensorsFound": "Keine Sensoren gefunden",
         "onewireScanFailed": "1-Wire-Sensor-Scan fehlgeschlagen",
-        "onewireAliasSaveFailed": "Alias konnte nicht gespeichert werden"
+        "onewireAliasSaveFailed": "Alias konnte nicht gespeichert werden",
+        "knxGroupAddressMissing": "Bitte eine Gruppenadresse angeben, zum Beispiel {example}.",
+        "knxGroupAddressInvalid": "„{value}“ ist keine gültige {field}. So sieht eine Adresse in diesem Projekt aus: {example}",
+        "knxFieldGroupAddress": "Gruppenadresse",
+        "knxFieldStateGroupAddress": "Rückmelde-Gruppenadresse"
       },
       "knxSection": "KNX-Verknüpfung",
       "dptLabel": "DPT *",
@@ -3344,7 +3348,9 @@
       "december": "Dezember"
     },
     "chooseFile": "Datei wählen",
-    "noFileSelected": "Keine Datei ausgewählt"
+    "noFileSelected": "Keine Datei ausgewählt",
+    "gaStyleUnavailable": "Der Adressstil des KNX-Projekts konnte nicht geladen werden; Gruppenadressen werden vorerst dreistufig angezeigt.",
+    "gaStyleRetry": "Erneut versuchen"
   },
   "hierarchy": {
     "title": "Hierarchien",
