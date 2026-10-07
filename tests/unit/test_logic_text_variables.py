@@ -187,6 +187,14 @@ class TestIcalUrl:
         year = str(datetime.now(UTC).year)
         assert urls == [f"https://example.com/cal/{year}.ics?room=a%20b"]
 
+    def test_missing_obs_reports_error_instead_of_reusing_old_calendar(self):
+        manager = _manager()
+        manager._hysteresis["g"] = {"i": {"raw": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n", "fetched_url": "https://old/x.ics"}}
+        out = _run(manager, [node("i", "ical", {"url": "https://example.com/###OBS3###.ics"})], {})
+        assert "not configured" in out["i"]["__error__"]
+        assert "raw" not in manager._hysteresis["g"]["i"]
+        assert not out["i"].get("raw")
+
     def test_variable_in_host_is_rejected_and_not_fetched(self):
         assert self._run_ical({"url": "https://###OBS1###.example.com/c.ics", "variables": OBS1_UUID}, value="x") == []
 

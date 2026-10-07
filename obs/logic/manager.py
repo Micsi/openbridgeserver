@@ -3198,6 +3198,7 @@ class LogicManager:
         # ── Pre-fetch iCal URLs (refresh only when cache is stale) ───────────
         hyst = self._hysteresis.setdefault(graph_id, {})
         refreshed_ical_nodes: set[str] = set()
+        ical_variable_errors: dict[str, str] = {}
         for node in flow.nodes:
             if node.type != "ical":
                 continue
@@ -3220,6 +3221,11 @@ class LogicManager:
                     ).strip()
                 except _ApiClientVariableError as exc:
                     logger.warning("Graph %s: iCal variable error on node %s: %s", graph_id[:8], node.id[:8], exc)
+                    # Never keep acting on a calendar fetched under a different URL.
+                    stale = hyst.setdefault(node.id, {})
+                    for key in ("raw", "fetched_url", "last_fetch_ts", "_ical_last_attempt_url", "_ical_last_attempt_limit", "_ical_last_attempt_ts"):
+                        stale.pop(key, None)
+                    ical_variable_errors[node.id] = str(exc)
                     continue
             refresh_min = float(node.data.get("refresh_interval_min") or 60)
             payload_limit = _ical_payload_limit_bytes(node.data)
@@ -3528,6 +3534,9 @@ class LogicManager:
         except Exception:
             logger.exception("Graph %s (%s) execution error", graph_id, name)
             return {}
+
+        for ical_error_id, ical_error in ical_variable_errors.items():
+            outputs.setdefault(ical_error_id, {})["__error__"] = ical_error
 
         # ── Change Filter: correct any comparison made against an unresolved
         # value on this real pass ─────────────────────────────────────────

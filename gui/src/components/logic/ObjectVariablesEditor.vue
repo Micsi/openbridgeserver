@@ -25,6 +25,7 @@ watch(
     const vars = normalise(raw)
     // A row whose object changed from outside (another node selected) drops its picker state.
     const changed = vars.map((v, i) => knownIds[i] !== v.datapoint_id)
+    changed.forEach((isChanged, i) => { if (isChanged) requestSeq[i] = (requestSeq[i] || 0) + 1 })
     searches.value = vars.map((v, i) => (changed[i] ? v.datapoint_name ?? '' : searches.value[i] ?? v.datapoint_name ?? ''))
     results.value = vars.map((_, i) => (changed[i] ? [] : results.value[i] ?? []))
     knownIds.splice(0, knownIds.length, ...vars.map(v => v.datapoint_id))

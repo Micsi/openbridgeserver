@@ -158,4 +158,18 @@ describe('NodeConfigPanel — variables in text fields (#1301)', () => {
     expect(lastUpdate(w).variables).toEqual([])
     w.unmount()
   })
+  it('object picker: ignores a pending response after switching nodes', async () => {
+    const { searchApi } = await import('@/api/client')
+    let resolveOld
+    searchApi.search.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+    const w = await mountPanel('json_extractor', { json_paths: '[]', variables: [{ slot: 1, datapoint_id: 'a', datapoint_name: 'Lamp' }] })
+    await flushPromises()
+    await w.find('[data-testid="extractor-variable-search-0"]').setValue('old')
+    await w.setProps({ node: { id: 'n2', type: 'json_extractor', data: { json_paths: '[]', variables: [{ slot: 1, datapoint_id: 'b', datapoint_name: 'Temperature' }] } } })
+    await flushPromises()
+    resolveOld({ data: { items: [{ id: 'old', name: 'Stale result' }] } })
+    await flushPromises()
+    expect(w.text()).not.toContain('Stale result')
+    w.unmount()
+  })
 })
