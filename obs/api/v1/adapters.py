@@ -2053,6 +2053,11 @@ async def webhook_rotate_token(
     from obs.adapters.webhook.adapter import WebhookBindingConfig, generate_token
 
     principal = _principal_from_dependency(_user)
+    # The reply carries the new bearer secret, so an API key — which WEBHOOK
+    # deliberately never delegates to — must not be able to fetch it, however
+    # many grants it holds.
+    if principal.type != "user":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Webhook-Token kann nur von einem Benutzer rotiert werden")
     instance_row = await _webhook_instance_row(db, instance_id)
     await _ensure_instance_write_grant(db, principal, str(instance_id))
 

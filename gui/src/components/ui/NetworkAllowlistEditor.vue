@@ -41,7 +41,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { classifyEntry } from '@/utils/ipAllowlist'
+import { classifyEntry, normalizeEntries } from '@/utils/ipAllowlist'
 
 const props = defineProps({
   modelValue: { type: [Array, String, null], default: () => [] },
@@ -52,13 +52,7 @@ const emit = defineEmits(['update:modelValue'])
 // A configuration stored before this field became a list still arrives as a
 // comma-separated string, so the editor accepts both shapes and always emits
 // a list — the same tolerance the backend schema has.
-const entries = computed(() => {
-  const value = props.modelValue
-  if (Array.isArray(value)) return value.map(entry => String(entry))
-  return String(value ?? '')
-    .split(/[,;\s]+/)
-    .filter(Boolean)
-})
+const entries = computed(() => normalizeEntries(props.modelValue))
 
 const invalidCount = computed(
   () => entries.value.filter(entry => entry.trim() !== '' && classifyEntry(entry) === 'invalid').length,

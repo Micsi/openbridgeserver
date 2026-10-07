@@ -1309,6 +1309,7 @@
       "invalidEntries": "{n} Eintrag/Einträge sind keine gültige IP oder CIDR-Notation",
       "hint": "Je Zeile eine IP-Adresse oder ein Netz, z. B. 10.38.0.0/16 oder 192.168.1.5. Eine leere Liste schränkt nicht ein.",
       "rejectedCalls": "{n} Aufruf(e) abgewiesen",
+      "instanceRejectedCalls": "{n} Aufruf(e) ließen sich keiner Verknüpfung zuordnen und wurden abgewiesen",
       "lastRejection": "Zuletzt: {reason} — Absender {host}",
       "originBlocked": "Diese URL zeigt auf {host}. Die Allowlist dieser Verknüpfung erlaubt diesen Absender nicht — ein Aufruf von hier aus wird mit 404 abgewiesen.",
       "reason": {

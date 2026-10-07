@@ -356,3 +356,28 @@ async def test_rotation_without_a_request_object_still_rotates(monkeypatch, db: 
     assert result.call_path == f"/iot/hook/bell?token={result.token}"
     row = await db.fetchone("SELECT config FROM adapter_bindings WHERE id=?", (str(binding_id),))
     assert json.loads(row["config"])["token"] == result.token
+
+
+async def test_rotation_refuses_an_api_key_even_with_operator_grants(monkeypatch, db: Database):
+    instance_id = uuid.uuid4()
+    binding_id = uuid.uuid4()
+    dp = _dp(uuid.uuid4(), "Bell")
+    await _insert_instance(db, instance_id)
+    await _insert_datapoint_row(db, dp.id, dp.name)
+    await _insert_binding(db, binding_id=binding_id, dp_id=dp.id, instance_id=instance_id, config={"slug": "bell", "token": "old-token"})
+    await db.execute_and_commit(
+        """
+        INSERT INTO authz_node_roles (principal_type, principal_id, node_type, node_id, role, effect)
+        VALUES ('api_key', 'device-key', 'adapter_instance', ?, 'operator', 'allow')
+        """,
+        (str(instance_id),),
+    )
+    monkeypatch.setattr("obs.core.registry.get_registry", lambda: _RegistryStub([dp]))
+    key = Principal(subject="api_key:device-key", type="api_key", is_admin=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await adapters_api.webhook_rotate_token(instance_id, binding_id, request=None, _user=key, db=db)
+
+    assert excinfo.value.status_code == 403
+    row = await db.fetchone("SELECT config FROM adapter_bindings WHERE id=?", (str(binding_id),))
+    assert json.loads(row["config"])["token"] == "old-token"

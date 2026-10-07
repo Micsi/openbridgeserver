@@ -1309,6 +1309,7 @@
       "invalidEntries": "{n} entry/entries are not a valid IP address or CIDR",
       "hint": "One IP address or network per row, e.g. 10.38.0.0/16 or 192.168.1.5. An empty list does not restrict anything.",
       "rejectedCalls": "{n} call(s) rejected",
+      "instanceRejectedCalls": "{n} call(s) could not be matched to a binding and were rejected",
       "lastRejection": "Last: {reason} — caller {host}",
       "originBlocked": "This URL points at {host}. This binding's allowlist does not allow that caller — a call from here is rejected with 404.",
       "reason": {

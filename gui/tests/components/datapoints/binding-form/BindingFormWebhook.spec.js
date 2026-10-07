@@ -331,3 +331,74 @@ describe('BindingFormWebhook — copy to clipboard', () => {
     w.unmount()
   })
 })
+
+describe('BindingFormWebhook — origin warning for a non-loopback host', () => {
+  it('gives no verdict when the GUI is opened via the server address', async () => {
+    // The hostname is OBS's own address, not the caller's, so even an
+    // allowlist that excludes it must not trigger the warning.
+    const originalUrl = window.location.href
+    window.happyDOM.setURL('http://192.168.1.10:8080/')
+    try {
+      const w = mk({ isExisting: true, entry: ENTRY }, { ...BASE_CFG, allowed_networks: ['10.38.0.0/16'] })
+      expect(w.find('[data-testid="webhook-origin-warning"]').exists()).toBe(false)
+      w.unmount()
+    } finally {
+      window.happyDOM.setURL(originalUrl)
+    }
+  })
+})
+
+describe('BindingFormWebhook — clipboard without the Clipboard API', () => {
+  beforeEach(() => {
+    // Plain-HTTP deployments have no secure context, so the API is simply absent.
+    Object.defineProperty(globalThis.navigator, 'clipboard', { value: undefined, configurable: true })
+  })
+
+  it('falls back to execCommand and confirms the copy', async () => {
+    document.execCommand = vi.fn(() => true)
+    const w = mk({ isExisting: true, entry: ENTRY })
+    const [copyButton] = w.findAll('button').filter(b => b.text() === 'Kopieren')
+    await copyButton.trigger('click')
+    await w.vm.$nextTick()
+
+    expect(document.execCommand).toHaveBeenCalledWith('copy')
+    expect(copyButton.text()).toBe('Kopiert')
+    w.unmount()
+  })
+})
+
+describe('BindingFormWebhook — instance-level rejections', () => {
+  const INSTANCE_REJECTIONS = {
+    total: 2,
+    counts: { unknown_slug: 2 },
+    last_reason: 'unknown_slug',
+    last_client_ip: '192.0.2.10',
+  }
+
+  it('shows calls that could not be matched to any binding', () => {
+    const w = mk({ isExisting: true, entry: ENTRY, instanceRejections: INSTANCE_REJECTIONS })
+    const box = w.find('[data-testid="webhook-instance-rejections"]')
+    expect(box.text()).toContain('2')
+    expect(box.text()).toContain('unbekannter Slug')
+    expect(box.text()).toContain('192.0.2.10')
+    w.unmount()
+  })
+
+  it('omits the reason line when none was recorded', () => {
+    const w = mk({ isExisting: true, entry: ENTRY, instanceRejections: { total: 1, last_reason: null } })
+    const box = w.find('[data-testid="webhook-instance-rejections"]')
+    expect(box.exists()).toBe(true)
+    expect(box.text()).not.toContain('Zuletzt')
+    w.unmount()
+  })
+
+  it('omits the box when nothing was rejected or the counters are missing', () => {
+    const none = mk({ isExisting: true, entry: ENTRY, instanceRejections: { total: 0 } })
+    expect(none.find('[data-testid="webhook-instance-rejections"]').exists()).toBe(false)
+    none.unmount()
+
+    const missing = mk({ isExisting: true, entry: ENTRY })
+    expect(missing.find('[data-testid="webhook-instance-rejections"]').exists()).toBe(false)
+    missing.unmount()
+  })
+})

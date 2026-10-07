@@ -294,6 +294,47 @@ describe('BindingForm — WEBHOOK edit', () => {
     w.unmount()
   })
 
+  it('opens and re-submits a binding whose allowlist is still the legacy comma string', async () => {
+    const w = await mountForm({
+      initial: existingBinding({ allowed_networks: '10.0.0.0/8,192.168.1.4' }),
+    })
+    expect(w.find('[data-testid="allowlist-entry-1"]').element.value).toBe('192.168.1.4')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(updateBinding.mock.calls[0][2].config.allowed_networks).toEqual(['10.0.0.0/8', '192.168.1.4'])
+    w.unmount()
+  })
+
+  it('surfaces rejections the server could not attribute to a binding', async () => {
+    webhookBindings.mockResolvedValue({
+      data: overview([ENTRY], {
+        rejections: {
+          total: 1,
+          counts: { unknown_slug: 1 },
+          last_reason: 'unknown_slug',
+          last_client_ip: '192.0.2.10',
+          last_slug: 'typo',
+          last_at: '2026-10-07T00:00:00Z',
+        },
+      }),
+    })
+    const w = await mountForm({ initial: existingBinding() })
+
+    const box = w.find('[data-testid="webhook-instance-rejections"]')
+    expect(box.text()).toContain('unbekannter Slug')
+    expect(box.text()).toContain('192.0.2.10')
+    w.unmount()
+  })
+
+  it('shows no instance-level rejections when the overview carries none', async () => {
+    webhookBindings.mockResolvedValue({ data: { ...overview([ENTRY]), rejections: undefined } })
+    const w = await mountForm({ initial: existingBinding() })
+
+    expect(w.find('[data-testid="webhook-instance-rejections"]').exists()).toBe(false)
+    w.unmount()
+  })
+
   it('warns when the binding allowlist excludes the host the GUI runs on', async () => {
     const w = await mountForm({ initial: existingBinding({ allowed_networks: ['10.38.0.0/16'] }) })
 

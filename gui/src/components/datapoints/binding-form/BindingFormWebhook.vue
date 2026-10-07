@@ -177,6 +177,20 @@
         </div>
       </div>
 
+      <div
+        v-if="instanceRejectionSummary"
+        class="p-2 rounded-lg bg-slate-100/80 dark:bg-slate-800/40 text-xs text-slate-600 dark:text-slate-300"
+        data-testid="webhook-instance-rejections"
+      >
+        <div>{{ $t('adapters.allowlist.instanceRejectedCalls', { n: instanceRejectionSummary.total }) }}</div>
+        <div v-if="instanceRejectionSummary.lastReason" class="mt-0.5 text-slate-500">
+          {{ $t('adapters.allowlist.lastRejection', {
+            reason: instanceRejectionSummary.lastReason,
+            host: instanceRejectionSummary.lastClientIp || '—',
+          }) }}
+        </div>
+      </div>
+
       <div class="flex items-center gap-3">
         <button type="button" class="btn-secondary btn-sm" :disabled="rotating" @click="$emit('rotate-token')" data-testid="webhook-rotate-token">
           <Spinner v-if="rotating" size="sm" />
@@ -194,7 +208,8 @@ import { useI18n } from 'vue-i18n'
 import HelpButton from '@/components/ui/HelpButton.vue'
 import NetworkAllowlistEditor from '@/components/ui/NetworkAllowlistEditor.vue'
 import Spinner from '@/components/ui/Spinner.vue'
-import { isAddressCovered } from '@/utils/ipAllowlist'
+import { copyText } from '@/utils/clipboard'
+import { isAddressCovered, isLoopbackHost } from '@/utils/ipAllowlist'
 
 const { t } = useI18n()
 
@@ -205,6 +220,9 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   error: { type: [String, null], default: null },
   rotating: { type: Boolean, default: false },
+  // Rejections the server could not attribute to a binding (unknown slug, wrong
+  // token before the slug matched) — only the instance-level counters see them.
+  instanceRejections: { type: [Object, null], default: null },
 })
 
 defineEmits(['rotate-token'])
@@ -230,27 +248,32 @@ const copied = ref(null)
 const originHost = window.location.hostname
 
 /**
- * Whether this binding's allowlist would reject a call from the host the GUI
- * is open on.
+ * Whether this binding's allowlist would reject a call from a browser on the
+ * OBS host itself.
  *
- * The call URL is built from the browser's own origin, so administering OBS
- * via localhost while the allowlist only names the LAN hands the operator a
- * URL their own configuration rejects — with an indistinguishable 404 and no
- * other hint. `isAddressCovered` returns null when it cannot decide (a
- * hostname needing DNS, an IPv6 entry), and then no warning is shown: a wrong
- * warning about a working URL would be worse than none.
+ * Only a loopback hostname gives a verdict. Otherwise the hostname is the
+ * *destination* address, not the caller's: a browser on 192.168.1.20 opening
+ * OBS at 192.168.1.10 is seen by the server as 192.168.1.20, and a browser
+ * cannot learn its own outbound address. Judging those against the allowlist
+ * would warn about working URLs or stay silent about rejected ones, so they get
+ * no verdict at all. `isAddressCovered` also returns null when it cannot decide
+ * (an IPv6 entry), and a wrong warning would be worse than none.
  */
-const originBlocked = computed(() => isAddressCovered(originHost, props.cfg.allowed_networks ?? []) === false)
+const originBlocked = computed(
+  () => isLoopbackHost(originHost) && isAddressCovered(originHost, props.cfg.allowed_networks ?? []) === false,
+)
 
-const rejectionSummary = computed(() => {
-  const rejections = props.entry?.rejections
+function summarizeRejections(rejections) {
   if (!rejections || !rejections.total) return null
   return {
     total: rejections.total,
     lastReason: rejections.last_reason ? t(`adapters.allowlist.reason.${rejections.last_reason}`) : '',
     lastClientIp: rejections.last_client_ip,
   }
-})
+}
+
+const rejectionSummary = computed(() => summarizeRejections(props.entry?.rejections))
+const instanceRejectionSummary = computed(() => summarizeRejections(props.instanceRejections))
 
 function toggleMethod(method) {
   const current = [...selectedMethods.value]
@@ -263,7 +286,7 @@ function toggleMethod(method) {
 
 async function copy(text) {
   try {
-    await navigator.clipboard.writeText(text)
+    await copyText(text)
     copied.value = text
   } catch {
     copied.value = null

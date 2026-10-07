@@ -78,4 +78,10 @@ describe('NetworkAllowlistEditor', () => {
     expect(w.find('[data-testid="allowlist-entry-1"]').classes()).not.toContain('border-red-400')
     w.unmount()
   })
+
+  it('flags an IPv4 spelling with leading zeros that the backend rejects', () => {
+    const w = mk(['010.0.0.1'])
+    expect(w.find('[data-testid="allowlist-invalid"]').exists()).toBe(true)
+    w.unmount()
+  })
 })

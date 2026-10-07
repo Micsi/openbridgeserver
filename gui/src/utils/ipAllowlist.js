@@ -14,14 +14,30 @@ const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
 /** Hostnames a browser uses for the machine OBS itself runs on. */
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
 
+/**
+ * Coerce a stored allowlist into a list of strings. A binding saved before the
+ * field became a list holds a comma-separated string, and the backend schema
+ * accepts that too, so every consumer goes through this instead of assuming an
+ * array.
+ */
+export function normalizeEntries(value) {
+  if (Array.isArray(value)) return value.map(entry => String(entry))
+  return String(value ?? '')
+    .split(/[,;\s]+/)
+    .filter(Boolean)
+}
+
 /** Parse an IPv4 literal into an unsigned 32-bit number, or null. */
 export function parseIpv4(text) {
   const match = IPV4_RE.exec(String(text ?? '').trim())
   if (!match) return null
   let value = 0
   for (let i = 1; i <= 4; i += 1) {
+    // `ipaddress` on the backend refuses leading zeros ("010"), so accepting
+    // them here would show no error for an entry that fails with a 422 on save.
+    if (match[i].length > 1 && match[i].startsWith('0')) return null
     const octet = Number(match[i])
-    if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null
+    if (octet > 255) return null
     value = value * 256 + octet
   }
   return value >>> 0
@@ -82,7 +98,7 @@ function ipv4Covered(address, entry) {
  * An empty allowlist covers everything, which is what the backend does too.
  */
 export function isAddressCovered(host, entries) {
-  const list = (entries ?? []).map(entry => String(entry).trim()).filter(Boolean)
+  const list = normalizeEntries(entries).map(entry => entry.trim()).filter(Boolean)
   if (list.length === 0) return true
 
   const loopback = isLoopbackHost(host)

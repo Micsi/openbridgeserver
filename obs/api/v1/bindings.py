@@ -172,6 +172,11 @@ async def _ensure_binding_mutation_scope(db: Database, principal: Principal, dp_
 def _ensure_adapter_delegates_binding(principal: Principal, adapter_type: str) -> None:
     if _is_admin_principal(principal):
         return
+    # A webhook binding is managed by a human with operator rights on both the
+    # DataPoint and the instance; only a non-user principal (an API key) is
+    # kept out, since the empty capability set below exists for exactly that.
+    if adapter_type == WEBHOOK_ADAPTER_TYPE and principal.type == "user":
+        return
 
     from obs.adapters.base import AdapterDelegationCapability
     from obs.adapters.registry import supports_delegation

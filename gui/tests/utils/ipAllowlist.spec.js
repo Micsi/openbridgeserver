@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   classifyEntry,
   isAddressCovered,
+  normalizeEntries,
   isLoopbackHost,
   parseIpv4,
   parseIpv4Entry,
@@ -17,7 +18,7 @@ describe('parseIpv4', () => {
     expect(parseIpv4(text)).toBe(expected)
   })
 
-  it.each(['', '  ', '1.2.3', '1.2.3.4.5', '256.0.0.1', 'abc', '1.2.3.-1', null, undefined, 'fd00::1'])(
+  it.each(['', '  ', '1.2.3', '1.2.3.4.5', '256.0.0.1', 'abc', '1.2.3.-1', null, undefined, 'fd00::1', '010.0.0.1', '1.02.3.4', '1.2.3.00'])(
     'rejects %s',
     (text) => {
       expect(parseIpv4(text)).toBeNull()
@@ -111,5 +112,39 @@ describe('isAddressCovered', () => {
     expect(isAddressCovered('::1', ['::1'])).toBe(true)
     expect(isAddressCovered('[::1]', ['::1/128'])).toBe(true)
     expect(isAddressCovered('::1', ['fd00::/8'])).toBeNull()
+  })
+})
+
+describe('normalizeEntries', () => {
+  it('keeps a list and stringifies its items', () => {
+    expect(normalizeEntries(['10.0.0.0/8', 5])).toEqual(['10.0.0.0/8', '5'])
+  })
+
+  it('splits the legacy comma-separated string', () => {
+    expect(normalizeEntries('10.0.0.0/8, 192.168.1.4;fd00::1\n127.0.0.1')).toEqual([
+      '10.0.0.0/8',
+      '192.168.1.4',
+      'fd00::1',
+      '127.0.0.1',
+    ])
+  })
+
+  it.each([null, undefined, ''])('turns %s into an empty list', (value) => {
+    expect(normalizeEntries(value)).toEqual([])
+  })
+})
+
+describe('legacy string allowlists', () => {
+  it('are judged like a list by isAddressCovered', () => {
+    expect(isAddressCovered('10.1.2.3', '10.0.0.0/8,192.168.1.4')).toBe(true)
+    expect(isAddressCovered('172.16.0.1', '10.0.0.0/8,192.168.1.4')).toBe(false)
+  })
+})
+
+describe('leading-zero IPv4 spellings', () => {
+  it('are classified invalid, as the backend schema rejects them', () => {
+    expect(classifyEntry('010.0.0.1')).toBe('invalid')
+    expect(classifyEntry('10.0.0.0/8')).toBe('valid')
+    expect(parseIpv4Entry('010.0.0.0/8')).toBeNull()
   })
 })

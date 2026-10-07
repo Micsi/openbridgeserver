@@ -188,6 +188,7 @@
           :loading="webhookLoading"
           :error="webhookError"
           :rotating="webhookRotating"
+          :instance-rejections="webhookInstanceRejections"
           @rotate-token="rotateWebhookToken"
         />
 
@@ -338,6 +339,7 @@ import BindingFormSnmp from '@/components/datapoints/binding-form/BindingFormSnm
 import BindingFormMessage from '@/components/datapoints/binding-form/BindingFormMessage.vue'
 import BindingFormWebhook from '@/components/datapoints/binding-form/BindingFormWebhook.vue'
 import { timerValueDefault, validateTimerValue } from '@/utils/timerValue'
+import { normalizeEntries } from '@/utils/ipAllowlist'
 
 const props = defineProps({
   dpId:           { type: String,  required: true },
@@ -511,6 +513,7 @@ const onewireAliasDrafts = reactive({})
 const webhookEntry    = ref(null)
 const webhookLoading  = ref(false)
 const webhookError    = ref(null)
+const webhookInstanceRejections = ref(null)
 const webhookRotating = ref(false)
 
 // SNMP Walk state
@@ -712,7 +715,7 @@ watch(() => props.initial, val => {
   // WEBHOOK defaults when loading
   if (cfg.slug         == null) cfg.slug         = ''
   if (cfg.methods      == null) cfg.methods      = ['GET']
-  if (cfg.allowed_networks == null) cfg.allowed_networks = []
+  cfg.allowed_networks = normalizeEntries(cfg.allowed_networks)
   if (cfg.value_source == null) cfg.value_source = 'fixed'
   if (cfg.fixed_value  == null) cfg.fixed_value  = 'true'
   if (cfg.value_param  == null) cfg.value_param  = 'value'
@@ -923,6 +926,7 @@ async function loadWebhookEntry() {
   webhookError.value = null
   try {
     const { data } = await adapterApi.webhookBindings(selectedInstanceId.value)
+    webhookInstanceRejections.value = data.rejections ?? null
     webhookEntry.value = (data.bindings ?? []).find(e => String(e.binding_id) === String(props.initial.id)) ?? null
     if (!webhookEntry.value) webhookError.value = t('adapters.bindingForm.errors.webhookEntryNotFound')
   } catch (e) {
@@ -1347,7 +1351,7 @@ function buildConfig() {
     const c = {
       slug: cfg.slug.trim().toLowerCase(),
       methods: [...cfg.methods],
-      allowed_networks: [...cfg.allowed_networks].map(e => e.trim()).filter(Boolean),
+      allowed_networks: normalizeEntries(cfg.allowed_networks).map(e => e.trim()).filter(Boolean),
       value_source: cfg.value_source,
       // An emptied number input yields '' through v-model.number, which the
       // backend would reject — normalise it back to "no debounce".

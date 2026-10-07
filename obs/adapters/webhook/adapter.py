@@ -430,8 +430,9 @@ class WebhookAdapter(AdapterBase):
     adapter_type = "WEBHOOK"
     config_schema = WebhookAdapterConfig
     binding_config_schema = WebhookBindingConfig
-    # Deliberately empty: creating or rotating a webhook binding stays an
-    # admin/operator (user principal) operation — see the module docstring.
+    # Deliberately empty: no API key may create or rotate a webhook binding.
+    # A *user* with operator grants may — ``_ensure_adapter_delegates_binding``
+    # lets user principals through for this type — see the module docstring.
     delegation_capabilities = frozenset()
 
     def __init__(self, event_bus: Any, config: dict | None = None, **kwargs) -> None:
