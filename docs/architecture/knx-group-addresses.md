@@ -85,11 +85,13 @@ without any error.
    main path. Its KNX device filters compare internal addresses the same way: `device`
    (comma-separated physical addresses) keeps datapoints whose binding carries, as command or
    status address, an address a communication object of the device links (the device view's
-   join, `group_addresses_by_device` in `knx_traceability.py`), `knx_linked=true|false` those with
+   join, `group_addresses_by_device` in `knx_traceability.py`, which the KNX monitor's device filter
+   uses too), `knx_linked=true|false` those with
    at least one / no linked address among their KNX addresses, and
    `GET /api/v1/search/knx-device-data` says whether any linked address is visible at all.
-   Non-admins match only through bindings on instances they may read and through the addresses
-   the device view shows them. The backend renders with `format_ga(address, style)`; the Admin GUI shows
+   Non-admins get exactly what the device view shows them: an address counts where an enabled
+   binding (on an enabled instance) of a datapoint they may read carries it, without an instance
+   grant – the filters, the signal and the device view share this one rule. The backend renders with `format_ga(address, style)`; the Admin GUI shows
    every group address through `formatGa(address, knxProject.groupAddressStyle)`
    (`gui/src/utils/groupAddress.js`), with the style from the one store `useKnxProjectStore`
    (`gui/src/stores/knxProject.js`, fed from `GET /api/v1/knxproj/group-addresses`, reloaded after

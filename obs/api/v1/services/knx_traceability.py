@@ -100,61 +100,17 @@ async def resolve_device_pas_to_group_addresses(
     device_pas: list[str],
     db: Database,
 ) -> list[str]:
-    """Resolve KNX physical addresses to group addresses via imported KNX project data."""
-    normalized_pas = normalize_nonempty(device_pas)
-    if not normalized_pas:
-        return []
-
-    co_cols = await table_columns(db, "knx_comm_objects")
-    link_cols = await table_columns(db, "knx_co_ga_links")
-    dev_cols = await table_columns(db, "knx_devices")
-
-    ga_col = next((c for c in ("group_address", "ga_address", "ga", "address") if c in link_cols), None)
-    if not ga_col:
-        return []
-
-    placeholders = ",".join("?" * len(normalized_pas))
-    co_id_col = next((c for c in ("id", "comm_object_id", "communication_object_id", "co_id") if c in co_cols), None)
-    link_co_col = next((c for c in ("comm_object_id", "communication_object_id", "co_id") if c in link_cols), None)
-
-    co_pa_col = next(
-        (c for c in ("physical_address", "device_physical_address", "device_pa", "pa", "address") if c in co_cols),
-        None,
-    )
-    if co_id_col and link_co_col and co_pa_col:
-        rows = await db.fetchall(
-            f"""SELECT DISTINCT l.{ga_col} AS ga
-                   FROM knx_comm_objects co
-                   JOIN knx_co_ga_links l ON l.{link_co_col} = co.{co_id_col}
-                  WHERE co.{co_pa_col} IN ({placeholders})""",
-            tuple(normalized_pas),
-        )
-        resolved = normalize_nonempty([str(row["ga"]) for row in rows if row["ga"] is not None])
-        if resolved:
-            return resolved
-
-    dev_id_col = next((c for c in ("id", "device_id") if c in dev_cols), None)
-    dev_pa_col = next((c for c in ("individual_address", "physical_address", "pa", "address") if c in dev_cols), None)
-    co_dev_id_col = next((c for c in ("device_id", "knx_device_id") if c in co_cols), None)
-    if dev_id_col and dev_pa_col and co_id_col and link_co_col and co_dev_id_col:
-        rows = await db.fetchall(
-            f"""SELECT DISTINCT l.{ga_col} AS ga
-                   FROM knx_devices d
-                   JOIN knx_comm_objects co ON co.{co_dev_id_col} = d.{dev_id_col}
-                   JOIN knx_co_ga_links l ON l.{link_co_col} = co.{co_id_col}
-                  WHERE d.{dev_pa_col} IN ({placeholders})""",
-            tuple(normalized_pas),
-        )
-        return normalize_nonempty([str(row["ga"]) for row in rows if row["ga"] is not None])
-
-    return []
+    """Resolve KNX physical addresses to the group addresses their communication objects link (sorted)."""
+    by_device = await group_addresses_by_device(db)
+    return sorted(set().union(*(by_device.get(pa, set()) for pa in normalize_nonempty(device_pas))))
 
 
 async def group_addresses_by_device(db: Database) -> dict[str, set[str]]:
     """Map each device's physical address to the group addresses its communication objects link.
 
-    The same device → communication object → group address join as the device view
-    (:func:`_devices_by_group_address`) and the KNX monitor's device filter.
+    The device → communication object → group address join of the device view
+    (:func:`_devices_by_group_address`); the KNX monitor's device filter
+    (:func:`resolve_device_pas_to_group_addresses`) and the search's device filters use it.
     """
     rows = await db.fetchall(
         """SELECT d.individual_address AS pa, l.ga_address

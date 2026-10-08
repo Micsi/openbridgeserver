@@ -153,14 +153,16 @@ async def _visible_bindings(db: Database, principal: Principal, rows: list) -> l
     ]
 
 
-async def _knx_group_addresses_by_datapoint(db: Database, principal: Principal) -> dict[str, set[str]]:
-    """Datapoint id → command and status group addresses of its KNX bindings the caller may see.
+async def _knx_group_addresses_by_datapoint(db: Database) -> dict[str, set[str]]:
+    """Datapoint id → command and status group addresses of its KNX bindings.
 
-    The addresses are taken from a binding the way the device view does (``_extract_knx_ga_roles``).
+    The addresses are taken from a binding the way the device view does (``_extract_knx_ga_roles``),
+    from every KNX binding as there: who may see which address is decided by the device view's
+    scope (``_authorized_knx_group_addresses``), not by instance grants.
     """
-    rows = await db.fetchall("SELECT datapoint_id, adapter_instance_id, config FROM adapter_bindings WHERE UPPER(adapter_type) = 'KNX'")
+    rows = await db.fetchall("SELECT datapoint_id, config FROM adapter_bindings WHERE UPPER(adapter_type) = 'KNX'")
     by_dp: dict[str, set[str]] = {}
-    for row in await _visible_bindings(db, principal, rows):
+    for row in rows:
         # adapter_bindings.config is valid JSON (CHECK json_valid).
         addresses = {address for _, address in _extract_knx_ga_roles(json.loads(row["config"]))}
         if addresses:
@@ -177,13 +179,15 @@ async def _filter_by_knx_devices(
 ) -> list:
     """Keep the datapoints on the given devices and/or with(out) a device-linked group address (#1266).
 
-    A datapoint belongs to a device when one of its KNX bindings the caller may see carries, as
-    command or status address, a group address a communication object of the device links. For
-    non-admins a linked address counts only where the device view shows it to them
-    (``_authorized_knx_group_addresses``); ``results`` already passed the read check.
+    A datapoint belongs to a device when one of its KNX bindings carries, as command or status
+    address, a group address a communication object of the device links. For non-admins a linked
+    address counts only where the device view shows it to them (``_authorized_knx_group_addresses``:
+    an enabled binding of a readable datapoint carries it), so filters, ``/knx-device-data`` and
+    the device view share one notion of rights. ``results`` must already have passed the read
+    check: it is reused as known readable.
     """
     by_device = await group_addresses_by_device(db)
-    addresses_by_dp = await _knx_group_addresses_by_datapoint(db, principal)
+    addresses_by_dp = await _knx_group_addresses_by_datapoint(db)
     if not (principal.type == "user" and principal.is_admin):
         result_ids = {str(dp.id) for dp in results}
         linked = set().union(*by_device.values())

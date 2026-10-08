@@ -131,7 +131,8 @@ async def test_device_filter_combines_with_pagination_and_tree(client, auth_head
     assert (_names(in_tree), in_tree["total"]) == ([f"{PREFIX} B"], 1)
 
 
-async def test_non_admins_learn_nothing_through_the_filters_without_instance_grant(client, auth_headers, plant):
+async def test_non_admins_get_what_the_device_view_shows_them(client, auth_headers, plant):
+    """Rights over datapoints only – the usual case, no instance grant – as in the device view."""
     username = f"lens-user-{uuid.uuid4().hex[:8]}"
     created = await client.post(
         "/api/v1/auth/users",
@@ -148,18 +149,28 @@ async def test_non_admins_learn_nothing_through_the_filters_without_instance_gra
     try:
         await _set_grants(client, auth_headers, username, [("datapoint", item["id"]) for item in ours])
         assert (await _search(client, headers, q=PREFIX))["total"] == 6
-        for params in ({"device": "1.1.21"}, {"device": "1.1.22"}, {"knx_linked": "true"}, {"knx_linked": "false"}):
-            body = await _search(client, headers, q=PREFIX, **params)
-            assert (body["items"], body["total"]) == ([], 0), params
-        assert await _device_data(client, headers) is False
 
-        # Positive control: with the instance readable, and enabled for the device view.
-        await _set_grants(
-            client, auth_headers, username, [("datapoint", item["id"]) for item in ours] + [("adapter_instance", plant["instance"]["id"])]
-        )
+        # Enabled instance (flag only, no adapter is started), no instance grant.
         await db.execute_and_commit("UPDATE adapter_instances SET enabled = 1 WHERE id = ?", (plant["instance"]["id"],))
-        body = await _search(client, headers, q=PREFIX, device="1.1.21")
-        assert (_names(body), await _device_data(client, headers)) == (ON_21, True)
+        for pa in ("1.1.21", "1.1.22"):
+            view = await client.get(f"/api/v1/knxproj/devices/{pa}/datapoints", headers=headers)
+            assert view.status_code == 200, view.text
+            body = await _search(client, headers, device=pa)
+            assert {item["id"] for item in body["items"]} == {dp["id"] for dp in view.json()["datapoints"]}, pa
+        assert _names(await _search(client, headers, q=PREFIX, device="1.1.21")) == ON_21
+        assert _names(await _search(client, headers, q=PREFIX, knx_linked="true")) == ON_21
+        assert _names(await _search(client, headers, q=PREFIX, knx_linked="false")) == [f"{PREFIX} C"]
+        assert await _device_data(client, headers) is True
+
+        await db.execute_and_commit("UPDATE adapter_instances SET enabled = 0 WHERE id = ?", (plant["instance"]["id"],))
+        # Disabled instance: the device view shows no device, so neither do the filters.
+        for pa in ("1.1.21", "1.1.22"):
+            assert (await client.get(f"/api/v1/knxproj/devices/{pa}/datapoints", headers=headers)).status_code == 404
+            body = await _search(client, headers, q=PREFIX, device=pa)
+            assert (body["items"], body["total"]) == ([], 0), pa
+        assert (await _search(client, headers, q=PREFIX, knx_linked="true"))["total"] == 0
+        assert (await _search(client, headers, q=PREFIX, knx_linked="false"))["total"] == 6
+        assert await _device_data(client, headers) is False
     finally:
         await db.execute_and_commit("UPDATE adapter_instances SET enabled = 0 WHERE id = ?", (plant["instance"]["id"],))
         await client.delete(f"/api/v1/auth/users/{username}", headers=auth_headers)

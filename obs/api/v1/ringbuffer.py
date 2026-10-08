@@ -752,8 +752,8 @@ async def _resolve_device_pas_to_group_addresses(
 ) -> list[str]:
     """Resolve physical addresses to KNX group addresses via persisted knxproj tables.
 
-    The helper is schema-tolerant so it keeps working while the KNX device
-    import tables are introduced incrementally across sub-issues.
+    Same device → communication object → group address join as the device view and the
+    search's device filters (``group_addresses_by_device``, #1266).
     """
     return await resolve_device_pas_to_group_addresses(device_pas, db)
 

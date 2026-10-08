@@ -12,8 +12,10 @@ object of the device links.
   device the caller may see, so a client can switch ``knx_linked`` off for a project
   without device data instead of showing an empty list.
 
-Non-admins only match through bindings on adapter instances they may read and
-through devices and group addresses the device view shows them.
+Non-admins get exactly what the device view (``GET /knxproj/devices/{pa}/datapoints``)
+shows them – one notion of rights for the view, the filters and the signal: an address
+counts where an enabled binding (on an enabled instance) of a datapoint they may read
+carries it; an instance grant is not needed, as in the device view.
 """
 
 from __future__ import annotations
@@ -21,8 +23,10 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import HTTPException
 
 import obs.api.v1.datapoints as datapoints_api
+import obs.api.v1.knxproj as knxproj_api
 import obs.api.v1.search as search_api
 from obs.api.auth import Principal
 from obs.db.database import Database
@@ -185,26 +189,59 @@ async def test_without_filters_nothing_is_filtered(db: Database, monkeypatch, pl
     assert (page.query["device"], page.query["knx_linked"]) == ("", None)
 
 
+async def _device_view_ids(db: Database, pa: str, principal: Principal = ALICE) -> set[str]:
+    try:
+        context = await knxproj_api.get_knx_device_datapoints(pa, _user=principal, db=db)
+    except HTTPException as exc:
+        assert exc.status_code == 404
+        return set()
+    return {str(dp.id) for dp in context.datapoints}
+
+
 @pytest.mark.asyncio
-async def test_non_admins_match_only_through_readable_instances(db: Database, monkeypatch, plant):
-    """No instance grant: no match, no count, no device data – nothing about the hidden instance."""
-    knx, dps = plant
-    datapoints = list(dps.values())
-    for dp in datapoints:
-        await _grant(db, "datapoint", str(dp.id))
+@pytest.mark.parametrize("instance_grant", [True, False], ids=["instance-grant", "no-instance-grant"])
+@pytest.mark.parametrize("instance_enabled", [True, False], ids=["enabled", "disabled"])
+@pytest.mark.parametrize("readable", [True, False], ids=["dp-readable", "dp-hidden"])
+async def test_filters_signal_and_device_view_agree_for_non_admins(db: Database, monkeypatch, instance_grant, instance_enabled, readable):
+    knx = await _instance(db)
+    await _device(db, "1.1.1", [["1/0/1"]])
+    lamp = await _datapoint(db, "Lamp")
+    await _binding(db, lamp, knx, config={"group_address": "1/0/1"})
+    await db.execute_and_commit("UPDATE adapter_instances SET enabled = ? WHERE id = ?", (int(instance_enabled), knx))
+    if instance_grant:
+        await _grant(db, "adapter_instance", knx)
+    if readable:
+        await _grant(db, "datapoint", str(lamp.id))
 
-    for params in ({"device": "1.1.1"}, {"device": "1.1.2"}, {"knx_linked": True}, {"knx_linked": False}):
-        page = await _search(db, monkeypatch, datapoints, ALICE, **params)
-        assert (page.items, page.total) == ([], 0), params
-    assert (await _search(db, monkeypatch, datapoints, ALICE)).total == len(datapoints)
-    assert await _device_data(db, ALICE) is False
+    view = await _device_view_ids(db, "1.1.1")
+    assert bool(view) == (readable and instance_enabled)
 
-    await _grant(db, "adapter_instance", knx)
-    # The device view needs an enabled instance (``_authorized_knx_device_scope``).
+    def ids(page) -> set[str]:
+        return {str(item.id) for item in page.items}
+
+    assert ids(await _search(db, monkeypatch, [lamp], ALICE, device="1.1.1")) == view
+    assert ids(await _search(db, monkeypatch, [lamp], ALICE, knx_linked=True)) == view
+    assert ids(await _search(db, monkeypatch, [lamp], ALICE, knx_linked=False)) == ({str(lamp.id)} - view if readable else set())
+    assert await _device_data(db, ALICE) is bool(view)
+
+
+@pytest.mark.asyncio
+async def test_the_filters_build_on_the_read_check_of_the_page(db: Database, monkeypatch, plant):
+    """A device the device view hides stays hidden even where an unreadable datapoint carries its address."""
+    knx, _ = plant
     await db.execute_and_commit("UPDATE adapter_instances SET enabled = 1 WHERE id = ?", (knx,))
-    page = await _search(db, monkeypatch, datapoints, ALICE, device="1.1.1")
-    assert (_names(page), await _device_data(db, ALICE)) == (["A dimmer", "A switch", "Shared", "Two-level notation"], True)
-    assert _names(await _search(db, monkeypatch, datapoints, ALICE, knx_linked=False)) == ["No device"]
+    await _device(db, "1.1.3", [["1/0/7"]])
+    stale = await _datapoint(db, "Stale")
+    await _binding(db, stale, knx, config={"group_address": "1/0/7"})
+    await db.execute_and_commit("UPDATE adapter_bindings SET enabled = 0 WHERE datapoint_id = ?", (str(stale.id),))
+    carrier = await _datapoint(db, "Carrier")  # the only enabled binding on 1/0/7, alice may not read it
+    await _binding(db, carrier, knx, config={"group_address": "1/0/7"})
+    await _grant(db, "datapoint", str(stale.id))
+
+    assert await _device_view_ids(db, "1.1.3") == set()
+    assert (await _search(db, monkeypatch, [stale, carrier], ALICE, device="1.1.3")).total == 0
+    assert _names(await _search(db, monkeypatch, [stale, carrier], ALICE, knx_linked=False)) == ["Stale"]
+    assert _names(await _search(db, monkeypatch, [stale, carrier], ADMIN, device="1.1.3")) == ["Carrier", "Stale"]
 
 
 @pytest.mark.asyncio
