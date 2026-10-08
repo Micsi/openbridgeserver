@@ -247,6 +247,21 @@ describe('DpPicker – function lens', () => {
     expect(wrapper.emitted('update:modelValue').at(-1)).toEqual([KITCHEN_STATUS])
   })
 
+  it('takes the lines from the function\'s tree even while another tree is chosen for the other lenses', async () => {
+    const { wrapper } = await mountPicker()
+    await openPicker(wrapper)
+    await chooseTree(wrapper, 'tree-groups')
+    await wrapper.get('[data-testid="dp-picker-lens-functions"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dp-picker-tree"]').exists()).toBe(false)
+    await pickFromCombobox(wrapper, 'dp-picker-functions', 'Kueche›Licht Decke')
+    expect(optionTexts(wrapper)).toEqual([
+      ['Demo-Test-Projekt', 'EG', 'Kueche', 'Licht Decke', 'Schalten'].join(SPLIT),
+      ['Demo-Test-Projekt', 'EG', 'Kueche', 'Licht Decke', 'Status'].join(SPLIT),
+    ])
+    expect(optionGas(wrapper)).toEqual([null, null])
+  })
+
   it('explains where functions come from when no function tree exists', async () => {
     const api = recordedApi()
     api.hierarchyApi.listTrees = vi.fn(async () => ({ data: picker.trees.filter((tree) => tree.id === 'tree-groups') }))
