@@ -245,7 +245,9 @@ async def test_an_empty_result_needs_no_binding_query(db: Database, monkeypatch)
 
 async def _linked(db: Database, links: list[tuple[DataPoint, str, str | None]]) -> None:
     """One tree, one node per (datapoint, node name, link address); alice may read every node."""
-    await db.execute_and_commit("INSERT INTO hierarchy_trees (id, name, description, created_at, updated_at) VALUES ('t', 'ETS', '', ?, ?)", (NOW, NOW))
+    await db.execute_and_commit(
+        "INSERT INTO hierarchy_trees (id, name, description, created_at, updated_at) VALUES ('t', 'ETS', '', ?, ?)", (NOW, NOW)
+    )
     for index, (dp, node_name, address) in enumerate(links):
         node_id = f"n-{index}"
         await db.execute_and_commit(
@@ -281,7 +283,16 @@ async def test_link_addresses_pass_the_same_binding_filter(db: Database, monkeyp
     await _binding(db, switch, readable, config={"group_address": "1/0/1", "state_group_address": "1/4/1"})
     await _binding(db, secret, hidden, config={"group_address": "1/0/2"})
     await _binding(db, stale, readable, config={"group_address": "1/0/5"})
-    await _linked(db, [(switch, "Schalten", "1/0/1"), (switch, "Status", "1/4/1"), (secret, "Schalten", "1/0/2"), (stale, "Schalten", "1/0/9"), (stale, "Hand", None)])
+    await _linked(
+        db,
+        [
+            (switch, "Schalten", "1/0/1"),
+            (switch, "Status", "1/4/1"),
+            (secret, "Schalten", "1/0/2"),
+            (stale, "Schalten", "1/0/9"),
+            (stale, "Hand", None),
+        ],
+    )
     datapoints = [switch, secret, stale]
 
     assert await _link_addresses(db, monkeypatch, datapoints, ALICE) == {
