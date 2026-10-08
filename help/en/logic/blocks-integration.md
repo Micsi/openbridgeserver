@@ -29,6 +29,8 @@ Pings a **host**/IP address and returns **Reachable** (bool) and **Latency (ms)*
 **Trigger** input is true — recommendation: connect it to a Timer/Cron block for periodic
 checks. **Timeout** and **ping count** are configurable.
 
+The host is deliberately static: variables are not evaluated here.
+
 The **Trigger mode** defines when a true trigger fires:
 
 - **On every event** (default for newly placed blocks): every newly incoming `true` fires — even
@@ -50,12 +52,39 @@ an output with **+**) delivers no new data. In debug mode the outputs appear und
 configured names. An older single-path configuration is shown as a legacy notice with a
 one-click upgrade to multiple outputs.
 
+### Variables in paths
+
+Paths may contain variables written as `###NAME###`. They are replaced once per logic run,
+before evaluation — in the configured application time zone, and all values of one run share
+the same instant. The **Insert variable** menu below each path inserts the placeholder; the
+**resolved path** is shown underneath.
+
+| Variable | Meaning | Example |
+|---|---|---|
+| `###H###` / `###HH###` | Hour without/with leading zero | `7` / `07` |
+| `###m###` / `###mm###` | Minute | `5` / `05` |
+| `###s###` / `###ss###` | Second | `9` / `09` |
+| `###d###` / `###dd###` | Day | `8` / `08` |
+| `###EE###` / `###EEE###` / `###EEEE###` | Weekday short/medium/full | `Mo` / `Mo.` / `Montag` |
+| `###M###` / `###MM###` / `###MMM###` / `###MMMM###` | Month numeric or as a name | `6` / `06` / `Juni` / `Juni` |
+| `###yy###` / `###yyyy###` | Year | `26` / `2026` |
+| `###DATE###` / `###TIME###` | Default date/time format from the settings | `08.06.2026` / `07:05:09` |
+| `###TS###` | ISO-8601 timestamp with time zone | `2026-06-08T07:05:09+02:00` |
+| `###OBS1###`, `###OBS2###`, … | Current value of the object assigned under **Variables** | |
+
+Case matters: `m` = minute, `M` = month. Example: `[###H###].text.value` reads array element
+7 at 7 o'clock. Substituted values are not expanded again. Unknown placeholders stay literal
+and are flagged in the editor; an unconfigured or empty `###OBSn###` slot and a path that
+cannot be found yield `null` plus a hint in the configuration panel.
+
 ## XML Extractor {#logic-block-xml-extractor}
 
 Parses an XML string (**Data** input) and extracts values via XPath expressions in
 ElementTree syntax (e.g. `.//temperature`). Handling is identical to the JSON Extractor:
 multiple named outputs via **+**, per-row live preview, a detected-paths dropdown, and a
 legacy-upgrade banner for an existing single-path configuration.
+
+Variables in XPath expressions work as in the JSON Extractor (see there), e.g. `./hours/hour[###H###]/text/value` or `.//forecast[@hour='###HH###']/value`. An invalid XPath does not abort the graph: the output yields `null` plus a hint.
 
 ## Substring / RegEx {#logic-block-substring-extractor}
 
@@ -79,6 +108,10 @@ Periodically loads an iCal/ICS file from a **URL** (**refresh interval** in minu
 **maximum calendar size** as a guard against oversized downloads) and evaluates its events.
 The **RAW** output provides the raw calendar text independent of any filters.
 
+Variables are allowed in the URL **path** and **query** (e.g. `…/calendar/###yyyy###.ics` or
+`?room=###OBS1###`, list: see JSON Extractor); scheme, host, userinfo and port stay fixed. When
+the resolved URL changes, the calendar is reloaded on the next run.
+
 **Add filter** lets you define any number of named filters; each filter produces 4 outputs
 (array of all matching events, next date, tomorrow as bool, today as bool). A filter can apply
 regular expressions to **summary**, **location**, and/or **description**, combined with
@@ -93,7 +126,7 @@ URL is allowed or would be blocked by the server-side SSRF guard (administrators
 blocked target directly from this dialog).
 
 **Variables** let you insert data points as placeholders (`###OBS1###`, `###OBS2###`, …) into
-the URL or body — their current values are substituted in before the request is sent. Further
+the URL, headers, auth fields or body — their current values are substituted in before the request is sent. The date/time variables (`###HH###`, `###yyyy###`, `###DATE###`, `###TS###`, …, see JSON Extractor) are available too; variables are not allowed in the URL scheme, host or port. Further
 settings: request/response content type, custom headers (as a JSON object or via a header file
 under `/run/secrets`), timeout, SSL certificate verification, and authentication (none, Basic,
 Digest, or a bearer token — also loadable from a file under `/run/secrets`). Outputs:
