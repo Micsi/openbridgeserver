@@ -197,7 +197,9 @@ async def test_picker_reads_trees_nodes_lenses_and_device_data(client, auth_head
     for params, only_ours in queries:
         body = await _get(client, auth_headers, "/api/v1/search/", **params)
         # The API sorts by name only; equal names keep the registry's order, which differs per process.
-        found = sorted((item for item in body["items"] if not only_ours or item["id"] in ours), key=lambda item: (item["name"].lower(), item["group_address"]))
+        found = sorted(
+            (item for item in body["items"] if not only_ours or item["id"] in ours), key=lambda item: (item["name"].lower(), item["group_address"])
+        )
         stable = {key: ids(value, "node") if key in ("tree_id", "node_id") or value in ours else value for key, value in params.items()}
         fixture["search"].append(
             {
