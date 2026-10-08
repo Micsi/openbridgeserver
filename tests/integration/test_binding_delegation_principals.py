@@ -14,10 +14,12 @@ the DataPoint and on the adapter instance:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
-from obs.api.auth import create_access_token
+from obs.api.auth import create_access_token, generate_api_key, hash_api_key
+from obs.db.database import get_db
 
 pytestmark = pytest.mark.integration
 
@@ -70,10 +72,17 @@ async def _grant_operator(client, auth_headers, principal_type: str, principal_i
 
 
 async def _api_key_headers(client, auth_headers, dp_id: str, instance_id: str) -> dict:
-    key = await client.post("/api/v1/auth/apikeys", json={"name": f"deleg-{uuid.uuid4().hex[:8]}"}, headers=auth_headers)
-    assert key.status_code == 201, key.text
-    await _grant_operator(client, auth_headers, "api_key", key.json()["id"], dp_id, instance_id)
-    return {"X-API-Key": key.json()["key"]}
+    # Stored directly rather than via POST /auth/apikeys: that route is limited to
+    # 10/minute per client for the whole session, and these parametrized tests
+    # would use up the budget of the integration tests that run after them.
+    key = generate_api_key()
+    key_id = str(uuid.uuid4())
+    await get_db().execute_and_commit(
+        "INSERT INTO api_keys (id, name, key_hash, owner, created_at) VALUES (?,?,?,?,?)",
+        (key_id, f"deleg-{uuid.uuid4().hex[:8]}", hash_api_key(key), "admin", datetime.now(UTC).isoformat()),
+    )
+    await _grant_operator(client, auth_headers, "api_key", key_id, dp_id, instance_id)
+    return {"X-API-Key": key}
 
 
 async def _user_headers(client, auth_headers, dp_id: str, instance_id: str) -> tuple[str, dict]:
