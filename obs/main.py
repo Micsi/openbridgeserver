@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     from obs.log_buffer import LogBufferHandler
 
     LogBufferHandler.install(asyncio.get_event_loop(), level=log_level)
+    # Runs after uvicorn configured its loggers, whichever way the server was started.
+    from obs.adapters.webhook.access_log import install_webhook_access_log_filter
+
+    install_webhook_access_log_filter()
     logger.info(f"open bridge server v{__version__} starting …")
 
     # 1. Database
