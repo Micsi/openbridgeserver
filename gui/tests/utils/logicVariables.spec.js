@@ -72,4 +72,12 @@ describe('translateVariableErrors', () => {
     )
     expect(translateVariableErrors('API client variable value is empty', t)).toBe('logic.variables.issues.emptyValue|{}')
   })
+  it('keeps a "; " inside an object name within its issue', () => {
+    expect(translateVariableErrors('Variable variable OBS1 object Room; Lamp has no value', t)).toBe(
+      'logic.variables.issues.noValue|{"name":"OBS1","object":"Room; Lamp"}',
+    )
+    expect(
+      translateVariableErrors('Variable variable OBS1 object Room; Lamp has no value; iCal variable OBS2 is not configured', t),
+    ).toBe('logic.variables.issues.noValue|{"name":"OBS1","object":"Room; Lamp"}; logic.variables.issues.notConfigured|{"name":"OBS2"}')
+  })
 })

@@ -89,10 +89,13 @@ const ISSUE_PATTERNS = [
   [/^(?:[^;]*? )?variable value is empty$/, 'emptyValue', []],
 ]
 
-// A block's ``__error__`` may join several issues with "; ".
+// A block's ``__error__`` may join several issues with "; ". Only split where the next segment
+// starts a new issue, so a "; " inside a user-defined object name stays part of that issue.
+const ISSUE_BOUNDARY_RE = /; (?=unknown variable |path '|invalid XPath |(?:[^;]*? )?variable (?:OBS\d+|value is empty))/
+
 export function translateVariableErrors(text, t) {
   if (typeof text !== 'string') return text
-  return String(text).split('; ').map(part => translateVariableIssue(part, t)).join('; ')
+  return text.split(ISSUE_BOUNDARY_RE).map(part => translateVariableIssue(part, t)).join('; ')
 }
 
 export function translateVariableIssue(issue, t) {
