@@ -87,17 +87,18 @@ def test_path_token_of_any_shape_is_redacted_below_a_multi_segment_prefix():
 
 
 def test_path_token_is_redacted_without_any_running_instance():
-    """Without a claim the generated token shape still identifies the credential segment."""
+    """Without a claim a trailing segment after a slug is treated as a credential."""
     assert redact_access_path(f"/hook/bell/{TOKEN}") == f"/hook/bell/{REDACTED}"
     assert redact_access_path(f"/home/hooks/bell/{TOKEN}?token={TOKEN}") == f"/home/hooks/bell/{REDACTED}?token={REDACTED}"
 
 
-def test_slug_only_calls_are_unchanged():
+def test_slug_only_calls_under_an_active_prefix_are_unchanged():
     _claim("/hook")
     assert redact_access_path("/hook/bell") == "/hook/bell"
     assert redact_access_path("/hook/bell?value=1") == "/hook/bell?value=1"
     webhook_module._instances_by_prefix.clear()
-    assert redact_access_path("/home/hooks/bell") == "/home/hooks/bell"
+    # Without a running instance this may also be a token URL below /home.
+    assert redact_access_path("/home/hooks/bell") == f"/home/hooks/{REDACTED}"
 
 
 @pytest.mark.parametrize(
@@ -111,7 +112,6 @@ def test_slug_only_calls_are_unchanged():
         "/visu/page/abc?lang=de",
         "/datapoints",
         f"/hook/{TOKEN}",
-        "/hook/bell/not-a-token-shaped-segment",
     ],
 )
 def test_other_paths_are_unchanged(path):
@@ -145,6 +145,15 @@ def test_filter_rewrites_the_path_argument_of_an_access_record():
     line = AccessFormatter(fmt='%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False).format(record)
     assert TOKEN not in line
     assert line == f'192.168.1.50:51234 - "GET /hook/bell/{REDACTED} HTTP/1.1" 204 No Content'
+
+
+def test_filter_masks_imported_token_when_instance_is_disabled():
+    record = _access_record("/inactive-import/bell/legacy-imported-secret")
+    record.args = (*record.args[:-1], 404)
+
+    assert WebhookTokenAccessLogFilter().filter(record) is True
+    line = AccessFormatter(fmt='%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False).format(record)
+    assert line == f'192.168.1.50:51234 - "GET /inactive-import/bell/{REDACTED} HTTP/1.1" 404 Not Found'
 
 
 def test_filter_leaves_unrelated_records_alone():

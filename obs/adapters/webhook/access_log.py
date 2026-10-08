@@ -19,25 +19,21 @@ leak a token either.  Hence three rules, from broad to narrow:
   masked whatever it looks like — that is exactly what the dispatcher reads as
   the token, so a mistyped or truncated token is covered as well.
 * Below any **other** non-reserved first segment (a stopped or disabled
-  instance), a trailing segment with the shape of a generated token that follows
-  a slug-shaped segment is masked.  Application-owned paths (``/api``, the SPAs,
-  static files) are never touched.
+  instance), a trailing segment following a slug-shaped segment is masked,
+  including imported tokens of arbitrary length.  Application-owned paths
+  (``/api``, the SPAs, static files) are never touched.
 """
 
 from __future__ import annotations
 
 import logging
-import math
-import re
 from urllib.parse import unquote, unquote_plus
 
-from obs.adapters.webhook.adapter import _RESERVED_PREFIX_SEGMENTS, SLUG_PATTERN, TOKEN_BYTES, active_prefixes
+from obs.adapters.webhook.adapter import _RESERVED_PREFIX_SEGMENTS, SLUG_PATTERN, active_prefixes
 from obs.api.v1.redaction import REDACTED
 
 ACCESS_LOGGER_NAME = "uvicorn.access"
 
-# ``secrets.token_urlsafe(n)`` yields ceil(n * 4 / 3) characters of the URL-safe alphabet.
-_TOKEN_SHAPE = re.compile(rf"^[A-Za-z0-9_-]{{{math.ceil(TOKEN_BYTES * 4 / 3)}}}$")
 # Index of the request target in uvicorn's ``'%s - "%s %s HTTP/%s" %d'`` record args.
 _PATH_ARG = 2
 
@@ -66,7 +62,7 @@ def _redact_path(path: str) -> str:
             masked = positions[len(prefix_segments) + 1 :]
             break
     else:
-        if len(decoded) >= 3 and _TOKEN_SHAPE.match(decoded[-1]) and SLUG_PATTERN.match(decoded[-2].lower()):
+        if len(decoded) >= 3 and SLUG_PATTERN.match(decoded[-2].lower()):
             masked = [positions[-1]]
 
     if not masked:
