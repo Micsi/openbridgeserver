@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import datetime
 
 import pytest
 
@@ -1108,5 +1109,111 @@ async def test_every_handled_trigger_response_is_marked_non_cacheable(client, au
         for status_code, response in responses.items():
             assert response.status_code == status_code
             assert response.headers["cache-control"] == "no-store", status_code
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+# ---------------------------------------------------------------------------
+# Monitor path — triggered values reach the RingBuffer (issue #1310)
+# ---------------------------------------------------------------------------
+
+
+async def _monitor_entries(client, auth_headers, dp_id: str, *, adapters: list[str] | None = None) -> list[dict]:
+    """Query the RingBuffer the way the Monitor view does (``POST /ringbuffer/query``), oldest first."""
+    filters: dict = {"datapoints": {"ids": [dp_id]}}
+    if adapters is not None:
+        filters["adapters"] = {"any_of": adapters}
+    resp = await client.post(
+        "/api/v1/ringbuffer/query",
+        json={"filters": filters, "sort": {"field": "id", "order": "asc"}, "pagination": {"limit": 100}},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def _wait_for_monitor_entries(client, auth_headers, dp_id: str, count: int, *, adapters: list[str] | None = None, timeout: float = 5.0):
+    """Poll until at least *count* entries are recorded; the RingBuffer is fed asynchronously from the bus."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        entries = await _monitor_entries(client, auth_headers, dp_id, adapters=adapters)
+        if len(entries) >= count or loop.time() >= deadline:
+            return entries
+        await asyncio.sleep(0.02)
+
+
+def _ts_seconds(ts: str) -> float:
+    return datetime.fromisoformat(ts).timestamp()
+
+
+async def test_trigger_and_autoreset_are_recorded_in_the_monitor_as_webhook_entries(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers)
+    try:
+        await _create_binding(
+            client,
+            auth_headers,
+            dp["id"],
+            instance["id"],
+            {"slug": "monitor-bell", "autoreset": True, "autoreset_value": "false", "autoreset_delay_ms": 200},
+        )
+        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+
+        # A value from another source on the same DataPoint, so the adapter filter has something to exclude.
+        written = await client.post(f"/api/v1/datapoints/{dp['id']}/value", json={"value": False}, headers=auth_headers)
+        assert written.status_code == 204, written.text
+        baseline = await _wait_for_monitor_entries(client, auth_headers, dp["id"], 1)
+        assert [e["source_adapter"] for e in baseline] == ["api"]
+
+        assert (await client.get(entry["call_path"])).status_code == 204
+
+        recorded = await _wait_for_monitor_entries(client, auth_headers, dp["id"], 3)
+        assert len(recorded) == 3, recorded
+        trigger, reset = recorded[1], recorded[2]
+
+        assert trigger["new_value"] is True
+        assert trigger["source_adapter"] == "WEBHOOK"
+        assert reset["new_value"] is False
+        assert reset["old_value"] is True
+        assert reset["source_adapter"] == "WEBHOOK"
+        # The reset stands for the configured delay after the trigger, it is not published with it.
+        assert _ts_seconds(reset["ts"]) - _ts_seconds(trigger["ts"]) >= 0.15
+
+        # The RingBuffer does not persist the binding id; the entry's metadata snapshot attributes the
+        # value to the WEBHOOK binding of this instance, which is the only binding on the DataPoint.
+        for recorded_entry in (trigger, reset):
+            assert recorded_entry["datapoint_id"] == dp["id"]
+            assert recorded_entry["metadata"]["source"] == {"adapter": "WEBHOOK"}
+            assert [(b["adapter_type"], b["adapter_instance_id"], b["direction"]) for b in recorded_entry["metadata"]["bindings"]] == [
+                ("WEBHOOK", instance["id"], "SOURCE")
+            ]
+
+        # The Monitor's adapter filter returns exactly the two webhook values — in either casing.
+        for adapter_filter in (["WEBHOOK"], ["webhook"]):
+            filtered = await _monitor_entries(client, auth_headers, dp["id"], adapters=adapter_filter)
+            assert [e["id"] for e in filtered] == [trigger["id"], reset["id"]], adapter_filter
+        assert [e["id"] for e in await _monitor_entries(client, auth_headers, dp["id"], adapters=["api"])] == [baseline[0]["id"]]
+    finally:
+        await _delete_instance(client, auth_headers, instance["id"])
+
+
+async def test_a_rejected_call_leaves_no_monitor_entry(client, auth_headers):
+    dp = await _create_dp(client, auth_headers)
+    instance = await _create_instance(client, auth_headers)
+    try:
+        await _create_binding(client, auth_headers, dp["id"], instance["id"], {"slug": "monitor-reject"})
+        entry = (await _webhook_bindings(client, auth_headers, instance["id"]))[0]
+
+        rejected = await client.get("/hook/monitor-reject?token=wrong-token")
+        assert rejected.status_code == 404, rejected.text
+
+        # A valid call afterwards is the barrier: the bus delivers in order, so once its entry is
+        # recorded, anything the rejected call had published would already be there too.
+        assert (await client.get(entry["call_path"])).status_code == 204
+        recorded = await _wait_for_monitor_entries(client, auth_headers, dp["id"], 1)
+        assert len(recorded) == 1, recorded
+        assert recorded[0]["new_value"] is True
+        assert recorded[0]["source_adapter"] == "WEBHOOK"
     finally:
         await _delete_instance(client, auth_headers, instance["id"])

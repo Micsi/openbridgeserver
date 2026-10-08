@@ -1056,6 +1056,26 @@ describe('LogicView WebSocket', () => {
 })
 
 describe('LogicView inspector inputs', () => {
+  it('translates variable errors of notification/archive blocks', async () => {
+    const { default: i18n } = await import('@/i18n')
+    i18n.global.locale.value = 'de'
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    const text = wrapper.vm.fmtDebugVal({ __error__: 'Variable variable OBS1 object Lamp has no value' })
+    expect(text).not.toContain('has no value')
+    expect(text).toContain('Lamp')
+    wrapper.unmount()
+  })
+
+  it('translates semicolon names', async () => {
+    const { default: i18n } = await import('@/i18n')
+    i18n.global.locale.value = 'de'
+    const { wrapper } = await mountLogicView({ isAdmin: true })
+    const text = wrapper.vm.fmtDebugVal({ __error__: 'Variable variable OBS1 object Room; Lamp has no value' }, { full: true })
+    expect(text).not.toContain('has no value')
+    expect(text).toContain('Room; Lamp')
+    wrapper.unmount()
+  })
+
   it('formats compact and full debug values across output types', async () => {
     const { wrapper } = await mountLogicView({ isAdmin: true })
     const longError = 'x'.repeat(60)
