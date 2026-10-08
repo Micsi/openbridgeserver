@@ -190,6 +190,19 @@ the rate limit, so it overlaps with the binding's own counters.
 device is replaced, for instance, or when its configuration ended up in the wrong hands.
 Other bindings and integrations are untouched.
 
+::: warning The token is part of the URL — and therefore of logs
+Both URL variants carry the token in clear text, as `?token=…` or as the last path
+segment. OBS masks it as `[redacted]` in its own access log (the journal or
+`docker logs`); the caller address, method, slug and status code stay visible for
+troubleshooting. Everything **in front of** OBS still sees the unmodified URL and
+often logs it: an upstream reverse proxy (nginx, Caddy, Traefik), the calling
+device itself, and any log shipping that collects those logs.
+
+- Restrict access to these logs and limit how long they are retained.
+- If a token has been exposed in a log or a device configuration, use **Issue a new
+  token** — the old URL stops working immediately.
+:::
+
 ### Why a token per binding instead of an API key
 
 An API key may write every object. In a device mounted outside the house, whose configuration

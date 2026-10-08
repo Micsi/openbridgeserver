@@ -202,6 +202,21 @@ falsches Token), und das Ratenlimit, überschneidet sich also mit den Zählern d
 wenn ein Gerät ausgetauscht wird oder seine Konfiguration in falsche Hände geraten ist.
 Andere Verknüpfungen und Integrationen bleiben davon unberührt.
 
+::: warning Das Token steht in der URL — und damit in Logs
+Beide URL-Varianten tragen das Token im Klartext, als `?token=…` oder als letztes
+Pfadsegment. OBS selbst maskiert es im eigenen Zugriffsprotokoll (Journal bzw.
+`docker logs`) zu `[redacted]`; Absenderadresse, Methode, Slug und Statuscode
+bleiben für die Fehlersuche sichtbar. Alles **vor** OBS sieht die URL dagegen
+unverändert und protokolliert sie oft mit: ein vorgeschalteter Reverse Proxy
+(nginx, Caddy, Traefik), das aufrufende Gerät selbst und ein Log-Shipping, das
+diese Logs einsammelt.
+
+- Zugriff auf diese Logs und ihre Aufbewahrungsdauer passend absichern.
+- Ist ein Token in einem Log oder einer Geräte-Konfiguration offengelegt worden,
+  mit **Token neu erzeugen** ein neues ausstellen — die alte URL ist damit sofort
+  ungültig.
+:::
+
 ### Warum ein Token je Verknüpfung und kein API-Key
 
 Ein API-Key darf jedes Objekt schreiben. In einem Gerät außen am Haus, dessen Konfiguration
