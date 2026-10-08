@@ -133,6 +133,7 @@ ROUTE_CLASSIFICATIONS: Final[dict[RouteSignature, RouteCategory]] = {
     ("GET", "/api/v1/ringbuffer/migration"): "read_history",
     ("GET", "/api/v1/ringbuffer/stats"): "read_history",
     ("GET", "/api/v1/search/"): "read_live",
+    ("GET", "/api/v1/search/knx-device-data"): "read_live",
     ("GET", "/api/v1/security/url-target-allowlist"): "read_live",
     ("GET", "/api/v1/support/categories"): "read_live",
     ("GET", "/api/v1/support/debug-log"): "read_live",

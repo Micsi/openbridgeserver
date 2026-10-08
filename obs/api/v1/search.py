@@ -8,11 +8,17 @@ Server-side filtered search over DataPoints.
   type    — data_type match (e.g. FLOAT)
   adapter — comma-separated adapter_type list (OR logic), at least one binding required
   quality — runtime quality filter: good | bad | uncertain
+  device  — comma-separated KNX device physical addresses (OR logic), datapoints on their group addresses
+  knx_linked — true: KNX group address linked to a device; false: KNX group addresses, none linked
+               (GET /api/v1/search/knx-device-data says whether any device data is visible)
   sort    — sort column: name | data_type | created_at | updated_at  (default: name)
   order   — sort direction: asc | desc                               (default: asc)
 """
 
 from __future__ import annotations
+
+import json
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -22,6 +28,8 @@ from obs.api.auth import Principal, get_current_principal
 from obs.api.authz import AuthzAction, AuthzTarget, authorize
 from obs.api.authz_service import filter_authorized_datapoints, load_role_grants, resolve_hierarchy_targets
 from obs.api.v1.datapoints import _SORT_KEYS, DataPointOut, HierarchyNodeRef, NodePathSegment, _enrich
+from obs.api.v1.knxproj import _authorized_knx_device_scope, _authorized_knx_group_addresses, _principal_from_dependency
+from obs.api.v1.services.knx_traceability import _extract_knx_ga_roles, group_addresses_by_device
 from obs.core.registry import get_registry
 from obs.db.database import Database, get_db
 
@@ -35,6 +43,12 @@ class SearchPage(BaseModel):
     size: int
     pages: int
     query: dict
+
+
+class KnxDeviceDataOut(BaseModel):
+    # True when a group address is linked to a KNX device the caller may see (#1266):
+    # without device data, ``knx_linked=true`` can only ever match nothing.
+    knx_device_data: bool
 
 
 async def _filter_authorized_hierarchy_rows(
@@ -121,6 +135,70 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database, principal: Pri
         item.hierarchy_nodes = by_dp.get(str(item.id), [])
 
 
+async def _visible_bindings(db: Database, principal: Principal, rows: list) -> list:
+    """Keep the binding rows on adapter instances the caller may read, like ``GET /datapoints/{id}/bindings``."""
+    if principal.type == "user" and principal.is_admin:
+        return rows
+    grants = await load_role_grants(db, principal, node_type="adapter_instance")
+    return [
+        row
+        for row in rows
+        if row["adapter_instance_id"] is None
+        or authorize(
+            principal=principal,
+            action=AuthzAction.READ,
+            targets=[AuthzTarget(node_type="adapter_instance", node_id=row["adapter_instance_id"], min_role="guest")],
+            grants=grants,
+        ).allowed
+    ]
+
+
+async def _knx_group_addresses_by_datapoint(db: Database, principal: Principal) -> dict[str, set[str]]:
+    """Datapoint id → command and status group addresses of its KNX bindings the caller may see.
+
+    The addresses are taken from a binding the way the device view does (``_extract_knx_ga_roles``).
+    """
+    rows = await db.fetchall("SELECT datapoint_id, adapter_instance_id, config FROM adapter_bindings WHERE UPPER(adapter_type) = 'KNX'")
+    by_dp: dict[str, set[str]] = {}
+    for row in await _visible_bindings(db, principal, rows):
+        # adapter_bindings.config is valid JSON (CHECK json_valid).
+        addresses = {address for _, address in _extract_knx_ga_roles(json.loads(row["config"]))}
+        if addresses:
+            by_dp.setdefault(row["datapoint_id"], set()).update(addresses)
+    return by_dp
+
+
+async def _filter_by_knx_devices(
+    db: Database,
+    principal: Principal,
+    results: list,
+    device_list: list[str],
+    knx_linked: bool | None,
+) -> list:
+    """Keep the datapoints on the given devices and/or with(out) a device-linked group address (#1266).
+
+    A datapoint belongs to a device when one of its KNX bindings the caller may see carries, as
+    command or status address, a group address a communication object of the device links. For
+    non-admins a linked address counts only where the device view shows it to them
+    (``_authorized_knx_group_addresses``); ``results`` already passed the read check.
+    """
+    by_device = await group_addresses_by_device(db)
+    addresses_by_dp = await _knx_group_addresses_by_datapoint(db, principal)
+    if not (principal.type == "user" and principal.is_admin):
+        result_ids = {str(dp.id) for dp in results}
+        linked = set().union(*by_device.values())
+        relevant = set().union(*(addresses_by_dp.get(dp_id, set()) for dp_id in result_ids)) & linked
+        allowed = await _authorized_knx_group_addresses(db, principal, sorted(relevant), known_readable=result_ids)
+        by_device = {pa: addresses & allowed for pa, addresses in by_device.items()}
+    if device_list:
+        wanted = set().union(*(by_device.get(pa, set()) for pa in device_list))
+        results = [dp for dp in results if addresses_by_dp.get(str(dp.id), set()) & wanted]
+    if knx_linked is not None:
+        linked = set().union(*by_device.values())
+        results = [dp for dp in results if str(dp.id) in addresses_by_dp and bool(addresses_by_dp[str(dp.id)] & linked) == knx_linked]
+    return results
+
+
 async def _add_command_group_address(items: list[DataPointOut], db: Database, principal: Principal) -> None:
     """Set each item's ``group_address``: the command group address of its KNX binding (#1266).
 
@@ -148,19 +226,7 @@ async def _add_command_group_address(items: list[DataPointOut], db: Database, pr
             ORDER BY CASE WHEN direction IN ('DEST', 'BOTH') THEN 0 ELSE 1 END, created_at, id""",
         dp_ids,
     )
-    if not (principal.type == "user" and principal.is_admin):
-        grants = await load_role_grants(db, principal, node_type="adapter_instance")
-        rows = [
-            row
-            for row in rows
-            if row["adapter_instance_id"] is None
-            or authorize(
-                principal=principal,
-                action=AuthzAction.READ,
-                targets=[AuthzTarget(node_type="adapter_instance", node_id=row["adapter_instance_id"], min_role="guest")],
-                grants=grants,
-            ).allowed
-        ]
+    rows = await _visible_bindings(db, principal, rows)
     by_dp: dict[str, str] = {}
     visible: dict[str, set[str | None]] = {}
     for row in rows:
@@ -187,6 +253,14 @@ async def search(
     quality: str = Query("", description="Runtime quality filter: good | bad | uncertain"),
     node_id: str = Query("", description="Comma-separated node IDs — OR logic"),
     tree_id: str = Query("", description="Comma-separated tree IDs — matches any node in these trees"),
+    device: Annotated[
+        str,
+        Query(description="Comma-separated KNX device physical addresses — OR logic; datapoints bound to a group address of the device"),
+    ] = "",
+    knx_linked: Annotated[
+        bool | None,
+        Query(description="true: KNX group address linked to a device; false: KNX group addresses, none linked to a device"),
+    ] = None,
     sort: str = Query("name", pattern="^(name|data_type|created_at|updated_at)$"),
     order: str = Query("asc", pattern="^(asc|desc)$"),
     page: int = Query(0, ge=0),
@@ -304,6 +378,11 @@ async def search(
         )
         results = [dp for dp in results if str(dp.id) in authorized_ids]
 
+    # 7b. KNX device filters (#1266) – after the read check, which they build on
+    device_list = [d.strip() for d in device.split(",") if d.strip()]
+    if device_list or knx_linked is not None:
+        results = await _filter_by_knx_devices(db, principal, results, device_list, knx_linked)
+
     # 8. Sort
     results = sorted(results, key=_SORT_KEYS[sort], reverse=(order == "desc"))
 
@@ -330,7 +409,26 @@ async def search(
             "quality": quality,
             "node_id": node_id,
             "tree_id": tree_id,
+            "device": device,
+            "knx_linked": knx_linked,
             "sort": sort,
             "order": order,
         },
     )
+
+
+@router.get("/knx-device-data", response_model=KnxDeviceDataOut)
+async def knx_device_data(
+    _user: Principal | str = Depends(get_current_principal),
+    db: Database = Depends(lambda: get_db()),
+) -> KnxDeviceDataOut:
+    """Whether the imported project links group addresses to KNX devices the caller may see (#1266).
+
+    A project imported without devices (or a caller the device view shows no device) has none,
+    so ``knx_linked=true`` would hide every datapoint: the picker switches that filter off.
+    """
+    principal = _principal_from_dependency(_user)
+    if principal.type == "user" and principal.is_admin:
+        return KnxDeviceDataOut(knx_device_data=bool(await group_addresses_by_device(db)))
+    allowed_device_ids, _ = await _authorized_knx_device_scope(db, principal)
+    return KnxDeviceDataOut(knx_device_data=bool(allowed_device_ids))

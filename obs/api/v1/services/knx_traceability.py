@@ -150,6 +150,24 @@ async def resolve_device_pas_to_group_addresses(
     return []
 
 
+async def group_addresses_by_device(db: Database) -> dict[str, set[str]]:
+    """Map each device's physical address to the group addresses its communication objects link.
+
+    The same device → communication object → group address join as the device view
+    (:func:`_devices_by_group_address`) and the KNX monitor's device filter.
+    """
+    rows = await db.fetchall(
+        """SELECT d.individual_address AS pa, l.ga_address
+             FROM knx_devices d
+             JOIN knx_comm_objects co ON co.device_id = d.id
+             JOIN knx_co_ga_links l ON l.comm_object_id = co.id"""
+    )
+    by_device: dict[str, set[str]] = {}
+    for row in rows:
+        by_device.setdefault(row["pa"], set()).add(row["ga_address"])
+    return by_device
+
+
 async def _group_address_metadata(group_addresses: list[str], db: Database) -> dict[str, dict[str, Any]]:
     normalized = normalize_nonempty(group_addresses)
     if not normalized:

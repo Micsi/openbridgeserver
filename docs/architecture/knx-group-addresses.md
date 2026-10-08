@@ -82,7 +82,14 @@ without any error.
    through (`group_address`, stored in `hierarchy_datapoint_links.group_address` since V57, null
    for links made by hand or before #1266), shown only while a binding the caller may see carries
    it as command or status address; the picker takes the path of the command address as the
-   main path. The backend renders with `format_ga(address, style)`; the Admin GUI shows
+   main path. Its KNX device filters compare internal addresses the same way: `device`
+   (comma-separated physical addresses) keeps datapoints whose binding carries, as command or
+   status address, an address a communication object of the device links (the device view's
+   join, `group_addresses_by_device` in `knx_traceability.py`), `knx_linked=true|false` those with
+   at least one / no linked address among their KNX addresses, and
+   `GET /api/v1/search/knx-device-data` says whether any linked address is visible at all.
+   Non-admins match only through bindings on instances they may read and through the addresses
+   the device view shows them. The backend renders with `format_ga(address, style)`; the Admin GUI shows
    every group address through `formatGa(address, knxProject.groupAddressStyle)`
    (`gui/src/utils/groupAddress.js`), with the style from the one store `useKnxProjectStore`
    (`gui/src/stores/knxProject.js`, fed from `GET /api/v1/knxproj/group-addresses`, reloaded after

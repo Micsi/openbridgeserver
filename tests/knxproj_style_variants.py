@@ -103,6 +103,31 @@ def _add_device_and_function(root: ElementTree.Element) -> None:
     ElementTree.SubElement(building, _q("DeviceInstanceRef"), RefId=f"{_PROJECT}-0_DI-1")
 
 
+def _add_device(root: ElementTree.Element, address: int, comm_objects: list[list[str]]) -> None:
+    """Device ``1.1.<address>`` with one communication object per list of group address ids."""
+    segment = root.find(f".//{_q('Line')}[@Id='{_PROJECT}-0_L-3']/{_q('Segment')}")
+    device = ElementTree.SubElement(
+        segment,
+        _q("DeviceInstance"),
+        Id=f"{_PROJECT}-0_DI-{100 + address}",
+        Address=str(address),
+        Name=f"Testgeraet {address}",
+        ProductRefId="M-0083_H-1-1_P-1",
+        Hardware2ProgramRefId="M-0083_H-1-1_HP-1",
+        Puid=str(800 + address),
+    )
+    refs = ElementTree.SubElement(device, _q("ComObjectInstanceRefs"))
+    for number, ga_ids in enumerate(comm_objects, start=1):
+        ElementTree.SubElement(
+            refs,
+            _q("ComObjectInstanceRef"),
+            RefId=f"O-{number}_R-{number}",
+            Text=f"Objekt {number}",
+            DatapointType="DPST-1-1",
+            Links=" ".join(ga_id.split("_", 1)[1] for ga_id in ga_ids),
+        )
+
+
 def knxproj_in_style(style: str) -> bytes:
     """Return the demo project as .knxproj bytes in ``style``, with device and function."""
     if style not in STYLES:
@@ -154,12 +179,15 @@ def knxproj_with_datapoint_types(datapoint_types: dict[int, str | None]) -> byte
     return out.getvalue()
 
 
-def knxproj_with_extra_group_addresses(extra: dict[int, str]) -> bytes:
+def knxproj_with_extra_group_addresses(extra: dict[int, str], devices: dict[int, list[list[int]]] | None = None) -> bytes:
     """Return the three-level demo project plus group addresses the demo does not use (#1266).
 
     ``extra`` maps a raw address to its ETS name; each goes into the middle range
     that contains it. Addresses outside the demo's 500 keep a test independent of
     other imports of the demo into the same database.
+
+    ``devices`` adds devices on line 1.1: device address → one list of raw addresses
+    per communication object, which links them (the demo itself has no devices).
     """
     ElementTree.register_namespace("", _NS)
     ElementTree.register_namespace("xsi", "http://www.w3.org/2001/XMLSchema-instance")
@@ -188,6 +216,8 @@ def knxproj_with_extra_group_addresses(extra: dict[int, str]) -> bytes:
                         DatapointType="DPST-1-1",
                         Puid=str(9000 + number),
                     )
+                for address, comm_objects in (devices or {}).items():
+                    _add_device(root, address, [[_ga_id(root, raw) for raw in raws] for raws in comm_objects])
                 data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             zout.writestr(info, data)
     return out.getvalue()

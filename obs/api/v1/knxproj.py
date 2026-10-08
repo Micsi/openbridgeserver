@@ -405,7 +405,13 @@ async def _authorized_knx_group_addresses(
     db: Database,
     principal: Principal,
     group_addresses: list[str],
+    known_readable: set[str] | frozenset[str] = frozenset(),
 ) -> set[str]:
+    """Group addresses an enabled binding of a datapoint the caller may read carries.
+
+    ``known_readable`` holds datapoint ids the caller already passed the read check
+    for (the search's result page): an address one of them carries needs no second check.
+    """
     ordered_addresses = list(dict.fromkeys(group_addresses))
     if not ordered_addresses:
         return set()
@@ -427,7 +433,8 @@ async def _authorized_knx_group_addresses(
             if ga in wanted:
                 datapoints_by_ga.setdefault(ga, []).append(row["datapoint_id"])
 
-    candidate_dp_ids = list(dict.fromkeys(dp_id for dp_ids in datapoints_by_ga.values() for dp_id in dp_ids))
+    settled = {ga for ga, dp_ids in datapoints_by_ga.items() if any(dp_id in known_readable for dp_id in dp_ids)}
+    candidate_dp_ids = list(dict.fromkeys(dp_id for ga, dp_ids in datapoints_by_ga.items() if ga not in settled for dp_id in dp_ids))
     allowed_dp_ids = set(
         await filter_authorized_datapoints(
             db,
@@ -436,7 +443,7 @@ async def _authorized_knx_group_addresses(
             action=AuthzAction.READ,
         )
     )
-    return {ga for ga, dp_ids in datapoints_by_ga.items() if any(dp_id in allowed_dp_ids for dp_id in dp_ids)}
+    return settled | {ga for ga, dp_ids in datapoints_by_ga.items() if any(dp_id in allowed_dp_ids for dp_id in dp_ids)}
 
 
 async def _authorized_knx_device_scope(
