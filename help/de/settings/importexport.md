@@ -78,3 +78,12 @@ ETS-Hierarchien dieses Imports ersetzen" ersetzt nur automatisch aus einem früh
 erzeugte Hierarchien; manuell angelegte Hierarchien bleiben davon unberührt. „Angelegte Objekte
 automatisch mit Hierarchieknoten verknüpfen" setzt voraus, dass gleichzeitig auch Objekte
 angelegt werden.
+
+Die Topologie folgt den Gruppenbereichen, wie sie im ETS-Projekt stehen – dreistufig mit Haupt-
+und Mittelgruppen, zweistufig nur mit Hauptgruppen oder frei mit beliebig verschachtelten
+Bereichen. Gebäude/Räume legt unter jedem Raum dessen ETS-Funktionen an und hängt die Objekte an
+die Funktion, so bleiben gleich benannte Gruppenadressen über „Raum › Funktion" unterscheidbar.
+Ein Objekt wird über seine Schalt- und seine Rückmelde-Gruppenadresse verknüpft; hängen mehrere
+Objekte an einer Gruppenadresse, werden alle verknüpft. Das Importergebnis nennt solche
+Gruppenadressen und zählt Objekte, die im Baum keinen Platz finden (etwa eine Gruppenadresse ohne
+ETS-Funktion im Gebäude-Baum).

@@ -78,7 +78,11 @@ without any error.
    `group_address_style`. `GET /api/v1/search` also carries each datapoint's command group
    address (`group_address`, #1266): the KNX binding's address, a writing binding (`DEST`/`BOTH`)
    before a reading one, then the oldest; non-admins only see bindings of adapter instances they
-   may read. The backend renders with `format_ga(address, style)`; the Admin GUI shows
+   may read. Each of its `hierarchy_nodes` carries the address the ETS hierarchy import linked
+   through (`group_address`, stored in `hierarchy_datapoint_links.group_address` since V57, null
+   for links made by hand or before #1266), shown only while a binding the caller may see carries
+   it as command or status address; the picker takes the path of the command address as the
+   main path. The backend renders with `format_ga(address, style)`; the Admin GUI shows
    every group address through `formatGa(address, knxProject.groupAddressStyle)`
    (`gui/src/utils/groupAddress.js`), with the style from the one store `useKnxProjectStore`
    (`gui/src/stores/knxProject.js`, fed from `GET /api/v1/knxproj/group-addresses`, reloaded after
@@ -146,13 +150,15 @@ Four layers, from strongest to weakest:
 
 1. **Database triggers (V56).** `BEFORE INSERT` and `BEFORE UPDATE` triggers on
    `knx_group_addresses.address`, `knx_co_ga_links.ga_address` and `knx_function_ga_links.ga_address`
-   abort any write of a non-internal text, whatever code issued it. Plain SQL (`GLOB`), so tools that
+   abort any write of a non-internal text, whatever code issued it. V57 adds the same pair for
+   `hierarchy_datapoint_links.group_address`, which may also be NULL. Plain SQL (`GLOB`), so tools that
    open the database without OBS keep working; a test checks the predicate against `normalize_ga()`
    for all 65536 addresses. Binding configs are JSON, may still hold legacy invalid addresses and are
    rewritten by unrelated edits, so they are not trigger-protected.
 2. **Data invariant** (`tests/knx_group_address_invariant.py`). Integration and upgrade tests drive
    every entrance with two-level and free inputs and then scan every storage place for non-internal
-   texts: the three `knx_*` columns, both GA fields of every KNX binding, and the binding snapshot of
+   texts: the three `knx_*` columns, `hierarchy_datapoint_links.group_address`, both GA fields of
+   every KNX binding, and the binding snapshot of
    new ringbuffer entries (it also feeds `ringbuffer_metadata_bindings.group_address`). The list was
    taken from all schemas and every persisted JSON document; filter sets store device PAs, logic
    graphs, Visu nodes and settings hold no group addresses. A new storage place must be added there,
