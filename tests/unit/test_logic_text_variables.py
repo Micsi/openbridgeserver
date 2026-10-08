@@ -232,6 +232,35 @@ class TestIcalUrl:
         assert not out["i"].get("raw")
         assert "fetched_url" not in manager._hysteresis["g"]["i"]
 
+    def test_old_calendar_stored_by_an_in_flight_refresh_is_dropped_under_the_lock(self):
+        manager = _manager(value="new")
+        old = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"
+        manager._hysteresis["g"] = {"i": {}}
+        lock = asyncio.Lock()
+        manager._ical_fetch_locks[("g", "i")] = lock
+
+        async def scenario():
+            await lock.acquire()
+            flow = FlowData.model_validate(
+                {"nodes": [node("i", "ical", {"url": "https://example.com/###OBS1###.ics", "variables": OBS1_UUID})], "edges": []}
+            )
+            manager._graphs["g"] = ("G", True, flow)
+            manager._node_state["g"] = {}
+            manager._app_config.update(CONFIG)
+            task = asyncio.create_task(manager._execute_graph("g", "G", flow, {}))
+            await asyncio.sleep(0.05)
+            # the preceding refresh publishes the old URL's calendar, then releases
+            manager._hysteresis["g"]["i"].update({"raw": old, "fetched_url": "https://example.com/old.ics"})
+            lock.release()
+            return await task
+
+        with (
+            patch("obs.logic.manager._build_ical_fetch_targets", side_effect=RuntimeError("offline")),
+            patch("obs.api.v1.websocket.get_ws_manager", side_effect=RuntimeError("no ws")),
+        ):
+            out = asyncio.run(scenario())
+        assert not out["i"].get("raw")
+
     def test_variable_in_host_is_rejected_and_not_fetched(self):
         assert self._run_ical({"url": "https://###OBS1###.example.com/c.ics", "variables": OBS1_UUID}, value="x") == []
 

@@ -3199,13 +3199,20 @@ class LogicManager:
         hyst = self._hysteresis.setdefault(graph_id, {})
         refreshed_ical_nodes: set[str] = set()
         ical_variable_errors: dict[str, str] = {}
+
+        def _drop_ical_data_of_other_url(cached: dict[str, Any] | None, resolved_url: str) -> None:
+            if cached and cached.get("fetched_url") not in (None, resolved_url):
+                for key in ("raw", "fetched_url", "last_fetch_ts"):
+                    cached.pop(key, None)
+
         for node in flow.nodes:
             if node.type != "ical":
                 continue
             url = (node.data.get("url") or "").strip()
             if not url:
                 continue
-            if VARIABLE_RE.search(url):
+            variable_url = bool(VARIABLE_RE.search(url))
+            if variable_url:
                 # Date/object variables are allowed in path and query only; the
                 # authority guard of the API client applies unchanged (#1301).
                 try:
@@ -3221,10 +3228,7 @@ class LogicManager:
                     ).strip()
                     # A changed resolved URL invalidates the calendar fetched from the old one,
                     # even if fetching the new one fails.
-                    previous = hyst.get(node.id)
-                    if previous and previous.get("fetched_url") not in (None, url):
-                        for key in ("raw", "fetched_url", "last_fetch_ts"):
-                            previous.pop(key, None)
+                    _drop_ical_data_of_other_url(hyst.get(node.id), url)
                 except _ApiClientVariableError as exc:
                     logger.warning("Graph %s: iCal variable error on node %s: %s", graph_id[:8], node.id[:8], exc)
                     # Never keep acting on a calendar fetched under a different URL.
@@ -3245,6 +3249,10 @@ class LogicManager:
                 if self._ical_cache_generations.get(graph_id) is not ical_generation:
                     fetch_lock.release()
                     continue
+                # A refresh that was in flight while the URL changed may have stored
+                # the old URL's calendar meanwhile (re-checked under the lock).
+                if variable_url:
+                    _drop_ical_data_of_other_url(hyst_node, url)
                 # Another execution may have refreshed this node while this one
                 # waited.  Re-check the shared attempt metadata under the lock;
                 # a failed attempt also satisfies queued callers.
