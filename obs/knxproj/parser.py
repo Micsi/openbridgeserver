@@ -37,6 +37,8 @@ class GroupAddressRecord:
     dpt: str | None  # "DPT9.001" oder None
     main_group_name: str = ""  # ETS-Name der Hauptgruppe (z.B. "Lichtsteuerung")
     mid_group_name: str = ""  # ETS-Name der Mittelgruppe (z.B. "Erdgeschoss")
+    # ETS-Gruppenbereiche, die die GA enthalten, außen → innen: {"name", "start", "end"} (#1266)
+    group_ranges: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -144,6 +146,37 @@ def _extract_group_names(project: Any) -> tuple[dict[str, str], dict[str, str]]:
             mid_names[mid_str] = mid_name
 
     return main_names, mid_names
+
+
+def _extract_group_ranges(project: Any) -> dict[str, list[dict]]:
+    """Group ranges containing each group address, outermost first (#1266).
+
+    Follows xknxproject's nested ``group_ranges`` as ETS stores them, whatever the
+    style: main → middle (three-level), main only (two-level) or any nesting (free).
+    Keys are the addresses in the project's notation, as in ``group_addresses``;
+    each range is ``{"name", "start", "end"}`` with raw bounds, which identify it.
+    """
+    chains: dict[str, list[dict]] = {}
+
+    def attr(item: Any, key: str) -> Any:
+        return item.get(key) if isinstance(item, dict) else getattr(item, key, None)
+
+    def walk(ranges: dict, parents: list[dict]) -> None:
+        for group_range in ranges.values():
+            chain = [
+                *parents,
+                {
+                    "name": str(attr(group_range, "name") or "").strip(),
+                    "start": attr(group_range, "address_start"),
+                    "end": attr(group_range, "address_end"),
+                },
+            ]
+            for address in attr(group_range, "group_addresses") or []:
+                chains[str(address)] = chain
+            walk(attr(group_range, "group_ranges") or {}, chain)
+
+    walk(attr(project, "group_ranges") or {}, [])
+    return chains
 
 
 def _dpt_from_xknxproject(dpt: dict | None) -> str | None:
@@ -739,6 +772,7 @@ def parse_knxproj_with_style(file_bytes: bytes, password: str | None = None) -> 
             os.unlink(tmp_path)
 
     main_names, mid_names = _extract_group_names(project)
+    range_chains = _extract_group_ranges(project)
     logger.info("group_address_ranges: %d Hauptgruppen, %d Mittelgruppen", len(main_names), len(mid_names))
 
     # KNXProject ist ein TypedDict → dict-Zugriff, nicht Attribut-Zugriff
@@ -796,6 +830,7 @@ def parse_knxproj_with_style(file_bytes: bytes, password: str | None = None) -> 
                 dpt=_dpt_from_xknxproject(dpt_raw),
                 main_group_name=main_names.get(main_key, ""),
                 mid_group_name=mid_names.get(mid_key, ""),
+                group_ranges=range_chains.get(addr_str, []),
             ),
         )
 

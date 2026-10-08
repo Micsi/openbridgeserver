@@ -241,3 +241,53 @@ def test_the_response_field_only_holds_internal_addresses():
 @pytest.mark.asyncio
 async def test_an_empty_result_needs_no_binding_query(db: Database, monkeypatch):
     assert await _search(db, monkeypatch, []) == {}
+
+
+async def _linked(db: Database, links: list[tuple[DataPoint, str, str | None]]) -> None:
+    """One tree, one node per (datapoint, node name, link address); alice may read every node."""
+    await db.execute_and_commit("INSERT INTO hierarchy_trees (id, name, description, created_at, updated_at) VALUES ('t', 'ETS', '', ?, ?)", (NOW, NOW))
+    for index, (dp, node_name, address) in enumerate(links):
+        node_id = f"n-{index}"
+        await db.execute_and_commit(
+            "INSERT INTO hierarchy_nodes (id, tree_id, parent_id, name, description, node_order, created_at, updated_at) VALUES (?, 't', NULL, ?, '', 0, ?, ?)",
+            (node_id, node_name, NOW, NOW),
+        )
+        await db.execute_and_commit(
+            "INSERT INTO hierarchy_datapoint_links (id, node_id, datapoint_id, group_address, created_at) VALUES (?, ?, ?, ?, ?)",
+            (f"l-{index}", node_id, str(dp.id), address, NOW),
+        )
+        await _grant(db, "hierarchy", node_id)
+
+
+async def _link_addresses(db: Database, monkeypatch, datapoints: list[DataPoint], principal: Principal) -> dict:
+    await _search(db, monkeypatch, datapoints, principal)  # warms the stubs
+    page = await search_api.search(
+        q="", tag="", type="", adapter="", quality="", node_id="", tree_id="", sort="name", order="asc", page=0, size=50, _user=principal, db=db
+    )
+    return {item.name: sorted((ref.node_name, ref.group_address) for ref in item.hierarchy_nodes) for item in page.items}
+
+
+@pytest.mark.asyncio
+async def test_link_addresses_pass_the_same_binding_filter(db: Database, monkeypatch):
+    """#1266 P6: a link's address shows only while a binding the caller may see carries it (command or status)."""
+    readable = await _instance(db)
+    hidden = await _instance(db)
+    await _grant(db, "adapter_instance", readable)
+    switch = await _datapoint(db, "Switch")
+    secret = await _datapoint(db, "Secret")
+    stale = await _datapoint(db, "Stale")
+    for dp in (switch, secret, stale):
+        await _grant(db, "datapoint", str(dp.id))
+    await _binding(db, switch, readable, config={"group_address": "1/0/1", "state_group_address": "1/4/1"})
+    await _binding(db, secret, hidden, config={"group_address": "1/0/2"})
+    await _binding(db, stale, readable, config={"group_address": "1/0/5"})
+    await _linked(db, [(switch, "Schalten", "1/0/1"), (switch, "Status", "1/4/1"), (secret, "Schalten", "1/0/2"), (stale, "Schalten", "1/0/9"), (stale, "Hand", None)])
+    datapoints = [switch, secret, stale]
+
+    assert await _link_addresses(db, monkeypatch, datapoints, ALICE) == {
+        "Switch": [("Schalten", "1/0/1"), ("Status", "1/4/1")],
+        "Secret": [("Schalten", None)],
+        "Stale": [("Hand", None), ("Schalten", None)],
+    }
+    admin = await _link_addresses(db, monkeypatch, datapoints, ADMIN)
+    assert (admin["Secret"], admin["Stale"]) == ([("Schalten", "1/0/2")], [("Hand", None), ("Schalten", None)])

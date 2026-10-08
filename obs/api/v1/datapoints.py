@@ -86,6 +86,15 @@ class HierarchyNodeRef(BaseModel):
     # stable identity across renames).
     node_path: list[NodePathSegment] = []
     display_depth: int = 0
+    # Group address the ETS hierarchy import linked through, internal notation; null
+    # for links made by hand or before #1266, and where the caller may not see a
+    # KNX binding of the datapoint with this address (search endpoint, #1266)
+    group_address: str | None = None
+
+    @field_validator("group_address")
+    @classmethod
+    def _internal_group_address(cls, value: str | None) -> str | None:
+        return try_normalize_ga(value)
 
 
 class DataPointDiagnostic(BaseModel):

@@ -2365,6 +2365,7 @@ class TestAddHierarchy:
                 tree_id=tree_id,
                 tree_name="Gebäude",
                 display_depth=2,
+                group_address=None,
             )
         ]
 

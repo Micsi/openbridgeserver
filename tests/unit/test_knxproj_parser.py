@@ -32,6 +32,7 @@ from obs.knxproj.parser import (
     _collect_fi_to_fn,
     _dpt_from_xknxproject,
     _extract_group_names,
+    _extract_group_ranges,
     _parse_trades_from_xml,
     _walk_spaces,
     _walk_trade_el,
@@ -127,6 +128,47 @@ class TestExtractGroupNames:
         main, mid = _extract_group_names({"other_key": 42})
         assert main == {}
         assert mid == {}
+
+
+class TestExtractGroupRanges:
+    """Range chains per address, from xknxproject's nested ranges, any style (#1266)."""
+
+    def test_free_nesting_of_any_depth(self):
+        project = {
+            "group_ranges": {
+                "0...2047": {
+                    "name": " Haus ",
+                    "address_start": 0,
+                    "address_end": 2047,
+                    "group_addresses": [],
+                    "group_ranges": {
+                        "0...255": {
+                            "name": "EG",
+                            "address_start": 0,
+                            "address_end": 255,
+                            "group_addresses": ["7"],
+                            "group_ranges": {
+                                "0...63": {"name": "Licht", "address_start": 0, "address_end": 63, "group_addresses": ["1", "2"], "group_ranges": {}},
+                            },
+                        },
+                    },
+                },
+            }
+        }
+        haus = {"name": "Haus", "start": 0, "end": 2047}
+        eg = {"name": "EG", "start": 0, "end": 255}
+        assert _extract_group_ranges(project) == {
+            "7": [haus, eg],
+            "1": [haus, eg, {"name": "Licht", "start": 0, "end": 63}],
+            "2": [haus, eg, {"name": "Licht", "start": 0, "end": 63}],
+        }
+
+    def test_object_style_project(self):
+        main_range = SimpleNamespace(name=None, address_start=2048, address_end=4095, group_addresses=["1/1"], group_ranges=None)
+        assert _extract_group_ranges(SimpleNamespace(group_ranges={"1": main_range})) == {"1/1": [{"name": "", "start": 2048, "end": 4095}]}
+
+    def test_no_ranges(self):
+        assert _extract_group_ranges({}) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +392,13 @@ class TestParseKnxprojReal:
             assert r.dpt is None or isinstance(r.dpt, str)
             if r.dpt:
                 assert r.dpt.startswith("DPT")
+
+    def test_group_ranges_follow_the_ets_ranges(self):
+        record = next(r for r in parse_knxproj(_DEMO_BYTES) if r.address == "1/1/1")
+        assert record.group_ranges == [
+            {"name": "Demo 01 - Binaersignale", "start": 2048, "end": 4095},
+            {"name": "Schalten", "start": 2304, "end": 2559},
+        ]
 
     def test_group_names_populated(self):
         records = parse_knxproj(_DEMO_BYTES)

@@ -68,7 +68,7 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database, principal: Pri
     dp_ids = [str(item.id) for item in items]
     placeholders = ",".join("?" * len(dp_ids))
     rows = await db.fetchall(
-        f"""SELECT hdl.datapoint_id, hn.id AS node_id, hn.name AS node_name,
+        f"""SELECT hdl.datapoint_id, hdl.group_address, hn.id AS node_id, hn.name AS node_name,
                    ht.id AS tree_id, ht.name AS tree_name, ht.display_depth
             FROM hierarchy_datapoint_links hdl
             JOIN hierarchy_nodes hn ON hn.id = hdl.node_id
@@ -114,6 +114,7 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database, principal: Pri
                 tree_name=r["tree_name"],
                 node_path=node_paths.get(r["node_id"], []),
                 display_depth=r["display_depth"] if r["display_depth"] is not None else 0,
+                group_address=r["group_address"],
             )
         )
     for item in items:
@@ -129,6 +130,10 @@ async def _add_command_group_address(items: list[DataPointOut], db: Database, pr
     address is no group address is skipped; the address is returned in the internal
     notation. Non-admins only get addresses of bindings on adapter instances they may
     read, like ``GET /api/v1/datapoints/{id}/bindings``.
+
+    The address a hierarchy link was made through (``hierarchy_nodes[].group_address``)
+    passes the same filter: it stays only while a binding the caller may see carries
+    it as command or status address, so it never reveals more than the bindings do.
     """
     if not items:
         return
@@ -136,7 +141,8 @@ async def _add_command_group_address(items: list[DataPointOut], db: Database, pr
     placeholders = ",".join("?" * len(dp_ids))
     rows = await db.fetchall(
         f"""SELECT datapoint_id, adapter_instance_id,
-                   JSON_EXTRACT(config, '$.group_address') AS group_address
+                   JSON_EXTRACT(config, '$.group_address') AS group_address,
+                   JSON_EXTRACT(config, '$.state_group_address') AS state_group_address
             FROM adapter_bindings
             WHERE UPPER(adapter_type) = 'KNX' AND datapoint_id IN ({placeholders})
             ORDER BY CASE WHEN direction IN ('DEST', 'BOTH') THEN 0 ELSE 1 END, created_at, id""",
@@ -156,12 +162,17 @@ async def _add_command_group_address(items: list[DataPointOut], db: Database, pr
             ).allowed
         ]
     by_dp: dict[str, str] = {}
+    visible: dict[str, set[str | None]] = {}
     for row in rows:
         address = try_normalize_ga(row["group_address"])
+        visible.setdefault(row["datapoint_id"], set()).update((address, try_normalize_ga(row["state_group_address"])))
         if address and row["datapoint_id"] not in by_dp:
             by_dp[row["datapoint_id"]] = address
     for item in items:
         item.group_address = by_dp.get(str(item.id))
+        for ref in item.hierarchy_nodes:
+            if ref.group_address not in visible.get(str(item.id), set()):
+                ref.group_address = None
 
 
 @router.get("/", response_model=SearchPage)

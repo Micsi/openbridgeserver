@@ -80,6 +80,8 @@ class HierarchyImportResult(BaseModel):
     nodes_created: int = 0
     links_created: int = 0
     trees_replaced: int = 0
+    datapoints_unplaced: int = 0
+    addresses_shared: int = 0
     message: str
 
 
@@ -753,7 +755,7 @@ async def _create_requested_hierarchies(
                     mode=mode,
                     auto_link=auto_link,
                     replace_existing=replace_existing,
-                    group_addresses=group_addresses if mode in ("groups", "mid", "flat") else None,
+                    group_addresses=group_addresses,
                 ),
             )
         except HTTPException as exc:
@@ -788,6 +790,8 @@ async def _create_requested_hierarchies(
                 nodes_created=created.nodes_created,
                 links_created=created.links_created,
                 trees_replaced=created.trees_replaced,
+                datapoints_unplaced=created.datapoints_unplaced,
+                addresses_shared=created.addresses_shared,
                 message=created.message,
             )
         )
@@ -900,16 +904,17 @@ async def import_knxproj_file(
 
     await db.executemany(
         """INSERT INTO knx_group_addresses
-               (address, name, description, dpt, main_group_name, mid_group_name, imported_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+               (address, name, description, dpt, main_group_name, mid_group_name, group_ranges, imported_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(address) DO UPDATE SET
                name            = excluded.name,
                description     = excluded.description,
                dpt             = excluded.dpt,
                main_group_name = excluded.main_group_name,
                mid_group_name  = excluded.mid_group_name,
+               group_ranges    = excluded.group_ranges,
                imported_at     = excluded.imported_at""",
-        [(r.address, r.name, r.description, r.dpt, r.main_group_name, r.mid_group_name, now) for r in records],
+        [(r.address, r.name, r.description, r.dpt, r.main_group_name, r.mid_group_name, json.dumps(r.group_ranges), now) for r in records],
     )
     # Gruppenadressstil des zuletzt importierten Projekts (#1296)
     await db.execute(

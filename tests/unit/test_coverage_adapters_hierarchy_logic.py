@@ -2411,13 +2411,16 @@ class TestEtsImport:
         from obs.api.v1.hierarchy import EtsImportRequest
 
         ga_rows = [
-            _row(address="0/0/1", name="GA1", description="desc", dpt="1.001", main_group_name="Main0", mid_group_name="Mid0"),
-            _row(address="0/1/1", name="GA2", description="", dpt="1.001", main_group_name="Main0", mid_group_name="Mid1"),
+            _row(address="0/0/1", name="GA1", description="desc", dpt="1.001", main_group_name="Main0", mid_group_name="Mid0", group_ranges=None),
+            _row(address="0/1/1", name="GA2", description="", dpt="1.001", main_group_name="Main0", mid_group_name="Mid1", group_ranges=None),
         ]
 
         class _Db:
             def __init__(self):
                 self.committed = []
+
+            async def fetchone(self, q, p=()):
+                return None
 
             async def fetchall(self, q, p=()):
                 if "knx_group_addresses" in q:
@@ -2446,12 +2449,15 @@ class TestEtsImport:
         from obs.api.v1.hierarchy import EtsImportRequest
 
         ga_rows = [
-            _row(address="0/0/1", name="GA1", description="", dpt="1.001", main_group_name="MG0", mid_group_name="MidG0"),
+            _row(address="0/0/1", name="GA1", description="", dpt="1.001", main_group_name="MG0", mid_group_name="MidG0", group_ranges=None),
         ]
 
         class _Db:
             def __init__(self):
                 self.committed = []
+
+            async def fetchone(self, q, p=()):
+                return None
 
             async def fetchall(self, q, p=()):
                 if "knx_group_addresses" in q:
@@ -2480,12 +2486,15 @@ class TestEtsImport:
         from obs.api.v1.hierarchy import EtsImportRequest
 
         ga_rows = [
-            _row(address="0/0/1", name="Light", description="", dpt="1.001", main_group_name="EG", mid_group_name="Wohnzimmer"),
+            _row(address="0/0/1", name="Light", description="", dpt="1.001", main_group_name="EG", mid_group_name="Wohnzimmer", group_ranges=None),
         ]
 
         class _Db:
             def __init__(self):
                 self.committed = []
+
+            async def fetchone(self, q, p=()):
+                return None
 
             async def fetchall(self, q, p=()):
                 if "knx_group_addresses" in q:
@@ -2513,7 +2522,7 @@ class TestEtsImport:
         from obs.api.v1.services.hierarchy_import import EtsImportRequest, create_ets_hierarchy
 
         ga_rows = [
-            _row(address="1/2/3", name="Light", description="desc", dpt="1.001", main_group_name="Main", mid_group_name="Mid"),
+            _row(address="1/2/3", name="Light", description="desc", dpt="1.001", main_group_name="Main", mid_group_name="Mid", group_ranges=None),
         ]
         db = _DbStub(rows=ga_rows)
 
@@ -2531,15 +2540,18 @@ class TestEtsImport:
         from obs.api.v1.services.hierarchy_import import EtsImportRequest, create_ets_hierarchy
 
         ga_rows = [
-            _row(address="1/2/3", name="Current", description="", dpt="1.001", main_group_name="Main", mid_group_name="Mid"),
-            _row(address="1/2/4", name="Current 2", description="", dpt="1.001", main_group_name="Main", mid_group_name="Mid"),
-            _row(address="9/9/9", name="Stale", description="", dpt="1.001", main_group_name="Old", mid_group_name="Old"),
+            _row(address="1/2/3", name="Current", description="", dpt="1.001", main_group_name="Main", mid_group_name="Mid", group_ranges=None),
+            _row(address="1/2/4", name="Current 2", description="", dpt="1.001", main_group_name="Main", mid_group_name="Mid", group_ranges=None),
+            _row(address="9/9/9", name="Stale", description="", dpt="1.001", main_group_name="Old", mid_group_name="Old", group_ranges=None),
         ]
 
         class _Db:
             def __init__(self):
                 self.queries = []
                 self.node_rows = []
+
+            async def fetchone(self, query, params=()):
+                return None
 
             async def fetchall(self, query, params=()):
                 self.queries.append((query, params))
@@ -2561,7 +2573,7 @@ class TestEtsImport:
         db = _Db()
         result = await create_ets_hierarchy(
             db,
-            EtsImportRequest(tree_name="Scoped", mode="groups", group_addresses=["1/2/3", "1/2/4", "9/9/8"]),
+            EtsImportRequest(tree_name="Scoped", mode="groups", group_addresses=["1/2/3", "1/2/4", "9/7/8"]),
         )
 
         ga_queries = [(query, params) for query, params in db.queries if "knx_group_addresses" in query]
@@ -2631,13 +2643,13 @@ class TestEtsImport:
 
         db = _DbStub(
             rows=[
-                _row(address="1", name="Bad", description="", dpt="1.001", main_group_name="Main", mid_group_name="Mid"),
+                _row(address="1", name="Bad", description="", dpt="1.001", main_group_name="Main", mid_group_name="Mid", group_ranges=None),
             ]
         )
 
         result = await create_ets_hierarchy(
             db,
-            EtsImportRequest(tree_name="Mid Invalid", mode="mid"),
+            EtsImportRequest(tree_name="Mid Invalid", mode="mid", auto_link=False),
         )
 
         assert result.nodes_created == 0
@@ -2649,13 +2661,13 @@ class TestEtsImport:
 
         db = _DbStub(
             rows=[
-                _row(address="1/2", name="Bad", description="", dpt="1.001", main_group_name="Main", mid_group_name="Mid"),
+                _row(address="1/2", name="Bad", description="", dpt="1.001", main_group_name="Main", mid_group_name="Mid", group_ranges=None),
             ]
         )
 
         result = await create_ets_hierarchy(
             db,
-            EtsImportRequest(tree_name="Groups Invalid", mode="groups"),
+            EtsImportRequest(tree_name="Groups Invalid", mode="groups", auto_link=False),
         )
 
         assert result.nodes_created == 0
@@ -2788,11 +2800,13 @@ class TestEtsImport:
                         _row(id="room", parent_id="building", name="Room", space_type="Room", sort_order=2),
                     ]
                 if "FROM knx_functions f" in query:
-                    return [_row(space_id="room", ga_address="1/2/3")]
+                    return [_row(id="fn-1", space_id="room", name="Ceiling", usage_text="", ga_address="1/2/3")]
                 if "FROM knx_space_device_links" in query:
                     return [_row(space_id="room", device_id="dev-1")]
-                if "FROM datapoints dp" in query:
-                    return [_row(id="dp-1")]
+                if "FROM adapter_bindings ab" in query:
+                    return [_row(datapoint_id="dp-1", config='{"group_address": "1/2/3"}')]
+                if "FROM knx_group_addresses" in query:
+                    return [_row(address="1/2/3")]
                 return []
 
             async def execute_and_commit(self, query, params=()):
@@ -2815,9 +2829,9 @@ class TestEtsImport:
             EtsImportRequest(tree_name="Buildings", mode="buildings", auto_link=True),
         )
 
-        assert result.nodes_created == 2
+        assert result.nodes_created == 3  # building, room, function
         assert result.links_created == 1
-        assert len(db.node_rows) == 2
+        assert len(db.node_rows) == 3
         assert len(db.link_rows) == 1
         assert len(db.device_link_rows) == 1
         assert db.device_link_rows[0][1] == db.node_rows[1][0]
@@ -2950,8 +2964,10 @@ class TestEtsImport:
                     return [_row(id="fn-1", name="Ceiling", usage_text="Lighting")]
                 if "FROM knx_function_ga_links" in query:
                     return [_row(ga_address="1/2/3")]
-                if "FROM datapoints dp" in query:
-                    return [_row(id="dp-1")]
+                if "FROM adapter_bindings ab" in query:
+                    return [_row(datapoint_id="dp-1", config='{"group_address": "1/2/3"}')]
+                if "FROM knx_group_addresses" in query:
+                    return [_row(address="1/2/3")]
                 return []
 
             async def execute_and_commit(self, query, params=()):
@@ -2988,6 +3004,8 @@ class TestEtsImport:
             async def fetchall(self, query, params=()):
                 if "FROM knx_trades" in query:
                     return [_row(id="trade-1", name="Lighting", parent_id=None, sort_order=1)]
+                if "FROM adapter_bindings ab" in query or "FROM knx_group_addresses" in query:
+                    return []
                 raise AssertionError(f"unexpected fetchall: {query}")
 
             async def execute_and_commit(self, query, params=()):

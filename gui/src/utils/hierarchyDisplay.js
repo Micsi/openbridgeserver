@@ -56,7 +56,9 @@ export function parseHierarchyCompositeId(compositeId) {
 // `group_address` (command group address of its KNX binding, internal
 // notation, or null) and `hierarchy_nodes`, each { node_id, node_name,
 // tree_id, tree_name, node_path: [{ node_id, node_name }] (root → parent),
-// display_depth }.
+// display_depth, group_address } — the last one is the address the ETS
+// import linked through (internal notation, null for links made by hand or
+// before #1266 P6).
 // ---------------------------------------------------------------------------
 
 /** Name comparison for collapsing a leaf: trimmed, inner whitespace
@@ -85,17 +87,17 @@ export function datapointRefPath(ref, datapointName) {
  * datapointRefPath(), in the order the API delivers them, and the main path.
  *
  * With one path that is the main path. With several (a switch and a status
- * address in two middle groups of one tree) the main path is undecided
- * (`primary: null`): it should be the path of the command group address, but
- * a link does not record which address created it (hierarchy_import.py keeps
- * the address → node mapping only while importing). Recording it is #1266 P6;
- * until then the caller shows all paths.
+ * address in two middle groups of one tree) it is the path of the one link
+ * made through the datapoint's command group address. Without such a link
+ * (links made by hand or before #1266 P6, or several through that address)
+ * the main path is undecided (`primary: null`) and the caller shows all paths.
  */
 export function datapointTreePaths(datapoint, treeId) {
-  const paths = (datapoint.hierarchy_nodes ?? [])
-    .filter(ref => ref.tree_id === treeId)
-    .map(ref => datapointRefPath(ref, datapoint.name))
-  return { primary: paths.length === 1 ? paths[0] : null, paths }
+  const refs = (datapoint.hierarchy_nodes ?? []).filter(ref => ref.tree_id === treeId)
+  const paths = refs.map(ref => datapointRefPath(ref, datapoint.name))
+  if (paths.length === 1) return { primary: paths[0], paths }
+  const command = datapoint.group_address ? refs.flatMap((ref, i) => (ref.group_address === datapoint.group_address ? [paths[i]] : [])) : []
+  return { primary: command.length === 1 ? command[0] : null, paths }
 }
 
 /**

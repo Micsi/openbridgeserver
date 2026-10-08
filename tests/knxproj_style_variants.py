@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -190,3 +191,147 @@ def knxproj_with_extra_group_addresses(extra: dict[int, str]) -> bytes:
                 data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             zout.writestr(info, data)
     return out.getvalue()
+
+
+@dataclass
+class GroupRangeSpec:
+    """One ETS group range of :func:`knxproj_with_layout`: name, raw bounds, addresses and nested ranges."""
+
+    name: str
+    start: int
+    end: int
+    addresses: dict[int, str] = field(default_factory=dict)  # raw address → ETS name
+    ranges: list[GroupRangeSpec] = field(default_factory=list)
+
+
+@dataclass
+class RoomSpec:
+    """One room of :func:`knxproj_with_layout` with its ETS functions (name → raw addresses)."""
+
+    name: str
+    functions: dict[str, list[int]] = field(default_factory=dict)
+
+
+def raw_address(main: int, middle: int, sub: int) -> int:
+    """Raw 16-bit value of the three-level address ``main/middle/sub``."""
+    return (main << 11) | (middle << 8) | sub
+
+
+def knxproj_with_layout(style: str, ranges: list[GroupRangeSpec], rooms: list[RoomSpec] | None = None, floor: str = "EG") -> bytes:
+    """Return the demo project in ``style`` with its group ranges replaced by ``ranges`` (#1266).
+
+    The demo's group addresses are dropped, so only the given ones are imported. With
+    ``rooms`` the demo building gets a floor ``floor`` holding these rooms, each with
+    its ETS functions referencing raw addresses of ``ranges``. ETS ties the range
+    layout to the style (three-level: main → middle, two-level: main only, free:
+    any nesting); this helper writes what it is given.
+    """
+    if style not in STYLES:
+        raise ValueError(style)
+    ElementTree.register_namespace("", _NS)
+    ElementTree.register_namespace("xsi", "http://www.w3.org/2001/XMLSchema-instance")
+    ElementTree.register_namespace("xsd", "http://www.w3.org/2001/XMLSchema")
+    counter = iter(range(10_000, 100_000))
+    ga_ids: dict[int, str] = {}
+
+    def add_range(parent: ElementTree.Element, spec: GroupRangeSpec) -> None:
+        number = next(counter)
+        element = ElementTree.SubElement(
+            parent,
+            _q("GroupRange"),
+            Id=f"{_PROJECT}-0_GR-{number}",
+            RangeStart=str(spec.start),
+            RangeEnd=str(spec.end),
+            Name=spec.name,
+            Puid=str(number),
+        )
+        for raw, name in spec.addresses.items():
+            number = next(counter)
+            ga_ids[raw] = f"{_PROJECT}-0_GA-{number}"
+            ElementTree.SubElement(
+                element, _q("GroupAddress"), Id=ga_ids[raw], Address=str(raw), Name=name, DatapointType="DPST-1-1", Puid=str(number)
+            )
+        for child in spec.ranges:
+            add_range(element, child)
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(DEMO_KNXPROJ) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            if info.filename == f"{_PROJECT}/project.xml":
+                data = data.replace(b'GroupAddressStyle="ThreeLevel"', f'GroupAddressStyle="{style}"'.encode())
+            elif info.filename == f"{_PROJECT}/0.xml":
+                root = ElementTree.fromstring(data)
+                group_ranges = root.find(f".//{_q('GroupAddresses')}/{_q('GroupRanges')}")
+                for child in list(group_ranges):
+                    group_ranges.remove(child)
+                for spec in ranges:
+                    add_range(group_ranges, spec)
+                if rooms:
+                    building = root.find(f".//{_q('Locations')}/{_q('Space')}")
+                    number = next(counter)
+                    floor_el = ElementTree.SubElement(
+                        building, _q("Space"), Type="Floor", Id=f"{_PROJECT}-0_BP-{number}", Name=floor, Puid=str(number)
+                    )
+                    for room in rooms:
+                        number = next(counter)
+                        room_el = ElementTree.SubElement(
+                            floor_el, _q("Space"), Type="Room", Id=f"{_PROJECT}-0_BP-{number}", Name=room.name, Puid=str(number)
+                        )
+                        for function_name, addresses in room.functions.items():
+                            number = next(counter)
+                            function_id = f"{_PROJECT}-0_F-{number}"
+                            function = ElementTree.SubElement(
+                                room_el, _q("Function"), Id=function_id, Name=function_name, Type="SwitchableLight", Puid=str(number)
+                            )
+                            for index, raw in enumerate(addresses, start=1):
+                                number = next(counter)
+                                ElementTree.SubElement(
+                                    function,
+                                    _q("GroupAddressRef"),
+                                    Id=f"{function_id}_GR-{index}",
+                                    RefId=ga_ids[raw],
+                                    Name=f"Ref {index}",
+                                    Role="SwitchOnOff",
+                                    Puid=str(number),
+                                )
+                data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            zout.writestr(info, data)
+    return out.getvalue()
+
+
+LIGHTING_NAMES = ("01 Esszimmer - Spots", "02 Kueche - Decke")
+
+
+def lighting_layout(main: int) -> list[GroupRangeSpec]:
+    """Three-level ``Beleuchtung › Schalten|Status|Dimmen`` in main group ``main`` (#1266).
+
+    Names repeat over the middle groups, and ``01 Esszimmer - Spots`` is twice in ``Schalten``.
+    """
+    spots, ceiling = LIGHTING_NAMES
+    return [
+        GroupRangeSpec(
+            "Beleuchtung",
+            raw_address(main, 0, 0),
+            raw_address(main, 7, 255),
+            ranges=[
+                GroupRangeSpec(
+                    "Schalten",
+                    raw_address(main, 1, 0),
+                    raw_address(main, 1, 255),
+                    {raw_address(main, 1, 1): spots, raw_address(main, 1, 2): ceiling, raw_address(main, 1, 3): spots},
+                ),
+                GroupRangeSpec(
+                    "Status", raw_address(main, 2, 0), raw_address(main, 2, 255), {raw_address(main, 2, 1): spots, raw_address(main, 2, 2): ceiling}
+                ),
+                GroupRangeSpec("Dimmen", raw_address(main, 3, 0), raw_address(main, 3, 255), {raw_address(main, 3, 1): spots}),
+            ],
+        )
+    ]
+
+
+def two_level_lighting_layout(main: int) -> list[GroupRangeSpec]:
+    """Two-level ``Beleuchtung`` in main group ``main``, no middle groups (#1266)."""
+    start = raw_address(main, 0, 0)
+    spots, ceiling = LIGHTING_NAMES
+    return [GroupRangeSpec("Beleuchtung", start, start + 2047, {start + 1: spots, start + 300: ceiling})]

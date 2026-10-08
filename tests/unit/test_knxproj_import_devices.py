@@ -19,6 +19,7 @@ def _ga(address: str, name: str = "GA") -> SimpleNamespace:
         dpt="DPT1.001",
         main_group_name="Main",
         mid_group_name="Mid",
+        group_ranges=[],
     )
 
 

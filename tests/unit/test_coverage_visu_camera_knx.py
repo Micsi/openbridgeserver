@@ -950,6 +950,8 @@ class TestKnxprojModels:
                     nodes_created=3,
                     links_created=1,
                     trees_replaced=1,
+                    datapoints_unplaced=0,
+                    addresses_shared=0,
                     message="created",
                 )
             ],
@@ -1155,7 +1157,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
         with (
             patch("obs.api.v1.knxproj.parse_knxproj_with_style", return_value=([record], "ThreeLevel")),
@@ -1170,7 +1174,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
         with (
             patch("obs.api.v1.knxproj.parse_knxproj_with_style", return_value=([record], "ThreeLevel")),
@@ -1187,7 +1193,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         location = SimpleNamespace(identifier="loc-1", parent_id=None, name="Kitchen", space_type="Room", sort_order=1)
         db = _make_db()
         db.execute_and_commit = AsyncMock(side_effect=[RuntimeError("location write failed")])
@@ -1207,7 +1215,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
 
         with (
@@ -1225,7 +1235,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         trade = SimpleNamespace(identifier="trade-1", name="Lighting", parent_id=None, sort_order=1, function_ids=["fn-1"])
         db = _make_db()
 
@@ -1247,7 +1259,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         location = SimpleNamespace(identifier="loc-1", parent_id=None, name="Kitchen", space_type="Room", sort_order=1)
         function = SimpleNamespace(identifier="fn-1", space_id="loc-1", name="Light", usage_text="Lighting", ga_addresses=["1/1/1"])
         trade = SimpleNamespace(identifier="trade-1", name="Lighting", parent_id=None, sort_order=1, function_ids=[])
@@ -1262,6 +1276,8 @@ class TestImportKnxprojFile:
                 nodes_created=2,
                 links_created=0,
                 trees_replaced=0,
+                datapoints_unplaced=0,
+                addresses_shared=0,
                 message="created",
             )
 
@@ -1296,7 +1312,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
         captured_requests = []
 
@@ -1308,6 +1326,8 @@ class TestImportKnxprojFile:
                 nodes_created=3,
                 links_created=0,
                 trees_replaced=1,
+                datapoints_unplaced=0,
+                addresses_shared=0,
                 message="created",
             )
 
@@ -1341,7 +1361,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         location = SimpleNamespace(identifier="loc-1", parent_id=None, name="Room", space_type="Room", sort_order=1)
         db = _make_db()
         captured_requests = []
@@ -1354,6 +1376,8 @@ class TestImportKnxprojFile:
                 nodes_created=2,
                 links_created=1,
                 trees_replaced=0,
+                datapoints_unplaced=0,
+                addresses_shared=0,
                 message="created",
             )
 
@@ -1384,7 +1408,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         location = SimpleNamespace(identifier="loc-1", parent_id=None, name="Room", space_type="Room", sort_order=1)
         db = _make_db()
 
@@ -1395,6 +1421,8 @@ class TestImportKnxprojFile:
                 nodes_created=1,
                 links_created=0,
                 trees_replaced=0,
+                datapoints_unplaced=0,
+                addresses_shared=0,
                 message="created",
             )
 
@@ -1424,7 +1452,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
 
         with (
@@ -1454,7 +1484,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
         captured_requests = []
 
@@ -1466,6 +1498,8 @@ class TestImportKnxprojFile:
                 nodes_created=3,
                 links_created=0,
                 trees_replaced=0,
+                datapoints_unplaced=0,
+                addresses_shared=0,
                 message="created",
             )
 
@@ -1495,7 +1529,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
         create_hierarchy = AsyncMock()
 
@@ -1528,7 +1564,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
         create_hierarchy = AsyncMock()
 
@@ -1582,7 +1620,9 @@ class TestImportKnxprojFile:
         upload = AsyncMock()
         upload.filename = "project.knxproj"
         upload.read = AsyncMock(return_value=b"data")
-        record = SimpleNamespace(address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1")
+        record = SimpleNamespace(
+            address="1/1/1", name="Light", description="", dpt="1.001", main_group_name="G1", mid_group_name="M1", group_ranges=[]
+        )
         db = _make_db()
 
         with (

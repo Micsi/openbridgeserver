@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import uuid as uuid_mod
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
+from obs.adapters.knx.group_address import DEFAULT_GROUP_ADDRESS_STYLE, format_ga, normalize_ga, try_normalize_ga
 from obs.api.v1.services.hierarchy_lifecycle import collect_hierarchy_tree_node_ids, delete_hierarchy_grants
 from obs.db.database import Database
 
 _GA_SCOPE_CHUNK_SIZE = 500
+_COMMAND, _STATUS = 0, 1  # how a binding reaches an address; the command address wins
 
 
 class EtsImportRequest(BaseModel):
@@ -21,6 +25,11 @@ class EtsImportRequest(BaseModel):
     replace_existing: bool = False  # replace existing auto-created ETS trees for this mode
     group_addresses: list[str] | None = None  # optional scope for current .knxproj import
 
+    @field_validator("group_addresses")
+    @classmethod
+    def _internal_group_addresses(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else [normalize_ga(address) for address in value]
+
 
 class ImportResult(BaseModel):
     tree_id: str
@@ -28,7 +37,33 @@ class ImportResult(BaseModel):
     nodes_created: int
     links_created: int = 0
     trees_replaced: int = 0
+    # KNX datapoints with an address in scope that got no place in the tree (#1266)
+    datapoints_unplaced: int = 0
+    # Addresses in scope whose datapoints were all linked although there are several (#1266)
+    addresses_shared: int = 0
     message: str
+
+
+@dataclass
+class _Links:
+    """Datapoint links of one tree, each with the address it was made through (#1266).
+
+    A datapoint reaching one node through several addresses is linked once, through
+    its command address (``group_address``) before a status address, then the
+    lowest address.
+    """
+
+    best: dict[tuple[str, str], tuple[int, str]] = field(default_factory=dict)
+    addresses: set[str] = field(default_factory=set)
+
+    def add(self, node_id: str, datapoint_id: str, kind: int, address: str) -> None:
+        self.addresses.add(address)
+        key = (node_id, datapoint_id)
+        if key not in self.best or (kind, address) < self.best[key]:
+            self.best[key] = (kind, address)
+
+    def datapoints(self) -> set[str]:
+        return {datapoint_id for _, datapoint_id in self.best}
 
 
 def _now() -> str:
@@ -73,6 +108,70 @@ async def replace_existing_ets_trees(db: Database, mode: str) -> int:
     return await _replace_existing_ets_trees(db, mode)
 
 
+async def _knx_datapoints_by_address(db: Database) -> dict[str, dict[str, int]]:
+    """Address (internal) → {datapoint id: how its KNX binding reaches it}.
+
+    Both the command (``group_address``) and the status address
+    (``state_group_address``) of a binding count; stored texts are normalized, a
+    text that is no group address is skipped.
+    """
+    rows = await db.fetchall(
+        """SELECT ab.datapoint_id, ab.config
+           FROM adapter_bindings ab
+           JOIN datapoints dp ON dp.id = ab.datapoint_id
+           WHERE UPPER(ab.adapter_type) = 'KNX'"""
+    )
+    by_address: dict[str, dict[str, int]] = {}
+    for row in rows:
+        config = json.loads(row["config"])  # NOT NULL and valid JSON, enforced by the schema
+        if not isinstance(config, dict):
+            continue
+        for kind, key in ((_COMMAND, "group_address"), (_STATUS, "state_group_address")):
+            address = try_normalize_ga(config.get(key))
+            if address is None:
+                continue
+            reached = by_address.setdefault(address, {})
+            reached[row["datapoint_id"]] = min(kind, reached.get(row["datapoint_id"], kind))
+    return by_address
+
+
+async def _group_address_rows(db: Database, scope: list[str] | None) -> list:
+    columns = "address, name, description, main_group_name, mid_group_name, group_ranges"
+    if scope is None:
+        return await db.fetchall(f"SELECT {columns} FROM knx_group_addresses ORDER BY address")
+    rows = []
+    for chunk in _chunks(list(dict.fromkeys(scope)), _GA_SCOPE_CHUNK_SIZE):
+        placeholders = ",".join("?" * len(chunk))
+        rows.extend(await db.fetchall(f"SELECT {columns} FROM knx_group_addresses WHERE address IN ({placeholders})", chunk))
+    return sorted(rows, key=lambda row: row["address"])
+
+
+def _range_chain(row, style: str) -> list[tuple[tuple, str, int]]:
+    """(identity, label, order) of the group ranges containing ``row``'s address, outermost first.
+
+    From the ETS ranges recorded by the ``.knxproj`` import (#1266), so two-level
+    and free projects keep their own layout. Rows imported before #1266 have none
+    recorded (NULL): they fall back to the stored main/middle group names, as
+    before, until the next import.
+    """
+    if row["group_ranges"] is None:
+        main, mid, _ = str(row["address"]).split("/")
+        return [
+            (("main", main), str(row["main_group_name"] or "").strip() or f"Hauptgruppe {main}", int(main)),
+            (("mid", main, mid), str(row["mid_group_name"] or "").strip() or f"Mittelgruppe {mid}", int(mid)),
+        ]
+    chain = []
+    identity: tuple = ()
+    for group_range in json.loads(row["group_ranges"]):
+        start, end = int(group_range["start"]), int(group_range["end"])
+        identity = (*identity, (start, end))
+        label = str(group_range.get("name") or "").strip()
+        if not label:
+            label = f"{format_ga(normalize_ga(str(start)), style)} – {format_ga(normalize_ga(str(end)), style)}"
+        chain.append((identity, label, start))
+    return chain
+
+
 async def create_ets_hierarchy(db: Database, request: EtsImportRequest) -> ImportResult:
     """Create a hierarchy tree from already imported ETS data."""
     if request.mode not in ("groups", "mid", "flat", "buildings", "trades"):
@@ -84,138 +183,57 @@ async def create_ets_hierarchy(db: Database, request: EtsImportRequest) -> Impor
     now = _now()
     tree_id = _new_id()
     nodes_created = 0
-    links_created = 0
 
-    # Batch all inserts; commit once at the end for performance.
+    # Batch all node inserts; commit once at the end for performance.
     inserts: list[tuple] = []
-    group_link_sentinels: set[tuple[str, str]] = set()
+    links = _Links()
     device_link_sentinels: set[tuple[str, str]] = set()
+    # Addresses whose datapoints belong into this tree, for counting what got no place.
+    scope_addresses: set[str] = set()
 
     def _q_insert(nid: str, parent_id: str | None, name: str, desc: str, order: int) -> None:
         inserts.append((nid, tree_id, parent_id, name, desc, order, None, now, now))
 
+    datapoints_by_address = await _knx_datapoints_by_address(db) if request.auto_link else {}
+
     if request.mode in ("groups", "mid", "flat"):
-        address_nodes: dict[str, str] = {}
-        if request.group_addresses is not None:
-            scoped_addresses = list(dict.fromkeys(request.group_addresses))
-            rows = []
-            for chunk in _chunks(scoped_addresses, _GA_SCOPE_CHUNK_SIZE):
-                placeholders = ",".join("?" * len(chunk))
-                rows.extend(
-                    await db.fetchall(
-                        f"""SELECT address, name, description, dpt, main_group_name, mid_group_name
-                            FROM knx_group_addresses
-                            WHERE address IN ({placeholders})
-                            ORDER BY address""",
-                        chunk,
-                    )
-                )
-        else:
-            rows = await db.fetchall(
-                "SELECT address, name, description, dpt, main_group_name, mid_group_name FROM knx_group_addresses ORDER BY address"
-            )
+        rows = await _group_address_rows(db, request.group_addresses)
         if not rows:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "Keine ETS-Gruppenadressen importiert. Bitte zuerst eine .knxproj importieren.",
             )
+        style_row = await db.fetchone("SELECT group_address_style FROM knx_project WHERE id = 1")
+        style = style_row["group_address_style"] if style_row else DEFAULT_GROUP_ADDRESS_STYLE
 
-        if request.mode == "mid":
-            main_nodes: dict[str, str] = {}
-            mid_nodes: dict[str, str] = {}
-            for row in rows:
-                parts = str(row["address"]).split("/")
-                if len(parts) < 2:
-                    continue
-                main_key, mid_key = parts[0], parts[1]
-                mid_composite = f"{main_key}/{mid_key}"
-                if main_key not in main_nodes:
-                    nid = _new_id()
-                    main_label = str(row["main_group_name"] or "").strip() or f"Hauptgruppe {main_key}"
-                    _q_insert(nid, None, main_label, "", int(main_key))
-                    main_nodes[main_key] = nid
+        # The tree follows the ETS group ranges (#1266): "groups" hangs a node per
+        # address under its innermost range, "mid" links the datapoint to that range
+        # itself, "flat" keeps only the outermost range. An address outside every
+        # range gets its own node at the top.
+        range_nodes: dict[tuple, str] = {}
+        for row in rows:
+            address = str(row["address"])
+            if try_normalize_ga(address) != address:
+                continue  # a legacy text that is no group address (V56 leaves those alone)
+            scope_addresses.add(address)
+            chain = _range_chain(row, style)
+            if request.mode == "flat":
+                chain = chain[:1]
+            parent = None
+            for identity, label, order in chain:
+                if identity not in range_nodes:
+                    range_nodes[identity] = _new_id()
+                    _q_insert(range_nodes[identity], parent, label, "", order)
                     nodes_created += 1
-                if mid_composite not in mid_nodes:
-                    nid = _new_id()
-                    mid_label = str(row["mid_group_name"] or "").strip() or f"Mittelgruppe {mid_key}"
-                    _q_insert(nid, main_nodes[main_key], mid_label, "", int(mid_key))
-                    mid_nodes[mid_composite] = nid
-                    nodes_created += 1
-                address_nodes[str(row["address"])] = mid_nodes[mid_composite]
-
-        elif request.mode == "groups":
-            main_nodes = {}
-            mid_nodes = {}
-            for row in rows:
-                parts = str(row["address"]).split("/")
-                if len(parts) != 3:
-                    continue
-                main_key, mid_key, _ = parts
-                mid_composite = f"{main_key}/{mid_key}"
-                if main_key not in main_nodes:
-                    nid = _new_id()
-                    main_label = str(row["main_group_name"] or "").strip() or f"Hauptgruppe {main_key}"
-                    _q_insert(nid, None, main_label, "", int(main_key))
-                    main_nodes[main_key] = nid
-                    nodes_created += 1
-                if mid_composite not in mid_nodes:
-                    nid = _new_id()
-                    mid_label = str(row["mid_group_name"] or "").strip() or f"Mittelgruppe {mid_key}"
-                    _q_insert(nid, main_nodes[main_key], mid_label, "", int(mid_key))
-                    mid_nodes[mid_composite] = nid
-                    nodes_created += 1
-                ga_name = str(row["name"]).strip() or row["address"]
-                nid = _new_id()
-                _q_insert(nid, mid_nodes[mid_composite], ga_name, str(row["description"] or ""), 0)
-                address_nodes[str(row["address"])] = nid
+                parent = range_nodes[identity]
+            if request.mode == "mid" and parent is not None:
+                target = parent
+            else:
+                target = _new_id()
+                _q_insert(target, parent, str(row["name"]).strip() or address, str(row["description"] or ""), 0)
                 nodes_created += 1
-
-        else:  # "flat"
-            main_nodes = {}
-            for row in rows:
-                parts = str(row["address"]).split("/")
-                main_key = parts[0]
-                if main_key not in main_nodes:
-                    nid = _new_id()
-                    main_label = str(row["main_group_name"] or "").strip() or f"Hauptgruppe {main_key}"
-                    _q_insert(nid, None, main_label, "", int(main_key))
-                    main_nodes[main_key] = nid
-                    nodes_created += 1
-                ga_name = str(row["name"]).strip() or row["address"]
-                nid = _new_id()
-                _q_insert(nid, main_nodes[main_key], ga_name, str(row["description"] or ""), 0)
-                address_nodes[str(row["address"])] = nid
-                nodes_created += 1
-
-        if request.auto_link:
-            datapoints_by_address: dict[str, set[str]] = {}
-            for chunk in _chunks(list(address_nodes), _GA_SCOPE_CHUNK_SIZE):
-                placeholders = ",".join("?" * len(chunk))
-                binding_rows = await db.fetchall(
-                    f"""SELECT TRIM(JSON_EXTRACT(ab.config, '$.group_address')) AS group_address,
-                               TRIM(JSON_EXTRACT(ab.config, '$.state_group_address')) AS state_group_address,
-                               ab.datapoint_id
-                        FROM adapter_bindings ab
-                        JOIN datapoints dp ON dp.id = ab.datapoint_id
-                        WHERE UPPER(ab.adapter_type) = 'KNX'
-                          AND (TRIM(JSON_EXTRACT(ab.config, '$.group_address')) IN ({placeholders})
-                               OR TRIM(JSON_EXTRACT(ab.config, '$.state_group_address')) IN ({placeholders}))
-                        GROUP BY group_address, state_group_address, ab.datapoint_id""",
-                    [*chunk, *chunk],
-                )
-                for binding in binding_rows:
-                    for field in ("group_address", "state_group_address"):
-                        value = binding[field]
-                        if value is None:
-                            continue
-                        address = str(value)
-                        if address in address_nodes:
-                            datapoints_by_address.setdefault(address, set()).add(binding["datapoint_id"])
-
-            for address, datapoint_ids in datapoints_by_address.items():
-                if len(datapoint_ids) != 1:
-                    continue
-                group_link_sentinels.add((address_nodes[address], next(iter(datapoint_ids))))
+            for datapoint_id, kind in datapoints_by_address.get(address, {}).items():
+                links.add(target, datapoint_id, kind, address)
 
     elif request.mode == "buildings":
         loc_rows = await db.fetchall("SELECT id, parent_id, name, space_type, sort_order FROM knx_locations ORDER BY sort_order")
@@ -234,31 +252,26 @@ async def create_ets_hierarchy(db: Database, request: EtsImportRequest) -> Impor
             nodes_created += 1
 
         if request.auto_link:
+            # Room › ETS function › datapoint (#1266): projects that name their
+            # addresses generically ("Schalten") tell them apart through the function.
+            scope_addresses = await _scope_addresses(db, request.group_addresses)
             fn_rows = await db.fetchall(
-                """SELECT f.space_id, l.ga_address
+                """SELECT f.id, f.space_id, f.name, f.usage_text, l.ga_address
                    FROM knx_functions f
-                   JOIN knx_function_ga_links l ON l.function_id = f.id"""
+                   JOIN knx_function_ga_links l ON l.function_id = f.id
+                   ORDER BY f.name, f.id"""
             )
-            space_gas: dict[str, set[str]] = {}
+            function_nodes: dict[str, str] = {}
             for fr in fn_rows:
-                space_gas.setdefault(fr["space_id"], set()).add(fr["ga_address"])
-
-            for space_id, gas in space_gas.items():
-                node_id = loc_to_node.get(space_id)
-                if not node_id or not gas:
+                space_node = loc_to_node.get(fr["space_id"])
+                if not space_node or fr["ga_address"] not in scope_addresses:
                     continue
-                placeholders = ",".join("?" * len(gas))
-                dp_rows = await db.fetchall(
-                    f"""SELECT DISTINCT dp.id
-                        FROM datapoints dp
-                        JOIN adapter_bindings ab ON ab.datapoint_id = dp.id
-                        WHERE UPPER(ab.adapter_type) = 'KNX'
-                          AND JSON_EXTRACT(ab.config, '$.group_address') IN ({placeholders})""",
-                    list(gas),
-                )
-                for dp in dp_rows:
-                    links_created += 1
-                    inserts.append(("__link__", node_id, dp["id"]))
+                if fr["id"] not in function_nodes:
+                    function_nodes[fr["id"]] = _new_id()
+                    _q_insert(function_nodes[fr["id"]], space_node, fr["name"] or fr["id"], fr["usage_text"] or "", len(function_nodes))
+                    nodes_created += 1
+                for datapoint_id, kind in datapoints_by_address.get(fr["ga_address"], {}).items():
+                    links.add(function_nodes[fr["id"]], datapoint_id, kind, fr["ga_address"])
 
         device_rows = await db.fetchall("SELECT space_id, device_id FROM knx_space_device_links")
         for row in device_rows:
@@ -293,6 +306,8 @@ async def create_ets_hierarchy(db: Database, request: EtsImportRequest) -> Impor
 
         fn_count_row = await db.fetchone("SELECT COUNT(*) AS cnt FROM knx_functions WHERE trade_id IS NOT NULL")
         has_fn_links = fn_count_row and (fn_count_row["cnt"] or 0) > 0
+        if request.auto_link:
+            scope_addresses = await _scope_addresses(db, request.group_addresses)
 
         trade_id_to_nid: dict[str, str] = {}
         for trade in trade_rows:
@@ -324,27 +339,16 @@ async def create_ets_hierarchy(db: Database, request: EtsImportRequest) -> Impor
                     "SELECT ga_address FROM knx_function_ga_links WHERE function_id = ?",
                     (fn["id"],),
                 )
-                gas = [r["ga_address"] for r in ga_rows if r["ga_address"]]
-                if not gas:
-                    continue
+                for ga_row in ga_rows:
+                    if ga_row["ga_address"] not in scope_addresses:
+                        continue
+                    for datapoint_id, kind in datapoints_by_address.get(ga_row["ga_address"], {}).items():
+                        links.add(fn_nid, datapoint_id, kind, ga_row["ga_address"])
 
-                placeholders = ",".join("?" * len(gas))
-                dp_rows = await db.fetchall(
-                    f"""SELECT DISTINCT dp.id
-                        FROM datapoints dp
-                        JOIN adapter_bindings ab ON ab.datapoint_id = dp.id
-                        WHERE UPPER(ab.adapter_type) = 'KNX'
-                          AND JSON_EXTRACT(ab.config, '$.group_address') IN ({placeholders})""",
-                    gas,
-                )
-                for dp in dp_rows:
-                    links_created += 1
-                    inserts.append(("__link__", fn_nid, dp["id"]))
-
-    node_inserts = [t for t in inserts if t[0] != "__link__"]
-    link_sentinels = [t for t in inserts if t[0] == "__link__"]
-    link_sentinels.extend(("__link__", node_id, datapoint_id) for node_id, datapoint_id in group_link_sentinels)
-    links_created += len(group_link_sentinels)
+    links_created = len(links.best)
+    in_scope = {datapoint_id for address in scope_addresses for datapoint_id in datapoints_by_address.get(address, {})}
+    datapoints_unplaced = len(in_scope - links.datapoints())
+    addresses_shared = sum(1 for address in links.addresses if len(datapoints_by_address[address]) > 1)
 
     trees_replaced = 0
     if request.replace_existing:
@@ -364,19 +368,18 @@ async def create_ets_hierarchy(db: Database, request: EtsImportRequest) -> Impor
         (_new_id(), tree_id, request.tree_name, now, now),
     )
 
-    if node_inserts:
+    if inserts:
         await db.executemany(
             """INSERT INTO hierarchy_nodes
                (id, tree_id, parent_id, name, description, node_order, icon, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?)""",
-            node_inserts,
+            inserts,
         )
 
-    if link_sentinels:
-        link_rows = [(_new_id(), node_id, dp_id, now) for (_, node_id, dp_id) in link_sentinels]
+    if links.best:
         await db.executemany(
-            "INSERT OR IGNORE INTO hierarchy_datapoint_links (id, node_id, datapoint_id, created_at) VALUES (?,?,?,?)",
-            link_rows,
+            "INSERT OR IGNORE INTO hierarchy_datapoint_links (id, node_id, datapoint_id, group_address, created_at) VALUES (?,?,?,?,?)",
+            [(_new_id(), node_id, datapoint_id, address, now) for (node_id, datapoint_id), (_, address) in links.best.items()],
         )
 
     if device_link_sentinels:
@@ -393,7 +396,18 @@ async def create_ets_hierarchy(db: Database, request: EtsImportRequest) -> Impor
         nodes_created=nodes_created,
         links_created=links_created,
         trees_replaced=trees_replaced,
+        datapoints_unplaced=datapoints_unplaced,
+        addresses_shared=addresses_shared,
         message=f"Hierarchiebaum '{request.tree_name}' mit {nodes_created} Knoten erstellt"
         + (f" ({trees_replaced} bestehende ETS-Hierarchien ersetzt)" if trees_replaced else "")
-        + (f", {links_created} DataPoints automatisch verknüpft" if links_created else ""),
+        + (f", {links_created} DataPoints automatisch verknüpft" if links_created else "")
+        + (f", {addresses_shared} Gruppenadressen mit mehreren Datenpunkten (alle verknüpft)" if addresses_shared else "")
+        + (f", {datapoints_unplaced} Datenpunkte ohne Platz in diesem Baum" if datapoints_unplaced else ""),
     )
+
+
+async def _scope_addresses(db: Database, scope: list[str] | None) -> set[str]:
+    """Addresses whose datapoints belong into a building or trade tree: the import's, else all known."""
+    if scope is not None:
+        return set(scope)
+    return {row["address"] for row in await db.fetchall("SELECT address FROM knx_group_addresses")}

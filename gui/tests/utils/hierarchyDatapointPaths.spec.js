@@ -4,9 +4,11 @@
 // (obs/api/v1/search.py): `group_address`, the command group address of the
 // KNX binding (internal notation or null), and `hierarchy_nodes`, a list of
 // { node_id, node_name, tree_id, tree_name, node_path: [{ node_id, node_name }],
-// display_depth }, where node_path runs root → parent and excludes the linked
-// node itself and the tree name. The real response for one case is checked in
-// hierarchyDatapointPathsApi.spec.js. Trees named "after P6"/"after P7" do not
+// display_depth, group_address }, where node_path runs root → parent and
+// excludes the linked node itself and the tree name, and group_address is the
+// address the link was made through (null when unknown). Real responses are
+// checked in hierarchyDatapointPathsApi.spec.js and
+// hierarchyDatapointPathsLayouts.spec.js. Trees named "after P6"/"after P7" do not
 // exist yet; they have the same shape. The ETS trees are built the way
 // obs/api/v1/services/hierarchy_import.py builds them today: "groups" puts one
 // node per group address (named like the address) under main › middle group
@@ -64,16 +66,29 @@ describe('datapointTreePaths — main path of a datapoint in one tree', () => {
   const status = gaTree(['Beleuchtung', 'Status', name])
   const room = nodeRef('t-b', 'ETS Gebäude und Räume', ['Haus', 'EG', 'Esszimmer'])
 
-  it('K5: switch and status path in one tree leave the main path undecided, every path listed', () => {
-    // A link does not record which group address created it, so neither the
-    // command address nor any order of the paths can decide (#1266 P6).
+  it('K5: links without their address (made by hand or before P6) leave the main path undecided, every path listed', () => {
+    // Without the address of each link neither the command address nor any
+    // order of the paths can decide.
     expect(datapointTreePaths({ name, group_address: '1/0/1', hierarchy_nodes: [status, schalten, room] }, 't-groups')).toEqual({
       primary: null,
       paths: [['Beleuchtung', 'Status'], ['Beleuchtung', 'Schalten']],
     })
   })
 
-  it.todo('K5 after P6: the path of the link created by the command group address is the main path')
+  it('K5: the path of the link made through the command group address is the main path', () => {
+    const dp = { name, group_address: '1/0/1', hierarchy_nodes: [{ ...status, group_address: '1/1/1' }, { ...schalten, group_address: '1/0/1' }, room] }
+    expect(datapointTreePaths(dp, 't-groups')).toEqual({
+      primary: ['Beleuchtung', 'Schalten'],
+      paths: [['Beleuchtung', 'Status'], ['Beleuchtung', 'Schalten']],
+    })
+  })
+
+  it('K5: stays undecided without a command address or with two links through it', () => {
+    const linked = [{ ...status, group_address: '1/1/1' }, { ...schalten, group_address: '1/0/1' }]
+    expect(datapointTreePaths({ name, group_address: null, hierarchy_nodes: linked }, 't-groups').primary).toBeNull()
+    const twice = [{ ...status, group_address: '1/0/1' }, { ...schalten, group_address: '1/0/1' }]
+    expect(datapointTreePaths({ name, group_address: '1/0/1', hierarchy_nodes: twice }, 't-groups').primary).toBeNull()
+  })
 
   it('works per tree: another tree gives its own path, a tree without link gives none', () => {
     const dp = { name, hierarchy_nodes: [schalten, room] }

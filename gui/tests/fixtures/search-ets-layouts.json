@@ -1,0 +1,1110 @@
+{
+  "K1 groups": [
+    {
+      "id": "dp-1",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "28/1/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Schalten"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/1/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-5",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "28/1/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-6",
+          "node_name": "02 Kueche - Decke",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Schalten"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/1/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-7",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "28/1/3",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-8",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Schalten"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/1/3"
+        }
+      ]
+    },
+    {
+      "id": "dp-9",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "28/2/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-10",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-11",
+              "node_name": "Status"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/2/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-12",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "28/2/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-13",
+          "node_name": "02 Kueche - Decke",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-11",
+              "node_name": "Status"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/2/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-14",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "28/3/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-15",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-16",
+              "node_name": "Dimmen"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/3/1"
+        }
+      ]
+    }
+  ],
+  "K1 mid": [
+    {
+      "id": "dp-1",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "28/1/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/1/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-4",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "28/1/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/1/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-5",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "28/1/3",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/1/3"
+        }
+      ]
+    },
+    {
+      "id": "dp-6",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "28/2/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-7",
+          "node_name": "Status",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/2/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-8",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "28/2/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-7",
+          "node_name": "Status",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/2/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-9",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "28/3/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-10",
+          "node_name": "Dimmen",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "28/3/1"
+        }
+      ]
+    }
+  ],
+  "K2 groups": [
+    {
+      "id": "dp-1",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "27/0/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "27/0/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-4",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "27/1/44",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-5",
+          "node_name": "02 Kueche - Decke",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "27/1/44"
+        }
+      ]
+    }
+  ],
+  "K2 mid": [
+    {
+      "id": "dp-1",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "27/0/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Beleuchtung",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [],
+          "display_depth": 0,
+          "group_address": "27/0/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-3",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "27/1/44",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Beleuchtung",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [],
+          "display_depth": 0,
+          "group_address": "27/1/44"
+        }
+      ]
+    }
+  ],
+  "K3 groups": [
+    {
+      "id": "dp-1",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "26/0/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Haus"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "EG"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "26/0/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-5",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "26/0/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-6",
+          "node_name": "02 Kueche - Decke",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Haus"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "EG"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "26/0/2"
+        }
+      ]
+    }
+  ],
+  "K3 mid": [
+    {
+      "id": "dp-1",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "26/0/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "EG",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Haus"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "26/0/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-4",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "26/0/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "EG",
+          "tree_id": "tree",
+          "tree_name": "ETS Haupt- und Mittelgruppen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Haus"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "26/0/2"
+        }
+      ]
+    }
+  ],
+  "R1 buildings": [
+    {
+      "id": "dp-1",
+      "name": "Schalten",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Licht Decke",
+          "tree_id": "tree",
+          "tree_name": "ETS Gebäude und Räume",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Demo-Test-Projekt"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "EG"
+            },
+            {
+              "node_id": "node-5",
+              "node_name": "Kueche"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-6",
+      "name": "Status",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Licht Decke",
+          "tree_id": "tree",
+          "tree_name": "ETS Gebäude und Räume",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Demo-Test-Projekt"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "EG"
+            },
+            {
+              "node_id": "node-5",
+              "node_name": "Kueche"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-7",
+      "name": "Schalten",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/3",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-8",
+          "node_name": "Licht Insel",
+          "tree_id": "tree",
+          "tree_name": "ETS Gebäude und Räume",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Demo-Test-Projekt"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "EG"
+            },
+            {
+              "node_id": "node-5",
+              "node_name": "Kueche"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/3"
+        }
+      ]
+    },
+    {
+      "id": "dp-9",
+      "name": "Status",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/4",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-8",
+          "node_name": "Licht Insel",
+          "tree_id": "tree",
+          "tree_name": "ETS Gebäude und Räume",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Demo-Test-Projekt"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "EG"
+            },
+            {
+              "node_id": "node-5",
+              "node_name": "Kueche"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/4"
+        }
+      ]
+    },
+    {
+      "id": "dp-10",
+      "name": "Schalten",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/5",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-11",
+          "node_name": "Licht Decke",
+          "tree_id": "tree",
+          "tree_name": "ETS Gebäude und Räume",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Demo-Test-Projekt"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "EG"
+            },
+            {
+              "node_id": "node-12",
+              "node_name": "Bad"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/5"
+        }
+      ]
+    }
+  ],
+  "R1 groups": [
+    {
+      "id": "dp-1",
+      "name": "Schalten",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Neue Hauptgruppe"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Neue Mittelgruppe"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-5",
+      "name": "Status",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-6",
+          "node_name": "Status",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Neue Hauptgruppe"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Neue Mittelgruppe"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-7",
+      "name": "Schalten",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/3",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-8",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Neue Hauptgruppe"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Neue Mittelgruppe"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/3"
+        }
+      ]
+    },
+    {
+      "id": "dp-9",
+      "name": "Status",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/4",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-10",
+          "node_name": "Status",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Neue Hauptgruppe"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Neue Mittelgruppe"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/4"
+        }
+      ]
+    },
+    {
+      "id": "dp-11",
+      "name": "Schalten",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/5",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-12",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Neue Hauptgruppe"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Neue Mittelgruppe"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/5"
+        }
+      ]
+    },
+    {
+      "id": "dp-13",
+      "name": "Schalten",
+      "data_type": "BOOLEAN",
+      "group_address": "25/0/6",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-14",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "ETS Gruppenadressen",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Neue Hauptgruppe"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Neue Mittelgruppe"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "25/0/6"
+        }
+      ]
+    }
+  ],
+  "K5 groups": [
+    {
+      "id": "dp-1",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "29/1/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "K5 groups",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Schalten"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/1/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-5",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "29/1/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-6",
+          "node_name": "02 Kueche - Decke",
+          "tree_id": "tree",
+          "tree_name": "K5 groups",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Schalten"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/1/2"
+        },
+        {
+          "node_id": "node-7",
+          "node_name": "02 Kueche - Decke",
+          "tree_id": "tree",
+          "tree_name": "K5 groups",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-8",
+              "node_name": "Status"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/2/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-9",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "29/1/3",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-10",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "K5 groups",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-4",
+              "node_name": "Schalten"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/1/3"
+        }
+      ]
+    },
+    {
+      "id": "dp-11",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "29/2/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-12",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "K5 groups",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-8",
+              "node_name": "Status"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/2/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-13",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "29/2/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-7",
+          "node_name": "02 Kueche - Decke",
+          "tree_id": "tree",
+          "tree_name": "K5 groups",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-8",
+              "node_name": "Status"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/2/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-14",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "29/3/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-15",
+          "node_name": "01 Esszimmer - Spots",
+          "tree_id": "tree",
+          "tree_name": "K5 groups",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            },
+            {
+              "node_id": "node-16",
+              "node_name": "Dimmen"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/3/1"
+        }
+      ]
+    }
+  ],
+  "K5 mid": [
+    {
+      "id": "dp-1",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "29/1/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "K5 mid",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/1/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-4",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "29/1/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "K5 mid",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/1/2"
+        },
+        {
+          "node_id": "node-5",
+          "node_name": "Status",
+          "tree_id": "tree",
+          "tree_name": "K5 mid",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/2/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-6",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "29/1/3",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-2",
+          "node_name": "Schalten",
+          "tree_id": "tree",
+          "tree_name": "K5 mid",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/1/3"
+        }
+      ]
+    },
+    {
+      "id": "dp-7",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "29/2/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-5",
+          "node_name": "Status",
+          "tree_id": "tree",
+          "tree_name": "K5 mid",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/2/1"
+        }
+      ]
+    },
+    {
+      "id": "dp-8",
+      "name": "02 Kueche - Decke",
+      "data_type": "BOOLEAN",
+      "group_address": "29/2/2",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-5",
+          "node_name": "Status",
+          "tree_id": "tree",
+          "tree_name": "K5 mid",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/2/2"
+        }
+      ]
+    },
+    {
+      "id": "dp-9",
+      "name": "01 Esszimmer - Spots",
+      "data_type": "BOOLEAN",
+      "group_address": "29/3/1",
+      "hierarchy_nodes": [
+        {
+          "node_id": "node-10",
+          "node_name": "Dimmen",
+          "tree_id": "tree",
+          "tree_name": "K5 mid",
+          "node_path": [
+            {
+              "node_id": "node-3",
+              "node_name": "Beleuchtung"
+            }
+          ],
+          "display_depth": 0,
+          "group_address": "29/3/1"
+        }
+      ]
+    }
+  ]
+}

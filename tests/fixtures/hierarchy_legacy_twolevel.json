@@ -1,0 +1,351 @@
+{
+ "before": {
+  "paths": {
+   "21/0/1": [
+    [
+     "ETS Gruppenadressen",
+     "Beleuchtung",
+     "Mittelgruppe 0",
+     "01 Esszimmer - Spots"
+    ],
+    [
+     "ETS Haupt- und Mittelgruppen",
+     "Beleuchtung",
+     "Mittelgruppe 0"
+    ]
+   ],
+   "21/1/44": [
+    [
+     "ETS Gruppenadressen",
+     "Beleuchtung",
+     "Mittelgruppe 1",
+     "02 Kueche - Decke"
+    ],
+    [
+     "ETS Haupt- und Mittelgruppen",
+     "Beleuchtung",
+     "Mittelgruppe 1"
+    ]
+   ]
+  },
+  "trees": {
+   "ETS Gruppenadressen": [
+    [
+     "Beleuchtung",
+     [
+      [
+       "Mittelgruppe 0",
+       [
+        [
+         "01 Esszimmer - Spots",
+         []
+        ]
+       ]
+      ],
+      [
+       "Mittelgruppe 1",
+       [
+        [
+         "02 Kueche - Decke",
+         []
+        ]
+       ]
+      ]
+     ]
+    ]
+   ],
+   "ETS Haupt- und Mittelgruppen": [
+    [
+     "Beleuchtung",
+     [
+      [
+       "Mittelgruppe 0",
+       []
+      ],
+      [
+       "Mittelgruppe 1",
+       []
+      ]
+     ]
+    ]
+   ]
+  }
+ },
+ "generated_with": "e77294c4",
+ "rows": {
+  "adapter_bindings": [
+   {
+    "adapter_instance_id": "2c49d55a-b798-479a-a006-07a38d2b32b3",
+    "adapter_type": "KNX",
+    "config": "{\"group_address\": \"21/0/1\", \"dpt_id\": \"DPT1.001\"}",
+    "created_at": "2026-10-08T05:37:05.105066+00:00",
+    "datapoint_id": "78cffde1-95bc-4d16-b32d-991336fa966f",
+    "direction": "SOURCE",
+    "enabled": 1,
+    "id": "c2af96e5-c7b1-4a6a-8b56-6904e42d5830",
+    "send_min_delta": null,
+    "send_min_delta_pct": null,
+    "send_on_change": 0,
+    "send_throttle_ms": null,
+    "updated_at": "2026-10-08T05:37:05.105066+00:00",
+    "value_formula": null,
+    "value_map": null
+   },
+   {
+    "adapter_instance_id": "2c49d55a-b798-479a-a006-07a38d2b32b3",
+    "adapter_type": "KNX",
+    "config": "{\"group_address\": \"21/1/44\", \"dpt_id\": \"DPT1.001\"}",
+    "created_at": "2026-10-08T05:37:05.105066+00:00",
+    "datapoint_id": "ff479b8c-6016-4ea5-ba17-6b9ad23677d2",
+    "direction": "SOURCE",
+    "enabled": 1,
+    "id": "aca96a17-7312-4420-92f3-aaae05cdb269",
+    "send_min_delta": null,
+    "send_min_delta_pct": null,
+    "send_on_change": 0,
+    "send_throttle_ms": null,
+    "updated_at": "2026-10-08T05:37:05.105066+00:00",
+    "value_formula": null,
+    "value_map": null
+   }
+  ],
+  "adapter_instances": [
+   {
+    "adapter_type": "KNX",
+    "config": "{}",
+    "created_at": "2026-01-01T00:00:00+00:00",
+    "enabled": 0,
+    "id": "2c49d55a-b798-479a-a006-07a38d2b32b3",
+    "name": "KNX-Bestand",
+    "updated_at": "2026-01-01T00:00:00+00:00"
+   }
+  ],
+  "datapoints": [
+   {
+    "control_class": "room_local",
+    "created_at": "2026-10-08T05:37:05.105066+00:00",
+    "data_type": "BOOLEAN",
+    "external_write_enabled": 0,
+    "id": "78cffde1-95bc-4d16-b32d-991336fa966f",
+    "mqtt_alias": null,
+    "mqtt_topic": "dp/78cffde1-95bc-4d16-b32d-991336fa966f/value",
+    "name": "01 Esszimmer - Spots",
+    "persist_value": 1,
+    "record_history": 1,
+    "tags": "[]",
+    "unit": null,
+    "updated_at": "2026-10-08T05:37:05.105066+00:00"
+   },
+   {
+    "control_class": "room_local",
+    "created_at": "2026-10-08T05:37:05.105067+00:00",
+    "data_type": "BOOLEAN",
+    "external_write_enabled": 0,
+    "id": "ff479b8c-6016-4ea5-ba17-6b9ad23677d2",
+    "mqtt_alias": null,
+    "mqtt_topic": "dp/ff479b8c-6016-4ea5-ba17-6b9ad23677d2/value",
+    "name": "02 Kueche - Decke",
+    "persist_value": 1,
+    "record_history": 1,
+    "tags": "[]",
+    "unit": null,
+    "updated_at": "2026-10-08T05:37:05.105067+00:00"
+   }
+  ],
+  "hierarchy_datapoint_links": [
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "datapoint_id": "78cffde1-95bc-4d16-b32d-991336fa966f",
+    "id": "dc3e5a71-926c-45b9-856a-2089d1502e29",
+    "node_id": "144cb7c8-d1e5-4bb6-8b97-b763007f9486"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "datapoint_id": "ff479b8c-6016-4ea5-ba17-6b9ad23677d2",
+    "id": "e1356a59-c88f-40d8-a1bf-080b9d1cd446",
+    "node_id": "13bb0119-98c7-4e1c-b3f1-eeff2dac7350"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.122841+00:00",
+    "datapoint_id": "ff479b8c-6016-4ea5-ba17-6b9ad23677d2",
+    "id": "7c1e1b58-89c7-4f9f-9ecd-1acfc5e5c33b",
+    "node_id": "2d1c698b-a2d4-412b-8b91-54b4d290949a"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.122841+00:00",
+    "datapoint_id": "78cffde1-95bc-4d16-b32d-991336fa966f",
+    "id": "3e924c04-dc1b-42d3-863c-92b9b4b0915e",
+    "node_id": "ceda741d-ff8a-4c09-86e1-424373a5f37b"
+   }
+  ],
+  "hierarchy_nodes": [
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "description": "",
+    "icon": null,
+    "id": "e46eb070-2771-414f-a116-440ae2588f23",
+    "is_tree_root": 1,
+    "name": "ETS Gruppenadressen",
+    "node_order": -1,
+    "parent_id": null,
+    "tree_id": "7b4f18d7-55f2-4d17-b731-e93eda3b4329",
+    "updated_at": "2026-10-08T05:37:05.121447+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "description": "",
+    "icon": null,
+    "id": "f5590749-adf6-44e8-9357-f26ea7edb15e",
+    "is_tree_root": 0,
+    "name": "Beleuchtung",
+    "node_order": 21,
+    "parent_id": null,
+    "tree_id": "7b4f18d7-55f2-4d17-b731-e93eda3b4329",
+    "updated_at": "2026-10-08T05:37:05.121447+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "description": "",
+    "icon": null,
+    "id": "20eb2857-d8f7-42a2-860c-07197baac2f6",
+    "is_tree_root": 0,
+    "name": "Mittelgruppe 0",
+    "node_order": 0,
+    "parent_id": "f5590749-adf6-44e8-9357-f26ea7edb15e",
+    "tree_id": "7b4f18d7-55f2-4d17-b731-e93eda3b4329",
+    "updated_at": "2026-10-08T05:37:05.121447+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "description": "",
+    "icon": null,
+    "id": "144cb7c8-d1e5-4bb6-8b97-b763007f9486",
+    "is_tree_root": 0,
+    "name": "01 Esszimmer - Spots",
+    "node_order": 0,
+    "parent_id": "20eb2857-d8f7-42a2-860c-07197baac2f6",
+    "tree_id": "7b4f18d7-55f2-4d17-b731-e93eda3b4329",
+    "updated_at": "2026-10-08T05:37:05.121447+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "description": "",
+    "icon": null,
+    "id": "02200e80-f012-4932-8557-a692f2ea7ffc",
+    "is_tree_root": 0,
+    "name": "Mittelgruppe 1",
+    "node_order": 1,
+    "parent_id": "f5590749-adf6-44e8-9357-f26ea7edb15e",
+    "tree_id": "7b4f18d7-55f2-4d17-b731-e93eda3b4329",
+    "updated_at": "2026-10-08T05:37:05.121447+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "description": "",
+    "icon": null,
+    "id": "13bb0119-98c7-4e1c-b3f1-eeff2dac7350",
+    "is_tree_root": 0,
+    "name": "02 Kueche - Decke",
+    "node_order": 0,
+    "parent_id": "02200e80-f012-4932-8557-a692f2ea7ffc",
+    "tree_id": "7b4f18d7-55f2-4d17-b731-e93eda3b4329",
+    "updated_at": "2026-10-08T05:37:05.121447+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.122841+00:00",
+    "description": "",
+    "icon": null,
+    "id": "63aea03d-e64c-450d-ae98-0e4a0ccf73b7",
+    "is_tree_root": 1,
+    "name": "ETS Haupt- und Mittelgruppen",
+    "node_order": -1,
+    "parent_id": null,
+    "tree_id": "2a815199-91ee-4943-9338-c01d9267a863",
+    "updated_at": "2026-10-08T05:37:05.122841+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.122841+00:00",
+    "description": "",
+    "icon": null,
+    "id": "c2d7dc11-6f51-4695-8cba-5e11a28b8355",
+    "is_tree_root": 0,
+    "name": "Beleuchtung",
+    "node_order": 21,
+    "parent_id": null,
+    "tree_id": "2a815199-91ee-4943-9338-c01d9267a863",
+    "updated_at": "2026-10-08T05:37:05.122841+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.122841+00:00",
+    "description": "",
+    "icon": null,
+    "id": "ceda741d-ff8a-4c09-86e1-424373a5f37b",
+    "is_tree_root": 0,
+    "name": "Mittelgruppe 0",
+    "node_order": 0,
+    "parent_id": "c2d7dc11-6f51-4695-8cba-5e11a28b8355",
+    "tree_id": "2a815199-91ee-4943-9338-c01d9267a863",
+    "updated_at": "2026-10-08T05:37:05.122841+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.122841+00:00",
+    "description": "",
+    "icon": null,
+    "id": "2d1c698b-a2d4-412b-8b91-54b4d290949a",
+    "is_tree_root": 0,
+    "name": "Mittelgruppe 1",
+    "node_order": 1,
+    "parent_id": "c2d7dc11-6f51-4695-8cba-5e11a28b8355",
+    "tree_id": "2a815199-91ee-4943-9338-c01d9267a863",
+    "updated_at": "2026-10-08T05:37:05.122841+00:00"
+   }
+  ],
+  "hierarchy_trees": [
+   {
+    "created_at": "2026-10-08T05:37:05.121447+00:00",
+    "description": "ets_import:groups",
+    "display_depth": 0,
+    "id": "7b4f18d7-55f2-4d17-b731-e93eda3b4329",
+    "name": "ETS Gruppenadressen",
+    "source": "ets_import:groups",
+    "updated_at": "2026-10-08T05:37:05.121447+00:00"
+   },
+   {
+    "created_at": "2026-10-08T05:37:05.122841+00:00",
+    "description": "ets_import:mid",
+    "display_depth": 0,
+    "id": "2a815199-91ee-4943-9338-c01d9267a863",
+    "name": "ETS Haupt- und Mittelgruppen",
+    "source": "ets_import:mid",
+    "updated_at": "2026-10-08T05:37:05.122841+00:00"
+   }
+  ],
+  "knx_group_addresses": [
+   {
+    "address": "21/0/1",
+    "description": "",
+    "dpt": "DPT1.001",
+    "imported_at": "2026-10-08T05:37:05.105066+00:00",
+    "main_group_name": "Beleuchtung",
+    "mid_group_name": "",
+    "name": "01 Esszimmer - Spots"
+   },
+   {
+    "address": "21/1/44",
+    "description": "",
+    "dpt": "DPT1.001",
+    "imported_at": "2026-10-08T05:37:05.105066+00:00",
+    "main_group_name": "Beleuchtung",
+    "mid_group_name": "",
+    "name": "02 Kueche - Decke"
+   }
+  ],
+  "knx_project": [
+   {
+    "group_address_style": "TwoLevel",
+    "id": 1
+   }
+  ]
+ },
+ "style": "TwoLevel"
+}

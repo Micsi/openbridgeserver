@@ -151,10 +151,11 @@ async def test_group_mode_auto_links_datapoint_by_state_group_address(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_group_mode_links_only_unique_bindings_in_current_import_scope(tmp_path):
+async def test_group_mode_links_every_datapoint_of_an_address_in_scope_and_reports_shared_addresses(tmp_path):
+    """#1266 P6: several datapoints on one address are all linked and counted, not left out silently."""
     async with _database(tmp_path / "scope.db") as db:
         await _insert_group_address(db, "1/2/3", name="Unique")
-        await _insert_group_address(db, "1/2/4", name="Ambiguous")
+        await _insert_group_address(db, "1/2/4", name="Shared")
         await _insert_group_address(db, "1/2/5", name="Missing")
         await _insert_group_address(db, "9/7/9", name="Out of scope", main_group_name="Other", mid_group_name="Other")
         await _insert_knx_binding(db, "dp-unique", "binding-unique", "1/2/3")
@@ -163,7 +164,7 @@ async def test_group_mode_links_only_unique_bindings_in_current_import_scope(tmp
             db,
             "dp-b",
             "binding-b",
-            "8/8/8",
+            "8/7/8",
             state_group_address="1/2/4",
         )
         await _insert_knx_binding(db, "dp-out", "binding-out", "9/7/9")
@@ -178,14 +179,15 @@ async def test_group_mode_links_only_unique_bindings_in_current_import_scope(tmp
             ),
         )
 
-        linked_datapoints = await db.fetchall("SELECT datapoint_id FROM hierarchy_datapoint_links ORDER BY datapoint_id")
+        links = await db.fetchall("SELECT datapoint_id, group_address FROM hierarchy_datapoint_links ORDER BY datapoint_id")
         node_names = await db.fetchall(
             "SELECT name FROM hierarchy_nodes WHERE tree_id=? ORDER BY name",
             (result.tree_id,),
         )
-        assert result.links_created == 1
-        assert [row["datapoint_id"] for row in linked_datapoints] == ["dp-unique"]
+        assert (result.links_created, result.addresses_shared, result.datapoints_unplaced) == (3, 1, 0)
+        assert [(row["datapoint_id"], row["group_address"]) for row in links] == [("dp-a", "1/2/4"), ("dp-b", "1/2/4"), ("dp-unique", "1/2/3")]
         assert "Out of scope" not in {row["name"] for row in node_names}
+        assert result.message.endswith("3 DataPoints automatisch verknüpft, 1 Gruppenadressen mit mehreren Datenpunkten (alle verknüpft)")
 
 
 @pytest.mark.asyncio
@@ -201,9 +203,9 @@ async def test_mid_mode_deduplicates_same_datapoint_reached_through_multiple_add
             EtsImportRequest(tree_name="ETS mid", mode="mid", auto_link=True),
         )
 
-        links = await db.fetchall("SELECT datapoint_id FROM hierarchy_datapoint_links")
+        links = await db.fetchall("SELECT datapoint_id, group_address FROM hierarchy_datapoint_links")
         assert result.links_created == 1
-        assert [row["datapoint_id"] for row in links] == ["dp-1"]
+        assert [(row["datapoint_id"], row["group_address"]) for row in links] == [("dp-1", "1/2/3")], "the lowest command address"
 
 
 async def _insert_binding_with_raw_config(

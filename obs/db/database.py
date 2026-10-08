@@ -908,6 +908,44 @@ async def _migration_v56_knx_internal_group_addresses(conn: aiosqlite.Connection
             )
 
 
+async def _migration_v57_ets_range_layout(conn: aiosqlite.Connection) -> None:
+    """Keep the ETS group ranges per address and the address per hierarchy link (#1266).
+
+    ``knx_group_addresses.group_ranges`` holds the ETS group ranges containing the
+    address, outermost first, as JSON (``[{"name", "start", "end"}]``); the GA
+    hierarchy modes build their tree from it instead of cutting the address into
+    main and middle group. NULL means "imported before #1266": until the next
+    ``.knxproj`` import those trees fall back to the stored main/middle names.
+
+    ``hierarchy_datapoint_links.group_address`` is the group address the ETS
+    hierarchy import linked the datapoint through (internal notation), so a picker
+    can take the path of the command address as the main path. Existing links and
+    links made by hand keep NULL; the next import of the tree records it. Triggers
+    reject a non-internal text like for the ``knx_*`` columns (V56).
+    """
+    from obs.adapters.knx.group_address import sql_is_internal_ga
+
+    async def _columns(table: str) -> set[str]:
+        async with conn.execute(f"PRAGMA table_info({table})") as cur:
+            return {row["name"] for row in await cur.fetchall()}
+
+    has_links = False
+    for table, column in (("knx_group_addresses", "group_ranges"), ("hierarchy_datapoint_links", "group_address")):
+        columns = await _columns(table)  # empty: table missing (partial schemas of focused migration tests)
+        if columns and column not in columns:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+        has_links = bool(columns)
+    if not has_links:
+        return
+    for event in ("INSERT", "UPDATE OF group_address"):
+        name = f"trg_hierarchy_datapoint_links_group_address_internal_{event.split()[0].lower()}"
+        await conn.execute(
+            f"""CREATE TRIGGER IF NOT EXISTS {name} BEFORE {event} ON hierarchy_datapoint_links
+                WHEN NEW.group_address IS NOT NULL AND NOT {sql_is_internal_ga("NEW.group_address")}
+                BEGIN SELECT RAISE(ABORT, 'hierarchy_datapoint_links.group_address: Gruppenadresse nicht in interner Schreibweise (#1266)'); END"""
+        )
+
+
 _MIGRATION_V53_HIERARCHY_LOGIC_GRAPH_LINKS = """
 CREATE TABLE IF NOT EXISTS hierarchy_logic_graph_links (
     id         TEXT PRIMARY KEY,
@@ -1447,6 +1485,7 @@ MIGRATIONS: list[tuple[int, str | Callable]] = [
     (54, _migration_v54_hierarchy_tree_root_nodes),
     (55, _migration_v55_knx_group_address_style),
     (56, _migration_v56_knx_internal_group_addresses),
+    (57, _migration_v57_ets_range_layout),
 ]
 
 

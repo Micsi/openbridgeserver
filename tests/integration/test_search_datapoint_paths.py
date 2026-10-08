@@ -4,8 +4,8 @@ The demo project is imported with three extra group addresses of one name: two
 in one middle range (``Schalten``) and one in another (``Status Rueckmeldung``),
 plus the ETS "groups" hierarchy. The extra addresses are not part of the demo, and
 the plain demo is imported into a second KNX instance first, so the test passes
-on an empty and on a populated database alike (an address bound to two
-datapoints is not linked into the tree, #1266 P6). The search response
+on an empty and on a populated database alike (datapoints of other instances on
+the demo's addresses are linked too, #1266 P6, but are not named like these). The search response
 for that name is the input of the GUI's path formatter: this test checks the
 real response and keeps ``gui/tests/fixtures/search-same-name.json`` equal to
 it (ids replaced by stable placeholders, fields the formatter does not read
@@ -90,6 +90,7 @@ def _projection(items: list[dict], tree_id: str) -> list[dict]:
                     "tree_name": ref["tree_name"],
                     "node_path": [{"node_id": stable(seg["node_id"], "node"), "node_name": seg["node_name"]} for seg in ref["node_path"]],
                     "display_depth": ref["display_depth"],
+                    "group_address": ref["group_address"],
                 }
                 for ref in item["hierarchy_nodes"]
                 if ref["tree_id"] == tree_id

@@ -268,6 +268,13 @@ class ExportedHierarchyDpLink(BaseModel):
     id: str
     node_id: str
     datapoint_id: str
+    # Address the ETS import linked through (#1266); absent in older exports
+    group_address: str | None = None
+
+    @field_validator("group_address")
+    @classmethod
+    def _internal_group_address(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_ga(value)
 
 
 class ExportedAuthzGrant(BaseModel):
@@ -529,7 +536,10 @@ async def export_config(
     ]
 
     dp_link_rows = await db.fetchall("SELECT * FROM hierarchy_datapoint_links")
-    hierarchy_dp_links = [ExportedHierarchyDpLink(id=r["id"], node_id=r["node_id"], datapoint_id=r["datapoint_id"]) for r in dp_link_rows]
+    hierarchy_dp_links = [
+        ExportedHierarchyDpLink(id=r["id"], node_id=r["node_id"], datapoint_id=r["datapoint_id"], group_address=r["group_address"])
+        for r in dp_link_rows
+    ]
 
     logic_capabilities = sorted(LOGIC_CAPABILITIES)
     capability_placeholders = ",".join("?" for _ in logic_capabilities)
@@ -1375,9 +1385,9 @@ async def import_config(
     for link in body.hierarchy_dp_links:
         try:
             await db.execute_and_commit(
-                """INSERT OR IGNORE INTO hierarchy_datapoint_links (id, node_id, datapoint_id, created_at)
-                   VALUES (?,?,?,?)""",
-                (link.id, link.node_id, link.datapoint_id, now),
+                """INSERT OR IGNORE INTO hierarchy_datapoint_links (id, node_id, datapoint_id, group_address, created_at)
+                   VALUES (?,?,?,?,?)""",
+                (link.id, link.node_id, link.datapoint_id, link.group_address, now),
             )
             result.hierarchy_upserted += 1
         except Exception as exc:
