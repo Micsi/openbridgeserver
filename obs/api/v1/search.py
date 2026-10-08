@@ -17,8 +17,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from obs.api.auth import Principal, get_current_principal
 from obs.adapters.knx.group_address import try_normalize_ga
+from obs.api.auth import Principal, get_current_principal
 from obs.api.authz import AuthzAction, AuthzTarget, authorize
 from obs.api.authz_service import filter_authorized_datapoints, load_role_grants, resolve_hierarchy_targets
 from obs.api.v1.datapoints import _SORT_KEYS, DataPointOut, HierarchyNodeRef, NodePathSegment, _enrich
