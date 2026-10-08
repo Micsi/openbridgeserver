@@ -67,6 +67,14 @@ describe('KnxDeviceCombobox', () => {
     expect(wrapper.text()).toContain('Hall Dimmer')
   })
 
+  it('shows chips like the monitor filter editor: address and name, details in the title (#1266)', async () => {
+    const wrapper = await mountCombobox({ modelValue: ['1.1.11'] })
+
+    const chip = wrapper.find('[data-testid="combobox-chip-0"] span')
+    expect(chip.text()).toBe('1.1.11 Hall Dimmer')
+    expect(chip.attributes('title')).toContain('1.1.11 · Hall Dimmer')
+  })
+
   it('announces selected suggestions with the common selected translation', async () => {
     const wrapper = await mountCombobox({ modelValue: ['1.1.10'] })
 

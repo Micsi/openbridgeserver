@@ -104,6 +104,8 @@ export const dpApi = {
 // ── Search ────────────────────────────────────────────────────────────────
 export const searchApi = {
   search: (params) => api.get('/search/', { params }),
+  // Whether KNX group addresses are linked to devices the caller may see (#1266)
+  knxDeviceData: () => api.get('/search/knx-device-data'),
 }
 
 // ── Adapters ──────────────────────────────────────────────────────────────

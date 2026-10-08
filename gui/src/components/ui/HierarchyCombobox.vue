@@ -60,6 +60,8 @@ const props = defineProps({
   // Settings → Hierarchy) — opt in per instance rather than changing the
   // shared default.
   includeTreeRoots: { type: Boolean, default: false },
+  // Offer the nodes of this tree only (the datapoint picker's hierarchy lens, #1266); empty: all trees.
+  treeId: { type: String, default: '' },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -206,7 +208,9 @@ async function load() {
 onMounted(load)
 
 const displayItems = computed(() => nodes.value)
-const suggestionItems = computed(() => nodes.value.filter((n) => n.displayable !== false))
+const suggestionItems = computed(() =>
+  nodes.value.filter((n) => n.displayable !== false && (!props.treeId || n.tree_id === props.treeId)),
+)
 
 async function fetchSuggestions(q) {
   if (!nodes.value.length) await load()

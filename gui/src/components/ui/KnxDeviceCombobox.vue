@@ -10,7 +10,7 @@
   >
     <template #chip="{ item, index, remove }">
       <slot name="chip" :item="item" :index="index" :remove="remove">
-        <span class="truncate">{{ item.label }}</span>
+        <span class="truncate" :title="knxDeviceChipTitle(item)">{{ knxDeviceChipLabel(item) }}</span>
       </slot>
     </template>
 
@@ -29,6 +29,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Combobox from '@/components/ui/Combobox.vue'
 import { knxprojApi } from '@/api/client'
+import { knxDeviceChipLabel, knxDeviceChipTitle } from '@/utils/knxDeviceLabel'
 
 const { t } = useI18n()
 

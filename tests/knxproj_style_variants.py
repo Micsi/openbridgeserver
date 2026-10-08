@@ -247,12 +247,20 @@ def raw_address(main: int, middle: int, sub: int) -> int:
     return (main << 11) | (middle << 8) | sub
 
 
-def knxproj_with_layout(style: str, ranges: list[GroupRangeSpec], rooms: list[RoomSpec] | None = None, floor: str = "EG") -> bytes:
+def knxproj_with_layout(
+    style: str,
+    ranges: list[GroupRangeSpec],
+    rooms: list[RoomSpec] | None = None,
+    floor: str = "EG",
+    devices: dict[int, list[list[int]]] | None = None,
+) -> bytes:
     """Return the demo project in ``style`` with its group ranges replaced by ``ranges`` (#1266).
 
     The demo's group addresses are dropped, so only the given ones are imported. With
     ``rooms`` the demo building gets a floor ``floor`` holding these rooms, each with
-    its ETS functions referencing raw addresses of ``ranges``. ETS ties the range
+    its ETS functions referencing raw addresses of ``ranges``. ``devices`` adds devices
+    on line 1.1 as in :func:`knxproj_with_extra_group_addresses` (device address → one
+    list of raw addresses of ``ranges`` per communication object). ETS ties the range
     layout to the style (three-level: main → middle, two-level: main only, free:
     any nesting); this helper writes what it is given.
     """
@@ -325,6 +333,8 @@ def knxproj_with_layout(style: str, ranges: list[GroupRangeSpec], rooms: list[Ro
                                     Role="SwitchOnOff",
                                     Puid=str(number),
                                 )
+                for address, comm_objects in (devices or {}).items():
+                    _add_device(root, address, [[ga_ids[raw] for raw in raws] for raws in comm_objects])
                 data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             zout.writestr(info, data)
     return out.getvalue()

@@ -137,3 +137,72 @@ export function datapointPathRows(datapoints, { treeId, groupAddressStyle }) {
   }
   return rows
 }
+
+/**
+ * The lines a picker shows for one row of datapointPathRows(): the label, or
+ * every path while the main path is undecided (`label: null`).
+ */
+export function datapointRowLines(row) {
+  return row.label === null ? row.paths : [row.label]
+}
+
+/**
+ * A row as one plain text – its lines, then the group address where the row
+ * shows one. An input that shows the chosen datapoint uses it, so the field
+ * reads like the row that was picked.
+ */
+export function datapointRowText(row) {
+  const text = datapointRowLines(row).join(' | ')
+  return row.groupAddress ? `${text} · ${row.groupAddress}` : text
+}
+
+/**
+ * The tree a picker without an explicit choice shows paths from: the one in
+ * which most of the given datapoints have a path (the first such tree on a
+ * tie), or null when none has one.
+ */
+export function preferredDatapointTreeId(datapoints) {
+  const counts = new Map()
+  for (const datapoint of datapoints) {
+    for (const treeId of new Set((datapoint.hierarchy_nodes ?? []).map(ref => ref.tree_id))) {
+      counts.set(treeId, (counts.get(treeId) ?? 0) + 1)
+    }
+  }
+  let best = null
+  for (const [treeId, count] of counts) {
+    if (best === null || count > counts.get(best)) best = treeId
+  }
+  return best
+}
+
+/** Trees the .knxproj import builds from ETS functions (Room › function, trade › function). */
+const KNX_FUNCTION_TREE_SOURCES = ['ets_import:buildings', 'ets_import:trades']
+
+export function isKnxFunctionTree(tree) {
+  return KNX_FUNCTION_TREE_SOURCES.includes(tree?.description)
+}
+
+/**
+ * ETS functions as the picker's function lens lists them, from datapoints as
+ * GET /api/v1/search delivers them for the function trees: in those trees the
+ * import links a datapoint to the node of its ETS function, so every linked
+ * node there is a function. One entry per node, with its path (root → function,
+ * without the tree name) and how many of the datapoints it holds, sorted by path.
+ */
+export function knxFunctionsOf(datapoints, treeIds) {
+  const wanted = new Set(treeIds)
+  const functions = new Map()
+  for (const datapoint of datapoints) {
+    for (const ref of datapoint.hierarchy_nodes ?? []) {
+      if (!wanted.has(ref.tree_id)) continue
+      if (!functions.has(ref.node_id)) {
+        const path = [...(ref.node_path ?? []).map(seg => seg.node_name), ref.node_name]
+        functions.set(ref.node_id, { id: ref.node_id, tree_id: ref.tree_id, tree_name: ref.tree_name, path, label: path.join(' › '), datapoints: new Set() })
+      }
+      functions.get(ref.node_id).datapoints.add(datapoint.id)
+    }
+  }
+  return [...functions.values()]
+    .map(({ datapoints: ids, ...fn }) => ({ ...fn, count: ids.size }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+}

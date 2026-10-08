@@ -100,7 +100,7 @@
           @update:model-value="onDevicesChange"
         >
           <template #chip="{ item, index }">
-            <span class="truncate" :title="deviceChipTitle(item)">{{ deviceChipLabel(item) }}</span>
+            <span class="truncate" :title="knxDeviceChipTitle(item)">{{ knxDeviceChipLabel(item) }}</span>
             <button
               type="button"
               :data-testid="`device-expand-${index}`"
@@ -351,6 +351,7 @@ import KnxDeviceCombobox from '@/components/ui/KnxDeviceCombobox.vue'
 import TagCombobox from '@/components/ui/TagCombobox.vue'
 import AdapterCombobox from '@/components/ui/AdapterCombobox.vue'
 import { isEmptyFilter } from '@/composables/useClientSideMatch'
+import { knxDeviceChipLabel, knxDeviceChipTitle } from '@/utils/knxDeviceLabel'
 import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
@@ -530,20 +531,6 @@ function chipFullLabel(item) {
 
 function chipFullLabelAttrs(item) {
   return { title: chipFullLabel(item) }
-}
-
-function deviceChipLabel(item) {
-  if (!item) return ''
-  const pa = item.id ?? item.pa
-  const label = item.label ?? item.name
-  return label && label !== pa ? `${pa} ${label}` : String(pa ?? '')
-}
-
-function deviceChipTitle(item) {
-  if (!item) return ''
-  return [item.id ?? item.pa, item.label ?? item.name, item.manufacturer, item.order_number]
-    .filter(Boolean)
-    .join(' · ')
 }
 
 function deviceChipPa(index) {

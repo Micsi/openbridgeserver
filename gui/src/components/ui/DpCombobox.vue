@@ -10,9 +10,7 @@
     @select="onSelect"
   >
     <template #item="{ item, active, selected }">
-      <span class="flex-1 min-w-0 truncate">{{ item.name }}</span>
-      <span class="text-xs text-slate-500 shrink-0">{{ item.data_type }}</span>
-      <span v-if="item.unit" class="text-xs text-slate-600 shrink-0">{{ item.unit }}</span>
+      <DpPathRow :row="item.row" />
       <span v-if="selected" class="text-xs text-blue-500 shrink-0">·</span>
       <span v-if="active" class="sr-only">{{ $t('common.active') }}</span>
     </template>
@@ -23,7 +21,10 @@
 import { computed, ref, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Combobox from '@/components/ui/Combobox.vue'
+import DpPathRow from '@/components/ui/DpPathRow.vue'
 import { searchApi } from '@/api/client'
+import { useKnxProjectStore } from '@/stores/knxProject'
+import { datapointPathRows, datapointRowText, preferredDatapointTreeId } from '@/utils/hierarchyDisplay'
 
 const { t } = useI18n()
 
@@ -36,6 +37,8 @@ const props = defineProps({
   // Set to true to allow multi-selection. The model value type changes to
   // string[] in that case; the FilterEditor (#36) needs this.
   multi: { type: Boolean, default: false },
+  // Tree whose paths the lines show (#1266); empty: the tree most suggestions have a path in.
+  treeId: { type: String, default: '' },
 })
 const emit = defineEmits(['update:modelValue', 'select'])
 
@@ -46,22 +49,32 @@ const effectivePlaceholder = computed(() => props.placeholder ?? t('datapoints.s
 // this for the "remembered label" of the currently selected DP.
 const knownItems = ref(new Map())
 
+const knxProject = useKnxProjectStore()
+
 function rememberItem(item) {
   if (!item || !item.id) return
-  knownItems.value.set(item.id, { id: item.id, label: item.name ?? item.id, name: item.name ?? item.id })
+  knownItems.value.set(item.id, { id: item.id, label: item.label, name: item.name })
+}
+
+// One path line per datapoint (#1266): the label of the input and of a chip is
+// the text of the line it was picked from.
+function withPathRows(items) {
+  const treeId = props.treeId || preferredDatapointTreeId(items)
+  const rows = datapointPathRows(items, { treeId, groupAddressStyle: knxProject.groupAddressStyle })
+  return rows.map((row) => ({ ...row.datapoint, label: datapointRowText(row), row }))
 }
 
 // Seed from displayName + modelValue (single-mode) so the input/chip can
 // show the label before the first fetch.
 if (props.displayName && typeof props.modelValue === 'string' && props.modelValue) {
-  rememberItem({ id: props.modelValue, name: props.displayName })
+  rememberItem({ id: props.modelValue, name: props.displayName, label: props.displayName })
 }
 
 watch(
   () => [props.modelValue, props.displayName],
   ([val, name]) => {
     if (typeof val === 'string' && val && name) {
-      rememberItem({ id: val, name })
+      rememberItem({ id: val, name, label: name })
     }
   },
 )
@@ -75,7 +88,7 @@ async function hydrateUnknownIds(ids) {
         const { data } = await searchApi.search({ q: id, size: 1 })
         const items = data.items ?? data ?? []
         const hit = items.find((it) => it.id === id)
-        if (hit) rememberItem(hit)
+        if (hit) rememberItem(withPathRows([hit])[0])
       } catch {
         /* swallow */
       }
@@ -107,8 +120,8 @@ async function fetchSuggestions(q) {
   try {
     const { data } = await searchApi.search({ q: q || '', size: 50 })
     const items = data.items ?? data ?? []
-    // Normalize to {id, label, ...rest} so generic Combobox can render the chip/item.
-    const normalized = items.map((it) => ({ ...it, label: it.name }))
+    // Normalize to {id, label, row, ...rest} so generic Combobox can render the chip/item.
+    const normalized = withPathRows(items)
     for (const it of normalized) rememberItem(it)
     return normalized
   } catch {

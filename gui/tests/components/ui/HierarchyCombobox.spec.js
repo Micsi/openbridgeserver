@@ -297,4 +297,29 @@ describe('HierarchyCombobox', () => {
     expect(alphaChildIdx).toBeLessThan(zetaIdx)
     expect(zetaIdx).toBeLessThan(zetaChildIdx)
   })
+
+  it('offers only the nodes of the given tree when treeId is set (#1266 picker lens)', async () => {
+    const scenario = {
+      trees: [
+        { id: 'a', name: 'Gebäude' },
+        { id: 'b', name: 'Gruppen' },
+      ],
+      nodesByTree: {
+        a: [{ id: 'a1', tree_id: 'a', parent_id: null, name: 'Küche' }],
+        b: [{ id: 'b1', tree_id: 'b', parent_id: null, name: 'Licht' }],
+      },
+    }
+    const { wrapper } = await mountHierarchyCombobox({ modelValue: [], treeId: 'b' }, scenario)
+    await wrapper.find('input').trigger('focus')
+    await flushPromises()
+    const labels = wrapper.findAll('[data-testid^="combobox-item-"]').map((i) => i.text())
+    expect(labels).toHaveLength(1)
+    expect(labels[0]).toContain('Licht')
+
+    await wrapper.setProps({ treeId: '' })
+    await wrapper.find('input').trigger('input')
+    await new Promise((r) => setTimeout(r, 250))
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid^="combobox-item-"]')).toHaveLength(2)
+  })
 })

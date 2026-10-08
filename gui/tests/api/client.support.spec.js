@@ -46,6 +46,16 @@ describe('supportApi client', () => {
   })
 })
 
+describe('searchApi client', () => {
+  it('asks whether KNX device data is visible (#1266)', async () => {
+    const { searchApi } = await import('@/api/client')
+
+    await searchApi.knxDeviceData()
+
+    expect(api.get).toHaveBeenCalledWith('/search/knx-device-data')
+  })
+})
+
 describe('dpApi client', () => {
   it('calls the datapoint duplication endpoint with the requested name', async () => {
     const { dpApi } = await import('@/api/client')

@@ -1,0 +1,2138 @@
+{
+  "trees": [
+    {
+      "id": "tree-buildings",
+      "name": "ETS Gebäude und Räume",
+      "description": "ets_import:buildings",
+      "display_depth": 0,
+      "root_node_id": "node-2"
+    },
+    {
+      "id": "tree-groups",
+      "name": "ETS Gruppenadressen",
+      "description": "ets_import:groups",
+      "display_depth": 0,
+      "root_node_id": "node-3"
+    }
+  ],
+  "nodes": {
+    "tree-buildings": [
+      {
+        "id": "node-4",
+        "tree_id": "tree-buildings",
+        "parent_id": null,
+        "name": "Demo-Test-Projekt",
+        "description": "Building",
+        "children": [
+          {
+            "id": "node-5",
+            "tree_id": "tree-buildings",
+            "parent_id": "node-4",
+            "name": "EG",
+            "description": "Floor",
+            "children": [
+              {
+                "id": "node-6",
+                "tree_id": "tree-buildings",
+                "parent_id": "node-5",
+                "name": "Kueche",
+                "description": "Room",
+                "children": [
+                  {
+                    "id": "node-7",
+                    "tree_id": "tree-buildings",
+                    "parent_id": "node-6",
+                    "name": "Licht Decke",
+                    "description": "",
+                    "children": []
+                  },
+                  {
+                    "id": "node-8",
+                    "tree_id": "tree-buildings",
+                    "parent_id": "node-6",
+                    "name": "Licht Insel",
+                    "description": "",
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "node-9",
+                "tree_id": "tree-buildings",
+                "parent_id": "node-5",
+                "name": "Bad",
+                "description": "Room",
+                "children": [
+                  {
+                    "id": "node-10",
+                    "tree_id": "tree-buildings",
+                    "parent_id": "node-9",
+                    "name": "Licht Decke",
+                    "description": "",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "tree-groups": [
+      {
+        "id": "node-11",
+        "tree_id": "tree-groups",
+        "parent_id": null,
+        "name": "Neue Hauptgruppe",
+        "description": "",
+        "children": [
+          {
+            "id": "node-12",
+            "tree_id": "tree-groups",
+            "parent_id": "node-11",
+            "name": "Neue Mittelgruppe",
+            "description": "",
+            "children": [
+              {
+                "id": "node-13",
+                "tree_id": "tree-groups",
+                "parent_id": "node-12",
+                "name": "Schalten",
+                "description": "",
+                "children": []
+              },
+              {
+                "id": "node-14",
+                "tree_id": "tree-groups",
+                "parent_id": "node-12",
+                "name": "Schalten",
+                "description": "",
+                "children": []
+              },
+              {
+                "id": "node-15",
+                "tree_id": "tree-groups",
+                "parent_id": "node-12",
+                "name": "Schalten",
+                "description": "",
+                "children": []
+              },
+              {
+                "id": "node-16",
+                "tree_id": "tree-groups",
+                "parent_id": "node-12",
+                "name": "Schalten",
+                "description": "",
+                "children": []
+              },
+              {
+                "id": "node-17",
+                "tree_id": "tree-groups",
+                "parent_id": "node-12",
+                "name": "Status",
+                "description": "",
+                "children": []
+              },
+              {
+                "id": "node-18",
+                "tree_id": "tree-groups",
+                "parent_id": "node-12",
+                "name": "Status",
+                "description": "",
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "search": [
+    {
+      "params": {
+        "tree_id": "tree-groups",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          },
+          {
+            "id": "dp-20",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/3",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              },
+              {
+                "node_id": "node-14",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              }
+            ]
+          },
+          {
+            "id": "dp-21",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/5",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-10",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-9",
+                    "node_name": "Bad"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              },
+              {
+                "node_id": "node-15",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              }
+            ]
+          },
+          {
+            "id": "dp-22",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/6",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-16",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/6"
+              }
+            ]
+          },
+          {
+            "id": "dp-23",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/2",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              },
+              {
+                "node_id": "node-17",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              }
+            ]
+          },
+          {
+            "id": "dp-24",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/4",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              },
+              {
+                "node_id": "node-18",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              }
+            ]
+          }
+        ],
+        "total": 6,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "tree_id": "tree-groups",
+        "size": 4,
+        "page": 0
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          },
+          {
+            "id": "dp-20",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/3",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              },
+              {
+                "node_id": "node-14",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              }
+            ]
+          },
+          {
+            "id": "dp-21",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/5",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-10",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-9",
+                    "node_name": "Bad"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              },
+              {
+                "node_id": "node-15",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              }
+            ]
+          },
+          {
+            "id": "dp-22",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/6",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-16",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/6"
+              }
+            ]
+          }
+        ],
+        "total": 6,
+        "page": 0,
+        "size": 4,
+        "pages": 2
+      }
+    },
+    {
+      "params": {
+        "tree_id": "tree-groups",
+        "size": 4,
+        "page": 1
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-23",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/2",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              },
+              {
+                "node_id": "node-17",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              }
+            ]
+          },
+          {
+            "id": "dp-24",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/4",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              },
+              {
+                "node_id": "node-18",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              }
+            ]
+          }
+        ],
+        "total": 6,
+        "page": 1,
+        "size": 4,
+        "pages": 2
+      }
+    },
+    {
+      "params": {
+        "tree_id": "tree-buildings",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          },
+          {
+            "id": "dp-20",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/3",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              },
+              {
+                "node_id": "node-14",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              }
+            ]
+          },
+          {
+            "id": "dp-21",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/5",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-10",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-9",
+                    "node_name": "Bad"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              },
+              {
+                "node_id": "node-15",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              }
+            ]
+          },
+          {
+            "id": "dp-23",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/2",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              },
+              {
+                "node_id": "node-17",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              }
+            ]
+          },
+          {
+            "id": "dp-24",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/4",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              },
+              {
+                "node_id": "node-18",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              }
+            ]
+          }
+        ],
+        "total": 5,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "node_id": "node-7",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          },
+          {
+            "id": "dp-23",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/2",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              },
+              {
+                "node_id": "node-17",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              }
+            ]
+          }
+        ],
+        "total": 2,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "device": "1.1.21",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          },
+          {
+            "id": "dp-23",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/2",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              },
+              {
+                "node_id": "node-17",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              }
+            ]
+          }
+        ],
+        "total": 2,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "device": "1.1.21,1.1.22",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          },
+          {
+            "id": "dp-20",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/3",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              },
+              {
+                "node_id": "node-14",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              }
+            ]
+          },
+          {
+            "id": "dp-23",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/2",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              },
+              {
+                "node_id": "node-17",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              }
+            ]
+          },
+          {
+            "id": "dp-24",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/4",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              },
+              {
+                "node_id": "node-18",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              }
+            ]
+          }
+        ],
+        "total": 4,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "device": "1.1.23",
+        "size": 500
+      },
+      "response": {
+        "items": [],
+        "total": 0,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "tree_id": "tree-groups",
+        "knx_linked": "true",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          },
+          {
+            "id": "dp-20",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/3",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              },
+              {
+                "node_id": "node-14",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              }
+            ]
+          },
+          {
+            "id": "dp-23",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/2",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              },
+              {
+                "node_id": "node-17",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              }
+            ]
+          },
+          {
+            "id": "dp-24",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/4",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              },
+              {
+                "node_id": "node-18",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              }
+            ]
+          }
+        ],
+        "total": 4,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "tree_id": "tree-groups",
+        "knx_linked": "false",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-21",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/5",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-10",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-9",
+                    "node_name": "Bad"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              },
+              {
+                "node_id": "node-15",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              }
+            ]
+          },
+          {
+            "id": "dp-22",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/6",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-16",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/6"
+              }
+            ]
+          }
+        ],
+        "total": 2,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "tree_id": "tree-groups",
+        "q": "status",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-23",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/2",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              },
+              {
+                "node_id": "node-17",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/2"
+              }
+            ]
+          },
+          {
+            "id": "dp-24",
+            "name": "Status",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/4",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              },
+              {
+                "node_id": "node-18",
+                "node_name": "Status",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/4"
+              }
+            ]
+          }
+        ],
+        "total": 2,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "q": "dp-19",
+        "size": 1
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          }
+        ],
+        "total": 1,
+        "page": 0,
+        "size": 1,
+        "pages": 1
+      }
+    },
+    {
+      "params": {
+        "q": "Schalten",
+        "size": 500
+      },
+      "response": {
+        "items": [
+          {
+            "id": "dp-19",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/1",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-7",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              },
+              {
+                "node_id": "node-13",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/1"
+              }
+            ]
+          },
+          {
+            "id": "dp-20",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/3",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-8",
+                "node_name": "Licht Insel",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-6",
+                    "node_name": "Kueche"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              },
+              {
+                "node_id": "node-14",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/3"
+              }
+            ]
+          },
+          {
+            "id": "dp-21",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/5",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-10",
+                "node_name": "Licht Decke",
+                "tree_id": "tree-buildings",
+                "tree_name": "ETS Gebäude und Räume",
+                "node_path": [
+                  {
+                    "node_id": "node-4",
+                    "node_name": "Demo-Test-Projekt"
+                  },
+                  {
+                    "node_id": "node-5",
+                    "node_name": "EG"
+                  },
+                  {
+                    "node_id": "node-9",
+                    "node_name": "Bad"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              },
+              {
+                "node_id": "node-15",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/5"
+              }
+            ]
+          },
+          {
+            "id": "dp-22",
+            "name": "Schalten",
+            "data_type": "BOOLEAN",
+            "unit": null,
+            "group_address": "30/0/6",
+            "hierarchy_nodes": [
+              {
+                "node_id": "node-16",
+                "node_name": "Schalten",
+                "tree_id": "tree-groups",
+                "tree_name": "ETS Gruppenadressen",
+                "node_path": [
+                  {
+                    "node_id": "node-11",
+                    "node_name": "Neue Hauptgruppe"
+                  },
+                  {
+                    "node_id": "node-12",
+                    "node_name": "Neue Mittelgruppe"
+                  }
+                ],
+                "display_depth": 0,
+                "group_address": "30/0/6"
+              }
+            ]
+          }
+        ],
+        "total": 4,
+        "page": 0,
+        "size": 500,
+        "pages": 1
+      }
+    }
+  ],
+  "devices": {
+    "items": [
+      {
+        "pa": "1.1.21",
+        "name": "Testgeraet 21",
+        "manufacturer": "MDT technologies",
+        "order_number": ""
+      },
+      {
+        "pa": "1.1.22",
+        "name": "Testgeraet 22",
+        "manufacturer": "MDT technologies",
+        "order_number": ""
+      },
+      {
+        "pa": "1.1.23",
+        "name": "Testgeraet 23",
+        "manufacturer": "MDT technologies",
+        "order_number": ""
+      }
+    ],
+    "total": 3
+  },
+  "knx_device_data": {
+    "knx_device_data": true
+  }
+}
