@@ -46,3 +46,32 @@ export function parseHierarchyCompositeId(compositeId) {
   if (idx <= 0) return null
   return { tree_id: compositeId.slice(0, idx), node_id: compositeId.slice(idx + 1) }
 }
+
+// ---------------------------------------------------------------------------
+// Datapoint paths for pickers and lenses (#1266, seam S8)
+//
+// Input is a datapoint as GET /api/v1/search delivers it: `name` plus
+// `hierarchy_nodes`, each { node_id, node_name, tree_id, tree_name,
+// node_path: [{ node_id, node_name }] (root → parent), display_depth }.
+// ---------------------------------------------------------------------------
+
+/** Name comparison used by the formatter: Unicode-compatible, trimmed, inner
+ * whitespace collapsed, case-insensitive. */
+export function normalizeHierarchyName(name) {
+  return String(name ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/**
+ * Node names of one hierarchy link of a datapoint, root → linked node, without
+ * the tree name. A last node named like the datapoint (an ETS "groups" tree
+ * holds one node per group address, named like it) is dropped, so the name is
+ * shown once — this repairs stored trees without a re-import.
+ */
+export function datapointRefPath(ref, datapointName) {
+  if (!ref) return []
+  const path = [...(ref.node_path ?? []).map(seg => seg.node_name), ref.node_name]
+  if (path.length && normalizeHierarchyName(path[path.length - 1]) === normalizeHierarchyName(datapointName)) {
+    path.pop()
+  }
+  return path
+}
