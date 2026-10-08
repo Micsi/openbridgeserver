@@ -165,3 +165,116 @@ describe('datapointPathRows — collisions show the group address, only there', 
     ])
   })
 })
+
+// Fixture families of the #1266 plan, as rows a picker would show.
+const lines = (datapoints, treeId) =>
+  datapointPathRows(datapoints, { treeId, groupAddressStyle: 'ThreeLevel' }).map(row => [row.label, row.groupAddress, row.ambiguous])
+
+describe('fixture families: classic group address structure', () => {
+  it('K6: a "groups" tree as imported today reads name once and needs no address', () => {
+    const spots = '01 Esszimmer - Spots'
+    const dps = ['Schalten', 'Status', 'Dimmen'].map((mid, i) => ({
+      id: `k6-${i}`,
+      name: spots,
+      group_address: `1/${i}/1`,
+      hierarchy_nodes: [gaTree(['Beleuchtung', mid, spots])],
+    }))
+    expect(lines(dps, 't-groups')).toEqual([
+      [`Beleuchtung › Schalten › ${spots}`, null, false],
+      [`Beleuchtung › Status › ${spots}`, null, false],
+      [`Beleuchtung › Dimmen › ${spots}`, null, false],
+    ])
+  })
+
+  it('K2: two-level project, today with the generated middle group, later without', () => {
+    // Internally 1/0/x; today's import names the missing middle group itself.
+    const today = ['Esszimmer Spots', 'Küche Spots'].map((name, i) => ({
+      id: `k2-${i}`,
+      name,
+      hierarchy_nodes: [gaTree(['Beleuchtung', 'Mittelgruppe 0', name])],
+    }))
+    expect(lines(today, 't-groups')).toEqual([
+      ['Beleuchtung › Mittelgruppe 0 › Esszimmer Spots', null, false],
+      ['Beleuchtung › Mittelgruppe 0 › Küche Spots', null, false],
+    ])
+    const ranges = today.map(dp => ({ ...dp, hierarchy_nodes: [gaTree(['Beleuchtung', dp.name])] }))
+    expect(lines(ranges, 't-groups').map(([label]) => label)).toEqual(['Beleuchtung › Esszimmer Spots', 'Beleuchtung › Küche Spots'])
+  })
+
+  it('K3: free addressing with nested ranges follows the range names', () => {
+    const dps = [
+      ['Haus', 'EG', 'Licht', 'Esszimmer Spots'],
+      ['Haus', 'OG', 'Licht', 'Esszimmer Spots'],
+    ].map((names, i) => ({ id: `k3-${i}`, name: 'Esszimmer Spots', hierarchy_nodes: [gaTree(names)] }))
+    expect(lines(dps, 't-groups')).toEqual([
+      ['Haus › EG › Licht › Esszimmer Spots', null, false],
+      ['Haus › OG › Licht › Esszimmer Spots', null, false],
+    ])
+  })
+})
+
+describe('fixture families: room oriented with ETS functions', () => {
+  // Room › function tree (#1266 P7) and today's "buildings" tree, which links
+  // a datapoint to its room only.
+  const roomFn = names => nodeRef('t-room', 'Räume', names)
+  const roomOnly = names => nodeRef('t-b', 'ETS Gebäude und Räume', names)
+  const gaOld = names => gaTree(names)
+  const r1 = []
+  for (const fn of ['Decke', 'Wand']) {
+    for (const [j, name] of ['Schalten', 'Status'].entries()) {
+      r1.push({
+        id: `r1-${fn}-${name}`,
+        name,
+        group_address: `0/0/${r1.length + 1}`,
+        hierarchy_nodes: [
+          roomFn(['Haus', 'EG', 'Esszimmer', fn]),
+          roomOnly(['Haus', 'EG', 'Esszimmer']),
+          // R2: an old main group with names that say nothing
+          gaOld(['Neue Hauptgruppe', `Neue Mittelgruppe ${j}`, name]),
+        ],
+      })
+    }
+  }
+
+  it('R1: two functions per room with generic names are unique by room › function', () => {
+    expect(lines(r1, 't-room')).toEqual([
+      ['Haus › EG › Esszimmer › Decke › Schalten', null, false],
+      ['Haus › EG › Esszimmer › Decke › Status', null, false],
+      ['Haus › EG › Esszimmer › Wand › Schalten', null, false],
+      ['Haus › EG › Esszimmer › Wand › Status', null, false],
+    ])
+  })
+
+  it('R1 today: the room alone does not tell the functions apart, the address does', () => {
+    expect(lines(r1, 't-b')).toEqual([
+      ['Haus › EG › Esszimmer › Schalten', '0/0/1', false],
+      ['Haus › EG › Esszimmer › Status', '0/0/2', false],
+      ['Haus › EG › Esszimmer › Schalten', '0/0/3', false],
+      ['Haus › EG › Esszimmer › Status', '0/0/4', false],
+    ])
+  })
+
+  it('R2: in the old main group the generic names collide and need the address', () => {
+    expect(lines(r1, 't-groups').map(([label, ga]) => [label, ga])).toEqual([
+      ['Neue Hauptgruppe › Neue Mittelgruppe 0 › Schalten', '0/0/1'],
+      ['Neue Hauptgruppe › Neue Mittelgruppe 1 › Status', '0/0/2'],
+      ['Neue Hauptgruppe › Neue Mittelgruppe 0 › Schalten', '0/0/3'],
+      ['Neue Hauptgruppe › Neue Mittelgruppe 1 › Status', '0/0/4'],
+    ])
+  })
+
+  it('R3: a group address without function shows its name, the address only on a collision', () => {
+    const dps = [
+      { id: 'r3-a', name: 'Zentral Aus', group_address: '0/7/1', hierarchy_nodes: [] },
+      { id: 'r3-b', name: 'Reserve', group_address: '0/7/2', hierarchy_nodes: [] },
+      { id: 'r3-c', name: 'Reserve', group_address: '0/7/3', hierarchy_nodes: [] },
+      r1[0],
+    ]
+    expect(lines(dps, 't-room')).toEqual([
+      ['Zentral Aus', null, false],
+      ['Reserve', '0/7/2', false],
+      ['Reserve', '0/7/3', false],
+      ['Haus › EG › Esszimmer › Decke › Schalten', null, false],
+    ])
+  })
+})
