@@ -151,3 +151,27 @@ def knxproj_with_datapoint_types(datapoint_types: dict[int, str | None]) -> byte
                 data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             zout.writestr(info, data)
     return out.getvalue()
+
+
+def knxproj_with_group_address_names(names: dict[int, str]) -> bytes:
+    """Return the three-level demo project with some group addresses renamed (#1266).
+
+    ``names`` maps a raw address to its new ETS name, e.g. to give two addresses of
+    one middle range the same name.
+    """
+    ElementTree.register_namespace("", _NS)
+    ElementTree.register_namespace("xsi", "http://www.w3.org/2001/XMLSchema-instance")
+    ElementTree.register_namespace("xsd", "http://www.w3.org/2001/XMLSchema")
+    out = io.BytesIO()
+    with zipfile.ZipFile(DEMO_KNXPROJ) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            if info.filename == f"{_PROJECT}/0.xml":
+                root = ElementTree.fromstring(data)
+                for ga in root.iter(_q("GroupAddress")):
+                    raw = int(ga.get("Address", "-1"))
+                    if raw in names:
+                        ga.set("Name", names[raw])
+                data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            zout.writestr(info, data)
+    return out.getvalue()

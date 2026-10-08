@@ -52,15 +52,17 @@ export function parseHierarchyCompositeId(compositeId) {
 // ---------------------------------------------------------------------------
 // Datapoint paths for pickers and lenses (#1266, seam S8)
 //
-// Input is a datapoint as GET /api/v1/search delivers it: `name` plus
-// `hierarchy_nodes`, each { node_id, node_name, tree_id, tree_name,
-// node_path: [{ node_id, node_name }] (root → parent), display_depth }.
+// Input is a datapoint as GET /api/v1/search delivers it: `name`,
+// `group_address` (command group address of its KNX binding, internal
+// notation, or null) and `hierarchy_nodes`, each { node_id, node_name,
+// tree_id, tree_name, node_path: [{ node_id, node_name }] (root → parent),
+// display_depth }.
 // ---------------------------------------------------------------------------
 
-/** Name comparison used by the formatter: Unicode-compatible, trimmed, inner
- * whitespace collapsed, case-insensitive. */
+/** Name comparison for collapsing a leaf: trimmed, inner whitespace
+ * collapsed, case-insensitive. */
 export function normalizeHierarchyName(name) {
-  return String(name ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()
+  return String(name ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
 /**
@@ -78,55 +80,48 @@ export function datapointRefPath(ref, datapointName) {
   return path
 }
 
-function comparePaths(a, b) {
-  const ka = a.join('\u0000')
-  const kb = b.join('\u0000')
-  return ka < kb ? -1 : ka > kb ? 1 : 0
-}
-
 /**
  * Paths of a datapoint in one tree (the caller picks the tree), each from
- * datapointRefPath(), in code-point order, and the main path among them.
+ * datapointRefPath(), in the order the API delivers them, and the main path.
  *
- * The main path is the one of the command group address: the link whose
- * `group_address` equals the datapoint's `group_address`. The search API
- * delivers neither field yet (#1266 P6/P7); without them, and when no link
- * matches, the first path in code-point order is the main path, so the
- * choice is deterministic whatever order the API returns the links in.
+ * With one path that is the main path. With several (a switch and a status
+ * address in two middle groups of one tree) the main path is undecided
+ * (`primary: null`): it should be the path of the command group address, but
+ * a link does not record which address created it (hierarchy_import.py keeps
+ * the address → node mapping only while importing). Recording it is #1266 P6;
+ * until then the caller shows all paths.
  */
 export function datapointTreePaths(datapoint, treeId) {
-  const refs = (datapoint.hierarchy_nodes ?? []).filter(ref => ref.tree_id === treeId)
-  const entries = refs
-    .map(ref => ({ ref, path: datapointRefPath(ref, datapoint.name) }))
-    .sort((a, b) => comparePaths(a.path, b.path))
-  if (!entries.length) return { primary: null, paths: [] }
-  const command = datapoint.group_address
-  const main = entries.find(entry => command && entry.ref.group_address === command) ?? entries[0]
-  return { primary: main.path, paths: entries.map(entry => entry.path) }
+  const paths = (datapoint.hierarchy_nodes ?? [])
+    .filter(ref => ref.tree_id === treeId)
+    .map(ref => datapointRefPath(ref, datapoint.name))
+  return { primary: paths.length === 1 ? paths[0] : null, paths }
 }
 
 /**
  * One picker line per datapoint for one tree: `label` is the main path plus
- * the name (once), `paths` every path of the datapoint in that tree as a line
- * (for a tooltip or detail text).
+ * the name (once), the name alone without a path in that tree, and null while
+ * the main path is undecided; `paths` holds every path as a line (for a
+ * tooltip or detail text).
  *
- * Lines that read the same (compared after normalizing) are collisions; only
- * there `groupAddress` carries the datapoint's command group address in the
- * project's style (formatGa), elsewhere it is null. `ambiguous` marks a
- * collision the address cannot resolve: the datapoint has none (the search
- * API does not deliver it yet, #1266 P6/P7) or shares it with another line.
+ * Lines that read exactly the same are collisions; only there `groupAddress`
+ * carries the datapoint's command group address in the project's style
+ * (formatGa; pass knxProject.groupAddressStyle, an unknown style throws),
+ * elsewhere it is null. `ambiguous` marks a collision the address cannot
+ * resolve: the datapoint has none or shares it with another line.
  */
 export function datapointPathRows(datapoints, { treeId, groupAddressStyle }) {
   const rows = datapoints.map(datapoint => {
     const { primary, paths } = datapointTreePaths(datapoint, treeId)
     const line = path => [...path, datapoint.name].join(' › ')
-    return { datapoint, label: line(primary ?? []), paths: paths.map(line), groupAddress: null, ambiguous: false }
+    const label = paths.length ? primary && line(primary) : datapoint.name
+    return { datapoint, label, paths: paths.map(line), groupAddress: null, ambiguous: false }
   })
   const byLabel = new Map()
   for (const row of rows) {
-    const key = normalizeHierarchyName(row.label)
-    if (!byLabel.has(key)) byLabel.set(key, [])
-    byLabel.get(key).push(row)
+    if (row.label === null) continue
+    if (!byLabel.has(row.label)) byLabel.set(row.label, [])
+    byLabel.get(row.label).push(row)
   }
   for (const group of byLabel.values()) {
     if (group.length < 2) continue

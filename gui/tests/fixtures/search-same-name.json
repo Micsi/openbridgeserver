@@ -1,0 +1,77 @@
+[
+  {
+    "id": "dp-1",
+    "name": "Spots P8",
+    "data_type": "BOOLEAN",
+    "group_address": "1/1/1",
+    "hierarchy_nodes": [
+      {
+        "node_id": "node-2",
+        "node_name": "Spots P8",
+        "tree_id": "tree-groups",
+        "tree_name": "ETS Gruppenadressen",
+        "node_path": [
+          {
+            "node_id": "node-3",
+            "node_name": "Demo 01 - Binaersignale"
+          },
+          {
+            "node_id": "node-4",
+            "node_name": "Schalten"
+          }
+        ],
+        "display_depth": 0
+      }
+    ]
+  },
+  {
+    "id": "dp-5",
+    "name": "Spots P8",
+    "data_type": "BOOLEAN",
+    "group_address": "1/1/2",
+    "hierarchy_nodes": [
+      {
+        "node_id": "node-6",
+        "node_name": "Spots P8",
+        "tree_id": "tree-groups",
+        "tree_name": "ETS Gruppenadressen",
+        "node_path": [
+          {
+            "node_id": "node-3",
+            "node_name": "Demo 01 - Binaersignale"
+          },
+          {
+            "node_id": "node-4",
+            "node_name": "Schalten"
+          }
+        ],
+        "display_depth": 0
+      }
+    ]
+  },
+  {
+    "id": "dp-7",
+    "name": "Spots P8",
+    "data_type": "BOOLEAN",
+    "group_address": "1/4/1",
+    "hierarchy_nodes": [
+      {
+        "node_id": "node-8",
+        "node_name": "Spots P8",
+        "tree_id": "tree-groups",
+        "tree_name": "ETS Gruppenadressen",
+        "node_path": [
+          {
+            "node_id": "node-3",
+            "node_name": "Demo 01 - Binaersignale"
+          },
+          {
+            "node_id": "node-9",
+            "node_name": "Status Rueckmeldung"
+          }
+        ],
+        "display_depth": 0
+      }
+    ]
+  }
+]
