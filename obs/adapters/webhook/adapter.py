@@ -105,6 +105,11 @@ _MAX_PREFIX_SEGMENTS = 3
 # static files and its history-mode routes (`gui/src/router/index.js`, guarded
 # by a test): the webhook middleware runs ahead of every route, so a prefix on
 # one of these would silently take that surface offline.
+# Kept as a deliberate copy rather than a shared, generated source (issue #1305):
+# the entries come from three owners — FastAPI routes and mounts, gui/public and
+# the Vue router — and the router source does not ship with a deployment, so a
+# common source would need an extra build step for little gain.  The contract
+# test against gui/src/router/index.js fails as soon as a GUI route is missing.
 _RESERVED_PREFIX_SEGMENTS = frozenset(
     {
         "adapters",
