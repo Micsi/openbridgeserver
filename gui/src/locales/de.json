@@ -418,7 +418,10 @@
         "selectOnewireInstanceFirst": "Bitte zuerst eine 1-Wire-Instanz wählen",
         "noSensorsFound": "Keine Sensoren gefunden",
         "onewireScanFailed": "1-Wire-Sensor-Scan fehlgeschlagen",
-        "onewireAliasSaveFailed": "Alias konnte nicht gespeichert werden"
+        "onewireAliasSaveFailed": "Alias konnte nicht gespeichert werden",
+        "webhookEntryNotFound": "Aufruf-URL für diese Verknüpfung nicht gefunden",
+        "webhookLoadFailed": "Aufruf-URL konnte nicht geladen werden",
+        "webhookRotateFailed": "Token konnte nicht neu erzeugt werden"
       },
       "knxSection": "KNX-Verknüpfung",
       "dptLabel": "DPT *",
@@ -751,7 +754,40 @@
       "ztChristmasEve": "Heiligabend",
       "ztAdventOffset": "1. Advent {sign}{n} Tage",
       "notSet": "—",
-      "ztHolidayOffset": "{name} {sign}{n} Tage"
+      "ztHolidayOffset": "{name} {sign}{n} Tage",
+      "webhookSection": "Webhook-Verknüpfung",
+      "webhookIntro": "Ein eingehender HTTP-Aufruf setzt diesen Datenpunkt. Geeignet für Geräte, die nur eine URL aufrufen können — z. B. eine Türsprechstelle beim Klingeln.",
+      "webhookSlugLabel": "Slug (Pfadsegment)",
+      "webhookSlugPlaceholder": "haustuer-klingel",
+      "webhookSlugHint": "Kleinbuchstaben, Ziffern, Bindestrich und Unterstrich. Teil der Aufruf-URL und je Webhook-Instanz eindeutig.",
+      "webhookMethodsLabel": "Erlaubte HTTP-Methoden",
+      "webhookMethodsHint": "Geräte, die nur eine URL aufrufen können, benutzen GET.",
+      "webhookValueSourceLabel": "Wertquelle",
+      "webhookValueSourceFixed": "Fester Wert",
+      "webhookValueSourceRequest": "Wert aus der Anfrage",
+      "webhookFixedValueLabel": "Fester Wert",
+      "webhookFixedValueHint": "Wird in den Datentyp des Datenpunkts umgewandelt — für einen Taster oder eine Klingel „true“.",
+      "webhookValueParamLabel": "Parameter-/Feldname",
+      "webhookValueParamHint": "Bei GET der Query-Parameter „?{name}=…“, bei POST das gleichnamige Feld im JSON-Body.",
+      "webhookDebounceLabel": "Entprellung (ms)",
+      "webhookDebounceHint": "Weitere Aufrufe innerhalb dieser Zeit werden mit 204 bestätigt, setzen den Wert aber nicht erneut. 0 = aus.",
+      "webhookCallUrlSection": "Aufruf-URL",
+      "webhookCallUrlLabel": "URL mit Token als Query-Parameter",
+      "webhookCallUrlHint": "Diese URL im Gerät hinterlegen. Das Token berechtigt ausschließlich diesen einen Datenpunkt.",
+      "webhookCallUrlPathLabel": "URL mit Token im Pfad",
+      "webhookCallUrlPathHint": "Alternative für Geräte, deren Konfigurationsfeld keine Query-Parameter zulässt.",
+      "webhookCallCount": "Aufrufe",
+      "webhookPublishCount": "Gesetzte Werte",
+      "webhookLastCalled": "Letzter Aufruf",
+      "webhookNeverCalled": "nie",
+      "webhookRotateToken": "Token neu erzeugen",
+      "webhookRotateTokenHint": "Widerruft die bisherige URL sofort — andere Integrationen bleiben unberührt.",
+      "webhookAutoresetLabel": "Auto-Reset aktivieren",
+      "webhookAutoresetHint": "Setzt den Datenpunkt nach der eingestellten Zeit automatisch auf den Reset-Wert zurück — damit wird aus dem Webhook ein Trigger (Klingel: true, kurz darauf wieder false). Ein erneuter, angenommener Aufruf startet die Zeit neu; ein Aufruf innerhalb der Entprellung zählt nicht.",
+      "webhookAutoresetValueLabel": "Reset-Wert",
+      "webhookAutoresetValueHint": "Wird wie der ausgelöste Wert in den Datentyp umgewandelt und durchläuft dieselbe Transformation.",
+      "webhookAutoresetDelayLabel": "Reset-Verzögerung (ms)",
+      "webhookAutoresetDelayHint": "Wie lange der ausgelöste Wert stehen bleibt. 0 = sofort zurücksetzen."
     },
     "knx": {
       "scan": {
@@ -1170,6 +1206,50 @@
           "title": "Anfrage-Timeout (s)",
           "description": "Sekunden pro owserver-Aufruf, bevor er als Fehler gewertet wird"
         }
+      },
+      "WEBHOOK": {
+        "path_prefix": {
+          "title": "Pfad-Präfix"
+        },
+        "trust_forwarded_for": {
+          "title": "X-Forwarded-For vertrauen"
+        },
+        "rate_limit_per_minute": {
+          "title": "Ratenlimit (Aufrufe/Minute je IP)"
+        },
+        "slug": {
+          "title": "Slug (Pfadsegment)"
+        },
+        "token": {
+          "title": "Token"
+        },
+        "methods": {
+          "title": "HTTP-Methoden"
+        },
+        "value_source": {
+          "title": "Wertquelle"
+        },
+        "fixed_value": {
+          "title": "Fester Wert"
+        },
+        "value_param": {
+          "title": "Parameter-/Feldname"
+        },
+        "debounce_ms": {
+          "title": "Entprellung (ms)"
+        },
+        "allowed_networks": {
+          "title": "Erlaubte Netze (CIDR)"
+        },
+        "autoreset": {
+          "title": "Auto-Reset"
+        },
+        "autoreset_value": {
+          "title": "Reset-Wert"
+        },
+        "autoreset_delay_ms": {
+          "title": "Reset-Verzögerung (ms)"
+        }
       }
     },
     "statusDetail": {
@@ -1207,7 +1287,11 @@
       "invalidBindingsSkipped": "{count} ungültige Verknüpfung(en) übersprungen ({examples})",
       "messageProviderFailures": "MESSAGE-Provider-Fehler: {count} Ziel(e)",
       "messageArchiveWriteFailed": "Meldungsarchiv konnte nicht geschrieben werden",
-      "messageSent": "MESSAGE gesendet"
+      "messageSent": "MESSAGE gesendet",
+      "webhookListening": "Erreichbar unter {prefix}/<slug>",
+      "webhookPrefixConflict": "Pfad-Präfix {prefix} überschneidet sich mit dem Präfix einer anderen Instanz",
+      "webhookDuplicateSlug": "Doppelte Slugs ignoriert: {slugs}",
+      "webhookInvalidConfig": "Ungültige Instanz-Konfiguration"
     },
     "testResult": {
       "typeNotRegistered": "Adapter-Typ '{type}' nicht registriert",
@@ -1215,6 +1299,27 @@
       "configValidationError": "Konfigurations-Validierungsfehler: {error}",
       "connectOk": "Verbindung zu {type} erfolgreich",
       "connectFailed": "Verbindungsversuch fehlgeschlagen"
+    },
+    "allowlist": {
+      "bindingLabel": "Erlaubte Netze (CIDR)",
+      "placeholder": "10.38.0.0/16",
+      "addEntry": "Eintrag hinzufügen",
+      "removeEntry": "Eintrag entfernen",
+      "emptyMeansAny": "Keine Einträge — alle Absender dürfen diese Verknüpfung auslösen.",
+      "invalidEntries": "{n} Eintrag/Einträge sind keine gültige IP oder CIDR-Notation",
+      "hint": "Je Zeile eine IP-Adresse oder ein Netz, z. B. 10.38.0.0/16 oder 192.168.1.5. Eine leere Liste schränkt nicht ein.",
+      "rejectedCalls": "{n} Aufruf(e) abgewiesen",
+      "instanceRejectedCalls": "Instanzweit abgewiesen: {n} Aufruf(e) (Summe über alle Verknüpfungen, auch nicht zuordenbare)",
+      "lastRejection": "Zuletzt: {reason} — Absender {host}",
+      "originBlocked": "Diese URL zeigt auf {host}. Die Allowlist dieser Verknüpfung erlaubt diesen Absender nicht — ein Aufruf von hier aus wird mit 404 abgewiesen.",
+      "reason": {
+        "rate_limited": "Ratenlimit überschritten",
+        "unknown_slug": "unbekannter Slug",
+        "invalid_binding": "ungültige Binding-Konfiguration",
+        "invalid_token": "falsches Token",
+        "method_not_allowed": "HTTP-Methode nicht erlaubt",
+        "address_blocked": "Absenderadresse nicht in der Allowlist"
+      }
     }
   },
   "history": {
@@ -3364,7 +3469,9 @@
       "december": "Dezember"
     },
     "chooseFile": "Datei wählen",
-    "noFileSelected": "Keine Datei ausgewählt"
+    "noFileSelected": "Keine Datei ausgewählt",
+    "copy": "Kopieren",
+    "copied": "Kopiert"
   },
   "hierarchy": {
     "title": "Hierarchien",

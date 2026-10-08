@@ -130,7 +130,10 @@ Default login: `admin` / `admin`
 
 - `gui/` — Admin GUI (Vue 3 + Vite), dev server on port 5173, built to `gui_dist/` (served by FastAPI at `/`)
 - `frontend/` — Visu SPA (Vue 3 + TypeScript), built to `frontend_dist/` (served by FastAPI at `/visu`)
-- Both proxy `/api` to `localhost:8080` during dev via `vite.config`
+- Both proxy `/api` to `localhost:8080` during dev via `vite.config`; the Admin GUI additionally
+  proxies `/help` and `/hook` (the WEBHOOK adapter's trigger endpoint, #1256 — the binding form
+  builds its call URL from the browser origin, so without that proxy a URL copied in dev would hit
+  Vite's SPA fallback instead of the backend)
 
 #### Logic editor node cards
 

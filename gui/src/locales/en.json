@@ -418,7 +418,10 @@
         "selectOnewireInstanceFirst": "Please select a 1-Wire instance first",
         "noSensorsFound": "No sensors found",
         "onewireScanFailed": "1-Wire sensor scan failed",
-        "onewireAliasSaveFailed": "Could not save alias"
+        "onewireAliasSaveFailed": "Could not save alias",
+        "webhookEntryNotFound": "No call URL found for this binding",
+        "webhookLoadFailed": "Could not load the call URL",
+        "webhookRotateFailed": "Could not issue a new token"
       },
       "knxSection": "KNX binding",
       "dptLabel": "DPT *",
@@ -751,7 +754,40 @@
       "ztChristmasEve": "Christmas Eve",
       "ztAdventOffset": "1st Advent {sign}{n} days",
       "notSet": "—",
-      "ztHolidayOffset": "{name} {sign}{n} days"
+      "ztHolidayOffset": "{name} {sign}{n} days",
+      "webhookSection": "Webhook binding",
+      "webhookIntro": "An incoming HTTP call sets this datapoint. Made for devices that can only call a URL — a door station when the bell is pressed, for example.",
+      "webhookSlugLabel": "Slug (path segment)",
+      "webhookSlugPlaceholder": "front-door-bell",
+      "webhookSlugHint": "Lower-case letters, digits, hyphen and underscore. Part of the call URL and unique per webhook instance.",
+      "webhookMethodsLabel": "Allowed HTTP methods",
+      "webhookMethodsHint": "Devices that can only call a URL use GET.",
+      "webhookValueSourceLabel": "Value source",
+      "webhookValueSourceFixed": "Fixed value",
+      "webhookValueSourceRequest": "Value from the request",
+      "webhookFixedValueLabel": "Fixed value",
+      "webhookFixedValueHint": "Converted to the datapoint's data type — \"true\" for a push button or a doorbell.",
+      "webhookValueParamLabel": "Parameter / field name",
+      "webhookValueParamHint": "For GET the query parameter \"?{name}=…\", for POST the field of the same name in the JSON body.",
+      "webhookDebounceLabel": "Debounce (ms)",
+      "webhookDebounceHint": "Further calls within this window are acknowledged with 204 but do not set the value again. 0 = off.",
+      "webhookCallUrlSection": "Call URL",
+      "webhookCallUrlLabel": "URL with the token as a query parameter",
+      "webhookCallUrlHint": "Configure this URL in the device. The token authorizes this one datapoint and nothing else.",
+      "webhookCallUrlPathLabel": "URL with the token in the path",
+      "webhookCallUrlPathHint": "Alternative for devices whose configuration field does not accept query parameters.",
+      "webhookCallCount": "Calls",
+      "webhookPublishCount": "Values set",
+      "webhookLastCalled": "Last call",
+      "webhookNeverCalled": "never",
+      "webhookRotateToken": "Issue a new token",
+      "webhookRotateTokenHint": "Revokes the previous URL immediately — other integrations are untouched.",
+      "webhookAutoresetLabel": "Enable auto-reset",
+      "webhookAutoresetHint": "Sets the datapoint back to the reset value after the configured time — which turns the webhook into a trigger (bell: true, then false again shortly after). Another accepted call restarts the timer; a call inside the debounce window does not.",
+      "webhookAutoresetValueLabel": "Reset value",
+      "webhookAutoresetValueHint": "Converted to the datapoint's data type and run through the same transformation as the triggered value.",
+      "webhookAutoresetDelayLabel": "Reset delay (ms)",
+      "webhookAutoresetDelayHint": "How long the triggered value stands. 0 = reset immediately."
     },
     "knx": {
       "scan": {
@@ -1170,6 +1206,50 @@
           "title": "Request timeout (s)",
           "description": "Seconds per owserver call before it is treated as an error"
         }
+      },
+      "WEBHOOK": {
+        "path_prefix": {
+          "title": "Path prefix"
+        },
+        "trust_forwarded_for": {
+          "title": "Trust X-Forwarded-For"
+        },
+        "rate_limit_per_minute": {
+          "title": "Rate limit (calls/minute per IP)"
+        },
+        "slug": {
+          "title": "Slug (path segment)"
+        },
+        "token": {
+          "title": "Token"
+        },
+        "methods": {
+          "title": "HTTP methods"
+        },
+        "value_source": {
+          "title": "Value source"
+        },
+        "fixed_value": {
+          "title": "Fixed value"
+        },
+        "value_param": {
+          "title": "Parameter / field name"
+        },
+        "debounce_ms": {
+          "title": "Debounce (ms)"
+        },
+        "allowed_networks": {
+          "title": "Allowed networks (CIDR)"
+        },
+        "autoreset": {
+          "title": "Auto-reset"
+        },
+        "autoreset_value": {
+          "title": "Reset value"
+        },
+        "autoreset_delay_ms": {
+          "title": "Reset delay (ms)"
+        }
       }
     },
     "statusDetail": {
@@ -1207,7 +1287,11 @@
       "invalidBindingsSkipped": "{count} invalid binding(s) skipped ({examples})",
       "messageProviderFailures": "MESSAGE provider failures: {count} target(s)",
       "messageArchiveWriteFailed": "MESSAGE archive write failed",
-      "messageSent": "MESSAGE sent"
+      "messageSent": "MESSAGE sent",
+      "webhookListening": "Reachable at {prefix}/<slug>",
+      "webhookPrefixConflict": "Path prefix {prefix} overlaps the prefix of another instance",
+      "webhookDuplicateSlug": "Duplicate slug(s) ignored: {slugs}",
+      "webhookInvalidConfig": "Invalid instance configuration"
     },
     "testResult": {
       "typeNotRegistered": "Adapter type '{type}' not registered",
@@ -1215,6 +1299,27 @@
       "configValidationError": "Configuration validation error: {error}",
       "connectOk": "Connection to {type} successful",
       "connectFailed": "Connection attempt failed"
+    },
+    "allowlist": {
+      "bindingLabel": "Allowed networks (CIDR)",
+      "placeholder": "10.38.0.0/16",
+      "addEntry": "Add entry",
+      "removeEntry": "Remove entry",
+      "emptyMeansAny": "No entries — every caller may trigger this binding.",
+      "invalidEntries": "{n} entry/entries are not a valid IP address or CIDR",
+      "hint": "One IP address or network per row, e.g. 10.38.0.0/16 or 192.168.1.5. An empty list does not restrict anything.",
+      "rejectedCalls": "{n} call(s) rejected",
+      "instanceRejectedCalls": "Rejected instance-wide: {n} call(s) (total across all bindings, including ones that could not be matched)",
+      "lastRejection": "Last: {reason} — caller {host}",
+      "originBlocked": "This URL points at {host}. This binding's allowlist does not allow that caller — a call from here is rejected with 404.",
+      "reason": {
+        "rate_limited": "rate limit exceeded",
+        "unknown_slug": "unknown slug",
+        "invalid_binding": "invalid binding configuration",
+        "invalid_token": "wrong token",
+        "method_not_allowed": "HTTP method not allowed",
+        "address_blocked": "caller address not in the allowlist"
+      }
     }
   },
   "history": {
@@ -3364,7 +3469,9 @@
       "december": "December"
     },
     "chooseFile": "Choose file",
-    "noFileSelected": "No file selected"
+    "noFileSelected": "No file selected",
+    "copy": "Copy",
+    "copied": "Copied"
   },
   "hierarchy": {
     "title": "Hierarchies",

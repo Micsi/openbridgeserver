@@ -423,7 +423,11 @@ async def duplicate_datapoint(
                     )
                 )
                 binding_rows = await transaction.fetchall(
-                    "SELECT * FROM adapter_bindings WHERE datapoint_id=? ORDER BY created_at",
+                    # A webhook binding is the public name (slug) and bearer secret
+                    # (token) of one endpoint for one DataPoint. Copying it would
+                    # either clone the secret or leave a dead twin that loses the
+                    # slug on reload, so the duplicate gets a fresh binding instead.
+                    "SELECT * FROM adapter_bindings WHERE datapoint_id=? AND adapter_type != 'WEBHOOK' ORDER BY created_at",
                     (str(dp_id),),
                 )
                 await registry.insert(duplicate, connection=transaction)
