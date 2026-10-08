@@ -90,7 +90,12 @@ async def test_search_delivers_paths_and_command_addresses_of_same_named_datapoi
     items = sorted((item for item in resp.json()["items"] if item["name"] == NAME), key=lambda item: item["group_address"])
 
     assert [item["group_address"] for item in items] == ["1/1/1", "1/1/2", "1/4/1"]
-    paths = [[*(seg["node_name"] for seg in ref["node_path"]), ref["node_name"]] for item in items for ref in item["hierarchy_nodes"] if ref["tree_id"] == imported]
+    paths = [
+        [*(seg["node_name"] for seg in ref["node_path"]), ref["node_name"]]
+        for item in items
+        for ref in item["hierarchy_nodes"]
+        if ref["tree_id"] == imported
+    ]
     assert paths == [
         ["Demo 01 - Binaersignale", "Schalten", NAME],
         ["Demo 01 - Binaersignale", "Schalten", NAME],
