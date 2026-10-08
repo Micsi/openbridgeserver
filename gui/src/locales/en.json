@@ -783,7 +783,7 @@
       "webhookRotateToken": "Issue a new token",
       "webhookRotateTokenHint": "Revokes the previous URL immediately — other integrations are untouched.",
       "webhookAutoresetLabel": "Enable auto-reset",
-      "webhookAutoresetHint": "Sets the datapoint back to the reset value after the configured time — which turns the webhook into a trigger (bell: true, then false again shortly after). Another call restarts the timer.",
+      "webhookAutoresetHint": "Sets the datapoint back to the reset value after the configured time — which turns the webhook into a trigger (bell: true, then false again shortly after). Another accepted call restarts the timer; a call inside the debounce window does not.",
       "webhookAutoresetValueLabel": "Reset value",
       "webhookAutoresetValueHint": "Converted to the datapoint's data type and run through the same transformation as the triggered value.",
       "webhookAutoresetDelayLabel": "Reset delay (ms)",

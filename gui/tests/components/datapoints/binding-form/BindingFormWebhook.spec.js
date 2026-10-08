@@ -117,6 +117,13 @@ describe('BindingFormWebhook — auto-reset', () => {
     w.unmount()
   })
 
+  it('qualifies the restart hint: only accepted calls, not debounced ones', () => {
+    const w = mk({}, { ...BASE_CFG, autoreset: true })
+    expect(w.text()).toContain('Ein erneuter, angenommener Aufruf startet die Zeit neu; ein Aufruf innerhalb der Entprellung zählt nicht.')
+    expect(w.text()).not.toContain('Ein erneuter Aufruf startet die Zeit neu.')
+    w.unmount()
+  })
+
   it('writes the reset value and delay into cfg', async () => {
     const cfg = { ...BASE_CFG, autoreset: true }
     const w = mk({}, cfg)

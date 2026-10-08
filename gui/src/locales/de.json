@@ -783,7 +783,7 @@
       "webhookRotateToken": "Token neu erzeugen",
       "webhookRotateTokenHint": "Widerruft die bisherige URL sofort — andere Integrationen bleiben unberührt.",
       "webhookAutoresetLabel": "Auto-Reset aktivieren",
-      "webhookAutoresetHint": "Setzt den Datenpunkt nach der eingestellten Zeit automatisch auf den Reset-Wert zurück — damit wird aus dem Webhook ein Trigger (Klingel: true, kurz darauf wieder false). Ein erneuter Aufruf startet die Zeit neu.",
+      "webhookAutoresetHint": "Setzt den Datenpunkt nach der eingestellten Zeit automatisch auf den Reset-Wert zurück — damit wird aus dem Webhook ein Trigger (Klingel: true, kurz darauf wieder false). Ein erneuter, angenommener Aufruf startet die Zeit neu; ein Aufruf innerhalb der Entprellung zählt nicht.",
       "webhookAutoresetValueLabel": "Reset-Wert",
       "webhookAutoresetValueHint": "Wird wie der ausgelöste Wert in den Datentyp umgewandelt und durchläuft dieselbe Transformation.",
       "webhookAutoresetDelayLabel": "Reset-Verzögerung (ms)",
