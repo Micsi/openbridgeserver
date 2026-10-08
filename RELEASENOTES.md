@@ -7,7 +7,7 @@
 * none
 
 ### Fixes 🐞
-* none
+* LXC: `obs-update --nightly` listed a new release below every nightly of the same month — 2026.10.0 showed up ninth, after `nightly-20261001` through `nightly-20261008` — because a release's patch number was compared with a nightly's day of month. The version menu is now ordered by publication time, newest first; which releases are offered (the two most recent stable releases plus newer release candidates) is unchanged. The fix takes effect after the first update that installs it, since `obs-update` replaces itself from the installed bundle. https://github.com/abeggled/openbridgeserver/issues/1323
 
 ### Known Issues 🔔
 * none
