@@ -75,7 +75,10 @@ without any error.
    the connection status.
    `try_normalize_ga()` returns `None` and is only for such tolerant readers.
 6. **Display in the project's style.** The API delivers internal addresses plus the project's
-   `group_address_style`. The backend renders with `format_ga(address, style)`; the Admin GUI shows
+   `group_address_style`. `GET /api/v1/search` also carries each datapoint's command group
+   address (`group_address`, #1266): the KNX binding's address, a writing binding (`DEST`/`BOTH`)
+   before a reading one, then the oldest; non-admins only see bindings of adapter instances they
+   may read. The backend renders with `format_ga(address, style)`; the Admin GUI shows
    every group address through `formatGa(address, knxProject.groupAddressStyle)`
    (`gui/src/utils/groupAddress.js`), with the style from the one store `useKnxProjectStore`
    (`gui/src/stores/knxProject.js`, fed from `GET /api/v1/knxproj/group-addresses`, reloaded after

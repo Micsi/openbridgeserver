@@ -21,8 +21,9 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
+from obs.adapters.knx.group_address import try_normalize_ga
 from obs.api.audit import contract_audit, set_contract_audit_details, set_contract_audit_resource_id
 from obs.api.auth import Principal, get_admin_user, get_current_principal
 from obs.api.authz import AuthzAction, AuthzTarget, RoleGrant, authorize
@@ -117,8 +118,15 @@ class DataPointOut(BaseModel):
     diagnostics: list[DataPointDiagnostic] = []
     # Hierarchy (populated by search endpoint, empty elsewhere)
     hierarchy_nodes: list[HierarchyNodeRef] = []
+    # Command group address of the KNX binding, internal notation (search endpoint only, #1266)
+    group_address: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("group_address")
+    @classmethod
+    def _internal_group_address(cls, value: str | None) -> str | None:
+        return try_normalize_ga(value)
 
     @field_serializer("value")
     def _serialize_value(self, v: Any) -> Any:

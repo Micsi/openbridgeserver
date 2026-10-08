@@ -18,7 +18,8 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from obs.api.auth import Principal, get_current_principal
-from obs.api.authz import AuthzAction, authorize
+from obs.adapters.knx.group_address import try_normalize_ga
+from obs.api.authz import AuthzAction, AuthzTarget, authorize
 from obs.api.authz_service import filter_authorized_datapoints, load_role_grants, resolve_hierarchy_targets
 from obs.api.v1.datapoints import _SORT_KEYS, DataPointOut, HierarchyNodeRef, NodePathSegment, _enrich
 from obs.core.registry import get_registry
@@ -117,6 +118,50 @@ async def _add_hierarchy(items: list[DataPointOut], db: Database, principal: Pri
         )
     for item in items:
         item.hierarchy_nodes = by_dp.get(str(item.id), [])
+
+
+async def _add_command_group_address(items: list[DataPointOut], db: Database, principal: Principal) -> None:
+    """Set each item's ``group_address``: the command group address of its KNX binding (#1266).
+
+    The datapoint picker shows it where same-named rows would otherwise look alike.
+    With several KNX bindings a writing one (DEST/BOTH) wins over a reading one
+    (SOURCE), then the oldest (``created_at``, then ``id``). A binding whose stored
+    address is no group address is skipped; the address is returned in the internal
+    notation. Non-admins only get addresses of bindings on adapter instances they may
+    read, like ``GET /api/v1/datapoints/{id}/bindings``.
+    """
+    if not items:
+        return
+    dp_ids = [str(item.id) for item in items]
+    placeholders = ",".join("?" * len(dp_ids))
+    rows = await db.fetchall(
+        f"""SELECT datapoint_id, adapter_instance_id,
+                   JSON_EXTRACT(config, '$.group_address') AS group_address
+            FROM adapter_bindings
+            WHERE UPPER(adapter_type) = 'KNX' AND datapoint_id IN ({placeholders})
+            ORDER BY CASE WHEN direction IN ('DEST', 'BOTH') THEN 0 ELSE 1 END, created_at, id""",
+        dp_ids,
+    )
+    if not (principal.type == "user" and principal.is_admin):
+        grants = await load_role_grants(db, principal, node_type="adapter_instance")
+        rows = [
+            row
+            for row in rows
+            if row["adapter_instance_id"] is None
+            or authorize(
+                principal=principal,
+                action=AuthzAction.READ,
+                targets=[AuthzTarget(node_type="adapter_instance", node_id=row["adapter_instance_id"], min_role="guest")],
+                grants=grants,
+            ).allowed
+        ]
+    by_dp: dict[str, str] = {}
+    for row in rows:
+        address = try_normalize_ga(row["group_address"])
+        if address and row["datapoint_id"] not in by_dp:
+            by_dp[row["datapoint_id"]] = address
+    for item in items:
+        item.group_address = by_dp.get(str(item.id))
 
 
 @router.get("/", response_model=SearchPage)
@@ -258,6 +303,7 @@ async def search(
 
     # 10. Enrich with hierarchy node assignments (single batch query)
     await _add_hierarchy(items, db, principal)
+    await _add_command_group_address(items, db, principal)
 
     return SearchPage(
         items=items,
