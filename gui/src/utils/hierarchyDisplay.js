@@ -1,3 +1,5 @@
+import { formatGa } from '@/utils/groupAddress'
+
 export function normalizeHierarchyDisplayDepth(displayDepth) {
   const depth = Number(displayDepth)
   if (!Number.isFinite(depth) || depth <= 0) return 0
@@ -101,4 +103,40 @@ export function datapointTreePaths(datapoint, treeId) {
   const command = datapoint.group_address
   const main = entries.find(entry => command && entry.ref.group_address === command) ?? entries[0]
   return { primary: main.path, paths: entries.map(entry => entry.path) }
+}
+
+/**
+ * One picker line per datapoint for one tree: `label` is the main path plus
+ * the name (once), `paths` every path of the datapoint in that tree as a line
+ * (for a tooltip or detail text).
+ *
+ * Lines that read the same (compared after normalizing) are collisions; only
+ * there `groupAddress` carries the datapoint's command group address in the
+ * project's style (formatGa), elsewhere it is null. `ambiguous` marks a
+ * collision the address cannot resolve: the datapoint has none (the search
+ * API does not deliver it yet, #1266 P6/P7) or shares it with another line.
+ */
+export function datapointPathRows(datapoints, { treeId, groupAddressStyle }) {
+  const rows = datapoints.map(datapoint => {
+    const { primary, paths } = datapointTreePaths(datapoint, treeId)
+    const line = path => [...path, datapoint.name].join(' › ')
+    return { datapoint, label: line(primary ?? []), paths: paths.map(line), groupAddress: null, ambiguous: false }
+  })
+  const byLabel = new Map()
+  for (const row of rows) {
+    const key = normalizeHierarchyName(row.label)
+    if (!byLabel.has(key)) byLabel.set(key, [])
+    byLabel.get(key).push(row)
+  }
+  for (const group of byLabel.values()) {
+    if (group.length < 2) continue
+    for (const row of group) {
+      const address = row.datapoint.group_address
+      row.groupAddress = address ? formatGa(address, groupAddressStyle) : null
+    }
+    for (const row of group) {
+      row.ambiguous = !row.groupAddress || group.filter(other => other.groupAddress === row.groupAddress).length > 1
+    }
+  }
+  return rows
 }

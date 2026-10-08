@@ -9,7 +9,7 @@
 // node per group address (named like the address) under main › middle group
 // and the import names the datapoint like the address.
 import { describe, expect, it } from 'vitest'
-import { datapointRefPath, datapointTreePaths } from '@/utils/hierarchyDisplay'
+import { datapointPathRows, datapointRefPath, datapointTreePaths } from '@/utils/hierarchyDisplay'
 
 let seq = 0
 function nodeRef(treeId, treeName, names) {
@@ -95,6 +95,73 @@ describe('datapointTreePaths — main path of a datapoint in one tree', () => {
     expect(datapointTreePaths({ name, hierarchy_nodes: [schalten, twin] }, 't-groups').paths).toEqual([
       ['Beleuchtung', 'Schalten'],
       ['Beleuchtung', 'Schalten'],
+    ])
+  })
+})
+
+// `group_address` on a datapoint is the command address of its KNX binding.
+// The search API does not deliver it yet (#1266 P6/P7); rows without it are
+// what the picker gets today.
+describe('datapointPathRows — collisions show the group address, only there', () => {
+  const spots = '01 Esszimmer - Spots'
+  const k4 = [
+    { id: 'a', name: spots, group_address: '1/0/1', hierarchy_nodes: [gaTree(['Beleuchtung', 'Schalten', spots])] },
+    { id: 'b', name: spots, group_address: '1/0/2', hierarchy_nodes: [gaTree(['Beleuchtung', 'Schalten', spots])] },
+    { id: 'c', name: spots, group_address: '1/1/1', hierarchy_nodes: [gaTree(['Beleuchtung', 'Status', spots])] },
+  ]
+  const opts = style => ({ treeId: 't-groups', groupAddressStyle: style })
+
+  it('K1: one line, path then the name exactly once', () => {
+    const [row] = datapointPathRows([k4[2]], opts('ThreeLevel'))
+    expect(row).toMatchObject({ label: `Beleuchtung › Status › ${spots}`, paths: [`Beleuchtung › Status › ${spots}`], groupAddress: null, ambiguous: false })
+    expect(row.datapoint).toBe(k4[2])
+  })
+
+  it.each([
+    ['ThreeLevel', '1/0/1', '1/0/2'],
+    ['TwoLevel', '1/1', '1/2'],
+    ['Free', '2049', '2050'],
+  ])('K4 (%s): same name twice in one range, the address in the project style tells them apart', (style, first, second) => {
+    const rows = datapointPathRows(k4, opts(style))
+    expect(rows.map(row => [row.label, row.groupAddress, row.ambiguous])).toEqual([
+      [`Beleuchtung › Schalten › ${spots}`, first, false],
+      [`Beleuchtung › Schalten › ${spots}`, second, false],
+      [`Beleuchtung › Status › ${spots}`, null, false],
+    ])
+  })
+
+  it('K4 today: without binding addresses the twins stay ambiguous, the rest is unaffected', () => {
+    const today = k4.map(({ group_address: _ga, ...dp }) => dp)
+    expect(datapointPathRows(today, opts('ThreeLevel')).map(row => [row.groupAddress, row.ambiguous])).toEqual([
+      [null, true],
+      [null, true],
+      [null, false],
+    ])
+  })
+
+  it('stays ambiguous when the colliding rows share their address too', () => {
+    const twins = [k4[0], { ...k4[1], group_address: '1/0/1' }]
+    expect(datapointPathRows(twins, opts('ThreeLevel')).map(row => row.ambiguous)).toEqual([true, true])
+  })
+
+  it('K5: the line shows the main path, the detail lists every path', () => {
+    const dp = { id: 'k5', name: spots, hierarchy_nodes: [gaTree(['Beleuchtung', 'Status', spots]), gaTree(['Beleuchtung', 'Schalten', spots])] }
+    const [row] = datapointPathRows([dp], opts('ThreeLevel'))
+    expect(row.label).toBe(`Beleuchtung › Schalten › ${spots}`)
+    expect(row.paths).toEqual([`Beleuchtung › Schalten › ${spots}`, `Beleuchtung › Status › ${spots}`])
+  })
+
+  it('compares the visible lines after normalizing, as a reader would', () => {
+    const rows = datapointPathRows(
+      [
+        { id: 'x', name: 'Licht', hierarchy_nodes: [] },
+        { id: 'y', name: ' licht ', hierarchy_nodes: [] },
+      ],
+      opts('ThreeLevel'),
+    )
+    expect(rows.map(row => [row.label, row.ambiguous])).toEqual([
+      ['Licht', true],
+      [' licht ', true],
     ])
   })
 })
