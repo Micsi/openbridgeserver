@@ -14,6 +14,7 @@ import math
 import operator
 import re
 import sys
+from collections.abc import Callable
 from datetime import UTC as _UTC
 from datetime import date as _date
 from datetime import datetime as _datetime
@@ -26,6 +27,7 @@ from zoneinfo import ZoneInfoNotFoundError
 from obs.datetime_format import DEFAULT_CUSTOM_FORMAT, DEFAULT_DATE_FORMAT, DEFAULT_TIME_FORMAT, format_datetime
 from obs.logic.graph_analysis import analyze_topology
 from obs.logic.models import FlowData, LogicNode
+from obs.logic.variables import ResolvedTemplate, TimeSnapshot, make_obs_resolver, make_time_snapshot, resolve_template
 
 logger = logging.getLogger(__name__)
 _AVG_MULTI_MAX_SAMPLES = 100_000
@@ -211,6 +213,8 @@ class GraphExecutor:
         ical_result_cache: dict[str, Any] | None = None,
         ical_cache_outputs_owned: bool = False,
         retained_boundary_handles: dict[str, set[str]] | None = None,
+        run_time: _datetime | None = None,
+        datapoint_lookup: Callable[[str], Any] | None = None,
     ):
         self.flow = flow
         # NOTE: use `is not None` instead of `or {}` — an empty dict {} is falsy,
@@ -225,6 +229,36 @@ class GraphExecutor:
         self.ical_result_cache = ical_result_cache if ical_result_cache is not None else {}
         self.ical_cache_outputs_owned = ical_cache_outputs_owned
         self.retained_boundary_handles = retained_boundary_handles or {}
+        # Shared ``###VAR###`` context (#1301): one instant per run and a
+        # datapoint-id → current-value lookup for ``###OBSn###`` slots.
+        self.run_time = run_time
+        self.datapoint_lookup = datapoint_lookup
+        self._variable_snapshot: TimeSnapshot | None = None
+        self._variable_issues: dict[str, list[str]] = {}
+        self._variable_failed: set[str] = set()
+
+    def _time_snapshot(self) -> TimeSnapshot:
+        if self._variable_snapshot is None:
+            self._variable_snapshot = make_time_snapshot(self.app_config, self.run_time)
+        return self._variable_snapshot
+
+    def _resolve_path_template(
+        self,
+        node: LogicNode,
+        path: str,
+        issues: list[str],
+        quote: Callable[[str], str] | None = None,
+    ) -> ResolvedTemplate:
+        """Expand ``###VAR###`` placeholders of an extractor path; problems go to *issues*."""
+        resolved = resolve_template(
+            path,
+            self._time_snapshot(),
+            make_obs_resolver(node.data.get("variables"), self.datapoint_lookup),
+            quote,
+        )
+        issues.extend(f"unknown variable ###{name}###" for name in resolved.unknown)
+        issues.extend(resolved.errors)
+        return resolved
 
     def execute(
         self,
@@ -247,6 +281,8 @@ class GraphExecutor:
         graph must not run twice just because the replay re-executes the
         whole topological order.
         """
+        self._variable_issues = {}
+        self._variable_failed = set()
         input_overrides = input_overrides or {}
         capture_incoming_overrides = capture_incoming_overrides or {}
         known_outputs = known_outputs or {}
@@ -327,7 +363,7 @@ class GraphExecutor:
             inputs.update(node_overrides)
 
             try:
-                inputs = self._resolve_effective_inputs(node, inputs)
+                inputs = self._resolve_effective_inputs(node, inputs, self)
                 # A connected port that its producer did not emit is not the
                 # same thing as an unconnected/defaulted input. In particular,
                 # evaluating a synchronous node with its default here can turn
@@ -438,8 +474,12 @@ class GraphExecutor:
         return outputs
 
     @staticmethod
-    def _resolve_effective_inputs(node: LogicNode, inputs: dict[str, Any]) -> dict[str, Any]:
-        """Include configured input fallbacks in the values used and captured."""
+    def _resolve_effective_inputs(node: LogicNode, inputs: dict[str, Any], executor: GraphExecutor | None = None) -> dict[str, Any]:
+        """Include configured input fallbacks in the values used and captured.
+
+        With an *executor*, ``###VAR###`` placeholders in static texts are expanded
+        (#1301); connected values are data and never expanded.
+        """
         effective = inputs.copy()
         data = node.data
 
@@ -453,6 +493,12 @@ class GraphExecutor:
                 port = f"in_{index}"
                 if effective.get(port) is None:
                     static = data.get(f"text_{index}")
+                    if executor is not None and isinstance(static, str) and static:
+                        issues = executor._variable_issues.setdefault(node.id, [])
+                        resolved = executor._resolve_path_template(node, static, issues)
+                        if not resolved.ok:
+                            executor._variable_failed.add(node.id)
+                        static = resolved.text
                     effective[port] = static if static is not None else ""
 
         return effective
@@ -1971,13 +2017,34 @@ class GraphExecutor:
                 for i in range(1, count + 1):
                     val = inputs.get(f"in_{i}")
                     parts.append(str(val) if val is not None else "")
-                return {"result": sep.join(parts)}
+                issues = self._variable_issues.get(node.id, [])
+                result = {"result": None if node.id in self._variable_failed else sep.join(parts)}
+                return {**result, "_issues": list(issues)} if issues else result
 
             case "string_replace":
                 raw_text = inputs.get("text")
                 if raw_text is None:
                     return {"result": None}
-                return {"result": self._apply_replace_rules(str(raw_text), self._load_rule_list(d.get("rules")))}
+                rules = self._load_rule_list(d.get("rules"))
+                issues: list[str] = []
+                failed = False
+                resolved_rules: list[dict[str, Any]] = []
+                for rule in rules:
+                    replacement = rule.get("replace")
+                    if isinstance(replacement, str) and replacement:
+                        # Values of regex rules are escaped so they stay literal in the template.
+                        is_regex = str(rule.get("mode") or "plain").strip().lower() == "regex"
+                        resolved = self._resolve_path_template(
+                            node,
+                            replacement,
+                            issues,
+                            (lambda v: v.replace("\\", "\\\\")) if is_regex else None,
+                        )
+                        failed = failed or not resolved.ok
+                        rule = {**rule, "replace": resolved.text}
+                    resolved_rules.append(rule)
+                result = {"result": None if failed else self._apply_replace_rules(str(raw_text), resolved_rules)}
+                return {**result, "_issues": issues} if issues else result
 
             case "statistics":
                 # State stored in hysteresis_state keyed by node.id
@@ -2149,26 +2216,43 @@ class GraphExecutor:
 
                     if isinstance(path_list, list) and path_list:
                         result: dict[str, Any] = dict(preview_ports)
+                        resolved_paths: list[str] = []
+                        issues: list[str] = []
                         for i, entry in enumerate(path_list):
                             p = (entry.get("path") or "").strip() if isinstance(entry, dict) else ""
                             val: Any = None
-                            if data_obj is not None and p:
+                            resolved_p = self._resolve_path_template(node, p, issues)
+                            resolved_paths.append(resolved_p.text)
+                            if data_obj is not None and p and resolved_p.ok:
                                 try:
-                                    val = self._json_extract(data_obj, p)
+                                    val = self._json_extract(data_obj, resolved_p.text)
                                 except (KeyError, IndexError, TypeError, ValueError):
                                     val = None
+                                    if resolved_p.text != p:
+                                        issues.append(f"path '{resolved_p.text}' not found")
                             result[f"out_{i + 1}"] = val
+                        result.update(
+                            self._variable_debug_ports(resolved_paths, [e.get("path", "") if isinstance(e, dict) else "" for e in path_list], issues)
+                        )
                         return result
 
                 # Legacy single-path mode
                 value: Any = None
-                if data_obj is not None and json_path:
+                issues = []
+                resolved_single = self._resolve_path_template(node, json_path, issues)
+                if data_obj is not None and json_path and resolved_single.ok:
                     try:
-                        value = self._json_extract(data_obj, json_path)
+                        value = self._json_extract(data_obj, resolved_single.text)
                     except (KeyError, IndexError, TypeError, ValueError):
                         value = None
+                        if resolved_single.text != json_path:
+                            issues.append(f"path '{resolved_single.text}' not found")
 
-                return {"value": value, **preview_ports}
+                return {
+                    "value": value,
+                    **preview_ports,
+                    **self._variable_debug_ports([resolved_single.text], [json_path], issues),
+                }
 
             case "xml_extractor":
                 import json as _json_xml
@@ -2203,24 +2287,33 @@ class GraphExecutor:
 
                     if isinstance(path_list, list) and path_list:
                         result: dict[str, Any] = {"_preview": preview_str}
+                        resolved_paths = []
+                        issues = []
                         for i, entry in enumerate(path_list):
                             p = (entry.get("path") or "").strip() if isinstance(entry, dict) else ""
                             val: Any = None
-                            if _xml_root is not None and p:
-                                el = _xml_root.find(p)
-                                if el is not None:
-                                    val = (el.text or "").strip()
+                            resolved_p = self._resolve_path_template(node, p, issues)
+                            resolved_paths.append(resolved_p.text)
+                            if _xml_root is not None and p and resolved_p.ok:
+                                val = self._xml_find_text(_xml_root, resolved_p.text, issues)
                             result[f"out_{i + 1}"] = val
+                        result.update(
+                            self._variable_debug_ports(resolved_paths, [e.get("path", "") if isinstance(e, dict) else "" for e in path_list], issues)
+                        )
                         return result
 
                 # Legacy single-path mode
                 value = None
-                if _xml_root is not None and xml_path:
-                    el = _xml_root.find(xml_path)
-                    if el is not None:
-                        value = (el.text or "").strip()
+                issues = []
+                resolved_single = self._resolve_path_template(node, xml_path, issues)
+                if _xml_root is not None and xml_path and resolved_single.ok:
+                    value = self._xml_find_text(_xml_root, resolved_single.text, issues)
 
-                return {"value": value, "_preview": preview_str}
+                return {
+                    "value": value,
+                    "_preview": preview_str,
+                    **self._variable_debug_ports([resolved_single.text], [xml_path], issues),
+                }
 
             case "substring_extractor":
                 import re as _re
@@ -2893,6 +2986,31 @@ class GraphExecutor:
             case _:
                 logger.debug("Unknown node type: %s", t)
                 return {}
+
+    @staticmethod
+    def _variable_debug_ports(resolved: list[str], templates: list[str], issues: list[str]) -> dict[str, Any]:
+        """Debug ports for the config panel: resolved paths and variable issues.
+
+        Emitted only when a path actually used variables (or something went
+        wrong) so blocks without variables keep their previous outputs.
+        """
+        ports: dict[str, Any] = {}
+        if any(str(t).strip() != r for t, r in zip(templates, resolved, strict=False)) or issues:
+            ports["_resolved_paths"] = resolved
+            ports["_path_templates"] = [str(t).strip() for t in templates]
+        if issues:
+            ports["_issues"] = issues
+        return ports
+
+    @staticmethod
+    def _xml_find_text(root: Any, xpath: str, issues: list[str]) -> str | None:
+        """``root.find(xpath)`` text; an invalid XPath yields ``None`` plus an issue instead of aborting."""
+        try:
+            el = root.find(xpath)
+        except (SyntaxError, KeyError, ValueError, TypeError) as exc:
+            issues.append(f"invalid XPath '{xpath}': {exc}")
+            return None
+        return (el.text or "").strip() if el is not None else None
 
     @staticmethod
     def _json_extract(obj: Any, path: str) -> Any:
