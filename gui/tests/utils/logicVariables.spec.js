@@ -4,6 +4,7 @@ import {
   LOGIC_STANDARD_VARIABLES,
   configuredObsSlots,
   translateVariableIssue,
+  translateVariableErrors,
   normaliseObjectVariables,
   unresolvedVariables,
   variableToken,
@@ -60,5 +61,15 @@ describe('translateVariableIssue', () => {
   })
   it('keeps unknown messages verbatim', () => {
     expect(translateVariableIssue('something else', t)).toBe('something else')
+  })
+})
+
+describe('translateVariableErrors', () => {
+  const t = (key, params) => `${key}|${JSON.stringify(params)}`
+  it('translates prefixed manager errors and joined lists', () => {
+    expect(translateVariableErrors('Variable variable OBS1 object Lamp has no value; iCal variable OBS2 is not configured', t)).toBe(
+      'logic.variables.issues.noValue|{"name":"OBS1","object":"Lamp"}; logic.variables.issues.notConfigured|{"name":"OBS2"}',
+    )
+    expect(translateVariableErrors('API client variable value is empty', t)).toBe('logic.variables.issues.emptyValue|{}')
   })
 })

@@ -225,6 +225,13 @@ class TestIcalUrl:
         assert "raw" not in manager._hysteresis["g"]["i"]
         assert not out["i"].get("raw")
 
+    def test_changed_variable_url_drops_old_calendar_even_if_fetch_fails(self):
+        manager = _manager(value="new")
+        manager._hysteresis["g"] = {"i": {"raw": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n", "fetched_url": "https://example.com/old.ics"}}
+        out = _run(manager, [node("i", "ical", {"url": "https://example.com/###OBS1###.ics", "variables": OBS1_UUID})], {})
+        assert not out["i"].get("raw")
+        assert "fetched_url" not in manager._hysteresis["g"]["i"]
+
     def test_variable_in_host_is_rejected_and_not_fetched(self):
         assert self._run_ical({"url": "https://###OBS1###.example.com/c.ics", "variables": OBS1_UUID}, value="x") == []
 

@@ -3219,6 +3219,12 @@ class LogicManager:
                             subject="iCal",
                         ),
                     ).strip()
+                    # A changed resolved URL invalidates the calendar fetched from the old one,
+                    # even if fetching the new one fails.
+                    previous = hyst.get(node.id)
+                    if previous and previous.get("fetched_url") not in (None, url):
+                        for key in ("raw", "fetched_url", "last_fetch_ts"):
+                            previous.pop(key, None)
                 except _ApiClientVariableError as exc:
                     logger.warning("Graph %s: iCal variable error on node %s: %s", graph_id[:8], node.id[:8], exc)
                     # Never keep acting on a calendar fetched under a different URL.

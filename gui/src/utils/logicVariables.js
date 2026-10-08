@@ -82,12 +82,18 @@ const ISSUE_PATTERNS = [
   [/^unknown variable (###.+###)$/, 'unknownVariable', ['name']],
   [/^path '(.*)' not found$/, 'pathNotFound', ['path']],
   [/^invalid XPath '(.*)': (.*)$/, 'invalidXPath', ['path', 'error']],
-  [/^variable (OBS\d+) is not configured$/, 'notConfigured', ['name']],
-  [/^variable (OBS\d+) object (.*) is not available$/, 'notAvailable', ['name', 'object']],
-  [/^variable (OBS\d+) references an invalid object$/, 'invalidObject', ['name']],
-  [/^variable (OBS\d+) object (.*) has no value$/, 'noValue', ['name', 'object']],
-  [/^variable value is empty$/, 'emptyValue', []],
+  [/^(?:[^;]*? )?variable (OBS\d+) is not configured$/, 'notConfigured', ['name']],
+  [/^(?:[^;]*? )?variable (OBS\d+) object (.*) is not available$/, 'notAvailable', ['name', 'object']],
+  [/^(?:[^;]*? )?variable (OBS\d+) references an invalid object$/, 'invalidObject', ['name']],
+  [/^(?:[^;]*? )?variable (OBS\d+) object (.*) has no value$/, 'noValue', ['name', 'object']],
+  [/^(?:[^;]*? )?variable value is empty$/, 'emptyValue', []],
 ]
+
+// A block's ``__error__`` may join several issues with "; ".
+export function translateVariableErrors(text, t) {
+  if (typeof text !== 'string') return text
+  return String(text).split('; ').map(part => translateVariableIssue(part, t)).join('; ')
+}
 
 export function translateVariableIssue(issue, t) {
   const text = String(issue)
