@@ -3,7 +3,7 @@
     "id": "dp-1",
     "name": "Spots P8",
     "data_type": "BOOLEAN",
-    "group_address": "1/1/1",
+    "group_address": "1/1/96",
     "hierarchy_nodes": [
       {
         "node_id": "node-2",
@@ -28,7 +28,7 @@
     "id": "dp-5",
     "name": "Spots P8",
     "data_type": "BOOLEAN",
-    "group_address": "1/1/2",
+    "group_address": "1/1/97",
     "hierarchy_nodes": [
       {
         "node_id": "node-6",
@@ -53,7 +53,7 @@
     "id": "dp-7",
     "name": "Spots P8",
     "data_type": "BOOLEAN",
-    "group_address": "1/4/1",
+    "group_address": "1/4/128",
     "hierarchy_nodes": [
       {
         "node_id": "node-8",

@@ -145,6 +145,20 @@ describe('datapointPathRows — collisions show the group address, only there', 
     expect(rows[0].paths).toEqual([`Beleuchtung › Status › ${spots}`, `Beleuchtung › Schalten › ${spots}`])
   })
 
+  it('two datapoints with undecided main paths do not collide with each other', () => {
+    const undecided = id => ({
+      id,
+      name: spots,
+      group_address: id === 'u1' ? '1/0/1' : '1/0/2',
+      hierarchy_nodes: [gaTree(['Beleuchtung', 'Status', spots]), gaTree(['Beleuchtung', 'Schalten', spots])],
+    })
+    const rows = datapointPathRows([undecided('u1'), undecided('u2')], opts('ThreeLevel'))
+    expect(rows.map(row => [row.label, row.groupAddress, row.ambiguous])).toEqual([
+      [null, null, false],
+      [null, null, false],
+    ])
+  })
+
   it('a path that is only the collapsed leaf reads as the name alone', () => {
     const [row] = datapointPathRows([{ id: 'leaf', name: 'Licht', hierarchy_nodes: [gaTree(['Licht'])] }], opts('ThreeLevel'))
     expect([row.label, row.paths]).toEqual(['Licht', ['Licht']])

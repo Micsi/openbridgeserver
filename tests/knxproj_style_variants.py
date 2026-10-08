@@ -153,11 +153,12 @@ def knxproj_with_datapoint_types(datapoint_types: dict[int, str | None]) -> byte
     return out.getvalue()
 
 
-def knxproj_with_group_address_names(names: dict[int, str]) -> bytes:
-    """Return the three-level demo project with some group addresses renamed (#1266).
+def knxproj_with_extra_group_addresses(extra: dict[int, str]) -> bytes:
+    """Return the three-level demo project plus group addresses the demo does not use (#1266).
 
-    ``names`` maps a raw address to its new ETS name, e.g. to give two addresses of
-    one middle range the same name.
+    ``extra`` maps a raw address to its ETS name; each goes into the middle range
+    that contains it. Addresses outside the demo's 500 keep a test independent of
+    other imports of the demo into the same database.
     """
     ElementTree.register_namespace("", _NS)
     ElementTree.register_namespace("xsi", "http://www.w3.org/2001/XMLSchema-instance")
@@ -168,10 +169,24 @@ def knxproj_with_group_address_names(names: dict[int, str]) -> bytes:
             data = zin.read(info.filename)
             if info.filename == f"{_PROJECT}/0.xml":
                 root = ElementTree.fromstring(data)
-                for ga in root.iter(_q("GroupAddress")):
-                    raw = int(ga.get("Address", "-1"))
-                    if raw in names:
-                        ga.set("Name", names[raw])
+                used = {int(ga.get("Address", "-1")) for ga in root.iter(_q("GroupAddress"))}
+                for number, (raw, name) in enumerate(sorted(extra.items()), start=1):
+                    if raw in used:
+                        raise ValueError(f"address {raw} is used by the demo project")
+                    [middle] = [
+                        r
+                        for r in root.iter(_q("GroupRange"))
+                        if not r.findall(_q("GroupRange")) and int(r.get("RangeStart")) <= raw <= int(r.get("RangeEnd"))
+                    ]
+                    ElementTree.SubElement(
+                        middle,
+                        _q("GroupAddress"),
+                        Id=f"{_PROJECT}-0_GA-{9000 + number}",
+                        Address=str(raw),
+                        Name=name,
+                        DatapointType="DPST-1-1",
+                        Puid=str(9000 + number),
+                    )
                 data = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
             zout.writestr(info, data)
     return out.getvalue()
