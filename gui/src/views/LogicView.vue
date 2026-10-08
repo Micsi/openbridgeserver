@@ -324,6 +324,7 @@ import { logicRunAuthzApi } from '@/api/logicAuthz'
 import { cloneSelectionForClipboard, remapClipboardForPaste } from '@/utils/logicClipboard'
 import { AUTH_TOKEN_REFRESHED_EVENT } from '@/utils/authEvents'
 import { extractorOutputLabels, extractorRowCount, retainPreviews } from '@/utils/logicExtractorOutputs'
+import { translateVariableErrors } from '@/utils/logicVariables'
 import NodePalette         from '@/components/logic/NodePalette.vue'
 import NodeConfigPanel     from '@/components/logic/NodeConfigPanel.vue'
 import ActionPreflightDialog from '@/components/authz/ActionPreflightDialog.vue'
@@ -786,7 +787,7 @@ function fmtDebugVal(nodeOut, { full = false, maxChars = null, portLabels = {} }
     return text.length <= limit ? text : `${text.slice(0, limit)}…`
   }
 
-  if ('__error__' in nodeOut) return `${t('logic.nodeError')}: ${clipped(nodeOut.__error__, 50)}`
+  if ('__error__' in nodeOut) return `${t('logic.nodeError')}: ${clipped(translateVariableErrors(nodeOut.__error__, t), 50)}`
   if ('_message' in nodeOut) {
     const message = nodeOut._message !== null && nodeOut._message !== undefined
       ? `"${String(nodeOut._message).slice(0, 24)}"`
