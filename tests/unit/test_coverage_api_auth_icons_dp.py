@@ -2001,7 +2001,7 @@ class TestDeleteBinding:
 
 
 class TestSearchEndpoint:
-    """All search tests patch _add_hierarchy to avoid hierarchy DB query complexity."""
+    """All search tests patch _add_hierarchy and _add_command_group_address to avoid their DB queries."""
 
     @pytest.mark.asyncio
     async def test_search_no_filters(self, monkeypatch):
@@ -2010,6 +2010,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         db = _DbStub(rows=[])
         result = await search_api.search(
             q="",
@@ -2037,6 +2038,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         db = _DbStub(rows=[])
         result = await search_api.search(
             q="",
@@ -2064,6 +2066,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         db = _DbStub(rows=[])
         result = await search_api.search(
             q="",
@@ -2092,6 +2095,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         db = _DbStub(rows=[])
         result = await search_api.search(
             q="",
@@ -2118,6 +2122,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         # q-filter uses fetchall for binding configs, then _add_hierarchy is patched
         config_rows = [_make_row(datapoint_id=str(dp1.id), config="{}"), _make_row(datapoint_id=str(dp2.id), config="{}")]
         db = _DbStub(rows=config_rows)
@@ -2147,6 +2152,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         # adapter filter uses fetchall, return matching dp ids
         adapter_rows = [_make_row(datapoint_id=str(dp1.id))]
         db = _DbStub(rows=adapter_rows)
@@ -2185,6 +2191,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         db = _DbStub(rows=[])
         result = await search_api.search(
             q="",
@@ -2209,6 +2216,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: _RegistryStub())
         monkeypatch.setattr(dp_api, "get_registry", lambda: _RegistryStub())
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         db = _DbStub(rows=[])
         result = await search_api.search(
             q="test",
@@ -2237,6 +2245,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         db = _DbStub(rows=[])
         result = await search_api.search(
             q="",
@@ -2265,6 +2274,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         node_rows = [_make_row(datapoint_id=str(dp1.id))]
         db = _DbStub(rows=node_rows)
         result = await search_api.search(
@@ -2293,6 +2303,7 @@ class TestSearchEndpoint:
         monkeypatch.setattr(search_api, "get_registry", lambda: reg)
         monkeypatch.setattr(dp_api, "get_registry", lambda: reg)
         monkeypatch.setattr(search_api, "_add_hierarchy", AsyncMock())
+        monkeypatch.setattr(search_api, "_add_command_group_address", AsyncMock())
         tree_rows = [_make_row(datapoint_id=str(dp1.id))]
         db = _DbStub(rows=tree_rows)
         result = await search_api.search(
