@@ -75,3 +75,30 @@ export function datapointRefPath(ref, datapointName) {
   }
   return path
 }
+
+function comparePaths(a, b) {
+  const ka = a.join('\u0000')
+  const kb = b.join('\u0000')
+  return ka < kb ? -1 : ka > kb ? 1 : 0
+}
+
+/**
+ * Paths of a datapoint in one tree (the caller picks the tree), each from
+ * datapointRefPath(), in code-point order, and the main path among them.
+ *
+ * The main path is the one of the command group address: the link whose
+ * `group_address` equals the datapoint's `group_address`. The search API
+ * delivers neither field yet (#1266 P6/P7); without them, and when no link
+ * matches, the first path in code-point order is the main path, so the
+ * choice is deterministic whatever order the API returns the links in.
+ */
+export function datapointTreePaths(datapoint, treeId) {
+  const refs = (datapoint.hierarchy_nodes ?? []).filter(ref => ref.tree_id === treeId)
+  const entries = refs
+    .map(ref => ({ ref, path: datapointRefPath(ref, datapoint.name) }))
+    .sort((a, b) => comparePaths(a.path, b.path))
+  if (!entries.length) return { primary: null, paths: [] }
+  const command = datapoint.group_address
+  const main = entries.find(entry => command && entry.ref.group_address === command) ?? entries[0]
+  return { primary: main.path, paths: entries.map(entry => entry.path) }
+}
