@@ -50,6 +50,7 @@ describe('datapointRefPath — leaf collapse', () => {
 
   it('tolerates a ref without node_path and an empty datapoint name', () => {
     expect(datapointRefPath({ node_name: 'Licht' }, '')).toEqual(['Licht'])
+    expect(datapointRefPath({ node_name: 'Licht' }, undefined)).toEqual(['Licht'])
     expect(datapointRefPath(null, 'x')).toEqual([])
   })
 })
